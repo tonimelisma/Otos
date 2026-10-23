@@ -23,7 +23,7 @@ This ADR owns:
 
 - Store change notifications versus Store-published UI snapshots
 - Projection-owned coalesced `CatalogWindowState` publication
-- one-in-flight publication and dirty-during-await behavior
+- one-in-flight publication and requested-during-await behavior
 - explicit sidebar-selection delivery from ViewModel to Projection
 - transient `unknown`, `available`, and `unavailable` library availability
 - availability-driven filtering and empty states
@@ -63,11 +63,15 @@ runtime state remain catalog truth.
 
 ### Projection-Owned Publication
 
-`CatalogProjection` owns one coalesced dirty loop. Store changes mark the
-background loop dirty; direct sidebar, sort, and filter intents also mark dirty
-and schedule an immediate publication attempt. On a publication with pending
-work, Projection asks Store for current root rows plus descriptor-ordered
-asset IDs, derives one `CatalogWindowState`, and yields it.
+`CatalogProjection` owns one publication loop and two counters. Every Store change
+and every sidebar, sort, or filter intent adds to `requested`; a pass records the
+`requested` it started from and advances `covered` to it only when its build
+succeeds, so work is owed exactly while `requested != covered` and nothing a
+finishing pass does can erase a request made while it ran. One consumer task runs
+every pass off a `bufferingNewest(1)` doorbell: intents ring it directly, other
+Store changes wait for a cadence task that rings it while Projection is behind. On
+a pass, Projection asks Store for current root rows plus descriptor-ordered asset
+IDs, derives one `CatalogWindowState`, and yields it. ADR 0032 states the rule.
 
 Before the Store's initial load has applied, its roots are unknown, not absent.
 `CatalogStore.loadedLibraries()` returns nil until then, and Projection publishes a
@@ -79,15 +83,22 @@ blank for a cadence tick after the catalog is already readable was measured at a
 one second of a launch that loads its catalog in 120 ms (APP-044).
 
 When Projection receives `.libraryRemoved(path)` for its selected root, it
-immediately retains `.allMedia` as selection input and marks itself dirty. A
+immediately retains `.allMedia` as selection input and requests a publication. A
 same-path replacement therefore remains unselected even when no root-absent
 state was published. The path is transient context, not generated identity;
 SQLite row IDs remain Store-private.
 
-Only one derivation may be in flight. Actor reentrancy allows new input to mark
-the actor dirty while awaited Store or diagnostic work is running. The completed
-state may still be yielded, but dirty remains set and the next tick derives the
-newest inputs. No second projection starts concurrently.
+Only one derivation may be in flight, because only the loop task runs passes.
+Actor reentrancy lets new input arrive while a pass awaits Store reads; it raises
+`requested`, the finishing pass covers only what it started from, and the loop runs
+again. A newer request never cancels a running build: GRDB reads throw
+`CancellationError` in a cancelled task, so a cancelled build holds errors, not a
+catalog. Cancellation is teardown only, and a cancelled pass publishes nothing.
+
+A failed Store read is not a fact. A pass whose build throws publishes nothing,
+logs `op=projection.publish phase=failed`, and leaves `covered` where it was, so
+the last published state stands and the next intent or cadence tick retries.
+Projection never substitutes an empty value for a read that failed (MED-002).
 
 ### Explicit Selection Intents
 
@@ -100,7 +111,7 @@ Projection may normalize a selected library that no longer exists to
 `.allMedia`. After deriving state, Projection also adopts that resolved fallback
 as its retained selection when the input used for the build is still current. If
 a newer explicit selection arrived during an await, the newer input wins and is
-left untouched for the next dirty tick. Applying the resolved selection updates
+left untouched for the next pass. Applying the resolved selection updates
 the ViewModel property directly and does not emit another user intent, so
 normalization cannot feed back into the stream or silently resurrect a removed
 selection if the same path is later added again.

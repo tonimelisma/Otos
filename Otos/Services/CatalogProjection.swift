@@ -4,24 +4,38 @@ import OSLog
 /// Catalog Projection guide
 /// This actor is the read-model boundary between catalog truth and the main window:
 /// fixed/removable source splitting, ordering, reachability filtering, sidebar scope,
-/// title selection, camera guidance banner state, and empty-state meaning. Notifications
-/// coalesce on the cadence; direct query intents wake publication immediately. `dirty`
-/// is cleared before awaited reads/build work so input survives for the next pass. Pure
-/// policy lives in `CatalogWindowPolicy`; diagnostics values live in
-/// `CatalogProjectionDiagnostics`.
+/// title selection, camera guidance banner state, and empty-state meaning. Pure policy
+/// lives in `CatalogWindowPolicy`; diagnostics values live in `CatalogProjectionDiagnostics`.
+///
+/// Publication is one loop. Every intent and every store change calls `requestPublication`, which
+/// only ever adds to `requested`; a pass records the `requested` it started from and
+/// advances `covered` to it when its build succeeds. Whether work is owed is
+/// `requested != covered` — nothing a finishing pass does can erase a request made while
+/// it ran, because a pass can only cover what it started from. One consumer task
+/// (`loopTask`) runs every pass off a `bufferingNewest(1)` doorbell, so builds never
+/// overlap. Intents and a store change that arrives before the first catalog load ring
+/// the doorbell directly; other store changes wait for `cadenceTask`, which rings it
+/// every `cadence` while the projection is behind.
+///
+/// Nothing cancels a build that newer work supersedes: GRDB reads throw
+/// `CancellationError` in a cancelled task, so a cancelled build would hold errors, and the
+/// older build's result is simply covered by the next pass. Cancellation is teardown only
+/// (`removeContinuation`), and a pass that is cancelled or whose read fails publishes
+/// nothing: it leaves `covered` where it was, so the request stays outstanding and the
+/// next intent or cadence tick retries it.
 actor CatalogProjection {
-    typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryRequest) async
+    typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryRequest) async throws
         -> CatalogWindowState
 
-    /// Whether the next publication must rebuild the full ordered-asset query. A
-    /// detail-only change (enrichment that touched no ordering/scope column) reuses
-    /// the last published order — the grid's own same-identity `.refreshVisible` path
-    /// already updates visible details cheaply (ADR 0011). `.none` means no
-    /// change is pending (the publish gate is `dirty`).
-    private enum DirtyKind {
+    /// Whether the next pass must rebuild the full ordered-asset query. A detail-only
+    /// change (enrichment that touched no ordering/scope column) reuses the last
+    /// published order — the grid's own same-identity `.refreshVisible` path already
+    /// updates visible details cheaply (ADR 0011). Declaration order is severity order:
+    /// a pending structural change always wins over a detail-only one.
+    private enum DirtyKind: Comparable {
         case none
-        case structural
         case detailOnly
+        case structural
     }
 
     private let cadence: Duration
@@ -30,15 +44,20 @@ actor CatalogProjection {
     private var queryRequest: CatalogQueryRequest = .initial
     /// Distinguishes one projection's diagnostics from another's in a shared log.
     private let diagnosticID = String(UUID().uuidString.prefix(8))
-    private var dirty = false
-    private var dirtyKind: DirtyKind = .none
-    private var publishing = false
+    /// Bumped by every intent and store change. Nothing decrements or clears it.
+    private var requested: UInt64 = 0
+    /// The `requested` value the last *successful* pass started from.
+    private var covered: UInt64 = 0
+    /// Severity merged since the last pass started.
+    private var pendingKind: DirtyKind = .none
+    /// Passes between their first and last line. Not request state: a count rather than
+    /// a flag so a cancelled pass finishing after a re-subscribe cannot mask a live one.
+    private var runningPasses = 0
+    private var doorbell: AsyncStream<Void>.Continuation?
     private var continuations: [UUID: AsyncStream<CatalogWindowState>.Continuation] = [:]
     private var changeTask: Task<Void, Never>?
-    private var publicationTask: Task<Void, Never>?
-    private var immediatePublicationTask: Task<Void, Never>?
-    private var immediateWakePending = false
-    private var publicationStore: CatalogStore?
+    private var loopTask: Task<Void, Never>?
+    private var cadenceTask: Task<Void, Never>?
     private var lastPublishedState: CatalogWindowState?
     /// The last publication was the pre-load `.loadingCatalog` state. The next store
     /// change is the load itself (or something after it), so it publishes immediately
@@ -47,16 +66,21 @@ actor CatalogProjection {
     /// Count of full ordered-asset queries executed by publications. A detail-only
     /// publication skips it; the count is the observable "full-catalog re-sort per
     /// enrichment batch" metric (ADR 0011) and drives the regression test.
-    private(set) var orderQueryCount: UInt64 = 0
+    var orderQueryCount: UInt64 = 0
     /// Window states published so far. Read with `isQuiescent`, it says whether a change
     /// published anything, without depending on when a subscriber receives it.
     private(set) var publicationCount: UInt64 = 0
     var detailRefreshGeneration: UInt64 = 0
 
-    /// True when no change is pending and no publication is in flight. Lets a test
-    /// poll for settlement instead of guessing a sleep duration.
+    /// True when every request has been covered by a successful pass and no pass is
+    /// running. Lets a test wait for settlement instead of guessing a sleep duration.
     var isQuiescent: Bool {
-        !dirty && !publishing
+        requested == covered && runningPasses == 0
+    }
+
+    /// Whether any consumer still holds a stream. Teardown happens when the last one ends.
+    var hasSubscribers: Bool {
+        !continuations.isEmpty
     }
 
     init(
@@ -93,7 +117,7 @@ actor CatalogProjection {
         continuation.onTermination = { [weak self] _ in
             Task { await self?.removeContinuation(id) }
         }
-        markDirty(wakeImmediately: true, store: store)
+        requestPublication(.structural, ringNow: true)
         return stream
     }
 
@@ -111,7 +135,7 @@ actor CatalogProjection {
             descriptor: descriptor,
             generation: queryRequest.generation &+ 1
         )
-        scheduleImmediatePublicationAfterIntent()
+        requestPublication(.structural, ringNow: true)
     }
 
     func updateQueryRequest(_ request: CatalogQueryRequest) {
@@ -120,44 +144,55 @@ actor CatalogProjection {
             "generation": "\(request.generation)",
             "scope": String(describing: request.descriptor.scope),
             "changed": "\(queryRequest != request)",
-            "publishing": "\(publishing)",
-            "dirty": "\(dirty)",
+            "requested": "\(requested)",
+            "covered": "\(covered)",
         ])
         guard queryRequest != request else { return }
         queryRequest = request
-        scheduleImmediatePublicationAfterIntent()
+        requestPublication(.structural, ringNow: true)
     }
 
-    /// One-shot window-state build for tests. Production UI consumes the coalesced
-    /// publication loop; this entry exists so projection math can be asserted without
-    /// standing up the dirty/publish cadence.
+    /// One-shot window-state build for tests. Production UI consumes the publication
+    /// loop; this entry derives a state from supplied facts so projection math can be
+    /// asserted without a store. It reads nothing, so it cannot fail.
     func windowState(
         libraries: [CatalogLibraryState],
         orderedAssetIDs: [MediaAssetID],
         sidebarSelection: SidebarSelection
     ) async -> CatalogWindowState {
-        let (state, _) = await buildWindowState(
-            libraries: libraries,
-            orderedAssetIDs: orderedAssetIDs,
-            request: CatalogQueryRequest(
-                descriptor: CatalogQueryDescriptor(scope: sidebarSelection),
-                generation: 0
-            )
+        let request = CatalogQueryRequest(
+            descriptor: CatalogQueryDescriptor(scope: sidebarSelection),
+            generation: 0
         )
-        return state
+        let allRoots = CatalogWindowPolicy.sortLibraries(libraries)
+        let facts = makeBuildFacts(
+            allRoots: allRoots,
+            request: request,
+            resolvedDescriptor: Self.resolvedDescriptor(for: request, allRoots: allRoots, importBatches: []),
+            importBatches: [],
+            ordered: (orderedAssetIDs, []),
+            orderQueryMs: 0
+        )
+        return windowState(
+            from: facts,
+            allAssetCount: orderedAssetIDs.count,
+            unfilteredVisibleAssetCount: facts.scopedAssetIDs.count,
+            filterOptions: .empty
+        ).0
     }
 }
 
 private extension CatalogProjection {
     func ensurePublicationLoop(store: CatalogStore, changes: AsyncStream<CatalogStoreChange>?) {
-        publicationStore = store
-        guard publicationTask == nil else {
+        guard loopTask == nil else {
             return
         }
 
         let cadence = cadence
-        // Both loops wait indefinitely, so they hold their owner weakly — and both
-        // must *end* when that upgrade fails, not merely skip a beat. A `while
+        let (bell, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        doorbell = continuation
+        // Every loop here waits indefinitely, so it holds its owner weakly — and must
+        // *end* when that upgrade fails, not merely skip a beat. A `while
         // !Task.isCancelled` loop whose body is `await self?.…` keeps running after
         // the projection is gone: it does nothing on each pass, but it never exits,
         // and its closure holds `store` strongly, so the whole `CatalogStore` (its
@@ -178,7 +213,20 @@ private extension CatalogProjection {
             }
         }
 
-        publicationTask = Task { [weak self] in
+        loopTask = Task { [weak self] in
+            for await _ in bell {
+                guard let self else {
+                    return
+                }
+                await pass(store: store)
+            }
+        }
+
+        // The cadence task is the one that notices the owner is gone, so it also ends the
+        // doorbell on every exit: `loopTask` waits on the doorbell indefinitely, and a
+        // wait nothing can end keeps `store` alive through its closure.
+        cadenceTask = Task { [weak self, continuation] in
+            defer { continuation.finish() }
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: cadence)
@@ -188,57 +236,25 @@ private extension CatalogProjection {
                 guard let self else {
                     return
                 }
-                await publishIfDirty(store: store)
+                await ringIfBehind()
             }
         }
     }
 
-    func markDirty(wakeImmediately: Bool = false, store: CatalogStore? = nil) {
-        dirty = true
-        dirtyKind = .structural
-        if wakeImmediately, let store {
-            scheduleImmediatePublication(store: store)
+    /// The only way work becomes owed. `ringNow` wakes the loop immediately; without it
+    /// the cadence tick picks the request up.
+    private func requestPublication(_ kind: DirtyKind, ringNow: Bool) {
+        requested &+= 1
+        pendingKind = max(pendingKind, kind)
+        if ringNow {
+            doorbell?.yield()
         }
     }
 
-    /// Marks dirt that may skip the full order re-query. A pending structural change
-    /// always wins over a detail-only one (max-severity semantics).
-    func markDetailDirty(wakeImmediately: Bool = false, store: CatalogStore? = nil) {
-        dirty = true
-        if dirtyKind != .structural {
-            dirtyKind = .detailOnly
+    func ringIfBehind() {
+        if requested != covered {
+            doorbell?.yield()
         }
-        if wakeImmediately, let store {
-            scheduleImmediatePublication(store: store)
-        }
-    }
-
-    /// Schedules one immediate publication pass unless one is already waiting to run;
-    /// that pass reads `dirty` when it starts, so it covers this wake too. A pass that
-    /// finds a publication in flight returns, and the publication re-wakes itself if
-    /// still dirty. Nothing here cancels a pass: a cancelled build reads nothing — its
-    /// queries throw `CancellationError` — and would publish an empty catalog as fact.
-    private func scheduleImmediatePublication(store: CatalogStore) {
-        guard !immediateWakePending else {
-            return
-        }
-        immediateWakePending = true
-        immediatePublicationTask = Task { [weak self, store] in
-            await self?.runImmediateWake(store: store)
-        }
-    }
-
-    private func runImmediateWake(store: CatalogStore) async {
-        immediateWakePending = false
-        await publishIfDirty(store: store)
-    }
-
-    func scheduleImmediatePublicationAfterIntent() {
-        guard let publicationStore else {
-            dirty = true
-            return
-        }
-        markDirty(wakeImmediately: true, store: publicationStore)
     }
 
     func storeDidChange(_ change: CatalogStoreChange) {
@@ -252,25 +268,24 @@ private extension CatalogProjection {
         }
         detailRefreshGeneration &+= 1
         if case .assetsDetailChanged = change {
-            markDetailDirty()
+            requestPublication(.detailOnly, ringNow: false)
         } else {
-            markDirty(wakeImmediately: publishedBeforeCatalogLoad, store: publicationStore)
+            requestPublication(.structural, ringNow: publishedBeforeCatalogLoad)
         }
     }
 
-    func publishIfDirty(store: CatalogStore) async {
-        guard dirty else {
+    /// One publication pass. It only runs on `loopTask`, so passes never overlap. It
+    /// takes up everything requested so far (`startedFrom`) and covers exactly that:
+    /// a request made while it awaits leaves `requested != covered` and runs next.
+    func pass(store: CatalogStore) async {
+        guard requested != covered else {
             return
         }
-        guard !publishing else {
-            return
-        }
-
-        // Clear before awaiting so changes during reads/build remain queued.
-        dirty = false
-        let pendingDirtyKind = dirtyKind
-        dirtyKind = .none
-        publishing = true
+        runningPasses += 1
+        defer { runningPasses -= 1 }
+        let startedFrom = requested
+        let kind = pendingKind
+        pendingKind = .none
         let selectedRequest = queryRequest
         OtosLog.catalog.noticeOperation("projection.publish", phase: "start", fields: [
             "projection": diagnosticID,
@@ -288,7 +303,7 @@ private extension CatalogProjection {
         let reuseOrderedAssetIDs: [MediaAssetID]?
         let reuseDayBuckets: [Date?]?
         let reuseDescriptor: CatalogQueryDescriptor?
-        if pendingDirtyKind == .detailOnly, let previous = lastPublishedState {
+        if kind == .detailOnly, let previous = lastPublishedState {
             reuseOrderedAssetIDs = previous.mediaGrid.orderedAssetIDs
             reuseDayBuckets = previous.mediaGrid.dayBuckets
             reuseDescriptor = previous.queryDescriptor
@@ -300,76 +315,84 @@ private extension CatalogProjection {
 
         let publicationStart = Date()
         let storeReadStart = Date()
-        // Before the catalog's first load there is nothing to query and nothing to
-        // claim: publish the loading state instead of an empty catalog (APP-044).
-        guard let libraries = await store.loadedLibraries() else {
-            publishedBeforeCatalogLoad = true
-            var loading = CatalogWindowState.empty
-            loading.mediaGrid = CatalogMediaGridState(descriptor: selectedRequest.descriptor, orderedAssetIDs: [])
-            loading.resolvedSidebarSelection = selectedRequest.descriptor.scope
-            loading.queryGeneration = selectedRequest.generation
-            OtosLog.catalog.notice("op=projection.publish phase=loadingCatalog")
-            if loading != lastPublishedState {
-                yield(loading)
+        let completed: CatalogProjectionCompletedPublication
+        do {
+            // Before the catalog's first load there is nothing to query and nothing to
+            // claim: publish the loading state instead of an empty catalog (APP-044).
+            guard let libraries = await store.loadedLibraries() else {
+                try Task.checkCancellation()
+                publishLoadingState(for: selectedRequest)
+                covered = startedFrom
+                ringIfBehind()
+                return
             }
-            publishing = false
-            // The load can land while this pass awaited the read; its change is
-            // already marked dirty, so publish it now rather than on the cadence.
-            if dirty {
-                markDirty(wakeImmediately: true, store: store)
+            publishedBeforeCatalogLoad = false
+            let storeReadMs = DiagnosticsTiming.milliseconds(since: storeReadStart)
+
+            let projectionStart = Date()
+            let signpost = OtosSignpost.performance.beginInterval("CatalogWindowPublication")
+            defer {
+                OtosSignpost.performance.endInterval("CatalogWindowPublication", signpost)
             }
+            let (state, buildMetrics) = try await buildWindowState(
+                store: store,
+                libraries: libraries,
+                request: selectedRequest,
+                reuse: CatalogProjectionOrderReuse(
+                    orderedAssetIDs: reuseOrderedAssetIDs,
+                    dayBuckets: reuseDayBuckets,
+                    descriptor: reuseDescriptor
+                )
+            )
+            // A cancelled pass is a teardown: whatever it read is not the catalog.
+            try Task.checkCancellation()
+            completed = CatalogProjectionCompletedPublication(
+                state: state,
+                buildMetrics: buildMetrics,
+                selectedDescriptor: selectedRequest.descriptor,
+                timing: CatalogProjectionPublicationTiming(
+                    storeReadMs: storeReadMs,
+                    projectionMs: DiagnosticsTiming.milliseconds(since: projectionStart),
+                    totalMs: DiagnosticsTiming.milliseconds(since: publicationStart)
+                )
+            )
+        } catch is CancellationError {
+            // Teardown (`removeContinuation`) already reset the counters; this pass
+            // belongs to a subscription that no longer exists.
             return
-        }
-        publishedBeforeCatalogLoad = false
-        let storeReadMs = DiagnosticsTiming.milliseconds(since: storeReadStart)
-
-        let projectionStart = Date()
-        let signpost = OtosSignpost.performance.beginInterval("CatalogWindowPublication")
-        let (state, buildMetrics) = await buildWindowState(
-            store: store,
-            libraries: libraries,
-            request: selectedRequest,
-            reuseOrderedAssetIDs: reuseOrderedAssetIDs,
-            reuseDayBuckets: reuseDayBuckets,
-            reuseDescriptor: reuseDescriptor
-        )
-        OtosSignpost.performance.endInterval("CatalogWindowPublication", signpost)
-
-        // A cancelled pass read nothing — every query threw `CancellationError` — so its
-        // state is not the catalog. Publish nothing and stay dirty for the next pass.
-        guard !Task.isCancelled else {
-            publishing = false
-            dirty = true
-            OtosLog.catalog.noticeOperation("projection.publish", phase: "abandoned", fields: [
+        } catch {
+            // The work is still owed: `covered` stays put and the severity is
+            // re-merged. No doorbell here — a persistent error must not retry in a
+            // tight loop; the next intent or cadence tick retries it.
+            pendingKind = max(pendingKind, kind)
+            OtosLog.catalog.errorOperation("projection.publish", phase: "failed", fields: [
                 "projection": diagnosticID,
                 "generation": "\(selectedRequest.generation)",
+                "error": String(describing: error),
             ])
             return
         }
 
-        // Normalize only the exact input this build used; a newer reentrant user
-        // intent stays dirty and wins on the next tick.
-        let retainedResolvedSelection = retainResolvedSelection(
-            state.queryDescriptor,
-            forInput: selectedRequest
-        )
-        await finishPublication(CatalogProjectionCompletedPublication(
-            state: state,
-            buildMetrics: buildMetrics,
-            selectedDescriptor: selectedRequest.descriptor,
-            retainedResolvedSelection: retainedResolvedSelection,
-            timing: CatalogProjectionPublicationTiming(
-                storeReadMs: storeReadMs,
-                projectionMs: DiagnosticsTiming.milliseconds(since: projectionStart),
-                totalMs: DiagnosticsTiming.milliseconds(since: publicationStart)
-            )
-        ), store: store)
+        // Everything from here to the last line is synchronous: nothing can interleave
+        // between covering the request and publishing what covers it.
+        covered = startedFrom
+        let diagnostics = publish(completed, selectedRequest: selectedRequest)
+        ringIfBehind()
+        await diagnostics.emit()
     }
 
-    private func finishPublication(
+    /// Normalizes the selection the build resolved, compares against the last published
+    /// state, and yields it if it changed. Synchronous.
+    func publish(
         _ publication: CatalogProjectionCompletedPublication,
-        store: CatalogStore
-    ) async {
+        selectedRequest: CatalogQueryRequest
+    ) -> CatalogProjectionPublicationDiagnostics {
+        // Normalize only the exact input this build used; a newer reentrant user
+        // intent stays outstanding and wins on the next pass.
+        let retainedResolvedSelection = retainResolvedSelection(
+            publication.state.queryDescriptor,
+            forInput: selectedRequest
+        )
         let equalityStart = Date()
         let changeSummary = CatalogProjectionChangeSummary.compare(
             previous: lastPublishedState,
@@ -377,36 +400,46 @@ private extension CatalogProjection {
         )
         let stateChanged = changeSummary.stateChanged
         let equalityUs = DiagnosticsTiming.microseconds(since: equalityStart)
-
-        await CatalogProjectionPublicationDiagnostics(
+        if stateChanged {
+            yield(publication.state)
+        }
+        return CatalogProjectionPublicationDiagnostics(
             state: publication.state,
             assetCount: publication.state.mediaGrid.orderedAssetIDs.count,
             metrics: publication.buildMetrics,
             changeSummary: changeSummary,
             selectedSidebarRow: publication.selectedDescriptor.scope,
-            retainedResolvedSelection: publication.retainedResolvedSelection,
+            retainedResolvedSelection: retainedResolvedSelection,
             equalityUs: equalityUs,
             storeReadMs: publication.timing.storeReadMs,
             projectionMs: publication.timing.projectionMs,
             totalMs: publication.timing.totalMs,
-            dirtyAfter: dirty,
+            dirtyAfter: requested != covered,
             stateChanged: stateChanged,
             orderQueryCount: orderQueryCount
-        ).emit()
+        )
+    }
 
-        if stateChanged {
-            yield(publication.state)
+    private func retainResolvedSelection(
+        _ resolvedDescriptor: CatalogQueryDescriptor,
+        forInput inputRequest: CatalogQueryRequest
+    ) -> Bool {
+        guard queryRequest == inputRequest else {
+            return false
         }
-        publishing = false
-        if dirty {
-            // Re-wake with the pending change's kind preserved: a detail-only change
-            // that arrived mid-publication must not be escalated to a structural
-            // rebuild by the re-wake.
-            if dirtyKind == .detailOnly {
-                markDetailDirty(wakeImmediately: true, store: store)
-            } else {
-                markDirty(wakeImmediately: true, store: store)
-            }
+        queryRequest.descriptor = resolvedDescriptor
+        return resolvedDescriptor != inputRequest.descriptor
+    }
+
+    func publishLoadingState(for request: CatalogQueryRequest) {
+        publishedBeforeCatalogLoad = true
+        var loading = CatalogWindowState.empty
+        loading.mediaGrid = CatalogMediaGridState(descriptor: request.descriptor, orderedAssetIDs: [])
+        loading.resolvedSidebarSelection = request.descriptor.scope
+        loading.queryGeneration = request.generation
+        OtosLog.catalog.notice("op=projection.publish phase=loadingCatalog")
+        if loading != lastPublishedState {
+            yield(loading)
         }
     }
 
@@ -425,194 +458,16 @@ private extension CatalogProjection {
         }
         changeTask?.cancel()
         changeTask = nil
-        publicationTask?.cancel()
-        publicationTask = nil
-        immediatePublicationTask?.cancel()
-        immediatePublicationTask = nil
-        immediateWakePending = false
-        publicationStore = nil
-        dirty = false
-        dirtyKind = .none
-        publishing = false
+        loopTask?.cancel()
+        loopTask = nil
+        cadenceTask?.cancel()
+        cadenceTask = nil
+        doorbell?.finish()
+        doorbell = nil
+        requested = 0
+        covered = 0
+        pendingKind = .none
         lastPublishedState = nil
         orderQueryCount = 0
-    }
-
-    private func retainResolvedSelection(
-        _ resolvedDescriptor: CatalogQueryDescriptor,
-        forInput inputRequest: CatalogQueryRequest
-    ) -> Bool {
-        guard queryRequest == inputRequest else {
-            return false
-        }
-        queryRequest.descriptor = resolvedDescriptor
-        return resolvedDescriptor != inputRequest.descriptor
-    }
-}
-
-private extension CatalogProjection {
-    private func buildWindowState(
-        store: CatalogStore,
-        libraries unsortedLibraries: [CatalogLibraryState],
-        request: CatalogQueryRequest,
-        reuseOrderedAssetIDs: [MediaAssetID]? = nil,
-        reuseDayBuckets: [Date?]? = nil,
-        reuseDescriptor: CatalogQueryDescriptor? = nil
-    ) async -> (CatalogWindowState, CatalogProjectionBuildMetrics) {
-        let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
-        let sources = CatalogWindowPolicy.sourceRows(from: allRoots)
-        let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: allRoots)
-        let importBatches: [ImportBatchSummary]
-        do {
-            importBatches = try await store.importBatches()
-        } catch {
-            OtosLog.catalog.error(
-                "Catalog import batch query failed error=\(String(describing: error), privacy: .public)"
-            )
-            importBatches = []
-        }
-        let resolvedDescriptor = CatalogWindowPolicy.resolvedDescriptor(
-            request.descriptor,
-            libraries: sources.libraries,
-            removableSources: sources.removableSources,
-            importBatches: importBatches
-        )
-        let orderedAssetIDs: [MediaAssetID]
-        let dayBuckets: [Date?]
-        let orderQueryMs: Int
-        if let reuseOrderedAssetIDs, let reuseDescriptor, resolvedDescriptor == reuseDescriptor {
-            orderedAssetIDs = reuseOrderedAssetIDs
-            dayBuckets = reuseDayBuckets ?? []
-            orderQueryMs = 0
-        } else {
-            orderQueryCount &+= 1
-            let orderStart = Date()
-            do {
-                (orderedAssetIDs, dayBuckets) = try await store.orderedAssetIDs(
-                    for: resolvedDescriptor,
-                    availableLibraryPaths: availableLibraryPaths
-                )
-                orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
-            } catch {
-                OtosLog.catalog.error(
-                    "Catalog ordered asset query failed error=\(String(describing: error), privacy: .public)"
-                )
-                orderedAssetIDs = []
-                dayBuckets = []
-                orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
-            }
-        }
-        return await buildWindowState(
-            libraries: allRoots,
-            orderedAssetIDs: orderedAssetIDs,
-            dayBuckets: dayBuckets,
-            request: request,
-            resolvedDescriptor: resolvedDescriptor,
-            store: store,
-            availableLibraryPaths: availableLibraryPaths,
-            importBatches: importBatches,
-            orderQueryMs: orderQueryMs
-        )
-    }
-
-    private func buildWindowState(
-        libraries unsortedLibraries: [CatalogLibraryState],
-        orderedAssetIDs: [MediaAssetID],
-        dayBuckets: [Date?] = [],
-        request: CatalogQueryRequest,
-        resolvedDescriptor providedResolvedDescriptor: CatalogQueryDescriptor? = nil,
-        store: CatalogStore? = nil,
-        availableLibraryPaths providedAvailableLibraryPaths: Set<LibraryRootPath>? = nil,
-        importBatches providedImportBatches: [ImportBatchSummary]? = nil,
-        orderQueryMs: Int = 0
-    ) async -> (CatalogWindowState, CatalogProjectionBuildMetrics) {
-        if let injectedState = await injectedWindowState(
-            unsortedLibraries,
-            orderedAssetIDs: orderedAssetIDs,
-            request: request
-        ) {
-            return injectedState
-        }
-
-        let signpost = OtosSignpost.performance.beginInterval("CatalogWindowStateBuild")
-        defer {
-            OtosSignpost.performance.endInterval("CatalogWindowStateBuild", signpost)
-        }
-        let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
-        let sources = CatalogWindowPolicy.sourceRows(from: allRoots)
-        let rootsByPath = CatalogWindowPolicy.rootsByPath(from: allRoots)
-        let availableLibraryPaths = providedAvailableLibraryPaths
-            ?? CatalogWindowPolicy.availablePaths(from: allRoots)
-        let importBatches: [ImportBatchSummary]
-        if let providedImportBatches {
-            importBatches = providedImportBatches
-        } else if let store {
-            do {
-                importBatches = try await store.importBatches()
-            } catch {
-                importBatches = []
-            }
-        } else {
-            importBatches = []
-        }
-        let resolvedDescriptor = providedResolvedDescriptor
-            ?? CatalogWindowPolicy.resolvedDescriptor(
-                request.descriptor,
-                libraries: sources.libraries,
-                removableSources: sources.removableSources,
-                importBatches: importBatches
-            )
-        let resolvedSidebarSelection = resolvedDescriptor.scope
-        let title = CatalogWindowPolicy.title(for: resolvedSidebarSelection, libraries: allRoots)
-        let (scopedAssetIDs, scopedDayBuckets) = CatalogWindowPolicy.assetIDs(
-            for: resolvedSidebarSelection,
-            orderedAssetIDs: orderedAssetIDs,
-            dayBuckets: dayBuckets,
-            availableLibraryPaths: availableLibraryPaths,
-            rootsByPath: rootsByPath
-        )
-        let (mediaEmptyState, filterOptions) = await supplementaryWindowStateFields(
-            CatalogProjectionSupplementaryBuildInput(
-                resolvedDescriptor: resolvedDescriptor,
-                allRoots: allRoots,
-                orderedAssetIDs: orderedAssetIDs,
-                scopedAssetIDs: scopedAssetIDs,
-                store: store,
-                availableLibraryPaths: availableLibraryPaths
-            )
-        )
-
-        return (catalogWindowState(CatalogProjectionWindowStateParts(
-            title: title,
-            libraries: sources.libraries,
-            removableSources: sources.removableSources,
-            importBatches: importBatches,
-            resolvedDescriptor: resolvedDescriptor,
-            queryGeneration: request.generation,
-            scopedAssetIDs: scopedAssetIDs,
-            scopedDayBuckets: scopedDayBuckets,
-            filterOptions: filterOptions,
-            mediaEmptyState: mediaEmptyState
-        )), CatalogProjectionBuildMetrics(orderQueryMs: orderQueryMs))
-    }
-
-    private func supplementaryWindowStateFields(
-        _ input: CatalogProjectionSupplementaryBuildInput
-    ) async -> (CatalogMediaEmptyState, CatalogFilterOptions) {
-        async let mediaEmptyState = emptyStateForBuild(CatalogProjectionEmptyStateBuildInput(
-            descriptor: input.resolvedDescriptor,
-            libraries: input.allRoots,
-            rootsByPath: CatalogWindowPolicy.rootsByPath(from: input.allRoots),
-            orderedAssetIDs: input.orderedAssetIDs,
-            scopedAssetIDs: input.scopedAssetIDs,
-            store: input.store,
-            availableLibraryPaths: input.availableLibraryPaths
-        ))
-        async let filterOptions = filterOptions(
-            for: input.resolvedDescriptor.scope,
-            store: input.store,
-            availableLibraryPaths: input.availableLibraryPaths
-        )
-        return await (mediaEmptyState, filterOptions)
     }
 }

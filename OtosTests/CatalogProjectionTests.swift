@@ -198,7 +198,7 @@ struct CatalogProjectionTests {
         let projection = CatalogProjection(
             cadence: .milliseconds(10),
             stateBuilder: { libraries, orderedAssetIDs, request in
-                await probe.build(
+                try await probe.build(
                     libraries: libraries,
                     orderedAssetIDs: orderedAssetIDs,
                     request: request
@@ -232,7 +232,7 @@ struct CatalogProjectionTests {
         let projection = CatalogProjection(
             cadence: .seconds(3600),
             stateBuilder: { libraries, orderedAssetIDs, request in
-                await probe.build(
+                try await probe.build(
                     libraries: libraries,
                     orderedAssetIDs: orderedAssetIDs,
                     request: request
@@ -261,6 +261,101 @@ struct CatalogProjectionTests {
         }
         #expect(states.contains { $0.resolvedSidebarSelection == pictures })
         #expect(await probe.cancelledBuildCount() == 0)
+    }
+
+    @Test func aFailedBuildPublishesNothingAndTheNextIntentRetries() async throws {
+        let store = CatalogStore(location: .inMemory)
+        try await store.start(scansSavedLibraries: false)
+        let probe = ProjectionProbe()
+        await probe.failCall(1)
+        await probe.releaseBuilds()
+        // An hour-long cadence: only the intent can retry the failed pass.
+        let projection = makeProbedProjection(probe, cadence: .seconds(3600))
+        let recorder = StateRecorder()
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer {
+            recordingTask.cancel()
+        }
+        let pictures = SidebarSelection.library(LibraryRootPath(rawValue: "/Users/example/Pictures"))
+
+        // Call 1 is the initial publication and its read fails. Once it has started it
+        // has taken up everything requested, so an intent now is a new request.
+        try await waitUntil { await probe.callCount() >= 1 }
+        await projection.updateSidebarSelection(pictures)
+
+        let states = await recorder.waitForCount(1) { states in
+            states.contains { $0.resolvedSidebarSelection == pictures }
+        }
+        try await waitForProjectionQuiescence(projection)
+
+        #expect(await probe.callCount() >= 2)
+        // Every published state came from a build that read successfully: the failed call
+        // published nothing, not an empty catalog.
+        #expect(states.allSatisfy { $0.title.hasPrefix("Call ") && $0.title != "Call 1" })
+    }
+
+    @Test func aStoreChangeDuringABuildIsPublishedAfterIt() async throws {
+        let temp = try makeTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = CatalogStore(location: .inMemory)
+        try await store.start(scansSavedLibraries: false)
+        let probe = ProjectionProbe()
+        // An hour-long cadence: only the finishing pass noticing the new request can
+        // publish the change.
+        let projection = makeProbedProjection(probe, cadence: .seconds(3600))
+        let recorder = StateRecorder()
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer {
+            recordingTask.cancel()
+        }
+
+        await probe.waitUntilInFlight()
+        let changesBefore = await projection.detailRefreshGeneration
+        try await store.addLibrary(url: root)
+        // Release only once the projection has recorded the change, so it arrived
+        // during the build rather than after it.
+        try await waitUntil { await projection.detailRefreshGeneration > changesBefore }
+        await probe.releaseBuilds()
+
+        let states = await recorder.waitForCount(1) { states in
+            states.contains { $0.libraries.count == 1 }
+        }
+        #expect(states.contains { $0.libraries.count == 1 })
+    }
+
+    @Test func teardownDuringABuildPublishesNothing() async throws {
+        let store = CatalogStore(location: .inMemory)
+        try await store.start(scansSavedLibraries: false)
+        let probe = ProjectionProbe()
+        let projection = makeProbedProjection(probe, cadence: .seconds(3600))
+        let recorder = StateRecorder()
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+
+        await probe.waitUntilInFlight()
+        let publishedBefore = await projection.publicationCount
+        recordingTask.cancel()
+        try await waitUntil { await !projection.hasSubscribers }
+        await probe.releaseBuilds()
+        try await waitForProjectionQuiescence(projection)
+
+        #expect(await projection.publicationCount == publishedBefore)
+        #expect(await recorder.count() == 0)
     }
 
     @Test func detailOnlyStoreChangePublishesGridRefreshGeneration() async throws {
@@ -419,6 +514,22 @@ private extension AsyncValueRecorder where Value == CatalogWindowState {
     }
 }
 
+private func makeProbedProjection(
+    _ probe: ProjectionProbe,
+    cadence: Duration = .milliseconds(10)
+) -> CatalogProjection {
+    CatalogProjection(
+        cadence: cadence,
+        stateBuilder: { libraries, orderedAssetIDs, request in
+            try await probe.build(
+                libraries: libraries,
+                orderedAssetIDs: orderedAssetIDs,
+                request: request
+            )
+        }
+    )
+}
+
 private actor ProjectionProbe {
     private var currentInFlight = 0
     private var maximumInFlightValue = 0
@@ -427,13 +538,24 @@ private actor ProjectionProbe {
     private var inFlightWaiters: [CheckedContinuation<Void, Never>] = []
     private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
     private var isReleased = false
+    private var failingCall: Int?
+
+    struct InjectedFailure: Error {}
+
+    /// The build for call `number` (1-based) throws, as a failed Store read does.
+    func failCall(_ number: Int) {
+        failingCall = number
+    }
 
     func build(
         libraries: [CatalogLibraryState],
         orderedAssetIDs: [MediaAssetID],
         request: CatalogQueryRequest
-    ) async -> CatalogWindowState {
+    ) async throws -> CatalogWindowState {
         calls += 1
+        if calls == failingCall {
+            throw InjectedFailure()
+        }
         currentInFlight += 1
         maximumInFlightValue = max(maximumInFlightValue, currentInFlight)
         resumeInFlightWaiters()
