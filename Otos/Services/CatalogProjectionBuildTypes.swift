@@ -19,21 +19,27 @@ nonisolated struct CatalogProjectionWindowStateParts {
     let mediaEmptyState: CatalogMediaEmptyState
 }
 
-nonisolated struct CatalogProjectionSupplementaryBuildInput {
-    let resolvedDescriptor: CatalogQueryDescriptor
-    let allRoots: [CatalogLibraryState]
-    let orderedAssetIDs: [MediaAssetID]
-    let scopedAssetIDs: [MediaAssetID]
-    let store: CatalogStore?
-    let availableLibraryPaths: Set<LibraryRootPath>
+/// The order a detail-only publication may reuse instead of re-running the ordered-asset
+/// query, with the descriptor it was built for.
+nonisolated struct CatalogProjectionOrderReuse {
+    let orderedAssetIDs: [MediaAssetID]?
+    let dayBuckets: [Date?]?
+    let descriptor: CatalogQueryDescriptor?
+
+    static let none = CatalogProjectionOrderReuse(orderedAssetIDs: nil, dayBuckets: nil, descriptor: nil)
 }
 
-nonisolated struct CatalogProjectionEmptyStateBuildInput {
-    let descriptor: CatalogQueryDescriptor
-    let libraries: [CatalogLibraryState]
-    let rootsByPath: [LibraryRootPath: CatalogLibraryState]
+/// Everything a window state is derived from once the Store has been read. Production
+/// reads these facts from the Store; the one-shot test entry supplies them directly.
+nonisolated struct CatalogProjectionBuildFacts {
+    /// Display-ordered roots (`CatalogWindowPolicy.sortLibraries`).
+    let allRoots: [CatalogLibraryState]
+    let request: CatalogQueryRequest
+    let resolvedDescriptor: CatalogQueryDescriptor
+    let importBatches: [ImportBatchSummary]
     let orderedAssetIDs: [MediaAssetID]
-    let scopedAssetIDs: [MediaAssetID]
-    let store: CatalogStore?
     let availableLibraryPaths: Set<LibraryRootPath>
+    let scopedAssetIDs: [MediaAssetID]
+    let scopedDayBuckets: [Date?]
+    let orderQueryMs: Int
 }

@@ -22,7 +22,6 @@ nonisolated struct CatalogProjectionCompletedPublication {
     let state: CatalogWindowState
     let buildMetrics: CatalogProjectionBuildMetrics
     let selectedDescriptor: CatalogQueryDescriptor
-    let retainedResolvedSelection: Bool
     let timing: CatalogProjectionPublicationTiming
 }
 
