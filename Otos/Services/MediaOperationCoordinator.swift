@@ -238,10 +238,17 @@ actor MediaOperationCoordinator {
         send(.sessionPreferencesChanged(prefs, source: source))
     }
 
+    /// Applies the user's Import intent and returns. A run it starts continues on its own
+    /// task, so a caller that delivers intents in order (the view model's intent stream)
+    /// is never held behind a copy.
+    func submitImport(for source: LibraryRootPath) {
+        send(.importQueued(source: source))
+    }
+
     /// Queues the import. When this call starts a run, it completes when the run does.
     func queueImport(for source: LibraryRootPath) async {
         let runningBefore = machine.executingBatch(for: source)
-        send(.importQueued(source: source))
+        submitImport(for: source)
         if let batch = machine.executingBatch(for: source), batch != runningBefore,
            let task = executions[batch]?.task
         {
@@ -550,11 +557,14 @@ actor MediaOperationCoordinator {
     private func startExecution(_ request: Machine.ExecutionRequest) {
         let executor = makeExecutor(request.source)
         let batch = request.batch
-        // Each callback hops to this actor on its own task, so samples can arrive out of
-        // order; the machine's staleness guard drops the ones that would move a counter
-        // backwards.
-        let progressHandler: @Sendable (MediaOperationProgress) -> Void = { [weak self] progress in
-            Task { [weak self] in
+        // The executor reports from ~10 copy worker threads. Each sample is yielded into
+        // one per-run stream that keeps only the newest, and one task delivers them to
+        // this actor in order, so samples can neither arrive shuffled nor outlive the run.
+        let (samples, sampleSink) = AsyncStream<MediaOperationProgress>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        let progressTask = Task { [weak self] in
+            for await progress in samples {
                 await self?.deliver(.executionProgress(batch, progress))
             }
         }
@@ -570,8 +580,12 @@ actor MediaOperationCoordinator {
                 deleteSourceRequested: request.deleteSourceRequested,
                 runID: request.runID
             ) { progress in
-                progressHandler(progress)
+                sampleSink.yield(progress)
             }
+            // Close the stream and let the delivery task drain it before the result is
+            // reported: no progress can follow `executionFinished`.
+            sampleSink.finish()
+            await progressTask.value
             await self?.executionTaskFinished(result, batch: batch)
         }
         executions[batch] = ExecutionHandle(task: task, executor: executor)

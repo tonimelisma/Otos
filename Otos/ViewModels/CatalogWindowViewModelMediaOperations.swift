@@ -2,6 +2,18 @@ import Foundation
 import Observation
 import OSLog
 
+/// A user action aimed at the import coordinator. Every case travels through the view
+/// model's one lossless stream, so the coordinator sees the user's actions in the order the
+/// user made them.
+nonisolated enum ImportIntent: Sendable {
+    case setDestination(LibraryRootPath, source: LibraryRootPath)
+    case setSessionPreferences(ImportPreferences, source: LibraryRootPath)
+    case queueImport(source: LibraryRootPath)
+    case cancelImport(source: LibraryRootPath)
+    case retryPlanning(source: LibraryRootPath)
+    case preferencesDidChange
+}
+
 /// Media-operation intents and presentation owned by the catalog window ViewModel.
 ///
 /// The coordinator actor owns plan lifecycle; this MainActor bridge only assigns
@@ -46,6 +58,7 @@ extension CatalogWindowViewModel {
             }
         )
         mediaOperationCoordinator = coordinator
+        startImportIntentConsumer(coordinator: coordinator)
         mediaOperationStartTask = Task { [weak self] in
             await coordinator.start()
             guard let self else {
@@ -60,6 +73,59 @@ extension CatalogWindowViewModel {
                     applyImportPresentations(presentations)
                 }
             }
+        }
+    }
+
+    /// The one consumer of import intents. It delivers them to the coordinator strictly in
+    /// submission order and holds the view model weakly across each wait, ending when the
+    /// stream ends or the view model is gone.
+    func startImportIntentConsumer(coordinator: MediaOperationCoordinator) {
+        importIntentTask?.cancel()
+        let intents = importIntentStream
+        importIntentTask = Task { [weak self, coordinator] in
+            for await intent in intents {
+                guard let self else {
+                    return
+                }
+                await deliver(intent, to: coordinator)
+            }
+        }
+    }
+
+    private func deliver(_ intent: ImportIntent, to coordinator: MediaOperationCoordinator) async {
+        switch intent {
+        case let .setDestination(destination, source):
+            await coordinator.setDestination(destination, for: source)
+            await refreshRemovableDestinations()
+        case let .setSessionPreferences(prefs, source):
+            await coordinator.setSessionPreferences(prefs, for: source)
+        case let .queueImport(source):
+            // Returns when the intent is applied, not when the run ends: the next intent
+            // (Cancel, above all) must not wait behind a copy.
+            await coordinator.submitImport(for: source)
+        case let .cancelImport(source):
+            await coordinator.cancelImport(for: source)
+        case let .retryPlanning(source):
+            await coordinator.retryPlanning(for: source)
+        case .preferencesDidChange:
+            await coordinator.preferencesDidChange()
+        }
+    }
+
+    private func submitImportIntent(_ intent: ImportIntent) {
+        switch importIntentContinuation.yield(intent) {
+        case .enqueued:
+            return
+        case .dropped:
+            // The stream is unbounded, so dropping means its lossless contract broke.
+            assertionFailure("Unbounded import intent stream dropped an intent")
+            OtosLog.ui.error("Import intent was unexpectedly dropped")
+        case .terminated:
+            assertionFailure("Import intent submitted after stream termination")
+            OtosLog.ui.error("Import intent submitted after termination")
+        @unknown default:
+            assertionFailure("Unknown import intent stream yield result")
+            OtosLog.ui.error("Import intent returned an unknown yield result")
         }
     }
 
@@ -114,6 +180,8 @@ extension CatalogWindowViewModel {
             })
             cancellingImportSources.formIntersection(stillExecuting)
         }
+        // Read, not a command: newest-wins by nature — each run re-reads the coordinator's
+        // current mapping, so a run that finishes late is overwritten by the next.
         Task {
             await refreshRemovableDestinations()
         }
@@ -150,12 +218,11 @@ extension CatalogWindowViewModel {
     /// write — that double-write is exactly what let a per-frame refresh
     /// revert an in-flight toggle.
     func setSessionPreferences(_ prefs: ImportPreferences, for source: LibraryRootPath) {
-        guard let coordinator = mediaOperationCoordinator else {
+        guard mediaOperationCoordinator != nil else {
             return
         }
-        Task {
-            await coordinator.setSessionPreferences(prefs, for: source)
-        }
+        // Command: every toggle is the user's latest word and must apply in order.
+        submitImportIntent(.setSessionPreferences(prefs, source: source))
     }
 
     func refreshRemovableDestinations() async {
@@ -169,52 +236,46 @@ extension CatalogWindowViewModel {
     }
 
     func setImportDestination(_ destination: LibraryRootPath, for source: LibraryRootPath) {
-        guard let coordinator = mediaOperationCoordinator else {
+        guard mediaOperationCoordinator != nil else {
             return
         }
-        Task { [weak self] in
-            await coordinator.setDestination(destination, for: source)
-            await self?.refreshRemovableDestinations()
-        }
+        // Command: ordered before a following Import, which must run into this destination.
+        submitImportIntent(.setDestination(destination, source: source))
     }
 
     func queueImport(for source: LibraryRootPath) {
-        guard let coordinator = mediaOperationCoordinator else {
+        guard mediaOperationCoordinator != nil else {
             return
         }
-        Task {
-            await coordinator.queueImport(for: source)
-        }
+        // Command: ordered after any destination or preference change made before it.
+        submitImportIntent(.queueImport(source: source))
     }
 
     func cancelImport(for source: LibraryRootPath) {
-        guard let coordinator = mediaOperationCoordinator else {
+        guard mediaOperationCoordinator != nil else {
             return
         }
         cancellingImportSources.insert(source)
-        Task {
-            await coordinator.cancelImport(for: source)
-        }
+        // Command: delivered in order, and never held behind the run it cancels.
+        submitImportIntent(.cancelImport(source: source))
     }
 
     func retryImportPlanning(for source: LibraryRootPath) {
-        guard let coordinator = mediaOperationCoordinator else {
+        guard mediaOperationCoordinator != nil else {
             return
         }
-        Task {
-            await coordinator.retryPlanning(for: source)
-        }
+        // Command: `Try Again` is a user act, not a state, so none may be dropped.
+        submitImportIntent(.retryPlanning(source: source))
     }
 
     func setImportPreferences(_ newPreferences: ImportPreferences) {
         importPreferences = newPreferences
         ImportPreferencesStore.save(newPreferences, defaults: preferences)
-        guard let coordinator = mediaOperationCoordinator else {
+        guard mediaOperationCoordinator != nil else {
             return
         }
-        Task {
-            await coordinator.preferencesDidChange()
-        }
+        // Command: ordered with the other import intents.
+        submitImportIntent(.preferencesDidChange)
     }
 
     // MARK: - Library reorganization (ARC-051)
@@ -242,6 +303,8 @@ extension CatalogWindowViewModel {
             preferencesDomain: preferencesDomain
         )
         reorganizationRunner = runner
+        // Single in flight by UI gating: the Reorganize command is the only entry and the
+        // confirmation sheet it opens is modal, so no second preview can start.
         Task { [weak self] in
             let outcome = await runner.preview(libraryRoot: path)
             guard let self else { return }
@@ -272,6 +335,8 @@ extension CatalogWindowViewModel {
             preferencesDomain: preferencesDomain
         )
         reorganizationRunner = runner
+        // Single in flight by UI gating: the confirmation sheet closes on this click, so the
+        // run cannot be confirmed twice.
         Task { [weak self] in
             let outcome = await runner.run(libraryRoot: path)
             guard let self else { return }
