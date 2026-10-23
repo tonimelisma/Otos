@@ -294,7 +294,9 @@ struct CatalogProjectionTests {
         try await waitForProjectionQuiescence(projection)
 
         #expect(await probe.callCount() >= 2)
-        #expect(states.allSatisfy { $0.title != "Call 1" })
+        // Every published state came from a build that read successfully: the failed call
+        // published nothing, not an empty catalog.
+        #expect(states.allSatisfy { $0.title.hasPrefix("Call ") && $0.title != "Call 1" })
     }
 
     @Test func aStoreChangeDuringABuildIsPublishedAfterIt() async throws {
