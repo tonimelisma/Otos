@@ -97,6 +97,7 @@ nonisolated enum RootNamespaceMutationOwner: String, Equatable, Sendable {
     case sourceErase
     case reorganization
     case mediaTrash
+    case libraryRemoval
 }
 
 /// The outcome of asking for a root's namespace lease.

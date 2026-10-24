@@ -1862,40 +1862,63 @@ extension CatalogStore {
         )
     }
 
+    /// Removes a library from the catalog. The removal owns the root's namespace from the
+    /// moment it starts: no import, reorganization or Move to Trash can begin on it, and
+    /// the reconcile loop leaves its dirt alone. It stops watching the root and cancels its
+    /// scan; a batch that scan delivers later is refused, because the scan no longer owns
+    /// the root. If the delete fails the library stays, watched again and rescanned, and
+    /// the error is thrown.
     func removeLibrary(path: LibraryRootPath) async throws {
         try await ensureStartedForMutation()
         guard let rootState = roots[path] else {
             return
         }
-        guard namespaceMutationLeases[path] == nil else {
-            throw CatalogStoreError.catalogUnavailable
+        if let holder = namespaceMutationLeases[path] {
+            OtosLog.catalog.noticeOperation("catalog.library.remove", phase: "busy", fields: [
+                "rootPath": path.rawValue,
+                "heldBy": holder.owner.rawValue,
+            ])
+            throw CatalogStoreError.libraryBusy(holder.owner)
         }
+        nextNamespaceMutationLeaseGeneration &+= 1
+        let lease = RootNamespaceMutationLease(
+            libraryRootPath: path,
+            generation: nextNamespaceMutationLeaseGeneration,
+            owner: .libraryRemoval,
+            markedDirtyByExternalEvents: false
+        )
+        namespaceMutationLeases[path] = lease
         let root = rootState.root
         let rootRowID = rootState.rowID
-
-        cancelRuntimeWork(for: path)
-        filesystemWatcher.removeRoot(path)
-        filesystemWatchingArmed.remove(path)
-
-        let dbQueue = try database()
-        guard let purgedThumbnails = try await thumbnailPathsForLibraryRemoval(
-            path: path,
-            root: root,
-            rootRowID: rootRowID,
-            dbWriter: dbQueue
-        ) else {
-            return
-        }
-
         let state = OtosSignpost.persistence.beginInterval("CatalogRemoveRoot")
+        defer { OtosSignpost.persistence.endInterval("CatalogRemoveRoot", state) }
         OtosLog.catalog.notice(
             "op=catalog.library.remove phase=start rootPath=\(path.rawValue, privacy: .public)"
         )
-        try await dbQueue.write { db in
-            try Self.deleteLibraryRoot(rootRowID: rootRowID, db: db)
-        }
-        OtosSignpost.persistence.endInterval("CatalogRemoveRoot", state)
 
+        filesystemWatcher.removeRoot(path)
+        filesystemWatchingArmed.remove(path)
+        cancelRuntimeWork(for: path)
+
+        let purgedThumbnails: [String]
+        do {
+            let dbQueue = try database()
+            purgedThumbnails = try await dbQueue.read { db in
+                try Self.fetchExistingAssetRows(libraryRootID: rootRowID, db: db)
+            }.compactMap(\.thumbnailPath)
+            try await dbQueue.write { db in
+                try Self.deleteLibraryRoot(rootRowID: rootRowID, db: db)
+            }
+        } catch {
+            OtosLog.catalog.errorOperation("catalog.library.remove", phase: "failed", fields: [
+                "rootPath": path.rawValue,
+                "error": String(describing: error),
+            ])
+            restoreAfterFailedRemoval(lease)
+            throw error
+        }
+
+        namespaceMutationLeases.removeValue(forKey: path)
         removeRoot(path: path)
         if let thumbnailDirectory {
             for name in purgedThumbnails {
@@ -1903,12 +1926,24 @@ extension CatalogStore {
             }
         }
         deleteDeviceStagingIfNeeded(root)
-        OtosLog.catalog.info("Library root removed path=\(root.path.rawValue, privacy: .public)")
         OtosLog.catalog.notice(
             "op=catalog.library.remove phase=finish rootPath=\(path.rawValue, privacy: .public)"
         )
         notifyCatalogChanged(.libraryRemoved(path))
         startNextScanIfNeeded()
+    }
+
+    /// A removal that could not delete the root's rows leaves the library as it was: its
+    /// lease is released, it is watched again, and a full scan restores whatever changed
+    /// while it was not watched.
+    private func restoreAfterFailedRemoval(_ lease: RootNamespaceMutationLease) {
+        let path = lease.libraryRootPath
+        guard namespaceMutationLeases[path]?.generation == lease.generation else { return }
+        namespaceMutationLeases.removeValue(forKey: path)
+        filesystemWatchingArmed.insert(path)
+        filesystemWatcher.addRoot(path)
+        enqueueScans([path])
+        notifyCatalogChanged()
     }
 
     /// Reorders library-kind roots, moving the one at `sourceIndex` (within the
@@ -1950,30 +1985,6 @@ extension CatalogStore {
             "op=catalog.library.reorder phase=finish count=\(orderedPaths.count, privacy: .public)"
         )
         notifyCatalogChanged()
-    }
-
-    private func thumbnailPathsForLibraryRemoval(
-        path: LibraryRootPath,
-        root: LibraryRoot,
-        rootRowID: Int64,
-        dbWriter: any DatabaseWriter
-    ) async throws -> [String]? {
-        do {
-            let deletionFacts = try await dbWriter.read { db in
-                try Self.fetchExistingAssetRows(libraryRootID: rootRowID, db: db)
-            }
-            guard roots[path]?.root == root,
-                  roots[path]?.rowID == rootRowID
-            else {
-                return nil
-            }
-            return deletionFacts.compactMap(\.thumbnailPath)
-        } catch {
-            OtosLog.persistence.error(
-                "Catalog remove root thumbnail lookup failed error=\(String(describing: error), privacy: .public)"
-            )
-            throw error
-        }
     }
 
     private func rootForDeviceIdentity(_ identity: DeviceIdentity) -> LibraryRoot? {

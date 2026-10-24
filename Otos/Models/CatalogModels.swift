@@ -878,6 +878,9 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
     case catalogUnavailable
     case unsupportedCatalogSchema(CatalogSchemaCompatibility)
     case importOperationMissing(ActiveFileOperationKey)
+    /// Another owner is changing the root's files: an import, a reorganization, a Move to
+    /// Trash or another removal.
+    case libraryBusy(RootNamespaceMutationOwner)
 
     var errorDescription: String? {
         switch self {
@@ -898,6 +901,8 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
             problem.errorDescription
         case let .importOperationMissing(key):
             "The import journal operation \(key.rawValue) is no longer present."
+        case let .libraryBusy(owner):
+            "The library is busy (\(owner.rawValue))."
         }
     }
 }
