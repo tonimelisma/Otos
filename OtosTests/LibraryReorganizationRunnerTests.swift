@@ -115,6 +115,40 @@ struct LibraryReorganizationRunnerTests {
         await fixture.store.shutdown()
     }
 
+    /// A component the last process left journaled holds its root from the moment the
+    /// next process loads its catalog, before anyone runs recovery: a half-moved library is
+    /// never scanned, reconciled or imported into first. Recovery adopts that hold,
+    /// finishes the component and releases the root.
+    @Test func aJournaledRootIsHeldFromLoadUntilItsRecoveryFinishesIt() async throws {
+        let fixture = try await RunnerFixture.make(files: [
+            ("a.jpg", Self.date(2023, 3, 15)),
+            ("b.jpg", Self.date(2023, 3, 16)),
+        ])
+        let plan = try await fixture.readyPlan()
+        let facts = try await fixture.memberFacts()
+        let plannerComponent = try #require(plan.components.first)
+        let component = try #require(ReorganizationExecutor.makeJournalComponent(
+            plan: plan,
+            plannerComponent: plannerComponent,
+            factsByPath: facts
+        ))
+        try await fixture.store.prepareReorganizationComponent(component)
+        await fixture.store.shutdown()
+
+        let relaunched = CatalogStore(
+            location: .databaseFile(fixture.root.deletingLastPathComponent().appending(path: "db/catalog.sqlite")),
+            filesystemWatcher: .noop
+        )
+        try await relaunched.start()
+        #expect(await relaunched.hasNamespaceMutationLease(for: fixture.rootPath))
+
+        try await LibraryReorganizationRunner.recoverJournal(store: relaunched)
+
+        #expect(try await relaunched.activeReorganizationComponents().isEmpty)
+        #expect(await relaunched.hasNamespaceMutationLease(for: fixture.rootPath) == false)
+        await relaunched.shutdown()
+    }
+
     private static func date(_ year: Int, _ month: Int, _ day: Int) throws -> Date {
         var components = DateComponents()
         components.year = year
