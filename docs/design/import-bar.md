@@ -81,8 +81,9 @@ is first, so order stops being derived and becomes a stored property of the root
   never in a parallel list in preferences, which would drift on removal.
 - **Ordered by the user** in Settings → Libraries: drag to reorder, plus `Move Up` /
   `Move Down` in the row's context menu and `⌘↑` / `⌘↓`, because drag alone is not
-  completable from the keyboard (DES-080). All three call one `moveLibrary(from:to:)`
-  intent.
+  completable from the keyboard (DES-080). All three call one `moveLibrary(_:_:)`
+  intent, which names the library and the move (up, down, before another library),
+  never a position, so the Store applies it to the order it holds when it arrives.
 - **Shown in that order in the sidebar**, so "the first library" is a fact the user
   can see without opening Settings. `CatalogWindowPolicy.sortLibraries` stops sorting
   library roots and preserves stored order; removable sources keep their own rule.

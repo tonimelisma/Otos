@@ -45,11 +45,11 @@ extension CatalogWindowViewModel {
 
     /// One path for drag, `Move Up`/`Move Down`, and ⌘↑/⌘↓ in Settings →
     /// Libraries.
-    func moveLibrary(from sourceIndex: Int, to destinationIndex: Int) {
+    func moveLibrary(_ path: LibraryRootPath, _ move: LibraryOrderMove) {
         OtosLog.ui.noticeOperation("intent.moveLibrary", phase: "received", fields: [
-            "from": "\(sourceIndex)", "to": "\(destinationIndex)",
+            "path": path.rawValue, "move": String(describing: move),
         ])
-        submitCatalogMutation(.moveLibrary(from: sourceIndex, to: destinationIndex))
+        submitCatalogMutation(.moveLibrary(path, move))
     }
 
     func ejectRemovableSource(_ source: LibraryRoot) {
@@ -95,8 +95,8 @@ extension CatalogWindowViewModel {
         case let .removeLibrary(path):
             await performRemoveLibrary(path, store: store)
             return nil
-        case let .moveLibrary(sourceIndex, destinationIndex):
-            await performMoveLibrary(from: sourceIndex, to: destinationIndex, store: store)
+        case let .moveLibrary(path, move):
+            await performMoveLibrary(path, move, store: store)
             return nil
         case let .ejectRemovableSource(root):
             return await performEjectRemovableSource(
@@ -333,17 +333,17 @@ private extension CatalogWindowViewModel {
     }
 
     nonisolated static func performMoveLibrary(
-        from sourceIndex: Int,
-        to destinationIndex: Int,
+        _ path: LibraryRootPath,
+        _ move: LibraryOrderMove,
         store: CatalogStore
     ) async {
         do {
-            try await store.moveLibrary(from: sourceIndex, to: destinationIndex)
+            try await store.moveLibrary(path, move)
         } catch {
             await recordMutationError(
                 "Catalog move library failed",
                 operation: "catalog.library.move",
-                fields: ["from": "\(sourceIndex)", "to": "\(destinationIndex)"],
+                fields: ["path": path.rawValue, "move": String(describing: move)],
                 error: error
             )
         }

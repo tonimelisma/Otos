@@ -1877,15 +1877,21 @@ extension CatalogStore {
     /// one user action, one path. The first entry in the
     /// result becomes the deterministic import destination
     /// (`MediaOperationCoordinator.refreshSources`).
-    func moveLibrary(from sourceIndex: Int, to destinationIndex: Int) async throws {
+    /// Moves one library within the user's order. The move names libraries, not
+    /// positions, and is applied to the order this actor holds now, so two quick moves
+    /// compose and a move made against a list that changed since it was drawn still
+    /// moves the library the user pointed at. A move that names a library no longer
+    /// present, or that would not change the order, changes nothing.
+    func moveLibrary(_ path: LibraryRootPath, _ move: LibraryOrderMove) async throws {
         try await ensureStartedForMutation()
-        var libraries = currentLibraries().filter { $0.kind == .library }
-        guard libraries.indices.contains(sourceIndex) else { return }
-        let clampedDestination = min(max(destinationIndex, 0), libraries.count - 1)
-        guard clampedDestination != sourceIndex else { return }
-        let moved = libraries.remove(at: sourceIndex)
-        libraries.insert(moved, at: clampedDestination)
-        let orderedPaths = libraries.map(\.path)
+        let current = currentLibraries().filter { $0.kind == .library }.map(\.path)
+        guard let orderedPaths = move.reordering(current, moving: path), orderedPaths != current else {
+            OtosLog.catalog.noticeOperation("catalog.library.reorder", phase: "unchanged", fields: [
+                "path": path.rawValue,
+                "move": String(describing: move),
+            ])
+            return
+        }
 
         // Apply to in-memory state before the write suspends, not after: a
         // concurrent second call must compute its own reorder against this

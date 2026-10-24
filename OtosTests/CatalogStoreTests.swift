@@ -126,7 +126,7 @@ struct CatalogStoreTests {
     }
 
     /// APP-003: library order is a stored property of the root,
-    /// user-owned via `moveLibrary(from:to:)` — not derived, and not a parallel
+    /// user-owned via `moveLibrary(_:_:)` — not derived, and not a parallel
     /// list in preferences that would drift when a root is removed.
     @Test func moveLibraryReordersAndSurvivesReload() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
@@ -146,19 +146,49 @@ struct CatalogStoreTests {
         let paths = try urls.map { try CatalogPath.normalizedDirectoryPath(for: $0) }
         #expect(await store.currentLibraries().map(\.path) == paths, "New libraries append in add order")
 
-        // Move "Middle" (index 2) to the front.
-        try await store.moveLibrary(from: 2, to: 0)
+        // Move "Middle" to the front.
+        try await store.moveLibrary(paths[2], .before(paths[0]))
         let reordered = [paths[2], paths[0], paths[1]]
         #expect(await store.currentLibraries().map(\.path) == reordered)
 
-        // No-op moves (already-clamped or same index) must not disturb order.
-        try await store.moveLibrary(from: 0, to: 0)
-        try await store.moveLibrary(from: 1, to: 99)
-        #expect(await store.currentLibraries().map(\.path) == [reordered[0], paths[1], reordered[1]])
+        // Moves that would not change the order (first up, before itself) change nothing.
+        try await store.moveLibrary(paths[2], .up)
+        try await store.moveLibrary(paths[0], .before(paths[0]))
+        #expect(await store.currentLibraries().map(\.path) == reordered)
 
         let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
-        #expect(await reloadedStore.currentLibraries().map(\.path) == [reordered[0], paths[1], reordered[1]])
+        #expect(await reloadedStore.currentLibraries().map(\.path) == reordered)
+    }
+
+    /// Two quick ⌘↓ presses on the same library each apply to the order the Store holds
+    /// when they arrive, so the library moves down twice — not down and back up, which
+    /// is what two moves computed as positions from the same stale list would do.
+    @Test func successiveMovesComposeAgainstTheStoreOrder() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let urls = ["A", "B", "C", "D"].map { temp.appending(path: $0, directoryHint: .isDirectory) }
+        for url in urls {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        let store = CatalogStore(location: .inMemory, filesystemWatcher: .noop)
+        try await store.start(scansSavedLibraries: false)
+        for url in urls {
+            try await store.addLibrary(url: url)
+        }
+        let paths = try urls.map { try CatalogPath.normalizedDirectoryPath(for: $0) }
+
+        try await store.moveLibrary(paths[1], .down)
+        try await store.moveLibrary(paths[1], .down)
+        #expect(await store.currentLibraries().map(\.path) == [paths[0], paths[2], paths[3], paths[1]])
+
+        // A move drawn against a list that still showed a removed library moves the
+        // library the user pointed at, and one naming a removed library changes nothing.
+        try await store.removeLibrary(path: paths[2])
+        try await store.moveLibrary(paths[1], .before(paths[0]))
+        #expect(await store.currentLibraries().map(\.path) == [paths[1], paths[0], paths[3]])
+        try await store.moveLibrary(paths[2], .up)
+        #expect(await store.currentLibraries().map(\.path) == [paths[1], paths[0], paths[3]])
+        await store.shutdown()
     }
 
     @Test func mediaChoiceDefaultsPersistsAcceptsSameValueAndSurvivesReload() async throws {

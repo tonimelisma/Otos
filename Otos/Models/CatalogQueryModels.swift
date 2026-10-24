@@ -336,3 +336,39 @@ nonisolated struct CatalogFilterOptions: Equatable {
         Set(fileTypes(for: kind).flatMap(\.formats))
     }
 }
+
+/// Where a library moves in the user's order (APP-003), stated against libraries rather
+/// than positions so the Store can apply it to the order it holds when the move arrives.
+nonisolated enum LibraryOrderMove: Equatable, Sendable {
+    /// One place earlier.
+    case up
+    /// One place later.
+    case down
+    /// Directly before this library, or last when nil.
+    case before(LibraryRootPath?)
+
+    /// The order after this move, or nil when `moving` (or the library it is placed
+    /// before) is not in `order`.
+    func reordering(_ order: [LibraryRootPath], moving: LibraryRootPath) -> [LibraryRootPath]? {
+        guard let index = order.firstIndex(of: moving) else { return nil }
+        var result = order
+        switch self {
+        case .up:
+            guard index > 0 else { return order }
+            result.swapAt(index, index - 1)
+        case .down:
+            guard index < order.count - 1 else { return order }
+            result.swapAt(index, index + 1)
+        case let .before(anchor):
+            result.remove(at: index)
+            if let anchor {
+                guard anchor != moving else { return order }
+                guard let anchorIndex = result.firstIndex(of: anchor) else { return nil }
+                result.insert(moving, at: anchorIndex)
+            } else {
+                result.append(moving)
+            }
+        }
+        return result
+    }
+}

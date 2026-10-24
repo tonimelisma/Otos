@@ -1789,7 +1789,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(executing.destinationPath == firstDest)
 
         // Reorder while the execution is in flight.
-        try await store.moveLibrary(from: 0, to: 1)
+        try await store.moveLibrary(firstDest, .down)
         try await waitForCoordinatorQuiescence(coordinator)
         let stillExecuting = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
         #expect(stillExecuting.destinationPath == firstDest, "Destination must not move mid-execution")

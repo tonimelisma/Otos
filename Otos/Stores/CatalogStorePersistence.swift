@@ -740,7 +740,7 @@ extension CatalogStore {
     }
 
     /// Writes new `sort_index` values for a reordered set of library roots. The
-    /// caller (`CatalogStore.moveLibrary(from:to:)`) computes the reordered array;
+    /// caller (`CatalogStore.moveLibrary(_:_:)`) computes the reordered array;
     /// this only persists it. One statement per row rather than a single UPDATE
     /// with a CASE expression — the set is sidebar-sized (tens, not thousands) and
     /// this reads far more directly than a generated CASE list.
