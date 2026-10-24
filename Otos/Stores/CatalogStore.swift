@@ -302,6 +302,10 @@ actor CatalogStore {
     /// deferred dirty-only reconciliation runs when the owner releases it.
     private var namespaceMutationLeases: [LibraryRootPath: RootNamespaceMutationLease] = [:]
     private var nextNamespaceMutationLeaseGeneration: UInt64 = 0
+    /// Roots whose reorganization lease the journal holds: installed at load for every
+    /// root with a journaled component, so nothing touches a half-moved library before
+    /// its recovery adopts the lease.
+    private var journalHeldReorganizationRoots: Set<LibraryRootPath> = []
 
     /// Long-running-session integrity interval. Launch scans already repair after
     /// process death; this bounds residual FSEvents/provider misses while the app
@@ -1509,7 +1513,6 @@ extension CatalogStore {
 
     func start(scansSavedLibraries: Bool = true) async throws {
         try await loadIfNeeded()
-        try await LibraryReorganizationRunner.recoverJournal(store: self)
         if scansSavedLibraries {
             requestLoadedRootScansIfNeeded()
         }
@@ -1582,8 +1585,12 @@ extension CatalogStore {
         // hook nil and performs no additional work.
         await initialLoadDidRead?()
         let normalizedRoots = await normalizeLoadedRoots(loaded.roots, dbWriter: dbQueue)
+        let journaledRoots = try await dbQueue.read { db in
+            try Set(Self.fetchAllActiveReorganizationComponents(db: db).map(\.libraryRootPath))
+        }
         let applyState = OtosSignpost.catalog.beginInterval("CatalogApplyLoadedCatalog")
         applyLoadedCatalog(roots: normalizedRoots)
+        holdJournaledReorganizationRoots(journaledRoots)
         unrequestedLoadedRootPaths = normalizedRoots
             .filter { $0.kind == .library }
             .map(\.path)
@@ -1599,6 +1606,32 @@ extension CatalogStore {
             "op=catalog.start phase=finish roots=\(normalizedRoots.count, privacy: .public) assets=\(loaded.assetCount, privacy: .public)"
         )
         notifyCatalogChanged()
+    }
+
+    /// A root with a journaled reorganization component is half-moved until its recovery
+    /// finishes. Its lease is held from the moment the catalog loads, so no scan, reconcile
+    /// pass, import or Move to Trash acts on it first, whoever runs recovery and when.
+    private func holdJournaledReorganizationRoots(_ journaledRoots: Set<LibraryRootPath>) {
+        for root in journaledRoots.sorted(by: { $0.rawValue < $1.rawValue }) where roots[root] != nil {
+            nextNamespaceMutationLeaseGeneration &+= 1
+            namespaceMutationLeases[root] = RootNamespaceMutationLease(
+                libraryRootPath: root,
+                generation: nextNamespaceMutationLeaseGeneration,
+                owner: .reorganization,
+                markedDirtyByExternalEvents: false
+            )
+            journalHeldReorganizationRoots.insert(root)
+            OtosLog.catalog.noticeOperation("reorganization.recover", phase: "held", fields: [
+                "rootPath": root.rawValue,
+            ])
+        }
+    }
+
+    /// The lease the journal has held for `root` since load, handed to the recovery that
+    /// finishes its component; `nil` when the journal holds none for it.
+    func adoptJournalHeldReorganizationLease(for root: LibraryRootPath) -> RootNamespaceMutationLease? {
+        guard journalHeldReorganizationRoots.remove(root) != nil else { return nil }
+        return namespaceMutationLeases[root]
     }
 
     private func clearAbandonedEnrichmentClaims(_ dbQueue: any DatabaseWriter) async throws {

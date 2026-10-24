@@ -743,11 +743,22 @@ extension CatalogWindowViewModel {
                 await MainActor.run {
                     self?.applyCatalogCompatibilityProblem(problem)
                 }
+                return
             } catch {
                 OtosLog.persistence.error("Catalog start failed")
                 OtosLog.catalog.error(
                     "op=catalog.start phase=error error=\(String(describing: error), privacy: .public)"
                 )
+                return
+            }
+            // A reorganization the last process left journaled is finished here, once. Its
+            // root has been held since the Store loaded, so nothing touched it meanwhile.
+            do {
+                try await LibraryReorganizationRunner.recoverJournal(store: store)
+            } catch {
+                OtosLog.catalog.errorOperation("reorganization.recover", phase: "failed", fields: [
+                    "error": String(describing: error),
+                ])
             }
         }
     }

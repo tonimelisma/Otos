@@ -234,8 +234,10 @@ everything expensive happens on an actor off the main thread.
   sidebar scopes via `import_batch_unix_ms`. The grid is the plan view.
 - **Library reorganization**: `ReorganizationPlanner` builds physical-member
   recipes; `ReorganizationExecutor` owns directory/move mechanics;
-  `LibraryReorganizationRunner` owns execution and recovery sequencing. Store owns
-  the typed root lease, durable `active_reorganization_*` transitions, and atomic
+  `LibraryReorganizationRunner` owns execution and recovery sequencing; the view model
+  runs its recovery once after the Store starts, and the Store never calls up into it.
+  From load, the Store holds every journaled root under the reorganization lease that
+  recovery adopts. Store owns the typed root lease, durable `active_reorganization_*` transitions, and atomic
   catalog remap, which records a `pending_identity_remap` batch in the same
   transaction. Batches reach the window inside `CatalogWindowState` (read with the
   ordered IDs); `CatalogWindowViewModel.applyState` carries selection, focus and

@@ -42,8 +42,9 @@ actor LibraryReorganizationRunner {
         let componentCount: Int
     }
 
-    /// Interprets durable component phases before Store starts filesystem scans.
-    /// Store owns each transaction and scan-exclusion lease; this operation owner
+    /// Finishes every journaled component, once, after the Store has loaded. Until it does,
+    /// the Store holds each journaled root under the reorganization lease it installed at
+    /// load, which this adopts. Store owns each transaction and lease; this operation owner
     /// decides what recovery action each journal state requires: a component that was
     /// moving resumes, one whose files all moved settles, and one that was rolling back
     /// (or was stuck rolling back) resumes its rollback. Every resolved component
@@ -52,10 +53,15 @@ actor LibraryReorganizationRunner {
         let components = try await store.activeReorganizationComponents()
         for component in components {
             let root = component.libraryRootPath
-            guard case let .acquired(lease) = await store.acquireNamespaceMutationLease(
+            let lease: RootNamespaceMutationLease
+            if let held = await store.adoptJournalHeldReorganizationLease(for: root) {
+                lease = held
+            } else if case let .acquired(acquired) = await store.acquireNamespaceMutationLease(
                 for: root,
                 owner: .reorganization
-            ) else {
+            ) {
+                lease = acquired
+            } else {
                 OtosLog.catalog.errorOperation("reorganization.recover", phase: "leaseUnavailable", fields: [
                     "key": component.componentKey.rawValue,
                     "rootPath": root.rawValue,
