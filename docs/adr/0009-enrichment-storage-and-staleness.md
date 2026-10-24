@@ -260,8 +260,9 @@ Adjacent decisions requiring separate ADRs or specs:
    its result comes back, so the drain needs no separate query of the shared
    coordinator, and an unrelated interactive preview request under the same root
    from another consumer never stalls an eject. `FileMaterialization` remains
-   the one-URL mechanism: it checks `SF_DATALESS`, requests asynchronously, polls
-   without reading bytes, and re-requests once per second inside the same timeout.
+   the one-URL mechanism: it checks `SF_DATALESS`, requests asynchronously, waits on
+   the file's vnode attribute changes without reading bytes, and re-requests once per
+   second inside the same timeout because the provider acknowledges nothing.
 
    Admission diagnostics are aggregate scheduler states. Rejections are counted by
    reason after a full pass and logged only when that state changes, followed by one

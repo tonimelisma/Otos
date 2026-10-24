@@ -88,11 +88,47 @@ extension FileMaterialization {
         try FileManager.default.startDownloadingUbiquitousItem(at: url)
     }
 
+    /// Serial queue the attribute watches deliver on; each delivery only rings a doorbell.
+    private nonisolated static let watchQueue = DispatchQueue(
+        label: "net.melisma.Otos.materialization.watch",
+        qos: .utility
+    )
+
+    /// Yields each time the file's vnode reports a change. The descriptor is opened with
+    /// `O_EVTONLY`, which observes the vnode without reading a byte or materializing it;
+    /// the kernel clearing `SF_DATALESS` arrives as an attribute change. A file that
+    /// cannot be opened for events yields nothing and finishes at once. The watch ends
+    /// when the consumer stops listening.
+    nonisolated static func attributeChanges(of url: URL) -> AsyncStream<Void> {
+        AsyncStream { continuation in
+            let descriptor = open(url.path(percentEncoded: false), O_EVTONLY)
+            guard descriptor >= 0 else {
+                continuation.finish()
+                return
+            }
+            let source = DispatchSource.makeFileSystemObjectSource(
+                fileDescriptor: descriptor,
+                eventMask: [.attrib, .write, .extend, .delete, .rename, .revoke],
+                queue: watchQueue
+            )
+            source.setEventHandler {
+                continuation.yield()
+            }
+            source.setCancelHandler {
+                close(descriptor)
+            }
+            continuation.onTermination = { _ in
+                source.cancel()
+            }
+            source.resume()
+        }
+    }
+
     /// Requests a download and waits, off the calling thread, until the file is
-    /// materialized or `timeout` elapses, polling SF_DATALESS every `pollInterval`.
-    /// Never reads bytes itself, so a worker awaiting this is never blocked on a
-    /// transfer the way a faulting read would block a thread. Honors cancellation
-    /// between polls.
+    /// materialized or the persistence's deadline passes, woken by the file's own
+    /// attribute changes. Never reads bytes itself, so a worker awaiting this is never
+    /// blocked on a transfer the way a faulting read would block a thread. Honors
+    /// cancellation.
     /// Production probe: a bounded `open()+read(1)` via `FileHandle`. Returns `served`
     /// if any byte is read, `providerUnavailable` only for `ETIMEDOUT`, and
     /// `inconclusive` otherwise. Never blocks longer than ~2s (kernel caps
@@ -248,24 +284,22 @@ extension FileMaterialization {
 
     nonisolated static func materialize(
         _ url: URL,
-        pollInterval: Duration = .milliseconds(250),
         persistence: Persistence = .background
     ) async -> MaterializationResult {
         await materialize(
             url,
-            pollInterval: pollInterval,
             persistence: persistence,
             providers: FileMaterializationProviders(
                 status: status(of:),
                 request: requestMaterialization(of:),
-                probe: probeProviderLiveness(of:)
+                probe: probeProviderLiveness(of:),
+                changes: attributeChanges(of:)
             )
         )
     }
 
     nonisolated static func materialize(
         _ url: URL,
-        pollInterval: Duration = .milliseconds(250),
         persistence: Persistence = .background,
         providers: FileMaterializationProviders
     ) async -> MaterializationResult {
@@ -276,18 +310,23 @@ extension FileMaterialization {
         if let failed = requestDownload(url, retry: false, requestProvider: providers.request) {
             return finishMaterialization(failed, url: url, start: start, rerequestCount: 0)
         }
-        let (outcome, rerequestCount) = await pollMaterialization(
+        let (outcome, rerequestCount) = await awaitArrival(
             url,
-            pollInterval: pollInterval,
             persistence: persistence,
             providers: providers
         )
         return finishMaterialization(outcome, url: url, start: start, rerequestCount: rerequestCount)
     }
 
-    private nonisolated static func pollMaterialization(
+    /// Waits for the bytes to arrive. The kernel reports it: clearing `SF_DATALESS` is an
+    /// attribute change on the file's vnode, which an event-only descriptor observes
+    /// without reading a byte (`docs/research/2026-10-23-materialization-arrival.md`).
+    /// One doorbell is rung by those changes and by the re-request schedule, and each
+    /// ring reads the flag. The schedule stays because the provider acknowledges nothing:
+    /// a request it drops is only noticed by asking again, and a background wait ends at
+    /// its deadline.
+    private nonisolated static func awaitArrival(
         _ url: URL,
-        pollInterval: Duration,
         persistence: Persistence,
         providers: FileMaterializationProviders
     ) async -> (MaterializationOutcome, Int) {
@@ -298,11 +337,24 @@ extension FileMaterialization {
         var consecutiveProviderUnavailable = 0
         var lastBlocks: Int64 = -1
         let start = ContinuousClock().now
-        while deadline.map({ clock.now < $0 }) ?? true {
-            do {
-                try await Task.sleep(for: pollInterval)
-            } catch {
-                return (.cancelled, rerequestCount)
+        let (wakes, wake) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let changes = providers.changes(url)
+        let watcher = Task {
+            for await _ in changes {
+                wake.yield()
+            }
+        }
+        var schedule = scheduleWake(wake, at: [nextRetry, deadline].compactMap(\.self).min())
+        defer {
+            watcher.cancel()
+            schedule.cancel()
+            wake.finish()
+        }
+        // The flag may have cleared before the watch was in place; look once now.
+        wake.yield()
+        for await _ in wakes {
+            if let deadline, clock.now >= deadline {
+                return (.timedOut, rerequestCount)
             }
             if let sample = progressSample(url, since: start),
                sample.blocks != lastBlocks
@@ -339,6 +391,8 @@ extension FileMaterialization {
                     // it here would cost a thread and up to 3 s per re-request to produce
                     // an answer nothing acts on.
                     nextRetry = clock.now.advanced(by: persistence.requestRetryInterval)
+                    schedule.cancel()
+                    schedule = scheduleWake(wake, at: [nextRetry, deadline].compactMap(\.self).min())
                     continue
                 }
                 switch await providers.probe(url) {
@@ -351,13 +405,35 @@ extension FileMaterialization {
                     consecutiveProviderUnavailable = 0
                 }
                 nextRetry = clock.now.advanced(by: persistence.requestRetryInterval)
+                schedule.cancel()
+                schedule = scheduleWake(wake, at: [nextRetry, deadline].compactMap(\.self).min())
             case .waitMore:
                 continue
             case .statusUnavailable:
                 return (.statusUnavailable, rerequestCount)
             }
         }
-        return (.timedOut, rerequestCount)
+        // The wakes end only when this task is cancelled.
+        return (.cancelled, rerequestCount)
+    }
+
+    /// Rings `wake` at `instant`: the next re-request, or the deadline. Time here is the
+    /// provider's silence, not a stand-in for arrival, which the vnode reports.
+    private nonisolated static func scheduleWake(
+        _ wake: AsyncStream<Void>.Continuation,
+        at instant: ContinuousClock.Instant?
+    ) -> Task<Void, Never> {
+        Task {
+            guard let instant else {
+                return
+            }
+            // time: deadline — the provider acknowledges no request and reports no refusal
+            try? await ContinuousClock().sleep(until: instant)
+            guard !Task.isCancelled else {
+                return
+            }
+            wake.yield()
+        }
     }
 
     /// Pure decision for one polling tick once the deadline guard has already passed:
@@ -455,6 +531,11 @@ nonisolated struct FileMaterializationProviders {
     /// `providerUnavailable` only for domain-qualified `ETIMEDOUT`, and
     /// `inconclusive` for any other error. Never throws.
     let probe: @Sendable (URL) async -> FileMaterializationProbeResult
+    /// Yields whenever the file's attributes change. Production watches the vnode through
+    /// an event-only descriptor, which reads no bytes; a stream that finishes at once
+    /// (the file could not be opened for events) leaves the re-request schedule to wake
+    /// the wait.
+    let changes: @Sendable (URL) -> AsyncStream<Void>
 }
 
 /// Outcome of `materializationPollDecision`, one polling tick's pure verdict.

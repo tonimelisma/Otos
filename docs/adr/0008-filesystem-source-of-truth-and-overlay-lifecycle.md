@@ -193,7 +193,7 @@ subordinate, rebuildable overlay.
    derived products are stored are owned by ADR 0009. A provider that definitively
    refuses a byte read with `ETIMEDOUT` (errno 60/110 or "timed out" text) twice
    consecutively on one file is a distinct transient fact `providerUnavailable`:
-   `FileMaterialization` short-circuits the 120s poll at `k=2` probes (`~2s` vs 120s)
+   `FileMaterialization` short-circuits the 120s wait at `k=2` probes (`~2s` vs 120s)
    with two `FileHandle.read(1)` probes (each kernel-capped at 1s), and
    `MaterializationCoordinator` records a per-root 60s `providerBreakerOpen`
    suppression after two consecutive `providerUnavailable` on that root so the next

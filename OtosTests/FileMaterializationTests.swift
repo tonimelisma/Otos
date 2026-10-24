@@ -54,7 +54,8 @@ struct FileMaterializationTests {
             providers: FileMaterializationProviders(
                 status: { _ in .materialized },
                 request: { _ in Issue.record("should not request a download when already materialized") },
-                probe: { _ async in .inconclusive }
+                probe: { _ async in .inconclusive },
+                changes: noAttributeChanges
             )
         )
         #expect(result.outcome == .alreadyMaterialized)
@@ -70,7 +71,8 @@ struct FileMaterializationTests {
             providers: FileMaterializationProviders(
                 status: { _ in .dataless },
                 request: { _ in throw ProbeError() },
-                probe: { _ async in .inconclusive }
+                probe: { _ async in .inconclusive },
+                changes: noAttributeChanges
             )
         )
         #expect(result.outcome == .requestFailed)
@@ -84,7 +86,6 @@ struct FileMaterializationTests {
         // .providerUnavailable, not wait for the 120s timeout.
         let result = await FileMaterialization.materialize(
             url,
-            pollInterval: .milliseconds(10),
             persistence: FileMaterialization.Persistence(
                 failsFastOnProviderUnavailable: true,
                 deadline: .seconds(10),
@@ -93,7 +94,8 @@ struct FileMaterializationTests {
             providers: FileMaterializationProviders(
                 status: { _ in .dataless },
                 request: { _ in },
-                probe: { _ async in .providerUnavailable }
+                probe: { _ async in .providerUnavailable },
+                changes: noAttributeChanges
             )
         )
         #expect(result.outcome == .providerUnavailable)
@@ -106,7 +108,6 @@ struct FileMaterializationTests {
         let probeCalls = AtomicCounter()
         let result = await FileMaterialization.materialize(
             url,
-            pollInterval: .milliseconds(10),
             persistence: FileMaterialization.Persistence(
                 failsFastOnProviderUnavailable: true,
                 deadline: .milliseconds(80),
@@ -120,7 +121,8 @@ struct FileMaterializationTests {
                     // First probe unavailable, second inconclusive (healed), then unavailable again
                     // Never two in a row → should time out, not providerUnavailable
                     return call == 1 ? .providerUnavailable : .inconclusive
-                }
+                },
+                changes: noAttributeChanges
             )
         )
         #expect(result.outcome == .timedOut)
@@ -151,7 +153,6 @@ struct FileMaterializationTests {
         let polls = Mutex(0)
         let result = await FileMaterialization.materialize(
             URL(fileURLWithPath: "/tmp/slow-provider.arw"),
-            pollInterval: .milliseconds(1),
             persistence: FileMaterialization.Persistence(
                 failsFastOnProviderUnavailable: false,
                 deadline: nil,
@@ -170,7 +171,8 @@ struct FileMaterializationTests {
                 probe: { _ async in
                     probes.withLock { $0 += 1 }
                     return .providerUnavailable
-                }
+                },
+                changes: noAttributeChanges
             )
         )
 
@@ -190,7 +192,6 @@ struct FileMaterializationTests {
     @Test func backgroundMaterializationStillShortCircuitsOnTheSameInput() async {
         let result = await FileMaterialization.materialize(
             URL(fileURLWithPath: "/tmp/slow-provider.arw"),
-            pollInterval: .milliseconds(1),
             persistence: FileMaterialization.Persistence(
                 failsFastOnProviderUnavailable: true,
                 deadline: .seconds(10),
@@ -199,11 +200,77 @@ struct FileMaterializationTests {
             providers: FileMaterializationProviders(
                 status: { _ in .dataless },
                 request: { _ in },
-                probe: { _ async in .providerUnavailable }
+                probe: { _ async in .providerUnavailable },
+                changes: noAttributeChanges
             )
         )
 
         #expect(result.outcome == .providerUnavailable)
+    }
+
+    /// Arrival is reported, not polled for: an attribute change on the file wakes the
+    /// wait, which reads the flag and returns, with the next re-request an hour away.
+    @Test func anAttributeChangeEndsTheWaitBeforeAnyRerequest() async throws {
+        let arrived = Mutex(false)
+        let statusReads = Mutex(0)
+        let sink = Mutex<AsyncStream<Void>.Continuation?>(nil)
+        let wait = Task {
+            await FileMaterialization.materialize(
+                URL(fileURLWithPath: "/tmp/otos-arrival-\(UUID().uuidString).jpg"),
+                persistence: FileMaterialization.Persistence(
+                    failsFastOnProviderUnavailable: false,
+                    deadline: nil,
+                    requestRetryInterval: .seconds(3600)
+                ),
+                providers: FileMaterializationProviders(
+                    status: { _ in
+                        statusReads.withLock { $0 += 1 }
+                        return arrived.withLock { $0 } ? .materialized : .dataless
+                    },
+                    request: { _ in },
+                    probe: { _ async in .inconclusive },
+                    changes: { _ in
+                        let (stream, continuation) = AsyncStream<Void>.makeStream()
+                        sink.withLock { $0 = continuation }
+                        return stream
+                    }
+                )
+            )
+        }
+        // One read before the request, one on the wait's own first look.
+        try await waitUntil { statusReads.withLock { $0 } >= 2 }
+
+        arrived.withLock { $0 = true }
+        try #require(sink.withLock { $0 }).yield()
+
+        let result = await wait.value
+        #expect(result.outcome == .materialized)
+        #expect(result.rerequestCount == 0)
+    }
+
+    /// The live watch reports a change to a file's attributes through an event-only
+    /// descriptor. `chmod` stands in for the kernel clearing `SF_DATALESS`, which only a
+    /// File Provider can do.
+    @Test func attributeChangesReportsAnAttributeChangeOnAFile() async throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appending(path: "otos-watch-\(UUID().uuidString).jpg")
+        try Data("jpeg".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let changes = FileMaterialization.attributeChanges(of: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+
+        var iterator = changes.makeAsyncIterator()
+        #expect(await iterator.next() != nil)
+    }
+
+    /// A file that cannot be watched leaves the re-request schedule to wake the wait.
+    @Test func attributeChangesFinishesAtOnceForAMissingFile() async {
+        let changes = FileMaterialization.attributeChanges(
+            of: URL(fileURLWithPath: "/tmp/otos-missing-\(UUID().uuidString).jpg")
+        )
+        var iterator = changes.makeAsyncIterator()
+        #expect(await iterator.next() == nil)
     }
 }
 
@@ -303,4 +370,9 @@ struct MaterializationPollDecisionTests {
         #expect(rerequestCount == 2)
         #expect(requestCount == 3)
     }
+}
+
+/// A file whose attributes never change: the re-request schedule alone wakes the wait.
+private let noAttributeChanges: @Sendable (URL) -> AsyncStream<Void> = { _ in
+    AsyncStream { $0.finish() }
 }
