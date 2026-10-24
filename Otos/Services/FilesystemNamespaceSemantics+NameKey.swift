@@ -35,25 +35,40 @@ nonisolated struct FilesystemNameKey: Hashable, Sendable {
 /// filename. Measurements in
 /// `docs/research/2026-08-21-volume-normalization-is-not-a-capability.md` also
 /// found no observable per-volume variation to probe. `nameKey` always decomposes.
-nonisolated struct VolumeNamespaceCapabilities: Equatable, Sendable {
-    let isCaseSensitive: Bool
-    /// Whether `isCaseSensitive` was actually probed. The memberwise initializer
-    /// gives it no default on purpose: recording a guess as a fact is what made
-    /// this flag unreachable from a live volume before.
-    let isKnown: Bool
+nonisolated enum VolumeNamespaceCapabilities: Equatable, Sendable {
+    case caseSensitive
+    case caseInsensitive
+    /// The probe did not answer. A guess is never recorded as a fact: an unknown volume
+    /// stays unknown, so a consumer that must not act on a guess can tell.
+    case unknown
 
-    /// The probe did not answer. Compares case-insensitively, which is the
-    /// conservative choice: it can only ever merge two names, never split one.
-    static let unknown = VolumeNamespaceCapabilities(isCaseSensitive: false, isKnown: false)
+    /// Whether two names that differ only by case are different names here. An unknown
+    /// volume compares case-insensitively, the conservative choice: it can only ever
+    /// merge two names, never split one.
+    var distinguishesCase: Bool {
+        self == .caseSensitive
+    }
 
-    static let caseInsensitiveAPFS = VolumeNamespaceCapabilities(isCaseSensitive: false, isKnown: true)
-    static let caseSensitiveAPFS = VolumeNamespaceCapabilities(isCaseSensitive: true, isKnown: true)
+    var isKnown: Bool {
+        self != .unknown
+    }
 
-    /// `NULL` when unprobed, so the column and `isKnown` stay one fact across a
-    /// round trip. Writing `0` for an unprobed root made it read back as a
-    /// confidently case-insensitive one.
+    /// `NULL` when unprobed, so an unprobed root never reads back as a confidently
+    /// case-insensitive one.
     var storedCaseSensitiveColumn: Int? {
-        isKnown ? (isCaseSensitive ? 1 : 0) : nil
+        switch self {
+        case .caseSensitive: 1
+        case .caseInsensitive: 0
+        case .unknown: nil
+        }
+    }
+
+    init(storedCaseSensitiveColumn column: Int?) {
+        switch column {
+        case nil: self = .unknown
+        case 1?: self = .caseSensitive
+        case _?: self = .caseInsensitive
+        }
     }
 }
 
@@ -73,7 +88,7 @@ extension FilesystemNamespaceSemantics {
         // arbitrary, but it must be the same on both sides of every comparison,
         // and it must match what the v17 `relative_path_key` backfill wrote.
         var normalized = relativePath.rawValue.decomposedStringWithCanonicalMapping
-        if !capabilities.isCaseSensitive {
+        if !capabilities.distinguishesCase {
             normalized = normalized.lowercased()
         }
         return FilesystemNameKey(rawValue: normalized)
@@ -90,7 +105,7 @@ extension FilesystemNamespaceSemantics {
         else {
             return .unknown
         }
-        return VolumeNamespaceCapabilities(isCaseSensitive: caseSensitive, isKnown: true)
+        return caseSensitive ? .caseSensitive : .caseInsensitive
     }
 
     nonisolated static func plannedPath(

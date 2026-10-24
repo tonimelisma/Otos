@@ -164,7 +164,7 @@ struct MediaTransferPlannerTests {
             policy: snapshot.policy,
             calendar: snapshot.calendar,
             timeZone: snapshot.timeZone,
-            destinationCapabilities: .caseSensitiveAPFS
+            destinationCapabilities: .caseSensitive
         )
         let plan = MediaTransferPlanner.planImport(
             snapshot: caseSensitive,
@@ -176,7 +176,7 @@ struct MediaTransferPlannerTests {
                     ),
                 ],
                 enumeratedFolders: [""],
-                capabilities: .caseSensitiveAPFS
+                capabilities: .caseSensitive
             )
         )
         #expect(plan.entries[0].disposition == .copy(destination: source.relativePath))
@@ -590,7 +590,7 @@ struct MediaTransferPlannerTests {
         let namespace = try FilesystemNamespaceSemantics.enumerateNamespace(
             root: CatalogPath.normalizedDirectoryPath(for: rootURL),
             folders: ["2024/05", "2025/05", "2026/05"],
-            capabilities: .caseInsensitiveAPFS
+            capabilities: .caseInsensitive
         )
         #expect(namespace.occupiedFolders == ["2024/05": "2024", "2025/05": "2025/05"])
         #expect(namespace.unreadableFolders.isEmpty)

@@ -12,8 +12,8 @@ struct FilesystemNamespaceSemanticsTests {
     }
 
     @Test func caseSensitivityIsTheOneCapabilityThatChangesAKey() {
-        #expect(key("IMG_1.JPG", .caseInsensitiveAPFS) == key("img_1.jpg", .caseInsensitiveAPFS))
-        #expect(key("IMG_1.JPG", .caseSensitiveAPFS) != key("img_1.jpg", .caseSensitiveAPFS))
+        #expect(key("IMG_1.JPG", .caseInsensitive) == key("img_1.jpg", .caseInsensitive))
+        #expect(key("IMG_1.JPG", .caseSensitive) != key("img_1.jpg", .caseSensitive))
     }
 
     /// Normalization is not a capability: the same path must produce the same key
@@ -24,12 +24,12 @@ struct FilesystemNamespaceSemanticsTests {
         let nfd = nfc.decomposedStringWithCanonicalMapping
         #expect(Array(nfc.utf8) != Array(nfd.utf8))
 
-        for capabilities in [VolumeNamespaceCapabilities.caseSensitiveAPFS, .caseInsensitiveAPFS, .unknown] {
+        for capabilities in [VolumeNamespaceCapabilities.caseSensitive, .caseInsensitive, .unknown] {
             #expect(key(nfc, capabilities) == key(nfd, capabilities))
         }
         // Every capability value keys an accented path identically, so no caller
         // can disagree with another about what the same file is called.
-        #expect(key(nfc, .unknown) == key(nfc, .caseInsensitiveAPFS))
+        #expect(key(nfc, .unknown) == key(nfc, .caseInsensitive))
     }
 
     /// `FilesystemNameKey`'s byte-exact `==` is what makes the normalization above
@@ -58,8 +58,12 @@ struct FilesystemNamespaceSemanticsTests {
     /// unprobed root made it read back as a confidently case-insensitive one.
     @Test func unknownCapabilitiesPersistAsNullNotAsFalse() {
         #expect(VolumeNamespaceCapabilities.unknown.storedCaseSensitiveColumn == nil)
-        #expect(VolumeNamespaceCapabilities.caseInsensitiveAPFS.storedCaseSensitiveColumn == 0)
-        #expect(VolumeNamespaceCapabilities.caseSensitiveAPFS.storedCaseSensitiveColumn == 1)
+        #expect(VolumeNamespaceCapabilities.caseInsensitive.storedCaseSensitiveColumn == 0)
+        #expect(VolumeNamespaceCapabilities.caseSensitive.storedCaseSensitiveColumn == 1)
+        for capabilities in [VolumeNamespaceCapabilities.caseSensitive, .caseInsensitive, .unknown] {
+            #expect(VolumeNamespaceCapabilities(storedCaseSensitiveColumn: capabilities.storedCaseSensitiveColumn)
+                == capabilities)
+        }
     }
 
     @Test func normalizedNamespaceCollisionIsForeignInsteadOfTrapping() {
@@ -69,7 +73,7 @@ struct FilesystemNamespaceSemanticsTests {
                 MediaRelativePath(rawValue: "img_1.jpg"): .regularFile(byteSize: 2, contentModifiedAt: nil),
             ],
             enumeratedFolders: [""],
-            capabilities: .caseInsensitiveAPFS
+            capabilities: .caseInsensitive
         )
         #expect(namespace.occupancy(of: MediaRelativePath(rawValue: "IMG_1.JPG")) == .foreign(kind: .other))
     }
