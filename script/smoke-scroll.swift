@@ -116,6 +116,34 @@ func postScroll(delta: Int) throws {
     event.post(tap: .cghidEventTap)
 }
 
+/// Activates the app and returns once NSWorkspace reports it active, so the scroll
+/// events land on its window rather than on whatever was frontmost.
+func activateAndWait(_ app: NSRunningApplication) {
+    guard !app.isActive else {
+        return
+    }
+    var activated = false
+    let center = NSWorkspace.shared.notificationCenter
+    let observer = center.addObserver(
+        forName: NSWorkspace.didActivateApplicationNotification,
+        object: nil,
+        queue: .main
+    ) { notification in
+        let activatedApp = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        if activatedApp?.processIdentifier == app.processIdentifier {
+            activated = true
+        }
+    }
+    defer { center.removeObserver(observer) }
+    app.activate(options: [.activateAllWindows])
+    // The notification arrives on the main run loop, which only runs while this spins.
+    // time: deadline — the window server may decline to activate the app
+    let giveUp = Date().addingTimeInterval(5)
+    while !activated, Date() < giveUp {
+        RunLoop.main.run(mode: .default, before: giveUp)
+    }
+}
+
 func run() throws {
     let config = try parseConfig(arguments: CommandLine.arguments)
     guard let app = NSWorkspace.shared.runningApplications.first(where: { application in
@@ -123,8 +151,7 @@ func run() throws {
     }) else {
         throw SmokeScrollError.appNotRunning(config.appName)
     }
-    app.activate(options: [.activateAllWindows])
-    Thread.sleep(forTimeInterval: 0.5)
+    activateAndWait(app)
 
     guard let bounds = frontmostWindowBounds(appName: config.appName) else {
         throw SmokeScrollError.windowNotFound(config.appName)
@@ -135,18 +162,21 @@ func run() throws {
 
     if config.settleSeconds > 0 {
         print("settling for \(config.settleSeconds)s before scrolling")
+        // time: measurement — the scenario scrolls after a set time of enrichment
         Thread.sleep(forTimeInterval: config.settleSeconds)
     }
 
     print("scrolling down cycles=\(config.cycles) delta=\(config.delta)")
     for _ in 0 ..< config.cycles {
         try postScroll(delta: -config.delta)
+        // time: measurement — synthetic input paced like a person scrolling
         Thread.sleep(forTimeInterval: config.pauseSeconds)
     }
 
     print("scrolling up cycles=\(config.cycles) delta=\(config.delta)")
     for _ in 0 ..< config.cycles {
         try postScroll(delta: config.delta)
+        // time: measurement — synthetic input paced like a person scrolling
         Thread.sleep(forTimeInterval: config.pauseSeconds)
     }
 }

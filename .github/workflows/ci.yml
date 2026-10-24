@@ -57,7 +57,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check whitespace, conflict markers, and requirement authority
+      - name: Check whitespace, conflict markers, requirement authority, and tagged time
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
@@ -65,6 +65,7 @@ jobs:
         run: |
           script/ci-text-hygiene.sh check
           script/requirements-authority-check.sh
+          script/time-guard.sh
 
   script-inventory:
     name: Script Inventory

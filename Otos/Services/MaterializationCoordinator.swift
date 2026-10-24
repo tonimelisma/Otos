@@ -703,6 +703,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         breakerWakeTask?.cancel()
         breakerWakeTask = Task { [weak self, clock, nextUntil] in
             do {
+                // time: backoff — the per-root breaker after a provider stopped serving
                 try await clock.sleep(until: nextUntil, tolerance: .milliseconds(250))
             } catch {
                 return

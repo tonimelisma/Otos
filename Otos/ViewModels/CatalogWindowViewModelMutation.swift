@@ -247,6 +247,7 @@ extension CatalogWindowViewModel {
                 OtosLog.catalog.notice(
                     "op=catalog.removable.eject phase=retry reason=busy attempt=\(attempt, privacy: .public) delayMs=\(DiagnosticsTiming.milliseconds(delay), privacy: .public) rootPath=\(root.path.rawValue, privacy: .public)"
                 )
+                // time: backoff — the system refused the unmount as busy
                 try? await Task.sleep(for: delay)
             }
         }

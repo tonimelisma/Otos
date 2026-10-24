@@ -164,6 +164,7 @@ extension FileMaterialization {
                 }
             }
             group.addTask {
+                // time: deadline — a hung provider must not pin a probe thread
                 try? await Task.sleep(for: probeTimeout)
                 return FileMaterializationProbeResult.inconclusive
             }

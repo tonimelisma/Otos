@@ -124,6 +124,7 @@ final nonisolated class CameraByteSource: MediaByteSource {
         // ~43 ms and a chunked fetch 77-234 ms — because its job is to break a hang, not to
         // second-guess a slow device.
         let waitStarted = DispatchTime.now()
+        // time: deadline — a PTP range read the camera may never answer
         let outcomeSignal = finished.wait(timeout: .now() + readDeadline)
         waitNanos.withLock { $0 += DispatchTime.now().uptimeNanoseconds - waitStarted.uptimeNanoseconds }
         guard outcomeSignal == .success else {

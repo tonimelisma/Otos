@@ -118,6 +118,7 @@ guard let stream = FSEventStreamCreate(
 let queue = DispatchQueue(label: "probe.fsevents")
 FSEventStreamSetDispatchQueue(stream, queue)
 FSEventStreamStart(stream)
+// time: measurement — a research probe timing provider events
 Thread.sleep(forTimeInterval: 0.3)
 
 print("probe root=\(root)")
@@ -151,6 +152,7 @@ for sample in samples {
             after = current
             break
         }
+        // time: measurement — a research probe timing provider events
         Thread.sleep(forTimeInterval: 0.25)
     }
     let doneAt = Date().timeIntervalSince(collector.started)

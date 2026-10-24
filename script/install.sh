@@ -69,8 +69,10 @@ if pgrep -fx "$INSTALLED_EXECUTABLE" >/dev/null; then
   # A normal Quit (same as ⌘Q), never a kill: the app gets its own termination
   # path, including device-staging cleanup.
   /usr/bin/osascript -e "tell application \"$INSTALLED_APP\" to quit" >/dev/null
-  while pgrep -fx "$INSTALLED_EXECUTABLE" >/dev/null; do
-    sleep 0.5
+  # `caffeinate -w` returns when that process exits — the kernel reports the exit, so
+  # nothing here guesses how long termination takes.
+  for pid in $(pgrep -fx "$INSTALLED_EXECUTABLE" || true); do
+    /usr/bin/caffeinate -w "$pid"
   done
 fi
 

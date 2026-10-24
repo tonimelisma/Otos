@@ -314,6 +314,7 @@ actor MediaOperationCoordinator {
         case let .scheduleUnreadableRetry(source, attachment, delay):
             retryTasks[source]?.cancel()
             retryTasks[source] = Task { [weak self] in
+                // time: backoff — a destination that could not be read
                 try? await Task.sleep(for: delay)
                 guard !Task.isCancelled, let self else { return }
                 await deliver(.unreadableRetryFired(source: source, attachment: attachment))

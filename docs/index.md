@@ -59,6 +59,7 @@ rewrite an ADR when the decision changes; never append increment history.
 | [0027](adr/0027-destination-free-space-is-measured-at-the-attempt.md) | Destination free space is measured only at the attempt: no precheck, no polling, a 5 GB per-entry floor with in-flight accounting, `ENOSPC` as backstop, and a floor stop as a resumable Cancel-shaped outcome. |
 | [0028](adr/0028-grid-drag-out-representation.md) | Grid and filmstrip drag-out: original file URLs, whole selection from a selected tile, plain click on a selected tile commits on mouse-up. |
 | [0032](adr/0032-owner-state-requests-and-intent-ordering.md) | Owner state changes only in synchronous code, a request is a revision counter nothing clears, an error is never a fact, intents travel in one ordered stream, and blocking work leaves the actor by a named mechanism. |
+| [0033](adr/0033-time-is-never-a-stand-in-for-a-fact.md) | Time never stands in for a fact that can be known; every wait on time is tagged deadline, backoff, schedule, measurement, poll, or a cadence citing its measurement, and `script/time-guard.sh` checks it. |
 | [0031](adr/0031-browser-place-restored-on-relaunch.md) | The browser place (query, view mode, selection, position) is saved once at quit and restored at launch, checked against the loaded catalog. |
 
 ## Research

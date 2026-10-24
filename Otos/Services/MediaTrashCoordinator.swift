@@ -605,6 +605,7 @@ actor MediaTrashCoordinator {
         timerTask?.cancel()
         let clock = clock
         timerTask = Task { [weak self] in
+            // time: backoff — a Move to Trash the system refused, or a download that failed
             try? await clock.sleep(until: instant)
             guard !Task.isCancelled else { return }
             self?.kick()
