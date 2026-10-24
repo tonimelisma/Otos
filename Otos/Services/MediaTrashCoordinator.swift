@@ -697,7 +697,7 @@ actor MediaTrashCoordinator {
             return
         }
         guard allSucceeded else {
-            _ = try? await store.clearPendingTrash([id])
+            _ = await clearPending([id], operation: "moveFailed")
             eventContinuation.yield(.moveFailed([id]))
             return
         }
@@ -730,7 +730,7 @@ actor MediaTrashCoordinator {
         await store.reconcileTrashedPaths(results.filter(\.succeeded))
         forget([item.id])
         if results.contains(where: { !$0.succeeded }) {
-            _ = try? await store.clearPendingTrash([item.id])
+            _ = await clearPending([item.id], operation: "removeFailed")
             eventContinuation.yield(.moveFailed([item.id]))
             return false
         }

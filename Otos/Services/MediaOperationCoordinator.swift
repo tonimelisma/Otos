@@ -60,6 +60,7 @@ actor MediaOperationCoordinator {
     /// replaced card logs its first state even when it equals the old card's last.
     private var lastLoggedState: [LibraryRootPath: (attachment: MediaOperationAttachmentGeneration, state: MediaOperationSourceState)] = [:]
     private var continuations: [UUID: AsyncStream<[MediaOperationSourcePresentation]>.Continuation] = [:]
+    private var destinationContinuations: [UUID: AsyncStream<[LibraryRootPath: LibraryRootPath]>.Continuation] = [:]
     private var isStarted = false
     private var consumerTask: Task<Void, Never>?
     private var catalogChangeTask: Task<Void, Never>?
@@ -220,6 +221,10 @@ actor MediaOperationCoordinator {
             continuation.finish()
         }
         continuations.removeAll()
+        for subscriber in destinationContinuations.values {
+            subscriber.finish()
+        }
+        destinationContinuations.removeAll()
         send(.shutdownCompleted)
         isStarted = false
     }
@@ -336,11 +341,12 @@ actor MediaOperationCoordinator {
             let store = store
             return spawnEffectTask { coordinator in
                 // A count that cannot be read confirms nothing; the next catalog change asks again.
-                let count = try? await store.importBatchAssetCount(batch)
+                let count = await Self.batchAssetCount(batch, store: store)
                 await coordinator.deliver(.batchAssetCountRead(batch, count: count))
             }
         case .persistDestinations:
             persistDestinationMappings()
+            publishDestinations()
         case let .autoEject(root):
             return spawnEffectTask { coordinator in await coordinator.autoEjectIfRequested(root) }
         case .publish:
@@ -603,11 +609,25 @@ actor MediaOperationCoordinator {
         executions[batch] = ExecutionHandle(task: task, executor: executor)
     }
 
+    /// The batch's asset count, or `nil` when the Store cannot read it: unknown, and
+    /// logged, never taken as zero.
+    private nonisolated static func batchAssetCount(_ batch: ImportBatchID, store: CatalogStore) async -> Int? {
+        do {
+            return try await store.importBatchAssetCount(batch)
+        } catch {
+            OtosLog.catalog.errorOperation("import.batchCount", phase: "readFailed", fields: [
+                "batch": "\(batch.unixMilliseconds)",
+                "error": String(describing: error),
+            ])
+            return nil
+        }
+    }
+
     private func executionTaskFinished(_ result: MediaImportExecutionResult, batch: ImportBatchID) async {
         // A failed run's published count is read here, before the event, so the machine
         // applies one complete fact. A count that cannot be read stays unknown.
         let failedPublishedCount: Int? = if case .failed = result {
-            try? await store.importBatchAssetCount(batch)
+            await Self.batchAssetCount(batch, store: store)
         } else {
             nil
         }
@@ -908,5 +928,32 @@ actor MediaOperationCoordinator {
 
     func allDestinations() -> [LibraryRootPath: LibraryRootPath] {
         machine.destinationBySource
+    }
+
+    /// The remembered destination per source: the current map, then each map the machine
+    /// persists. Newest-wins and published in the order the machine changed it, so a
+    /// slow reader can only fall behind, never step back to an older map.
+    func destinationsStream() -> AsyncStream<[LibraryRootPath: LibraryRootPath]> {
+        let (stream, subscriber) = AsyncStream<[LibraryRootPath: LibraryRootPath]>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        let id = UUID()
+        destinationContinuations[id] = subscriber
+        subscriber.yield(machine.destinationBySource)
+        subscriber.onTermination = { [weak self] _ in
+            Task { await self?.removeDestinationContinuation(id) }
+        }
+        return stream
+    }
+
+    private func publishDestinations() {
+        let destinations = machine.destinationBySource
+        for subscriber in destinationContinuations.values {
+            subscriber.yield(destinations)
+        }
+    }
+
+    private func removeDestinationContinuation(_ id: UUID) {
+        destinationContinuations.removeValue(forKey: id)
     }
 }

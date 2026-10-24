@@ -165,14 +165,15 @@ and let instrumentation prove a real bottleneck before optimizing it.
      cancels published work; cancel only for teardown. A cancelled result is never published.
   4. **An error is not a fact.** A failed read publishes nothing, leaves the request
      outstanding and is logged; never substitute `[]`, `0`, `.empty` or `nil` for a value a
-     user sees (lint `error_becomes_value`). An error is classified by its domain and
+     user sees (lint `error_becomes_value`, `discarded_async_error`). An error is classified by its domain and
      code or the API's typed status, never by its localized text (lint
      `error_text_matching`).
   5. **Intents travel in one ordered stream with one consumer** (`.unbounded` for commands,
      `.bufferingNewest(1)` for newest-wins state), never one `Task {}` per call. An intent
      that starts long work returns when it is applied. A platform callback yields into its
      owner's stream; it never hops through its own `Task { @MainActor … }` (lint
-     `unordered_main_actor_hop`).
+     `unordered_main_actor_hop`), and view-model work is never a bare per-call `Task {}`
+     (lint `unowned_view_model_task`).
   6. **Blocking work leaves the actor by a named mechanism** (`@concurrent`,
      `Task.detached`, a task-group child, a dedicated queue): this target compiles with
      `NonisolatedNonsendingByDefault`, so a `nonisolated async` call runs on its caller's

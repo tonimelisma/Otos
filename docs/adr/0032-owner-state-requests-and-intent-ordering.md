@@ -59,7 +59,8 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
    stands, the request stays outstanding, and the error is logged with `errorOperation`.
    No `catch` or `try?` substitutes `[]`, `0`, `.empty` or `nil` for a value a user sees; a
    value that is genuinely unknown is optional and shown as unknown. SwiftLint rule
-   `error_becomes_value` rejects `try? … ?? []/0/""/false/.empty` anywhere in the app, and
+   `error_becomes_value` rejects `try? … ?? []/0/""/false/.empty` anywhere in the app,
+   `discarded_async_error` rejects a `try? await` statement that drops a failure, and
    `projection_catch_substitutes_value` rejects the `catch` form in the projection.
 5. **Intents to an owner travel in one ordered channel.** Commands (must not be dropped,
    must stay in order) use one `.unbounded` `AsyncStream<Intent>` with one consumer.
@@ -70,6 +71,8 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
    callback yields into its owner's stream. SwiftLint rule `unordered_main_actor_hop`
    rejects a bare `Task { @MainActor … }` started from a callback; where an API documents
    the main thread, `MainActor.assumeIsolated` asserts it instead of hopping.
+   `unowned_view_model_task` rejects a bare `Task {}` started per call in view-model code:
+   such work is a named task property cancelled at teardown, or a stream's one consumer.
 6. **Blocking work leaves the actor explicitly.** Filesystem walks, planning, decoding and
    hashing enter through `@concurrent`, `Task.detached`, a task-group child, or a dedicated
    queue. A comment saying "off the actor" or "off main" names which.

@@ -3,15 +3,21 @@ set -euo pipefail
 
 ROOT_DIR="${GUARD_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
+# Each coordinator stream has one publication path: the value a new subscriber is
+# opened with, and the one place that publishes changes. Presentations yield through
+# `continuation` (subscribe, `publish()`); destination maps through `subscriber`
+# (subscribe, `publishDestinations()`). A third yield site is a second path.
 check_root() {
   local root="$1"
   local file="$root/Otos/Services/MediaOperationCoordinator.swift"
-  local count
-  count="$(grep -c 'continuation\.yield' "$file" || true)"
-  if [[ "$count" != "2" ]]; then
-    echo "FAIL: MediaOperationCoordinator must have exactly two continuation.yield call sites; found $count" >&2
-    return 1
-  fi
+  local name count
+  for name in continuation subscriber; do
+    count="$(grep -c "${name}\\.yield" "$file" || true)"
+    if [[ "$count" != "2" ]]; then
+      echo "FAIL: MediaOperationCoordinator must have exactly two ${name}.yield call sites; found $count" >&2
+      return 1
+    fi
+  done
 }
 
 self_test() {
@@ -19,11 +25,17 @@ self_test() {
   d="$(mktemp -d)"
   trap 'rm -rf "$d"' RETURN
   mkdir -p "$d/Otos/Services"
-  printf '%s\n' 'continuation.yield([])' 'continuation.yield([])' > "$d/Otos/Services/MediaOperationCoordinator.swift"
+  local file="$d/Otos/Services/MediaOperationCoordinator.swift"
+  printf '%s\n' 'continuation.yield([])' 'continuation.yield([])' 'subscriber.yield([:])' 'subscriber.yield([:])' > "$file"
   check_root "$d"
-  printf '%s\n' 'continuation.yield([])' >> "$d/Otos/Services/MediaOperationCoordinator.swift"
-  if check_root "$d"; then
-    echo "guard-presentation-yield self-test failed" >&2
+  printf '%s\n' 'continuation.yield([])' >> "$file"
+  if check_root "$d" 2>/dev/null; then
+    echo "guard-presentation-yield self-test failed: a third presentation yield passed" >&2
+    return 1
+  fi
+  printf '%s\n' 'continuation.yield([])' 'continuation.yield([])' 'subscriber.yield([:])' 'subscriber.yield([:])' 'subscriber.yield([:])' > "$file"
+  if check_root "$d" 2>/dev/null; then
+    echo "guard-presentation-yield self-test failed: a third destination yield passed" >&2
     return 1
   fi
   echo "guard-presentation-yield self-test: clean oracle"

@@ -93,6 +93,21 @@ custom_rules:
     message: "Tasks started one per callback have no order, so a later report can be handled before an earlier one (ADR 0032, rule 5). Yield into one ordered AsyncStream with one consumer, assert MainActor.assumeIsolated where the API documents the main thread, or own the task as a named property."
     severity: error
 
+  unowned_view_model_task:
+    name: "View-model work is owned by a named task or an ordered stream"
+    included: 'Otos/ViewModels/.*\.swift'
+    regex: '(^|[;{]|\bin)\s*Task(\.detached)?\s*(\([^)]*\))?\s*\{'
+    message: "A bare Task started per call has no owner, no cancellation at teardown, and no order against the next one, so an older result can land after a newer one (ADR 0032, rules 3 and 5). Assign it to a named property cancelled at teardown, or deliver it through the owner's ordered stream."
+    severity: error
+
+  discarded_async_error:
+    name: "A failed async call is handled, not discarded"
+    included: 'Otos/.*\.swift'
+    excluded: 'OtosTests/'
+    regex: '(^|[;{]|\bin)\s*(_\s*=\s*)?try\?\s+await\s+(?![A-Za-z().]*sleep\()'
+    message: "`try? await` as a statement drops the failure without a trace (ADR 0032, rule 4: the error is logged). Catch it and log with errorOperation, or route it through the owner's helper that does."
+    severity: error
+
   error_text_matching:
     name: "An error is classified by its type, never by its text"
     regex: '(localizedDescription|localizedFailureReason|describing:\s*error\))\s*\.\s*(localizedCaseInsensitiveContains|localizedStandardContains|contains|hasPrefix|hasSuffix|range|lowercased|uppercased)\b'

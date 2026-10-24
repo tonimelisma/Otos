@@ -246,11 +246,11 @@ final class CatalogWindowViewModel {
 
     /// Per-source import plan summaries for the footer (scalar only; no full plan map).
     var importPresentations: [MediaOperationSourcePresentation] = []
-    /// Cached destination mappings for Settings display, including unavailable
-    /// sources whose runtime mapping is retained (Stage 5). Updated from the
-    /// coordinator's `allDestinations()` after presentation changes and after
-    /// explicit destination intents.
+    /// Destination mappings for Settings display, including unavailable sources whose
+    /// runtime mapping is retained. Assigned only by `removableDestinationsTask`, the one
+    /// consumer of the coordinator's ordered `destinationsStream()`.
     var removableDestinations: [LibraryRootPath: LibraryRootPath] = [:]
+    @ObservationIgnored var removableDestinationsTask: Task<Void, Never>?
     /// Settings Import tab bindings; persisted through `ImportPreferencesStore`. Set in
     /// `init`, not a property default, because its initial value depends on the
     /// injected `preferences`.
@@ -277,6 +277,8 @@ final class CatalogWindowViewModel {
     var identityRemapEpoch: UInt64 = 0
     var identityRemapBatch: CatalogIdentityRemapBatch?
     @ObservationIgnored var reorganizationRunner: LibraryReorganizationRunner?
+    /// The reorganization preview or run in flight; at most one.
+    @ObservationIgnored var reorganizationTask: Task<Void, Never>?
     @ObservationIgnored let mediaTrashCoordinator: MediaTrashCoordinator
     @ObservationIgnored var mediaTrashEventTask: Task<Void, Never>?
     /// Undo, redo and the answers to trash prompts travel in one lossless ordered stream:
@@ -489,6 +491,8 @@ final class CatalogWindowViewModel {
         enrichmentStartTask?.cancel()
         deviceStagingSweepTask?.cancel()
         importPresentationTask?.cancel()
+        removableDestinationsTask?.cancel()
+        reorganizationTask?.cancel()
         importIntentTask?.cancel()
         mediaOperationStartTask?.cancel()
         removableVolumeMonitor?.stop()
@@ -508,23 +512,26 @@ final class CatalogWindowViewModel {
         mediaTrashIntentContinuation.finish()
         mediaChoiceContinuation.finish()
         viewportContinuation.finish()
-        if let mediaOps = mediaOperationCoordinator {
-            Task { await mediaOps.shutdown() }
-        }
+        // The owners below must be told to stop or their own loops would keep them, and
+        // the store, alive past this window: the enrichment supervisor strongly retains
+        // its coordinator. `shutdown()` is async and teardown cannot await, so one task,
+        // which nothing here outlives to own, stops them side by side — an import's
+        // shutdown waits for its run, and nothing else should wait behind that.
+        // Materialization stops after enrichment, which feeds it.
+        let mediaOps = mediaOperationCoordinator
         let mediaTrash = mediaTrashCoordinator
-        Task { await mediaTrash.shutdown() }
-        if let coordinator = enrichmentCoordinator {
-            // The coordinator's supervisor strongly retains the coordinator, so it must be
-            // told to stop or it (and the store) would outlive this window. shutdown() is
-            // async and deinit cannot await, so hand it off; this owner is already gone.
-            let materializationCoordinator = materializationCoordinator
-            Task {
-                await coordinator.shutdown()
-                await materializationCoordinator?.shutdown()
+        let enrichment = enrichmentCoordinator
+        let materialization = materializationCoordinator
+        // swiftlint:disable:next unowned_view_model_task
+        Task {
+            await withDiscardingTaskGroup { group in
+                group.addTask { await mediaOps?.shutdown() }
+                group.addTask { await mediaTrash.shutdown() }
+                group.addTask {
+                    await enrichment?.shutdown()
+                    await materialization?.shutdown()
+                }
             }
-        } else {
-            let materializationCoordinator = materializationCoordinator
-            Task { await materializationCoordinator?.shutdown() }
         }
         stallMonitor.stop()
     }
