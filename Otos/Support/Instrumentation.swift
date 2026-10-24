@@ -120,6 +120,14 @@ extension Logger {
 /// from a denied source, and their absence turned one real failure into an
 /// afternoon of inference.
 nonisolated enum ErrorDiagnostics {
+    /// Whether a file operation failed because the file is not there, by domain and code.
+    /// Removing a file that is already gone has the outcome its caller wanted.
+    static func isMissingFile(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return (nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileNoSuchFileError)
+            || (nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(ENOENT))
+    }
+
     static func fields(for error: Error, prefix: String = "error") -> [String: String] {
         let nsError = error as NSError
         var out: [String: String] = [

@@ -93,7 +93,16 @@ nonisolated enum ThumbnailStore {
         ] as CFDictionary
         CGImageDestinationAddImage(destination, jpegImage, properties)
         guard CGImageDestinationFinalize(destination) else {
-            try? FileManager.default.removeItem(at: stagedURL)
+            do {
+                try FileManager.default.removeItem(at: stagedURL)
+            } catch where ErrorDiagnostics.isMissingFile(error) {
+                // Already gone: the outcome this removal wanted.
+            } catch {
+                OtosLog.thumbnails.errorOperation("thumbnail.cleanup", phase: "removeFailed", fields: [
+                    "path": stagedURL.path(percentEncoded: false),
+                    "error": String(describing: error),
+                ])
+            }
             throw ThumbnailStoreError.writeFailed
         }
 
@@ -139,7 +148,16 @@ nonisolated enum ThumbnailStore {
         do {
             try FileManager.default.copyItem(at: sourceURL, to: stagedURL)
         } catch {
-            try? FileManager.default.removeItem(at: stagedURL)
+            do {
+                try FileManager.default.removeItem(at: stagedURL)
+            } catch where ErrorDiagnostics.isMissingFile(error) {
+                // Already gone: the outcome this removal wanted.
+            } catch {
+                OtosLog.thumbnails.errorOperation("thumbnail.cleanup", phase: "removeFailed", fields: [
+                    "path": stagedURL.path(percentEncoded: false),
+                    "error": String(describing: error),
+                ])
+            }
             throw ThumbnailStoreError.writeFailed
         }
         return GeneratedThumbnail(
@@ -185,7 +203,16 @@ nonisolated enum ThumbnailStore {
 
     /// Removes a staged thumbnail that was never accepted by the catalog.
     static func discard(_ thumbnail: GeneratedThumbnail, in directory: URL) {
-        try? FileManager.default.removeItem(at: url(for: thumbnail.stagedRelativePath, in: directory))
+        do {
+            try FileManager.default.removeItem(at: url(for: thumbnail.stagedRelativePath, in: directory))
+        } catch where ErrorDiagnostics.isMissingFile(error) {
+            // Already gone: the outcome this removal wanted.
+        } catch {
+            OtosLog.thumbnails.errorOperation("thumbnail.cleanup", phase: "removeFailed", fields: [
+                "path": url(for: thumbnail.stagedRelativePath, in: directory).path(percentEncoded: false),
+                "error": String(describing: error),
+            ])
+        }
     }
 
     /// Loads and decodes a thumbnail synchronously on the calling thread; callers run it from a
@@ -244,7 +271,16 @@ nonisolated enum ThumbnailStore {
 
     /// Deletes a thumbnail file. No-op if it is already absent.
     static func delete(_ relativeName: String, in directory: URL) {
-        try? FileManager.default.removeItem(at: url(for: relativeName, in: directory))
+        do {
+            try FileManager.default.removeItem(at: url(for: relativeName, in: directory))
+        } catch where ErrorDiagnostics.isMissingFile(error) {
+            // Already gone: the outcome this removal wanted.
+        } catch {
+            OtosLog.thumbnails.errorOperation("thumbnail.cleanup", phase: "removeFailed", fields: [
+                "path": url(for: relativeName, in: directory).path(percentEncoded: false),
+                "error": String(describing: error),
+            ])
+        }
     }
 
     /// Deletes every app-owned thumbnail file under `directory`. Originals never live
@@ -258,7 +294,16 @@ nonisolated enum ThumbnailStore {
             return
         }
         for url in contents {
-            try? FileManager.default.removeItem(at: url)
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch where ErrorDiagnostics.isMissingFile(error) {
+                // Already gone: the outcome this removal wanted.
+            } catch {
+                OtosLog.thumbnails.errorOperation("thumbnail.cleanup", phase: "removeFailed", fields: [
+                    "path": url.path(percentEncoded: false),
+                    "error": String(describing: error),
+                ])
+            }
         }
     }
 

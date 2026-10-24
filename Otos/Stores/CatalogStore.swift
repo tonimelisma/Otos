@@ -2588,7 +2588,7 @@ extension CatalogStore {
     nonisolated var thumbnailDirectory: URL? {
         switch location {
         case let .application(bundleIdentifier):
-            try? Self.applicationThumbnailDirectory(bundleIdentifier: bundleIdentifier)
+            Self.applicationThumbnailDirectory(bundleIdentifier: bundleIdentifier)
         case let .databaseFile(url):
             url.deletingLastPathComponent().appending(path: "Thumbnails", directoryHint: .isDirectory)
         case .inMemory:

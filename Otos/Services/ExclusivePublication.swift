@@ -66,7 +66,15 @@ nonisolated enum ExclusivePublication {
 
     static func publish(staging: URL, final: URL) -> Outcome {
         let parent = final.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        } catch {
+            // Publishing into a missing folder fails next with its own outcome; this says why.
+            OtosLog.mediaIO.errorOperation("mediaOperation.publish", phase: "createFolderFailed", fields: [
+                "path": parent.path(percentEncoded: false),
+                "error": String(describing: error),
+            ])
+        }
         let capability = VolumeRenameCapability.probe(url: parent)
         switch capability {
         case .renameExcl:

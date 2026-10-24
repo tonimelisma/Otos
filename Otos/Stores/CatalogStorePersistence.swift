@@ -37,14 +37,10 @@ extension CatalogStore {
 
     /// Thumbnail files live beside the catalog in Application Support. Created lazily by
     /// `ThumbnailStore.stage`/`promote`; computed here so the location convention has one owner.
-    static func applicationThumbnailDirectory(bundleIdentifier: String) throws -> URL {
-        let appSupportURL = try FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        return appSupportURL
+    /// Where the thumbnails live. A path, computed without touching the disk: the
+    /// thumbnail store creates the folder before it writes into it.
+    static func applicationThumbnailDirectory(bundleIdentifier: String) -> URL {
+        URL.applicationSupportDirectory
             .appending(path: bundleIdentifier, directoryHint: .isDirectory)
             .appending(path: "Thumbnails", directoryHint: .isDirectory)
     }
@@ -718,7 +714,14 @@ extension CatalogStore {
         try dbWriter.writeWithoutTransaction { db in
             try db.execute(sql: "PRAGMA synchronous = FULL")
             defer {
-                try? db.execute(sql: "PRAGMA synchronous = NORMAL")
+                do {
+                    try db.execute(sql: "PRAGMA synchronous = NORMAL")
+                } catch {
+                    // The connection stays at FULL: slower, never less durable.
+                    OtosLog.persistence.errorOperation("catalog.durability", phase: "restoreFailed", fields: [
+                        "error": String(describing: error),
+                    ])
+                }
             }
             var result: T!
             try db.inTransaction {

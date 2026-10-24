@@ -125,6 +125,12 @@ custom_rules:
     regex: 'swiftlint:disable(?!:(next|this|previous))'
     message: "Suppress a rule only for the line it is wrong about (`disable:next`, with the reason in a comment above). A region disable silently covers code written later."
     severity: error
+  statement_try_optional:
+    name: "An error is handled, not discarded"
+    included: 'Otos/.*\.swift'
+    regex: '^[ \t]*try\?[ \t](?![^\n]*\bsleep\()'
+    message: "A statement `try?` throws the error away. Handle it: treat the outcome you expect (a missing file is gone already) and log the rest with its op. Only a sleep's cancellation needs no handling."
+    severity: error
   file_url_without_directory_hint:
     name: "A file URL says whether it is a directory"
     included: 'Otos/.*\.swift'
