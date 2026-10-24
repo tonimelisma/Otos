@@ -5,8 +5,9 @@ single source of truth for what media exists and where it lives. Otos overlays
 organization, metadata, previews, and editing intent on top of user-owned media
 that stays on disk wherever the user chose to keep it, including cloud-synced
 folders. Originals are read-only, and Otos never takes the user's media hostage:
-it never relocates originals into an opaque app-owned library and never writes
-into the user's media folders.
+it never relocates originals into an opaque app-owned library, and nothing it
+derives or authors (catalog, ratings, edits, metadata, thumbnails, previews) is
+written into the user's media folders.
 
 `docs/architecture.md` is the current-state code map. `docs/requirements.md` is the
 authoritative registry of implemented behavior. `docs/adr/` justifies the
@@ -38,14 +39,17 @@ design rules for user-facing surfaces; per-screen specs live beside it in
 - The filesystem is the single source of truth. The catalog and every overlay Otos
   stores are a subordinate, rebuildable projection; when they disagree, the
   filesystem wins and the catalog reconciles.
-- Otos never takes media hostage: no opaque app-owned vault, and it never writes
-  into the user's media folders. It does not generate sidecar files for identity
-  or authored overlay. It may inventory and, during explicit import/reorganization,
-  transfer existing user-owned useful companions (`.xmp` / `.srt`). It changes the user's
-  files only through explicit, opt-in, user-initiated actions; the default is that
-  nothing on disk changes.
+- Otos never takes media hostage: no opaque app-owned vault. Everything Otos
+  derives or authors lives in Application Support, never in the user's media
+  folders, and it generates no sidecar files for identity or authored overlay. The
+  user's files change only through explicit, user-initiated file operations:
+  import (copies media and its existing `.xmp` / `.srt` companions into a library),
+  library reorganization (moves them within it), Move to Trash, and card Erase
+  (removable volumes and cameras only; library roots are read-only to it). The
+  default is that nothing on disk changes.
 - Overlay has one lifecycle. Every overlay Otos holds for an item is kept as long
-  as that item exists and is purged in full only when the item is proven deleted.
+  as that item exists and is purged in full only when the item is proven deleted
+  (absent from a reachable, fully enumerated root) or the user removes its root.
   A temporarily missing original is never a deletion. Asset identity is the
   filesystem path; Otos invents no durable IDs, content fingerprints, or sidecars.
   See `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md`.
@@ -88,10 +92,8 @@ and let instrumentation prove a real bottleneck before optimizing it.
 - Third-party dependencies require a justified decision (alternatives + tradeoffs)
   in an ADR before adding one.
 - App data (catalog + all overlay) lives in Application Support and is treated as
-  backed up. There is no cache eviction or preview pruning; overlay for an item is
-  purged only when that item is proven deleted (absent from a reachable, fully
-  enumerated root) or the user removes the containing root. Overlay is never purged
-  when an original is merely temporarily missing.
+  backed up. There is no cache eviction or preview pruning; overlay follows the
+  single lifecycle above.
 - Most media lives in cloud-synced folders as possibly-dataless placeholders whose
   filesystem facts (name, size, dates, type) read without downloading, but whose
   bytes force materialization. Byte-reading work must never *accidentally*
@@ -101,8 +103,8 @@ and let instrumentation prove a real bottleneck before optimizing it.
   whole library); its unreclaimable local-disk cost is deliberately accepted. The
   scanner reads only filesystem facts and materializes nothing; byte-reading
   consumers submit deliberate transfers to the shared `MaterializationCoordinator`.
-  `EnrichmentCoordinator` remains the background enrichment owner. See
-  `docs/adr/0008-…` and `docs/adr/0009-enrichment-storage-and-staleness.md`.
+  `EnrichmentCoordinator` is the background enrichment owner. See ADR 0008 and
+  `docs/adr/0009-enrichment-storage-and-staleness.md`.
 
 ## Architecture Standards
 
@@ -180,8 +182,7 @@ MediaIO/Thumbnails/Persistence/Rendering/Performance). **No human reads logs** �
 agent does, so log the things the agent must find, in a machine-greppable shape.
 The agent's windows are `script/logs.sh` (unified logs) and `script/profile.sh`
 (Instruments via `xctrace`). Performance work is evidence-driven: measure, change,
-remeasure; attach the log/trace artifact and worst-span summary. Do not add scale
-machinery for anticipated load before measurement.
+remeasure; attach the log/trace artifact and worst-span summary.
 
 ## Code Smells
 
@@ -243,7 +244,8 @@ verification (requirements-authority + lint + build + test), and prints a heartb
 every 60 s carrying elapsed time and the running test count. Do not invoke
 `script/verify.sh`, `script/test.sh` or `script/build.sh` directly:
 `script/hooks/guard-long-checks.sh` denies it, because those skip the gates and
-emit no heartbeat, which is how a hung run is mistaken for a slow one. Read logs with `script/logs.sh stream [Category]` (live) or
+emit no heartbeat, which is how a hung run is mistaken for a slow one. Read logs
+with `script/logs.sh stream [Category]` (live) or
 `script/logs.sh show --last 10m` (post-hoc ndjson); profile with
 `script/profile.sh "<Template>" 10s` and `script/profile-export.sh <trace>`.
 See `docs/adr/0015-observability.md`.
@@ -258,7 +260,7 @@ read its logs with `script/logs.sh` — `.info`/`.debug` persist for it.
 
 `script/check.sh` takes roughly 4 minutes to build plus 3 to run the suite. It runs
 the seconds-long gates itself, first, so a formatting nit never costs a full
-build-and-test cycle — you do not have to remember to.
+build-and-test cycle.
 
 **A long check is watched, not awaited.** Waiting on process completion alone does
 not work: a hung process never completes, so it never reports, and the wait is
