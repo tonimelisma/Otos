@@ -193,9 +193,12 @@ foreground, since none of them touch `build/DerivedData` or Xcode state.
   `MediaGridStripInputTests` was serialized for this, which moved the race
   rather than removing it: a full run deadlocked in the still-parallel
   `MediaGridSelectionControllerTests` after 786 tests, parked in `XCTWaiter`
-  with flat CPU. Every window-hosting suite is now `@Suite(.serialized)` and
-  every harness closes its window in an `isolated deinit` (main-actor, where
-  `NSWindow` requires it); inline windows close via `defer`.
+  with flat CPU. `.serialized` orders only the tests inside the suite it marks
+  (and the suites nested in it), so every window-hosting suite is nested in the
+  one `@Suite(.serialized)` parent `AppKitWindowTests`, which runs all of them one
+  at a time relative to each other; every harness closes its window in an
+  `isolated deinit` (main-actor, where `NSWindow` requires it); inline windows
+  close via `defer`.
 
 ## Defers
 

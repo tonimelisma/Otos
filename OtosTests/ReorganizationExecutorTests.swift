@@ -3,9 +3,10 @@ import Foundation
 import Synchronization
 import Testing
 
+@Suite(.testDirectory)
 struct ReorganizationRecoveryObservationTests {
     @Test func classifiesWillMoveMatrix() throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let source = temp.appending(path: "a.jpg")
         let destination = temp.appending(path: "b.jpg")
         let modified = Date(timeIntervalSince1970: 1_700_000_000)
@@ -60,6 +61,7 @@ struct ReorganizationRecoveryObservationTests {
     }
 }
 
+@Suite(.testDirectory)
 struct ActiveReorganizationJournalTests {
     @Test func journalRoundTripsThroughStore() async throws {
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
@@ -127,9 +129,10 @@ struct ActiveReorganizationJournalTests {
     }
 }
 
+@Suite(.testDirectory)
 struct ReorganizationLeaseTests {
     @Test func leaseDefersScanUntilRelease() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
@@ -154,9 +157,10 @@ struct ReorganizationLeaseTests {
     }
 }
 
+@Suite(.testDirectory)
 struct ReorganizationSettlementTests {
     @Test func setBasedSwapRemapsWithoutCollision() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "aaaa")
@@ -316,6 +320,7 @@ struct ReorganizationSettlementTests {
     }
 }
 
+@Suite(.testDirectory)
 struct ReorganizationExecutorMoveTests {
     @Test func executesSingleMoveAndMarksComplete() async throws {
         let fixture = try await ExecutorFixture.make(files: ["old.jpg": [0x11, 0x22]])
@@ -400,7 +405,7 @@ private struct ExecutorFixture {
     let modified: Date
 
     static func make(files: [String: [UInt8]]) async throws -> ExecutorFixture {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Library", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let modified = Date(timeIntervalSince1970: 1_700_000_300)

@@ -3,9 +3,10 @@ import GRDB
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogStoreTests {
     @Test func changeNotificationsAreCheapTypedSignals() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let scanner = CatalogScanner { _, _, _ in .empty }
@@ -36,7 +37,7 @@ struct CatalogStoreTests {
     }
 
     @Test func incompatibleLegacyDatabaseIsRefusedWithoutErase() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let original = root.appending(path: "legacy.jpg", directoryHint: .notDirectory)
@@ -91,7 +92,7 @@ struct CatalogStoreTests {
     }
 
     @Test func addLibraryScansRegularFilesAndReloadsFromDisk() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let nested = root.appending(path: "Nested", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
@@ -129,7 +130,7 @@ struct CatalogStoreTests {
     /// user-owned via `moveLibrary(_:_:)` — not derived, and not a parallel
     /// list in preferences that would drift when a root is removed.
     @Test func moveLibraryReordersAndSurvivesReload() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let urls = ["Zebra", "Alpha", "Middle"].map { temp.appending(path: $0, directoryHint: .isDirectory) }
         for url in urls {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -165,7 +166,7 @@ struct CatalogStoreTests {
     /// when they arrive, so the library moves down twice — not down and back up, which
     /// is what two moves computed as positions from the same stale list would do.
     @Test func successiveMovesComposeAgainstTheStoreOrder() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let urls = ["A", "B", "C", "D"].map { temp.appending(path: $0, directoryHint: .isDirectory) }
         for url in urls {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -192,7 +193,7 @@ struct CatalogStoreTests {
     }
 
     @Test func mediaChoiceDefaultsPersistsAcceptsSameValueAndSurvivesReload() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
@@ -222,7 +223,7 @@ struct CatalogStoreTests {
     }
 
     @Test func importSettlementCarriesChoiceFromCatalogedSource() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let sourceRoot = temp.appending(path: "Source", directoryHint: .isDirectory)
         let destinationRoot = temp.appending(path: "Destination", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
@@ -281,7 +282,7 @@ struct CatalogStoreTests {
     }
 
     @Test func scanSkipsPackageDescendantsAndRecordsDiagnostics() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let package = root.appending(path: "Photos Library.photoslibrary", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
@@ -302,7 +303,7 @@ struct CatalogStoreTests {
     }
 
     @Test func addLibraryRejectsDuplicateAncestorAndDescendantRoots() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let parent = temp.appending(path: "Parent", directoryHint: .isDirectory)
         let child = parent.appending(path: "Child", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: child, withIntermediateDirectories: true)
@@ -326,7 +327,7 @@ struct CatalogStoreTests {
     }
 
     @Test func removeLibraryDeletesCatalogRowsAndLeavesOriginalsUntouched() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let original = root.appending(path: "a.jpg")
@@ -361,7 +362,7 @@ struct CatalogStoreTests {
     }
 
     @Test func completedLaunchScanDeletesRowsForMissingFiles() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let first = root.appending(path: "a.jpg")
@@ -387,7 +388,7 @@ struct CatalogStoreTests {
     }
 
     @Test func failedLaunchScanDoesNotDeletePreviouslyCatalogedRows() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let first = root.appending(path: "a.jpg")
@@ -430,7 +431,7 @@ struct CatalogStoreTests {
     }
 
     @Test func cancelledLaunchScanDoesNotDeletePreviouslyCatalogedRows() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
@@ -539,13 +540,6 @@ func waitForCatalogStoreState(
         }
     }
     throw AsyncTestTimeoutError.streamEnded("catalog store changes")
-}
-
-func makeCatalogStoreTemporaryDirectory() throws -> URL {
-    let url = FileManager.default.temporaryDirectory
-        .appending(path: "OtosTests-\(UUID().uuidString)", directoryHint: .isDirectory)
-    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    return url
 }
 
 func writeCatalogStoreFile(_ url: URL, contents: String) throws {

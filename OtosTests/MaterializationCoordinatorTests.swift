@@ -42,34 +42,50 @@ struct MaterializationCoordinatorTests {
             policy: policy
         )
         let firstActive = Task { await coordinator.materialize(request("active-1.jpg", priority: .device)) }
+        try await executor.waitForStarts(1)
         let secondActive = Task { await coordinator.materialize(request("active-2.jpg", priority: .device)) }
         try await executor.waitForStarts(2)
-        let background = Task {
-            await coordinator.materialize(request("promoted.jpg", priority: .background))
-        }
-        let lowerPriority = Task {
+
+        // `queued.jpg` is queued strictly before `promoted.jpg`, so first-in-first-out
+        // would start `queued.jpg` next; only promotion starts `promoted.jpg` first.
+        let earlierBackground = Task {
             await coordinator.materialize(request("queued.jpg", priority: .background))
         }
-        try await waitUntil(every: .milliseconds(10)) { await coordinator.queuedRequestCount() >= 2 }
+        try await waitForAdmission(coordinator) { await coordinator.queuedRequestCount() == 1 }
+        let laterBackground = Task {
+            await coordinator.materialize(request("promoted.jpg", priority: .background))
+        }
+        try await waitForAdmission(coordinator) { await coordinator.queuedRequestCount() == 2 }
         let interactive = Task {
             await coordinator.materialize(request("promoted.jpg", priority: .interactive))
         }
+        // Two device waiters, `queued.jpg`'s, and both of `promoted.jpg`'s on one entry.
+        try await waitForAdmission(coordinator) { await coordinator.stateSnapshot().waiters == 5 }
+        #expect(await coordinator.queuedRequestCount() == 2)
+
+        // Freeing one slot admits exactly one request. Waiting for `active-1.jpg`'s
+        // waiter to leave and admission to settle makes "admitted nothing" a failure
+        // here rather than a hang in `waitForStarts`.
         try await executor.releaseNext()
+        try await waitForAdmission(coordinator) { await coordinator.stateSnapshot().waiters == 4 }
+        try #require(await coordinator.stateSnapshot().inFlight == 2)
         try await executor.waitForStarts(3)
-        #expect(await (executor.startedNames()).last == "promoted.jpg")
+        #expect(await executor.startedNames() == ["active-1.jpg", "active-2.jpg", "promoted.jpg"])
+
         try await executor.releaseNext()
         try await executor.releaseNext()
         try await executor.waitForStarts(4)
-        #expect(await (executor.startedNames()).last == "queued.jpg")
+        #expect(await executor.startedNames() == ["active-1.jpg", "active-2.jpg", "promoted.jpg", "queued.jpg"])
         try await executor.releaseNext()
-        _ = await (
+        let results = await (
             firstActive.value,
             secondActive.value,
-            background.value,
-            interactive.value,
-            lowerPriority.value
+            earlierBackground.value,
+            laterBackground.value,
+            interactive.value
         )
-        #expect(await executor.startedNames().count == 4)
+        #expect(results.3.isMaterialized)
+        #expect(results.4.isMaterialized)
         await coordinator.shutdown()
     }
 

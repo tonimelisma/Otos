@@ -2,9 +2,10 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogStoreAvailabilityTests {
     @Test func databaseLoadedRootBeginsUnknownWhenScanningIsDisabled() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
@@ -22,7 +23,7 @@ struct CatalogStoreAvailabilityTests {
     }
 
     @Test func unavailableLaunchRootPreservesRowsAndMarksLibraryUnavailable() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
@@ -56,7 +57,7 @@ struct CatalogStoreAvailabilityTests {
     }
 
     @Test func scanFailureRechecksRootBeforeMarkingUnavailable() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")

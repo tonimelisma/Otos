@@ -2,6 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogProjectionTests {
     /// Library-kind roots preserve their incoming (`sort_index`) order rather
     /// than being re-sorted by name — the user's own Settings → Libraries order.
@@ -161,7 +162,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func publicationLoopCoalescesStoreAndSidebarChanges() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
@@ -300,7 +301,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func aStoreChangeDuringABuildIsPublishedAfterIt() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let store = CatalogStore(location: .inMemory)
@@ -642,7 +643,7 @@ private struct DetailRefreshFixture {
 }
 
 private func makeDetailRefreshFixture() async throws -> DetailRefreshFixture {
-    let temp = try makeTemporaryDirectory()
+    let temp = try makeTestDirectory()
     let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     try "jpeg".write(to: root.appending(path: "one.jpg"), atomically: true, encoding: .utf8)
@@ -702,27 +703,4 @@ extension CatalogProjection {
             sidebarSelection: sidebarSelection
         )
     }
-}
-
-private func waitForDiagnostics(
-    _ url: URL,
-    matching predicate: @escaping @Sendable (String) -> Bool
-) async throws -> String {
-    try await waitForValue {
-        readableDiagnostics(at: url).flatMap { predicate($0) ? $0 : nil }
-    }
-}
-
-private func readableDiagnostics(at url: URL) -> String? {
-    guard let data = try? Data(contentsOf: url) else {
-        return nil
-    }
-    return String(data: data, encoding: .utf8)
-}
-
-private func makeTemporaryDirectory() throws -> URL {
-    let url = FileManager.default.temporaryDirectory
-        .appending(path: "OtosTests-\(UUID().uuidString)", directoryHint: .isDirectory)
-    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    return url
 }

@@ -4,9 +4,10 @@ import Testing
 
 /// DES-069 day buckets: `CatalogStore.orderedAssetIDs` only populates them under
 /// `.bestDate` sort, and pairs them index-for-index with the returned IDs.
+@Suite(.testDirectory)
 struct CatalogStoreDayBucketTests {
     @Test func bestDateSortReturnsStartOfDayBucketsPairedWithIDs() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         defer { try? FileManager.default.removeItem(at: temp) }
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

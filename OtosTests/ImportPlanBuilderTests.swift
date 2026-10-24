@@ -7,9 +7,16 @@ import Testing
 /// and returns plan plus namespace counts and timing. The controlled builder
 /// records requests, suspends selected builds, resumes with real results, and
 /// records cancellation without assuming cancellation ends the continuation.
+@Suite(.testDirectory)
 struct ImportPlanBuilderTests {
-    private static let destRoot = LibraryRootPath(rawValue: "/tmp/library")
-    private static let sourceRoot = LibraryRootPath(rawValue: "/tmp/card")
+    /// A path identifier only: planning never reads the source root.
+    private static let sourceRoot = LibraryRootPath(rawValue: "/Volumes/PLAN-BUILDER-CARD")
+
+    /// A destination library of the test's own, so the live enumeration reads only what
+    /// the test put there.
+    private static func makeDestination() throws -> LibraryRootPath {
+        try CatalogPath.normalizedExistingDirectoryPath(for: makeTestDirectory())
+    }
 
     private static func facts(
         name: String = "IMG_1.JPG",
@@ -32,7 +39,7 @@ struct ImportPlanBuilderTests {
 
     private static func snapshot(
         sourceMedia: [PlanningFileFacts],
-        dest: LibraryRootPath = destRoot,
+        dest: LibraryRootPath,
         occupants: [MediaRelativePath: DestinationOccupantFacts] = [:]
     ) -> ImportPlanningSnapshot {
         ImportPlanningSnapshot(
@@ -56,33 +63,61 @@ struct ImportPlanBuilderTests {
         )
     }
 
-    @Test func liveBuilderProducesSameOutputAsDirectEnumerationAndPlanner() async {
-        let media = [
-            Self.facts(name: "IMG_001.JPG", captureWallCompact: 20_250_101_120_000),
-            Self.facts(name: "IMG_002.JPG", captureWallCompact: 20_250_102_120_000),
-        ]
-        let snapshot = Self.snapshot(sourceMedia: media)
-        let live = LiveImportPlanBuilder()
-        let viaBuilder = await live.build(snapshot: snapshot, additionalReserved: [])
-        // Direct enumeration + planner
-        let folders = MediaTransferPlanner.destinationFolders(for: snapshot)
-        let namespace = FilesystemNamespaceSemantics.enumerateNamespace(root: Self.destRoot, folders: folders)
-        let directPlan = MediaTransferPlanner.planImport(
-            snapshot: snapshot,
-            namespace: namespace,
+    /// The live builder reads the destination as it is on disk and plans against it.
+    /// The destination already holds an unrelated file at the first shot's date name,
+    /// so that shot takes the first suffix while the second lands on its own name; the
+    /// one folder both names live in is the one folder read.
+    @Test func liveBuilderPlansAgainstTheDestinationOnDisk() async throws {
+        let dest = try Self.makeDestination()
+        let occupied = dest.url.appending(path: "2025/01/20250101_120000.jpeg")
+        try FileManager.default.createDirectory(
+            at: occupied.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data(repeating: 7, count: 99).write(to: occupied)
+        let first = Self.facts(name: "IMG_001.JPG", captureWallCompact: 20_250_101_120_000)
+        let second = Self.facts(name: "IMG_002.JPG", captureWallCompact: 20_250_102_120_000)
+
+        let built = await LiveImportPlanBuilder().build(
+            snapshot: Self.snapshot(sourceMedia: [first, second], dest: dest),
             additionalReserved: []
         )
-        #expect(viaBuilder.plan.entries.count == directPlan.entries.count)
-        #expect(viaBuilder.namespace.entryCount == namespace.entryCount)
-        #expect(viaBuilder.namespace.folderCount == namespace.folderCount)
-        #expect(viaBuilder.plan.totals.copyCount == directPlan.totals.copyCount)
+
+        #expect(built.namespace.folderCount == 1)
+        #expect(built.namespace.entryCount == 1)
+        #expect(built.namespace.unreadableFolders.isEmpty)
+        let suffixed = MediaRelativePath(rawValue: "2025/01/20250101_120000_001.jpeg")
+        let free = MediaRelativePath(rawValue: "2025/01/20250102_120000.jpeg")
+        #expect(built.plan.entries == [
+            MediaOperationPlanEntry(
+                source: first,
+                idealDestination: suffixed,
+                finalDestination: suffixed,
+                companionDestinations: [:],
+                disposition: .copy(destination: suffixed)
+            ),
+            MediaOperationPlanEntry(
+                source: second,
+                idealDestination: free,
+                finalDestination: free,
+                companionDestinations: [:],
+                disposition: .copy(destination: free)
+            ),
+        ])
+        #expect(built.plan.totals == MediaOperationPlanTotals(
+            copyCount: 2,
+            skipCount: 0,
+            blockedCount: 0,
+            companionCopyCount: 0,
+            copyBytes: 20
+        ))
     }
 
     @Test func controlledBuilderCanSuspendAndResumeTwoIndependentBuilds() async throws {
         // Use distinct source roots so the builder can suspend each independently.
-        let sourceA = LibraryRootPath(rawValue: "/tmp/cardA")
-        let sourceB = LibraryRootPath(rawValue: "/tmp/cardB")
-        let dest = Self.destRoot
+        let sourceA = LibraryRootPath(rawValue: "/Volumes/PLAN-BUILDER-CARD-A")
+        let sourceB = LibraryRootPath(rawValue: "/Volumes/PLAN-BUILDER-CARD-B")
+        let dest = try Self.makeDestination()
         let mediaA = [PlanningFileFacts(
             id: MediaAssetID(libraryRootPath: sourceA, relativePath: MediaRelativePath(rawValue: "A1.JPG")),
             sourceURL: sourceA.url.appending(path: "A1.JPG"),
@@ -171,8 +206,8 @@ struct ImportPlanBuilderTests {
     }
 
     @Test func cancellingSuspendedBuildRecordsCancelAndReleasesContinuation() async throws {
-        let source = LibraryRootPath(rawValue: "/tmp/cardC")
-        let dest = Self.destRoot
+        let source = LibraryRootPath(rawValue: "/Volumes/PLAN-BUILDER-CARD-C")
+        let dest = try Self.makeDestination()
         let media = [PlanningFileFacts(
             id: MediaAssetID(libraryRootPath: source, relativePath: MediaRelativePath(rawValue: "C1.JPG")),
             sourceURL: source.url.appending(path: "C1.JPG"),

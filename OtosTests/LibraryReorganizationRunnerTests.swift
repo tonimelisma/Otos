@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 /// End-to-end reorganization runs over a real catalog and a real library folder.
+@Suite(.testDirectory)
 struct LibraryReorganizationRunnerTests {
     /// A run that stops partway keeps every component that settled before the failure,
     /// rolls the failing one back, and leaves the settled remaps for the window to apply
@@ -132,7 +133,7 @@ private struct RunnerFixture {
     let rootPath: LibraryRootPath
 
     static func make(files: [(String, Date)]) async throws -> RunnerFixture {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Library", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         for (name, modified) in files {

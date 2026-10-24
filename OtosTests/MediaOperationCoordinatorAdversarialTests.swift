@@ -6,16 +6,12 @@ import Testing
 /// Adversarial lifecycle tests for MediaOperationCoordinator.
 /// These prove stale-completion rejection, ledger release, and deterministic
 /// execution boundaries via the controlled plan-builder and execution controls.
-@Suite(.serialized)
+@Suite(.serialized, .testDirectory)
 struct MediaOperationCoordinatorAdversarialTests {
     // MARK: - Helpers
 
     private func log(_ msg: String) {
         OtosLog.catalog.notice("TEST \(msg)")
-    }
-
-    private func makeTempRoot() throws -> URL {
-        try makeCatalogStoreTemporaryDirectory()
     }
 
     private func waitForReady(
@@ -71,6 +67,14 @@ struct MediaOperationCoordinatorAdversarialTests {
         }
     }
 
+    /// Stamps `destination` with `source`'s modification date, so the two read as the
+    /// same file to the import's namespace check.
+    private func giveDestination(_ destination: URL, theModificationDateOf source: URL) throws {
+        let attributes = try FileManager.default.attributesOfItem(atPath: source.path)
+        let modified = try #require(attributes[.modificationDate] as? Date)
+        try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: destination.path)
+    }
+
     private enum TestError: Error, CustomStringConvertible {
         case planFailed(MediaOperationSourceState)
         var description: String {
@@ -84,7 +88,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func detachDuringSuspendedBuildNoPresentationAfterResume() async throws {
         log("START detachDuringSuspendedBuildNoPresentationAfterResume")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -130,15 +134,13 @@ struct MediaOperationCoordinatorAdversarialTests {
         let stillHas = await coordinator.currentPresentations().contains(where: { $0.sourcePath == cardPath })
         #expect(!stillHas, "Stale build after detach must not publish presentation")
         #expect(await coordinator.readyPlan(for: cardPath) == nil)
-        log("END")
-        log("END")
         await coordinator.shutdown()
     }
 
     /// A change recorded while a build is suspended is a fact that build never saw, so
     /// its completion must not erase it: the session re-plans with the new preferences.
     @Test func aPreferenceChangeDuringABuildIsPlannedAfterIt() async throws {
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -183,7 +185,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func rapidSamePathReattachOldBuildCannotBecomeReady() async throws {
         log("START rapidSamePathReattachOldBuildCannotBecomeReady")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -244,8 +246,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         // The ready plan should be from B (contains c.jpg).
         let entryNames = plan.entries.map(\.source.relativePath.rawValue).sorted()
         #expect(entryNames.contains("c.jpg"))
-        log("END")
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -253,7 +253,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func oldCompletionCannotClearNewTask() async throws {
         log("START oldCompletionCannotClearNewTask")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -318,8 +318,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cancelled = await builder.recordedCancelled()
         // Cancellation should have been observed for the pending build.
         #expect(cancelled.contains(cardPath))
-        log("END")
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -327,7 +325,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func claimsReleaseOnDetach() async throws {
         log("START claimsReleaseOnDetach")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardAURL = temp.appending(path: "CardA", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -385,8 +383,6 @@ struct MediaOperationCoordinatorAdversarialTests {
             planB.entries.first?.finalDestination.rawValue == "shared.jpg",
             "Claim should be released on detach, B should get base name"
         )
-        log("END")
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -394,7 +390,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func claimsReleaseOnCancel() async throws {
         log("START claimsReleaseOnCancel")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardAURL = temp.appending(path: "CardA", directoryHint: .isDirectory)
         let cardBURL = temp.appending(path: "CardB", directoryHint: .isDirectory)
@@ -500,8 +496,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await waitUntil(every: .milliseconds(50)) {
             await coordinator.readyPlan(for: cardBPath)?.entries.first?.finalDestination.rawValue == "shared.jpg"
         }
-        log("END")
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -509,7 +503,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func claimsReleaseOnFailure() async throws {
         log("START claimsReleaseOnFailure")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardAURL = temp.appending(path: "CardA", directoryHint: .isDirectory)
         let cardBURL = temp.appending(path: "CardB", directoryHint: .isDirectory)
@@ -588,8 +582,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await waitUntil(every: .milliseconds(50)) {
             await coordinator.readyPlan(for: cardBPath)?.entries.first?.finalDestination.rawValue == "shared.jpg"
         }
-        log("END")
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -597,7 +589,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func currentLedgerConflictRebuildsWithDisjointName() async throws {
         log("START currentLedgerConflictRebuildsWithDisjointName")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardAURL = temp.appending(path: "CardA", directoryHint: .isDirectory)
         let cardBURL = temp.appending(path: "CardB", directoryHint: .isDirectory)
@@ -665,8 +657,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         // Verify A still holds base.
         let planAAfter = await coordinator.readyPlan(for: cardAPath)
         #expect(planAAfter?.entries.first?.finalDestination.rawValue == "shared.jpg")
-        log("END")
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -674,7 +664,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func settlementConversionAfterPublishBStillSuffixDueToRealFile() async throws {
         log("START settlementConversionAfterPublishBStillSuffixDueToRealFile")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardAURL = temp.appending(path: "CardA", directoryHint: .isDirectory)
         let cardBURL = temp.appending(path: "CardB", directoryHint: .isDirectory)
@@ -741,8 +731,6 @@ struct MediaOperationCoordinatorAdversarialTests {
             let destination = await coordinator.readyPlan(for: cardBPath)?.entries.first?.finalDestination.rawValue
             return destination != "shared.jpg" && destination?.contains("shared") == true
         }
-        log("END")
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -750,7 +738,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func detachDuringExecutionNoRecreation() async throws {
         log("START detachDuringExecutionNoRecreation")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -800,8 +788,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         // drawn only on a live card's row.
         await queueTask3.value
         try await waitUntilNoPresentation(coordinator, source: cardPath)
-        log("END")
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -815,7 +801,7 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// stays hidden throughout.
     @Test func completionIsStateThatSurvivesADroppedIntermediateFrame() async throws {
         log("START completionIsStateThatSurvivesADroppedIntermediateFrame")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -890,7 +876,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         let again = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
         #expect(again.copiedJustNow == 1)
         #expect(again.batchID == nil, "a settled run exposes no batch")
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -903,7 +888,7 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// `publish()` uses — reflects the live value regardless of what triggered it.
     @Test func executingPresentationCarriesLiveProgressNotZero() async throws {
         log("START executingPresentationCarriesLiveProgressNotZero")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -997,7 +982,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(outcome.summary.copyCount == 1)
         #expect(outcome.skippedForeignCount == 1)
         #expect(outcome.failedCount == 1)
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -1006,7 +990,7 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// the imported assets.
     @Test func settledPresentationIsDiscardedAfterDetach() async throws {
         log("START settledPresentationIsDiscardedAfterDetach")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -1068,7 +1052,6 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         try await waitUntilNoPresentation(coordinator, source: cardPath)
         #expect(await coordinator.currentPresentations().isEmpty, "a settled outcome leaves with its card")
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -1078,7 +1061,7 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// keeps behind state G until the user presses Try Again.
     @Test func aFailedRunStaysFailedAfterTheRebuildItSchedules() async throws {
         log("START aFailedRunStaysFailedAfterTheRebuildItSchedules")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -1136,7 +1119,6 @@ struct MediaOperationCoordinatorAdversarialTests {
             return
         }
         #expect(reason == .destinationUnavailable)
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -1145,7 +1127,7 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// is what the user sees next.
     @Test func tryAgainLeavesTheFailedState() async throws {
         log("START tryAgainLeavesTheFailedState")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -1201,7 +1183,6 @@ struct MediaOperationCoordinatorAdversarialTests {
             return false
         }
         #expect(ready.batchID == nil, "no run is being presented once the failure is cleared")
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -1212,7 +1193,7 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// 368 items already in the library.
     @Test func anUnreadableDestinationFolderDefersTheBuildAndHoldsTheProvenPlan() async throws {
         log("START anUnreadableDestinationFolderDefersTheBuildAndHoldsTheProvenPlan")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -1279,7 +1260,6 @@ struct MediaOperationCoordinatorAdversarialTests {
             return false
         }
         #expect(settled.batchID == nil)
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -1288,7 +1268,7 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// again, reaches Ready.
     @Test func anUnreadableDestinationThatPersistsBecomesAPlanningFailureThatTryAgainClears() async throws {
         log("START anUnreadableDestinationThatPersistsBecomesAPlanningFailureThatTryAgainClears")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -1346,7 +1326,6 @@ struct MediaOperationCoordinatorAdversarialTests {
             return false
         }
         #expect(ready.stopReason == nil)
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -1357,7 +1336,7 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// what presents until the re-plan lands.
     @Test func aCompletedRunPresentsItsSettlementUntilTheRePlanLands() async throws {
         log("START aCompletedRunPresentsItsSettlementUntilTheRePlanLands")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -1419,7 +1398,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         }
         #expect(after.copiedJustNow == 1)
         #expect(after.isFullyClean == true)
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -1430,7 +1408,7 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// is not gated, so the batch row keeps its pin either way.
     @Test func aCompletionIsPresentedOnlyForTheLibraryItCopiedInto() async throws {
         log("START aCompletionIsPresentedOnlyForTheLibraryItCopiedInto")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let firstURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let secondURL = temp.appending(path: "Camera Roll", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -1498,7 +1476,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         })
         #expect(back.copiedJustNow == 1)
         #expect(back.isFullyClean == true)
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -1507,7 +1484,7 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// reader the floor uses, and only where there is a plan to compare it to.
     @Test func aReadyPresentationCarriesTheDestinationsAvailableCapacity() async throws {
         log("START aReadyPresentationCarriesTheDestinationsAvailableCapacity")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -1551,7 +1528,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         let drawn = ImportBarPresentation.map(presentation: ready, preferences: .default, sourceDisplayName: "Card")
         #expect(drawn.secondaryLine == .plain("Not everything will fit yet · 5.4 GB available"))
         #expect(drawn.primaryAction == .importNewItems)
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -1562,7 +1538,7 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// clean, so it neither auto-dismisses nor ejects.
     @Test func aStoppedRunPublishesItsStopFactsAcrossTheRePlan() async throws {
         log("START aStoppedRunPublishesItsStopFactsAcrossTheRePlan")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -1627,7 +1603,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(rePlanned.copiedJustNow == 1)
         #expect(rePlanned.plannedCount == 3)
         #expect(rePlanned.isFullyClean == false)
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -1638,7 +1613,7 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// the filesystem and the landed entries are skips now.
     @Test func aCardThatDoesNotFitIsCopiedUpToTheFloorAndTheRePlanOffersTheRemainder() async throws {
         log("START aCardThatDoesNotFitIsCopiedUpToTheFloorAndTheRePlanOffersTheRemainder")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -1711,9 +1686,13 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(rePlanned.copiedJustNow == 2)
         #expect(rePlanned.plannedCount == 3)
         #expect(rePlanned.isFullyClean == false)
-        if case let .ready(summary, _, _, _) = rePlanned.state {
-            #expect(summary.skipCount == 2, "the two that landed are skips now")
-        }
+        let rePlannedSummary: MediaOperationPlanTotals? =
+            if case let .ready(summary, _, _, _) = rePlanned.state {
+                summary
+            } else {
+                nil
+            }
+        #expect(try #require(rePlannedSummary).skipCount == 2, "the two that landed are skips now")
         #expect(try await store.importBatches().map(\.assetCount) == [2], "the stopped run's partial batch is real")
         for name in ["a.jpg", "b.jpg", "c.jpg"] {
             #expect(
@@ -1721,7 +1700,6 @@ struct MediaOperationCoordinatorAdversarialTests {
                 "nothing on the card is erased"
             )
         }
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -1731,7 +1709,7 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// under it — only a session still on the default may track a reorder.
     @Test func executingDestinationSurvivesLibraryReorder() async throws {
         log("START executingDestinationSurvivesLibraryReorder")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let firstDestURL = temp.appending(path: "Zebra", directoryHint: .isDirectory)
         let secondDestURL = temp.appending(path: "Alpha", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -1815,7 +1793,6 @@ struct MediaOperationCoordinatorAdversarialTests {
             source: cardPath,
             predicate: { $0.destinationPath == secondDest }
         )
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -1823,7 +1800,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func shutdownWaitsForSuspendedWorkAndNoLaterPublication() async throws {
         log("START shutdownWaitsForSuspendedWorkAndNoLaterPublication")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardAURL = temp.appending(path: "CardA", directoryHint: .isDirectory)
         let cardBURL = temp.appending(path: "CardB", directoryHint: .isDirectory)
@@ -1881,8 +1858,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await waitForPendingBuilder(builder, source: cardBPath)
 
         // Start shutdown while builds are suspended. It should cancel builds and return.
-        log("END")
-        log("END")
         await coordinator.shutdown()
         // After shutdown, no presentations should remain and no later publication after resuming old builds.
         let hasA = await coordinator.currentPresentations().contains(where: { $0.sourcePath == cardAPath })
@@ -1902,7 +1877,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func repeatedImportStartsExactlyOneBatch() async throws {
         log("START repeatedImportStartsExactlyOneBatch")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -1944,8 +1919,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         let batches = try await store.importBatches()
         #expect(batches.count == 1, "Repeated import should start exactly one batch")
         #expect(batches.first?.assetCount == 4)
-        log("END")
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -1960,7 +1933,7 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// A rebuild has no count of its own to offer, but the last one was already proven and
     /// published, so showing it asserts nothing new.
     @Test func aRebuildDuringPreparationKeepsTheProvenCount() async throws {
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -2041,7 +2014,7 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// metadata wait drew Done — and the sidebar row its eject button — between
     /// Preparing frames. Every frame of the wait must carry the count.
     @Test func aCardThatGainsFilesAfterAnImportShowsOnlyTheCountWhileItWaits() async throws {
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -2117,7 +2090,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func catalogChangeWakesWaitingForMetadataSourceDeterministic() async throws {
         log("START catalogChangeWakesWaitingForMetadataSourceDeterministic")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -2162,8 +2135,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         })
         guard case .waitingForMetadata = waiting.state else {
             Issue.record("Expected waitingForMetadata")
-            log("END")
-            log("END")
             await coordinator.shutdown()
             return
         }
@@ -2200,8 +2171,6 @@ struct MediaOperationCoordinatorAdversarialTests {
             }
             return false
         })
-        log("END")
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -2209,26 +2178,19 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func zeroCopyWithoutDeleteRemainsReadyWithoutExecutor() async throws {
         log("START zeroCopyWithoutDeleteRemainsReadyWithoutExecutor")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
-        // Create a file that already exists at destination as preexisting (same name, size, mtime)
+        // The destination already holds this file: same name, size and mtime. With
+        // original naming and no folder, the live namespace check expects the source's
+        // size and mtime there, so it plans a skip and nothing to copy.
         let srcFile = cardURL.appending(path: "already.jpg")
         let destFile = destURL.appending(path: "already.jpg")
         try Data(repeating: 18, count: 1024).write(to: srcFile)
         try Data(repeating: 18, count: 1024).write(to: destFile)
-        // Ensure mtimes match by copying mtime? For test, we can use filesystem namespace live check: it checks live
-        // size and expected mtime derived from policy.
-        // For original naming with no folder, expected mtime is source mtime. To make them match, ensure both have same
-        // mtime after copy.
-        // We'll set dest's mtime to src's mtime.
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: srcFile.path),
-           let mtime = attrs[.modificationDate] as? Date
-        {
-            try? FileManager.default.setAttributes([.modificationDate: mtime], ofItemAtPath: destFile.path)
-        }
+        try giveDestination(destFile, theModificationDateOf: srcFile)
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
@@ -2273,15 +2235,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         })
         guard case .ready = pres.state else {
             Issue.record("Expected to remain Ready for zero-copy without delete, got \(pres.state)")
-            log("END")
-            log("END")
             await coordinator.shutdown()
             return
         }
         let executed = await execControl.recordedExecuted()
         #expect(executed.isEmpty, "Executor should not be invoked for zero-copy without delete")
-        log("END")
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -2289,7 +2247,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func zeroCopyWithDeleteExecutorRunsDeletionPath() async throws {
         log("START zeroCopyWithDeleteExecutorRunsDeletionPath")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -2298,11 +2256,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let destFile = destURL.appending(path: "already2.jpg")
         try Data(repeating: 19, count: 1024).write(to: srcFile)
         try Data(repeating: 19, count: 1024).write(to: destFile)
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: srcFile.path),
-           let mtime = attrs[.modificationDate] as? Date
-        {
-            try? FileManager.default.setAttributes([.modificationDate: mtime], ofItemAtPath: destFile.path)
-        }
+        try giveDestination(destFile, theModificationDateOf: srcFile)
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
@@ -2345,7 +2299,6 @@ struct MediaOperationCoordinatorAdversarialTests {
             }
             return false
         }
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -2353,7 +2306,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func deviceInventoryLandingAfterAttachTriggersReplan() async throws {
         log("START deviceInventoryLandingAfterAttachTriggersReplan")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -2404,8 +2357,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await waitUntil(every: .milliseconds(20)) {
             await coordinator.readyPlan(for: rootPath)?.totals.copyCount == 1
         }
-        log("END")
-        log("END")
         await coordinator.shutdown()
     }
 
@@ -2413,7 +2364,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     @Test func importIsRefusedWhileDeviceIsStillEnumerating() async throws {
         log("START importIsRefusedWhileDeviceIsStillEnumerating")
-        let temp = try makeTempRoot()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -2506,8 +2457,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         } else {
             Issue.record("Expected executionUnavailable once readiness resolved, got \(resolved.state)")
         }
-        log("END")
-        log("END")
         await coordinator.shutdown()
     }
 }

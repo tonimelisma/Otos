@@ -575,8 +575,14 @@ struct ImportSessionMachineTests {
         #expect(machine.handle(.buildFinished(build.id, Self.builtPlan(for: build))).isEmpty)
         #expect(machine.handle(.librariesRefreshed(Self.snapshot([Self.cardState()]))).isEmpty)
 
+        // Once shutdown completes, the card attaches as it did the first time: one
+        // session, planning one build into the library.
         _ = machine.handle(.shutdownCompleted)
-        #expect(!machine.handle(.librariesRefreshed(Self.snapshot([Self.library(Self.libraryA), Self.cardState()]))).isEmpty)
+        let reattached = machine.handle(.librariesRefreshed(Self.snapshot([Self.library(Self.libraryA), Self.cardState()])))
+        #expect(Array(machine.sessions.keys) == [Self.card])
+        let rebuilds = Self.builds(in: reattached)
+        #expect(rebuilds.map(\.id.source) == [Self.card])
+        #expect(rebuilds.map(\.destination) == [Self.libraryA])
     }
 
     @Test func aCardWithNoDestinationLibrarySettlesWithoutABuild() {

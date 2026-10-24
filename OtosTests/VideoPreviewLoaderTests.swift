@@ -35,18 +35,17 @@ struct VideoPreviewLoaderTests {
         #expect(result == nil)
     }
 
-    @Test func playCreatesPlayerWhenMaterialized() async {
+    @Test func playCreatesPlayerWhenMaterialized() async throws {
         let loader = VideoPreviewLoader(
             status: { _ in .materialized },
             materializationRequester: ClosureMaterializationRequester { _ in .cancelled }
         )
         let videoDetail = detail(kind: .video)
-        let state = await loader.preparePlayer(id: id("a.mp4"), detail: videoDetail)
-        #expect(state != nil)
-        #expect(state?.id.relativePath.rawValue == "a.mp4")
+        let state = try #require(await loader.preparePlayer(id: id("a.mp4"), detail: videoDetail))
+        expectFreshPlayer(state, for: id("a.mp4"))
     }
 
-    @Test func playMaterializesWhenDataless() async {
+    @Test func playMaterializesWhenDataless() async throws {
         let counter = TestCounter()
         let requester = ClosureMaterializationRequester { _ in
             counter.increment()
@@ -67,8 +66,8 @@ struct VideoPreviewLoaderTests {
             materializationRequester: requester
         )
         let videoDetail = detail(kind: .video)
-        let state = await loader.preparePlayer(id: id("b.mp4"), detail: videoDetail)
-        #expect(state != nil)
+        let state = try #require(await loader.preparePlayer(id: id("b.mp4"), detail: videoDetail))
+        expectFreshPlayer(state, for: id("b.mp4"))
         #expect(counter.value == 1)
     }
 
@@ -85,19 +84,28 @@ struct VideoPreviewLoaderTests {
         #expect(state == nil)
     }
 
-    @Test func loupeVideoStateCleanupReplacesPlayer() async {
+    @Test func loupeVideoStateCleanupReplacesPlayer() async throws {
         let loader = VideoPreviewLoader(
             status: { _ in .materialized },
             materializationRequester: ClosureMaterializationRequester { _ in .cancelled }
         )
         let videoDetail = detail(kind: .video)
-        let first = await loader.preparePlayer(id: id("a.mp4"), detail: videoDetail)
-        #expect(first != nil)
-        if let first {
-            loader.cleanup(first)
-        }
-        // Second play after cleanup should succeed with new id
-        let second = await loader.preparePlayer(id: id("b.mp4"), detail: videoDetail)
-        #expect(second?.id.relativePath.rawValue == "b.mp4")
+        let first = try #require(await loader.preparePlayer(id: id("a.mp4"), detail: videoDetail))
+        loader.cleanup(first)
+        #expect(first.player.currentItem == nil)
+        #expect(first.player.rate == 0)
+        // A play after cleanup gets its own player for the new asset.
+        let second = try #require(await loader.preparePlayer(id: id("b.mp4"), detail: videoDetail))
+        expectFreshPlayer(second, for: id("b.mp4"))
+        #expect(second.player !== first.player)
+    }
+
+    /// A newly prepared player: paused, for exactly this asset's file. The fixture paths
+    /// name no real file, so no video track is readable and the display size is unknown.
+    private func expectFreshPlayer(_ state: LoupeVideoState, for id: MediaAssetID) {
+        #expect(state.id == id)
+        #expect(!state.isPlaying)
+        #expect(state.displaySize == nil)
+        #expect((state.player.currentItem?.asset as? AVURLAsset)?.url == id.fileURL)
     }
 }

@@ -5,6 +5,7 @@ import Testing
 /// APP-018: a connected camera's catalog follows the camera. Each change the camera
 /// reports runs one more pass: new items are recorded, staged and thumbnailed once,
 /// and an item the camera no longer lists is removed only when the list held still.
+@Suite(.testDirectory)
 @MainActor
 struct CameraCatalogSyncTests {
     @Test func aConnectedCameraStaysInStepWithItsCard() async throws {
@@ -52,7 +53,7 @@ struct CameraCatalogSyncTests {
         let rangeCapableRoots = TestRecorder<LibraryRootPath>()
 
         init(passes: [DeviceCameraCatalogSnapshot]) async throws {
-            let temp = try makeCatalogStoreTemporaryDirectory()
+            let temp = try makeTestDirectory()
             store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
             try await store.start(scansSavedLibraries: false)
             camera = ScriptedCamera(

@@ -4,334 +4,332 @@ import os
 @testable import OtosKit
 import Testing
 
-/// Controller-level tests for the model-owned mouse selection (APP-011).
-///
-/// These drive the **real** `MediaGridCollectionView.mouseDown(with:)` override — the same
-/// path a real click takes — with synthesized `NSEvent`s positioned at the center of a
-/// known item's frame. Because the override does not call `super.mouseDown`, there is no
-/// AppKit tracking loop to drive, so the test does not pre-settle the selection the way
-/// the prior (broken) test harness did: it exercises the actual gesture classification →
-/// `GridSelection` computation → `selectionIndexPaths` write. `CGEvent` posting (real HID
-/// events) was considered for hit-test fidelity but rejected for a test process: it posts
-/// to absolute screen coordinates, moves the real cursor, and needs an on-screen focused
-/// window plus accessibility grants. Driving `mouseDown(with:)` with a synthetic `NSEvent`
-/// is deterministic, runs headless, and still exercises the owned path end-to-end — the
-/// only thing it skips is AppKit's native selection tracking loop, which the design
-/// deliberately never calls.
-/// Serialized for the same reason as `MediaGridStripInputTests`: these tests host
-/// real `NSWindow`s and spin the run loop, and concurrent window-hosting suites
-/// race AppKit over key-window state and teardown. Leaving this suite parallel
-/// while the strip suite was serialized only moved the race here — a full run
-/// deadlocked in this suite after 786 tests, parked in `XCTWaiter`.
-@Suite(.serialized)
-@MainActor
-struct MediaGridSelectionControllerTests {
-    // MARK: - Acceptance matrix (rows 1–14)
+extension AppKitWindowTests {
+    /// Controller-level tests for the model-owned mouse selection (APP-011).
+    ///
+    /// These drive the **real** `MediaGridCollectionView.mouseDown(with:)` override — the same
+    /// path a real click takes — with synthesized `NSEvent`s positioned at the center of a
+    /// known item's frame. Because the override does not call `super.mouseDown`, there is no
+    /// AppKit tracking loop to drive, so the test does not pre-settle the selection the way
+    /// the prior (broken) test harness did: it exercises the actual gesture classification →
+    /// `GridSelection` computation → `selectionIndexPaths` write. `CGEvent` posting (real HID
+    /// events) was considered for hit-test fidelity but rejected for a test process: it posts
+    /// to absolute screen coordinates, moves the real cursor, and needs an on-screen focused
+    /// window plus accessibility grants. Driving `mouseDown(with:)` with a synthetic `NSEvent`
+    /// is deterministic, runs headless, and still exercises the owned path end-to-end — the
+    /// only thing it skips is AppKit's native selection tracking loop, which the design
+    /// deliberately never calls.
+    ///
+    /// Its tests host real windows, so it is nested in `AppKitWindowTests`.
+    @MainActor
+    struct MediaGridSelectionControllerTests {
+        // MARK: - Acceptance matrix (rows 1–14)
 
-    @Test func row1_plainClickSelectsOnlyTheClickedItem() throws {
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[2], modifiers: [])
+        @Test func row1_plainClickSelectsOnlyTheClickedItem() throws {
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[2], modifiers: [])
 
-        #expect(harness.selectedIDs() == [harness.ids[2]])
-        #expect(harness.controller.gridSelection.anchor == harness.ids[2])
-        #expect(harness.controller.gridSelection.base == [harness.ids[2]])
-    }
+            #expect(harness.selectedIDs() == [harness.ids[2]])
+            #expect(harness.controller.gridSelection.anchor == harness.ids[2])
+            #expect(harness.controller.gridSelection.base == [harness.ids[2]])
+        }
 
-    @Test func row2_shiftClickExtendsAForwardRange() throws {
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[2], modifiers: [])
-        try harness.click(harness.ids[5], modifiers: [.shift])
+        @Test func row2_shiftClickExtendsAForwardRange() throws {
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[2], modifiers: [])
+            try harness.click(harness.ids[5], modifiers: [.shift])
 
-        #expect(harness.selectedIDs() == Set(harness.ids[2 ... 5]))
-        #expect(harness.controller.gridSelection.anchor == harness.ids[2])
-    }
+            #expect(harness.selectedIDs() == Set(harness.ids[2 ... 5]))
+            #expect(harness.controller.gridSelection.anchor == harness.ids[2])
+        }
 
-    @Test func row3_secondShiftClickContractsAndKeepsTheClickedTile() throws {
-        // B1: click 1, ⇧-click 4 → {1,2,3,4}; ⇧-click 3 → {1,2,3} (not {1,2}).
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[1], modifiers: [])
-        try harness.click(harness.ids[4], modifiers: [.shift])
-        #expect(harness.selectedIDs() == Set(harness.ids[1 ... 4]))
+        @Test func row3_secondShiftClickContractsAndKeepsTheClickedTile() throws {
+            // B1: click 1, ⇧-click 4 → {1,2,3,4}; ⇧-click 3 → {1,2,3} (not {1,2}).
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[1], modifiers: [])
+            try harness.click(harness.ids[4], modifiers: [.shift])
+            #expect(harness.selectedIDs() == Set(harness.ids[1 ... 4]))
 
-        try harness.click(harness.ids[3], modifiers: [.shift])
-        #expect(harness.selectedIDs() == Set(harness.ids[1 ... 3]))
-    }
+            try harness.click(harness.ids[3], modifiers: [.shift])
+            #expect(harness.selectedIDs() == Set(harness.ids[1 ... 3]))
+        }
 
-    @Test func row4_shiftClickExtendsABackwardRange() throws {
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[5], modifiers: [])
-        try harness.click(harness.ids[2], modifiers: [.shift])
+        @Test func row4_shiftClickExtendsABackwardRange() throws {
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[5], modifiers: [])
+            try harness.click(harness.ids[2], modifiers: [.shift])
 
-        #expect(harness.selectedIDs() == Set(harness.ids[2 ... 5]))
-    }
+            #expect(harness.selectedIDs() == Set(harness.ids[2 ... 5]))
+        }
 
-    @Test func row5_commandClickAddsAnIslandAndMovesTheAnchor() throws {
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[1], modifiers: [])
-        try harness.click(harness.ids[4], modifiers: [.command])
+        @Test func row5_commandClickAddsAnIslandAndMovesTheAnchor() throws {
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[1], modifiers: [])
+            try harness.click(harness.ids[4], modifiers: [.command])
 
-        #expect(harness.selectedIDs() == [harness.ids[1], harness.ids[4]])
-        #expect(harness.controller.gridSelection.anchor == harness.ids[4])
-    }
+            #expect(harness.selectedIDs() == [harness.ids[1], harness.ids[4]])
+            #expect(harness.controller.gridSelection.anchor == harness.ids[4])
+        }
 
-    @Test func row6_shiftClickAfterCommandClickRangesFromNewAnchorKeepingIsland() throws {
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[1], modifiers: [])
-        try harness.click(harness.ids[4], modifiers: [.command])
-        try harness.click(harness.ids[6], modifiers: [.shift])
+        @Test func row6_shiftClickAfterCommandClickRangesFromNewAnchorKeepingIsland() throws {
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[1], modifiers: [])
+            try harness.click(harness.ids[4], modifiers: [.command])
+            try harness.click(harness.ids[6], modifiers: [.shift])
 
-        #expect(harness.selectedIDs() == Set([harness.ids[1]] + harness.ids[4 ... 6]))
-    }
+            #expect(harness.selectedIDs() == Set([harness.ids[1]] + harness.ids[4 ... 6]))
+        }
 
-    @Test func row7_commandClickInsideARangeRemovesOnlyThatItem() throws {
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[2], modifiers: [])
-        try harness.click(harness.ids[5], modifiers: [.shift]) // {C,D,E,F}
-        try harness.click(harness.ids[3], modifiers: [.command]) // remove D
+        @Test func row7_commandClickInsideARangeRemovesOnlyThatItem() throws {
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[2], modifiers: [])
+            try harness.click(harness.ids[5], modifiers: [.shift]) // {C,D,E,F}
+            try harness.click(harness.ids[3], modifiers: [.command]) // remove D
 
-        #expect(harness.selectedIDs() == [harness.ids[2], harness.ids[4], harness.ids[5]])
-    }
+            #expect(harness.selectedIDs() == [harness.ids[2], harness.ids[4], harness.ids[5]])
+        }
 
-    @Test func row8_plainClickCollapsingAMultiSelectionReanchors() throws {
-        // B2: select {C,D,E}, plain-click D → {D}; base becomes {D}.
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[2], modifiers: [])
-        try harness.click(harness.ids[3], modifiers: [.command])
-        try harness.click(harness.ids[4], modifiers: [.command])
-        #expect(harness.selectedIDs() == Set(harness.ids[2 ... 4]))
+        @Test func row8_plainClickCollapsingAMultiSelectionReanchors() throws {
+            // B2: select {C,D,E}, plain-click D → {D}; base becomes {D}.
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[2], modifiers: [])
+            try harness.click(harness.ids[3], modifiers: [.command])
+            try harness.click(harness.ids[4], modifiers: [.command])
+            #expect(harness.selectedIDs() == Set(harness.ids[2 ... 4]))
 
-        try harness.click(harness.ids[3], modifiers: [])
+            try harness.click(harness.ids[3], modifiers: [])
 
-        #expect(harness.selectedIDs() == [harness.ids[3]])
-        #expect(harness.controller.gridSelection.base == [harness.ids[3]])
-    }
+            #expect(harness.selectedIDs() == [harness.ids[3]])
+            #expect(harness.controller.gridSelection.base == [harness.ids[3]])
+        }
 
-    @Test func row9_shiftClickAfterCollapseDoesNotReAddPriorSelection() throws {
-        // B2: …then ⇧-click G → {D,E,F,G}, not {C,D,E,F,G}.
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[2], modifiers: [])
-        try harness.click(harness.ids[3], modifiers: [.command])
-        try harness.click(harness.ids[4], modifiers: [.command])
-        try harness.click(harness.ids[3], modifiers: []) // collapse to D
-        try harness.click(harness.ids[6], modifiers: [.shift])
+        @Test func row9_shiftClickAfterCollapseDoesNotReAddPriorSelection() throws {
+            // B2: …then ⇧-click G → {D,E,F,G}, not {C,D,E,F,G}.
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[2], modifiers: [])
+            try harness.click(harness.ids[3], modifiers: [.command])
+            try harness.click(harness.ids[4], modifiers: [.command])
+            try harness.click(harness.ids[3], modifiers: []) // collapse to D
+            try harness.click(harness.ids[6], modifiers: [.shift])
 
-        #expect(harness.selectedIDs() == Set(harness.ids[3 ... 6]))
-    }
+            #expect(harness.selectedIDs() == Set(harness.ids[3 ... 6]))
+        }
 
-    @Test func plainMouseDownOnASelectedTileWaitsForMouseUpAndADragKeepsTheSelection() throws {
-        // ADR 0028: {C,D,E} selected; mouse-down on D changes nothing yet, mouse-up collapses
-        // to {D}; a drag that begins in between keeps {C,D,E} and starts the drag instead.
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[2], modifiers: [])
-        try harness.click(harness.ids[3], modifiers: [.command])
-        try harness.click(harness.ids[4], modifiers: [.command])
+        @Test func plainMouseDownOnASelectedTileWaitsForMouseUpAndADragKeepsTheSelection() throws {
+            // ADR 0028: {C,D,E} selected; mouse-down on D changes nothing yet, mouse-up collapses
+            // to {D}; a drag that begins in between keeps {C,D,E} and starts the drag instead.
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[2], modifiers: [])
+            try harness.click(harness.ids[3], modifiers: [.command])
+            try harness.click(harness.ids[4], modifiers: [.command])
 
-        try harness.mouseDown(harness.ids[3], modifiers: [])
-        #expect(harness.selectedIDs() == Set(harness.ids[2 ... 4]))
-        try harness.mouseUp(harness.ids[3], modifiers: [])
-        #expect(harness.selectedIDs() == [harness.ids[3]])
+            try harness.mouseDown(harness.ids[3], modifiers: [])
+            #expect(harness.selectedIDs() == Set(harness.ids[2 ... 4]))
+            try harness.mouseUp(harness.ids[3], modifiers: [])
+            #expect(harness.selectedIDs() == [harness.ids[3]])
 
-        try harness.click(harness.ids[2], modifiers: [])
-        try harness.click(harness.ids[4], modifiers: [.shift])
-        var dragStarts: [IndexPath] = []
-        harness.controller.collectionView.onDragBegin = { hit, _ in dragStarts.append(hit) }
-        try harness.mouseDown(harness.ids[3], modifiers: [])
-        try harness.mouseDrag(from: harness.ids[3], by: MediaGridDragPolicy.dragThreshold + 1)
-        try harness.mouseUp(harness.ids[3], modifiers: [])
+            try harness.click(harness.ids[2], modifiers: [])
+            try harness.click(harness.ids[4], modifiers: [.shift])
+            var dragStarts: [IndexPath] = []
+            harness.controller.collectionView.onDragBegin = { hit, _ in dragStarts.append(hit) }
+            try harness.mouseDown(harness.ids[3], modifiers: [])
+            try harness.mouseDrag(from: harness.ids[3], by: MediaGridDragPolicy.dragThreshold + 1)
+            try harness.mouseUp(harness.ids[3], modifiers: [])
 
-        #expect(harness.selectedIDs() == Set(harness.ids[2 ... 4]))
-        #expect(dragStarts.count == 1)
-    }
+            #expect(harness.selectedIDs() == Set(harness.ids[2 ... 4]))
+            #expect(dragStarts.count == 1)
+        }
 
-    @Test func row10_commandClickDeselectingTheSoleSelectionLeavesAnchorAsPivot() throws {
-        // B3 setup: click B, ⌘-click B → ∅; anchor stays B, base ∅.
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[1], modifiers: [])
-        try harness.click(harness.ids[1], modifiers: [.command])
+        @Test func row10_commandClickDeselectingTheSoleSelectionLeavesAnchorAsPivot() throws {
+            // B3 setup: click B, ⌘-click B → ∅; anchor stays B, base ∅.
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[1], modifiers: [])
+            try harness.click(harness.ids[1], modifiers: [.command])
 
-        #expect(harness.selectedIDs().isEmpty)
-        #expect(harness.controller.gridSelection.anchor == harness.ids[1])
-        #expect(harness.controller.gridSelection.base.isEmpty)
-    }
+            #expect(harness.selectedIDs().isEmpty)
+            #expect(harness.controller.gridSelection.anchor == harness.ids[1])
+            #expect(harness.controller.gridSelection.base.isEmpty)
+        }
 
-    @Test func row11_shiftClickAfterCommandDeselectRangesFromPivotWithNothingStale() throws {
-        // B3: …then ⇧-click E → {B,C,D,E}.
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[1], modifiers: [])
-        try harness.click(harness.ids[1], modifiers: [.command])
-        try harness.click(harness.ids[4], modifiers: [.shift])
+        @Test func row11_shiftClickAfterCommandDeselectRangesFromPivotWithNothingStale() throws {
+            // B3: …then ⇧-click E → {B,C,D,E}.
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[1], modifiers: [])
+            try harness.click(harness.ids[1], modifiers: [.command])
+            try harness.click(harness.ids[4], modifiers: [.shift])
 
-        #expect(harness.selectedIDs() == Set(harness.ids[1 ... 4]))
-    }
+            #expect(harness.selectedIDs() == Set(harness.ids[1 ... 4]))
+        }
 
-    @Test func row12_emptySpaceClickClearsSelectionAndAnchor() throws {
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[2], modifiers: [])
+        @Test func row12_emptySpaceClickClearsSelectionAndAnchor() throws {
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[2], modifiers: [])
 
-        try harness.clickEmptySpace(modifiers: [])
+            try harness.clickEmptySpace(modifiers: [])
 
-        #expect(harness.selectedIDs().isEmpty)
-        #expect(harness.controller.gridSelection.anchor == nil)
-    }
+            #expect(harness.selectedIDs().isEmpty)
+            #expect(harness.controller.gridSelection.anchor == nil)
+        }
 
-    @Test func row13_shiftClickWithEmptySelectionFallsBackToClicked() throws {
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[3], modifiers: [.shift])
+        @Test func row13_shiftClickWithEmptySelectionFallsBackToClicked() throws {
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[3], modifiers: [.shift])
 
-        #expect(harness.selectedIDs() == [harness.ids[3]])
-        #expect(harness.controller.gridSelection.anchor == harness.ids[3])
-    }
+            #expect(harness.selectedIDs() == [harness.ids[3]])
+            #expect(harness.controller.gridSelection.anchor == harness.ids[3])
+        }
 
-    @Test func row14_commandShiftClickExtendsRangeKeepingIslands() throws {
-        // {B,E} (anchor E), ⌘⇧-click H → {B,E,F,G,H}.
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[4], modifiers: []) // E
-        try harness.click(harness.ids[1], modifiers: [.command]) // + B, anchor→B
-        try harness.click(harness.ids[4], modifiers: [.command]) // pivot back to E
-        try harness.click(harness.ids[7], modifiers: [.shift, .command]) // ⌘⇧ H
+        @Test func row14_commandShiftClickExtendsRangeKeepingIslands() throws {
+            // {B,E} (anchor E), ⌘⇧-click H → {B,E,F,G,H}.
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[4], modifiers: []) // E
+            try harness.click(harness.ids[1], modifiers: [.command]) // + B, anchor→B
+            try harness.click(harness.ids[4], modifiers: [.command]) // pivot back to E
+            try harness.click(harness.ids[7], modifiers: [.shift, .command]) // ⌘⇧ H
 
-        #expect(harness.selectedIDs() == Set([harness.ids[1]] + harness.ids[4 ... 7]))
-    }
+            #expect(harness.selectedIDs() == Set([harness.ids[1]] + harness.ids[4 ... 7]))
+        }
 
-    // MARK: - Model → view render (structural apply no longer writes the model)
+        // MARK: - Model → view render (structural apply no longer writes the model)
 
-    @Test func structuralApplyRendersPrunedModelWithoutWritingIt() throws {
-        // Prune lives in ViewModel.applyState; the controller only renders.
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[2], modifiers: [])
-        try harness.click(harness.ids[3], modifiers: [.shift])
-        #expect(harness.selectedIDs() == Set(harness.ids[2 ... 3]))
+        @Test func structuralApplyRendersPrunedModelWithoutWritingIt() throws {
+            // Prune lives in ViewModel.applyState; the controller only renders.
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[2], modifiers: [])
+            try harness.click(harness.ids[3], modifiers: [.shift])
+            #expect(harness.selectedIDs() == Set(harness.ids[2 ... 3]))
 
-        harness.setModelSelection(
-            GridSelection(
-                selection: [harness.ids[2]],
-                anchor: harness.ids[2],
-                base: [harness.ids[2]]
+            harness.setModelSelection(
+                GridSelection(
+                    selection: [harness.ids[2]],
+                    anchor: harness.ids[2],
+                    base: [harness.ids[2]]
+                )
             )
-        )
-        harness.controller.renderSelectionFromModel(reason: "structuralApply")
+            harness.controller.renderSelectionFromModel(reason: "structuralApply")
 
-        #expect(harness.controller.gridSelection.selection == [harness.ids[2]])
-        #expect(harness.selectedIDs() == [harness.ids[2]])
-    }
+            #expect(harness.controller.gridSelection.selection == [harness.ids[2]])
+            #expect(harness.selectedIDs() == [harness.ids[2]])
+        }
 
-    @Test func structuralApplyRendersEmptyModelAfterDescriptorClear() throws {
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[1], modifiers: [])
+        @Test func structuralApplyRendersEmptyModelAfterDescriptorClear() throws {
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[1], modifiers: [])
 
-        harness.setModelSelection(.empty)
-        let grid = CatalogMediaGridState(
-            scope: .library(LibraryRootPath(rawValue: "/Pictures")),
-            orderedAssetIDs: harness.ids
-        )
-        let context = MediaGridViewController.StructuralApplyCompletionContext(
-            grid: grid,
-            change: .scope,
-            applyStart: .now,
-            applyCallStart: .now,
-            diffPolicyMs: 0,
-            snapshotBuildMs: 0,
-            insertedCount: 0,
-            removedCount: 0,
-            reorderOnly: false,
-            largeApply: false,
-            animatingDifferences: true,
-            animationSuppressed: false,
-            usesReloadDataFallback: false,
-            heldDuringScroll: false,
-            signpost: .beginState(id: .exclusive)
-        )
+            harness.setModelSelection(.empty)
+            let grid = CatalogMediaGridState(
+                scope: .library(LibraryRootPath(rawValue: "/Pictures")),
+                orderedAssetIDs: harness.ids
+            )
+            let context = MediaGridViewController.StructuralApplyCompletionContext(
+                grid: grid,
+                change: .scope,
+                applyStart: .now,
+                applyCallStart: .now,
+                diffPolicyMs: 0,
+                snapshotBuildMs: 0,
+                insertedCount: 0,
+                removedCount: 0,
+                reorderOnly: false,
+                largeApply: false,
+                animatingDifferences: true,
+                animationSuppressed: false,
+                usesReloadDataFallback: false,
+                heldDuringScroll: false,
+                signpost: .beginState(id: .exclusive)
+            )
 
-        harness.controller.completeStructuralApply(context, operation: nil, stallMonitor: nil)
+            harness.controller.completeStructuralApply(context, operation: nil, stallMonitor: nil)
 
-        #expect(harness.controller.gridSelection == .empty)
-        #expect(harness.selectedIDs().isEmpty)
-    }
+            #expect(harness.controller.gridSelection == .empty)
+            #expect(harness.selectedIDs().isEmpty)
+        }
 
-    @Test func programmaticDeltaDoesNotReconcile() throws {
-        let harness = try makeHarness(itemCount: 4)
-        var reconcileCount = 0
-        harness.installSpyHandlers(onReconcile: { reconcileCount += 1 })
+        @Test func programmaticDeltaDoesNotReconcile() throws {
+            let harness = try makeHarness(itemCount: 4)
+            var reconcileCount = 0
+            harness.installSpyHandlers(onReconcile: { reconcileCount += 1 })
 
-        try harness.click(harness.ids[0], modifiers: [])
-        reconcileCount = 0
-        harness.controller.applySelectionDelta(
-            from: [harness.ids[0]],
-            to: [harness.ids[1]]
-        )
-        #expect(reconcileCount == 0)
-        #expect(harness.selectedIDs() == [harness.ids[1]])
+            try harness.click(harness.ids[0], modifiers: [])
+            reconcileCount = 0
+            harness.controller.applySelectionDelta(
+                from: [harness.ids[0]],
+                to: [harness.ids[1]]
+            )
+            #expect(reconcileCount == 0)
+            #expect(harness.selectedIDs() == [harness.ids[1]])
 
-        harness.controller.collectionView(
-            harness.controller.collectionView,
-            didSelectItemsAt: []
-        )
-        #expect(reconcileCount == 1)
-    }
+            harness.controller.collectionView(
+                harness.controller.collectionView,
+                didSelectItemsAt: []
+            )
+            #expect(reconcileCount == 1)
+        }
 
-    @Test func shiftChainContractionAfterNativeEcho() throws {
-        // Guards the base-stomp regression: programmatic echoes must not reset base.
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[1], modifiers: [])
-        try harness.click(harness.ids[4], modifiers: [.shift])
-        #expect(harness.selectedIDs() == Set(harness.ids[1 ... 4]))
+        @Test func shiftChainContractionAfterNativeEcho() throws {
+            // Guards the base-stomp regression: programmatic echoes must not reset base.
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[1], modifiers: [])
+            try harness.click(harness.ids[4], modifiers: [.shift])
+            #expect(harness.selectedIDs() == Set(harness.ids[1 ... 4]))
 
-        try harness.click(harness.ids[3], modifiers: [.shift])
-        #expect(harness.selectedIDs() == Set(harness.ids[1 ... 3]))
-    }
+            try harness.click(harness.ids[3], modifiers: [.shift])
+            #expect(harness.selectedIDs() == Set(harness.ids[1 ... 3]))
+        }
 
-    // MARK: - Thumbnail-only hit area
+        // MARK: - Thumbnail-only hit area
 
-    @Test func clickInsideLandscapeThumbnailFaceSelects() throws {
-        let harness = try makeHarness(itemCount: 8)
-        let target = harness.ids[2]
-        harness.configureItemWithThumbnail(target, pixelSize: CGSize(width: 400, height: 200))
+        @Test func clickInsideLandscapeThumbnailFaceSelects() throws {
+            let harness = try makeHarness(itemCount: 8)
+            let target = harness.ids[2]
+            harness.configureItemWithThumbnail(target, pixelSize: CGSize(width: 400, height: 200))
 
-        try harness.clickItem(target, target: .thumbnailFaceCenter, modifiers: [])
+            try harness.clickItem(target, target: .thumbnailFaceCenter, modifiers: [])
 
-        #expect(harness.selectedIDs() == [target])
-        #expect(harness.controller.gridSelection.anchor == target)
-    }
+            #expect(harness.selectedIDs() == [target])
+            #expect(harness.controller.gridSelection.anchor == target)
+        }
 
-    @Test func clickInLandscapeLetterboxDeselects() throws {
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[2], modifiers: []) // establish a selection
-        #expect(!harness.selectedIDs().isEmpty)
+        @Test func clickInLandscapeLetterboxDeselects() throws {
+            let harness = try makeHarness(itemCount: 8)
+            try harness.click(harness.ids[2], modifiers: []) // establish a selection
+            #expect(!harness.selectedIDs().isEmpty)
 
-        let target = harness.ids[3]
-        harness.configureItemWithThumbnail(target, pixelSize: CGSize(width: 400, height: 200))
+            let target = harness.ids[3]
+            harness.configureItemWithThumbnail(target, pixelSize: CGSize(width: 400, height: 200))
 
-        try harness.clickItem(target, target: .topLetterboxCenter, modifiers: [])
+            try harness.clickItem(target, target: .topLetterboxCenter, modifiers: [])
 
-        #expect(harness.selectedIDs().isEmpty)
-        #expect(harness.controller.gridSelection.anchor == nil)
-    }
+            #expect(harness.selectedIDs().isEmpty)
+            #expect(harness.controller.gridSelection.anchor == nil)
+        }
 
-    @Test func unmodifiedDoubleClickForwardsAfterSelection() throws {
-        let harness = try makeHarness(itemCount: 8)
-        var doubleClicked: MediaAssetID?
-        harness.controller.onItemDoubleClick = { doubleClicked = $0 }
-        try harness.doubleClick(harness.ids[2])
+        @Test func unmodifiedDoubleClickForwardsAfterSelection() throws {
+            let harness = try makeHarness(itemCount: 8)
+            var doubleClicked: MediaAssetID?
+            harness.controller.onItemDoubleClick = { doubleClicked = $0 }
+            try harness.doubleClick(harness.ids[2])
 
-        #expect(harness.selectedIDs() == [harness.ids[2]])
-        #expect(doubleClicked == harness.ids[2])
-    }
+            #expect(harness.selectedIDs() == [harness.ids[2]])
+            #expect(doubleClicked == harness.ids[2])
+        }
 
-    @Test func modifiedClickInLetterboxIsNoOp() throws {
-        let harness = try makeHarness(itemCount: 8)
-        let first = harness.ids[1]
-        let second = harness.ids[3]
-        try harness.click(first, modifiers: [])
-        try harness.click(second, modifiers: [.command])
-        let before = harness.selectedIDs()
-        #expect(before == [first, second])
+        @Test func modifiedClickInLetterboxIsNoOp() throws {
+            let harness = try makeHarness(itemCount: 8)
+            let first = harness.ids[1]
+            let second = harness.ids[3]
+            try harness.click(first, modifiers: [])
+            try harness.click(second, modifiers: [.command])
+            let before = harness.selectedIDs()
+            #expect(before == [first, second])
 
-        let target = harness.ids[4]
-        harness.configureItemWithThumbnail(target, pixelSize: CGSize(width: 400, height: 200))
+            let target = harness.ids[4]
+            harness.configureItemWithThumbnail(target, pixelSize: CGSize(width: 400, height: 200))
 
-        try harness.clickItem(target, target: .topLetterboxCenter, modifiers: [.shift])
+            try harness.clickItem(target, target: .topLetterboxCenter, modifiers: [.shift])
 
-        #expect(harness.selectedIDs() == before)
+            #expect(harness.selectedIDs() == before)
+        }
     }
 }
 

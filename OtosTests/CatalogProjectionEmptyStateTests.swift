@@ -2,9 +2,10 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogProjectionEmptyStateTests {
     @Test func storeBackedAllMediaEmptyStateCountsUnavailableCatalogedMedia() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "catalog.sqlite")
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -87,7 +88,7 @@ struct CatalogProjectionEmptyStateTests {
     /// instead of waiting for the background cadence (APP-044). The cadence here is a
     /// minute; the wait is ten seconds, so only an immediate publication passes.
     @Test func theCatalogLoadPublishesWithoutWaitingForTheCadence() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "catalog.sqlite")
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

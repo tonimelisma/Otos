@@ -7,9 +7,10 @@ import Testing
 /// with neither can never satisfy it, so it reads "stale" forever — even after
 /// enrichment has supplied the capture wall that names it. Planning asks a
 /// different question and must not inherit that permanent answer.
+@Suite(.testDirectory)
 struct ImportPlanningNamingFactsTests {
     @Test func aKnownCaptureWallIsTerminalEvenWhenEnrichmentCanNeverSettle() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         let destinationURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
@@ -92,7 +93,8 @@ struct ImportPlanningNamingFactsTests {
         #expect(applied == .applied(count: 1))
 
         let afterEnrichment = try #require(try await snapshotFacts())
-        #expect(afterEnrichment.captureWallCompact != nil)
+        // The record's floating wall clock, 2026-01-01 12:00:00, verbatim.
+        #expect(afterEnrichment.captureWallCompact == 20_260_101_120_000)
         #expect(afterEnrichment.hasAnyDate)
         // Terminal, not settled: enrichment is still nominally outstanding, but
         // nothing it can add improves this name, so planning must not wait.
@@ -110,7 +112,7 @@ struct ImportPlanningNamingFactsTests {
     /// A durable mtime becomes an honest fallback the moment enrichment has looked and
     /// found no embedded wall — proven absence, not assumed. That is the next test.
     @Test func aDurableMtimeIsPendingUntilEnrichmentHasLooked() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         let destinationURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)

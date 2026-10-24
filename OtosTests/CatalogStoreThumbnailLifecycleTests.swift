@@ -2,6 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogStoreThumbnailLifecycleTests {
     @Test func acceptedStagedThumbnailPromotesAndStampsCatalog() async throws {
         let fixture = try await makeThumbnailLifecycleFixture()
@@ -231,7 +232,7 @@ private struct ThumbnailLifecycleFixture {
 }
 
 private func makeThumbnailLifecycleFixture() async throws -> ThumbnailLifecycleFixture {
-    let temp = try makeCatalogStoreTemporaryDirectory()
+    let temp = try makeTestDirectory()
     let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")

@@ -3,6 +3,7 @@ import Foundation
 import Synchronization
 import Testing
 
+@Suite(.testDirectory)
 struct MediaEnricherTests {
     private final class SequencedReadinessChecker: EnrichmentReadinessChecking, Sendable {
         private let statuses: Mutex<[FileMaterializationStatus]>
@@ -41,7 +42,7 @@ struct MediaEnricherTests {
     /// Found on a live 991-item card: 684 rows lost their thumbnail with all 8,606 files
     /// still present. Neither owner's tests could see it alone.
     @Test func aDeviceRowKeepsItsProvisionalThumbnailWhenNoPreviewIsProduced() throws {
-        let directory = try makeCatalogStoreTemporaryDirectory()
+        let directory = try makeTestDirectory()
         let id = MediaAssetID(
             libraryRootPath: LibraryRootPath(rawValue: "/DeviceStaging/Cam"),
             relativePath: MediaRelativePath(rawValue: "DSC00001.ARW")
@@ -70,7 +71,7 @@ struct MediaEnricherTests {
     /// The other half: a row with nothing on disk still reports nothing, rather than a path
     /// that resolves to a missing file.
     @Test func aRowWithNoThumbnailOnDiskReportsNone() throws {
-        let directory = try makeCatalogStoreTemporaryDirectory()
+        let directory = try makeTestDirectory()
         let id = MediaAssetID(
             libraryRootPath: LibraryRootPath(rawValue: "/DeviceStaging/Cam"),
             relativePath: MediaRelativePath(rawValue: "absent.arw")
@@ -79,7 +80,7 @@ struct MediaEnricherTests {
     }
 
     @Test func enrichesJpegFixtureWithMetadataThumbnailAndTimestampFacts() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let thumbnailDirectory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
         let enricher = MediaEnricher.live(thumbnailDirectory: thumbnailDirectory)
         let url = fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg")
@@ -111,7 +112,7 @@ struct MediaEnricherTests {
     }
 
     @Test func zeroByteStubIsDefinitiveCompleteWithoutThumbnail() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let thumbnailDirectory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
         // 0-byte stubs (toy-camera AVI/JPG shape) cannot yield real QuickLook imagery
         // once `.icon` is rejected from representationTypes.
@@ -135,7 +136,7 @@ struct MediaEnricherTests {
     }
 
     @Test func unsupportedFileIsDefinitiveComplete() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let thumbnailDirectory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
         let textURL = temp.appending(path: "note.txt")
         try Data("not media".utf8).write(to: textURL)
@@ -155,7 +156,7 @@ struct MediaEnricherTests {
 
     @Test func datalessRegressionRoutesBackToDownload() async throws {
         // A missing/unreadable path reports unknown status, so the gate refuses to read.
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let thumbnailDirectory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
         let enricher = MediaEnricher.live(thumbnailDirectory: thumbnailDirectory)
         let missing = temp.appending(path: "gone.jpg")
@@ -172,7 +173,7 @@ struct MediaEnricherTests {
     }
 
     @Test func evictionAfterHashGateSkipsMetadata() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let url = fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg")
         let checker = SequencedReadinessChecker([.materialized, .dataless])
         let enricher = MediaEnricher.live(
@@ -197,7 +198,7 @@ struct MediaEnricherTests {
     }
 
     @Test func evictionAfterMetadataGateSkipsThumbnail() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let thumbnailDirectory = temp.appending(path: "Thumbnails")
         let url = fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg")
         let checker = SequencedReadinessChecker([.materialized, .materialized, .dataless])
@@ -224,7 +225,7 @@ struct MediaEnricherTests {
     }
 
     @Test func materializedEnrichmentUsesOneGatePerBytePhase() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let checker = SequencedReadinessChecker([.materialized, .materialized, .materialized])
         let enricher = MediaEnricher.live(
             thumbnailDirectory: temp.appending(path: "Thumbnails"),
@@ -252,7 +253,7 @@ struct MediaEnricherTests {
     /// than elapsed time — a regression that hashes-and-discards would still return a
     /// nil contentHash, so only observing the hash call itself catches it.
     @Test func removableSourceEnrichmentNeverCallsContentHasher() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let thumbnailDirectory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
         let url = fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg")
         let hasherCalls = Mutex(0)

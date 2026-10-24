@@ -105,6 +105,7 @@ private func result(_ outcome: MaterializationOutcome) -> MaterializationResult 
 
 private let fastRetry = MediaTrashCoordinator.RetryPolicy(delays: [.milliseconds(20)])
 
+@Suite(.testDirectory)
 struct MediaTrashCoordinatorTests {
     @Test func pendingItemsAreTrashedCompanionFirstAndTheirRowsLeave() async throws {
         let fixture = try await TrashFixture.make()
@@ -112,7 +113,7 @@ struct MediaTrashCoordinatorTests {
         // The rows leave because the files left: the fake moves each member out of the
         // root, as the Trash does, so the store's reconcile of these paths agrees with
         // the deletion instead of re-cataloging a file that is still there.
-        let trash = try makeCatalogStoreTemporaryDirectory()
+        let trash = try makeTestDirectory()
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
             materializationRequester: nil,
@@ -376,7 +377,7 @@ extension MediaTrashCoordinatorTests {
     /// A trash stand-in that really moves files into a scratch folder and reports where,
     /// so undo can be exercised without touching the user's Trash.
     private static func scratchTrash() throws -> (URL, MediaTrashCoordinator.TrashExecutor) {
-        let trash = try makeCatalogStoreTemporaryDirectory()
+        let trash = try makeTestDirectory()
         return (trash, { url in
             let destination = trash.appending(path: UUID().uuidString + "-" + url.lastPathComponent)
             try FileManager.default.moveItem(at: url, to: destination)
@@ -458,7 +459,7 @@ extension MediaTrashCoordinatorTests {
     /// Relaunch: a fresh Store on the same catalog file, not yet started by anyone, and a
     /// coordinator that starts first. The pending intent must still be found and drained.
     @Test func pendingItemsResumeBeforeTheCatalogIsStartedElsewhere() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
@@ -509,7 +510,7 @@ private struct TrashFixture {
     let id: MediaAssetID
 
     static func make(primaryBytes: Int = 4) async throws -> TrashFixture {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: String(repeating: "j", count: primaryBytes))

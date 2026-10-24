@@ -2,9 +2,10 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct MediaOperationCoordinatorTests {
     @Test func repeatedIntentAndOccupancyChangeStartOneBatch() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let destinationURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let sourceURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
@@ -56,7 +57,7 @@ struct MediaOperationCoordinatorTests {
     /// explicitly rather than leaving the view to re-derive them from
     /// `fixedLibraries`/`removableSources` itself.
     @Test func presentationCarriesDestinationDisplayNameAndCardStillExists() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let destinationURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let sourceURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
@@ -99,7 +100,7 @@ struct MediaOperationCoordinatorTests {
     /// future capture can distinguish "no events emitted" (idle app awaiting user
     /// input) from "events not received" (broken subscription).
     @Test func planningChangeStreamDeliversAttachedSourceWithoutIntent() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
@@ -155,7 +156,7 @@ struct MediaOperationCoordinatorTests {
     }
 
     @Test func catalogChangeWakesWaitingForMetadataSource() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
@@ -246,7 +247,7 @@ struct MediaOperationCoordinatorTests {
     }
 
     @Test func queueImportSurfacesExecutionUnavailableOrQueuedState() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
@@ -323,7 +324,7 @@ struct MediaOperationCoordinatorTests {
     /// stay there — never livelock back into `.planning` — while a real occupancy
     /// change still forces a replan.
     @Test func noOpPlanRevisionChurnDoesNotDisturbReadyPlan() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
@@ -410,7 +411,7 @@ struct MediaOperationCoordinatorTests {
     /// would fall back to "Checking the card…" on every re-plan — once a second, for
     /// as long as anything kept invalidating, each cycle ending in the identical count.
     @Test func aRebuildKeepsShowingThePlanItIsReplacing() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
@@ -475,7 +476,7 @@ struct MediaOperationCoordinatorTests {
     /// eject button — between every pair of Preparing frames (2026-10-04: a 75-item plan
     /// alternating with `waitingForMetadata(done:, total: 930)` once a second).
     @Test func aPlanProvenBeforeNewPendingRowsIsNotHeldThroughTheMetadataWait() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
@@ -558,7 +559,7 @@ struct MediaOperationCoordinatorTests {
     /// not honour. The bar must never present the old plan after the pick: it
     /// returns to Checking until a plan built against the new destination lands.
     @Test func changingTheDestinationNeverPresentsThePlanBuiltForTheOldOne() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let firstRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let secondRoot = temp.appending(path: "Camera Roll", directoryHint: .isDirectory)
         let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -623,7 +624,7 @@ struct MediaOperationCoordinatorTests {
     }
 
     @Test func destinationNamingChurnDoesNotDisturbReadyPlan() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
@@ -693,7 +694,7 @@ struct MediaOperationCoordinatorTests {
     /// those names after enrichment supplied the real capture wall — which is how
     /// 23 videos were imported twice five minutes apart (field evidence).
     @Test func sourceNamingChangeReplansBecauseItRenamesTheCopy() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
@@ -752,7 +753,7 @@ struct MediaOperationCoordinatorTests {
     }
 
     @Test func destinationDefaultSkipsUnavailableFirstLibrary() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let firstURL = temp.appending(path: "Zebra", directoryHint: .isDirectory)
         let secondURL = temp.appending(path: "Alpha", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -972,7 +973,7 @@ struct MediaOperationCoordinatorTests {
         libraryNames: [String],
         identity: String
     ) async throws -> DestinationFixture {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let libraryURLs = libraryNames.map { temp.appending(path: $0, directoryHint: .isDirectory) }
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         for url in libraryURLs + [cardURL] {

@@ -3,6 +3,7 @@ import Foundation
 import Synchronization
 import Testing
 
+@Suite(.testDirectory)
 struct EnrichmentCoordinatorTests {
     @Test func unchangedAdmissionRejectionsEmitOneTransitionAcrossOneHundredWakes() async {
         let coordinator = EnrichmentCoordinator(
@@ -21,7 +22,7 @@ struct EnrichmentCoordinatorTests {
     }
 
     @Test func enrichmentCoordinatorCapsVideosAndSkipsRejectedQueueHead() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
@@ -64,7 +65,7 @@ struct EnrichmentCoordinatorTests {
     }
 
     @Test func eagerDeviceStagingDownloadsStillItemsBeforeVideos() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let rootPath = LibraryRootPath(
             rawValue: temp.appending(path: "DeviceStaging/Camera").path(percentEncoded: false)
         )
@@ -88,7 +89,7 @@ struct EnrichmentCoordinatorTests {
     }
 
     @Test func shutdownReleasesQueuedAndInFlightClaims() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let relativeNames = ["a.jpg", "b.jpg", "c.jpg"]
@@ -124,7 +125,7 @@ struct EnrichmentCoordinatorTests {
     /// The eject drain drops work that was claimed but not started, and returns when the
     /// work that was running finishes — not after an interval.
     @Test func drainDropsQueuedWorkAndReturnsWhenRunningWorkFinishes() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let relativeNames = ["a.jpg", "b.jpg", "c.jpg"]
@@ -165,7 +166,7 @@ struct EnrichmentCoordinatorTests {
     }
 
     @Test func visibleThumbnailLifecycleEnrichesViewportPriorityAssets() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
@@ -193,7 +194,7 @@ struct EnrichmentCoordinatorTests {
     }
 
     @Test func enrichesMaterializedAndDownloadsThenEnrichesDataless() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
@@ -265,7 +266,7 @@ struct EnrichmentCoordinatorTests {
     }
 
     @Test func transientOutcomeIsRetriedUntilComplete() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
@@ -308,7 +309,7 @@ struct EnrichmentCoordinatorTests {
     }
 
     @Test func droppedStaleResultReWakesAndReEnriches() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
@@ -352,7 +353,7 @@ struct EnrichmentCoordinatorTests {
     }
 
     @Test func zeroByteClaimedAssetShortCircuitsWithoutMaterializeOrEnricher() async throws {
-        let root = try makeCatalogStoreTemporaryDirectory().appending(path: "Pics", directoryHint: .isDirectory)
+        let root = try makeTestDirectory().appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let store = CatalogStore(
             location: .inMemory,
@@ -405,7 +406,7 @@ struct EnrichmentCoordinatorTests {
         .enabled(if: ProcessInfo.processInfo.environment["OTOS_SCALE_TEST"] == "1")
     )
     func largeDatalessLibraryKeepsClaimAndMaterializationHandoffBounded() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let names = (0 ..< 25000).map { "asset-\($0).jpg" }
@@ -449,7 +450,7 @@ struct EnrichmentCoordinatorTests {
     // MARK: - Claim-window release and retry exhaustion
 
     @Test func exhaustedBackgroundRetriesReleaseClaimWindowForFreshCandidate() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["fresh.jpg"]))
@@ -517,7 +518,7 @@ struct EnrichmentCoordinatorTests {
     }
 
     @Test func retryLedgerDefersMatchingSignatureAndResetsOnChange() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let store = CatalogStore(location: .inMemory, scanner: fixedScanner([("a.jpg", 100)]))
@@ -559,7 +560,7 @@ struct EnrichmentCoordinatorTests {
     }
 
     @Test func retryLedgerSkipsPastBlockedCandidatesWithinBoundedPasses() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         // "blocked-*" sorts before "fresh" so Store's deterministic ordering
@@ -1046,7 +1047,7 @@ struct EnrichmentCoordinatorTests {
     /// coordinator, and confirms each dispatched `EnrichWork.shouldHash` matches its own
     /// claim rather than a single shared coordinator-wide value.
     @Test func dispatchedWorkCarriesClaimTimeHashRequiredPerRoot() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let removableRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)

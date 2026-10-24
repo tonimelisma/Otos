@@ -78,9 +78,10 @@ struct ImportPreferencesStoreTests {
     }
 }
 
+@Suite(.testDirectory)
 struct MediaCompanionInventoryTests {
     @Test func scanInventoriesCompanionsWithoutEnteringMediaQueries() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "IMG_1.JPG"), contents: "jpeg")
@@ -132,7 +133,7 @@ struct MediaCompanionInventoryTests {
     }
 
     @Test func targetedDeleteRepairsCompanionPairing() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let media = root.appending(path: "shot.JPG")

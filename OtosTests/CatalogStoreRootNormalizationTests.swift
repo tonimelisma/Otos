@@ -3,6 +3,7 @@ import GRDB
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogStoreRootNormalizationTests {
     @Test func addLibraryResolvesSymlinkedRootBeforeScanning() async throws {
         let fixture = try makeSymlinkedOneDrivePicturesFixture()
@@ -93,7 +94,7 @@ private struct SymlinkedOneDrivePicturesFixture {
 }
 
 private func makeSymlinkedOneDrivePicturesFixture() throws -> SymlinkedOneDrivePicturesFixture {
-    let temp = try makeCatalogStoreTemporaryDirectory()
+    let temp = try makeTestDirectory()
     let cloudRoot = temp.appending(path: "Library/CloudStorage/OneDrive-Personal", directoryHint: .isDirectory)
     let pictures = cloudRoot.appending(path: "Pictures", directoryHint: .isDirectory)
     let desktop = temp.appending(path: "Desktop", directoryHint: .isDirectory)

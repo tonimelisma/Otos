@@ -87,6 +87,7 @@ private enum SnapshotError: Error {
     case digestFailed(String)
 }
 
+@Suite(.testDirectory)
 struct OriginalsReadOnlyTests {
     @Test func addLibraryAndFullScanLeaveOriginalTreeUnchanged() async throws {
         let root = try makeFixtureRoot(named: "scan")
@@ -239,7 +240,7 @@ struct OriginalsReadOnlyTests {
     }
 
     private func makeFixtureRoot(named name: String) throws -> URL {
-        let root = try makeCatalogStoreTemporaryDirectory().appending(
+        let root = try makeTestDirectory().appending(
             path: "\(name)-root",
             directoryHint: .isDirectory
         )
@@ -254,7 +255,7 @@ struct OriginalsReadOnlyTests {
     }
 
     private func makeMediaFixtureRoot(named name: String, fixtureName: String, fileName: String) throws -> URL {
-        let root = try makeCatalogStoreTemporaryDirectory().appending(
+        let root = try makeTestDirectory().appending(
             path: "\(name)-root",
             directoryHint: .isDirectory
         )

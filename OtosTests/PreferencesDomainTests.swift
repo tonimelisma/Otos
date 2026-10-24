@@ -8,6 +8,7 @@ import Testing
 /// temporary domain persists and isolates, and that reconstructing actors from the
 /// same domain observes the same persisted state while a distinct control suite
 /// remains unchanged.
+@Suite(.testDirectory)
 @MainActor
 struct PreferencesDomainTests {
     @Test func temporaryDomainPersistsViewModelStateAndIsolatesControl() {
@@ -60,7 +61,7 @@ struct PreferencesDomainTests {
         let temp = PreferencesDomain.suite(UUID().uuidString)
         let control = PreferencesDomain.suite(UUID().uuidString)
 
-        let tempDir = try makeCatalogStoreTemporaryDirectory()
+        let tempDir = try makeTestDirectory()
         let destURL = tempDir.appending(path: "Dest", directoryHint: .isDirectory)
         let sourceURL = tempDir.appending(path: "Source", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -97,24 +98,5 @@ struct PreferencesDomainTests {
 
         _ = loadedB
         _ = deviceIdentity
-    }
-
-    @Test func temporaryDomainIsRequiredAtEveryConstructionSite() {
-        // Compile-time proof: these initializers require a PreferencesDomain value.
-        // If any site had a default that silently selected .standard, this test
-        // would not need to supply the domain explicitly.
-        let temp = PreferencesDomain.suite(UUID().uuidString)
-        let store = CatalogStore(location: .inMemory)
-        // Each construction explicitly passes the domain.
-        _ = CatalogWindowViewModel(
-            catalogStore: store,
-            startsStallMonitor: false,
-            startsEnrichment: false,
-            startsSourceMonitoring: false,
-            preferencesDomain: temp
-        )
-        _ = MediaOperationCoordinator(store: store, preferencesDomain: temp)
-        _ = LibraryReorganizationRunner(store: store, preferencesDomain: temp)
-        // No assertion needed — compilation proves the requirement.
     }
 }

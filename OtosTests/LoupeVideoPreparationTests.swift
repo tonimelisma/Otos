@@ -7,10 +7,11 @@ import Testing
 /// playback with no click, exactly as opening an image decodes it. These run against a
 /// real `CatalogStore` because `bestKind` — the fact that starts preparation — is a
 /// catalog answer, and a fake reader would assert the trigger against itself.
+@Suite(.testDirectory)
 @MainActor
 struct LoupeVideoPreparationTests {
     private func makeVideoCatalog() async throws -> (CatalogStore, MediaAssetID) {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Movies", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)

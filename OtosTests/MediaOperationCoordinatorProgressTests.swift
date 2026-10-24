@@ -4,6 +4,7 @@ import Testing
 
 /// Execution progress reaches the coordinator through one per-run stream, so a sample can
 /// neither arrive after the run settled nor overtake a newer one.
+@Suite(.testDirectory)
 struct MediaOperationCoordinatorProgressTests {
     private static func progress(_ completed: Int, bytes: Int64) -> MediaOperationProgress {
         MediaOperationProgress(
@@ -16,7 +17,7 @@ struct MediaOperationCoordinatorProgressTests {
     }
 
     @Test func noProgressIsPresentedAfterTheRunSettles() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)

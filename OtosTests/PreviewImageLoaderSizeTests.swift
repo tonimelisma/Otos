@@ -8,6 +8,7 @@ import Testing
 /// Two requests for one asset share a decode only when that decode is at least as large as
 /// the one the second request needs; otherwise the second is handed a smaller image than it
 /// asked for.
+@Suite(.testDirectory)
 struct PreviewImageLoaderSizeTests {
     private actor Gate {
         private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -29,10 +30,7 @@ struct PreviewImageLoaderSizeTests {
     }
 
     @Test func aLargerRequestIsNeverHandedASmallerDecodeThatWasAlreadyInFlight() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appending(path: "otos-preview-size-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let directory = try makeTestDirectory()
         try writeJPEG(width: 2000, height: 1500, to: directory.appending(path: "big.jpg"))
         let id = MediaAssetID(
             libraryRootPath: LibraryRootPath(rawValue: directory.path(percentEncoded: false)),

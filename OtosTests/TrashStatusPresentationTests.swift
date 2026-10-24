@@ -108,8 +108,10 @@ struct LargeTrashDownloadPromptTests {
 }
 
 /// DES-018/DES-053: the bar keeps one height in every state. Each state is also
-/// rendered in light and dark to `$TMPDIR/OtosDesignEvidence/trash-status-bar/` as the
-/// design check's screenshots (DES-022).
+/// rendered in light and dark as the design check's screenshots (DES-022), into
+/// `build/DesignEvidence/trash-status-bar/` of the checkout that ran the test — the
+/// worktree's own, ignored `build/`, so parallel runs in other worktrees never
+/// overwrite each other's evidence and the images outlive the test for review.
 @MainActor
 struct TrashStatusBarRenderingTests {
     private static let states: [(String, MediaTrashCoordinator.QueueState)] = [
@@ -119,9 +121,17 @@ struct TrashStatusBarRenderingTests {
         ("waiting-download", .init(pendingCount: 1, movedCount: 0, bytesToDownload: 0, attention: .waitingForDownload)),
     ]
 
+    /// `<checkout>/build/DesignEvidence/trash-status-bar`, found from this file's own
+    /// location in `<checkout>/OtosTests/`.
+    private static func evidenceDirectory(filePath: String = #filePath) -> URL {
+        URL(filePath: filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "build/DesignEvidence/trash-status-bar", directoryHint: .isDirectory)
+    }
+
     @Test func everyStateRendersAtOneHeight() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appending(path: "OtosDesignEvidence/trash-status-bar", directoryHint: .isDirectory)
+        let directory = Self.evidenceDirectory()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var heights: Set<CGFloat> = []
         for (name, queueState) in Self.states {
@@ -137,14 +147,12 @@ struct TrashStatusBarRenderingTests {
                 host.frame = NSRect(origin: .zero, size: host.fittingSize)
                 host.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
                 host.layoutSubtreeIfNeeded()
-                if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
-                    host.cacheDisplay(in: host.bounds, to: bitmap)
-                    if let png = bitmap.representation(using: .png, properties: [:]) {
-                        try png.write(
-                            to: directory.appending(path: "trash-bar-\(name)-\(scheme == .dark ? "dark" : "light").png")
-                        )
-                    }
-                }
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                try png.write(
+                    to: directory.appending(path: "trash-bar-\(name)-\(scheme == .dark ? "dark" : "light").png")
+                )
             }
         }
         #expect(heights.count == 1)

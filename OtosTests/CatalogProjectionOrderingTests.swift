@@ -2,6 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogProjectionOrderingTests {
     @Test func detailChangeKeepsOrder() async {
         let root = orderingRoot()
@@ -77,7 +78,7 @@ struct CatalogProjectionOrderingTests {
     }
 
     @Test func sidebarFilteringPublishesSelectedScope() async throws {
-        let temp = try orderingTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         try Data("a".utf8).write(to: rootURL.appending(path: "a.jpg"))
@@ -119,7 +120,7 @@ struct CatalogProjectionOrderingTests {
     }
 
     @Test func detailOnlyStoreChangePublishesRefreshAndChecksOrder() async throws {
-        let temp = try orderingTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try "jpeg".write(to: root.appending(path: "one.jpg"), atomically: true, encoding: .utf8)
@@ -202,13 +203,6 @@ private func orderingFixture(
         libraries: [CatalogLibraryState(root: root, availability: .available, activity: .idle)],
         orderedAssetIDs: orderedAssetIDs(for: assets)
     )
-}
-
-private func orderingTemporaryDirectory() throws -> URL {
-    let url = FileManager.default.temporaryDirectory
-        .appending(path: "OtosTests-\(UUID().uuidString)", directoryHint: .isDirectory)
-    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    return url
 }
 
 private typealias OrderingStateRecorder = AsyncValueRecorder<CatalogWindowState>

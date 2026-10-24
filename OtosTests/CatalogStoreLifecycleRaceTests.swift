@@ -2,25 +2,26 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogStoreLifecycleRaceTests {
     @Test func concurrentStartupAndMutationShareOneInitialLoad() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let gate = InitialLoadGate()
+        let gate = ArrivalGate()
         let scanner = CatalogScanner { _, _, _ in .empty }
         let store = CatalogStore(
             location: .inMemory,
             scanner: scanner,
             initialLoadDidRead: {
-                await gate.pause()
+                await gate.arrive()
             }
         )
 
         let startup = Task {
             try await store.start(scansSavedLibraries: false)
         }
-        await gate.waitForArrivalCount(1)
+        await gate.waitForArrivals(1)
         let mutation = Task {
             try await store.addLibrary(url: root)
         }
@@ -29,9 +30,8 @@ struct CatalogStoreLifecycleRaceTests {
         // joins it, rather than starting a second database read that could later
         // replace the mutation's memory state.
         try await waitUntil { await store.joinedInitialLoadCount == 1 }
-        let arrivalCount = await gate.arrivalCount()
-        #expect(arrivalCount == 1)
-        await gate.releaseAll()
+        #expect(await gate.arrivalCount == 1)
+        await gate.open()
         try await startup.value
         try await mutation.value
 
@@ -41,7 +41,7 @@ struct CatalogStoreLifecycleRaceTests {
     }
 
     @Test func mutationFirstStartupStillScansLoadedRootsExactlyOnce() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let savedRoot = temp.appending(path: "Saved", directoryHint: .isDirectory)
         let addedRoot = temp.appending(path: "Added", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: savedRoot, withIntermediateDirectories: true)
@@ -82,7 +82,7 @@ struct CatalogStoreLifecycleRaceTests {
     }
 
     @Test func staleCallbacksCannotMutateSamePathReplacementScan() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let probe = ControlledScanProbe()
@@ -101,7 +101,14 @@ struct CatalogStoreLifecycleRaceTests {
             // The first scanner deliberately ignores cancellation and calls
             // back late. Store ownership, not scanner cooperation, protects the
             // replacement root.
-            try? await batchHandler([file])
+            let accepted: Bool
+            do {
+                try await batchHandler([file])
+                accepted = true
+            } catch {
+                accepted = false
+            }
+            await probe.recordBatch(invocation, accepted: accepted)
             return .mediaOnly([file.relativePath])
         }
         let store = CatalogStore(
@@ -118,64 +125,21 @@ struct CatalogStoreLifecycleRaceTests {
         try await store.addLibrary(url: root)
         await probe.waitForInvocationCount(2)
 
+        // The stale scanner's late batch is refused, and only once the store has
+        // answered it is the catalog read, so an empty catalog means refused rather
+        // than not yet delivered.
         await probe.release(1)
+        #expect(await probe.batchOutcome(1) == false)
         let replacementStillActive = try await catalogStoreTestState(store)
         #expect(replacementStillActive.isScanning)
         #expect(replacementStillActive.testAssets.isEmpty)
 
         await probe.release(2)
+        #expect(await probe.batchOutcome(2) == true)
         let completed = try await waitForCatalogStoreState(store) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.count == 1
         }
         #expect(completed.testAssets.map(\.relativePath.rawValue) == ["replacement.jpg"])
-    }
-}
-
-private actor InitialLoadGate {
-    private var arrivals = 0
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-    private var arrivalWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
-
-    func pause() async {
-        arrivals += 1
-        resumeArrivalWaiters()
-        await withCheckedContinuation { continuation in
-            waiters.append(continuation)
-        }
-    }
-
-    func arrivalCount() -> Int {
-        arrivals
-    }
-
-    func waitForArrivalCount(_ expectedCount: Int) async {
-        if arrivals >= expectedCount {
-            return
-        }
-        await withCheckedContinuation { continuation in
-            arrivalWaiters.append((expectedCount, continuation))
-            resumeArrivalWaiters()
-        }
-    }
-
-    func releaseAll() {
-        let currentWaiters = waiters
-        waiters.removeAll()
-        for waiter in currentWaiters {
-            waiter.resume()
-        }
-    }
-
-    private func resumeArrivalWaiters() {
-        var remaining: [(Int, CheckedContinuation<Void, Never>)] = []
-        for waiter in arrivalWaiters {
-            if arrivals >= waiter.0 {
-                waiter.1.resume()
-            } else {
-                remaining.append(waiter)
-            }
-        }
-        arrivalWaiters = remaining
     }
 }
 
@@ -197,11 +161,15 @@ private extension AsyncValueRecorder where Value == LibraryRootPath {
     }
 }
 
+/// Holds each scanner invocation until the test releases it, and reports what the
+/// store answered to that invocation's batch once the handler has returned.
 private actor ControlledScanProbe {
     private var invocationCount = 0
     private var releasedInvocations = Set<Int>()
     private var releaseWaiters: [Int: CheckedContinuation<Void, Never>] = [:]
     private var invocationWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var batchOutcomes: [Int: Bool] = [:]
+    private var batchWaiters: [Int: [CheckedContinuation<Bool, Never>]] = [:]
 
     func beginInvocation() -> Int {
         invocationCount += 1
@@ -231,6 +199,21 @@ private actor ControlledScanProbe {
     func release(_ invocation: Int) {
         releasedInvocations.insert(invocation)
         releaseWaiters.removeValue(forKey: invocation)?.resume()
+    }
+
+    func recordBatch(_ invocation: Int, accepted: Bool) {
+        batchOutcomes[invocation] = accepted
+        batchWaiters.removeValue(forKey: invocation)?.forEach { $0.resume(returning: accepted) }
+    }
+
+    /// Whether the store accepted `invocation`'s batch, returned once its handler has.
+    func batchOutcome(_ invocation: Int) async -> Bool {
+        if let outcome = batchOutcomes[invocation] {
+            return outcome
+        }
+        return await withCheckedContinuation { continuation in
+            batchWaiters[invocation, default: []].append(continuation)
+        }
     }
 
     private func resumeInvocationWaiters() {

@@ -2,6 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogStoreRemovableSourceTests {
     @Test func quiesceKeepsRemovableSourceAvailableForSidebar() async throws {
         let fixture = try await makeRemountFixture()
@@ -121,7 +122,7 @@ struct CatalogStoreRemovableSourceTests {
     }
 
     @Test func mtpCatalogRowsAreScopedToCameraAndStagingSurvivesDetach() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
@@ -184,7 +185,7 @@ struct CatalogStoreRemovableSourceTests {
     }
 
     @Test func staleDeviceEnumerationCannotWriteOrReconcileNewerRows() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
@@ -239,7 +240,7 @@ struct CatalogStoreRemovableSourceTests {
     }
 
     @Test func startWatchingIncludesAlreadyAttachedRemovableVolumes() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
@@ -273,7 +274,7 @@ private struct RemovableRemountFixture {
 }
 
 private func makeRemountFixture() async throws -> RemovableRemountFixture {
-    let temp = try makeCatalogStoreTemporaryDirectory()
+    let temp = try makeTestDirectory()
     let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
     let firstMount = temp.appending(path: "Card-1", directoryHint: .isDirectory)
     let secondMount = temp.appending(path: "Card-2", directoryHint: .isDirectory)

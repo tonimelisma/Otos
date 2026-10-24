@@ -7,6 +7,7 @@ import Testing
 /// to decide what it publishes. These pin the rules that keep that honest: a failed read
 /// publishes nothing, an item the user took back is never moved, and an unreadable overlay
 /// defers a move instead of losing the user's choice.
+@Suite(.testDirectory)
 struct MediaTrashCoordinatorOwnershipTests {
     private struct InjectedReadFailure: Error {}
 
@@ -50,7 +51,7 @@ struct MediaTrashCoordinatorOwnershipTests {
         let trash: URL
 
         static func make(names: [String]) async throws -> Fixture {
-            let temp = try makeCatalogStoreTemporaryDirectory()
+            let temp = try makeTestDirectory()
             let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
             let trash = temp.appending(path: "Trash", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

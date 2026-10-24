@@ -34,7 +34,7 @@ struct CatalogWindowViewModelTrashTests {
         let path = fixture.path(fixture.ids[0])
         try await waitUntil { !FileManager.default.fileExists(atPath: path) }
         try await waitUntil {
-            await (try? fixture.store.mediaAssets(for: fixture.ids).isEmpty) == true
+            try await fixture.store.mediaAssets(for: fixture.ids).isEmpty
         }
         // The queue can move the file before the main actor registers the undo, and
         // undo with nothing registered does nothing; wait for the registration itself.
@@ -43,7 +43,7 @@ struct CatalogWindowViewModelTrashTests {
         model.undoCuration()
         try await waitUntil { FileManager.default.fileExists(atPath: path) }
         try await waitUntil {
-            await (try? fixture.store.mediaAssets(for: fixture.ids).count) == 1
+            try await fixture.store.mediaAssets(for: fixture.ids).count == 1
         }
         #expect(model.curationUndoState.redoTitle == "Redo Move to Trash")
         #expect(model.trashAlertMessage == nil)
@@ -179,7 +179,7 @@ private func makeTrashFixture(count: Int) async throws -> TrashFixture {
     let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(5))
     try await store.addLibrary(url: root)
     try await waitUntil {
-        await (try? store.mediaAssets(for: ids).count) == ids.count
+        try await store.mediaAssets(for: ids).count == ids.count
     }
     return TrashFixture(store: store, root: root, rootPath: libraryRootPath, ids: ids)
 }

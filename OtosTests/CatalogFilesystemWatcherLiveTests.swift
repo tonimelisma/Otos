@@ -7,9 +7,10 @@ import Testing
 /// handler, and stopping one leaves the other watching. Files are written by a child
 /// process because the stream ignores events this process causes
 /// (`kFSEventStreamCreateFlagIgnoreSelf`).
+@Suite(.testDirectory)
 struct CatalogFilesystemWatcherLiveTests {
     @Test func liveWatchersDeliverOnlyTheirOwnRootsAndStopIndependently() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let rootA = temp.appending(path: "A", directoryHint: .isDirectory)
         let rootB = temp.appending(path: "B", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootA, withIntermediateDirectories: true)

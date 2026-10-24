@@ -5,9 +5,10 @@ import Testing
 /// The catalog database must always store the latest scanned filesystem facts. A
 /// whole-second date change affects Date sort and enrichment priority, so it
 /// also republishes (ARC-038).
+@Suite(.testDirectory)
 struct CatalogStoreScanFreshnessTests {
     @Test func reScanRefreshesInMemoryDatesWhenOnlySizeUnchanged() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let file = root.appending(path: "a.jpg")

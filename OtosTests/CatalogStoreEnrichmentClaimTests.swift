@@ -3,9 +3,10 @@ import GRDB
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogStoreEnrichmentClaimTests {
     @Test func startupClearsAbandonedEnrichmentClaims() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -32,7 +33,7 @@ struct CatalogStoreEnrichmentClaimTests {
     }
 
     @Test func priorityClaimingContinuesPastContendedRowsBeforeFallback() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let store = CatalogStore(
@@ -64,7 +65,7 @@ struct CatalogStoreEnrichmentClaimTests {
     }
 
     @Test func fallbackEnrichmentClaimsUseNewestBestDateOrder() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let store = CatalogStore(
@@ -85,7 +86,7 @@ struct CatalogStoreEnrichmentClaimTests {
     }
 
     @Test func fallbackEnrichmentClaimsRemovableSourcesBeforeFixedLibraries() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let removableRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)

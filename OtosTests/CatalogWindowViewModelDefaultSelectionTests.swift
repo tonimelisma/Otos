@@ -2,12 +2,11 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct ViewModelDefaultSelectionTests {
     @MainActor
     @Test func startupSelectsSingleLibraryWhenAllMediaIsHidden() async throws {
-        let temp = FileManager.default.temporaryDirectory
-            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try Data("jpeg".utf8).write(to: root.appending(path: "one.jpg"))

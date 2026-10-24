@@ -111,6 +111,7 @@ struct CaptureWallClockTests {
     }
 }
 
+@Suite(.testDirectory)
 struct CatalogStoreSchemaMigrationTests {
     @Test func v10FixtureWithoutDestinationProvenanceMigratesAdditively() async throws {
         let databaseURL = try await Self.makeV10FixtureWithoutDestinationProvenance()
@@ -207,7 +208,7 @@ struct CatalogStoreSchemaMigrationTests {
     }
 
     @Test func unrecognizedLegacySchemaIsRefusedWithoutErase() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
@@ -248,7 +249,7 @@ struct CatalogStoreSchemaMigrationTests {
     }
 
     @Test func v13MigrationAddsMetadataOnlyEnrichmentClaimIndexesAndKeepsDigests() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
@@ -320,7 +321,7 @@ struct CatalogStoreSchemaMigrationTests {
     }
 
     @Test func importBatchQueriesReturnNewestFirst() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "a")
@@ -353,7 +354,7 @@ struct CatalogStoreSchemaMigrationTests {
     }
 
     @Test func enrichmentWritesCaptureWallCompact() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "shot.jpg"), contents: "jpeg")
@@ -410,7 +411,7 @@ struct CatalogStoreSchemaMigrationTests {
     /// A claim is a process fact: v21 renames the column for every catalog and clears the
     /// claims the last process left, whatever expiry it had written.
     @Test func v21RenamesTheClaimColumnAndClearsLeftoverClaims() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
@@ -450,7 +451,7 @@ struct CatalogStoreSchemaMigrationTests {
         let image = try MountedTestDiskImage.attach(named: "OtosV16MigrationTest")
         defer { image.detach() }
 
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
@@ -514,7 +515,7 @@ private extension CatalogStoreSchemaMigrationTests {
     }
 
     static func makeV10FixtureWithoutDestinationProvenance() async throws -> URL {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
@@ -545,7 +546,7 @@ private extension CatalogStoreSchemaMigrationTests {
     }
 
     static func makeV5EnrichedFixture() async throws -> V5Fixture {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let original = root.appending(path: "dated.jpg", directoryHint: .notDirectory)
@@ -633,7 +634,7 @@ private extension CatalogStoreSchemaMigrationTests {
     }
 
     static func makeFutureSchemaFixture() async throws -> FutureFixture {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),

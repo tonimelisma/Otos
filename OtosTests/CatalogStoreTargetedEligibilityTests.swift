@@ -3,9 +3,10 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogStoreTargetedEligibilityTests {
     @Test func targetedFileEventDeletesCatalogRowWhenPathBecomesIneligible() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let file = root.appending(path: "changed.jpg")

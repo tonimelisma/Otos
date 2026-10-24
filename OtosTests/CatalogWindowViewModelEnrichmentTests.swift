@@ -6,10 +6,11 @@ import Testing
 /// viewport, and (critically) starts it only after the catalog has loaded so persisted
 /// assets enrich on launch even when the launch rescan is a no-op that fires no
 /// notification. These tests drive that wiring with an injected fake enricher.
+@Suite(.testDirectory)
 struct CatalogWindowViewModelEnrichmentTests {
     @MainActor
     @Test func startStartsInjectedCoordinatorAndViewportIsAccepted() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "one.jpg"), contents: "jpeg")
@@ -59,7 +60,7 @@ struct CatalogWindowViewModelEnrichmentTests {
         // load to the parallel suite: a fixed in-memory scanner (no directory enumeration),
         // inert filesystem watchers (no real FSEvents), and fixed facts. Only SQLite is
         // real, which is what makes it a genuine relaunch across two store instances.
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let databaseURL = temp.appending(path: "db/catalog.sqlite")

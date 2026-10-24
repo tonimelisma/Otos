@@ -10,6 +10,7 @@ import Testing
 ///
 /// Store answers *what the scope holds*; `CatalogWindowPolicy` turns that into
 /// *what the window says*. They are tested at their own boundaries.
+@Suite(.testDirectory)
 struct CatalogBatchScopeTests {
     private static let batch = ImportBatchID(unixMilliseconds: 1_785_908_514_176)
 
@@ -17,7 +18,7 @@ struct CatalogBatchScopeTests {
     /// filter menu. Before the fix only ordering applied the stamp, so the counts
     /// returned zero and the menu offered the whole library's formats.
     @Test func everyScopedReadAppliesBatchMembership() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         defer { try? FileManager.default.removeItem(at: temp) }
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
