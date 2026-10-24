@@ -19,8 +19,16 @@ design rules for user-facing surfaces; per-screen specs live beside it in
 
 - Treat this repository as a blank-slate architecture. Do not add compatibility
   shims. If a structure is wrong, replace it with the right structure; do not
-  patch around bad boundaries. Effort is not a decision criterion — choose the
-  correct architecture even when it needs a larger refactor.
+  patch around bad boundaries.
+- **Engineering effort is free. Never take a shortcut.** Every engineering
+  decision assumes effort costs nothing, so effort, diff size, file count, and
+  schema migrations are never reasons to choose a design. When a code smell or
+  anything iffy appears, stop and ask: if this were being built from a blank
+  slate today, what approach and architecture would it have? Build that, and
+  delete what it replaces. No quick fixes, no call-site patches for a type-level
+  defect, no "good enough for now", no follow-up deferred to save work. Free
+  effort is not license to gold-plate: the blank-slate answer is still the
+  smallest correct design for the verified requirements.
 - Keep the app as simple as possible. Prefer the smallest correct model, owner,
   schema, state flow, and UI that satisfies verified requirements. Simplicity is
   a requirement, not a shortcut.
