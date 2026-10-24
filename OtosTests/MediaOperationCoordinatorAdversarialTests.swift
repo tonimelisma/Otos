@@ -472,14 +472,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         log("STEP resumePending cancelled")
         await execControl.resumePending(
             for: cardAPath,
-            with: .stopped(
-                reason: .user,
-                publishedCount: 0,
-                hasBlockedEntries: false,
-                hasEntryFailures: false,
-                skippedForeignCount: 0,
-                failedCount: 0
-            )
+            with: .stopped(.user, .tally(published: 0))
         )
         // Settlement schedules A's rebuild, which the builder holds.
         try await waitForPendingBuilder(builder, source: cardAPath)
@@ -569,7 +562,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         log("STEP waitForPendingExecution")
         try await waitForPendingExecution(execControl, source: cardAPath)
         await builder2.suspendNextBuild(for: cardAPath)
-        await execControl.resumePending(for: cardAPath, with: .failed(reason: .unexpected(detail: "injectedFailure")))
+        await execControl.resumePending(for: cardAPath, with: .failed(.unexpected(detail: "injectedFailure"), publishedCount: 0))
         // Settlement schedules A's rebuild, which the builder holds.
         try await waitForPendingBuilder(builder2, source: cardAPath)
         await queueTask2.value
@@ -854,14 +847,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         // stream's bufferingNewest(1) can lose.
         await execControl.resumePending(
             for: cardPath,
-            with: .completed(
-                publishedCount: 1,
-                hasBlockedEntries: false,
-                hasEntryFailures: false,
-                skippedForeignCount: 0,
-                failedCount: 0,
-                incompleteItems: []
-            )
+            with: .completed(.tally(published: 1), incompleteItems: [], erase: nil)
         )
         await queueTask.value
 
@@ -876,7 +862,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
-    /// APP-029: `presentation(for:)` derives `.executing` from `session.lastProgress`,
+    /// APP-029: `presentation(for:)` derives `.executing` from the executing phase's progress,
     /// never a zero-progress literal, so every re-derivation — a `publish()` for an
     /// unrelated reason, or simply re-reading the current snapshot, as here — shows
     /// the progress that has landed, not only the private splice-and-yield path
@@ -956,14 +942,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let stream = await coordinator.presentationsStream()
         await execControl.resumePending(
             for: cardPath,
-            with: .completed(
-                publishedCount: 1,
-                hasBlockedEntries: false,
-                hasEntryFailures: true,
-                skippedForeignCount: 1,
-                failedCount: 1,
-                incompleteItems: []
-            )
+            with: .completed(.tally(published: 1, entryFailures: true, skippedForeign: 1, failed: 1), incompleteItems: [], erase: nil)
         )
         var completed: (summary: MediaOperationPlanTotals, skippedForeignCount: Int, failedCount: Int)?
         for await values in stream {
@@ -1029,14 +1008,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         await execControl.resumePending(
             for: cardPath,
-            with: .completed(
-                publishedCount: 1,
-                hasBlockedEntries: false,
-                hasEntryFailures: false,
-                skippedForeignCount: 0,
-                failedCount: 0,
-                incompleteItems: []
-            )
+            with: .completed(.tally(published: 1), incompleteItems: [], erase: nil)
         )
         await queueTask.value
 
@@ -1097,7 +1069,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForReady(coordinator, source: cardPath)
         let queueTask = Task { await coordinator.queueImport(for: cardPath) }
         try await waitForPendingExecution(execControl, source: cardPath)
-        await execControl.resumePending(for: cardPath, with: .failed(reason: .destinationUnavailable))
+        await execControl.resumePending(for: cardPath, with: .failed(.destinationUnavailable, publishedCount: 0))
         await queueTask.value
 
         _ = try await waitForPresentation(coordinator, source: cardPath) { pres in
@@ -1163,7 +1135,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForReady(coordinator, source: cardPath)
         let queueTask = Task { await coordinator.queueImport(for: cardPath) }
         try await waitForPendingExecution(execControl, source: cardPath)
-        await execControl.resumePending(for: cardPath, with: .failed(reason: .unexpected(detail: "test")))
+        await execControl.resumePending(for: cardPath, with: .failed(.unexpected(detail: "test"), publishedCount: 0))
         await queueTask.value
         _ = try await waitForPresentation(coordinator, source: cardPath) { pres in
             if case .failed = pres.state {
@@ -1578,14 +1550,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let queueTask = Task { await coordinator.queueImport(for: cardPath) }
         try await waitForPendingExecution(execControl, source: cardPath)
 
-        await execControl.resumePending(for: cardPath, with: .stopped(
-            reason: .user,
-            publishedCount: 1,
-            hasBlockedEntries: false,
-            hasEntryFailures: false,
-            skippedForeignCount: 0,
-            failedCount: 0
-        ))
+        await execControl.resumePending(for: cardPath, with: .stopped(.user, .tally(published: 1)))
         await queueTask.value
 
         // The re-plan that follows settlement lands as Ready; the stop facts
@@ -1771,14 +1736,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         await execControl.resumePending(
             for: cardPath,
-            with: .completed(
-                publishedCount: 1,
-                hasBlockedEntries: false,
-                hasEntryFailures: false,
-                skippedForeignCount: 0,
-                failedCount: 0,
-                incompleteItems: []
-            )
+            with: .completed(.tally(published: 1), incompleteItems: [], erase: nil)
         )
         await queueTask.value
 

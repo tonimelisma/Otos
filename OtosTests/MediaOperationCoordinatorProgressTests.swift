@@ -75,14 +75,7 @@ struct MediaOperationCoordinatorProgressTests {
         await execControl.sendProgress(last, for: cardPath)
         await execControl.resumePending(
             for: cardPath,
-            with: .completed(
-                publishedCount: 1,
-                hasBlockedEntries: false,
-                hasEntryFailures: false,
-                skippedForeignCount: 0,
-                failedCount: 0,
-                incompleteItems: []
-            )
+            with: .completed(.tally(published: 1), incompleteItems: [], erase: nil)
         )
         await queueTask.value
         try await waitForCoordinatorQuiescence(coordinator)

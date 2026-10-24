@@ -123,9 +123,9 @@ regardless.
 
 Every field on `MediaOperationSourcePresentation` — progress, `copiedJustNow`,
 `isFullyClean`, `settledAt`, session preferences, the destination display
-name — is read off `session` (or `session.lastCompletion`/`session.lastProgress`,
-themselves written exactly once per transition, in the same transaction as the
-`session.phase` change that makes them reachable) inside `makePresentation`,
+name — is read off `session` (its phase, whose payload carries a running import's
+progress, or `session.lastCompletion`, written in the same transition that settles
+the run) inside `makePresentation`,
 never re-derived or defaulted at the call site. A caller supplies only the
 `MediaOperationSourceState` for the frame it wants shown; it cannot supply a
 partial or synthesized value for any other field, because `makePresentation`

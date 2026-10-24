@@ -231,3 +231,23 @@ func markEnrichmentLookedAtEveryRow(_ store: CatalogStore, root: LibraryRootPath
 func waitForCoordinatorQuiescence(_ coordinator: MediaOperationCoordinator) async throws {
     try await waitUntil { await coordinator.isQuiescent }
 }
+
+extension MediaImportRunTally {
+    /// A run's tally for a test: what it published, with nothing else happening unless
+    /// the test says so.
+    static func tally(
+        published: Int,
+        blocked: Bool = false,
+        entryFailures: Bool = false,
+        skippedForeign: Int = 0,
+        failed: Int = 0
+    ) -> MediaImportRunTally {
+        MediaImportRunTally(
+            publishedCount: published,
+            hasBlockedEntries: blocked,
+            hasEntryFailures: entryFailures,
+            skippedForeignCount: skippedForeign,
+            failedCount: failed
+        )
+    }
+}
