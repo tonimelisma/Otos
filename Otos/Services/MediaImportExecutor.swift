@@ -1615,7 +1615,6 @@ actor MediaImportExecutor {
                 operation: operation,
                 byteSize: settledByteSize,
                 contentModifiedAt: settledModified,
-                batch: request.batch,
                 companions: companions.published
             )
         } catch {

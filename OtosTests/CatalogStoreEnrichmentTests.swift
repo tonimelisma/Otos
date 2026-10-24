@@ -488,7 +488,6 @@ struct CatalogStoreEnrichmentTests {
             operation: operation,
             byteSize: scannedSize,
             contentModifiedAt: scannedModifiedAt,
-            batch: batch,
             companions: []
         )
         #expect(result.metadataCloned)
@@ -699,7 +698,6 @@ struct CatalogStoreEnrichmentTests {
             operation: operation,
             byteSize: 6,
             contentModifiedAt: Date(timeIntervalSince1970: 1000),
-            batch: batch,
             companions: []
         )
 
