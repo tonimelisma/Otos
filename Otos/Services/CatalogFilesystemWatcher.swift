@@ -22,64 +22,40 @@ nonisolated struct CatalogFilesystemWatcher {
     var removeRoot: @Sendable (LibraryRootPath) -> Void
     var stop: @Sendable () -> Void
 
-    static let live = CatalogFilesystemWatcher(
-        start: { roots, handler in
-            LiveCatalogFilesystemWatcher.start(roots: roots, handler: handler)
-        },
-        addRoot: { root in
-            LiveCatalogFilesystemWatcher.addRoot(root)
-        },
-        removeRoot: { root in
-            LiveCatalogFilesystemWatcher.removeRoot(root)
-        },
-        stop: {
-            LiveCatalogFilesystemWatcher.stop()
-        }
-    )
-
-    static let noop = CatalogFilesystemWatcher(
-        start: { _, _ in },
-        addRoot: { _ in },
-        removeRoot: { _ in },
-        stop: {}
-    )
-
-    /// Test harness that invokes the registered handler without `FSEventStream`.
-    static func testing() -> (watcher: CatalogFilesystemWatcher, emit: @Sendable (FilesystemEvent) -> Void) {
-        TestingCatalogFilesystemWatcher.make()
+    /// A watcher with its own `FSEventStream`, root list and handler. Each call is
+    /// independent: two stores never share a stream, so one store's `stop()` or `start`
+    /// cannot silence or redirect another's events. The stream stops when `stop()` is
+    /// called or when the last copy of the returned watcher is released.
+    static func live() -> CatalogFilesystemWatcher {
+        let lifetime = LiveCatalogFilesystemWatcher()
+        return CatalogFilesystemWatcher(
+            start: { roots, handler in
+                lifetime.state.start(roots: roots, handler: handler)
+            },
+            addRoot: { root in
+                lifetime.state.addRoot(root)
+            },
+            removeRoot: { root in
+                lifetime.state.removeRoot(root)
+            },
+            stop: {
+                lifetime.state.stop()
+            }
+        )
     }
-
-    static func testingWithRootInspection() -> (
-        CatalogFilesystemWatcherInspection
-    ) {
-        TestingCatalogFilesystemWatcher.makeWithRootInspection()
-    }
-}
-
-nonisolated struct CatalogFilesystemWatcherInspection {
-    let watcher: CatalogFilesystemWatcher
-    let emit: @Sendable (FilesystemEvent) -> Void
-    let roots: @Sendable () -> [LibraryRootPath]
 }
 
 // MARK: - Live
 
-private nonisolated enum LiveCatalogFilesystemWatcher {
-    private static let state = WatcherState()
+/// Owns one `WatcherState` for as long as any copy of its `CatalogFilesystemWatcher`
+/// exists. The stream's callback context points at the state unretained; releasing this
+/// owner stops the stream on its queue first, so no callback can run against a freed state.
+/// The owner is never released on the watcher queue: handlers forward events and hold no
+/// reference back to the watcher.
+private final nonisolated class LiveCatalogFilesystemWatcher: Sendable {
+    let state = WatcherState()
 
-    static func start(roots: [LibraryRootPath], handler: @escaping @Sendable (FilesystemEvent) -> Void) {
-        state.start(roots: roots, handler: handler)
-    }
-
-    static func addRoot(_ root: LibraryRootPath) {
-        state.addRoot(root)
-    }
-
-    static func removeRoot(_ root: LibraryRootPath) {
-        state.removeRoot(root)
-    }
-
-    static func stop() {
+    deinit {
         state.stop()
     }
 }
@@ -126,6 +102,7 @@ private final nonisolated class WatcherState: Sendable {
     }
 
     func stop() {
+        dispatchPrecondition(condition: .notOnQueue(queue))
         queue.sync {
             storage.withLock { storage in
                 invalidateStreamLocked(storage: &storage)
@@ -213,7 +190,8 @@ private final nonisolated class WatcherState: Sendable {
     }
 }
 
-// swiftlint:disable function_parameter_count
+// The parameter list is `FSEventStreamCallback`'s, fixed by CoreServices.
+// swiftlint:disable:next function_parameter_count
 private nonisolated func filesystemEventStreamCallback(
     _: ConstFSEventStreamRef,
     clientCallBackInfo: UnsafeMutableRawPointer?,
@@ -242,93 +220,4 @@ private nonisolated func filesystemEventStreamCallback(
         events.append(FilesystemEvent(path: path, flags: eventFlags[index]))
     }
     client.deliver(events: events)
-}
-
-// swiftlint:enable function_parameter_count
-
-// MARK: - Testing
-
-private nonisolated struct TestingWatcherStorage {
-    var handler: (@Sendable (FilesystemEvent) -> Void)?
-    var roots: [LibraryRootPath] = []
-}
-
-private final nonisolated class TestingCatalogFilesystemWatcher: Sendable {
-    private let storage = Mutex(TestingWatcherStorage())
-
-    static func make() -> (watcher: CatalogFilesystemWatcher, emit: @Sendable (FilesystemEvent) -> Void) {
-        let harness = TestingCatalogFilesystemWatcher()
-        let watcher = CatalogFilesystemWatcher(
-            start: { _, handler in
-                harness.setHandler(handler)
-            },
-            addRoot: { _ in },
-            removeRoot: { _ in },
-            stop: {
-                harness.setHandler(nil)
-            }
-        )
-        return (watcher, harness.emit)
-    }
-
-    static func makeWithRootInspection() -> CatalogFilesystemWatcherInspection {
-        let harness = TestingCatalogFilesystemWatcher()
-        let watcher = CatalogFilesystemWatcher(
-            start: { roots, handler in
-                harness.setRoots(roots)
-                harness.setHandler(handler)
-            },
-            addRoot: { root in
-                harness.addRoot(root)
-            },
-            removeRoot: { root in
-                harness.removeRoot(root)
-            },
-            stop: {
-                harness.setRoots([])
-                harness.setHandler(nil)
-            }
-        )
-        return CatalogFilesystemWatcherInspection(watcher: watcher, emit: harness.emit, roots: harness.roots)
-    }
-
-    func emit(_ event: FilesystemEvent) {
-        let handler = storage.withLock { storage in
-            storage.handler
-        }
-        handler?(event)
-    }
-
-    private func setHandler(_ handler: (@Sendable (FilesystemEvent) -> Void)?) {
-        storage.withLock { storage in
-            storage.handler = handler
-        }
-    }
-
-    private func setRoots(_ roots: [LibraryRootPath]) {
-        storage.withLock { storage in
-            storage.roots = roots
-        }
-    }
-
-    private func addRoot(_ root: LibraryRootPath) {
-        storage.withLock { storage in
-            guard !storage.roots.contains(root) else {
-                return
-            }
-            storage.roots.append(root)
-        }
-    }
-
-    private func removeRoot(_ root: LibraryRootPath) {
-        storage.withLock { storage in
-            storage.roots.removeAll { $0 == root }
-        }
-    }
-
-    private func roots() -> [LibraryRootPath] {
-        storage.withLock { storage in
-            storage.roots
-        }
-    }
 }

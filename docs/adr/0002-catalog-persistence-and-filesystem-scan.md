@@ -331,7 +331,11 @@ System Events for each saved library root using file-level events
 is not used (no consumer of `OwnEvent`). The watcher translates callbacks into
 `Sendable` events and forwards them to `CatalogStore`; it never writes SQLite or
 catalog memory. Provider hydration runs outside the Otos process, so `IgnoreSelf`
-cannot identify those events.
+cannot identify those events. Each `CatalogStore` owns its own watcher instance
+(`CatalogFilesystemWatcher.live()`): one stream, root list and handler per Store,
+stopped by `stop()` or when the Store releases it. A process-wide watcher was
+rejected: a second Store's `start` would redirect the first one's events and any
+Store's `stop` would silence every other, which is exactly what parallel tests do.
 
 `CatalogStore` maps each event path to exactly one library root, ignores events
 until that root's first scan has completed ("arming"), and receives them through one

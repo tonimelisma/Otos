@@ -302,7 +302,7 @@ actor CatalogStore {
     init(
         location: Location,
         scanner: CatalogScanner = .live,
-        filesystemWatcher: CatalogFilesystemWatcher = .live,
+        filesystemWatcher: CatalogFilesystemWatcher = .live(),
         scanCadence: Duration = .seconds(1),
         initialLoadDidRead: (@Sendable () async -> Void)? = nil,
         importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)? = nil

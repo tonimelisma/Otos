@@ -1204,10 +1204,13 @@ struct ImportExecutionProgressTests {
         }
         try await expectCompanionLeftOnCard(fixture, result: result)
         #expect(!FileManager.default.fileExists(atPath: fixture.destinationRoot.appending(path: "IMG_0.xmp").path))
+        #expect(try await fixture.store.companions(in: fixture.destinationPath).isEmpty)
     }
 
     /// A file that took the companion's destination after planning is never
-    /// overwritten, and the companion it displaced stays on the card.
+    /// overwritten, and the companion it displaced stays on the card. The catalog may
+    /// list that occupant as the primary's companion once the library is reconciled —
+    /// it is a real file there — so this test asserts on the bytes, not on catalog rows.
     @Test func aCompanionWhoseDestinationWasTakenIsNotCopiedOverIt() async throws {
         let fixture = try await makeCompanionFixture()
         let occupant = fixture.destinationRoot.appending(path: "IMG_0.xmp")
@@ -1231,7 +1234,6 @@ struct ImportExecutionProgressTests {
         #expect(hasEntryFailures)
         #expect(incompleteItems == fixture.plan.entries.map(\.source.id))
         #expect(FileManager.default.fileExists(atPath: fixture.destinationRoot.appending(path: "IMG_0.jpg").path))
-        #expect(try await fixture.store.companions(in: fixture.destinationPath).isEmpty)
         #expect(
             FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_0.xmp").path),
             "a companion that is not in the library is never erased"
