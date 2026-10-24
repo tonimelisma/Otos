@@ -1029,6 +1029,25 @@ struct ImportExecutionProgressTests {
         }
     }
 
+    /// ADR 0027: each landed source is erased as it settles, and the outcome counts it as
+    /// deleted. The end-of-run sweep leaves a path that was already erased alone rather
+    /// than finding it gone and calling it skipped.
+    @Test func anEraseRunCountsWhatItErasedAsEachEntryLanded() async throws {
+        let fixture = try await makeCardFixture(count: 3, bytesEach: 64)
+
+        let result = await executeFloorRun(fixture, deleteSourceRequested: true) { _ in nil }
+
+        guard case let .completed(tally, _, eraseOutcome?) = result else {
+            Issue.record("Expected a completed erase run, got \(result)")
+            return
+        }
+        #expect(tally.publishedCount == 3)
+        #expect(eraseOutcome == EraseOutcome(deletedCount: 3, skippedCount: 0, failedCount: 0))
+        for index in 0 ..< 3 {
+            #expect(!FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_\(index).jpg").path))
+        }
+    }
+
     /// A run never treats another run's journal as something to recover: an entry in
     /// flight in another library keeps its row and its staging file while this one runs.
     @Test func aRunLeavesAnotherRunsJournalAlone() async throws {

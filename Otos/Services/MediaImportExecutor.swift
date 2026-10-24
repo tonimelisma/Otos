@@ -147,6 +147,30 @@ actor MediaImportExecutor {
         let bytesFree: Int64
     }
 
+    /// What erasing landed entries one by one, as they settled, did. A path it erased or
+    /// found already gone is handled, and the end-of-run sweep leaves it alone; a path it
+    /// could not erase (another owner held the card, the delete failed) is not, so the
+    /// sweep tries it again and counts the outcome.
+    private struct LandedEraseTally: Sendable {
+        var deleted = 0
+        var alreadyGone = 0
+        var notErased = 0
+        var handled: Set<MediaRelativePath> = []
+
+        mutating func record(_ outcome: SourceEraseOutcome?, path: MediaRelativePath) {
+            switch outcome {
+            case .deleted:
+                deleted += 1
+                handled.insert(path)
+            case .alreadyGone:
+                alreadyGone += 1
+                handled.insert(path)
+            case .refused, .failed, nil:
+                notErased += 1
+            }
+        }
+    }
+
     private struct EntryTotals: Sendable {
         let publishedCount: Int
         let publishedBytes: Int64
@@ -425,12 +449,15 @@ actor MediaImportExecutor {
         // still erases what landed. One consumer takes them in settle order, each under
         // the card's namespace lease and journaled; the run waits for it before the sweep.
         let (landedSources, landedSink) = AsyncStream<MediaOperationPlanEntry>.makeStream(bufferingPolicy: .unbounded)
-        let landedEraser: Task<Void, Never>? = context.allowSourceDeletion
+        let landedEraser: Task<LandedEraseTally, Never>? = context.allowSourceDeletion
             ? Task { [weak self] in
+                var tally = LandedEraseTally()
                 for await entry in landedSources {
-                    guard let self else { return }
-                    await eraseLandedSource(entry, context: context)
+                    guard let self else { break }
+                    let outcome = await eraseLandedSource(entry, context: context)
+                    tally.record(outcome, path: entry.source.relativePath)
                 }
+                return tally
             }
             : nil
         // ADR 0027: an entry is admitted only while the destination volume
@@ -574,11 +601,21 @@ actor MediaImportExecutor {
             return spaceStop
         }
         landedSink.finish()
-        await landedEraser?.value
+        let landed = await landedEraser?.value ?? LandedEraseTally()
         // A floor stop is never fully clean: the un-copied entries exist only
-        // on the card, so the erase sweep does not run (ADR 0027).
+        // on the card, so the erase sweep does not run (ADR 0027); what it reports is
+        // what erasing landed entries did.
         if context.allowSourceDeletion, spaceStop == nil {
-            let eraseOutcome = await eraseSourceFiles(context: context, erasableSourcePaths: erasableSourcePaths)
+            let sweep = await eraseSourceFiles(
+                context: context,
+                erasableSourcePaths: erasableSourcePaths.subtracting(landed.handled)
+            )
+            let eraseOutcome = EraseOutcome(
+                deletedCount: landed.deleted + sweep.deletedCount,
+                skippedCount: landed.alreadyGone + sweep.skippedCount,
+                failedCount: sweep.failedCount
+            )
+            logEraseOutcome(eraseOutcome, landed: landed, context: context)
             return EntryTotals(
                 publishedCount: publishedCount,
                 publishedBytes: publishedBytes,
@@ -600,8 +637,34 @@ actor MediaImportExecutor {
             overlayReuse: overlayReuse,
             spaceStop: spaceStop,
             failureReasons: failureReasons,
-            eraseOutcome: EraseOutcome(deletedCount: 0, skippedCount: 0, failedCount: 0)
+            eraseOutcome: landedOnlyOutcome(landed, context: context)
         )
+    }
+
+    /// The erase outcome of a run whose sweep did not run: what erasing landed entries did,
+    /// with every landed entry it could not erase counted as failed, since nothing retries it.
+    private func landedOnlyOutcome(_ landed: LandedEraseTally, context: EntryExecutionContext) -> EraseOutcome {
+        let outcome = EraseOutcome(
+            deletedCount: landed.deleted,
+            skippedCount: landed.alreadyGone,
+            failedCount: landed.notErased
+        )
+        if context.allowSourceDeletion {
+            logEraseOutcome(outcome, landed: landed, context: context)
+        }
+        return outcome
+    }
+
+    private func logEraseOutcome(_ outcome: EraseOutcome, landed: LandedEraseTally, context: EntryExecutionContext) {
+        OtosLog.mediaIO.noticeOperation("import.erase", phase: "outcome", fields: [
+            "run": context.runID,
+            "deleted": "\(outcome.deletedCount)",
+            "skipped": "\(outcome.skippedCount)",
+            "failed": "\(outcome.failedCount)",
+            "landedDeleted": "\(landed.deleted)",
+            "landedAlreadyGone": "\(landed.alreadyGone)",
+            "landedNotErased": "\(landed.notErased)",
+        ])
     }
 
     private func eraseSourceFiles(
@@ -754,8 +817,13 @@ actor MediaImportExecutor {
     /// card's namespace lease and journaled exactly as the sweep journals, so a crash
     /// between the two is recovered. A card another owner holds keeps the file; the
     /// end-of-run sweep tries again under its own lease.
-    private func eraseLandedSource(_ entry: MediaOperationPlanEntry, context: EntryExecutionContext) async {
-        guard case let .import(sourceRoot, _, _) = context.plan.mode else { return }
+    /// Returns what the erase did, or `nil` when it was not attempted: another owner held
+    /// the card, or the journal could not record it.
+    private func eraseLandedSource(
+        _ entry: MediaOperationPlanEntry,
+        context: EntryExecutionContext
+    ) async -> SourceEraseOutcome? {
+        guard case let .import(sourceRoot, _, _) = context.plan.mode else { return nil }
         let acquisition = await store.acquireNamespaceMutationLease(for: sourceRoot, owner: .sourceErase)
         guard case let .acquired(lease) = acquisition else {
             OtosLog.mediaIO.noticeOperation("import.erase", phase: "landedDeferred", fields: [
@@ -763,7 +831,7 @@ actor MediaImportExecutor {
                 "reason": acquisition.logReason,
                 "relativePath": entry.source.relativePath.rawValue,
             ])
-            return
+            return nil
         }
         let journal = ActiveSourceEraseOperation(
             key: .make(),
@@ -774,9 +842,10 @@ actor MediaImportExecutor {
             sourceByteSize: entry.source.byteSize,
             updatedAt: Date()
         )
+        let outcome: SourceEraseOutcome?
         do {
             try await store.beginSourceEraseOperation(journal)
-            switch await eraseSourceFile(
+            let erased = await eraseSourceFile(
                 candidate: EraseManifestEntry(
                     relativePath: entry.source.relativePath,
                     byteSize: entry.source.byteSize,
@@ -785,7 +854,8 @@ actor MediaImportExecutor {
                 sourceRoot: sourceRoot,
                 sourceKind: context.sourceKind,
                 sourceDeviceIdentity: context.sourceDeviceIdentity
-            ) {
+            )
+            switch erased {
             case .deleted, .alreadyGone:
                 await ImportStaging.completeEraseJournal(journal.key, store: store)
             case .refused, .failed:
@@ -794,14 +864,17 @@ actor MediaImportExecutor {
                     "relativePath": entry.source.relativePath.rawValue,
                 ])
             }
+            outcome = erased
         } catch {
             OtosLog.mediaIO.errorOperation("import.erase", phase: "landedJournalFailed", fields: [
                 "run": context.runID,
                 "relativePath": entry.source.relativePath.rawValue,
                 "error": String(describing: error),
             ])
+            outcome = nil
         }
         _ = await store.releaseNamespaceMutationLease(lease)
+        return outcome
     }
 
     private func eraseSourceFile(
