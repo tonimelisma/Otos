@@ -845,7 +845,7 @@ struct MediaOperationCoordinatorTests {
         #expect(before.destinationPath == fixture.libraries[0])
 
         // Move the last library ("Middle") to the front.
-        try await fixture.store.moveLibrary(from: 2, to: 0)
+        try await fixture.store.moveLibrary(fixture.libraries[2], .before(fixture.libraries[0]))
 
         _ = try await readyGeneration(coordinator, source: fixture.source, greaterThan: baseline)
         let after = try #require(
@@ -872,7 +872,7 @@ struct MediaOperationCoordinatorTests {
         _ = try await readyGeneration(coordinator, source: fixture.source, greaterThan: baseline)
 
         // Reorder without touching the explicitly chosen library at all.
-        try await fixture.store.moveLibrary(from: 2, to: 0)
+        try await fixture.store.moveLibrary(fixture.libraries[2], .before(fixture.libraries[0]))
         try await waitForCoordinatorQuiescence(coordinator)
 
         let after = try #require(
@@ -912,7 +912,7 @@ struct MediaOperationCoordinatorTests {
         #expect(afterFallback.destinationPath == fixture.libraries[0])
 
         // Reordering now must move the (no-longer-explicit) destination too.
-        try await fixture.store.moveLibrary(from: 0, to: 1)
+        try await fixture.store.moveLibrary(fixture.libraries[0], .down)
         try await waitForCoordinatorQuiescence(coordinator)
         let afterReorder = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }

@@ -39,7 +39,7 @@ final class CatalogWindowViewModel {
         case addLibrary(URL)
         case ensureLibrary(URL)
         case removeLibrary(LibraryRootPath)
-        case moveLibrary(from: Int, to: Int)
+        case moveLibrary(LibraryRootPath, LibraryOrderMove)
         case ejectRemovableSource(LibraryRoot)
         case forgetRemovableSource(LibraryRoot)
         case attachRemovableVolume(RemovableVolumeAttachment)

@@ -9,7 +9,7 @@ struct SettingsView: View {
     let removableDestinations: [LibraryRootPath: LibraryRootPath]
     let addLibrary: (URL) -> Void
     let removeLibrary: (LibraryRoot) -> Void
-    let moveLibrary: (Int, Int) -> Void
+    let moveLibrary: (LibraryRootPath, LibraryOrderMove) -> Void
     let forgetRemovableSource: (LibraryRoot) -> Void
     let importPreferences: ImportPreferences
     let setImportPreferences: (ImportPreferences) -> Void
@@ -231,7 +231,7 @@ private struct LibrariesSettingsView: View {
     /// Drag, `Move Up`/`Move Down`, and ⌘↑/⌘↓ all call this one intent (plan
     /// 0092 increment 4) — one user action, one path. Indices are positions in
     /// `libraries`' current (stored) order.
-    let moveLibrary: (Int, Int) -> Void
+    let moveLibrary: (LibraryRootPath, LibraryOrderMove) -> Void
 
     @State private var showingImporter = false
     @State private var selectedPath: LibraryRootPath?
@@ -264,16 +264,18 @@ private struct LibrariesSettingsView: View {
                     libraryRow(library)
                         .tag(library.path)
                         .contextMenu {
-                            Button("Move Up") { moveLibrary(index, index - 1) }
+                            Button("Move Up") { moveLibrary(library.path, .up) }
                                 .disabled(index == 0)
-                            Button("Move Down") { moveLibrary(index, index + 1) }
+                            Button("Move Down") { moveLibrary(library.path, .down) }
                                 .disabled(index == libraries.count - 1)
                         }
                 }
                 .onMove { indices, destination in
+                    // `destination` is the row the drop landed above, in the list as
+                    // drawn: the move names that library (or the end), not a position.
                     guard let sourceIndex = indices.first else { return }
-                    let resolvedDestination = destination > sourceIndex ? destination - 1 : destination
-                    moveLibrary(sourceIndex, resolvedDestination)
+                    let anchor = libraries.indices.contains(destination) ? libraries[destination].path : nil
+                    moveLibrary(libraries[sourceIndex].path, .before(anchor))
                 }
             }
             // Invisible, keyboard-only mirrors of the Move Up/Down menu items —
@@ -346,10 +348,10 @@ private struct LibrariesSettingsView: View {
     }
 
     private func moveSelected(by offset: Int) {
-        guard let selectedIndex, canMoveSelected(by: offset) else {
+        guard let selectedPath, canMoveSelected(by: offset) else {
             return
         }
-        moveLibrary(selectedIndex, selectedIndex + offset)
+        moveLibrary(selectedPath, offset < 0 ? .up : .down)
     }
 
     private var selectedRoot: LibraryRoot? {
