@@ -64,8 +64,7 @@ Captured owner guidance for verification:
   identity or overlay files. Existing user-owned useful companions (`.xmp` / `.srt`)
   may be inventoried and transferred during explicit import/reorganization. The
   catalog can be made exportable if portability is ever needed.
-- Explicit Move to Trash is the one current filesystem mutation exception and is
-  owned by ADR 0022: system Trash only, catalog-proven members only, exact-path
+- Explicit Move to Trash is a user-initiated filesystem mutation owned by ADR 0022: system Trash only, catalog-proven members only, exact-path
   partial reconciliation, and no byte read or materialization request.
 - Persisting one thumbnail per asset is acceptable even at a million assets;
   regenerating thumbnails is expensive precisely because most originals are in the
@@ -77,8 +76,9 @@ This ADR owns:
 
 - The product contract that the filesystem is the single source of truth and the
   catalog plus all overlay is a subordinate, rebuildable projection.
-- The no-hostage rule: no opaque app-owned media vault, no writes into the user's
-  media folders, and no generated sidecar files for identity or authored overlay.
+- The no-hostage rule: no opaque app-owned media vault, nothing Otos derives or
+  authors written into the user's media folders, and no generated sidecar files
+  for identity or authored overlay.
   Existing useful companions may be inventoried/transferred only under explicit
   import or reorganization. Catalog export is the portability answer.
 - The single overlay lifecycle: overlay is held while its item exists inside a
