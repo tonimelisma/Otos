@@ -762,7 +762,7 @@ extension CatalogWindowViewModel {
         applySidebarSelectionPolicy(previous: previousState, next: nextState)
 
         let updateID = stallMonitor.reserveUpdateID()
-        let applyStart = Date()
+        let applyStart = ContinuousClock.now
         let operation = stallMonitor.beginOperation("CatalogWindowViewModel.applyState")
         defer { stallMonitor.endOperation(operation) }
         let signpost = OtosSignpost.ui.beginInterval("CatalogWindowStateApply")
@@ -822,7 +822,7 @@ extension CatalogWindowViewModel {
             emptyState: nextState.mediaEmptyState.diagnosticDescription,
             mediaIdentityChanged: mediaIdentityChanged,
             detailRefreshGeneration: nextState.mediaGrid.detailRefreshGeneration,
-            timestamp: Date()
+            timestamp: .now
         )
         stallMonitor.recordGridHandoff(handoff)
 

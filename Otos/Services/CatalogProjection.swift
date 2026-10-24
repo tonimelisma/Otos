@@ -320,8 +320,8 @@ private extension CatalogProjection {
             reuseDescriptor = nil
         }
 
-        let publicationStart = Date()
-        let storeReadStart = Date()
+        let publicationStart = ContinuousClock.now
+        let storeReadStart = ContinuousClock.now
         let completed: CatalogProjectionCompletedPublication
         do {
             // Before the catalog's first load there is nothing to query and nothing to
@@ -336,7 +336,7 @@ private extension CatalogProjection {
             publishedBeforeCatalogLoad = false
             let storeReadMs = DiagnosticsTiming.milliseconds(since: storeReadStart)
 
-            let projectionStart = Date()
+            let projectionStart = ContinuousClock.now
             let signpost = OtosSignpost.performance.beginInterval("CatalogWindowPublication")
             defer {
                 OtosSignpost.performance.endInterval("CatalogWindowPublication", signpost)
@@ -400,7 +400,7 @@ private extension CatalogProjection {
             publication.state.queryDescriptor,
             forInput: selectedRequest
         )
-        let equalityStart = Date()
+        let equalityStart = ContinuousClock.now
         let changeSummary = CatalogProjectionChangeSummary.compare(
             previous: lastPublishedState,
             current: publication.state

@@ -26,7 +26,7 @@ nonisolated struct CatalogGridHandoff: Equatable {
     let emptyState: String
     let mediaIdentityChanged: Bool
     let detailRefreshGeneration: UInt64
-    let timestamp: Date
+    let timestamp: ContinuousClock.Instant
 }
 
 nonisolated struct MainRunLoopOperationToken: Equatable {
@@ -38,13 +38,13 @@ final class MainRunLoopStallMonitor {
     private struct OperationRecord {
         let id: Int
         let name: String
-        let startedAt: Date
+        let startedAt: ContinuousClock.Instant
     }
 
     private struct CompletedOperationRecord {
         let name: String
         let durationMs: Int
-        let finishedAt: Date
+        let finishedAt: ContinuousClock.Instant
     }
 
     /// One in-flight sidebar/filter/sort intent awaiting the structural apply that
@@ -58,11 +58,11 @@ final class MainRunLoopStallMonitor {
     private struct PendingIntentToPaint {
         let signpost: OSSignpostIntervalState
         let scope: SidebarSelection
-        let startedAt: Date
+        let startedAt: ContinuousClock.Instant
     }
 
     private var timer: Timer?
-    private var expectedFireDate: Date?
+    private var expectedFire: ContinuousClock.Instant?
     private var nextUpdateID = 0
     private var nextOperationID = 0
     private var latestHandoff: CatalogGridHandoff?
@@ -71,8 +71,9 @@ final class MainRunLoopStallMonitor {
     private var pendingIntentToPaint: PendingIntentToPaint?
     /// Optional MainActor-safe extra fields (e.g. mutation-gate exclusivity) sampled at stall time.
     var additionalStallFields: (() -> [String: String])?
-    private let interval: TimeInterval = 0.1
-    private let stallThreshold: TimeInterval = 0.1
+    // time: measurement — the sampling period of the stall monitor
+    private let interval = Duration.milliseconds(100)
+    private let stallThreshold = Duration.milliseconds(100)
     private let longOperationThresholdMs = 100
 
     isolated deinit {
@@ -110,7 +111,7 @@ final class MainRunLoopStallMonitor {
         pendingIntentToPaint = PendingIntentToPaint(
             signpost: OtosSignpost.ui.beginInterval("SidebarSelectionToPaint"),
             scope: scope,
-            startedAt: Date()
+            startedAt: .now
         )
         OtosLog.ui.noticeOperation(
             "ui.sidebarSelectionToPaint",
@@ -140,14 +141,14 @@ final class MainRunLoopStallMonitor {
         return true
     }
 
-    func beginOperation(_ name: String, now: Date = Date()) -> MainRunLoopOperationToken {
+    func beginOperation(_ name: String, now: ContinuousClock.Instant = .now) -> MainRunLoopOperationToken {
         nextOperationID += 1
         let record = OperationRecord(id: nextOperationID, name: name, startedAt: now)
         operationStack.append(record)
         return MainRunLoopOperationToken(id: record.id)
     }
 
-    func endOperation(_ token: MainRunLoopOperationToken, now: Date = Date()) {
+    func endOperation(_ token: MainRunLoopOperationToken, now: ContinuousClock.Instant = .now) {
         guard let index = operationStack.lastIndex(where: { $0.id == token.id }) else {
             return
         }
@@ -166,9 +167,12 @@ final class MainRunLoopStallMonitor {
                 return
             }
 
-            expectedFireDate = Date().addingTimeInterval(interval)
-            let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-                Task { @MainActor in
+            expectedFire = ContinuousClock.now.advanced(by: interval)
+            // The timer is scheduled on the main run loop, so its block already runs on
+            // the main thread: ticking there directly measures the run loop's lateness,
+            // where a `Task` hop would add its own scheduling delay to every sample.
+            let timer = Timer(timeInterval: DiagnosticsTiming.seconds(interval), repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
                     self?.tick()
                 }
             }
@@ -183,45 +187,44 @@ final class MainRunLoopStallMonitor {
     func stop() {
         timer?.invalidate()
         timer = nil
-        expectedFireDate = nil
+        expectedFire = nil
         latestHandoff = nil
         operationStack.removeAll()
         lastLongOperation = nil
         pendingIntentToPaint = nil
     }
 
-    private func tick(now: Date = Date()) {
-        guard let expectedFireDate = activeExpectedFireDate(now: now) else {
+    private func tick(now: ContinuousClock.Instant = .now) {
+        guard let expectedFire = activeExpectedFire(now: now) else {
             return
         }
 
-        let lateness = now.timeIntervalSince(expectedFireDate)
-        self.expectedFireDate = now.addingTimeInterval(interval)
+        let lateness = expectedFire.duration(to: now)
+        self.expectedFire = now.advanced(by: interval)
         guard lateness >= stallThreshold else {
             return
         }
 
-        let stallMs = max(0, Int((lateness * 1000).rounded()))
-        recordStall(stallMs: stallMs, now: now)
+        recordStall(stallMs: DiagnosticsTiming.milliseconds(lateness), now: now)
     }
 
-    private func activeExpectedFireDate(now: Date) -> Date? {
+    private func activeExpectedFire(now: ContinuousClock.Instant) -> ContinuousClock.Instant? {
         // Inactive apps are eligible for timer coalescing and App Nap. A late
         // main-run-loop timer in that state is not evidence of user-visible
         // jank, so reset the baseline until the app is active again.
         guard NSApplication.shared.isActive else {
-            expectedFireDate = now.addingTimeInterval(interval)
+            expectedFire = now.advanced(by: interval)
             return nil
         }
 
-        guard let expectedFireDate else {
-            expectedFireDate = now.addingTimeInterval(interval)
+        guard let expectedFire else {
+            expectedFire = now.advanced(by: interval)
             return nil
         }
-        return expectedFireDate
+        return expectedFire
     }
 
-    private func recordStall(stallMs: Int, now: Date) {
+    private func recordStall(stallMs: Int, now: ContinuousClock.Instant) {
         let latestHandoff = latestHandoff
         let currentOperation = operationStack.last
         let lastLongOperation = lastLongOperation
@@ -239,7 +242,7 @@ final class MainRunLoopStallMonitor {
 
     private func stallFields(
         stallMs: Int,
-        now: Date,
+        now: ContinuousClock.Instant,
         latestHandoff: CatalogGridHandoff?,
         currentOperation: OperationRecord?,
         lastLongOperation: CompletedOperationRecord?,
@@ -247,8 +250,8 @@ final class MainRunLoopStallMonitor {
     ) -> [String: String] {
         var fields = [
             "stallMs": "\(stallMs)",
-            "thresholdMs": "\(Int((stallThreshold * 1000).rounded()))",
-            "intervalMs": "\(Int((interval * 1000).rounded()))",
+            "thresholdMs": "\(DiagnosticsTiming.milliseconds(stallThreshold))",
+            "intervalMs": "\(DiagnosticsTiming.milliseconds(interval))",
         ]
         if let latestHandoff {
             fields["latestUpdateID"] = "\(latestHandoff.updateID)"

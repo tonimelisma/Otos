@@ -283,7 +283,7 @@ actor CatalogStore {
     /// Last successful completed full-root reconciliation per root. Launch/add
     /// scans count; used only for the long-running-session integrity sweep.
     private var unreadableSourceIDs: Set<MediaAssetID> = []
-    private var lastSuccessfulFullRootScanAt: [LibraryRootPath: Date] = [:]
+    private var lastSuccessfulFullRootScanAt: [LibraryRootPath: ContinuousClock.Instant] = [:]
     private var integrityScanTask: Task<Void, Never>?
     private var knownMaterializationSuppression = KnownMaterializationSuppressionState()
     /// Typed namespace-mutation lease per root. Import publication, library
@@ -1254,7 +1254,7 @@ extension CatalogStore {
             return []
         }
 
-        let queryStart = Date()
+        let queryStart = ContinuousClock.now
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreEnrichmentCandidateQuery")
         defer {
             OtosSignpost.persistence.endInterval("CatalogStoreEnrichmentCandidateQuery", signpost)
@@ -2523,9 +2523,9 @@ private extension CatalogStore {
         _ dbWriter: any DatabaseWriter,
         _ body: @Sendable @escaping (Database) throws -> Value
     ) async throws -> DatabaseTimedValue<Value> {
-        let start = Date()
+        let start = ContinuousClock.now
         return try await dbWriter.read { db in
-            let entered = Date()
+            let entered = ContinuousClock.now
             let value = try body(db)
             return DatabaseTimedValue(
                 value: value,
@@ -2539,9 +2539,9 @@ private extension CatalogStore {
         _ dbWriter: any DatabaseWriter,
         _ body: @Sendable @escaping (Database) throws -> Value
     ) async throws -> DatabaseTimedValue<Value> {
-        let start = Date()
+        let start = ContinuousClock.now
         return try await dbWriter.write { db in
-            let entered = Date()
+            let entered = ContinuousClock.now
             let value = try body(db)
             return DatabaseTimedValue(
                 value: value,
@@ -3105,7 +3105,7 @@ private extension CatalogStore {
                     ]
                 )
             }
-            lastSuccessfulFullRootScanAt[scan.rootPath] = Date()
+            lastSuccessfulFullRootScanAt[scan.rootPath] = .now
         } catch is CancellationError {
             await recordIgnoredStaleCallback(scan, callback: "reconciliation")
             return
@@ -3600,7 +3600,7 @@ private extension CatalogStore {
         let pendingEvents = filesystemEventBatches.removeValue(forKey: root) ?? []
         knownMaterializationSuppression.pruneExpired()
         let activeSuppression = knownMaterializationSuppression.activeExpiries()
-        let now = Date()
+        let now = ContinuousClock.now
         var keptEvents: [FilesystemEvent] = []
         keptEvents.reserveCapacity(pendingEvents.count)
         var suppressedCount = 0
@@ -3740,7 +3740,7 @@ private extension CatalogStore {
         guard let rootRowID = roots[root]?.rowID else {
             return
         }
-        let started = Date()
+        let started = ContinuousClock.now
         var catalogChanged = false
         var changedCount = 0
         for path in files.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
@@ -3762,7 +3762,7 @@ private extension CatalogStore {
             bumpNamespaceRevision(for: root)
             notifyCatalogChanged()
         }
-        let totalMs = Int(Date().timeIntervalSince(started) * 1000)
+        let totalMs = DiagnosticsTiming.milliseconds(since: started)
         OtosLog.catalog.notice(
             "op=catalog.reconcile phase=finish mode=file rootPath=\(root.rawValue, privacy: .public) scopeCount=\(files.count, privacy: .public) changed=\(changedCount, privacy: .public) totalMs=\(totalMs, privacy: .public)"
         )
@@ -3938,8 +3938,7 @@ private extension CatalogStore {
     }
 
     private func scheduleOverdueIntegrityScans() {
-        let now = Date()
-        let interval = DiagnosticsTiming.seconds(Self.integrityScanInterval)
+        let now = ContinuousClock.now
         for path in roots.keys {
             guard roots[path]?.root.kind == .library else {
                 continue
@@ -3958,14 +3957,14 @@ private extension CatalogStore {
             if let accumulator = filesystemDirty[path], accumulator.isRootDirty {
                 continue
             }
-            let last = lastSuccessfulFullRootScanAt[path]
-            let age = last.map { now.timeIntervalSince($0) } ?? interval
-            guard age >= interval else {
+            // A root never fully scanned in this process is overdue.
+            let age = lastSuccessfulFullRootScanAt[path].map { $0.duration(to: now) }
+            if let age, age < Self.integrityScanInterval {
                 continue
             }
             filesystemDirty[path, default: FilesystemDirtyAccumulator()].insertRoot()
             OtosLog.catalog.notice(
-                "op=catalog.integrityScan phase=schedule rootPath=\(path.rawValue, privacy: .public) successfulScanAgeSec=\(Int(age), privacy: .public)"
+                "op=catalog.integrityScan phase=schedule rootPath=\(path.rawValue, privacy: .public) successfulScanAgeSec=\(age.map { "\(Int(DiagnosticsTiming.seconds($0)))" } ?? "never", privacy: .public)"
             )
             Task { await self.drainDirtyReconcile(for: path) }
         }

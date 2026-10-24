@@ -78,4 +78,10 @@ custom_rules:
     message: "A failed Store read publishes nothing (ADR 0032, rule 4): throw it to the pass instead of assigning or returning [], .empty or 0 in a catch."
     severity: error
 
+  wall_clock_interval:
+    name: "An interval inside the process is measured on ContinuousClock"
+    regex: 'Date\(\)\.(timeIntervalSince|addingTimeInterval)\(|\btimeIntervalSinceNow\b|Date\.distant(Past|Future)\b|Date\(timeIntervalSinceNow:'
+    message: "A process-local deadline or elapsed time uses ContinuousClock.Instant and Duration (DiagnosticsTiming): the wall clock can jump, run backwards or stop across sleep. Date is for persisted or displayed timestamps."
+    severity: error
+
 reporter: xcode

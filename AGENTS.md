@@ -175,6 +175,9 @@ and let instrumentation prove a real bottleneck before optimizing it.
      actor.
   Test an interleaving by delivering the competing event at that exact suspension, never
   with time.
+- Intervals and deadlines inside the process use `ContinuousClock` (`Instant`, `Duration`);
+  `Date` is only for persisted or displayed timestamps (ADR 0033, lint
+  `wall_clock_interval`).
 - Main-actor work stays below Apple's 100 ms hang threshold; scrolling/grid/
   animation/pointer paths well below it. Changes touching jank, responsiveness,
   concurrency, media I/O, or rendering include profiler/log evidence.

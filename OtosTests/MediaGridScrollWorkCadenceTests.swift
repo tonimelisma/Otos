@@ -7,13 +7,17 @@ import Testing
 /// The maximum wait is what serves a sustained fling.
 struct MediaGridScrollWorkCadenceTests {
     @Test func aBurstThatIsStillRunningIsServedByTheMaximumWait() {
-        #expect(MediaGridScrollWorkCadence.runsImmediately(sinceLastRun: 0.1))
-        #expect(MediaGridScrollWorkCadence.runsImmediately(sinceLastRun: 5))
+        #expect(MediaGridScrollWorkCadence.runsImmediately(sinceLastRun: .milliseconds(100)))
+        #expect(MediaGridScrollWorkCadence.runsImmediately(sinceLastRun: .seconds(5)))
+    }
+
+    @Test func workThatHasNeverRunRunsNow() {
+        #expect(MediaGridScrollWorkCadence.runsImmediately(sinceLastRun: nil))
     }
 
     @Test func workJustRunIsLeftToTheTrailingEdge() {
-        #expect(!MediaGridScrollWorkCadence.runsImmediately(sinceLastRun: 0))
-        #expect(!MediaGridScrollWorkCadence.runsImmediately(sinceLastRun: 0.099))
+        #expect(!MediaGridScrollWorkCadence.runsImmediately(sinceLastRun: .zero))
+        #expect(!MediaGridScrollWorkCadence.runsImmediately(sinceLastRun: .milliseconds(99)))
     }
 
     @Test func theMaximumWaitOutlastsTheCoalesceWindow() {
@@ -26,14 +30,14 @@ struct MediaGridScrollWorkCadenceTests {
         // The measured case: bounds notifications ~6.5 ms apart against a 16 ms window,
         // so every trailing edge is cancelled. Walk that rate forward and confirm the
         // maximum wait fires, and roughly as often as it promises.
-        let tick = 0.0065
-        var sinceLastRun = 0.0
+        let tick = Duration.microseconds(6500)
+        var sinceLastRun = Duration.zero
         var runs = 0
-        for _ in 0 ..< Int(1.0 / tick) {
+        for _ in 0 ..< Int(1.0 / 0.0065) {
             sinceLastRun += tick
             if MediaGridScrollWorkCadence.runsImmediately(sinceLastRun: sinceLastRun) {
                 runs += 1
-                sinceLastRun = 0
+                sinceLastRun = .zero
             }
         }
         #expect(runs >= 8)

@@ -32,11 +32,11 @@ extension EnrichmentCoordinator {
         retryLedger[id]
     }
 
-    func testSeedReadinessRetry(id: MediaAssetID, notBefore: Date) {
+    func testSeedReadinessRetry(id: MediaAssetID, notBefore: ContinuousClock.Instant) {
         readinessRetryNotBefore[id] = notBefore
     }
 
-    func testReadinessRetryDeadlines() -> [Date] {
+    func testReadinessRetryDeadlines() -> [ContinuousClock.Instant] {
         Array(readinessRetryNotBefore.values)
     }
 

@@ -79,7 +79,7 @@ nonisolated struct MediaEnricher {
                     readinessChecker: readinessChecker
                 )
             }
-            let hashStart = Date()
+            let hashStart = ContinuousClock.now
             let hashSignpost = OtosSignpost.mediaIO.beginInterval("ContentHash")
             let hashOutcome = contentHasher(url)
             OtosSignpost.mediaIO.endInterval("ContentHash", hashSignpost)
@@ -168,7 +168,7 @@ nonisolated struct MediaEnricher {
         guard case let .cameraRanges(session, relativePath, size) = access else {
             return .notMaterialized
         }
-        let started = Date()
+        let started = ContinuousClock.now
         let parsed = await CameraMetadataReader.read(
             session: session,
             relativePath: relativePath,
@@ -372,7 +372,7 @@ nonisolated struct MediaEnricher {
     /// so the asset is not retried until the file changes, and the grid shows a
     /// broken-media placeholder.
     static func generateThumbnail(id: MediaAssetID, url: URL, directory: URL) async -> GeneratedThumbnail? {
-        let generationStart = Date()
+        let generationStart = ContinuousClock.now
         let signpost = OtosSignpost.thumbnails.beginInterval("ThumbnailGenerate")
         defer {
             OtosSignpost.thumbnails.endInterval("ThumbnailGenerate", signpost)

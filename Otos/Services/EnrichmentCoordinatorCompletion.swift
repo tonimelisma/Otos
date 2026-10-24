@@ -9,8 +9,6 @@ import Synchronization
 /// diagnostics, batches Store writes, and releases process-local SQLite claims on
 /// success, retryable failure, or shutdown.
 extension EnrichmentCoordinator {
-    private nonisolated static let diagnosticTimestampFormatter = Mutex(ISO8601DateFormatter())
-
     func finishEnrich(_ work: EnrichWork, _ outcome: EnrichmentOutcome) async {
         defer { resumeDrainedWaiters() }
         let id = work.id
@@ -196,20 +194,20 @@ extension EnrichmentCoordinator {
         guard !outcome.isMaterialized else {
             return nil
         }
-        let delay: TimeInterval
+        let delay: Duration
         let attemptCount = work.attemptCount + 1
         if work.isDeviceStaging {
             switch outcome {
             case .insufficientLocalSpace:
-                delay = 60
+                delay = .seconds(60)
             default:
                 guard attemptCount < 3 else {
                     return nil
                 }
-                delay = Double(attemptCount) * writeFailureBackoff.timeInterval
+                delay = writeFailureBackoff * attemptCount
             }
         } else {
-            let delays: [TimeInterval] = [15, 60, 300, 900]
+            let delays: [Duration] = [.seconds(15), .seconds(60), .seconds(300), .seconds(900)]
             guard attemptCount <= delays.count else {
                 return nil
             }
@@ -223,14 +221,14 @@ extension EnrichmentCoordinator {
             isVideo: work.isVideo,
             isDeviceStaging: work.isDeviceStaging,
             attemptCount: attemptCount,
-            retryNotBefore: Date().addingTimeInterval(delay)
+            retryNotBefore: .now.advanced(by: delay)
         )
     }
 
     private func recordRetryLedgerFailure(for work: DownloadWork) async {
         let previousAttempts = retryLedger[work.id]?.attemptCount ?? 0
         let entry = RetryLedgerEntry(
-            notBefore: Date().addingTimeInterval(900),
+            notBefore: .now.advanced(by: .seconds(900)),
             attemptCount: previousAttempts + 1,
             sourceSize: work.sourceSize
         )
@@ -240,7 +238,7 @@ extension EnrichmentCoordinator {
             phase: "retryLedgerPaced",
             id: work.id,
             fields: [
-                "notBefore": Self.diagnosticTimestamp(entry.notBefore),
+                "retryInMs": "\(DiagnosticsTiming.milliseconds(from: .now, to: entry.notBefore))",
                 "attemptCount": "\(entry.attemptCount)",
             ]
         )
@@ -255,11 +253,10 @@ extension EnrichmentCoordinator {
             ledgerRetryTask = nil
             return
         }
-        let delay = max(nextRetry.timeIntervalSinceNow, 0)
         ledgerRetryTask = Task { [weak self] in
             do {
                 // time: backoff — the retry ledger paces a materialization the provider failed
-                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                try await ContinuousClock().sleep(until: nextRetry)
             } catch {
                 return
             }
@@ -285,11 +282,10 @@ extension EnrichmentCoordinator {
         guard let nextRetry else {
             return
         }
-        let delay = max(nextRetry.timeIntervalSinceNow, 0)
         downloadRetryTask = Task { [weak self] in
             do {
                 // time: backoff — a failed provider download retries on its schedule
-                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                try await ContinuousClock().sleep(until: nextRetry)
             } catch {
                 return
             }
@@ -383,12 +379,6 @@ extension EnrichmentCoordinator {
                 error=\(String(describing: error), privacy: .public)
                 """
             )
-        }
-    }
-
-    private nonisolated static func diagnosticTimestamp(_ date: Date) -> String {
-        diagnosticTimestampFormatter.withLock { formatter in
-            formatter.string(from: date)
         }
     }
 

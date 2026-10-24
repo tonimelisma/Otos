@@ -6,8 +6,8 @@ extension MediaGridViewController {
     struct StructuralApplyCompletionContext {
         let grid: CatalogMediaGridState
         let change: MediaGridMutationGate.QueryChange
-        let applyStart: Date
-        let applyCallStart: Date
+        let applyStart: ContinuousClock.Instant
+        let applyCallStart: ContinuousClock.Instant
         let diffPolicyMs: Int
         let snapshotBuildMs: Int
         let insertedCount: Int
@@ -26,7 +26,7 @@ extension MediaGridViewController {
         change: MediaGridMutationGate.QueryChange
     ) {
         let operation = stallMonitor?.beginOperation("MediaGridViewController.applyStructure")
-        let applyStart = Date()
+        let applyStart = ContinuousClock.now
         let policyStart = applyStart
         let summary = MediaGridStructuralApplyPolicy.summarize(
             previousOrderedIDs: mutationGate.displayedOrderedIDs,
@@ -41,7 +41,7 @@ extension MediaGridViewController {
         // or video-badge changes never require this O(n) diffable snapshot path.
         // Selection truth lives in the ViewModel and is already pruned/cleared in
         // `applyState` before this apply runs; completion only renders the model.
-        let snapshotStart = Date()
+        let snapshotStart = ContinuousClock.now
         let snapshot = mediaSnapshot(for: grid)
         let snapshotBuildMs = DiagnosticsTiming.milliseconds(since: snapshotStart)
 
@@ -49,7 +49,7 @@ extension MediaGridViewController {
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")
         logStartedStructuralApply(grid, change: change, anchor: scrollAnchor, summary: summary)
         let stallMonitor = stallMonitor
-        let applyCallStart = Date()
+        let applyCallStart = ContinuousClock.now
         let animationSuppressed = summary.animatingDifferences
             && suppressesApplyAnimation(anchor: scrollAnchor, nextOrderedIDs: grid.orderedAssetIDs)
         let context = StructuralApplyCompletionContext(
@@ -97,7 +97,7 @@ extension MediaGridViewController {
     private func suppressesApplyAnimation(anchor: ScrollAnchor?, nextOrderedIDs: [MediaAssetID]) -> Bool {
         if MediaGridAnimation.prefersReducedMotion
             || MediaGridAnimation.suppressesApplyAnimation(
-                lastScrollTickAge: Date().timeIntervalSince(lastScrollTickAt)
+                lastScrollTickAge: lastScrollTickAt.map { $0.duration(to: .now) }
             )
         {
             return true
@@ -385,7 +385,7 @@ extension MediaGridViewController {
         stallMonitor: MainRunLoopStallMonitor?
     ) {
         let applyCallMs = DiagnosticsTiming.milliseconds(since: context.applyCallStart)
-        let completionStart = Date()
+        let completionStart = ContinuousClock.now
         OtosSignpost.ui.endInterval("MediaGridStructuralApply", context.signpost)
         stallMonitor?.completeIntentToPaint(appliedScope: context.grid.scope)
 

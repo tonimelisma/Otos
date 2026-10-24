@@ -538,7 +538,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.testSeedRetryLedger(
             id: id,
             entry: EnrichmentCoordinator.RetryLedgerEntry(
-                notBefore: Date().addingTimeInterval(900), attemptCount: 1, sourceSize: 100
+                notBefore: .now.advanced(by: .seconds(900)), attemptCount: 1, sourceSize: 100
             )
         )
         let deferred = await coordinator.dequeueEnrichmentWork()
@@ -550,7 +550,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.testSeedRetryLedger(
             id: id,
             entry: EnrichmentCoordinator.RetryLedgerEntry(
-                notBefore: Date().addingTimeInterval(900), attemptCount: 1, sourceSize: 999
+                notBefore: .now.advanced(by: .seconds(900)), attemptCount: 1, sourceSize: 999
             )
         )
         let claimed = await coordinator.dequeueEnrichmentWork()
@@ -588,7 +588,7 @@ struct EnrichmentCoordinatorTests {
             await coordinator.testSeedRetryLedger(
                 id: asset.id,
                 entry: EnrichmentCoordinator.RetryLedgerEntry(
-                    notBefore: Date().addingTimeInterval(900), attemptCount: 1, sourceSize: asset.byteSize
+                    notBefore: .now.advanced(by: .seconds(900)), attemptCount: 1, sourceSize: asset.byteSize
                 )
             )
         }
@@ -611,7 +611,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.testSeedRetryLedger(
             id: id,
             entry: EnrichmentCoordinator.RetryLedgerEntry(
-                notBefore: Date().addingTimeInterval(900), attemptCount: 3, sourceSize: 100
+                notBefore: .now.advanced(by: .seconds(900)), attemptCount: 3, sourceSize: 100
             )
         )
         let work = EnrichmentCoordinator.DownloadWork(
@@ -703,13 +703,13 @@ struct EnrichmentCoordinatorTests {
             libraryRootPath: LibraryRootPath(rawValue: "/DeviceStaging/Camera"),
             relativePath: MediaRelativePath(rawValue: "stale.arw")
         )
-        await coordinator.testSeedReadinessRetry(id: id, notBefore: Date(timeIntervalSinceNow: -30))
+        await coordinator.testSeedReadinessRetry(id: id, notBefore: .now.advanced(by: .seconds(-30)))
 
         _ = await coordinator.dequeueEnrichmentWork()
 
         let deadlines = await coordinator.testReadinessRetryDeadlines()
         #expect(
-            deadlines.allSatisfy { $0 > Date() },
+            deadlines.allSatisfy { $0 > .now },
             "an elapsed deadline must not survive a pass: min() would be in the past and the wake delay zero"
         )
         await coordinator.shutdown()
@@ -745,13 +745,13 @@ struct EnrichmentCoordinatorTests {
             libraryRootPath: rootPath,
             relativePath: MediaRelativePath(rawValue: "never_reached.arw")
         )
-        await coordinator.testSeedReadinessRetry(id: deferred, notBefore: Date(timeIntervalSinceNow: -5))
+        await coordinator.testSeedReadinessRetry(id: deferred, notBefore: .now.advanced(by: .seconds(-5)))
 
         _ = await coordinator.dequeueEnrichmentWork()
 
         let deadlines = await coordinator.testReadinessRetryDeadlines()
         #expect(
-            deadlines.allSatisfy { $0 > Date() },
+            deadlines.allSatisfy { $0 > .now },
             "a pass that exits early on saturated demand must still leave no elapsed deadline behind"
         )
         await coordinator.shutdown()
@@ -770,7 +770,7 @@ struct EnrichmentCoordinatorTests {
             libraryRootPath: LibraryRootPath(rawValue: "/DeviceStaging/Camera"),
             relativePath: MediaRelativePath(rawValue: "parked.arw")
         )
-        let deadline = Date(timeIntervalSinceNow: 600)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(600))
         await coordinator.testSeedReadinessRetry(id: id, notBefore: deadline)
 
         _ = await coordinator.dequeueEnrichmentWork()

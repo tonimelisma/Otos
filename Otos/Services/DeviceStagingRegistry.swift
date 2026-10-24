@@ -32,7 +32,7 @@ final class DeviceStagingRegistry {
         guard let route = route(for: url) else {
             return nil
         }
-        let start = Date()
+        let start = ContinuousClock.now
         let path = url.path(percentEncoded: false)
         if FileManager.default.fileExists(atPath: path) {
             return MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
