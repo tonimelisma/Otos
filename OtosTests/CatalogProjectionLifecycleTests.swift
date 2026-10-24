@@ -12,18 +12,22 @@ struct CatalogProjectionLifecycleTests {
     /// orphan per projection accumulates across a test run until the process deadlocks
     /// mid-suite.
     ///
-    /// Proven by ownership, not by timing: the store is held weakly here, so if the
-    /// loop still retained it the reference could not go nil.
+    /// Proven by ownership, not by timing: a sentinel only the store's scanner holds is
+    /// released exactly when the store is, and reports it. A loop that still retained
+    /// the store would keep the sentinel alive, and the release would never be reported.
     @Test func releasingAProjectionEndsItsLoopsAndReleasesTheStore() async throws {
         let temp = try makeTestDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
 
-        weak var weakStore: CatalogStore?
+        let storeReleased = ReleaseSignal()
         do {
-            let scanner = CatalogScanner { _, _, _ in .empty }
+            let sentinel = ReleaseSentinel(storeReleased)
+            let scanner = CatalogScanner { _, _, _ in
+                _ = sentinel
+                return .empty
+            }
             let store = CatalogStore(location: .inMemory, scanner: scanner)
-            weakStore = store
             let projection = CatalogProjection(cadence: .milliseconds(10))
             let stream = await projection.states(store: store, initialDescriptor: .default)
             let recordingTask = Task {
@@ -38,8 +42,8 @@ struct CatalogProjectionLifecycleTests {
 
         // The loops wake on their cadence; after their next pass each must observe a
         // nil owner and return, dropping the store with them. A released projection
-        // that kept its CatalogStore alive never satisfies this wait.
-        try await waitUntil(every: .milliseconds(50)) { weakStore == nil }
+        // that kept its CatalogStore alive never reports this.
+        await storeReleased.wait()
     }
 
     @Test func coalescedRemoveAndSamePathReaddResetsSelection() async throws {
