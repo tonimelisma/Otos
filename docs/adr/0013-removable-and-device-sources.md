@@ -105,6 +105,12 @@ Adjacent decisions requiring separate ADRs or specs:
    current, and deletion reconciliation runs only after a stable catalog snapshot.
    Partial or unstable ImageCapture snapshots are fail-closed: they may make
    observed rows visible, but they do not prove that unobserved rows were deleted.
+   The catalog follows the camera while it is connected: one `CameraCatalogSync` per
+   camera runs a pass at attach and one more each time the camera reports an add,
+   remove or rename after its catalog is complete (a newest-wins doorbell, so passes never
+   overlap), staging and thumbnailing only items no earlier pass saw. Re-running the
+   whole attach flow per report was rejected: it re-requested every thumbnail and
+   re-queued every staging seed.
    Staging is swept off the MainActor at startup and deleted when the camera
    disconnects; the catalog rows remain for stable camera identities as unavailable
    overlay.
