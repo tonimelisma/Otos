@@ -46,9 +46,7 @@ still fails with 3328, so file coordination is not what lets Finder succeed.
 
 Gold standard (the owner, by hand in Finder): a local `test.txt` moved to the Trash
 landed in `~/.Trash`; a 1 GiB file that OneDrive had made dataless, moved to the Trash
-the same way, did not appear in `~/.Trash` and was gone from the domain. Whether
-Finder decides by size, or never downloads on a user's Move to Trash, is not yet
-established. Scripted Finder runs are weaker evidence than a manual action.
+the same way, did not appear in `~/.Trash` and was gone from the domain.
 
 OneDrive's recycle bin on the web listed every probe deletion (scripted and manual)
 except the 1 GiB file at the time of the check.
