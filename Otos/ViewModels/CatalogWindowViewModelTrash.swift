@@ -39,7 +39,7 @@ extension CatalogWindowViewModel {
         guard mediaTrashTask == nil else {
             return false
         }
-        let ids = mediaChoiceTargetIDs(.current)
+        let ids = targetIDs(.current)
         guard !ids.isEmpty else {
             return false
         }
@@ -56,7 +56,7 @@ extension CatalogWindowViewModel {
         guard canMoveTargetedMediaToTrash else {
             return
         }
-        let ids = mediaChoiceTargetIDs(.current)
+        let ids = targetIDs(.current)
         guard asksBeforeLargeTrashDownload else {
             performMoveToTrash(ids)
             return

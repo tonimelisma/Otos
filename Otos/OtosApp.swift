@@ -164,10 +164,10 @@ public struct OtosApp: App {
                 .disabled(catalogViewModel.currentTargetFileURLs.isEmpty)
                 Divider()
                 Button("Reveal in Finder") {
-                    catalogViewModel.revealSelectionInFinder()
+                    catalogViewModel.revealCurrentTargetsInFinder()
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
-                .disabled(catalogViewModel.selectedAssetIDs.isEmpty)
+                .disabled(catalogViewModel.currentTargetFileURLs.isEmpty)
             }
             // Undo covers curation choices only; Move to Trash keeps Finder's Put Back
             // (ADR 0022). Titles come from the manager: `Undo Like`, `Redo Dislike`.

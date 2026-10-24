@@ -135,6 +135,8 @@ private struct TableWorkspace: WorkspaceOpening {
 
     func open(_: [URL], withApplicationAt _: URL) async throws {}
 
+    func revealInFinder(_: [URL]) {}
+
     func queriedExtensions() -> [String] {
         queried.snapshot()
     }

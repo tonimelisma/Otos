@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 @testable import OtosKit
+import Synchronization
 import Testing
 
 /// ViewModel side of the media context menu (APP-037): the right-click selection rule
@@ -65,6 +66,24 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         #expect(menuModel.canReveal)
         #expect(model.openWithMenu.openTitle == "Open in Preview")
         #expect(model.openWithMenuTask == nil)
+    }
+
+    /// Reveal acts on the same targets as Open, Share and Copy: in Loupe that is the
+    /// focused item, never a grid multi-selection left behind it (APP-037).
+    @Test func revealUsesTheCurrentTargetsInEveryMode() {
+        let workspace = MenuRecordingWorkspace()
+        let model = makeMenuModel(workspace: workspace)
+        let ids = makeIDs(count: 3)
+        model.applyState(menuWindowState(ids: ids))
+        _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
+        _ = model.applyGridClick(hit: ids[2], modifiers: [.command], orderedIDs: ids)
+
+        model.revealCurrentTargetsInFinder()
+        model.openLoupe(id: ids[1])
+        #expect(model.mediaItemMenuModel().canReveal)
+        model.revealCurrentTargetsInFinder()
+
+        #expect(workspace.revealed == [[ids[0].fileURL, ids[2].fileURL], [ids[1].fileURL]])
     }
 
     @Test func noTargetsBuildNoMenu() {
@@ -164,6 +183,11 @@ private actor MenuOpenLog {
 /// Every JPEG opens in Preview; Preview and Photos can open it.
 private struct MenuRecordingWorkspace: WorkspaceOpening {
     private let log = MenuOpenLog()
+    private let reveals = RevealRecorder()
+
+    var revealed: [[URL]] {
+        reveals.snapshot()
+    }
 
     var opens: [(application: URL, targets: [URL])] {
         get async { await log.opens }
@@ -183,5 +207,22 @@ private struct MenuRecordingWorkspace: WorkspaceOpening {
 
     func open(_ urls: [URL], withApplicationAt applicationURL: URL) async throws {
         await log.record(application: applicationURL, targets: urls)
+    }
+
+    func revealInFinder(_ urls: [URL]) {
+        reveals.record(urls)
+    }
+}
+
+/// Reveals as the workspace received them. A class, so the value-type workspace shares it.
+private final class RevealRecorder: Sendable {
+    private let storage = Mutex<[[URL]]>([])
+
+    func record(_ urls: [URL]) {
+        storage.withLock { $0.append(urls) }
+    }
+
+    func snapshot() -> [[URL]] {
+        storage.withLock { $0 }
     }
 }

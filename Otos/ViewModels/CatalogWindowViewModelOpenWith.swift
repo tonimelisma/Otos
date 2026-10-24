@@ -24,7 +24,7 @@ import UniformTypeIdentifiers
 extension CatalogWindowViewModel {
     /// File URLs of the current targets in display order; empty when nothing is targeted.
     func resolveCurrentTargetFileURLs() -> [URL] {
-        mediaChoiceTargetIDs(.current).map(\.fileURL)
+        targetIDs(.current).map(\.fileURL)
     }
 
     /// Resolves the targets once per writer change into `currentTargetFileURLs` (read

@@ -18,7 +18,7 @@ import OSLog
 /// register their own inverse synchronously at fire time so the manager files it on
 /// the opposite stack. Move to Trash is not registered here: Finder's Put Back is its
 /// undo (ADR 0022).
-nonisolated enum MediaChoiceTarget: Equatable {
+nonisolated enum MediaTarget: Equatable {
     case current
     case item(MediaAssetID)
     case compare(PanePosition)
@@ -52,7 +52,7 @@ struct MediaChoiceCommand: Equatable {
     let ids: [MediaAssetID]
     /// Menu title for the undo entry: `Like`, `Dislike`, `Mark as Not Rated`.
     let actionName: String
-    let target: MediaChoiceTarget
+    let target: MediaTarget
     let mode: BrowserViewMode
     let descriptor: CatalogQueryDescriptor
     let queryGeneration: UInt64
@@ -80,14 +80,14 @@ extension CatalogWindowViewModel {
     static let currentTargetChoiceLimit = 64
 
     var hasMediaChoiceTarget: Bool {
-        !mediaChoiceTargetIDs(.current).isEmpty
+        !targetIDs(.current).isEmpty
     }
 
     /// Reads the current targets' choices once per target change (and once after a
     /// confirmed write) and publishes the one value they share, or nil.
     func refreshCurrentTargetChoice() {
         currentTargetChoiceTask?.cancel()
-        let ids = mediaChoiceTargetIDs(.current)
+        let ids = targetIDs(.current)
         guard !ids.isEmpty, ids.count <= Self.currentTargetChoiceLimit else {
             if currentTargetChoice != nil {
                 currentTargetChoice = nil
@@ -98,7 +98,7 @@ extension CatalogWindowViewModel {
         let reader = tileDetailReader
         currentTargetChoiceTask = Task { [weak self] in
             let details = await reader.details(for: ids)
-            guard !Task.isCancelled, let self, mediaChoiceTargetIDs(.current) == ids else { return }
+            guard !Task.isCancelled, let self, targetIDs(.current) == ids else { return }
             let choices = Set(ids.compactMap { details[$0]?.mediaChoice })
             let shared = choices.count == 1 && details.count == ids.count ? choices.first : nil
             if currentTargetChoice != shared {
@@ -118,13 +118,13 @@ extension CatalogWindowViewModel {
 
     func submitMediaChoice(
         _ choice: MediaChoice,
-        target: MediaChoiceTarget = .current,
+        target: MediaTarget = .current,
         origin: MediaChoiceOrigin = .menu
     ) {
         if case let .compare(position) = target {
             activeComparePane = position
         }
-        let ids = mediaChoiceTargetIDs(target)
+        let ids = targetIDs(target)
         guard !ids.isEmpty else {
             return
         }
@@ -154,7 +154,7 @@ extension CatalogWindowViewModel {
         assignments: [MediaAssetID: MediaChoice],
         ids: [MediaAssetID],
         actionName: String,
-        target: MediaChoiceTarget,
+        target: MediaTarget,
         advanceFrom: MediaAssetID?,
         advanceTo: MediaAssetID?,
         origin: MediaChoiceOrigin
@@ -186,7 +186,7 @@ extension CatalogWindowViewModel {
         handledMediaChoiceCount == submittedMediaChoiceCount
     }
 
-    func mediaChoiceTargetIDs(_ target: MediaChoiceTarget) -> [MediaAssetID] {
+    func targetIDs(_ target: MediaTarget) -> [MediaAssetID] {
         let ordered = state.mediaGrid.orderedAssetIDs
         switch target {
         case .current:
