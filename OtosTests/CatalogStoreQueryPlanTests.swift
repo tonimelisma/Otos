@@ -46,7 +46,6 @@ struct CatalogStoreQueryPlanTests {
         let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
-        let now = Date().timeIntervalSince1970
         let rootOrderQuery = try #require(CatalogQueryGateway.orderedAssetIDQuery(
             descriptor: .default,
             scope: CatalogScopePredicate(rootIDs: [rootID1])
@@ -57,15 +56,11 @@ struct CatalogStoreQueryPlanTests {
         ))
         let rootEnrichmentQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
             rootIDs: [rootID1],
-            now: now,
-            claimNotAfter: now + 300,
             limit: 4,
             hashRequired: true
         ))
         let globalEnrichmentQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
             rootIDs: [rootID1, rootID2],
-            now: now,
-            claimNotAfter: now + 300,
             limit: 4,
             hashRequired: true
         ))
@@ -100,11 +95,8 @@ struct CatalogStoreQueryPlanTests {
         let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let rootID = try await insertEnrichmentClaimFixture(dbQueue, assetCount: 200, claimedCount: 50)
-        let now = Date().timeIntervalSince1970
         let claimQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
             rootIDs: [rootID],
-            now: now,
-            claimNotAfter: now + 300,
             limit: 4,
             hashRequired: true
         ))
@@ -141,12 +133,10 @@ struct CatalogStoreQueryPlanTests {
         let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let rootID = try await insertEnrichmentClaimFixture(dbQueue, assetCount: 3, claimedCount: 0)
-        let claimedUntil = Date().timeIntervalSince1970 + 300
 
         let claimed = try await dbQueue.write { db in
             try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [rootID],
-                claimNotAfter: claimedUntil,
                 limit: 2,
                 hashRequired: true,
                 db: db
@@ -160,7 +150,7 @@ struct CatalogStoreQueryPlanTests {
                 sql: """
                 SELECT COUNT(*) FROM media_asset
                 WHERE library_root_id = ?
-                  AND enrichment_claimed_until IS NOT NULL
+                  AND enrichment_claimed IS NOT NULL
                 """,
                 arguments: [rootID]
             ) ?? 0
@@ -183,18 +173,13 @@ struct CatalogStoreQueryPlanTests {
         let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
-        let now = Date().timeIntervalSince1970
         let rootMetadataOnlyQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
             rootIDs: [rootID1],
-            now: now,
-            claimNotAfter: now + 300,
             limit: 4,
             hashRequired: false
         ))
         let globalMetadataOnlyQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
             rootIDs: [rootID1, rootID2],
-            now: now,
-            claimNotAfter: now + 300,
             limit: 4,
             hashRequired: false
         ))
@@ -238,12 +223,10 @@ struct CatalogStoreQueryPlanTests {
             )
             return rootID
         }
-        let now = Date().timeIntervalSince1970
 
         let metadataOnlyClaimed = try await dbQueue.write { db in
             try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [rootID],
-                claimNotAfter: now + 300,
                 limit: 4,
                 hashRequired: false,
                 db: db
@@ -254,7 +237,6 @@ struct CatalogStoreQueryPlanTests {
         let broadClaimed = try await dbQueue.write { db in
             try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [rootID],
-                claimNotAfter: now + 300,
                 limit: 4,
                 hashRequired: true,
                 db: db
@@ -416,10 +398,9 @@ private func insertEnrichmentClaimFixture(
     try await dbQueue.write { db in
         try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/otos-claim"])
         let rootID = db.lastInsertedRowID
-        let claimedUntil = Date().timeIntervalSince1970 + 300
         for index in 0 ..< assetCount {
             let relativePath = String(format: "asset-%04d.jpg", index)
-            let claimed: Double? = index < claimedCount ? claimedUntil : nil
+            let claimed: Int? = index < claimedCount ? 1 : nil
             try db.execute(
                 sql: """
                 INSERT INTO media_asset (
@@ -431,7 +412,7 @@ private func insertEnrichmentClaimFixture(
                     content_type_identifier,
                     byte_size,
                     content_modified_at_unix,
-                    enrichment_claimed_until
+                    enrichment_claimed
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,

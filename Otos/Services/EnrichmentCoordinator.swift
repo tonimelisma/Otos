@@ -157,8 +157,6 @@ actor EnrichmentCoordinator {
     let admissionPolicy: EnrichmentAdmissionPolicy
     let handoffPolicy: EnrichmentMaterializationHandoffPolicy
     let claimWindowLimit: Int
-    let claimRefreshInterval: Duration
-    let claimRefreshSleep: @Sendable (Duration) async -> Void
     let readinessChecker: any EnrichmentReadinessChecking
 
     var viewport: [MediaAssetID] = []
@@ -222,7 +220,6 @@ actor EnrichmentCoordinator {
     var applyFlushTask: Task<Void, Never>?
     var writeRetryTask: Task<Void, Never>?
     var downloadRetryTask: Task<Void, Never>?
-    var claimRefreshTask: Task<Void, Never>?
     var ledgerRetryTask: Task<Void, Never>?
     var readinessRetryTask: Task<Void, Never>?
     private let signalStream: AsyncStream<Void>
@@ -240,11 +237,7 @@ actor EnrichmentCoordinator {
         writeFailureBackoff: Duration = .seconds(5),
         admissionPolicy: EnrichmentAdmissionPolicy = .production,
         handoffPolicy: EnrichmentMaterializationHandoffPolicy = .production(),
-        claimWindowLimit: Int = 32,
-        claimRefreshInterval: Duration = .seconds(120),
-        claimRefreshSleep: @escaping @Sendable (Duration) async -> Void = { duration in
-            try? await Task.sleep(for: duration)
-        }
+        claimWindowLimit: Int = 32
     ) {
         self.store = store
         self.enricher = enricher
@@ -259,8 +252,6 @@ actor EnrichmentCoordinator {
         self.writeFailureBackoff = writeFailureBackoff
         self.handoffPolicy = handoffPolicy
         self.claimWindowLimit = max(claimWindowLimit, enrichConcurrency)
-        self.claimRefreshInterval = claimRefreshInterval
-        self.claimRefreshSleep = claimRefreshSleep
         self.readinessChecker = readinessChecker
         let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         signalStream = stream
@@ -283,15 +274,6 @@ extension EnrichmentCoordinator {
             }
         }
         supervisor = Task { await self.runLoop() }
-        let refreshSleep = claimRefreshSleep
-        let refreshInterval = claimRefreshInterval
-        claimRefreshTask = Task { [weak self, refreshSleep] in
-            while !Task.isCancelled {
-                await refreshSleep(refreshInterval)
-                guard !Task.isCancelled else { break }
-                await self?.refreshOutstandingMaterializationClaims()
-            }
-        }
         signal()
     }
 
@@ -302,7 +284,6 @@ extension EnrichmentCoordinator {
         let capturedApplyFlushTask = applyFlushTask
         let capturedWriteRetryTask = writeRetryTask
         let capturedDownloadRetryTask = downloadRetryTask
-        let capturedClaimRefreshTask = claimRefreshTask
         let capturedLedgerRetryTask = ledgerRetryTask
         let capturedReadinessRetryTask = readinessRetryTask
         supervisor?.cancel()
@@ -314,8 +295,6 @@ extension EnrichmentCoordinator {
         writeRetryTask = nil
         capturedDownloadRetryTask?.cancel()
         downloadRetryTask = nil
-        capturedClaimRefreshTask?.cancel()
-        claimRefreshTask = nil
         capturedLedgerRetryTask?.cancel()
         ledgerRetryTask = nil
         capturedReadinessRetryTask?.cancel()
@@ -325,7 +304,6 @@ extension EnrichmentCoordinator {
         await capturedApplyFlushTask?.value
         await capturedWriteRetryTask?.value
         await capturedDownloadRetryTask?.value
-        await capturedClaimRefreshTask?.value
         await capturedLedgerRetryTask?.value
         await capturedReadinessRetryTask?.value
         self.supervisor = nil

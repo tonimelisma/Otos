@@ -66,7 +66,7 @@ This ADR owns:
 - The enrichment ownership split: `EnrichmentCoordinator` owns a bounded claim
   state machine and eight local enrichment workers; `MaterializationCoordinator`
   owns the one bounded physical-transfer scheduler shared by preview, device, and
-  background demand. Store owns claim ordering and leases. Connected-source
+  background demand. Store owns claim ordering and claims. Connected-source
   priority is applied at candidate/staging selection time, not through a durable
   second queue.
 
@@ -186,7 +186,7 @@ Adjacent decisions requiring separate ADRs or specs:
    separate materialization demands and in-flight IDs, pending-apply claims,
    readiness retry state, eight local byte-reading workers, the `freshly` handoff,
    and batched writes. Ready capacity, physical-transfer capacity, and SQLite
-   lease ownership are independent: a dataless claim becomes a bounded
+   claim ownership are independent: a dataless claim becomes a bounded
    materialization demand without occupying a ready slot, and a completed result
    releases ready capacity while retaining its Store claim until apply. It does
    not schedule physical provider transfers. `MaterializationCoordinator` is the
@@ -232,8 +232,10 @@ Adjacent decisions requiring separate ADRs or specs:
    The active window covers the 120-second timeout plus measured event lag and the
    existing post-success grace.
 
-   Dataless discovery retains its claim and a periodic owner refreshes materializer-
-   waiting leases before expiry. Success releases the old claim and returns the
+   Dataless discovery retains its claim for as long as the materializer waits: a claim
+   is a process fact with no expiry, held until its owner releases it or the process
+   ends, and loading the catalog clears every claim the last process left. Success
+   releases the old claim and returns the
    identity through `freshly` and clears any pacing ledger entry for it. Cancellation
    (an in-flight transfer torn down by something other than shutdown — a per-root
    drain, for example) releases the claim without consuming a retry attempt: it is
