@@ -113,7 +113,7 @@ actor MediaOperationCoordinator {
         self.materializationRequester = materializationRequester
         self.autoEjectHandler = autoEjectHandler
         machine = ImportSessionMachine(
-            destinationBySource: [:],
+            destinationBySource: Self.loadDestinationMappings(from: preferences),
             unreadableRetryDelays: unreadableRetryDelays,
             canExecuteCameraImport: cameraImport != nil
         )
@@ -149,7 +149,6 @@ actor MediaOperationCoordinator {
     func start() async {
         guard !isStarted else { return }
         isStarted = true
-        loadDestinationMappings()
         // Every journal row now belongs to a process that has ended: settle or clean
         // it up before this coordinator runs any import of its own.
         await MediaImportRecovery(
@@ -624,15 +623,8 @@ actor MediaOperationCoordinator {
         }
     }
 
-    private func executionTaskFinished(_ result: MediaImportExecutionResult, batch: ImportBatchID) async {
-        // A failed run's published count is read here, before the event, so the machine
-        // applies one complete fact. A count that cannot be read stays unknown.
-        let failedPublishedCount: Int? = if case .failed = result {
-            await Self.batchAssetCount(batch, store: store)
-        } else {
-            nil
-        }
-        send(.executionFinished(batch, result, failedPublishedCount: failedPublishedCount))
+    private func executionTaskFinished(_ result: MediaImportExecutionResult, batch: ImportBatchID) {
+        send(.executionFinished(batch, result))
         executions.removeValue(forKey: batch)
     }
 
@@ -688,10 +680,8 @@ actor MediaOperationCoordinator {
             interimState(for: session) ?? .planning
         case let .ready(ctx):
             readyState(for: session, ctx: ctx)
-        case .executing:
-            executingState(for: session)
-        case .completed:
-            completedState(for: session)
+        case let .executing(ctx):
+            .executing(progress: ctx.progress)
         case let .executionUnavailable(summary, generation, attentionItems):
             .executionUnavailable(summary: summary, generation: generation, attentionItems: attentionItems)
         case let .planningFailed(reason):
@@ -707,7 +697,7 @@ actor MediaOperationCoordinator {
             default:
                 return makePresentation(
                     session: session,
-                    state: .failed(reason: failure.reason, publishedCount: failure.publishedCount ?? 0)
+                    state: .failed(reason: failure.reason, publishedCount: failure.publishedCount)
                 )
             }
         }
@@ -726,38 +716,14 @@ actor MediaOperationCoordinator {
             ?? session.lastNamingProgress.map { .waitingForMetadata(done: $0.done, total: $0.total) }
     }
 
-    /// `runExecution` sets `lastProgress` in the same transaction it sets
-    /// `phase = .executing`, and `applyExecutionProgress` is the only other
-    /// writer of either — so a `.executing` phase with no stored progress is
-    /// unreachable, not a case to paper over with a fabricated zero.
-    private func executingState(for session: SourceSession) -> MediaOperationSourceState {
-        guard let progress = session.lastProgress else {
-            preconditionFailure("`.executing` phase always sets `lastProgress` in the same transaction (runExecution)")
-        }
-        return .executing(progress: progress)
-    }
-
-    /// `applyExecutionResult` sets `settledOutcome` in the same transaction it
-    /// sets `phase = .completed`, and is the only writer of either — so a
-    /// `.completed` phase with no stored outcome is unreachable, not a case to
-    /// paper over with a fabricated zero-summary literal.
     /// Between a run settling and its re-plan landing there is no proven plan
     /// to hold (the pre-run one was dropped as false), but there is a settled
     /// outcome — and Done is what the user is looking at. Presenting it across
     /// the window keeps the bar on Done instead of flashing the stale pre-run
     /// Ready (observed 2026-09-13) or falling back to Preparing.
     private func settlementState(for session: SourceSession) -> MediaOperationSourceState? {
-        guard session.lastReadyContext == nil, session.settledOutcome != nil else {
+        guard session.lastReadyContext == nil, let outcome = session.settledOutcome else {
             return nil
-        }
-        return completedState(for: session)
-    }
-
-    private func completedState(for session: SourceSession) -> MediaOperationSourceState {
-        guard let outcome = session.settledOutcome else {
-            preconditionFailure(
-                "`.completed` phase always sets `settledOutcome` in the same transaction (applyExecutionResult)"
-            )
         }
         return .completed(
             summary: outcome.summary,
@@ -807,11 +773,11 @@ actor MediaOperationCoordinator {
 
     /// The batch this attachment's run is copying into, exposed only while
     /// it executes and only once it has proven itself non-empty (see
-    /// `batchAssetCountConfirmed`): the sidebar's batch row exists only once it
+    /// `batchHasPublishedAsset`): the sidebar's batch row exists only once it
     /// has an asset, and that row's progress indicator is the one consumer
     /// (`import-bar.md` "Ownership of status").
     private func executingBatchID(for session: SourceSession) -> ImportBatchID? {
-        guard case let .executing(ctx) = session.phase, session.batchAssetCountConfirmed else {
+        guard case let .executing(ctx) = session.phase, ctx.batchHasPublishedAsset else {
             return nil
         }
         return ctx.batch
@@ -821,11 +787,12 @@ actor MediaOperationCoordinator {
         session: SourceSession,
         state: MediaOperationSourceState
     ) -> MediaOperationSourcePresentation {
+        let destination = machine.destination(of: session.root.path)
         // Sampled only where the bar can compare it against a plan: a `stat`
         // per Ready publish, never per progress tick.
         let availableBytes: Int64? = switch state {
         case .ready, .executionUnavailable:
-            session.destination.flatMap { volumeCapacity($0.url) }
+            destination.flatMap { volumeCapacity($0.url) }
         default:
             nil
         }
@@ -834,13 +801,13 @@ actor MediaOperationCoordinator {
         // library, so the outcome is withheld and the plan speaks for itself
         // ("Nothing new on this card" or "181 new items"); pick the original
         // library again and the outcome returns.
-        let completion = session.lastCompletion.flatMap { $0.destination == session.destination ? $0 : nil }
+        let completion = session.lastCompletion.flatMap { $0.destination == destination ? $0 : nil }
         return MediaOperationSourcePresentation(
             sourcePath: session.root.path,
             attachmentGeneration: session.attachmentGeneration,
             sourceKind: session.root.kind,
-            destinationPath: session.destination,
-            destinationDisplayName: session.destination.flatMap { machine.displayName(ofLibrary: $0) },
+            destinationPath: destination,
+            destinationDisplayName: destination.flatMap { machine.displayName(ofLibrary: $0) },
             state: state,
             importRequested: session.importRequested,
             attachToReadyMs: session.attachToReadyMs,
@@ -885,7 +852,7 @@ actor MediaOperationCoordinator {
                 nil
             }
             let batchID = presentation.batchID.map { String(describing: $0) } ?? "none"
-            let runID = machine.sessions[presentation.sourcePath]?.activeRunID ?? "none"
+            let runID = machine.sessions[presentation.sourcePath]?.runID ?? "none"
             OtosLog.catalog.notice(
                 "op=import.presentation phase=publish run=\(runID, privacy: .public) sourcePath=\(presentation.sourcePath.rawValue, privacy: .public) attachment=\(presentation.attachmentGeneration.rawValue, privacy: .public) state=\(String(describing: presentation.state), privacy: .public) completedCount=\(progress?.completedCount ?? 0, privacy: .public) totalCount=\(progress?.totalCount ?? 0, privacy: .public) completedBytes=\(progress?.completedBytes ?? 0, privacy: .public) batchID=\(batchID, privacy: .public)"
             )
@@ -905,14 +872,17 @@ actor MediaOperationCoordinator {
     private static let retiredDestinationByDeviceIdentityKey = "import.destinationByDeviceIdentity"
     private static let retiredLastUsedDestinationKey = "import.lastUsedDestination"
 
-    private func loadDestinationMappings() {
-        preferences.removeObject(forKey: Self.retiredDestinationByDeviceIdentityKey)
-        preferences.removeObject(forKey: Self.retiredLastUsedDestinationKey)
-        if let raw = preferences.dictionary(forKey: Self.destinationMappingKey) as? [String: String] {
-            send(.destinationsRestored(Dictionary(uniqueKeysWithValues: raw.map {
-                (LibraryRootPath(rawValue: $0.key), LibraryRootPath(rawValue: $0.value))
-            })))
+    /// The persisted destinations the machine starts from, so no attachment can be seen
+    /// before them.
+    private static func loadDestinationMappings(from preferences: any PreferenceStore) -> [LibraryRootPath: LibraryRootPath] {
+        preferences.removeObject(forKey: retiredDestinationByDeviceIdentityKey)
+        preferences.removeObject(forKey: retiredLastUsedDestinationKey)
+        guard let raw = preferences.dictionary(forKey: destinationMappingKey) as? [String: String] else {
+            return [:]
         }
+        return Dictionary(uniqueKeysWithValues: raw.map {
+            (LibraryRootPath(rawValue: $0.key), LibraryRootPath(rawValue: $0.value))
+        })
     }
 
     private func persistDestinationMappings() {

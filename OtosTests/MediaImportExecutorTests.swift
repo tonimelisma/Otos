@@ -691,11 +691,12 @@ struct ImportExecutionProgressTests {
             runID: UUID().uuidString
         ) { _ in }
 
-        guard case let .failed(reason) = result else {
+        guard case let .failed(reason, publishedCount) = result else {
             Issue.record("Expected systemic sourceNotReady failure, got \(result)")
             return
         }
         #expect(reason == .sourceNotReady)
+        #expect(publishedCount == 0)
     }
 
     /// A per-file staleness failure alongside a successful entry must stay
@@ -769,10 +770,13 @@ struct ImportExecutionProgressTests {
             runID: UUID().uuidString
         ) { _ in }
 
-        guard case let .completed(publishedCount, _, hasEntryFailures, _, failedCount, _) = result else {
+        guard case let .completed(tally, _, nil) = result else {
             Issue.record("Expected completed with one per-file failure, got \(result)")
             return
         }
+        let publishedCount = tally.publishedCount
+        let hasEntryFailures = tally.hasEntryFailures
+        let failedCount = tally.failedCount
         #expect(publishedCount == 1)
         #expect(failedCount == 1)
         #expect(hasEntryFailures)
@@ -850,10 +854,11 @@ struct ImportExecutionProgressTests {
             runID: UUID().uuidString
         ) { _ in }
 
-        guard case let .completed(_, _, _, skippedForeignCount, _, incompleteItems) = result else {
+        guard case let .completed(tally, incompleteItems, nil) = result else {
             Issue.record("Expected completed with a skipped-foreign entry, got \(result)")
             return
         }
+        let skippedForeignCount = tally.skippedForeignCount
         #expect(skippedForeignCount == 1)
         let destinationID = MediaAssetID(libraryRootPath: destinationPath, relativePath: finalDestination)
         #expect(incompleteItems == [plan.entries[0].source.id])
@@ -871,7 +876,7 @@ struct ImportExecutionProgressTests {
             runID: UUID().uuidString
         ) { _ in }
 
-        guard case let .completedWithErase(_, _, _, _, _, _, eraseOutcome) = result else {
+        guard case let .completed(_, _, eraseOutcome?) = result else {
             Issue.record("Expected zero-copy deletion to complete, got \(result)")
             return
         }
@@ -952,10 +957,11 @@ struct ImportExecutionProgressTests {
             runID: UUID().uuidString
         ) { _ in }
 
-        guard case let .completedWithErase(_, _, _, _, failedCount, _, eraseOutcome) = result else {
+        guard case let .completed(tally, _, eraseOutcome?) = result else {
             Issue.record("Expected a completed erase result, got \(result)")
             return
         }
+        let failedCount = tally.failedCount
         #expect(failedCount == 1)
         #expect(eraseOutcome.deletedCount == 0)
         #expect(FileManager.default.fileExists(atPath: fixture.sourceFile.path))
@@ -985,7 +991,7 @@ struct ImportExecutionProgressTests {
             runID: UUID().uuidString
         ) { _ in }
 
-        guard case let .completedWithErase(_, _, _, _, _, _, eraseOutcome) = result else {
+        guard case let .completed(_, _, eraseOutcome?) = result else {
             Issue.record("A busy source namespace must not fail the import, got \(result)")
             return
         }
@@ -1010,10 +1016,11 @@ struct ImportExecutionProgressTests {
 
         let result = await executeFloorRun(fixture, deleteSourceRequested: true) { _ in nil }
 
-        guard case let .completedWithErase(publishedCount, _, _, _, _, _, eraseOutcome) = result else {
+        guard case let .completed(tally, _, eraseOutcome?) = result else {
             Issue.record("Expected a completed erase run, got \(result)")
             return
         }
+        let publishedCount = tally.publishedCount
         #expect(publishedCount == 2)
         #expect(eraseOutcome == EraseOutcome(deletedCount: 0, skippedCount: 0, failedCount: 2))
         for name in ["IMG_0.jpg", "IMG_1.jpg"] {
@@ -1215,10 +1222,12 @@ struct ImportExecutionProgressTests {
         let result = await executeFloorRun(fixture) { _ in
             FreeSpaceFloor.bytes + 2500 - Self.bytesLanded(under: destination)
         }
-        guard case let .stopped(reason, publishedCount, _, _, _, failedCount) = result else {
+        guard case let .stopped(reason, tally) = result else {
             Issue.record("Expected a stopped run, got \(result)")
             return
         }
+        let publishedCount = tally.publishedCount
+        let failedCount = tally.failedCount
         guard case .diskFloor = reason else {
             Issue.record("Expected the disk floor as the reason, got \(reason)")
             return
@@ -1233,10 +1242,11 @@ struct ImportExecutionProgressTests {
     @Test func inFlightBytesCountEvenWhenTheCapacityFigureIsStale() async throws {
         let fixture = try await makeCardFixture(count: 3, bytesEach: 1024)
         let result = await executeFloorRun(fixture) { _ in FreeSpaceFloor.bytes + 2500 }
-        guard case let .stopped(_, publishedCount, _, _, _, _) = result else {
+        guard case let .stopped(_, tally) = result else {
             Issue.record("Expected a stopped run, got \(result)")
             return
         }
+        let publishedCount = tally.publishedCount
         #expect(publishedCount == 2)
     }
 
@@ -1245,10 +1255,11 @@ struct ImportExecutionProgressTests {
     @Test func anUnknownCapacityAdmitsEveryEntry() async throws {
         let fixture = try await makeCardFixture(count: 3, bytesEach: 1024)
         let result = await executeFloorRun(fixture) { _ in nil }
-        guard case let .completed(publishedCount, _, _, _, _, _) = result else {
+        guard case let .completed(tally, _, nil) = result else {
             Issue.record("Expected a completed run, got \(result)")
             return
         }
+        let publishedCount = tally.publishedCount
         #expect(publishedCount == 3)
     }
 
@@ -1264,10 +1275,11 @@ struct ImportExecutionProgressTests {
         let result = await executeFloorRun(fixture, deleteSourceRequested: true) { _ in
             FreeSpaceFloor.bytes + 2500 - Self.bytesLanded(under: destination)
         }
-        guard case let .stopped(_, publishedCount, _, _, _, _) = result else {
+        guard case let .stopped(_, tally) = result else {
             Issue.record("Expected a stopped run, got \(result)")
             return
         }
+        let publishedCount = tally.publishedCount
         #expect(publishedCount == 2)
         #expect(
             !FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_0.jpg").path),
@@ -1312,10 +1324,12 @@ struct ImportExecutionProgressTests {
             deleteSourceRequested: false,
             runID: UUID().uuidString
         ) { _ in }
-        guard case let .stopped(reason, publishedCount, _, _, _, failedCount) = result else {
+        guard case let .stopped(reason, tally) = result else {
             Issue.record("Expected a stopped run, got \(result)")
             return
         }
+        let publishedCount = tally.publishedCount
+        let failedCount = tally.failedCount
         guard case .diskFloor = reason else {
             Issue.record("Expected the disk floor as the reason, got \(reason)")
             return
@@ -1331,10 +1345,11 @@ struct ImportExecutionProgressTests {
     @Test func aCopiedCompanionIsRecordedBesideItsPrimaryAndErasedWithIt() async throws {
         let fixture = try await makeCompanionFixture()
         let result = await executeCompanionRun(fixture, transfer: CopyfileTransfer.copy)
-        guard case let .completedWithErase(publishedCount, _, _, _, _, incompleteItems, _) = result else {
+        guard case let .completed(tally, incompleteItems, .some) = result else {
             Issue.record("Expected a completed erase run, got \(result)")
             return
         }
+        let publishedCount = tally.publishedCount
         #expect(publishedCount == 1)
         #expect(incompleteItems.isEmpty)
         #expect(FileManager.default.fileExists(atPath: fixture.destinationRoot.appending(path: "IMG_0.xmp").path))
@@ -1382,11 +1397,14 @@ struct ImportExecutionProgressTests {
         _ fixture: CardFixture,
         result: MediaImportExecutionResult
     ) async throws {
-        guard case let .completedWithErase(publishedCount, _, hasEntryFailures, _, failedCount, incompleteItems, _) = result
+        guard case let .completed(tally, incompleteItems, .some) = result
         else {
             Issue.record("Expected a completed erase run, got \(result)")
             return
         }
+        let publishedCount = tally.publishedCount
+        let hasEntryFailures = tally.hasEntryFailures
+        let failedCount = tally.failedCount
         #expect(publishedCount == 0, "an item is copied only when all of its files are in the library")
         #expect(failedCount == 1)
         #expect(hasEntryFailures)

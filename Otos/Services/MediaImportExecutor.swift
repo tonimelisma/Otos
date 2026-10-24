@@ -247,7 +247,7 @@ actor MediaImportExecutor {
     ) async -> MediaImportExecutionResult {
         cancelFlag.reset()
         guard case let .import(_, destination, _) = plan.mode else {
-            return .failed(reason: .unexpected(detail: "notAnImportPlan"))
+            return .failed(.unexpected(detail: "notAnImportPlan"), publishedCount: 0)
         }
         let copyEntries = plan.entries.filter {
             if case .copy = $0.disposition {
@@ -279,17 +279,17 @@ actor MediaImportExecutor {
             case let .acquired(lease):
                 namespaceLease = lease
             case .rootNotRegistered:
-                return .failed(reason: .destinationUnavailable)
+                return .failed(.destinationUnavailable, publishedCount: 0)
             case .catalogUnavailable:
                 // Not `.destinationUnavailable`: the catalog never loaded, so
                 // whether the library is there is unknown.
-                return .failed(reason: .unexpected(detail: "catalogUnavailable"))
+                return .failed(.unexpected(detail: "catalogUnavailable"), publishedCount: 0)
             case let .busy(owner):
                 // The library *is* available; another namespace mutation owns it.
                 // Saying "isn't available" would be false, and the bar has no
                 // vocabulary for "busy" — `.unexpected`'s detail is for the log
                 // only (`MediaOperationModels.swift`), which is exactly right here.
-                return .failed(reason: .unexpected(detail: "destinationNamespaceBusy:\(owner.rawValue)"))
+                return .failed(.unexpected(detail: "destinationNamespaceBusy:\(owner.rawValue)"), publishedCount: 0)
             }
         }
         // The erase lease is deliberately *not* taken here. It is only needed by
@@ -362,25 +362,18 @@ actor MediaImportExecutor {
             "mbps": throughputMBps(bytes: entryTotals.publishedBytes, elapsedMs: elapsedMs),
             "workers": "\(Self.workerCount)",
         ])
+        let tally = MediaImportRunTally(
+            publishedCount: entryTotals.publishedCount,
+            hasBlockedEntries: hasBlockedEntries,
+            hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch,
+            skippedForeignCount: entryTotals.skippedForeignCount,
+            failedCount: entryTotals.failedCount
+        )
         if cancelFlag.isCancelled {
-            return .stopped(
-                reason: .user,
-                publishedCount: entryTotals.publishedCount,
-                hasBlockedEntries: hasBlockedEntries,
-                hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch,
-                skippedForeignCount: entryTotals.skippedForeignCount,
-                failedCount: entryTotals.failedCount
-            )
+            return .stopped(.user, tally)
         }
         if let spaceStop = entryTotals.spaceStop {
-            return .stopped(
-                reason: .diskFloor(bytesFree: spaceStop.bytesFree),
-                publishedCount: entryTotals.publishedCount,
-                hasBlockedEntries: hasBlockedEntries,
-                hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch,
-                skippedForeignCount: entryTotals.skippedForeignCount,
-                failedCount: entryTotals.failedCount
-            )
+            return .stopped(.diskFloor(bytesFree: spaceStop.bytesFree), tally)
         }
         // Every attempted entry failing the same non-per-file way means the source
         // itself wasn't ready — a systemic cause, not per-file damage. Report it as
@@ -394,28 +387,12 @@ actor MediaImportExecutor {
             && entryTotals.failedCount == copyEntries.count
             && entryTotals.failureReasons.allSatisfy { $0 == .sourceNotReady }
         if allFailedWithSourceNotReady {
-            return .failed(reason: .sourceNotReady)
-        }
-        if deleteSourceRequested {
-            return .completedWithErase(
-                publishedCount: entryTotals.publishedCount,
-                hasBlockedEntries: hasBlockedEntries,
-                hasEntryFailures: entryTotals.failedCount > 0
-                    || batchIntegrityMismatch
-                    || entryTotals.eraseOutcome.failedCount > 0,
-                skippedForeignCount: entryTotals.skippedForeignCount,
-                failedCount: entryTotals.failedCount,
-                incompleteItems: entryTotals.incompleteItems,
-                eraseOutcome: entryTotals.eraseOutcome
-            )
+            return .failed(.sourceNotReady, publishedCount: entryTotals.publishedCount)
         }
         return .completed(
-            publishedCount: entryTotals.publishedCount,
-            hasBlockedEntries: hasBlockedEntries,
-            hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch,
-            skippedForeignCount: entryTotals.skippedForeignCount,
-            failedCount: entryTotals.failedCount,
-            incompleteItems: entryTotals.incompleteItems
+            tally,
+            incompleteItems: entryTotals.incompleteItems,
+            erase: deleteSourceRequested ? entryTotals.eraseOutcome : nil
         )
     }
 
@@ -1721,36 +1698,36 @@ nonisolated struct EraseOutcome: Equatable, Sendable {
     let failedCount: Int
 }
 
-nonisolated enum MediaImportExecutionResult: Equatable, Sendable {
-    case completed(
-        publishedCount: Int,
-        hasBlockedEntries: Bool,
-        hasEntryFailures: Bool,
-        skippedForeignCount: Int,
-        failedCount: Int,
-        incompleteItems: [MediaAssetID]
+/// What a run did to the entries it attempted, the same whether it completed or stopped.
+/// `hasEntryFailures` is about copying and the batch's integrity; a source erase reports
+/// its own failures in `EraseOutcome`.
+nonisolated struct MediaImportRunTally: Equatable, Sendable {
+    let publishedCount: Int
+    let hasBlockedEntries: Bool
+    let hasEntryFailures: Bool
+    let skippedForeignCount: Int
+    let failedCount: Int
+
+    static let nothingAttempted = MediaImportRunTally(
+        publishedCount: 0,
+        hasBlockedEntries: false,
+        hasEntryFailures: false,
+        skippedForeignCount: 0,
+        failedCount: 0
     )
+}
+
+nonisolated enum MediaImportExecutionResult: Equatable, Sendable {
+    /// Every planned entry was attempted. `erase` is the source erase's outcome when the
+    /// run was asked to erase its source, `nil` when it was not.
+    case completed(MediaImportRunTally, incompleteItems: [MediaAssetID], erase: EraseOutcome?)
     /// The run ended before attempting every planned entry — a partial success
     /// carrying why (`ImportStopReason`), never a failure. What landed is a real
-    /// batch; the erase sweep never ran; the remainder is the re-plan's to offer.
-    case stopped(
-        reason: ImportStopReason,
-        publishedCount: Int,
-        hasBlockedEntries: Bool,
-        hasEntryFailures: Bool,
-        skippedForeignCount: Int,
-        failedCount: Int
-    )
-    case failed(reason: MediaOperationFailureReason)
-    case completedWithErase(
-        publishedCount: Int,
-        hasBlockedEntries: Bool,
-        hasEntryFailures: Bool,
-        skippedForeignCount: Int,
-        failedCount: Int,
-        incompleteItems: [MediaAssetID],
-        eraseOutcome: EraseOutcome
-    )
+    /// batch and the remainder is the re-plan's to offer.
+    case stopped(ImportStopReason, MediaImportRunTally)
+    /// The run could not proceed. `publishedCount` is what this run had published when
+    /// it failed — the executor's own count, not a later read of the catalog.
+    case failed(MediaOperationFailureReason, publishedCount: Int)
 }
 
 /// Thread-safe byte-progress accumulator for copy callbacks off the executor

@@ -143,6 +143,14 @@ struct ImportSessionMachineTests {
         return (machine, run)
     }
 
+    /// The running import's phase payload.
+    private static func execution(in machine: Machine) -> Machine.ExecutionContext? {
+        if case let .executing(context) = machine.sessions[card]?.phase {
+            return context
+        }
+        return nil
+    }
+
     private static let progress = MediaOperationProgress(
         completedCount: 1,
         totalCount: 2,
@@ -214,6 +222,66 @@ struct ImportSessionMachineTests {
         #expect(next.count == 1)
         #expect(next.first?.destination == Self.libraryB)
         #expect(machine.sessions[Self.card]?.lastReadyContext == nil)
+    }
+
+    /// ARC-047: a default destination that follows a reorder is a destination change like
+    /// a pick: the plan proven against the old library is not held under the new one.
+    @Test func aReorderThatMovesTheDestinationDropsThePlanMeasuredAgainstTheOldLibrary() {
+        var (machine, build) = Self.attachedWithBuildRunning(
+            libraries: [Self.library(Self.libraryA), Self.library(Self.libraryB), Self.cardState()]
+        )
+        _ = machine.handle(.buildFinished(build.id, Self.builtPlan(for: build)))
+        #expect(machine.sessions[Self.card]?.lastReadyContext?.destination == Self.libraryA)
+
+        let effects = machine.handle(.librariesRefreshed(Self.snapshot(
+            [Self.library(Self.libraryB), Self.library(Self.libraryA), Self.cardState()]
+        )))
+
+        #expect(machine.destination(of: Self.card) == Self.libraryB)
+        #expect(machine.sessions[Self.card]?.lastReadyContext == nil)
+        #expect(Self.builds(in: effects).first?.destination == Self.libraryB)
+    }
+
+    /// A run releases the library it copied into, even when a reorder held during the run
+    /// moves its own source elsewhere at settlement: another source still pointed at that
+    /// library rebuilds then.
+    @Test func settlementFlushesRebuildsForTheLibraryTheRunReleased() throws {
+        let otherCard = LibraryRootPath(rawValue: "/Volumes/OTHER")
+        let otherCardState = CatalogLibraryState(
+            root: LibraryRoot(path: otherCard, kind: .removableVolume, deviceIdentity: "volume:other"),
+            availability: .available,
+            activity: .idle,
+            attachmentGeneration: 2
+        )
+        var (machine, run) = try Self.executing()
+        let attached = machine.handle(.librariesRefreshed(Self.snapshot(
+            [Self.library(Self.libraryA), Self.library(Self.libraryB), Self.cardState(), otherCardState]
+        )))
+        let otherBuild = try #require(Self.builds(in: attached).first { $0.id.source == otherCard })
+        _ = machine.handle(.buildFinished(otherBuild.id, .failed("unrelated")))
+        _ = machine.handle(.destinationPicked(Self.libraryA, source: otherCard))
+        // Library A's namespace moves while the card's run holds it: the other card, idle
+        // now, owes a rebuild against A, and it is held back.
+        _ = machine.handle(.planningChanged(RootPlanningChange(
+            rootPath: Self.libraryA,
+            namespaceRevision: 9,
+            namingRevision: 0
+        )))
+        // The libraries reorder while the run holds A; the card's default follows to B at
+        // settlement.
+        _ = machine.handle(.librariesRefreshed(Self.snapshot(
+            [Self.library(Self.libraryB), Self.library(Self.libraryA), Self.cardState(), otherCardState]
+        )))
+
+        #expect(machine.sessions[otherCard]?.needsPlan == true)
+
+        let effects = machine.handle(.executionFinished(
+            run.batch,
+            .completed(.nothingAttempted, incompleteItems: [], erase: nil)
+        ))
+
+        #expect(machine.destination(of: Self.card) == Self.libraryB)
+        #expect(Self.builds(in: effects).contains { $0.id.source == otherCard && $0.destination == Self.libraryA })
     }
 
     @Test func aStaleBuildResultIsDropped() {
@@ -384,8 +452,7 @@ struct ImportSessionMachineTests {
         // The drained run settles the old batch without touching any session.
         let settled = machine.handle(.executionFinished(
             run.batch,
-            .failed(reason: .sourceRemoved),
-            failedPublishedCount: 3
+            .failed(.sourceRemoved, publishedCount: 3)
         ))
         #expect(settled.isEmpty)
         #expect(machine.sessions.isEmpty)
@@ -396,15 +463,7 @@ struct ImportSessionMachineTests {
 
         _ = machine.handle(.executionFinished(
             run.batch,
-            .completed(
-                publishedCount: 1,
-                hasBlockedEntries: false,
-                hasEntryFailures: false,
-                skippedForeignCount: 0,
-                failedCount: 0,
-                incompleteItems: []
-            ),
-            failedPublishedCount: nil
+            .completed(.tally(published: 1), incompleteItems: [], erase: nil)
         ))
         let late = machine.handle(.executionProgress(run.batch, Self.progress))
 
@@ -424,33 +483,20 @@ struct ImportSessionMachineTests {
         )
 
         #expect(machine.handle(.executionProgress(run.batch, older)).isEmpty)
-        #expect(machine.sessions[Self.card]?.lastProgress == Self.progress)
+        #expect(Self.execution(in: machine)?.progress == Self.progress)
     }
 
-    @Test func aFailedRunWhoseCountCannotBeReadStatesNoCount() throws {
+    @Test func aFailedRunStatesTheCountItsExecutorReports() throws {
         var (machine, run) = try Self.executing()
 
         _ = machine.handle(.executionFinished(
             run.batch,
-            .failed(reason: .unexpected(detail: "boom")),
-            failedPublishedCount: nil
+            .failed(.unexpected(detail: "boom"), publishedCount: 4)
         ))
 
         let failure = machine.sessions[Self.card]?.lastFailure
         #expect(failure?.reason == .unexpected(detail: "boom"))
-        #expect(failure?.publishedCount == nil)
-    }
-
-    @Test func aFailedRunKeepsItsReadCount() throws {
-        var (machine, run) = try Self.executing()
-
-        _ = machine.handle(.executionFinished(
-            run.batch,
-            .failed(reason: .unexpected(detail: "boom")),
-            failedPublishedCount: 4
-        ))
-
-        #expect(machine.sessions[Self.card]?.lastFailure?.publishedCount == 4)
+        #expect(failure?.publishedCount == 4)
     }
 
     @Test func settlementRequestsARePlanAgainstTheNamespaceTheRunChanged() throws {
@@ -458,15 +504,7 @@ struct ImportSessionMachineTests {
 
         let effects = machine.handle(.executionFinished(
             run.batch,
-            .completed(
-                publishedCount: 1,
-                hasBlockedEntries: false,
-                hasEntryFailures: false,
-                skippedForeignCount: 0,
-                failedCount: 0,
-                incompleteItems: []
-            ),
-            failedPublishedCount: nil
+            .completed(.tally(published: 1), incompleteItems: [], erase: nil)
         ))
 
         #expect(Self.builds(in: effects).count == 1)
@@ -480,22 +518,14 @@ struct ImportSessionMachineTests {
         _ = machine.handle(.librariesRefreshed(Self.snapshot(
             [Self.library(Self.libraryB), Self.library(Self.libraryA), Self.cardState()]
         )))
-        #expect(machine.sessions[Self.card]?.destination == Self.libraryA)
+        #expect(machine.destination(of: Self.card) == Self.libraryA)
 
         let effects = machine.handle(.executionFinished(
             run.batch,
-            .completed(
-                publishedCount: 1,
-                hasBlockedEntries: false,
-                hasEntryFailures: false,
-                skippedForeignCount: 0,
-                failedCount: 0,
-                incompleteItems: []
-            ),
-            failedPublishedCount: nil
+            .completed(.tally(published: 1), incompleteItems: [], erase: nil)
         ))
 
-        #expect(machine.sessions[Self.card]?.destination == Self.libraryB)
+        #expect(machine.destination(of: Self.card) == Self.libraryB)
         #expect(Self.builds(in: effects).first?.destination == Self.libraryB)
     }
 
@@ -504,10 +534,10 @@ struct ImportSessionMachineTests {
 
         #expect(machine.handle(.batchAssetCountRead(run.batch, count: nil)).isEmpty)
         #expect(machine.handle(.batchAssetCountRead(run.batch, count: 0)).isEmpty)
-        #expect(machine.sessions[Self.card]?.batchAssetCountConfirmed == false)
+        #expect(Self.execution(in: machine)?.batchHasPublishedAsset == false)
 
         let confirmed = machine.handle(.batchAssetCountRead(run.batch, count: 2))
-        #expect(machine.sessions[Self.card]?.batchAssetCountConfirmed == true)
+        #expect(Self.execution(in: machine)?.batchHasPublishedAsset == true)
         #expect(confirmed.contains {
             if case .publish = $0 {
                 true

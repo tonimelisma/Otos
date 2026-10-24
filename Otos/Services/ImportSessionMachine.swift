@@ -55,8 +55,13 @@ nonisolated struct ImportSessionMachine {
         let attempt: Int
     }
 
+    /// A proven plan and what it was proven for: the library it copies into and the run
+    /// that built it. Its claims are names in that library, whatever the source's
+    /// destination says by the time it is read.
     nonisolated struct ReadyContext {
         let plan: MediaOperationPlan
+        let destination: LibraryRootPath
+        let runID: String
         let skippedPackageCount: Int
         let claims: Set<FilesystemNameKey>
         let attentionItems: [MediaAttentionItem]
@@ -67,19 +72,26 @@ nonisolated struct ImportSessionMachine {
         case sourceRemoved
     }
 
+    /// A running import. It holds its destination for its whole life: a destination
+    /// change made while it runs is recorded for the source and applies when it settles.
     nonisolated struct ExecutionContext {
         let plan: MediaOperationPlan
+        let destination: LibraryRootPath
         let claims: Set<FilesystemNameKey>
         let sourceKind: LibraryRootKind
         let sourceRoot: LibraryRoot
-        let summary: MediaOperationPlanTotals
-        let generation: UInt64
         let skippedPackageCount: Int
         let prefs: ImportPreferences
         let batch: ImportBatchID
         let runID: String
         let attachment: AttachmentGeneration
         var interruption: ExecutionInterruption?
+        /// The run's latest progress. It starts as the true starting value (the plan's
+        /// totals, nothing completed yet) and only a newer sample replaces it.
+        var progress: MediaOperationProgress
+        /// Whether the batch has at least one durably published asset. The sidebar's batch
+        /// row exists only then, so the presentation exposes the batch only then.
+        var batchHasPublishedAsset: Bool
     }
 
     /// An execution whose source disappeared while the executor was still running. The
@@ -95,7 +107,6 @@ nonisolated struct ImportSessionMachine {
         case building(BuildContext)
         case ready(ReadyContext)
         case executing(ExecutionContext)
-        case completed
         case executionUnavailable(
             summary: MediaOperationPlanTotals,
             generation: UInt64,
@@ -106,8 +117,8 @@ nonisolated struct ImportSessionMachine {
 
     /// The most recent execution's outcome for the current attachment, kept across the
     /// post-settlement re-plan so a card left in the reader keeps reporting what it just
-    /// copied (`import-bar.md` state F) instead of that fact vanishing the moment the
-    /// phase leaves `.completed`. Cleared only by a new `AttachmentGeneration` (card
+    /// copied (`import-bar.md` state F) instead of that fact vanishing when the re-plan
+    /// replaces the phase. Cleared only by a new `AttachmentGeneration` (card
     /// ejected and re-inserted) — never by a later re-plan within the same attachment.
     nonisolated struct AttachmentCompletion {
         let batch: ImportBatchID?
@@ -147,18 +158,17 @@ nonisolated struct ImportSessionMachine {
     /// and a successful rebuild should replace them.
     nonisolated struct AttachmentFailure {
         let reason: MediaOperationFailureReason
-        /// What this run had landed before it failed — state G states it when nonzero.
-        /// `nil` means the count could not be read: unknown, not zero, and not stated.
-        let publishedCount: Int?
+        /// What this run had landed before it failed, as its executor counted it — state G
+        /// states it when nonzero.
+        let publishedCount: Int
         /// The run's batch, named in the settlement log when the card is removed while
         /// state G stands.
         let batch: ImportBatchID
         let destination: LibraryRootPath
     }
 
-    /// A settled `.completed` execution's outcome, stored on the session so
-    /// `presentation(for:)` reads the real outcome rather than synthesizing a
-    /// zero-summary `.completed` on every publish.
+    /// A completed run's outcome, stored on the session so `presentation(for:)` reads the
+    /// real outcome rather than synthesizing a zero-summary one on every publish.
     nonisolated struct SettledOutcome {
         let summary: MediaOperationPlanTotals
         let skippedForeignCount: Int
@@ -177,9 +187,9 @@ nonisolated struct ImportSessionMachine {
     nonisolated struct SourceSession {
         let attachmentGeneration: AttachmentGeneration
         var root: CatalogLibraryState
-        var destination: LibraryRootPath?
-        /// Whether `destination` was picked via the pop-up this attachment, rather than
-        /// still tracking the default. A default destination keeps following the first
+        /// Whether the source's destination was picked via the pop-up this attachment,
+        /// rather than still tracking the default. The destination itself is
+        /// `destinationBySource`, the machine's one record of it. A default destination keeps following the first
         /// available library — including through a Settings → Libraries reorder while the
         /// card is attached. An explicit pick only falls back when it actually becomes
         /// unavailable, per its own "must survive until that run finishes" rule. Reset to
@@ -196,21 +206,15 @@ nonisolated struct ImportSessionMachine {
         var nextBuildGeneration: BuildGeneration
         var attachStartedAt: ContinuousClock.Instant
         var attachToReadyMs: Int?
-        /// The live execution's most recent progress, so a `publish` that fires for an
-        /// unrelated reason mid-execution re-derives the real in-flight progress from
-        /// `presentation(for:)` instead of resetting the bar to zero. Set to a true
-        /// starting value the moment `.executing` begins and overwritten by every
-        /// subsequent progress event; only meaningful while `phase` is `.executing`.
-        var lastProgress: MediaOperationProgress?
         /// The most recent naming progress this attachment reported. Held rather than
         /// recomputed because a rebuild has no count of its own to offer; showing the last
         /// proven one asserts nothing new. Scoped to the attachment, so a new card starts
         /// from nothing.
         var lastNamingProgress: NamingProgress?
-        /// The most recent settled `.completed` execution's outcome. Set in the same
-        /// transaction as `phase = .completed`; presented while `phase` is `.completed`
-        /// and through the re-plan that follows. Cleared when the card enters
-        /// `.waitingForMetadata`, whose pending rows the run never saw.
+        /// The most recent completed run's outcome, presented through the re-plan that
+        /// follows it until a plan lands. Cleared when the card enters
+        /// `.waitingForMetadata`, whose pending rows the run never saw, and when the
+        /// destination changes, since it was measured against the previous library.
         var settledOutcome: SettledOutcome?
         /// The most recent plan this attachment actually proved, kept across the rebuilds
         /// that follow it. A re-plan overwrites `phase` with `.building`, so without this
@@ -227,17 +231,21 @@ nonisolated struct ImportSessionMachine {
         /// The pending retry for a build deferred on an unreadable destination folder;
         /// `nil` when no such build is outstanding.
         var unreadableRetry: UnreadableRetry?
-        /// Correlates the current source session's plan, execution, and presentation
-        /// diagnostics. Minted at the building boundary so a re-plan cannot accidentally
-        /// join an older run.
-        var activeRunID: String?
-        /// Whether the executing batch has at least one durably-published asset yet.
-        /// Gates the presentation's `batchID` so the batch row's progress indicator is
-        /// keyed only once that row exists in the sidebar.
-        var batchAssetCountConfirmed = false
 
         var needsPlan: Bool {
             planRequested != planCovered
+        }
+
+        /// Correlates this session's plan, execution and presentation diagnostics. Minted
+        /// when a build is taken up and carried by the phase that build leads to, so a
+        /// re-plan cannot join an older run.
+        var runID: String? {
+            switch phase {
+            case let .building(context): context.runID
+            case let .ready(context): context.runID
+            case let .executing(context): context.runID
+            default: nil
+            }
         }
 
         mutating func requestPlan() {
@@ -305,9 +313,6 @@ nonisolated struct ImportSessionMachine {
     }
 
     nonisolated enum Event {
-        /// The destination mapping persisted by an earlier run; fills only sources the
-        /// machine has no destination for.
-        case destinationsRestored([LibraryRootPath: LibraryRootPath])
         case librariesRefreshed(SourcesSnapshot)
         case planningChanged(RootPlanningChange)
         case catalogChanged
@@ -321,9 +326,7 @@ nonisolated struct ImportSessionMachine {
         case buildFinished(BuildID, BuildOutcome)
         case unreadableRetryFired(source: LibraryRootPath, attachment: AttachmentGeneration)
         case executionProgress(ImportBatchID, MediaOperationProgress)
-        /// `failedPublishedCount` is read by the execution task for a failed run only;
-        /// `nil` means it could not be read.
-        case executionFinished(ImportBatchID, MediaImportExecutionResult, failedPublishedCount: Int?)
+        case executionFinished(ImportBatchID, MediaImportExecutionResult)
         case shutdown
         case shutdownCompleted
     }
@@ -345,9 +348,9 @@ nonisolated struct ImportSessionMachine {
     // MARK: - State
 
     private(set) var sessions: [LibraryRootPath: SourceSession] = [:]
-    /// Persistent per-source destination mapping, retained even after detach for
-    /// Settings display. Mirrors `session.destination` while attached but is never
-    /// cleared on detach.
+    /// Each source's destination, the one record of it: read by an attached session,
+    /// remembered across detach for Settings and the next attachment, and written only by
+    /// `setDestination`.
     private(set) var destinationBySource: [LibraryRootPath: LibraryRootPath]
     private var lastSeenRevisions: [LibraryRootPath: RootPlanningRevisions] = [:]
     private var draining: [ImportBatchID: DrainingRun] = [:]
@@ -393,6 +396,16 @@ nonisolated struct ImportSessionMachine {
         libraries.first { $0.path == path }?.displayName
     }
 
+    /// The library a source's session copies into: a running import's own while it runs,
+    /// otherwise the source's destination.
+    func destination(of source: LibraryRootPath) -> LibraryRootPath? {
+        guard let session = sessions[source] else { return nil }
+        if case let .executing(context) = session.phase {
+            return context.destination
+        }
+        return destinationBySource[source]
+    }
+
     /// The batch a session is executing, if it is.
     func executingBatch(for source: LibraryRootPath) -> ImportBatchID? {
         guard case let .executing(context) = sessions[source]?.phase else {
@@ -408,10 +421,6 @@ nonisolated struct ImportSessionMachine {
     mutating func handle(_ event: Event) -> [Effect] {
         var effects: [Effect] = []
         switch event {
-        case let .destinationsRestored(mapping):
-            for (source, destination) in mapping where destinationBySource[source] == nil {
-                destinationBySource[source] = destination
-            }
         case let .librariesRefreshed(snapshot):
             refresh(snapshot, into: &effects)
         case let .planningChanged(change):
@@ -444,8 +453,8 @@ nonisolated struct ImportSessionMachine {
             fireUnreadableRetry(source: source, attachment: attachment, into: &effects)
         case let .executionProgress(batch, progress):
             applyExecutionProgress(batch: batch, progress: progress, into: &effects)
-        case let .executionFinished(batch, result, failedPublishedCount):
-            finishExecution(batch, result, failedPublishedCount: failedPublishedCount, into: &effects)
+        case let .executionFinished(batch, result):
+            finishExecution(batch, result, into: &effects)
         case .shutdown:
             isShuttingDown = true
             sessions.removeAll()
@@ -556,19 +565,9 @@ nonisolated struct ImportSessionMachine {
         let isRememberedValid = remembered.map { dest in
             fixedAvailable.contains { $0.path == dest }
         } ?? false
-        let destination = isRememberedValid ? remembered : fixedAvailable.first?.path
-        if destinationBySource[source.path] != destination {
-            if let destination {
-                destinationBySource[source.path] = destination
-            } else {
-                destinationBySource.removeValue(forKey: source.path)
-            }
-            effects.append(.persistDestinations)
-        }
         var session = SourceSession(
             attachmentGeneration: attachmentGen,
             root: source,
-            destination: destination,
             isDestinationExplicit: isRememberedValid,
             preferences: snapshot.defaultPreferences,
             phase: .inventory,
@@ -576,12 +575,10 @@ nonisolated struct ImportSessionMachine {
             nextBuildGeneration: BuildGeneration(rawValue: 1),
             attachStartedAt: ContinuousClock().now,
             attachToReadyMs: nil,
-            lastProgress: nil,
             settledOutcome: nil,
             lastCompletion: nil,
             lastFailure: nil,
-            unreadableRetry: nil,
-            activeRunID: nil
+            unreadableRetry: nil
         )
         session.requestPlan()
         sessions[source.path] = session
@@ -590,7 +587,12 @@ nonisolated struct ImportSessionMachine {
         } else {
             lastSeenRevisions.removeValue(forKey: source.path)
         }
-        takeUpBuild(source.path, into: &effects)
+        setDestination(
+            isRememberedValid ? remembered : fixedAvailable.first?.path,
+            explicit: isRememberedValid,
+            for: source.path,
+            into: &effects
+        )
     }
 
     private mutating func updateAttached(
@@ -641,45 +643,45 @@ nonisolated struct ImportSessionMachine {
         fixedAvailable: [CatalogLibraryState],
         into effects: inout [Effect]
     ) {
-        // Never touch the destination of a session that is actively executing: its
-        // ExecutionContext (claims) already committed to a specific destination, and
-        // rewriting `session.destination` under a live copy would desync it from the
-        // ledger it's actually writing into.
-        let isExecuting = if case .executing = sessions[source]?.phase {
-            true
-        } else {
-            false
-        }
-        let currentDestination = sessions[source]?.destination
-        let isExplicit = sessions[source]?.isDestinationExplicit ?? false
-        var newDestination = currentDestination
-        var explicitAfterUpdate = isExplicit
-        if !isExecuting {
-            if isExplicit {
-                let isCurrentValid = currentDestination
-                    .map { dest in fixedAvailable.contains(where: { $0.path == dest }) } ?? false
-                if !isCurrentValid {
-                    newDestination = fixedAvailable.first?.path
-                    explicitAfterUpdate = false
-                }
-            } else {
-                newDestination = fixedAvailable.first?.path
-            }
-        }
-        guard newDestination != currentDestination || explicitAfterUpdate != isExplicit else {
+        guard let session = sessions[source] else { return }
+        if case .executing = session.phase {
             return
         }
-        sessions[source]?.destination = newDestination
-        sessions[source]?.isDestinationExplicit = explicitAfterUpdate
-        if destinationBySource[source] != newDestination {
-            if let newDestination {
-                destinationBySource[source] = newDestination
-            } else {
-                destinationBySource.removeValue(forKey: source)
-            }
+        let current = destinationBySource[source]
+        let isCurrentAvailable = current.map { dest in fixedAvailable.contains { $0.path == dest } } ?? false
+        if session.isDestinationExplicit, isCurrentAvailable {
+            return
+        }
+        let tracked = fixedAvailable.first?.path
+        guard tracked != current || session.isDestinationExplicit else { return }
+        setDestination(tracked, explicit: false, for: source, into: &effects)
+    }
+
+    /// The one writer of a source's destination. Remembers it for the source and, for an
+    /// attached session whose library changed, drops what was measured against the old
+    /// one — the held plan and the settled outcome — and re-plans: "42 new items" or
+    /// "everything on this card is imported" are claims about a library, and drawn under
+    /// another's name they would be false, or offer an Import whose number the click
+    /// would not honour. The last naming progress is about the card, so it stays.
+    private mutating func setDestination(
+        _ destination: LibraryRootPath?,
+        explicit: Bool,
+        for source: LibraryRootPath,
+        into effects: inout [Effect]
+    ) {
+        let previous = destinationBySource[source]
+        if previous != destination {
+            destinationBySource[source] = destination
             effects.append(.persistDestinations)
         }
-        sessions[source]?.requestPlan()
+        guard var session = sessions[source] else { return }
+        session.isDestinationExplicit = explicit
+        if previous != destination {
+            session.requestPlan()
+            session.lastReadyContext = nil
+            session.settledOutcome = nil
+        }
+        sessions[source] = session
         takeUpBuild(source, into: &effects)
     }
 
@@ -825,12 +827,12 @@ nonisolated struct ImportSessionMachine {
     /// `destination` is stale because the names it can claim there just changed.
     private mutating func rebuildSessionsTargeting(destination: LibraryRootPath, into effects: inout [Effect]) {
         let isDestinationUnderExecution = sessions.values.contains { session in
-            if case .executing = session.phase {
-                return session.destination == destination
+            if case let .executing(context) = session.phase {
+                return context.destination == destination
             }
             return false
         }
-        for source in Array(sessions.keys) where sessions[source]?.destination == destination {
+        for source in Array(sessions.keys) where destinationBySource[source] == destination {
             sessions[source]?.requestPlan()
             if isDestinationUnderExecution {
                 OtosLog.catalog.notice("op=import.coordinator phase=suppressRebuild source=\(source.rawValue, privacy: .public) destination=\(destination.rawValue, privacy: .public)")
@@ -862,7 +864,7 @@ nonisolated struct ImportSessionMachine {
         // catalog-change event this machine already consumes: an import's own
         // publish/settle writes are themselves catalog changes.
         for session in sessions.values {
-            if case let .executing(ctx) = session.phase, !session.batchAssetCountConfirmed {
+            if case let .executing(ctx) = session.phase, !ctx.batchHasPublishedAsset {
                 effects.append(.readBatchAssetCount(ctx.batch))
             }
         }
@@ -875,11 +877,13 @@ nonisolated struct ImportSessionMachine {
     ) {
         guard let count, count > 0,
               let source = source(executing: batch),
-              sessions[source]?.batchAssetCountConfirmed == false
+              case var .executing(context)? = sessions[source]?.phase,
+              !context.batchHasPublishedAsset
         else {
             return
         }
-        sessions[source]?.batchAssetCountConfirmed = true
+        context.batchHasPublishedAsset = true
+        sessions[source]?.phase = .executing(context)
         effects.append(.publish)
     }
 
@@ -899,38 +903,7 @@ nonisolated struct ImportSessionMachine {
         for source: LibraryRootPath,
         into effects: inout [Effect]
     ) {
-        destinationBySource[source] = destination
-        effects.append(.persistDestinations)
-        guard var session = sessions[source] else {
-            // Source not yet attached. `destinationBySource` above is recorded for
-            // Settings display only — a session created later always starts on the
-            // default (first available library), not this value.
-            return
-        }
-        let previous = session.destination
-        session.destination = destination
-        session.isDestinationExplicit = true
-        if previous != destination {
-            session.requestPlan()
-            // The held plan and the settled outcome were measured against the previous
-            // library — "42 new items", "139 already in", "everything on this card is
-            // imported" are all claims about *it*. Holding them across the rebuild
-            // (ARC-047's refresh-is-not-a-first-check rule) would draw the old counts
-            // under the new library's name and offer an Import whose number the click
-            // would not honour. A destination change is a rebuild whose inputs changed,
-            // like a settlement, so the bar returns to Checking until the new plan lands;
-            // the last naming progress still carries its determinate count.
-            session.lastReadyContext = nil
-            session.settledOutcome = nil
-            if case .completed = session.phase {
-                // `.completed` presents from `settledOutcome`, which is gone.
-                session.phase = .inventory
-            }
-        }
-        sessions[source] = session
-        if session.needsPlan {
-            takeUpBuild(source, into: &effects)
-        }
+        setDestination(destination, explicit: true, for: source, into: &effects)
         effects.append(.publish)
     }
 
@@ -1007,7 +980,7 @@ nonisolated struct ImportSessionMachine {
         session.nextBuildGeneration = BuildGeneration(rawValue: buildGen.rawValue &+ 1)
         let attachmentGen = session.attachmentGeneration
         let runID = UUID().uuidString
-        let destination = session.destination
+        let destination = destinationBySource[source]
         OtosLog.catalog.noticeOperation("plan.rebuild", phase: "schedule", fields: ["source": source.rawValue, "destination": destination?.rawValue ?? "none", "generation": "\(buildGen.rawValue)", "attachment": "\(attachmentGen.rawValue)", "run": runID])
         guard let destination else {
             // No destination is state B ("No destination"), not a failure —
@@ -1018,7 +991,6 @@ nonisolated struct ImportSessionMachine {
             effects.append(.publish)
             return true
         }
-        session.activeRunID = runID
         session.phase = .building(BuildContext(generation: buildGen, runID: runID, destination: destination))
         let policy = ImportPolicy.from(session.preferences)
         sessions[source] = session
@@ -1128,7 +1100,7 @@ nonisolated struct ImportSessionMachine {
         let snapshot = built.snapshot
         let build = built.build
         let plan = build.plan
-        guard owned.session.destination == destination else {
+        guard destinationBySource[source] == destination else {
             // The destination changed while this build ran. The build is still the
             // session's current one — nothing else will end `.building` — so it must hand
             // the phase back and request a plan for the new destination.
@@ -1171,6 +1143,8 @@ nonisolated struct ImportSessionMachine {
         }
         let readyCtx = ReadyContext(
             plan: plan,
+            destination: destination,
+            runID: runID,
             skippedPackageCount: built.skippedPackageCount,
             claims: newClaims,
             attentionItems: plan.attentionItems
@@ -1276,10 +1250,10 @@ nonisolated struct ImportSessionMachine {
         excluding excludedSource: LibraryRootPath? = nil
     ) -> Set<FilesystemNameKey> {
         var result: Set<FilesystemNameKey> = []
-        for (source, session) in sessions where session.destination == destination && source != excludedSource {
+        for (source, session) in sessions where source != excludedSource {
             switch session.phase {
-            case let .ready(ctx): result.formUnion(ctx.claims)
-            case let .executing(ctx): result.formUnion(ctx.claims)
+            case let .ready(ctx) where ctx.destination == destination: result.formUnion(ctx.claims)
+            case let .executing(ctx) where ctx.destination == destination: result.formUnion(ctx.claims)
             default: break
             }
         }
@@ -1362,14 +1336,13 @@ nonisolated struct ImportSessionMachine {
         into effects: inout [Effect]
     ) {
         guard var session = sessions[source], case .ready = session.phase else { return }
-        let runID = session.activeRunID ?? "missing"
+        let runID = readyContext.runID
         OtosLog.catalog.noticeOperation(
             "import.activity",
             phase: "started",
             fields: ["rootPath": source.rawValue, "run": runID]
         )
         let plan = readyContext.plan
-        let summary = plan.totals
         let prefs = session.preferences
         // Minted here, not read off `plan.mode` (a throwaway id re-minted on every re-plan
         // — trap #6) and not left to the executor to mint deep inside `execute()`: the
@@ -1379,33 +1352,29 @@ nonisolated struct ImportSessionMachine {
         let batch = ImportBatchID()
         session.phase = .executing(ExecutionContext(
             plan: plan,
+            destination: readyContext.destination,
             claims: readyContext.claims,
             sourceKind: sourceState.root.kind,
             sourceRoot: sourceState.root,
-            summary: summary,
-            generation: plan.generation,
             skippedPackageCount: readyContext.skippedPackageCount,
             prefs: prefs,
             batch: batch,
             runID: runID,
             attachment: session.attachmentGeneration,
-            interruption: nil
+            interruption: nil,
+            progress: MediaOperationProgress(
+                completedCount: 0,
+                totalCount: plan.totals.copyCount,
+                completedBytes: 0,
+                totalBytes: plan.totals.copyBytes,
+                elapsedMs: 0
+            ),
+            batchHasPublishedAsset: false
         ))
         session.importRequested = false
         // A new attempt supersedes the last one's failure; its own outcome will be
         // recorded when it settles.
         session.lastFailure = nil
-        session.batchAssetCountConfirmed = false
-        // A true starting value (real totals, zero completed), overwritten by the
-        // executor's first progress callback moments later — not a fabricated zero, since
-        // it's what's actually true before any bytes have moved.
-        session.lastProgress = MediaOperationProgress(
-            completedCount: 0,
-            totalCount: summary.copyCount,
-            completedBytes: 0,
-            totalBytes: summary.copyBytes,
-            elapsedMs: 0
-        )
         sessions[source] = session
         effects.append(.publish)
         effects.append(.startExecution(ExecutionRequest(
@@ -1428,33 +1397,26 @@ nonisolated struct ImportSessionMachine {
         progress: MediaOperationProgress,
         into effects: inout [Effect]
     ) {
-        guard let source = source(executing: batch), let previous = sessions[source]?.lastProgress else {
+        guard let source = source(executing: batch),
+              case var .executing(context)? = sessions[source]?.phase,
+              !progress.isStale(comparedTo: context.progress)
+        else {
             return
         }
-        if progress.isStale(comparedTo: previous) {
-            return
-        }
-        // Stored on the session so any later `publish` — including one fired for an
-        // unrelated reason mid-execution — re-derives this same live value via
-        // `presentation(for:)` instead of resetting to zero.
-        sessions[source]?.lastProgress = progress
+        // Kept on the phase so any later `publish` — including one fired for an unrelated
+        // reason mid-execution — re-derives this same live value.
+        context.progress = progress
+        sessions[source]?.phase = .executing(context)
         effects.append(.publish)
     }
 
     private mutating func finishExecution(
         _ batch: ImportBatchID,
         _ result: MediaImportExecutionResult,
-        failedPublishedCount: Int?,
         into effects: inout [Effect]
     ) {
         if let source = source(executing: batch), case let .executing(context)? = sessions[source]?.phase {
-            applyExecutionResult(
-                result,
-                source: source,
-                context: context,
-                failedPublishedCount: failedPublishedCount,
-                into: &effects
-            )
+            applyExecutionResult(result, source: source, context: context, into: &effects)
             return
         }
         guard let drained = draining.removeValue(forKey: batch) else {
@@ -1463,30 +1425,22 @@ nonisolated struct ImportSessionMachine {
             )
             return
         }
-        settleDetachedExecution(result, failedPublishedCount: failedPublishedCount, draining: drained)
+        settleDetachedExecution(result, draining: drained)
     }
 
     /// Settles an execution whose card went away while it ran. The executor lifetime ends
     /// here and the outcome is logged; there is no card row left to draw it on.
-    private func settleDetachedExecution(
-        _ result: MediaImportExecutionResult,
-        failedPublishedCount: Int?,
-        draining: DrainingRun
-    ) {
+    private func settleDetachedExecution(_ result: MediaImportExecutionResult, draining: DrainingRun) {
         let context = draining.context
-        let publishedCount: Int? = switch result {
-        case let .completed(count, _, _, _, _, _),
-             let .completedWithErase(count, _, _, _, _, _, _),
-             let .stopped(_, count, _, _, _, _):
-            count
-        case .failed:
-            failedPublishedCount
+        let publishedCount = switch result {
+        case let .completed(tally, _, _), let .stopped(_, tally): tally.publishedCount
+        case let .failed(_, publishedCount): publishedCount
         }
         let outcome = if context.interruption == .sourceRemoved {
             "sourceRemoved"
         } else {
             switch result {
-            case .completed, .completedWithErase: "completed"
+            case .completed: "completed"
             case .stopped: "stopped"
             case .failed: "failed"
             }
@@ -1499,145 +1453,83 @@ nonisolated struct ImportSessionMachine {
         )
     }
 
+    /// Records a run's outcome beside the session and releases what the run held. The
+    /// phase returns to `.inventory`: a phase says what the session is doing now, and the
+    /// re-plan that follows replaces it, while the outcome is a fact that re-plan has no
+    /// business rewriting (`import-bar.md` states F and G). The plan the run executed
+    /// from is dropped in every case — its landed entries are skips now — so the bar shows
+    /// the outcome, not that plan, until the re-plan lands (DES-030; on 2026-09-13 the held
+    /// pre-run plan drew `Ready · Import 368 Items` for 360 ms between two Done frames).
     private mutating func applyExecutionResult(
         _ result: MediaImportExecutionResult,
         source: LibraryRootPath,
         context: ExecutionContext,
-        failedPublishedCount: Int?,
         into effects: inout [Effect]
     ) {
         guard var session = sessions[source] else { return }
-        let summary = context.summary
-        guard let destination = context.plan.mode.importDestination else {
-            preconditionFailure("an executing session's plan is always an import plan (mode: \(context.plan.mode))")
-        }
+        let totals = context.plan.totals
+        session.phase = .inventory
+        session.lastReadyContext = nil
+        session.settledOutcome = nil
         switch result {
-        case let .completed(
-            publishedCount,
-            hasBlockedEntries,
-            hasEntryFailures,
-            skippedForeignCount,
-            failedCount,
-            incompleteItems
-        ):
-            session.phase = .completed
-            // Stricter than the auto-eject gate just below on purpose: a foreign skip
-            // doesn't block physically ejecting the card, but it does keep the bar from
+        case let .completed(tally, incompleteItems, erase):
+            let eraseFailed = (erase?.failedCount ?? 0) > 0
+            // Stricter than the auto-eject gate below on purpose: a foreign skip doesn't
+            // block physically ejecting the card, but it does keep the bar from
             // auto-dismissing (`import-bar.md` "What the presentation must carry").
             session.lastCompletion = AttachmentCompletion(
-                batch: summary.copyCount + summary.companionCopyCount > 0 ? context.batch : nil,
-                publishedCount: publishedCount,
-                isFullyClean: !hasBlockedEntries && !hasEntryFailures
-                    && skippedForeignCount == 0 && summary.blockedCount == 0,
+                batch: totals.copyCount + totals.companionCopyCount > 0 ? context.batch : nil,
+                publishedCount: tally.publishedCount,
+                isFullyClean: !tally.hasBlockedEntries && !tally.hasEntryFailures
+                    && tally.skippedForeignCount == 0 && totals.blockedCount == 0 && !eraseFailed,
                 incompleteItems: incompleteItems,
-                eraseOutcome: nil,
+                eraseOutcome: erase,
                 stopReason: nil,
-                plannedCount: summary.copyCount,
-                destination: destination
-            )
-            // Stored on the session so `presentation(for:)` reads the real outcome instead
-            // of a zero-summary literal synthesized on every publish.
-            session.settledOutcome = SettledOutcome(
-                summary: summary,
-                skippedForeignCount: skippedForeignCount,
-                failedCount: failedCount,
-                incompleteItems: incompleteItems,
-                eraseOutcome: nil
-            )
-            // The plan this run executed from is false now — its entries are skips — so it
-            // must not be held across the rebuild: on 2026-09-13 the held pre-run plan drew
-            // `Ready · Import 368 Items` for 360 ms between two Done frames.
-            // `presentation(for:)` shows the settlement instead until the re-plan lands.
-            session.lastReadyContext = nil
-            sessions[source] = session
-            effects.append(.publish)
-            if context.prefs.autoEjectAfterImport, !hasBlockedEntries, !hasEntryFailures, summary.blockedCount == 0 {
-                effects.append(.autoEject(context.sourceRoot))
-            }
-        case let .completedWithErase(
-            publishedCount,
-            hasBlockedEntries,
-            hasEntryFailures,
-            skippedForeignCount,
-            failedCount,
-            incompleteItems,
-            eraseOutcome
-        ):
-            session.phase = .completed
-            session.lastCompletion = AttachmentCompletion(
-                batch: summary.copyCount + summary.companionCopyCount > 0 ? context.batch : nil,
-                publishedCount: publishedCount,
-                isFullyClean: !hasBlockedEntries && !hasEntryFailures
-                    && skippedForeignCount == 0 && summary.blockedCount == 0
-                    && eraseOutcome.failedCount == 0,
-                incompleteItems: incompleteItems,
-                eraseOutcome: eraseOutcome,
-                stopReason: nil,
-                plannedCount: summary.copyCount,
-                destination: destination
+                plannedCount: totals.copyCount,
+                destination: context.destination
             )
             session.settledOutcome = SettledOutcome(
-                summary: summary,
-                skippedForeignCount: skippedForeignCount,
-                failedCount: failedCount,
+                summary: totals,
+                skippedForeignCount: tally.skippedForeignCount,
+                failedCount: tally.failedCount,
                 incompleteItems: incompleteItems,
-                eraseOutcome: eraseOutcome
+                eraseOutcome: erase
             )
-            session.lastReadyContext = nil
-            sessions[source] = session
-            effects.append(.publish)
-            if context.prefs.autoEjectAfterImport, !hasBlockedEntries, !hasEntryFailures,
-               summary.blockedCount == 0, eraseOutcome.failedCount == 0
+            if context.prefs.autoEjectAfterImport, !tally.hasBlockedEntries, !tally.hasEntryFailures,
+               totals.blockedCount == 0, !eraseFailed
             {
                 effects.append(.autoEject(context.sourceRoot))
             }
-        case let .stopped(reason, publishedCount, _, _, _, _):
-            // Release claim: go to inventory and rebuild, so the stopped execution's
-            // destination reservation does not block other sources from reclaiming the
-            // base name. A stopped run is never fully clean (J8), so it neither
-            // auto-ejects nor erases; the bar draws state F's Stopped variant from this
-            // completion — what landed, of what was planned, and why it stopped — and
-            // offers the re-plan's remainder as the act.
-            session.phase = .inventory
-            // The plan this run executed from is false now — its landed entries are skips —
-            // and the rebuild replacing it has not run yet. Dropping it makes the bar draw
-            // the act as pending until the honest number lands (DES-030). The settled
-            // outcome is this stop, not an earlier completion.
-            session.lastReadyContext = nil
-            session.settledOutcome = nil
+        case let .stopped(reason, tally):
+            // A stopped run is never fully clean (J8), so it never auto-ejects; the bar
+            // draws state F's Stopped variant from this completion — what landed, of what
+            // was planned, and why it stopped — and offers the re-plan's remainder.
             session.lastCompletion = AttachmentCompletion(
                 batch: context.batch,
-                publishedCount: publishedCount,
+                publishedCount: tally.publishedCount,
                 isFullyClean: false,
                 incompleteItems: [],
                 eraseOutcome: nil,
                 stopReason: reason,
-                plannedCount: summary.copyCount,
-                destination: destination
+                plannedCount: totals.copyCount,
+                destination: context.destination
             )
-            sessions[source] = session
-            effects.append(.publish)
-        case let .failed(reason):
-            // Recorded, not phased: the rebuild below replaces the phase and must not
-            // erase the failure (state G, "never auto-dismisses"). The plan this run
-            // executed from is dropped as on a stop — the run may have changed the
-            // namespace before it failed — so the re-plan is what `Try Again` reveals.
-            session.phase = .inventory
-            session.lastReadyContext = nil
-            session.settledOutcome = nil
+        case let .failed(reason, publishedCount):
+            // State G, "never auto-dismisses": the failure stands until the next attempt
+            // or `Try Again`.
             session.lastFailure = AttachmentFailure(
                 reason: reason,
-                publishedCount: failedPublishedCount,
+                publishedCount: publishedCount,
                 batch: context.batch,
-                destination: destination
+                destination: context.destination
             )
-            sessions[source] = session
-            effects.append(.publish)
         }
+        sessions[source] = session
+        effects.append(.publish)
         OtosLog.catalog.noticeOperation(
             "import.activity",
             phase: "finished",
-            fields: ["rootPath": source.rawValue, "run": session.activeRunID ?? "missing"]
+            fields: ["rootPath": source.rawValue, "run": context.runID]
         )
         // A run holds its destination while it executes; settlement is when a change held
         // during the run applies, so resolve it before the re-plan below.
@@ -1646,22 +1538,26 @@ nonisolated struct ImportSessionMachine {
         // against the namespace the run just changed.
         sessions[source]?.requestPlan()
         takeUpBuild(source, into: &effects)
-        flushRebuilds(after: source, into: &effects)
+        flushRebuilds(released: context.destination, by: source, into: &effects)
     }
 
-    /// Flushes destination-driven rebuilds other sources owe, once no other run still
-    /// holds the destination this one just released.
-    private mutating func flushRebuilds(after source: LibraryRootPath, into effects: inout [Effect]) {
-        guard let finishedDestination = destinationBySource[source] else { return }
+    /// Flushes the rebuilds other sources owe against the library a run just released,
+    /// once no other run still holds it. The released library is the run's own, not the
+    /// source's destination now: a change held during the run has just been applied.
+    private mutating func flushRebuilds(
+        released destination: LibraryRootPath,
+        by source: LibraryRootPath,
+        into effects: inout [Effect]
+    ) {
         let stillExecuting = sessions.values.contains { session in
-            if case .executing = session.phase, session.destination == finishedDestination {
-                return true
+            if case let .executing(context) = session.phase {
+                return context.destination == destination
             }
             return false
         }
         guard !stillExecuting else { return }
-        for (otherSource, destination) in destinationBySource
-            where destination == finishedDestination && otherSource != source
+        for otherSource in Array(sessions.keys)
+            where otherSource != source && destinationBySource[otherSource] == destination
         {
             guard takeUpBuild(otherSource, into: &effects) else { continue }
             OtosLog.catalog.notice("op=import.coordinator phase=flushRebuild source=\(otherSource.rawValue, privacy: .public) destination=\(destination.rawValue, privacy: .public)")
