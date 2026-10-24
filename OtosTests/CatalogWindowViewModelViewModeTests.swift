@@ -199,13 +199,15 @@ struct CatalogWindowViewModelViewModeTests {
             libraryRootPath: ids[0].libraryRootPath,
             relativePath: MediaRelativePath(rawValue: "renamed.jpg")
         )
-        model.applyIdentityRemapBatch(
+        var renamedState = makeViewModeState(orderedIDs: [renamed, ids[1]])
+        renamedState.pendingIdentityRemaps = [
             CatalogIdentityRemapBatch(
+                id: 1,
                 libraryRootPath: ids[0].libraryRootPath,
-                remaps: [CatalogIdentityRemap(oldID: ids[0], newID: renamed)],
-                rootRevision: 1
-            )
-        )
+                remaps: [CatalogIdentityRemap(oldID: ids[0], newID: renamed)]
+            ),
+        ]
+        model.applyState(renamedState)
         await model.paneRequestTasks[.loupe]?.value
 
         #expect(model.focusedAssetID == renamed)

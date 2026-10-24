@@ -180,20 +180,19 @@ extension CatalogStore {
     }
 
     /// Set-based identity remap (ARC-051). Private intermediate keys never publish.
+    /// The remaps are the component's own media members, logical source to final path;
+    /// they are recorded as a pending batch in this transaction (ARC-052) and the
+    /// component's journal is deleted with it.
     static func settleRelocationComponent(
         rootRowID: Int64,
-        libraryRootPath: LibraryRootPath,
         component: ActiveReorganizationComponent,
-        remaps: [CatalogIdentityRemap],
         db: Database
     ) throws -> CatalogIdentityRemapBatch {
         guard component.phase == .filesystemComplete else {
             throw CatalogStoreError.catalogUnavailable
         }
-        let mediaMembers = component.members.filter { $0.kind == .media }
-        guard remaps.count == mediaMembers.count else {
-            throw CatalogStoreError.catalogUnavailable
-        }
+        let libraryRootPath = component.libraryRootPath
+        let remaps = identityRemaps(for: component)
 
         let privatePrefix = ".otos-reorg-tx/\(component.componentKey.rawValue)"
         for (index, remap) in remaps.enumerated() {
@@ -228,20 +227,97 @@ extension CatalogStore {
             db: db
         )
 
-        try updateComponentPhase(
-            key: component.componentKey,
-            phase: .catalogCommitted,
-            nextStepIndex: component.nextStepIndex,
-            updatedAt: Date(),
-            db: db
-        )
         try deleteActiveReorganizationComponent(key: component.componentKey, db: db)
+        return try insertPendingIdentityRemapBatch(libraryRootPath: libraryRootPath, remaps: remaps, db: db)
+    }
 
-        return CatalogIdentityRemapBatch(
-            libraryRootPath: libraryRootPath,
-            remaps: remaps,
-            rootRevision: 0
+    /// Each media member's move, from the path the catalog knows it by to its final path.
+    static func identityRemaps(for component: ActiveReorganizationComponent) -> [CatalogIdentityRemap] {
+        component.members.compactMap { member in
+            guard member.kind == .media else { return nil }
+            return CatalogIdentityRemap(
+                oldID: MediaAssetID(
+                    libraryRootPath: component.libraryRootPath,
+                    relativePath: member.logicalSourceRelativePath
+                ),
+                newID: MediaAssetID(
+                    libraryRootPath: component.libraryRootPath,
+                    relativePath: member.finalRelativePath
+                )
+            )
+        }
+    }
+
+    private static func insertPendingIdentityRemapBatch(
+        libraryRootPath: LibraryRootPath,
+        remaps: [CatalogIdentityRemap],
+        db: Database
+    ) throws -> CatalogIdentityRemapBatch {
+        try db.execute(
+            sql: "INSERT INTO pending_identity_remap_batch (library_root_path) VALUES (?)",
+            arguments: [libraryRootPath.rawValue]
         )
+        let batchID = db.lastInsertedRowID
+        for (ordinal, remap) in remaps.enumerated() {
+            try db.execute(
+                sql: """
+                INSERT INTO pending_identity_remap (batch_id, ordinal, old_relative_path, new_relative_path)
+                VALUES (?, ?, ?, ?)
+                """,
+                arguments: [batchID, ordinal, remap.oldID.relativePath.rawValue, remap.newID.relativePath.rawValue]
+            )
+        }
+        return CatalogIdentityRemapBatch(id: batchID, libraryRootPath: libraryRootPath, remaps: remaps)
+    }
+
+    /// Every batch the window has not acknowledged, oldest first. Read inside the same
+    /// transaction as the window's ordered IDs.
+    static func fetchPendingIdentityRemapBatches(db: Database) throws -> [CatalogIdentityRemapBatch] {
+        let batchRows = try Row.fetchAll(
+            db,
+            sql: "SELECT id, library_root_path FROM pending_identity_remap_batch ORDER BY id"
+        )
+        guard !batchRows.isEmpty else { return [] }
+        let remapRows = try Row.fetchAll(
+            db,
+            sql: """
+            SELECT batch_id, old_relative_path, new_relative_path
+            FROM pending_identity_remap
+            ORDER BY batch_id, ordinal
+            """
+        )
+        var remapsByBatch: [Int64: [(old: String, new: String)]] = [:]
+        for row in remapRows {
+            remapsByBatch[row["batch_id"], default: []].append((row["old_relative_path"], row["new_relative_path"]))
+        }
+        return batchRows.map { row in
+            let id: Int64 = row["id"]
+            let root = LibraryRootPath(rawValue: row["library_root_path"])
+            return CatalogIdentityRemapBatch(
+                id: id,
+                libraryRootPath: root,
+                remaps: (remapsByBatch[id] ?? []).map { pair in
+                    CatalogIdentityRemap(
+                        oldID: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: pair.old)),
+                        newID: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: pair.new))
+                    )
+                }
+            )
+        }
+    }
+
+    /// Deletes acknowledged batches. Idempotent: a batch already gone is acknowledged.
+    static func deletePendingIdentityRemapBatches(ids: [Int64], db: Database) throws {
+        guard !ids.isEmpty else { return }
+        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
+        try db.execute(
+            sql: "DELETE FROM pending_identity_remap_batch WHERE id IN (\(placeholders))",
+            arguments: StatementArguments(ids)
+        )
+    }
+
+    static func deleteAllPendingIdentityRemapBatches(db: Database) throws {
+        try db.execute(sql: "DELETE FROM pending_identity_remap_batch")
     }
 
     private static func remapCompanionPathsForSettlement(

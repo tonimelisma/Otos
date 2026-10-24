@@ -4,14 +4,16 @@ import OSLog
 /// Same-volume reorganization executor (ARC-051).
 ///
 /// Persists the component recipe before the first move, executes ordered
-/// no-overwrite steps, and marks `.filesystemComplete` for Store settlement.
-/// Cancellation is honored only between components (caller stops scheduling).
+/// no-overwrite steps, and marks `.filesystemComplete` for Store settlement. A component
+/// that cannot finish is rolled back: its completed steps are reversed and the folders
+/// it created removed, so a component either happens whole or leaves the library as it
+/// was. Every transition goes through `CatalogStore`'s journal before and after the
+/// filesystem change it describes, which is what makes crash recovery a resume.
 nonisolated enum ReorganizationExecutor {
     /// Builds a durable journal component from a planner component + snapshot facts.
     static func makeJournalComponent(
         plan: ReorganizationPlan,
         plannerComponent: ReorganizationComponent,
-        snapshot: ReorganizationPlanningSnapshot,
         factsByPath: [MediaRelativePath: (byteSize: Int64, contentModifiedAt: Date)]
     ) -> ActiveReorganizationComponent? {
         let key = ReorganizationComponentKey.make()
@@ -145,92 +147,255 @@ nonisolated enum ReorganizationExecutor {
         }
     }
 
-    /// Executes remaining steps for a journaled component. Store APIs are injected.
+    /// Moves a journaled component forward from where its journal stands, writing each
+    /// transition before and after the filesystem change it describes. Resuming after a
+    /// crash takes the same path: a step journaled as `willMove` is observed on disk
+    /// first, so a move that happened is recorded rather than repeated.
     static func executeComponent(
-        component: ActiveReorganizationComponent,
+        _ component: ActiveReorganizationComponent,
         rootURL: URL,
-        markWillMove: (ActiveReorganizationStep) async throws -> Void,
-        markDidMove: (ActiveReorganizationStep, MediaRelativePath) async throws -> Void,
-        markFilesystemComplete: () async throws -> Void,
-        shouldContinue: () -> Bool
+        store: CatalogStore
     ) async -> ReorganizationExecutionOutcome {
-        var working = component
-        for directory in working.directories where directory.phase == .planned {
-            do {
-                try ensureDirectory(rootURL: rootURL, relativePath: directory.relativePath)
-            } catch {
-                return .failed(reason: "directoryPrerequisite")
+        let key = component.componentKey
+        for directory in component.directories where directory.phase == .planned {
+            switch ensureDirectory(rootURL: rootURL, relativePath: directory.relativePath) {
+            case .preexisting:
+                continue
+            case .created:
+                do {
+                    try await store.recordReorganizationDirectoryCreated(key: key, relativePath: directory.relativePath)
+                } catch {
+                    return stopped(.journalWrite, key: key, error: error)
+                }
+            case .unavailable:
+                return stopped(.folderUnavailable(directory.relativePath), key: key, error: nil)
             }
         }
 
-        while working.nextStepIndex < working.steps.count {
-            guard shouldContinue() else {
-                return .cancelled
-            }
-            let step = working.steps[working.nextStepIndex]
+        var nextStepIndex = component.nextStepIndex
+        while nextStepIndex < component.steps.count {
+            let step = component.steps[nextStepIndex]
             if step.phase == .didMove {
-                working.nextStepIndex += 1
+                nextStepIndex += 1
                 continue
             }
-            let member = working.members.first { $0.memberIndex == step.memberIndex }
-            guard let member else {
-                return .failed(reason: "missingMember")
+            guard let member = component.members.first(where: { $0.memberIndex == step.memberIndex }) else {
+                return stopped(.fileChanged(step.sourceRelativePath), key: key, error: nil)
             }
-
-            let observation = observeStep(
+            switch observeStep(
                 rootURL: rootURL,
                 step: step,
                 expectedByteSize: member.byteSize,
                 expectedModifiedAt: member.contentModifiedAt
-            )
-            switch observation {
+            ) {
             case .moveHappened:
                 do {
-                    try await markDidMove(step, step.destinationRelativePath)
-                    working.nextStepIndex += 1
+                    try await store.recordReorganizationMoveCompletion(
+                        key: key,
+                        step: step,
+                        nextStepIndex: nextStepIndex + 1
+                    )
                 } catch {
-                    return .failed(reason: "markDidMove")
+                    return stopped(.journalWrite, key: key, error: error)
                 }
+                nextStepIndex += 1
                 continue
-            case .ambiguousBothExist, .ambiguousNeitherExists:
-                return .blocked(reason: "ambiguousRecovery")
+            case .ambiguousBothExist:
+                return stopped(.destinationTaken(step.destinationRelativePath), key: key, error: nil)
+            case .ambiguousNeitherExists:
+                return stopped(.fileChanged(step.sourceRelativePath), key: key, error: nil)
             case .moveDidNotHappen:
                 break
             }
 
             do {
-                try await markWillMove(step)
+                try await store.recordReorganizationMoveIntent(key: key, stepIndex: step.stepIndex)
             } catch {
-                return .failed(reason: "markWillMove")
+                return stopped(.journalWrite, key: key, error: error)
             }
-
             let sourceURL = rootURL.appending(path: step.sourceRelativePath.rawValue)
             let destinationURL = rootURL.appending(path: step.destinationRelativePath.rawValue)
-            let parent = destinationURL.deletingLastPathComponent()
-            try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-
-            let outcome = ExclusivePublication.publish(staging: sourceURL, final: destinationURL)
-            switch outcome {
+            switch ExclusivePublication.publish(staging: sourceURL, final: destinationURL) {
             case .published:
                 do {
-                    try await markDidMove(step, step.destinationRelativePath)
-                    working.nextStepIndex += 1
+                    try await store.recordReorganizationMoveCompletion(
+                        key: key,
+                        step: step,
+                        nextStepIndex: nextStepIndex + 1
+                    )
                 } catch {
-                    return .failed(reason: "markDidMoveAfterPublish")
+                    return stopped(.journalWrite, key: key, error: error)
                 }
+                nextStepIndex += 1
             case .destinationExists:
-                return .blocked(reason: "destinationExists")
-            case let .failed(reason):
-                return .failed(reason: reason)
+                return stopped(.destinationTaken(step.destinationRelativePath), key: key, error: nil)
+            case let .failed(detail):
+                OtosLog.catalog.errorOperation("reorganization.execute", phase: "moveRefused", fields: [
+                    "key": key.rawValue,
+                    "path": step.sourceRelativePath.rawValue,
+                    "detail": detail,
+                ])
+                return stopped(.moveRefused(step.sourceRelativePath), key: key, error: nil)
             }
         }
 
         do {
-            try await markFilesystemComplete()
-            return .filesystemComplete(component.componentKey)
+            try await store.recordReorganizationFilesystemCompletion(key: key, nextStepIndex: component.steps.count)
+            return .filesystemComplete
         } catch {
-            return .failed(reason: "markFilesystemComplete")
+            return stopped(.journalWrite, key: key, error: error)
         }
+    }
+
+    /// Undoes a component that will not finish: every step that moved a file is moved
+    /// back, newest first, and every folder the component created is removed once empty,
+    /// so the library is as it was before the component. Resuming after a crash takes
+    /// the same path; each step is observed on disk before it is reversed.
+    static func rollBackComponent(
+        _ component: ActiveReorganizationComponent,
+        rootURL: URL,
+        store: CatalogStore
+    ) async -> ReorganizationRollbackOutcome {
+        let key = component.componentKey
+        if component.phase != .rollingBack {
+            do {
+                try await store.recordReorganizationRollbackStart(key: key, nextStepIndex: component.nextStepIndex)
+            } catch {
+                return await stuck(.journalWrite, component: component, store: store, error: error)
+            }
+        }
+        for step in component.steps.reversed() where step.phase == .willMove || step.phase == .didMove {
+            guard let member = component.members.first(where: { $0.memberIndex == step.memberIndex }) else {
+                return await stuck(.fileChanged(step.sourceRelativePath), component: component, store: store, error: nil)
+            }
+            // The reverse move: what is at the destination goes back to the source.
+            switch observeStep(
+                rootURL: rootURL,
+                step: step,
+                expectedByteSize: member.byteSize,
+                expectedModifiedAt: member.contentModifiedAt
+            ) {
+            case .moveDidNotHappen:
+                break
+            case .moveHappened:
+                let sourceURL = rootURL.appending(path: step.sourceRelativePath.rawValue)
+                let destinationURL = rootURL.appending(path: step.destinationRelativePath.rawValue)
+                switch ExclusivePublication.publish(staging: destinationURL, final: sourceURL) {
+                case .published:
+                    break
+                case .destinationExists:
+                    return await stuck(
+                        .destinationTaken(step.sourceRelativePath),
+                        component: component,
+                        store: store,
+                        error: nil
+                    )
+                case let .failed(detail):
+                    OtosLog.catalog.errorOperation("reorganization.rollback", phase: "moveRefused", fields: [
+                        "key": key.rawValue,
+                        "path": step.destinationRelativePath.rawValue,
+                        "detail": detail,
+                    ])
+                    return await stuck(
+                        .moveRefused(step.destinationRelativePath),
+                        component: component,
+                        store: store,
+                        error: nil
+                    )
+                }
+            case .ambiguousBothExist:
+                return await stuck(.destinationTaken(step.sourceRelativePath), component: component, store: store, error: nil)
+            case .ambiguousNeitherExists:
+                return await stuck(.fileChanged(step.destinationRelativePath), component: component, store: store, error: nil)
+            }
+            do {
+                try await store.recordReorganizationStepRolledBack(key: key, step: step)
+            } catch {
+                return await stuck(.journalWrite, component: component, store: store, error: error)
+            }
+        }
+        for directory in component.directories.reversed() where directory.phase == .created {
+            removeIfEmpty(rootURL: rootURL, relativePath: directory.relativePath, key: key)
+        }
+        do {
+            try await store.discardRolledBackReorganizationComponent(key: key)
+        } catch {
+            return await stuck(.journalWrite, component: component, store: store, error: error)
+        }
+        OtosLog.catalog.noticeOperation("reorganization.rollback", phase: "restored", fields: ["key": key.rawValue])
+        return .restored
+    }
+
+    private static func stopped(
+        _ fault: ReorganizationFault,
+        key: ReorganizationComponentKey,
+        error: (any Error)?
+    ) -> ReorganizationExecutionOutcome {
+        var fields = ["key": key.rawValue, "fault": fault.logCode]
+        if let error {
+            fields["error"] = String(describing: error)
+        }
+        OtosLog.catalog.errorOperation("reorganization.execute", phase: "stopped", fields: fields)
+        return .stopped(fault)
+    }
+
+    private static func stuck(
+        _ fault: ReorganizationFault,
+        component: ActiveReorganizationComponent,
+        store: CatalogStore,
+        error: (any Error)?
+    ) async -> ReorganizationRollbackOutcome {
+        var fields = ["key": component.componentKey.rawValue, "fault": fault.logCode]
+        if let error {
+            fields["error"] = String(describing: error)
+        }
+        do {
+            try await store.recordReorganizationBlocked(key: component.componentKey)
+        } catch {
+            fields["blockedWrite"] = String(describing: error)
+        }
+        OtosLog.catalog.faultOperation("reorganization.rollback", phase: "stuck", fields: fields)
+        return .stuck(fault)
+    }
+
+    private enum DirectoryResult {
+        case preexisting
+        case created
+        case unavailable
+    }
+
+    private static func ensureDirectory(rootURL: URL, relativePath: MediaRelativePath) -> DirectoryResult {
+        let url = rootURL.appending(path: relativePath.rawValue, directoryHint: .isDirectory)
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) {
+            return isDirectory.boolValue ? .preexisting : .unavailable
+        }
+        do {
+            // One level at a time: `directoryPrerequisites` lists every ancestor in
+            // order, so each created folder is journaled on its own and rollback can
+            // remove exactly the ones this component made.
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+            return .created
+        } catch {
+            OtosLog.catalog.errorOperation("reorganization.execute", phase: "folderUnavailable", fields: [
+                "path": relativePath.rawValue,
+                "error": String(describing: error),
+            ])
+            return .unavailable
+        }
+    }
+
+    /// `rmdir(2)` removes only an empty folder, so anything placed there since stays.
+    private static func removeIfEmpty(rootURL: URL, relativePath: MediaRelativePath, key: ReorganizationComponentKey) {
+        let path = rootURL.appending(path: relativePath.rawValue, directoryHint: .isDirectory).path
+        guard rmdir(path) != 0 else { return }
+        let code = errno
+        guard code != ENOTEMPTY, code != ENOENT else { return }
+        OtosLog.catalog.errorOperation("reorganization.rollback", phase: "folderKept", fields: [
+            "key": key.rawValue,
+            "path": relativePath.rawValue,
+            "errno": "\(code)",
+        ])
     }
 
     private static func directoryPrerequisites(
@@ -249,18 +414,6 @@ nonisolated enum ReorganizationExecutor {
             }
         }
         return result.sorted { $0.rawValue.localizedStandardCompare($1.rawValue) == .orderedAscending }
-    }
-
-    private static func ensureDirectory(rootURL: URL, relativePath: MediaRelativePath) throws {
-        let url = rootURL.appending(path: relativePath.rawValue, directoryHint: .isDirectory)
-        var isDirectory: ObjCBool = false
-        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) {
-            guard isDirectory.boolValue else {
-                throw CocoaError(.fileWriteFileExists)
-            }
-            return
-        }
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     }
 
     private static func matchesFacts(url: URL, byteSize: Int64, modifiedAt: Date) -> Bool {

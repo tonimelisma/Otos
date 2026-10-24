@@ -72,6 +72,9 @@ nonisolated struct CatalogWindowState: Equatable {
     var mediaEmptyState: CatalogMediaEmptyState
     var deviceConnectionBanner: CatalogDeviceConnectionBanner?
     var queryGeneration: UInt64 = 0
+    /// Remaps committed but not yet acknowledged by the window, read with the ordered
+    /// IDs. The window applies each batch once, before it shows the new identities.
+    var pendingIdentityRemaps: [CatalogIdentityRemapBatch] = []
 
     var queryDescriptor: CatalogQueryDescriptor {
         mediaGrid.descriptor

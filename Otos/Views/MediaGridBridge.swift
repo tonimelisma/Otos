@@ -84,9 +84,6 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     var onInfoToggleKey: () -> Void = {}
     /// Asset to keep centered (loupe focus, compare newest member, or grid return focus).
     var focusTargetID: MediaAssetID?
-    /// Catalog identity remap batch from reorganization settlement (ARC-051).
-    var identityRemapEpoch: UInt64 = 0
-    var identityRemapBatch: CatalogIdentityRemapBatch?
 
     func makeNSViewController(context _: Context) -> MediaGridViewController {
         MediaGridViewController(presentation: presentation)
@@ -114,12 +111,6 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
         controller.contextMenu = contextMenu
         controller.onZoomToggleKey = onZoomToggleKey
         controller.onInfoToggleKey = onInfoToggleKey
-        if identityRemapEpoch != controller.appliedIdentityRemapEpoch,
-           let batch = identityRemapBatch
-        {
-            controller.tileContents.applyIdentityRemapBatch(batch)
-            controller.appliedIdentityRemapEpoch = identityRemapEpoch
-        }
         controller.applyPresentation(presentation)
         if case .grid = presentation {
             controller.receiveColumnCount(columnCount)
@@ -178,7 +169,6 @@ final class MediaGridViewController: NSViewController {
     /// Hoisted to ViewModel ownership so grid, strip, and panes share one decoded-image owner.
     var tileContents: TileContentStore = .init()
     /// Last applied reorganization remap epoch from SwiftUI (ARC-051).
-    var appliedIdentityRemapEpoch: UInt64 = 0
     private var detailQueryTask: Task<Void, Never>?
     private var detailQueryGeneration = 0
     /// In-flight decode keys `"id|imageKey"` owned by the controller, not the tile.

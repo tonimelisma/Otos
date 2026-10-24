@@ -25,23 +25,29 @@ extension CatalogProjection {
         let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: allRoots)
         let orderedAssetIDs: [MediaAssetID]
         let dayBuckets: [Date?]
+        let pendingIdentityRemaps: [CatalogIdentityRemapBatch]
         let orderQueryMs: Int
         if let reuseIDs = reuse.orderedAssetIDs, resolvedDescriptor == reuse.descriptor {
             orderedAssetIDs = reuseIDs
             dayBuckets = reuse.dayBuckets ?? []
+            pendingIdentityRemaps = reuse.pendingIdentityRemaps ?? []
             orderQueryMs = 0
         } else {
             orderQueryCount &+= 1
             let orderStart = ContinuousClock.now
-            (orderedAssetIDs, dayBuckets) = try await store.orderedAssetIDs(
+            let ordered = try await store.orderedAssetIDs(
                 for: resolvedDescriptor,
                 availableLibraryPaths: availableLibraryPaths
             )
+            orderedAssetIDs = ordered.ids
+            dayBuckets = ordered.dayBuckets
+            pendingIdentityRemaps = ordered.pendingIdentityRemaps
             orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
         }
         // Tests inject controlled derivation while keeping the real publication loop.
         if let stateBuilder {
-            let state = try await stateBuilder(allRoots, orderedAssetIDs, request)
+            var state = try await stateBuilder(allRoots, orderedAssetIDs, request)
+            state.pendingIdentityRemaps = pendingIdentityRemaps
             return (state, CatalogProjectionBuildMetrics(orderQueryMs: 0))
         }
 
@@ -60,12 +66,14 @@ extension CatalogProjection {
             for: facts.resolvedDescriptor.scope,
             availableLibraryPaths: facts.availableLibraryPaths
         )
-        return try await windowState(
+        var (state, metrics) = try await windowState(
             from: facts,
             allAssetCount: allAssetCount,
             unfilteredVisibleAssetCount: unfilteredVisibleAssetCount,
             filterOptions: filterOptions
         )
+        state.pendingIdentityRemaps = pendingIdentityRemaps
+        return (state, metrics)
     }
 
     static func resolvedDescriptor(
