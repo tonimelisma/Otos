@@ -126,12 +126,13 @@ nonisolated enum SourceFileClass: Equatable, Sendable {
         {
             return .sourceArtifact("sonyClipXML")
         }
-        switch URL(fileURLWithPath: name).pathExtension.lowercased() {
+        let fileExtension = MediaRelativePath(rawValue: name).fileExtension
+        switch fileExtension.lowercased() {
         case "xmp", "srt": return .usefulSidecar
         case "thm", "ctg", "aae", "lrf", "mpl", "cpi": return .cruftSidecar
         default:
             return MediaEligibility.isCatalogMedia(
-                contentTypeIdentifier: UTType(filenameExtension: URL(fileURLWithPath: name).pathExtension)?.identifier
+                contentTypeIdentifier: UTType(filenameExtension: fileExtension)?.identifier
             ) ? .media : .unknown
         }
     }

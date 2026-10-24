@@ -120,7 +120,7 @@ nonisolated enum ThumbnailStore {
         destinationID: MediaAssetID,
         in directory: URL
     ) throws -> GeneratedThumbnail {
-        guard sourceRelativeName == URL(fileURLWithPath: sourceRelativeName).lastPathComponent,
+        guard !sourceRelativeName.contains("/"),
               !sourceRelativeName.isEmpty,
               sourceRelativeName != ".",
               sourceRelativeName != ".."

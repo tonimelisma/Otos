@@ -74,10 +74,7 @@ nonisolated enum FilesystemReconciler {
         let relativePath: MediaRelativePath? = if isRootPath {
             nil
         } else {
-            CatalogPath.relativePath(
-                rootPath: root,
-                fileURL: URL(fileURLWithPath: event.path)
-            )
+            CatalogPath.relativePath(rootPath: root, absolutePath: event.path)
         }
         let scope = flags.classifiedScope(relativePath: relativePath, isRootPath: isRootPath)
         let action: SingleFileReconcileOperation? = if case .file = scope {

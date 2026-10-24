@@ -166,7 +166,7 @@ extension CatalogStore {
         for row in stagingRows {
             let key: String = row["operation_key"]
             let path: String = row["staging_path"]
-            companionStaging[key, default: []].append(URL(fileURLWithPath: path))
+            companionStaging[key, default: []].append(URL(fileURLWithPath: path, isDirectory: false))
         }
         return try Row.fetchAll(db, sql: "SELECT * FROM active_file_operation ORDER BY updated_at").compactMap { row in
             activeFileOperation(from: row, companionStaging: companionStaging)
@@ -330,7 +330,7 @@ extension CatalogStore {
             sourceRelativePath: MediaRelativePath(rawValue: row["source_relative_path"]),
             destinationRootPath: LibraryRootPath(rawValue: row["destination_root_path"]),
             destinationRelativePath: MediaRelativePath(rawValue: row["destination_relative_path"]),
-            stagingURL: stagingPath.map { URL(fileURLWithPath: $0) },
+            stagingURL: stagingPath.map { URL(fileURLWithPath: $0, isDirectory: false) },
             companionStagingURLs: companionStaging[key] ?? [],
             contentHash: (row["content_hash_xxh3_128"] as Data?).flatMap(XXH3Digest128.init(data:)),
             importBatch: ImportBatchID(unixMilliseconds: row["import_batch_unix_ms"]),

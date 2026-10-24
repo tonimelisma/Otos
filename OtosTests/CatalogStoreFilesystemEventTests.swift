@@ -362,6 +362,69 @@ struct CatalogStoreFilesystemEventTests {
         #expect(await recorder.invocations().count == baseline)
     }
 
+    /// ARC-041: a file reconcile that observed a path missing does not delete a row the
+    /// path's owner restored while the reconcile was suspended. The reconcile is held
+    /// right after its observation; undo puts the file back and restores the row with
+    /// its overlay; the held reconcile then finds the root's namespace changed, defers,
+    /// and re-observes. A stale delete would purge the overlay, and the row the restore's
+    /// own dirt re-creates afterwards would come back without it.
+    @Test func staleMissingObservationDoesNotDeleteARestoredRow() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appending(path: "a.jpg")
+        let aside = temp.appending(path: "a.jpg")
+        try writeCatalogStoreFile(file, contents: "jpeg")
+
+        let gate = ArrivalGate()
+        var scanner = CatalogScanner.live
+        scanner.observeFile = { fileURL, rootPath in
+            let observation = try await CatalogFileObservation.observe(fileURL: fileURL, rootPath: rootPath)
+            if case .absent = observation {
+                await gate.arrive()
+            }
+            return observation
+        }
+        let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: scanner,
+            filesystemWatcher: watcher,
+            scanCadence: .milliseconds(10)
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let cataloged = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.count == 1
+        }
+        let id = try #require(cataloged.testAssets.first?.id)
+        let item = try #require(try await store.mediaTrashItems(for: [id]).first)
+
+        try FileManager.default.moveItem(at: file, to: aside)
+        emit(
+            FilesystemEvent(
+                path: file.path,
+                flags: UInt32(kFSEventStreamEventFlagItemRemoved | kFSEventStreamEventFlagItemIsFile)
+            )
+        )
+        await gate.waitForArrivals(1)
+
+        try FileManager.default.moveItem(at: aside, to: file)
+        let batch = ImportBatchID(unixMilliseconds: 1000)
+        let restored = await store.restoreTrashedItem(TrashedItem(
+            item: item,
+            members: item.members.map { TrashedMember(member: $0, trashURL: nil) },
+            overlay: TrashedOverlay(mediaChoice: .liked, importBatch: batch)
+        ))
+        #expect(restored)
+
+        await gate.open()
+        try await waitUntil { await store.isFilesystemQuiescent }
+        let settled = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        #expect(settled.testAssets.map(\.id) == [id])
+        #expect(try await store.assetIDs(inImportBatch: batch) == [id])
+    }
+
     @Test func diskChangeReconcilesAfterRescan() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

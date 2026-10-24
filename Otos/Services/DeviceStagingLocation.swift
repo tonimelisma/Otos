@@ -157,7 +157,7 @@ nonisolated enum DeviceStagingLocation {
         let roots = ownedDescriptors.withLock { Array($0.keys) }
         for path in roots {
             guard let enumerator = FileManager.default.enumerator(
-                at: URL(fileURLWithPath: path),
+                at: URL(fileURLWithPath: path, isDirectory: true),
                 includingPropertiesForKeys: [.isRegularFileKey],
                 options: [.skipsHiddenFiles]
             ) else {

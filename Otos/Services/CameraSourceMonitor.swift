@@ -477,7 +477,7 @@ final class DeviceCameraSession: NSObject {
                     continue
                 }
                 guard let kind = MediaCompanionKind.recognize(
-                    fileExtension: URL(fileURLWithPath: name).pathExtension
+                    fileExtension: MediaRelativePath(rawValue: name).fileExtension
                 ) else {
                     continue
                 }
@@ -1002,9 +1002,8 @@ final class DeviceCameraSession: NSObject {
         let relativePath = collisionIndex == 0
             ? baseRelativePath
             : baseRelativePath + "#\(collisionIndex + 1)"
-        let contentType = URL(fileURLWithPath: name).pathExtension.isEmpty
-            ? nil
-            : UTType(filenameExtension: URL(fileURLWithPath: name).pathExtension)
+        let fileExtension = MediaRelativePath(rawValue: name).fileExtension
+        let contentType = fileExtension.isEmpty ? nil : UTType(filenameExtension: fileExtension)
         guard MediaEligibility.isCatalogMedia(contentType: contentType) else {
             return nil
         }

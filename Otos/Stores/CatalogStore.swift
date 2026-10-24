@@ -241,9 +241,19 @@ actor CatalogStore {
     private var filesystemWatchingStarted = false
     private var filesystemEventSink: AsyncStream<FilesystemEvent>.Continuation?
     private var filesystemEventConsumer: Task<Void, Never>?
-    /// True while `afterFilesystemLeaseCleared` revisits every dirty root so a
-    /// mid-pass `enqueueScans` cannot start the next full-root scan early.
-    private var isRevisitingDirtyRoots = false
+    /// The one owner of dirty-scope reconciliation and of starting the next queued
+    /// full-root scan (ADR 0032). Anything that leaves reconcilable work — a scan or a
+    /// lease ending, an event batch classified, an independent mutation settled — rings
+    /// the doorbell; the loop drains every dirty root it may act on, then starts the
+    /// next queued scan. One loop, so two drains of one root never interleave.
+    private var reconcileLoop: Task<Void, Never>?
+    private var reconcileDoorbell: AsyncStream<Void>.Continuation?
+    /// Bumped by every ring; a pass covers the value it started from.
+    private var reconcileRequested: UInt64 = 0
+    private var reconcileCovered: UInt64 = 0
+    /// True while the loop's pass runs, so a scan enqueued mid-pass waits for the pass
+    /// to finish every dirty root. Written only by the loop.
+    private var reconcilePassRunning = false
     private var filesystemWatchingArmed: Set<LibraryRootPath> = []
     /// One pass per root acts on that root's filesystem events. Events that arrive while
     /// it awaits join `filesystemEventBatches` and the same pass takes them next, so a
@@ -273,7 +283,8 @@ actor CatalogStore {
             && scanLeases.pendingScanPaths.isEmpty
             && scanLeases.rescanAfterCurrentScan.isEmpty
             && filesystemDirty.isEmpty
-            && !isRevisitingDirtyRoots
+            && reconcileRequested == reconcileCovered
+            && !reconcilePassRunning
     }
 
     /// Per-root typed dirty-scope accumulator. Events that arrive while a lease
@@ -495,9 +506,10 @@ extension CatalogStore {
     }
 
     /// Records a namespace mutation before its owner crosses a database await.
-    /// The epoch invalidates any older destructive scan observation while the typed
-    /// dirty scope gives the normal post-lease reconciler enough work to restore
-    /// filesystem truth without guessing about deletion.
+    /// The epoch invalidates any older destructive observation, scan or file reconcile,
+    /// and the typed dirty scope is a reconcile request in the same step: the loop
+    /// reconciles it once no lease holds the root, so a reconcile the epoch deferred
+    /// is observed again without waiting for another event.
     private func recordIndependentNamespaceMutation(
         root: LibraryRootPath,
         scope: FilesystemDirtyScope,
@@ -520,6 +532,7 @@ extension CatalogStore {
                 "scope": String(describing: scope),
             ]
         )
+        requestReconcile()
     }
 
     /// Planning media facts for reorganization of one fixed library root.
@@ -1061,11 +1074,13 @@ extension CatalogStore {
         for restored in trashed.members {
             let path = restored.member.relativePath
             recordIndependentNamespaceMutation(root: root, scope: .file(path), fileAction: .upsert)
-            changed = await reconcileUpsertedFile(
-                at: root.url.appending(path: path.rawValue).path(percentEncoded: false),
+            changed = await reconcileFile(
+                path,
+                action: .upsert,
                 root: root,
-                rootRowID: rootRowID
-            ) || changed
+                rootRowID: rootRowID,
+                witness: nil
+            ) == .changed || changed
         }
         let primaryPath = trashed.item.id.relativePath.rawValue
         let isBack: Bool
@@ -2509,6 +2524,12 @@ extension CatalogStore {
     }
 
     func shutdown() {
+        reconcileDoorbell?.finish()
+        reconcileDoorbell = nil
+        reconcileLoop?.cancel()
+        reconcileLoop = nil
+        reconcileCovered = reconcileRequested
+        reconcilePassRunning = false
         currentScanTask?.cancel()
         currentScanTask = nil
         integrityScanTask?.cancel()
@@ -2901,8 +2922,8 @@ private extension CatalogStore {
 
     private func activity(for path: LibraryRootPath) -> CatalogLibraryActivity {
         // Pending full-root scans must read as scanning. clearCurrentScan clears the
-        // active lease before the async dirty-revisit Task starts the next pending
-        // root; without this, waiters can observe a false idle gap and race.
+        // active lease before the reconcile loop starts the next pending root; without
+        // this, waiters can observe a false idle gap and race.
         if scanLeases.hasActiveFilesystemScan(for: path)
             || scanLeases.pendingScanPaths.contains(path)
         {
@@ -2941,7 +2962,7 @@ private extension CatalogStore {
     }
 
     private func startNextScanIfNeeded() {
-        guard !isRevisitingDirtyRoots else {
+        guard !reconcilePassRunning else {
             return
         }
         guard currentScanTask == nil else {
@@ -3358,28 +3379,45 @@ private extension CatalogStore {
 
         notifyCatalogChanged()
         // Drain every dirty root before starting the next queued full-root scan:
-        // drainDirtyReconcile skips subtree/root dirt while any scan holds the
-        // global lease (currentScanTask), so starting B first would leave A's
-        // retained dirt waiting behind B.
-        Task { await self.afterFilesystemLeaseCleared() }
+        // subtree/root dirt waits while any scan holds the global lease, so starting B
+        // first would leave A's retained dirt waiting behind B.
+        requestReconcile()
     }
 
-    /// Store-owned reconciliation scheduler: revisit all dirty roots whenever the
-    /// single filesystem scan lease clears, then start the next queued full scan.
-    private func afterFilesystemLeaseCleared() async {
-        // Suppress startNextScanIfNeeded while revisiting dirty roots so a
-        // root-dirty enqueue mid-pass cannot start scan B before file/subtree
-        // dirt for other roots has been considered.
-        isRevisitingDirtyRoots = true
-        await drainAllDirtyRoots()
-        isRevisitingDirtyRoots = false
-        startNextScanIfNeeded()
+    /// Rings the reconcile loop, starting it if this Store has none yet. The loop starts
+    /// on first request rather than in `start()` because a Store that only adds and
+    /// scans libraries still needs its queued scans advanced. It holds the Store weakly
+    /// and ends when the Store does; after `shutdown()` no root is armed and no scan is
+    /// queued, so a request then reconciles nothing.
+    private func requestReconcile() {
+        reconcileRequested &+= 1
+        if reconcileLoop == nil {
+            let (bell, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+            reconcileDoorbell = continuation
+            reconcileLoop = Task { [weak self] in
+                for await _ in bell {
+                    guard let self else { return }
+                    await runReconcilePass()
+                }
+            }
+        }
+        reconcileDoorbell?.yield(())
     }
 
-    private func drainAllDirtyRoots() async {
-        let rootsToDrain = filesystemDirty.keys.sorted { $0.rawValue < $1.rawValue }
-        for root in rootsToDrain {
+    private func runReconcilePass() async {
+        guard reconcileRequested != reconcileCovered else {
+            return
+        }
+        let startedFrom = reconcileRequested
+        reconcilePassRunning = true
+        for root in filesystemDirty.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
             await drainDirtyReconcile(for: root)
+        }
+        reconcilePassRunning = false
+        reconcileCovered = startedFrom
+        startNextScanIfNeeded()
+        if reconcileRequested != reconcileCovered {
+            reconcileDoorbell?.yield(())
         }
     }
 
@@ -3638,10 +3676,7 @@ private extension CatalogStore {
         var stagingSuppressedCount = 0
         for event in pendingEvents {
             let flags = FilesystemEventFlags(event: event)
-            let relativePath = CatalogPath.relativePath(
-                rootPath: root,
-                fileURL: URL(fileURLWithPath: event.path)
-            )
+            let relativePath = CatalogPath.relativePath(rootPath: root, absolutePath: event.path)
             if let relativePath,
                KnownMaterializationSuppressionPolicy.isSuppressible(
                    flags: flags,
@@ -3712,7 +3747,7 @@ private extension CatalogStore {
             OtosLog.catalog.notice(
                 "op=catalog.filesystemEvent phase=classify rootPath=\(root.rawValue, privacy: .public) eventCount=\(keptEvents.count, privacy: .public) file=\(fileCount, privacy: .public) subtree=\(subtreeCount, privacy: .public) root=\(rootCount, privacy: .public) suppressed=\(suppressedCount, privacy: .public)"
             )
-            await drainDirtyReconcile(for: root)
+            requestReconcile()
         }
     }
 
@@ -3764,38 +3799,50 @@ private extension CatalogStore {
         }
     }
 
+    /// Reconciles each dirty file from what the filesystem says now. The dirt was taken
+    /// at the root's current epoch; a path whose write finds the root changed since is
+    /// put back, with every path not yet reached, and the next pass observes it again.
     private func reconcileFileDirt(
         root: LibraryRootPath,
         files: [MediaRelativePath: SingleFileReconcileOperation]
     ) async {
-        guard let rootRowID = roots[root]?.rowID else {
+        guard let rootState = roots[root] else {
             return
         }
+        let rootRowID = rootState.rowID
+        let witness = ReconcileWitness(root: root, epoch: rootState.namespaceMutationEpoch)
         let started = ContinuousClock.now
-        var catalogChanged = false
         var changedCount = 0
-        for path in files.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
-            let action = files[path] ?? .upsert
-            let absolute = root.url.appendingPathComponent(path.rawValue, isDirectory: false)
-                .path(percentEncoded: false)
-            let changed: Bool = switch action {
-            case .deleteIfMissing:
-                await reconcileDeletedFile(at: absolute, root: root, rootRowID: rootRowID)
-            case .upsert:
-                await reconcileUpsertedFile(at: absolute, root: root, rootRowID: rootRowID)
-            }
-            if changed {
-                catalogChanged = true
+        var deferredCount = 0
+        let ordered = files.keys.sorted(by: { $0.rawValue < $1.rawValue })
+        for (index, path) in ordered.enumerated() {
+            let result = await reconcileFile(
+                path,
+                action: files[path] ?? .upsert,
+                root: root,
+                rootRowID: rootRowID,
+                witness: witness
+            )
+            if case .changed = result {
                 changedCount += 1
             }
+            if case .deferred = result {
+                var dirty = filesystemDirty[root] ?? FilesystemDirtyAccumulator()
+                for remaining in ordered[index...] {
+                    dirty.insert(.file(remaining), fileAction: files[remaining] ?? .upsert)
+                }
+                filesystemDirty[root] = dirty
+                deferredCount = ordered.count - index
+                break
+            }
         }
-        if catalogChanged {
+        if changedCount > 0 {
             bumpNamespaceRevision(for: root)
             notifyCatalogChanged()
         }
         let totalMs = DiagnosticsTiming.milliseconds(since: started)
         OtosLog.catalog.notice(
-            "op=catalog.reconcile phase=finish mode=file rootPath=\(root.rawValue, privacy: .public) scopeCount=\(files.count, privacy: .public) changed=\(changedCount, privacy: .public) totalMs=\(totalMs, privacy: .public)"
+            "op=catalog.reconcile phase=finish mode=file rootPath=\(root.rawValue, privacy: .public) scopeCount=\(files.count, privacy: .public) changed=\(changedCount, privacy: .public) deferred=\(deferredCount, privacy: .public) totalMs=\(totalMs, privacy: .public)"
         )
     }
 
@@ -3997,86 +4044,96 @@ private extension CatalogStore {
             OtosLog.catalog.notice(
                 "op=catalog.integrityScan phase=schedule rootPath=\(path.rawValue, privacy: .public) successfulScanAgeSec=\(age.map { "\(Int(DiagnosticsTiming.seconds($0)))" } ?? "never", privacy: .public)"
             )
-            Task { await self.drainDirtyReconcile(for: path) }
+            requestReconcile()
         }
     }
 
-    @discardableResult
-    private func reconcileFilesystemEvent(_ event: FilesystemEvent, root: LibraryRootPath) async -> Bool {
-        let flags = FilesystemEventFlags(event: event)
-        guard let action = flags.singleFileAction,
-              let rootRowID = roots[root]?.rowID
-        else {
-            return false
-        }
-
-        switch action {
-        case .deleteIfMissing:
-            return await reconcileDeletedFile(at: event.path, root: root, rootRowID: rootRowID)
-        case .upsert:
-            return await reconcileUpsertedFile(at: event.path, root: root, rootRowID: rootRowID)
-        }
+    /// What one file reconcile did. `deferred`: the root changed (or a namespace owner
+    /// took it) after this reconcile observed the file, so the observation may be stale
+    /// and nothing was written; the path stays dirty for the next pass.
+    private enum FileReconcileResult {
+        case changed
+        case unchanged
+        case deferred
     }
 
-    private func reconcileDeletedFile(
-        at absolutePath: String,
+    /// A dirt-driven reconcile writes only while the observation it acts on is still the
+    /// latest word on the root: no independent mutation since (`epoch`) and no namespace
+    /// owner holding it. Checked synchronously right before each write is submitted, so a
+    /// mutation's own write, submitted later, is ordered after this one by the writer.
+    private struct ReconcileWitness {
+        let root: LibraryRootPath
+        let epoch: UInt64
+    }
+
+    private func isCurrent(_ witness: ReconcileWitness?) -> Bool {
+        guard let witness else { return true }
+        return roots[witness.root]?.namespaceMutationEpoch == witness.epoch
+            && namespaceMutationLeases[witness.root] == nil
+    }
+
+    /// Reconciles one path from a single observation of it. An absent file is deleted
+    /// from the catalog only when the dirt said it may be (`deleteIfMissing`); a present
+    /// file that is not catalog media leaves the catalog; catalog media is upserted.
+    /// A failed observation writes nothing and is logged; the next event or scan of the
+    /// path observes it again.
+    private func reconcileFile(
+        _ relativePath: MediaRelativePath,
+        action: SingleFileReconcileOperation,
         root: LibraryRootPath,
-        rootRowID: Int64
-    ) async -> Bool {
-        let fileURL = URL(fileURLWithPath: absolutePath, isDirectory: false)
-        if FileManager.default.fileExists(atPath: absolutePath) {
-            return await reconcileUpsertedFile(at: absolutePath, root: root, rootRowID: rootRowID)
-        }
-        guard let relativePath = CatalogPath.relativePath(rootPath: root, fileURL: fileURL) else {
-            return false
-        }
-
-        return await deleteCatalogedPath(relativePath: relativePath, rootRowID: rootRowID)
-    }
-
-    private func reconcileUpsertedFile(
-        at absolutePath: String,
-        root: LibraryRootPath,
-        rootRowID: Int64
-    ) async -> Bool {
-        let fileURL = URL(fileURLWithPath: absolutePath, isDirectory: false)
-        guard FileManager.default.fileExists(atPath: absolutePath) else {
-            return false
-        }
-        let observed: CatalogScannedFileReader.ObservedItem?
+        rootRowID: Int64,
+        witness: ReconcileWitness?
+    ) async -> FileReconcileResult {
+        let fileURL = root.url.appendingPathComponent(relativePath.rawValue, isDirectory: false)
+        let observation: CatalogFileObservation
         do {
-            observed = try CatalogScannedFileReader.observedItem(fileURL: fileURL, rootPath: root)
+            observation = try await scanner.observeFile(fileURL, root)
         } catch {
-            OtosLog.catalog.errorOperation("catalog.reconcile", phase: "upsertFailed", fields: [
-                "path": absolutePath,
+            OtosLog.catalog.errorOperation("catalog.reconcile", phase: "observeFailed", fields: [
+                "rootPath": root.rawValue,
+                "path": relativePath.rawValue,
                 "error": String(describing: error),
             ])
-            return false
+            return .unchanged
         }
-        guard let observed else {
-            guard let relativePath = CatalogPath.relativePath(rootPath: root, fileURL: fileURL) else {
-                return false
+        switch observation {
+        case .absent:
+            guard action == .deleteIfMissing else {
+                return .unchanged
             }
-            return await deleteCatalogedPath(relativePath: relativePath, rootRowID: rootRowID)
+            return await deleteCatalogedPath(relativePath: relativePath, rootRowID: rootRowID, witness: witness)
+        case .present(nil):
+            return await deleteCatalogedPath(relativePath: relativePath, rootRowID: rootRowID, witness: witness)
+        case let .present(observed?):
+            return await upsertObservedFile(observed, at: relativePath, root: root, rootRowID: rootRowID, witness: witness)
         }
+    }
 
-        let dbQueue: (any DatabaseWriter)?
+    private func upsertObservedFile(
+        _ observed: CatalogScannedFileReader.ObservedItem,
+        at relativePath: MediaRelativePath,
+        root: LibraryRootPath,
+        rootRowID: Int64,
+        witness: ReconcileWitness?
+    ) async -> FileReconcileResult {
+        let dbQueue: any DatabaseWriter
         do {
             dbQueue = try database()
         } catch {
             OtosLog.catalog.errorOperation("catalog.reconcile", phase: "upsertFailed", fields: [
-                "path": absolutePath,
+                "rootPath": root.rawValue,
+                "path": relativePath.rawValue,
                 "error": String(describing: error),
             ])
-            return false
-        }
-        guard let dbQueue else {
-            return false
+            return .unchanged
         }
 
         do {
             let rootCapabilities = roots[root]?.capabilities ?? .unknown
-            return try await dbQueue.write { db in
+            guard isCurrent(witness) else {
+                return .deferred
+            }
+            let changed = try await dbQueue.write { db in
                 switch observed {
                 case let .media(scannedFile):
                     // A path that was a companion and became media must leave the
@@ -4129,18 +4186,31 @@ private extension CatalogStore {
                     return mediaDeleted || companionChanged
                 }
             }
+            return changed ? .changed : .unchanged
         } catch {
             OtosLog.catalog.errorOperation("catalog.reconcile", phase: "upsertFailed", fields: [
-                "path": absolutePath,
+                "rootPath": root.rawValue,
+                "path": relativePath.rawValue,
                 "error": String(describing: error),
             ])
-            return false
+            return .unchanged
         }
     }
 
-    private func deleteCatalogedPath(relativePath: MediaRelativePath, rootRowID: Int64) async -> Bool {
-        guard let dbQueue = try? database() else {
-            return false
+    private func deleteCatalogedPath(
+        relativePath: MediaRelativePath,
+        rootRowID: Int64,
+        witness: ReconcileWitness?
+    ) async -> FileReconcileResult {
+        let dbQueue: any DatabaseWriter
+        do {
+            dbQueue = try database()
+        } catch {
+            OtosLog.catalog.errorOperation("catalog.reconcile", phase: "deleteFailed", fields: [
+                "path": relativePath.rawValue,
+                "error": String(describing: error),
+            ])
+            return .unchanged
         }
 
         let deletionTarget: CatalogedFileDeletionTarget?
@@ -4150,6 +4220,9 @@ private extension CatalogStore {
             }
             let capabilities = roots.values.first(where: { $0.rowID == rootRowID })?.capabilities
                 ?? .unknown
+            guard isCurrent(witness) else {
+                return .deferred
+            }
             let deleted = try await dbQueue.write { db -> Bool in
                 var changed = false
                 if try Self.deleteAssetRow(rootRowID: rootRowID, relativePath: relativePath, db: db) {
@@ -4169,16 +4242,20 @@ private extension CatalogStore {
                 return changed
             }
             guard deleted else {
-                return false
+                return .unchanged
             }
         } catch {
-            return false
+            OtosLog.catalog.errorOperation("catalog.reconcile", phase: "deleteFailed", fields: [
+                "path": relativePath.rawValue,
+                "error": String(describing: error),
+            ])
+            return .unchanged
         }
 
         if let thumbnailPath = deletionTarget?.thumbnailPath, let thumbnailDirectory {
             ThumbnailStore.delete(thumbnailPath, in: thumbnailDirectory)
         }
-        return true
+        return .changed
     }
 
     private func recordFilesystemEventDrop(root: LibraryRootPath, reason: String) async {
@@ -4470,7 +4547,7 @@ extension CatalogStore {
         }
         _ = bumpNamespaceRevision(for: operation.destinationRootPath)
         notifyCatalogChanged()
-        Task { await self.drainDirtyReconcile(for: operation.destinationRootPath) }
+        requestReconcile()
         OtosLog.catalog.notice(
             "op=mediaOperation.settle phase=finish destination=\(operation.destinationRelativePath.rawValue, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public)"
         )
@@ -4488,7 +4565,6 @@ extension CatalogStore {
             "op=mediaOperation.publish phase=foreignOccupant rootPath=\(root.rawValue, privacy: .public) relative=\(relativePath.rawValue, privacy: .public)"
         )
         _ = bumpNamespaceRevision(for: root)
-        Task { await self.drainDirtyReconcile(for: root) }
     }
 
     /// Acquires the existing root namespace lease only when no other namespace
@@ -4575,8 +4651,9 @@ extension CatalogStore {
             )
             changed = await deleteCatalogedPath(
                 relativePath: path.relativePath,
-                rootRowID: rootRowID
-            ) || changed
+                rootRowID: rootRowID,
+                witness: nil
+            ) == .changed || changed
         }
         if changed {
             notifyCatalogChanged()
@@ -4612,6 +4689,8 @@ extension CatalogStore {
         } else {
             startNextScanIfNeeded()
         }
+        // Dirt the lease held back may be reconciled now.
+        requestReconcile()
         return true
     }
 
@@ -4793,7 +4872,6 @@ extension CatalogStore {
         // against this root replans. Reorg's own `rootRevision` stays the general
         // planRevision, which the occupancy bump also advances.
         bumpNamespaceRevision(for: settled.libraryRootPath)
-        Task { await self.drainDirtyReconcile(for: settled.libraryRootPath) }
         notifyCatalogChanged()
         OtosLog.catalog.notice(
             "op=reorganization.settle phase=finish rootPath=\(settled.libraryRootPath.rawValue, privacy: .public) remapCount=\(settled.remaps.count, privacy: .public) batch=\(settled.id, privacy: .public)"
