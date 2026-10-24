@@ -32,7 +32,8 @@ fi
 
 open_app() {
   if [[ -n "${OTOS_SMOKE_SELECT_ROOT:-}" ]]; then
-    "$APP_BUNDLE/Contents/MacOS/$APP_NAME" >/dev/null 2>&1 &
+    # fd 3 is a log stream this script or its caller reads; the app must not hold it.
+    "$APP_BUNDLE/Contents/MacOS/$APP_NAME" >/dev/null 2>&1 3<&- &
   else
     /usr/bin/open -n "$APP_BUNDLE"
   fi
@@ -76,9 +77,15 @@ case "$MODE" in
     stream_logs "subsystem == \"$SUBSYSTEM\""
     ;;
   --verify|verify)
+    # Verified by the app's own report that its window attached and the session
+    # started, read from a stream that is live before the launch.
+    otos_log_stream_open "process == \"$APP_NAME\" AND subsystem == \"$SUBSYSTEM\" AND eventMessage CONTAINS \"op=sessionStart\""
+    trap otos_log_stream_close EXIT
     open_app
-    sleep 2
-    pgrep -x "$APP_NAME" >/dev/null
+    if ! otos_log_stream_await 'op=sessionStart' 120 >/dev/null; then
+      echo "$APP_NAME did not report its session start" >&2
+      exit 1
+    fi
     ;;
   *)
     echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2

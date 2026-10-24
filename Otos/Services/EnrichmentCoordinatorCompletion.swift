@@ -258,6 +258,7 @@ extension EnrichmentCoordinator {
         let delay = max(nextRetry.timeIntervalSinceNow, 0)
         ledgerRetryTask = Task { [weak self] in
             do {
+                // time: backoff — the retry ledger paces a materialization the provider failed
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             } catch {
                 return
@@ -287,6 +288,7 @@ extension EnrichmentCoordinator {
         let delay = max(nextRetry.timeIntervalSinceNow, 0)
         downloadRetryTask = Task { [weak self] in
             do {
+                // time: backoff — a failed provider download retries on its schedule
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             } catch {
                 return
@@ -425,6 +427,7 @@ extension EnrichmentCoordinator {
         }
         let backoff = writeFailureBackoff
         writeRetryTask = Task { [weak self] in
+            // time: backoff — after a failed catalog write
             try? await Task.sleep(for: backoff)
             await self?.fireWriteFailureRetry()
         }

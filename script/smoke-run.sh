@@ -90,6 +90,7 @@ quit_app() {
     if [[ -z "$APP_PID" ]] || ! kill -0 "$APP_PID" >/dev/null 2>&1; then
       return
     fi
+    # time: deadline — an app that ignores Quit is killed after three seconds
     sleep 0.1
   done
   # Fallback: kill only the PID this run launched. Never `pkill -x "$APP_NAME"`
@@ -110,6 +111,7 @@ quit_app() {
 # `is_import_active` is kept as a compatibility alias; new code calls
 # `has_active_operational_work`.
 cleanup() {
+  otos_log_stream_close
   if [[ -n "$LOG_STREAM_PID" ]]; then
     kill "$LOG_STREAM_PID" >/dev/null 2>&1 || true
     wait "$LOG_STREAM_PID" >/dev/null 2>&1 || true
@@ -166,37 +168,31 @@ run_selected_launch() {
 # `outcome=selected` is logged only after the root appeared among the Store's own
 # published roots.
 verify_selection_applied() {
-  local app_pid="$1"
-  local predicate="processID == $app_pid AND subsystem == \"$SUBSYSTEM\" AND eventMessage CONTAINS \"op=smoke.select\""
-  for _ in $(seq 1 50); do
-    if /usr/bin/log show --last 2m --style ndjson --info --predicate "$predicate" 2>/dev/null \
-      | grep -E 'op=smoke\.select.*phase=finish.*outcome=selected' >/dev/null; then
-      echo "Smoke selection verified via unified log pid=$app_pid"
-      return
-    fi
-    if /usr/bin/log show --last 2m --style ndjson --info --predicate "$predicate" 2>/dev/null \
-      | grep -E 'op=smoke\.select.*outcome=notRegistered' >/dev/null; then
-      echo "Root is not registered in the catalog: $SMOKE_ROOT" >&2
-      echo "A smoke run never adds a root — pass one that already exists." >&2
-      echo >&2
-      registered_roots_message >&2
-      exit 1
-    fi
-    sleep 0.1
-  done
-
-  echo "Smoke launch did not log op=smoke.select phase=finish for root=$SMOKE_ROOT pid=$app_pid" >&2
-  /usr/bin/log show --last 2m --style ndjson --info --predicate "processID == $app_pid AND subsystem == \"$SUBSYSTEM\"" 2>/dev/null | tail -n 40 >&2 || true
-  exit 1
+  local app_pid="$1" line
+  if ! line="$(otos_log_stream_await 'op=smoke\.select.*outcome=(selected|notRegistered)' 120)"; then
+    echo "Smoke launch did not log op=smoke.select for root=$SMOKE_ROOT pid=$app_pid" >&2
+    /usr/bin/log show --last 2m --style ndjson --info --predicate "processID == $app_pid AND subsystem == \"$SUBSYSTEM\"" 2>/dev/null | tail -n 40 >&2 || true
+    exit 1
+  fi
+  if [[ "$line" == *outcome=notRegistered* ]]; then
+    echo "Root is not registered in the catalog: $SMOKE_ROOT" >&2
+    echo "A smoke run never adds a root — pass one that already exists." >&2
+    echo >&2
+    registered_roots_message >&2
+    exit 1
+  fi
+  echo "Smoke selection verified via unified log pid=$app_pid"
 }
 
 
 run_verify() {
   check_provider_readiness
   QUIT_ON_EXIT=1
+  # Live before the launch, so the selection line cannot be logged ahead of it.
+  otos_log_stream_open "process == \"$APP_NAME\" AND subsystem == \"$SUBSYSTEM\" AND eventMessage CONTAINS \"op=smoke.select\""
   local app_pid
   app_pid="$(run_selected_launch)"
-  sleep "${OTOS_SMOKE_VERIFY_SECONDS:-3}"
+  APP_PID="$app_pid"
   verify_selection_applied "$app_pid"
   echo "Smoke launch succeeded, window scoped to root=$SMOKE_ROOT"
 }
@@ -251,6 +247,7 @@ run_jank() {
 
   local app_pid
   app_pid="$(run_selected_launch)"
+  APP_PID="$app_pid"
   echo "App launched pid=$app_pid selecting root=$SMOKE_ROOT"
   echo "Waiting ${SETTLE_SECONDS}s before scrolling"
 
@@ -261,7 +258,6 @@ run_jank() {
     --delta "$SCROLL_DELTA" \
     --pause "$SCROLL_PAUSE"
 
-  sleep 1
   # If operational work became active during the smoke run, leave the app alive
   if active_root="$(has_active_operational_work "$CATALOG_DB")"; then
     echo "Smoke run completed but operational work is now active for root=$active_root — leaving app running." >&2

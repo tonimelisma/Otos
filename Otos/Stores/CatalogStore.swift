@@ -3927,6 +3927,7 @@ private extension CatalogStore {
         // Store is gone, rather than outliving it as an idle sleeper.
         integrityScanTask = Task { [weak self] in
             while !Task.isCancelled {
+                // time: schedule — the 24 h integrity scan, checked every 15 minutes
                 try? await Task.sleep(for: CatalogStore.integrityScanPollInterval)
                 guard !Task.isCancelled, let self else {
                     return

@@ -81,6 +81,7 @@ monitor_test_host_footprint() {
         return 1
       fi
     done
+    # time: measurement — samples the test host's memory footprint
     sleep 2
   done
   return 0

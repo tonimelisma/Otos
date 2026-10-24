@@ -178,6 +178,7 @@ final class RemovableVolumeMonitor {
         onQuiesce(identity)
         Task { @MainActor [weak self, identity] in
             do {
+                // time: deadline — `unreportedUnmountRefusalLimit`: a refused unmount is reported to its caller alone
                 try await Task.sleep(for: Self.unreportedUnmountRefusalLimit)
             } catch {
                 return

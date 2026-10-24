@@ -367,6 +367,7 @@ final class MediaGridViewController: NSViewController {
             let window = Int(MediaGridScrollWorkCadence.coalesceWindow * 1000)
             scrollCoalesceTask = Task { [weak self] in
                 do {
+                    // time: cadence docs/research/2026-09-04-grid-day-header-pinning-and-scroll-edge-effect.md
                     try await Task.sleep(for: .milliseconds(window))
                 } catch {
                     return
@@ -387,6 +388,7 @@ final class MediaGridViewController: NSViewController {
         let quietMs = Int(MediaGridAnimation.applyAnimationScrollQuietThreshold * 1000)
         scrollHoldQuietTask = Task { [weak self] in
             do {
+                // time: deadline — a legacy mouse reports no end of scrolling (`MediaGridAnimation`)
                 try await Task.sleep(for: .milliseconds(quietMs))
             } catch {
                 return

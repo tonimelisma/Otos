@@ -96,6 +96,11 @@ if swiftformat --lint "$ROOT_DIR" 2>&1 | grep -q "require formatting"; then
     fast_failed=1
   fi
 fi
+# Every wait on time names why nothing could report the fact instead (ADR 0033).
+if ! "$ROOT_DIR/script/time-guard.sh"; then
+  echo "op=check.stage phase=fail stage=fast-gates reason=untaggedTime" >&2
+  fast_failed=1
+fi
 if [[ "$fast_failed" != "0" ]]; then
   echo "check: FAILED at fast-gates (cost you seconds, not a build)" >&2
   exit 1
@@ -168,6 +173,7 @@ report_parked_tests() {
   xcrun swift-inspect dump-concurrency "$pid" > "$dump" 2>&1 &
   inspect_pid=$!
   while kill -0 "$inspect_pid" 2>/dev/null && (( waited < INSPECT_SECONDS )); do
+    # time: deadline — a wedged swift-inspect must not become the hang it reports
     sleep 1
     waited=$(( waited + 1 ))
   done
@@ -202,6 +208,7 @@ TEST_FINISHED_PATTERN="' (passed|failed) on '"
 
 started_at="$(date +%s)"
 while kill -0 "$verify_pid" 2>/dev/null; do
+  # time: schedule — the heartbeat a watcher reads; it ends with the run, never bounds it
   sleep "$HEARTBEAT_SECONDS"
   kill -0 "$verify_pid" 2>/dev/null || break
   elapsed=$(( $(date +%s) - started_at ))

@@ -235,6 +235,7 @@ private extension CatalogProjection {
             defer { continuation.finish() }
             while !Task.isCancelled {
                 do {
+                    // time: cadence docs/research/grid-reorder-cadence-and-appkit-diffable-apply.md
                     try await Task.sleep(for: cadence)
                 } catch {
                     return

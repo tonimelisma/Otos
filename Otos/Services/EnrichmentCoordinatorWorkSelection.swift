@@ -197,6 +197,7 @@ extension EnrichmentCoordinator {
         }
         let delay = max(nextRetry.timeIntervalSince(now), 0)
         readinessRetryTask = Task { [weak self] in
+            // time: backoff — the filesystem could not say whether the file is local
             do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
             await self?.signal()
         }

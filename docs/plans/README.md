@@ -3,6 +3,23 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
+Plan 0106 (time is never a stand-in for a fact that can be known) is complete across
+seven increments and was removed at closure. It opened 2026-10-05, after test waits with
+wall-clock deadlines were shown to fail on load and to hide tests that asserted nothing.
+Its rule and the six cases where time may appear live in ADR 0033 and AGENTS.md, and
+`script/time-guard.sh` checks every wait in `Otos/`, `OtosTests/` and `script/` in the
+fast gates and CI. Test waits wait on owner-reported facts with no deadline; the eject
+drain waits on the work it drains; Otos's own Eject resumes a card on its reported
+failure, and a refused unmount started elsewhere — which the system reports to no one
+else — resumes after a documented limit; smoke selection follows published state; the
+filesystem-event debounce and the enrichment apply timer became owner coalescing;
+enrichment claims stopped expiring; File Provider arrival is the vnode's attribute
+change, not a 250 ms poll. The cadences that remain stand on measurements in
+`docs/research/2026-10-23-cadence-audit.md`, and the OS reports behind the rest are in
+`docs/research/2026-10-23-removable-and-camera-state-reports.md` and
+`docs/research/2026-10-23-materialization-arrival.md`. Camera catalog completeness has
+no OS report, so its settle check stays time-based and gates only deletion proof.
+
 Plan 0107 (owner state changes synchronously, and requests are never lost) is complete
 across seven increments and was removed at closure. It opened 2026-10-05, when the hangs
 plan 0106's deadline removals exposed traced to owners holding state across an `await`
@@ -20,8 +37,7 @@ the window now follows a run into its batch once the batch's first item lands
 (`import-bar.md`, APP-002). One lint rule landed
 (`projection_catch_substitutes_value`); the matching rule for `@concurrent` on `Live*`
 async functions was left out because a regex cannot tell an actor method from a
-`nonisolated` one, and review carries it (AGENTS.md, Code Review lens A). Plan 0106
-resumes at its increment 3.
+`nonisolated` one, and review carries it (AGENTS.md, Code Review lens A).
 
 Plan 0104 (recoverable Move to Trash for cloud-only media, with undo) is complete
 across four increments and was removed at closure. It opened 2026-10-04 when Move

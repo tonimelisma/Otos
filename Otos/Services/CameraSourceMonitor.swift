@@ -739,6 +739,7 @@ final class DeviceCameraSession: NSObject {
     private func requestOpenSession(timeout: Duration) async throws {
         let timeoutTask = Task { [weak self] in
             do {
+                // time: deadline — `sessionOpenLimit`: the camera may never open its session
                 try await Task.sleep(for: timeout)
                 self?.resolveWaiters(condition: .open, result: .failure(DeviceCameraSessionError.openTimedOut))
             } catch is CancellationError {
@@ -754,6 +755,7 @@ final class DeviceCameraSession: NSObject {
     private func waitForCatalogReady(timeout: Duration) async throws {
         let timeoutTask = Task { [weak self] in
             do {
+                // time: deadline — `catalogReadyLimit`: the camera may never finish its catalog
                 try await Task.sleep(for: timeout)
                 self?.resolveWaiters(
                     condition: .catalogReady,
@@ -906,6 +908,7 @@ final class DeviceCameraSession: NSObject {
                 return false
             }
             do {
+                // time: deadline — ImageCaptureCore reports no fact that the list is whole (`catalogSettleLimit`)
                 try await Task.sleep(for: Self.catalogSettleSampleInterval)
             } catch {
                 return false

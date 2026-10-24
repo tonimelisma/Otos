@@ -47,6 +47,7 @@ func waitForValue<Value>(
         if let value = try await produce() {
             return value
         }
+        // time: poll — the condition is in-process state nothing reports; no deadline
         try await Task.sleep(for: interval)
     }
 }

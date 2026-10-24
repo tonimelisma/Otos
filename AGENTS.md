@@ -33,6 +33,11 @@ design rules for user-facing surfaces; per-screen specs live beside it in
 - Do not fabricate user-visible or domain facts. Unknown dates, paths, provider
   state, progress, counts, diagnostics, and capabilities stay unknown or
   explicitly qualified until proven.
+- Time is never a stand-in for a fact that can be known. If something can report that
+  work finished, state changed, or an item is ready, wait on that report. Time appears
+  only where nothing can report the fact, and the wait says which case it is with a
+  `time:` tag — `deadline`, `backoff`, `schedule`, `measurement`, `poll`, or
+  `cadence <measurement path>` — which `script/time-guard.sh` checks (ADR 0033).
 - One user action has one implementation path. Buttons, menus, shortcuts,
   gestures, automation hooks, and tests call the same owner intent, not parallel
   behavior paths.
