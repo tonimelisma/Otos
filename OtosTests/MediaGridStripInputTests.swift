@@ -138,6 +138,28 @@ extension AppKitWindowTests {
             harness.controller.viewDidAppear()
             #expect(harness.window.firstResponder === harness.controller.collectionView)
         }
+
+        /// `NSViewControllerRepresentable` can show the view before it has a window. The
+        /// claim is made when the collection view reports entering one, not on a timer.
+        @Test func aStripThatAppearsBeforeItsWindowClaimsFirstResponderWhenItHasOne() {
+            let controller = MediaGridViewController(
+                presentation: .strip(tileEdge: MediaGridPresentation.defaultStripTileEdge)
+            )
+            _ = controller.view
+            adoptStripGrid(controller, ids: (0 ..< 4).map { makeStripAssetID(path: "early-\($0).jpg") })
+            let window = orderedInTestWindow(width: 640, height: 120, contentView: NSView())
+            defer { window.close() }
+            let field = NSTextField()
+            window.contentView?.addSubview(field)
+            window.makeFirstResponder(field)
+            controller.viewDidAppear()
+
+            // Synchronous: the claim is made as the view enters the window, with no turn of
+            // the run loop in between, so a deferred retry could not have run yet.
+            window.contentView?.addSubview(controller.view)
+
+            #expect(window.firstResponder === controller.collectionView)
+        }
     }
 }
 

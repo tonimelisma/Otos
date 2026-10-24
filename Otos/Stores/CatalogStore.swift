@@ -424,12 +424,6 @@ extension CatalogStore {
         )
     }
 
-    /// Test-only read of the unreadable verdict set, so its lifecycle can be asserted
-    /// without exposing the storage.
-    func testIsSourceUnreadable(_ id: MediaAssetID) -> Bool {
-        unreadableSourceIDs.contains(id)
-    }
-
     func namespaceRevision(for rootPath: LibraryRootPath) -> UInt64? {
         roots[rootPath]?.namespaceRevision
     }

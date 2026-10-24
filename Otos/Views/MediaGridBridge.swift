@@ -220,6 +220,9 @@ final class MediaGridViewController: NSViewController {
     var isApplyingModelSelection = false
     private var lastFocusTargetID: MediaAssetID?
     var pendingFocusTargetID: MediaAssetID?
+    /// The view appeared before it had a window, so its first-responder claim waits for
+    /// the collection view to report entering one.
+    private var claimsFirstResponderOnWindow = false
     private(set) var postLayoutWorkQueue: GridPostLayoutWorkQueue!
     /// Bridges a pinch-driven zoom request up to the ViewModel intent; the pinch
     /// gesture never mutates column-count truth or the layout itself — see
@@ -296,16 +299,12 @@ final class MediaGridViewController: NSViewController {
         // The collection view owns keyboard input in every presentation: arrows
         // (grid: native selection; strip: forwarded focus/pair intents), Return, Esc.
         // Mode switches recreate the controller, so claim first responder on appear.
+        // The window can still be nil here under `NSViewControllerRepresentable`; the
+        // collection view reports when it enters one, and the claim is made then.
         if let window = view.window {
             window.makeFirstResponder(collectionView)
         } else {
-            // C-P2 fallback: window can be briefly nil under NSViewControllerRepresentable.
-            DispatchQueue.main.async { [weak self] in
-                guard let self else {
-                    return
-                }
-                view.window?.makeFirstResponder(collectionView)
-            }
+            claimsFirstResponderOnWindow = true
         }
         // Fresh controllers park focus until window attach; retry here so centering
         // does not wait on a later structural apply or decode landing.
@@ -540,6 +539,11 @@ extension MediaGridViewController {
                 return
             }
             onItemDoubleClick(id)
+        }
+        collectionView.onMovedToWindow = { [weak self] in
+            guard let self, claimsFirstResponderOnWindow, let window = view.window else { return }
+            claimsFirstResponderOnWindow = false
+            window.makeFirstResponder(collectionView)
         }
         collectionView.onReturnKey = { [weak self] in
             self?.onReturnKey()

@@ -626,22 +626,32 @@ struct MediaTransferPlannerTests {
     /// boundary a single unreadable file stays blocked for the life of the process —
     /// through eject and re-insert, and even once it reads cleanly again — and the set
     /// grows without bound. Re-inserting a card re-evaluates from observation.
-    @Test func anUnreadableVerdictIsForgottenWhenTheRootDetaches() async {
-        let store = CatalogStore(location: .inMemory)
-        let root = LibraryRootPath(rawValue: "/Volumes/Card")
-        let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "IMG_0001.JPG"))
-        let other = LibraryRootPath(rawValue: "/Volumes/Other")
-        let otherID = MediaAssetID(libraryRootPath: other, relativePath: MediaRelativePath(rawValue: "IMG_0002.JPG"))
+    @Test func anUnreadableVerdictIsForgottenWhenTheRootDetaches() async throws {
+        try await withCatalogedLibrary(fileCount: 1, fileNamePrefix: "card") { card in
+            let other = try makeTestDirectory()
+            try Data([0]).write(to: other.appending(path: "other-0.jpg"))
+            try await card.store.addLibrary(url: other)
+            let otherPath = try CatalogPath.normalizedExistingDirectoryPath(for: other)
+            let otherID = MediaAssetID(libraryRootPath: otherPath, relativePath: MediaRelativePath(rawValue: "other-0.jpg"))
+            _ = try await waitForCatalogStoreState(card.store) { !$0.isScanning && $0.testAssets.count == 2 }
+            let id = card.ids[0]
 
-        await store.markSourceUnreadable(id)
-        await store.markSourceUnreadable(otherID)
-        #expect(await store.testIsSourceUnreadable(id))
-        #expect(await store.testIsSourceUnreadable(otherID))
+            await card.store.markSourceUnreadable(id)
+            await card.store.markSourceUnreadable(otherID)
+            #expect(try await Self.plansAsUnreadable(id, in: card.store))
+            #expect(try await Self.plansAsUnreadable(otherID, in: card.store))
 
-        await store.forgetUnreadableSources(under: root)
+            await card.store.forgetUnreadableSources(under: card.rootPath)
 
-        #expect(await !(store.testIsSourceUnreadable(id)), "the verdict outlived its attachment")
-        #expect(await store.testIsSourceUnreadable(otherID), "another root's verdicts must be untouched")
+            #expect(try await !Self.plansAsUnreadable(id, in: card.store), "the verdict outlived its attachment")
+            #expect(try await Self.plansAsUnreadable(otherID, in: card.store), "another root's verdicts must be untouched")
+        }
+    }
+
+    /// The verdict as planning reads it: the planning facts the Store hands the planner.
+    private static func plansAsUnreadable(_ id: MediaAssetID, in store: CatalogStore) async throws -> Bool {
+        let facts = try #require(await store.planningMedia(for: id.libraryRootPath))
+        return try #require(facts.first { $0.id == id }).isSourceUnreadable
     }
 
     @Test func unreadableSourceIsBlockedNotSilentlySkipped() {

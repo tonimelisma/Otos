@@ -21,12 +21,9 @@ nonisolated enum CaptureTimestampRole: String, CaseIterable, Sendable {
 /// The four timestamp roles the `best_capture_unix` generated column coalesces,
 /// projected out of the stored records.
 ///
-/// This is a *derivation*, not a second stored fact. `EnrichmentResult` used to
-/// carry these four instants alongside `metadata.timestamps`, which already held
-/// them — a lossy duplicate of the same upstream `CaptureTimestamps`, on the same
-/// struct, that nothing kept in agreement. Production could not diverge because
-/// both halves came from one source, but any constructed value could, and the
-/// only defence was that no one tried.
+/// This is a *derivation*, not a second stored fact: the four instants are read from
+/// `metadata.timestamps`, the one stored copy, so no constructed value can carry a
+/// pair that disagrees.
 ///
 /// `metadata.timestamps` is the stored truth. `ts_*_unix` and
 /// `capture_wall_compact` (see `CaptureWallClock`) are both projections of it,
