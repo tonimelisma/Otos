@@ -34,10 +34,12 @@ data required *no decision*: it was what happened when nobody said otherwise.
 
 **Production data locations are named exactly once, at the app entry point, and are
 never defaulted anywhere else.** `OtosApp` is the only place that names the
-production catalog location and `UserDefaults.standard`. Every type that needs a
-data location takes it as a required, non-defaulted parameter, so a caller cannot
-reach production data by omitting an argument — reaching it is a thing you have to
-write down. Tests pass temporary locations and a self-cleaning `UserDefaults` suite;
+production catalog location, `UserDefaults.standard`, and the user's system Trash
+(`MediaTrashCoordinator.FileOperations.live`). Every type that needs one takes it as
+a required, non-defaulted parameter, so a caller cannot reach production data by
+omitting an argument — reaching it is a thing you have to write down. Tests pass
+temporary locations, a self-cleaning `UserDefaults` suite, and a Trash that is a
+folder they own (or one that refuses every move);
 the hosted test app additionally declines to start the product stack at all
 (`RunContext.isTestRun`), so the test host comes up inert rather than merely
 pointed somewhere else.

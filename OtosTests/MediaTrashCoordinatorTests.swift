@@ -117,12 +117,12 @@ struct MediaTrashCoordinatorTests {
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
             materializationRequester: nil,
-            trashExecutor: { url in
+            files: .testing(trash: { url in
                 calls.append(url.lastPathComponent)
                 let destination = trash.appending(path: url.lastPathComponent)
                 try FileManager.default.moveItem(at: url, to: destination)
                 return destination
-            }
+            })
         )
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())
         await coordinator.start()
@@ -153,12 +153,12 @@ struct MediaTrashCoordinatorTests {
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
             materializationRequester: nil,
-            trashExecutor: { url in
+            files: .testing(trash: { url in
                 if url.pathExtension == "jpg" {
                     throw CocoaError(.fileNoSuchFile)
                 }
                 return nil
-            }
+            })
         )
         let events = EventRecorder(coordinator)
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())
@@ -187,11 +187,11 @@ struct MediaTrashCoordinatorTests {
         let coordinator = MediaTrashCoordinator(
             store: store,
             materializationRequester: requester,
-            status: { local.status($0) },
-            trashExecutor: { url in
+            files: .testing(trash: { url in
                 calls.append(url.lastPathComponent)
                 return nil
-            }
+            }),
+            status: { local.status($0) }
         )
         _ = try await store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())
         await coordinator.start()
@@ -219,8 +219,8 @@ struct MediaTrashCoordinatorTests {
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
             materializationRequester: requester,
+            files: .testing(trash: { _ in nil }),
             status: { local.status($0) },
-            trashExecutor: { _ in nil },
             retryPolicy: fastRetry
         )
         let events = EventRecorder(coordinator)
@@ -241,12 +241,11 @@ struct MediaTrashCoordinatorTests {
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
             materializationRequester: FakeRequester { _ in result(.requestFailed) },
-            status: { local.status($0) },
-            trashExecutor: { url in
+            files: .testing(trash: { url in
                 trashed.append(url.lastPathComponent)
                 return nil
-            },
-            removeExecutor: { url in removed.append(url.lastPathComponent) }
+            }, remove: { url in removed.append(url.lastPathComponent) }),
+            status: { local.status($0) }
         )
         let events = EventRecorder(coordinator)
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())
@@ -271,9 +270,8 @@ struct MediaTrashCoordinatorTests {
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
             materializationRequester: FakeRequester { _ in result(.requestFailed) },
-            status: { local.status($0) },
-            trashExecutor: { _ in nil },
-            removeExecutor: { url in removed.append(url.lastPathComponent) }
+            files: .testing(trash: { _ in nil }, remove: { url in removed.append(url.lastPathComponent) }),
+            status: { local.status($0) }
         )
         let events = EventRecorder(coordinator)
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())
@@ -298,9 +296,9 @@ struct MediaTrashCoordinatorTests {
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
             materializationRequester: requester,
+            files: .testing(trash: { _ in nil }),
             status: { local.status($0) },
             capacity: { _ in free.withLock { $0 } },
-            trashExecutor: { _ in nil },
             retryPolicy: fastRetry
         )
         let events = EventRecorder(coordinator)
@@ -330,10 +328,10 @@ struct MediaTrashCoordinatorTests {
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
             materializationRequester: nil,
-            trashExecutor: { url in
+            files: .testing(trash: { url in
                 calls.append(url.lastPathComponent)
                 return nil
-            }
+            })
         )
         await coordinator.start()
         try await waitUntil { try await fixture.store.pendingTrashItems().isEmpty }
@@ -354,11 +352,11 @@ struct MediaTrashCoordinatorTests {
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
             materializationRequester: requester,
-            status: { local.status($0) },
-            trashExecutor: { url in
+            files: .testing(trash: { url in
                 trashed.append(url.lastPathComponent)
                 return nil
-            }
+            }),
+            status: { local.status($0) }
         )
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())
         await coordinator.start()
@@ -392,7 +390,7 @@ extension MediaTrashCoordinatorTests {
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
             materializationRequester: nil,
-            trashExecutor: executor
+            files: .testing(trash: executor)
         )
         let batch = MediaTrashBatchID()
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: batch)
@@ -420,8 +418,8 @@ extension MediaTrashCoordinatorTests {
                 await suspendUntilCancelled()
                 return .cancelled
             },
-            status: { local.status($0) },
-            trashExecutor: { _ in nil }
+            files: .testing(trash: { _ in nil }),
+            status: { local.status($0) }
         )
         let batch = MediaTrashBatchID()
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: batch)
@@ -439,7 +437,7 @@ extension MediaTrashCoordinatorTests {
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
             materializationRequester: nil,
-            trashExecutor: executor
+            files: .testing(trash: executor)
         )
         let batch = MediaTrashBatchID()
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: batch)
@@ -478,10 +476,10 @@ extension MediaTrashCoordinatorTests {
         let coordinator = MediaTrashCoordinator(
             store: relaunched,
             materializationRequester: nil,
-            trashExecutor: { url in
+            files: .testing(trash: { url in
                 calls.append(url.lastPathComponent)
                 return nil
-            }
+            })
         )
         await coordinator.start()
         try await waitUntil { calls.entries == ["a.jpg"] }
@@ -495,6 +493,7 @@ extension MediaTrashCoordinatorTests {
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
             materializationRequester: nil,
+            files: .refusing,
             status: { local.status($0) }
         )
         #expect(await coordinator.downloadBytes(for: [fixture.id]) == 1000)

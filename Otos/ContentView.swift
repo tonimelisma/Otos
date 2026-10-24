@@ -443,7 +443,8 @@ private struct AllImportsListView: View {
     ContentView(
         viewModel: CatalogWindowViewModel(
             catalogStore: CatalogStore(location: .inMemory),
-            preferencesDomain: .suite("Otos.Preview.\(UUID().uuidString)")
+            preferencesDomain: .suite("Otos.Preview.\(UUID().uuidString)"),
+            trashFiles: .refusing
         )
     )
 }

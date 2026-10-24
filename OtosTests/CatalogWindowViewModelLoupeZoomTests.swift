@@ -147,7 +147,8 @@ private func makeZoomModel(loader: FakePreviewLoader) -> CatalogWindowViewModel 
         startsEnrichment: false,
         startsSourceMonitoring: false,
         preferencesDomain: .suite(UUID().uuidString),
-        previewLoader: loader
+        previewLoader: loader,
+        trashFiles: .refusing
     )
 }
 

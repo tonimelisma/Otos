@@ -19,7 +19,8 @@ struct ViewModelDefaultSelectionTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults
+            preferencesDomain: tempDefaults,
+            trashFiles: .refusing
         )
 
         model.start()
@@ -129,7 +130,8 @@ struct ViewModelDefaultSelectionTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: temp
+            preferencesDomain: temp,
+            trashFiles: .refusing
         )
     }
 

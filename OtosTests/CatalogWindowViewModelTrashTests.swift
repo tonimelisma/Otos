@@ -3,54 +3,59 @@ import Foundation
 import Testing
 
 /// Move to Trash acts without asking (Plan 0104 D1) and is undoable from Edit ▸ Undo
-/// (APP-039): undo puts the files back from the system Trash, redo moves them again.
+/// (APP-039): undo puts the files back from the Trash, redo moves them again. Each test's
+/// Trash is a folder it owns, so a run never touches the user's Trash (ADR 0020).
 @MainActor
+@Suite(.testDirectory)
 struct CatalogWindowViewModelTrashTests {
     @Test func moveToTrashActsWithoutAskingAndRegistersUndo() async throws {
-        let fixture = try await makeTrashFixture(count: 2)
-        defer { fixture.removeRoot() }
-        let model = makeTrashModel(store: fixture.store)
-        model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
-        model.selectAll()
+        try await withCatalogedLibrary(fileCount: 2, fileNamePrefix: "trash") { fixture in
+            let trash = try makeTestDirectory()
+            let model = makeTrashModel(store: fixture.store, trash: trash)
+            model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
+            model.selectAll()
 
-        model.moveTargetedMediaToTrash()
+            model.moveTargetedMediaToTrash()
 
-        try await waitUntil {
-            fixture.ids.allSatisfy { !FileManager.default.fileExists(atPath: fixture.path($0)) }
+            try await waitUntil {
+                fixture.ids.allSatisfy { !FileManager.default.fileExists(atPath: fixture.path($0)) }
+            }
+            // The files are in the Trash the model was given, and nowhere else.
+            #expect(try FileManager.default.contentsOfDirectory(atPath: trash.path).count == 2)
+            // Undo is registered once the items are hidden, which is not ordered against
+            // the queue moving the files; wait for the registration itself.
+            try await waitUntil { model.curationUndoState.canUndo }
+            #expect(model.curationUndoState.undoTitle == "Undo Move to Trash")
         }
-        // Undo is registered once the items are hidden, which is not ordered against
-        // the queue moving the files; wait for the registration itself.
-        try await waitUntil { model.curationUndoState.canUndo }
-        #expect(model.curationUndoState.undoTitle == "Undo Move to Trash")
     }
 
     @Test func undoPutsItemsBackAndRedoMovesThemAgain() async throws {
-        let fixture = try await makeTrashFixture(count: 1)
-        defer { fixture.removeRoot() }
-        let model = makeTrashModel(store: fixture.store)
-        model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
-        model.selectAll()
-        model.moveTargetedMediaToTrash()
-        let path = fixture.path(fixture.ids[0])
-        try await waitUntil { !FileManager.default.fileExists(atPath: path) }
-        try await waitUntil {
-            try await fixture.store.mediaAssets(for: fixture.ids).isEmpty
-        }
-        // The queue can move the file before the main actor registers the undo, and
-        // undo with nothing registered does nothing; wait for the registration itself.
-        try await waitUntil { model.curationUndoState.canUndo }
+        try await withCatalogedLibrary(fileCount: 1, fileNamePrefix: "trash") { fixture in
+            let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory())
+            model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
+            model.selectAll()
+            model.moveTargetedMediaToTrash()
+            let path = fixture.path(fixture.ids[0])
+            try await waitUntil { !FileManager.default.fileExists(atPath: path) }
+            try await waitUntil {
+                try await fixture.store.mediaAssets(for: fixture.ids).isEmpty
+            }
+            // The queue can move the file before the main actor registers the undo, and
+            // undo with nothing registered does nothing; wait for the registration itself.
+            try await waitUntil { model.curationUndoState.canUndo }
 
-        model.undoCuration()
-        try await waitUntil { FileManager.default.fileExists(atPath: path) }
-        try await waitUntil {
-            try await fixture.store.mediaAssets(for: fixture.ids).count == 1
-        }
-        #expect(model.curationUndoState.redoTitle == "Redo Move to Trash")
-        #expect(model.trashAlertMessage == nil)
+            model.undoCuration()
+            try await waitUntil { FileManager.default.fileExists(atPath: path) }
+            try await waitUntil {
+                try await fixture.store.mediaAssets(for: fixture.ids).count == 1
+            }
+            #expect(model.curationUndoState.redoTitle == "Redo Move to Trash")
+            #expect(model.trashAlertMessage == nil)
 
-        model.redoCuration()
-        try await waitUntil { !FileManager.default.fileExists(atPath: path) }
-        #expect(model.curationUndoState.undoTitle == "Undo Move to Trash")
+            model.redoCuration()
+            try await waitUntil { !FileManager.default.fileExists(atPath: path) }
+            #expect(model.curationUndoState.undoTitle == "Undo Move to Trash")
+        }
     }
 
     @Test func theLargeDownloadPreferenceDefaultsOnAndPersists() {
@@ -60,7 +65,8 @@ struct CatalogWindowViewModelTrashTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: domain
+            preferencesDomain: domain,
+            trashFiles: .refusing
         )
         #expect(model.asksBeforeLargeTrashDownload)
         model.setAsksBeforeLargeTrashDownload(false)
@@ -69,119 +75,86 @@ struct CatalogWindowViewModelTrashTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: domain
+            preferencesDomain: domain,
+            trashFiles: .refusing
         )
         #expect(!reloaded.asksBeforeLargeTrashDownload)
     }
 
     @Test func localItemsMoveWithoutTheLargeDownloadQuestion() async throws {
-        let fixture = try await makeTrashFixture(count: 1)
-        defer { fixture.removeRoot() }
-        let model = makeTrashModel(store: fixture.store)
-        #expect(model.asksBeforeLargeTrashDownload)
-        model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
-        model.selectAll()
+        try await withCatalogedLibrary(fileCount: 1, fileNamePrefix: "trash") { fixture in
+            let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory())
+            #expect(model.asksBeforeLargeTrashDownload)
+            model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
+            model.selectAll()
 
-        model.moveTargetedMediaToTrash()
+            model.moveTargetedMediaToTrash()
 
-        let path = fixture.path(fixture.ids[0])
-        try await waitUntil { !FileManager.default.fileExists(atPath: path) }
-        #expect(model.largeTrashDownloadPrompt == nil)
+            let path = fixture.path(fixture.ids[0])
+            try await waitUntil { !FileManager.default.fileExists(atPath: path) }
+            #expect(model.largeTrashDownloadPrompt == nil)
+        }
     }
 
     @Test func loupeTrashingTheLastItemFocusesThePreviousOne() async throws {
-        let fixture = try await makeTrashFixture(count: 3)
-        defer { fixture.removeRoot() }
-        let model = makeTrashModel(store: fixture.store)
-        model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
-        model.openLoupe(id: fixture.ids[2])
+        try await withCatalogedLibrary(fileCount: 3, fileNamePrefix: "trash") { fixture in
+            let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory())
+            model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
+            model.openLoupe(id: fixture.ids[2])
 
-        model.moveTargetedMediaToTrash()
+            model.moveTargetedMediaToTrash()
 
-        try await waitUntil { model.focusedAssetID != fixture.ids[2] }
-        #expect(model.focusedAssetID == fixture.ids[1])
-        #expect(model.gridSelection.selection == [fixture.ids[1]])
+            try await waitUntil { model.focusedAssetID != fixture.ids[2] }
+            #expect(model.focusedAssetID == fixture.ids[1])
+            #expect(model.gridSelection.selection == [fixture.ids[1]])
+        }
     }
 
     @Test func loupeTrashingAMiddleItemFocusesTheNextOne() async throws {
-        let fixture = try await makeTrashFixture(count: 3)
-        defer { fixture.removeRoot() }
-        let model = makeTrashModel(store: fixture.store)
-        model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
-        model.openLoupe(id: fixture.ids[1])
+        try await withCatalogedLibrary(fileCount: 3, fileNamePrefix: "trash") { fixture in
+            let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory())
+            model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
+            model.openLoupe(id: fixture.ids[1])
 
-        model.moveTargetedMediaToTrash()
+            model.moveTargetedMediaToTrash()
 
-        try await waitUntil { model.focusedAssetID != fixture.ids[1] }
-        #expect(model.focusedAssetID == fixture.ids[2])
+            try await waitUntil { model.focusedAssetID != fixture.ids[1] }
+            #expect(model.focusedAssetID == fixture.ids[2])
+        }
     }
 
     @Test func gridTrashingTheTrailingItemsSelectsTheOneBeforeThem() async throws {
-        let fixture = try await makeTrashFixture(count: 3)
-        defer { fixture.removeRoot() }
-        let model = makeTrashModel(store: fixture.store)
-        model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
-        model.selectAssets([fixture.ids[1], fixture.ids[2]])
+        try await withCatalogedLibrary(fileCount: 3, fileNamePrefix: "trash") { fixture in
+            let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory())
+            model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
+            model.selectAssets([fixture.ids[1], fixture.ids[2]])
 
-        model.moveTargetedMediaToTrash()
+            model.moveTargetedMediaToTrash()
 
-        try await waitUntil { model.gridSelection.selection != [fixture.ids[1], fixture.ids[2]] }
-        #expect(model.gridSelection.selection == [fixture.ids[0]])
+            try await waitUntil { model.gridSelection.selection != [fixture.ids[1], fixture.ids[2]] }
+            #expect(model.gridSelection.selection == [fixture.ids[0]])
+        }
     }
 
     @Test func noTargetDoesNothing() {
-        let model = makeTrashModel(store: CatalogStore(location: .inMemory))
+        let model = makeTrashModel(store: CatalogStore(location: .inMemory), trash: nil)
         model.moveTargetedMediaToTrash()
         #expect(model.mediaTrashTask == nil)
         #expect(!model.curationUndoState.canUndo)
     }
 }
 
+/// A model whose Trash is `trash`, a folder the test owns; `nil` refuses every move.
 @MainActor
-private func makeTrashModel(store: CatalogStore) -> CatalogWindowViewModel {
+private func makeTrashModel(store: CatalogStore, trash: URL?) -> CatalogWindowViewModel {
     CatalogWindowViewModel(
         catalogStore: store,
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,
-        preferencesDomain: .suite(UUID().uuidString)
+        preferencesDomain: .suite(UUID().uuidString),
+        trashFiles: trash.map { .folder($0) } ?? .refusing
     )
-}
-
-private struct TrashFixture {
-    let store: CatalogStore
-    let root: URL
-    let rootPath: LibraryRootPath
-    let ids: [MediaAssetID]
-
-    func path(_ id: MediaAssetID) -> String {
-        root.appending(path: id.relativePath.rawValue).path
-    }
-
-    func removeRoot() {
-        try? FileManager.default.removeItem(at: root)
-        Task { await store.shutdown() }
-    }
-}
-
-private func makeTrashFixture(count: Int) async throws -> TrashFixture {
-    let root = FileManager.default.temporaryDirectory
-        .appending(path: "Otos-trash-confirm-\(UUID().uuidString)", directoryHint: .isDirectory)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    for index in 0 ..< count {
-        try Data([0]).write(to: root.appending(path: "trash-\(index).jpg"))
-    }
-    let rootPath = try CatalogPath.normalizedExistingDirectoryPath(for: root)
-    let libraryRootPath = LibraryRootPath(rawValue: rootPath.rawValue)
-    let ids = (0 ..< count).map { index in
-        MediaAssetID(libraryRootPath: libraryRootPath, relativePath: MediaRelativePath(rawValue: "trash-\(index).jpg"))
-    }
-    let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(5))
-    try await store.addLibrary(url: root)
-    try await waitUntil {
-        try await store.mediaAssets(for: ids).count == ids.count
-    }
-    return TrashFixture(store: store, root: root, rootPath: libraryRootPath, ids: ids)
 }
 
 @MainActor

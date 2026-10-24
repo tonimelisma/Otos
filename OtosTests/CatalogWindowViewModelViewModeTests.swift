@@ -432,7 +432,8 @@ private func makeViewModeModel(loader: FakePreviewLoader) -> CatalogWindowViewMo
         startsEnrichment: false,
         startsSourceMonitoring: false,
         preferencesDomain: temp,
-        previewLoader: loader
+        previewLoader: loader,
+        trashFiles: .refusing
     )
 }
 

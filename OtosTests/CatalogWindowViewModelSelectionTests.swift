@@ -305,7 +305,8 @@ private func makeSelectionViewModel() -> CatalogWindowViewModel {
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,
-        preferencesDomain: temp
+        preferencesDomain: temp,
+        trashFiles: .refusing
     )
 }
 
