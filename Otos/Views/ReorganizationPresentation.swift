@@ -45,6 +45,8 @@ enum ReorganizationOutcomePresentation {
                 "This library is busy moving items to the Trash. Try again when it finishes."
             case .reorganization:
                 "This library is already being reorganized."
+            case .libraryRemoval:
+                "This library is being removed from Otos."
             }
         case .libraryUnavailable:
             "This library is no longer in Otos."

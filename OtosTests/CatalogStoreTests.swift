@@ -36,6 +36,42 @@ struct CatalogStoreTests {
         await recorder.waitForEvent(.libraryRemoved(rootPath))
     }
 
+    /// APP-007: a library another owner is changing is not removed. The removal says who
+    /// holds it, and the library stays cataloged and watched until it can be removed.
+    @Test func removingABusyLibraryThrowsWhoHoldsItAndKeepsTheLibrary() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
+        let watcher = CatalogFilesystemWatcher.testingWithRootInspection()
+        let store = CatalogStore(location: .inMemory, filesystemWatcher: watcher.watcher, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        guard case let .acquired(lease) = await store.acquireNamespaceMutationLease(
+            for: rootPath,
+            owner: .importPublication
+        ) else {
+            Issue.record("Expected to hold the library's namespace for this test")
+            return
+        }
+
+        await #expect(throws: CatalogStoreError.libraryBusy(.importPublication)) {
+            try await store.removeLibrary(path: rootPath)
+        }
+        let kept = try await catalogStoreTestState(store)
+        #expect(kept.libraries.map(\.path) == [rootPath])
+        #expect(kept.testAssets.count == 1)
+        #expect(watcher.roots().contains(rootPath))
+
+        _ = await store.releaseNamespaceMutationLease(lease)
+        try await store.removeLibrary(path: rootPath)
+        #expect(try await catalogStoreTestState(store).libraries.isEmpty)
+        #expect(!watcher.roots().contains(rootPath))
+        await store.shutdown()
+    }
+
     @Test func incompatibleLegacyDatabaseIsRefusedWithoutErase() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
