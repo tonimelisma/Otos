@@ -181,3 +181,35 @@ actor AsyncValueRecorder<Value: Sendable> {
         }
     }
 }
+
+/// A one-shot fact a test waits on: set once, observed by every waiter, before or after.
+actor ReleaseSignal {
+    private var released = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func release() {
+        released = true
+        waiters.forEach { $0.resume() }
+        waiters.removeAll()
+    }
+
+    func wait() async {
+        guard !released else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+}
+
+/// Reports its own release. Held only by the object under test, it says when that object
+/// was released: an ownership fact, not a guess about timing.
+final class ReleaseSentinel: Sendable {
+    private let signal: ReleaseSignal
+
+    init(_ signal: ReleaseSignal) {
+        self.signal = signal
+    }
+
+    deinit {
+        let signal = signal
+        Task { await signal.release() }
+    }
+}
