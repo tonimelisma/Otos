@@ -66,6 +66,10 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
    State-valued intents (only the newest matters) use `.bufferingNewest(1)`. Never one
    plain `Task { await owner.intent() }` per intent. An intent that starts long work returns
    when it is applied, not when the work ends, so the next intent is never queued behind it.
+   Platform reports (DiskArbitration, ImageCaptureCore delegates) are intents too: the
+   callback yields into its owner's stream. SwiftLint rule `unordered_main_actor_hop`
+   rejects a bare `Task { @MainActor … }` started from a callback; where an API documents
+   the main thread, `MainActor.assumeIsolated` asserts it instead of hopping.
 6. **Blocking work leaves the actor explicitly.** Filesystem walks, planning, decoding and
    hashing enter through `@concurrent`, `Task.detached`, a task-group child, or a dedicated
    queue. A comment saying "off the actor" or "off main" names which.

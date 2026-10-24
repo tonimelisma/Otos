@@ -62,3 +62,79 @@ struct RemovableVolumeMonitorLiveDiskImageTests {
         #expect(RemovableVolumeMonitor.deviceModel(forVolumeAt: neverMounted, session: session) == nil)
     }
 }
+
+/// APP-017: removable reports are applied in the order DiskArbitration made them, and an
+/// unmount request quiesces a source that resumes only when the request is refused.
+struct RemovableVolumeTrackerTests {
+    private static let card = RemovableVolumeAttachment(
+        mountURL: URL(fileURLWithPath: "/Volumes/CARD", isDirectory: true),
+        identity: "volume:CARD-UUID",
+        displayName: "CARD",
+        isEjectable: true
+    )
+    private static let cardDisk = RemovableVolumeDisk(volumePath: "/Volumes/CARD", volumeUUID: "CARD-UUID")
+
+    @Test func aMountedCardAttachesOnceAndAnUnmountedOneDetaches() {
+        var tracker = RemovableVolumeTracker()
+        #expect(tracker.reconcile([Self.card]) == [.attach(Self.card)])
+        #expect(tracker.reconcile([Self.card]).isEmpty)
+        #expect(tracker.reconcile([]) == [.detach(Self.card.identity, .unmounted)])
+    }
+
+    @Test func anUnmountRequestQuiescesAndARefusalResumes() {
+        var tracker = RemovableVolumeTracker()
+        _ = tracker.reconcile([Self.card])
+        let requested = tracker.unmountRequested(Self.cardDisk)
+        guard case let .awaitRefusalLimit(identity, request) = requested.last else {
+            Issue.record("Expected the refusal limit to start, got \(requested)")
+            return
+        }
+        #expect(requested.first == .quiesce(Self.card.identity))
+        #expect(identity == Self.card.identity)
+        #expect(tracker.refusalLimitElapsed(identity: identity, request: request) == [.resume(identity)])
+        #expect(tracker.refusalLimitElapsed(identity: identity, request: request).isEmpty, "resumes once")
+    }
+
+    @Test func anUnmountThatSucceedsDetachesAndNeverResumes() {
+        var tracker = RemovableVolumeTracker()
+        _ = tracker.reconcile([Self.card])
+        guard case let .awaitRefusalLimit(identity, request) = tracker.unmountRequested(Self.cardDisk).last else {
+            Issue.record("Expected the refusal limit to start")
+            return
+        }
+        #expect(tracker.reconcile([]) == [.detach(identity, .unmounted)])
+        #expect(tracker.refusalLimitElapsed(identity: identity, request: request).isEmpty)
+    }
+
+    /// A second request (a retried eject) quiesces again; the first request's limit
+    /// elapsing must not resume the source the second one is still unmounting.
+    @Test func anOlderRequestsLimitNeverResumesANewerRequest() {
+        var tracker = RemovableVolumeTracker()
+        _ = tracker.reconcile([Self.card])
+        guard case let .awaitRefusalLimit(_, first) = tracker.unmountRequested(Self.cardDisk).last,
+              case let .awaitRefusalLimit(identity, second) = tracker.unmountRequested(Self.cardDisk).last
+        else {
+            Issue.record("Expected two refusal limits")
+            return
+        }
+        #expect(tracker.refusalLimitElapsed(identity: identity, request: first).isEmpty)
+        #expect(tracker.refusalLimitElapsed(identity: identity, request: second) == [.resume(identity)])
+    }
+
+    @Test func aDisappearedCardDetachesAsDisconnectedMatchedByUUIDOrPath() {
+        var tracker = RemovableVolumeTracker()
+        _ = tracker.reconcile([Self.card])
+        #expect(tracker.disappeared(RemovableVolumeDisk(volumePath: nil, volumeUUID: "CARD-UUID"))
+            == [.detach(Self.card.identity, .disconnected)])
+        _ = tracker.reconcile([Self.card])
+        #expect(tracker.disappeared(RemovableVolumeDisk(volumePath: "/Volumes/CARD", volumeUUID: nil))
+            == [.detach(Self.card.identity, .disconnected)])
+        #expect(tracker.disappeared(Self.cardDisk).isEmpty, "an unknown disk changes nothing")
+    }
+
+    @Test func anUnmountRequestForAnUnknownDiskChangesNothing() {
+        var tracker = RemovableVolumeTracker()
+        _ = tracker.reconcile([Self.card])
+        #expect(tracker.unmountRequested(RemovableVolumeDisk(volumePath: "/Volumes/OTHER", volumeUUID: nil)).isEmpty)
+    }
+}

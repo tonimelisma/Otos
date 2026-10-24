@@ -93,7 +93,7 @@ single `setQueryDescriptor` writer, so automatic and manual selection share one 
 - The eject drains in-flight enrichment under the root — the work already running,
   however long it takes, since nothing new starts there — then calls
   `NSWorkspace.unmountAndEjectDevice`. Success unmounts the volume, and the row
-  disappears because the real `didUnmountNotification` → detach removes it — UI and
+  disappears because the real unmount report (DiskArbitration removing the volume path) → detach removes it — UI and
   reality never diverge. Failure returns a typed `RemovableEjectOutcome`
   (`.ejected` / `.cancelled` / `.busy(displayName)` / `.failed(description)`).
   User-cancelled eject clears the spinner with no alert. Busy/failed surface a

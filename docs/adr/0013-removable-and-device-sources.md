@@ -80,14 +80,21 @@ Adjacent decisions requiring separate ADRs or specs:
    removable source shows that source's cataloged rows; All Media queries filter to
    `kind == library`.
 
-4. **Quiesce/eject and detach are separate.** A user eject or `willUnmount`
-   notification first quiesces the source, drains in-flight enrichment for that
+4. **Quiesce/eject and detach are separate.** A user eject or an unmount request
+   (DiskArbitration's unmount approval, which every unmount passes through, Otos's own
+   included) first quiesces the source, drains in-flight enrichment for that
    root, and leaves catalog rows plus overlay intact. A failed eject resumes the
    source instead of detaching it. A confirmed unmount/disappearance marks the
    source unavailable, releases enrichment claims, stops filesystem watching, and
    preserves rows plus overlay. Explicit Forget removes the source row and its
    overlay. Transient camera identities are removed on detach because they have no
-   durable source identity to preserve.
+   durable source identity to preserve. Every removable report comes from
+   DiskArbitration alone — disk appeared, volume path changed, unmount requested,
+   disk disappeared — on one serial queue into one ordered stream with one consumer,
+   so a detach is never handled before the quiesce that preceded it; NSWorkspace's
+   mount notifications are not used, because two sources on two queues cannot agree
+   on an order. ImageCaptureCore's browser and session reports likewise feed one
+   ordered stream per owner.
 
 5. **MTP cameras use ImageCapture plus local staging.** ImageCapture provides
    catalog item names, type, size, dates, and 160x120-ish provisional thumbnails.

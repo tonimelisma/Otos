@@ -152,6 +152,14 @@ final class CameraSourceMonitor: NSObject {
     private var sessionsByIdentity: [String: DeviceCameraSession] = [:]
     private var identitiesByDevice: [ObjectIdentifier: String] = [:]
     private var isStarted = false
+    /// Browser reports in the order the browser made them; `browserLoop` is the one consumer.
+    private let browserEvents: AsyncStream<BrowserEvent>.Continuation
+    private var browserLoop: Task<Void, Never>?
+
+    fileprivate nonisolated enum BrowserEvent: Sendable {
+        case added(ICCameraDevice)
+        case removed(ICCameraDevice)
+    }
 
     init(
         onAttach: @escaping @MainActor @Sendable (DeviceCameraSession) -> Void,
@@ -159,7 +167,22 @@ final class CameraSourceMonitor: NSObject {
     ) {
         self.onAttach = onAttach
         self.onDetach = onDetach
+        let (stream, continuation) = AsyncStream.makeStream(of: BrowserEvent.self, bufferingPolicy: .unbounded)
+        browserEvents = continuation
         super.init()
+        browserLoop = Task { [weak self] in
+            for await event in stream {
+                guard let self else {
+                    return
+                }
+                switch event {
+                case let .added(camera):
+                    attach(camera)
+                case let .removed(camera):
+                    detach(camera)
+                }
+            }
+        }
         browser.delegate = self
         browser.browsedDeviceTypeMask = ICDeviceTypeMask(
             rawValue: ICDeviceTypeMask.camera.rawValue | ICDeviceLocationTypeMask.local.rawValue
@@ -270,27 +293,23 @@ final class CameraSourceMonitor: NSObject {
 /// `@preconcurrency import ImageCaptureCore`, which is what that import is for — no
 /// unchecked `Sendable` conformance is introduced (ARC-042).
 ///
-/// Hops are independent tasks and may land in any order. Every piece of owner state they
-/// touch is a sticky one-way latch (`sessionOpenResult`, `terminalFailure`,
-/// `isCatalogReady`) or a monotonic counter (`didAddItemCount`), so no interleaving of
-/// deliveries changes the outcome a caller observes.
+/// Each delegate method only yields into its owner's ordered stream: the browser's for
+/// add/remove, the session's for session and catalog reports. One loop per owner applies
+/// them on the main actor in the order the framework delivered them, so a camera removed
+/// right after it was added is never left attached.
 extension CameraSourceMonitor: ICDeviceBrowserDelegate {
     nonisolated func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
         guard let camera = device as? ICCameraDevice else {
             return
         }
-        Task { @MainActor [weak self] in
-            self?.attach(camera)
-        }
+        browserEvents.yield(.added(camera))
     }
 
     nonisolated func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {
         guard let camera = device as? ICCameraDevice else {
             return
         }
-        Task { @MainActor [weak self] in
-            self?.detach(camera)
-        }
+        browserEvents.yield(.removed(camera))
     }
 
     nonisolated func deviceBrowserDidEnumerateLocalDevices(_ browser: ICDeviceBrowser) {
@@ -338,6 +357,18 @@ final class DeviceCameraSession: NSObject {
     /// path that moves bytes. A cap that lives anywhere else would not cover it.
     private var transferInFlight = false
     private var transferWaiters: [(id: UUID, continuation: CheckedContinuation<Void, Error>)] = []
+    /// Session and catalog reports in the order ImageCaptureCore made them, whichever
+    /// queue it made them on; `eventLoop` is the one consumer.
+    private let events: AsyncStream<SessionEvent>.Continuation
+    private var eventLoop: Task<Void, Never>?
+
+    fileprivate nonisolated enum SessionEvent: Sendable {
+        /// The framework error, reduced to its description at the boundary.
+        case opened(frameworkErrorDescription: String?)
+        case closed
+        case itemsAdded(Int)
+        case catalogComplete
+    }
 
     init(identity: String, displayName: String, device: ICCameraDevice) {
         self.identity = identity
@@ -348,8 +379,31 @@ final class DeviceCameraSession: NSObject {
         // launch sweep leaves it alone. Best-effort: a failed claim means another instance
         // does the cleaning, not that staging is unusable.
         DeviceStagingLocation.claimOwnership(identity: identity)
+        let (stream, continuation) = AsyncStream.makeStream(of: SessionEvent.self, bufferingPolicy: .unbounded)
+        events = continuation
         super.init()
+        eventLoop = Task { [weak self] in
+            for await event in stream {
+                guard let self else {
+                    return
+                }
+                apply(event)
+            }
+        }
         device.delegate = self
+    }
+
+    private func apply(_ event: SessionEvent) {
+        switch event {
+        case let .opened(frameworkErrorDescription):
+            applySessionOpenOutcome(frameworkErrorDescription: frameworkErrorDescription)
+        case .closed:
+            applySessionClosed()
+        case let .itemsAdded(count):
+            didAddItemCount += count
+        case .catalogComplete:
+            markCatalogReady()
+        }
     }
 
     func catalogSnapshot() async throws -> DeviceCameraCatalogSnapshot {
@@ -608,6 +662,9 @@ final class DeviceCameraSession: NSObject {
         length: Int,
         completion: @escaping @Sendable (Result<Data, DeviceCameraSessionError>) -> Void
     ) {
+        // A request, not a report: each read carries its own completion and its caller
+        // waits for that answer alone, so no order between reads is owed.
+        // swiftlint:disable:next unordered_main_actor_hop
         Task { @MainActor in
             guard !isClosed, let file = filesByRelativePath[relativePath] else {
                 completion(.failure(.itemUnavailable(relativePath.rawValue)))
@@ -833,10 +890,9 @@ final class DeviceCameraSession: NSObject {
         }
     }
 
-    /// Main-actor side of `device(_:didOpenSessionWithError:)`. Sticky: the first
-    /// outcome latches, so a reordered delivery cannot downgrade a session that already
-    /// opened, and `terminalFailure` (set by a close) still wins in `wait(for:)`.
-    fileprivate func applySessionOpenOutcome(frameworkErrorDescription: String?) {
+    /// Main-actor side of `device(_:didOpenSessionWithError:)`. `terminalFailure` (set by a
+    /// close) still wins in `wait(for:)`.
+    private func applySessionOpenOutcome(frameworkErrorDescription: String?) {
         if let frameworkErrorDescription {
             sessionOpenResult = .failure(DeviceCameraSessionError.disconnected)
             resolveWaiters(condition: .open, result: .failure(DeviceCameraSessionError.disconnected))
@@ -856,20 +912,14 @@ final class DeviceCameraSession: NSObject {
     /// Main-actor side of `device(_:didCloseSessionWithError:)` and `didRemove(_:)`.
     /// Both mean the same thing to every caller — the session is gone — so they share
     /// one owner intent instead of two paths that must stay in step.
-    fileprivate func applySessionClosed() {
+    private func applySessionClosed() {
         failAllWaiters(DeviceCameraSessionError.disconnected)
         OtosLog.fileAccess.noticeOperation("camera.session", phase: "close", fields: [
             "identity": identity,
         ])
     }
 
-    /// Main-actor side of the two `didAdd` callbacks; monotonic, so hop order is
-    /// irrelevant to `waitForCatalogStability`.
-    fileprivate func countAddedItems(_ count: Int) {
-        didAddItemCount += count
-    }
-
-    fileprivate func markCatalogReady() {
+    private func markCatalogReady() {
         isCatalogReady = true
         resolveWaiters(condition: .catalogReady, result: .success(()))
     }
@@ -987,16 +1037,11 @@ extension DeviceCameraSession: ICCameraDeviceDelegate {
         // The framework error is reduced to a Sendable value at the boundary rather
         // than carried inward: callers of this session only ever see its own typed
         // failures, and the framework's description survives in the log line below.
-        let description = error.map { String(describing: $0) }
-        Task { @MainActor [weak self] in
-            self?.applySessionOpenOutcome(frameworkErrorDescription: description)
-        }
+        events.yield(.opened(frameworkErrorDescription: error.map { String(describing: $0) }))
     }
 
     nonisolated func device(_ device: ICDevice, didCloseSessionWithError error: (any Error)?) {
-        Task { @MainActor [weak self] in
-            self?.applySessionClosed()
-        }
+        events.yield(.closed)
     }
 
     nonisolated func device(_ device: ICDevice, didReceiveStatusInformation status: [ICDeviceStatus: Any]) {}
@@ -1004,22 +1049,15 @@ extension DeviceCameraSession: ICCameraDeviceDelegate {
     nonisolated func device(_ device: ICDevice, didEncounterError error: (any Error)?) {}
 
     nonisolated func didRemove(_ device: ICDevice) {
-        Task { @MainActor [weak self] in
-            self?.applySessionClosed()
-        }
+        events.yield(.closed)
     }
 
     nonisolated func cameraDevice(_ camera: ICCameraDevice, didAdd item: ICCameraItem) {
-        Task { @MainActor [weak self] in
-            self?.countAddedItems(1)
-        }
+        events.yield(.itemsAdded(1))
     }
 
     nonisolated func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {
-        let count = items.count
-        Task { @MainActor [weak self] in
-            self?.countAddedItems(count)
-        }
+        events.yield(.itemsAdded(items.count))
     }
 
     nonisolated func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {}
@@ -1052,8 +1090,6 @@ extension DeviceCameraSession: ICCameraDeviceDelegate {
     nonisolated func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {}
 
     nonisolated func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
-        Task { @MainActor [weak self] in
-            self?.markCatalogReady()
-        }
+        events.yield(.catalogComplete)
     }
 }

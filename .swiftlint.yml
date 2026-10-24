@@ -85,6 +85,14 @@ custom_rules:
     message: "An error is not a fact (ADR 0032, rule 4): `try? … ?? []/0/\"\"/false/.empty` turns a failure into a value someone reads as true. Handle the error (log it, publish nothing, report it), or keep the result Optional so unknown stays unknown."
     severity: error
 
+  unordered_main_actor_hop:
+    name: "A callback must not hop to the main actor through its own task"
+    included: 'Otos/.*\.swift'
+    excluded: 'OtosTests/'
+    regex: '(^|[;{]|\bin)\s*Task\s*\{\s*@MainActor'
+    message: "Tasks started one per callback have no order, so a later report can be handled before an earlier one (ADR 0032, rule 5). Yield into one ordered AsyncStream with one consumer, assert MainActor.assumeIsolated where the API documents the main thread, or own the task as a named property."
+    severity: error
+
   wall_clock_interval:
     name: "An interval inside the process is measured on ContinuousClock"
     regex: 'Date\(\)\.(timeIntervalSince|addingTimeInterval)\(|\btimeIntervalSinceNow\b|Date\.distant(Past|Future)\b|Date\(timeIntervalSinceNow:'

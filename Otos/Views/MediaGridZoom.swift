@@ -101,9 +101,10 @@ extension MediaGridViewController {
                 collectionView.animator().scrollToItems(at: [anchor], scrollPosition: .centeredVertically)
             }
         } completionHandler: { [weak self] in
-            // AppKit does not isolate its completion callback. Re-enter the
-            // controller's owner before reading or mutating grid state.
-            Task { @MainActor [weak self] in
+            // AppKit does not annotate this callback's isolation, but runs an animation
+            // group's completion on the main thread. Asserting that, rather than hopping
+            // through a task, finishes this swap before any later zoom can begin.
+            MainActor.assumeIsolated {
                 self?.finishZoomSwap(
                     signpost: signpost,
                     oldCount: oldCount,
