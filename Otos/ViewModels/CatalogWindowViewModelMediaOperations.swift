@@ -73,6 +73,15 @@ extension CatalogWindowViewModel {
                     applyImportPresentations(presentations)
                 }
             }
+            let destinations = await coordinator.destinationsStream()
+            removableDestinationsTask = Task { [weak self] in
+                for await map in destinations {
+                    guard let self else {
+                        return
+                    }
+                    removableDestinations = map
+                }
+            }
         }
     }
 
@@ -96,7 +105,6 @@ extension CatalogWindowViewModel {
         switch intent {
         case let .setDestination(destination, source):
             await coordinator.setDestination(destination, for: source)
-            await refreshRemovableDestinations()
         case let .setSessionPreferences(prefs, source):
             await coordinator.setSessionPreferences(prefs, for: source)
         case let .queueImport(source):
@@ -180,11 +188,6 @@ extension CatalogWindowViewModel {
             })
             cancellingImportSources.formIntersection(stillExecuting)
         }
-        // Read, not a command: newest-wins by nature — each run re-reads the coordinator's
-        // current mapping, so a run that finishes late is overwritten by the next.
-        Task {
-            await refreshRemovableDestinations()
-        }
     }
 
     /// Moves the user from a card's own row to the batch its run is copying into, once,
@@ -223,16 +226,6 @@ extension CatalogWindowViewModel {
         }
         // Command: every toggle is the user's latest word and must apply in order.
         submitImportIntent(.setSessionPreferences(prefs, source: source))
-    }
-
-    func refreshRemovableDestinations() async {
-        guard let coordinator = mediaOperationCoordinator else {
-            return
-        }
-        let all = await coordinator.allDestinations()
-        await MainActor.run {
-            removableDestinations = all
-        }
     }
 
     func setImportDestination(_ destination: LibraryRootPath, for source: LibraryRootPath) {
@@ -295,7 +288,7 @@ extension CatalogWindowViewModel {
     }
 
     func requestReorganizationConfirmation() {
-        guard let path = selectedFixedLibraryPath else {
+        guard let path = selectedFixedLibraryPath, reorganizationTask == nil else {
             return
         }
         let runner = reorganizationRunner ?? LibraryReorganizationRunner(
@@ -303,11 +296,12 @@ extension CatalogWindowViewModel {
             preferencesDomain: preferencesDomain
         )
         reorganizationRunner = runner
-        // Single in flight by UI gating: the Reorganize command is the only entry and the
-        // confirmation sheet it opens is modal, so no second preview can start.
-        Task { [weak self] in
+        // One preview or run in flight, owned here: a second request while one runs is
+        // ignored, and the window's teardown cancels it.
+        reorganizationTask = Task { [weak self] in
             let outcome = await runner.preview(libraryRoot: path)
             guard let self else { return }
+            reorganizationTask = nil
             switch outcome {
             case let .needsConfirmation(summary):
                 reorganizationSummaryText = ReorganizationSummaryPresentation.string(for: summary)
@@ -326,7 +320,7 @@ extension CatalogWindowViewModel {
     }
 
     func confirmReorganization() {
-        guard let path = selectedFixedLibraryPath else {
+        guard let path = selectedFixedLibraryPath, reorganizationTask == nil else {
             return
         }
         showsReorganizationConfirmation = false
@@ -335,11 +329,10 @@ extension CatalogWindowViewModel {
             preferencesDomain: preferencesDomain
         )
         reorganizationRunner = runner
-        // Single in flight by UI gating: the confirmation sheet closes on this click, so the
-        // run cannot be confirmed twice.
-        Task { [weak self] in
+        reorganizationTask = Task { [weak self] in
             let outcome = await runner.run(libraryRoot: path)
             guard let self else { return }
+            reorganizationTask = nil
             switch outcome {
             case let .completed(batches, _, _):
                 for batch in batches {

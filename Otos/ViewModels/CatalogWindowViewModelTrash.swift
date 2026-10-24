@@ -242,14 +242,25 @@ extension CatalogWindowViewModel {
         let coordinator = mediaTrashCoordinator
         let store = catalogStore
         mediaTrashIntentTask = Task { [weak self, coordinator, store] in
+            // The queue starts before the first intent reaches it, in the same task.
+            await coordinator.start()
             for await intent in intents {
                 switch intent {
                 case let .undo(batch, ids):
                     let outcome = await coordinator.undo(batch: batch, ids: ids)
                     self?.finishTrashUndo(outcome)
                 case let .redo(batch, ids):
-                    _ = try? await store.markPendingTrash(ids, batch: batch)
-                    coordinator.kick()
+                    do {
+                        _ = try await store.markPendingTrash(ids, batch: batch)
+                        coordinator.kick()
+                    } catch {
+                        // Nothing was re-hidden; the items stay where they are.
+                        OtosLog.ui.errorOperation("trash.redo", phase: "failed", fields: [
+                            "batch": "\(batch.unixMilliseconds)",
+                            "requested": "\(ids.count)",
+                            "error": String(describing: error),
+                        ])
+                    }
                 case let .deleteImmediately(ids):
                     await coordinator.deleteImmediately(ids)
                 case let .restore(ids):
@@ -278,8 +289,6 @@ extension CatalogWindowViewModel {
             }
         }
         startTrashIntentConsumer()
-        // Lifecycle, not a user act: `start()` is idempotent and nothing orders against it.
-        Task { await coordinator.start() }
     }
 
     func applyMediaTrashEvent(_ event: MediaTrashCoordinator.Event) {

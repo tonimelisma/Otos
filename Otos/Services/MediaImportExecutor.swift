@@ -312,7 +312,9 @@ actor MediaImportExecutor {
             }
             return false
         }
-        let totalBytes = copyEntries.reduce(Int64(0)) { $0 + ($1.source.byteSize ?? 0) }
+        // Only sizes the plan knows. An entry whose primary size is unknown is refused
+        // before it copies a byte (`missingPlannedByteSize`), so it adds nothing here.
+        let totalBytes = copyEntries.compactMap(\.source.byteSize).reduce(0, +)
         // No run-level free-space check: an import that cannot fit whole is
         // copied up to the floor and stopped as a designed outcome (ADR 0027).
         // The check is per entry, inside `runPlanEntries`.
@@ -519,9 +521,14 @@ actor MediaImportExecutor {
             var inFlightBytes: Int64 = 0
             var inFlightByIndex: [Int: Int64] = [:]
             var spaceStop: SpaceStop?
-            func plannedBytes(_ index: Int) -> Int64 {
+            /// The entry's bytes the plan knows, and how many of its files it has no size
+            /// for. Unknown is not zero: such a file is admitted on the known bytes alone,
+            /// with `ENOSPC` as the backstop — the same rule as a volume that reports no
+            /// capacity — and the admission says so.
+            func plannedBytes(_ index: Int) -> (known: Int64, unknownCount: Int) {
                 let source = copyEntries[index].source
-                return (source.byteSize ?? 0) + source.companions.reduce(Int64(0)) { $0 + ($1.byteSize ?? 0) }
+                let sizes = [source.byteSize] + source.companions.map(\.byteSize)
+                return (sizes.compactMap(\.self).reduce(0, +), sizes.count { $0 == nil })
             }
             /// Whether the entry at `index` fits above the floor. Refusing one
             /// entry ends admission for the run; entries already in flight were
@@ -534,7 +541,15 @@ actor MediaImportExecutor {
                     // The volume does not answer: admit, and let `ENOSPC` be the backstop.
                     return true
                 }
-                let entryBytes = plannedBytes(index)
+                let (entryBytes, unknownCount) = plannedBytes(index)
+                if unknownCount > 0 {
+                    OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "admitUnknownSize", fields: [
+                        "run": context.runID,
+                        "index": "\(index)",
+                        "knownBytes": "\(entryBytes)",
+                        "unknownSizeCount": "\(unknownCount)",
+                    ])
+                }
                 guard capacity - inFlightBytes - entryBytes >= FreeSpaceFloor.bytes else {
                     spaceStop = SpaceStop(bytesFree: capacity)
                     OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "diskFloor", fields: [
@@ -552,12 +567,12 @@ actor MediaImportExecutor {
             }
             func submit(_ index: Int) {
                 let entry = copyEntries[index]
-                let bytes = plannedBytes(index)
+                let bytes = plannedBytes(index).known
                 inFlightBytes += bytes
                 inFlightByIndex[index] = bytes
                 group.addTask {
                     guard !self.cancelFlag.isCancelled else {
-                        return EntryResult(index: index, outcome: .cancelled, byteSize: 0)
+                        return EntryResult(index: index, outcome: .cancelled)
                     }
                     let outcome = await self.copyEntry(
                         entry,
@@ -571,7 +586,7 @@ actor MediaImportExecutor {
                             }
                         }
                     )
-                    return EntryResult(index: index, outcome: outcome, byteSize: entry.source.byteSize ?? 0)
+                    return EntryResult(index: index, outcome: outcome)
                 }
             }
             while nextIndex < min(Self.workerCount, copyEntries.count), admits(nextIndex) {
@@ -581,7 +596,7 @@ actor MediaImportExecutor {
             while let result = await group.next() {
                 inFlightBytes -= inFlightByIndex.removeValue(forKey: result.index) ?? 0
                 switch result.outcome {
-                case let .published(reuseResult, companionsNotCopied):
+                case let .published(reuseResult, bytes, companionsNotCopied):
                     let entry = copyEntries[result.index]
                     let notCopied = Set(companionsNotCopied)
                     erasableSourcePaths.insert(entry.source.relativePath)
@@ -595,9 +610,9 @@ actor MediaImportExecutor {
                         failureReasons.append(.companionNotCopied)
                         incompleteItems.append(entry.source.id)
                     }
-                    publishedBytes += result.byteSize
+                    publishedBytes += bytes
                     overlayReuse.record(reuseResult)
-                    byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: result.byteSize)
+                    byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: bytes)
                 case .cancelled:
                     cancelFlag.cancel()
                     byteProgress.finish(index: result.index, resolvedItem: false, publishedBytes: 0)
@@ -760,10 +775,10 @@ actor MediaImportExecutor {
                     ])
                     logged += 1
                 }
-                try? await store.completeSourceEraseOperation(key: journal.key)
+                await Self.completeEraseJournal(journal.key, store: store)
             case .alreadyGone:
                 skipped += 1
-                try? await store.completeSourceEraseOperation(key: journal.key)
+                await Self.completeEraseJournal(journal.key, store: store)
             case .refused, .failed:
                 failed += 1
             }
@@ -854,7 +869,22 @@ actor MediaImportExecutor {
             filesystemURL: url,
             cameraImport: cameraImport
         ).isSettled else { return }
-        try? await store.completeSourceEraseOperation(key: operation.key)
+        await Self.completeEraseJournal(operation.key, store: store)
+    }
+
+    /// Clears an erase journal row once its file is gone. A failed clear is logged; the
+    /// row is found again at startup, where the file is already gone and the row settles.
+    private nonisolated static func completeEraseJournal(
+        _ key: String,
+        store: CatalogStore
+    ) async {
+        do {
+            try await store.completeSourceEraseOperation(key: key)
+        } catch {
+            OtosLog.catalog.errorOperation("import.erase.journal", phase: "completeFailed", fields: [
+                "error": String(describing: error),
+            ])
+        }
     }
 
     private func sourceDeletionCandidates(
@@ -930,10 +960,10 @@ actor MediaImportExecutor {
     }
 
     private enum EntryOutcome: Sendable {
-        /// The primary is published. `companionsNotCopied` are the source paths of
-        /// companions that did not reach the library: they are not recorded, and their
-        /// sources are never erased.
-        case published(ImportOverlayReuseResult, companionsNotCopied: [MediaRelativePath])
+        /// The primary is published, `bytes` long as it settled. `companionsNotCopied` are
+        /// the source paths of companions that did not reach the library: they are not
+        /// recorded, and their sources are never erased.
+        case published(ImportOverlayReuseResult, bytes: Int64, companionsNotCopied: [MediaRelativePath])
         case skippedForeign
         case cancelled
         case failed(EntryFailure)
@@ -942,7 +972,6 @@ actor MediaImportExecutor {
     private struct EntryResult: Sendable {
         let index: Int
         let outcome: EntryOutcome
-        let byteSize: Int64
     }
 
     private nonisolated func sourceStillMatches(
@@ -1004,7 +1033,7 @@ actor MediaImportExecutor {
                 onByteProgress: onByteProgress
             )
         case .library:
-            try? await store.abandonImportOperation(key: operationKey)
+            await Self.abandonEntry(operationKey, staging: nil, store: store, reason: "libraryAsSource")
             return .failed(.other)
         }
     }
@@ -1017,13 +1046,11 @@ actor MediaImportExecutor {
     ) async -> EntryOutcome? {
         let copyOutcome = await copyOffActor(from: sourceURL, to: stagingURL, onByteProgress: onByteProgress)
         if cancelFlag.isCancelled || copyOutcome == .cancelled {
-            try? FileManager.default.removeItem(at: stagingURL)
-            try? await store.abandonImportOperation(key: operationKey)
+            await Self.abandonEntry(operationKey, staging: stagingURL, store: store, reason: "cancelled")
             return .cancelled
         }
         if case let .failed(code) = copyOutcome {
-            try? FileManager.default.removeItem(at: stagingURL)
-            try? await store.abandonImportOperation(key: operationKey)
+            await Self.abandonEntry(operationKey, staging: stagingURL, store: store, reason: "transferFailed")
             OtosLog.catalog.error(
                 "op=mediaOperation.copy phase=failed errno=\(code, privacy: .public)"
             )
@@ -1062,12 +1089,11 @@ actor MediaImportExecutor {
         onByteProgress: @escaping @Sendable (Int64) -> Void
     ) async -> EntryOutcome? {
         guard let identity, let cameraImport else {
-            try? await store.abandonImportOperation(key: operationKey)
+            await Self.abandonEntry(operationKey, staging: nil, store: store, reason: "cameraUnavailable")
             return .failed(.other)
         }
         if cancelFlag.isCancelled {
-            try? FileManager.default.removeItem(at: stagingURL)
-            try? await store.abandonImportOperation(key: operationKey)
+            await Self.abandonEntry(operationKey, staging: stagingURL, store: store, reason: "cancelled")
             return .cancelled
         }
         switch await cameraImport.ensureImportBytes(
@@ -1082,18 +1108,15 @@ actor MediaImportExecutor {
             }
             return nil
         case .cancelled:
-            try? FileManager.default.removeItem(at: stagingURL)
-            try? await store.abandonImportOperation(key: operationKey)
+            await Self.abandonEntry(operationKey, staging: stagingURL, store: store, reason: "cancelled")
             return .cancelled
         case .failed(.outOfSpace):
             // The staging write refused for space: the floor, reached the hard
             // way, on a camera — the same stop as a refused `copyfile` on a card.
-            try? FileManager.default.removeItem(at: stagingURL)
-            try? await store.abandonImportOperation(key: operationKey)
+            await Self.abandonEntry(operationKey, staging: stagingURL, store: store, reason: "outOfSpace")
             return .failed(.outOfSpace)
         case let .failed(.other(message)):
-            try? FileManager.default.removeItem(at: stagingURL)
-            try? await store.abandonImportOperation(key: operationKey)
+            await Self.abandonEntry(operationKey, staging: stagingURL, store: store, reason: "transferFailed")
             OtosLog.catalog.error(
                 "op=mediaOperation.camera phase=failed detail=\(message, privacy: .public)"
             )
@@ -1345,8 +1368,7 @@ actor MediaImportExecutor {
         }
 
         guard !cancelFlag.isCancelled else {
-            try? FileManager.default.removeItem(at: stagingURL)
-            try? await store.abandonImportOperation(key: operation.operationKey)
+            await Self.abandonEntry(operation.operationKey, staging: stagingURL, store: store, reason: "cancelled")
             logSkipped(reason: "cancelled")
             return .cancelled
         }
@@ -1379,8 +1401,7 @@ actor MediaImportExecutor {
                 ]
             )
         case .cancelled:
-            try? FileManager.default.removeItem(at: stagingURL)
-            try? await store.abandonImportOperation(key: operation.operationKey)
+            await Self.abandonEntry(operation.operationKey, staging: stagingURL, store: store, reason: "hashCancelled")
             OtosLog.mediaIO.noticeOperation(
                 "contentHash",
                 phase: "cancelled",
@@ -1395,8 +1416,7 @@ actor MediaImportExecutor {
             logSkipped(reason: "cancelled")
             return .cancelled
         case let .failed(category):
-            try? FileManager.default.removeItem(at: stagingURL)
-            try? await store.abandonImportOperation(key: operation.operationKey)
+            await Self.abandonEntry(operation.operationKey, staging: stagingURL, store: store, reason: "hashFailed")
             OtosLog.mediaIO.errorOperation(
                 "contentHash",
                 phase: "failed",
@@ -1429,8 +1449,7 @@ actor MediaImportExecutor {
             stagedCompanions = staged
             companionsNotCopied = notCopied
         case let .stop(stop):
-            try? FileManager.default.removeItem(at: stagingURL)
-            try? await store.abandonImportOperation(key: operation.operationKey)
+            await Self.abandonEntry(operation.operationKey, staging: stagingURL, store: store, reason: "companionTransferStopped")
             logSkipped(reason: "companionTransferStopped")
             return stop
         }
@@ -1504,7 +1523,7 @@ actor MediaImportExecutor {
             }
         }
         guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
-            try? await request.store.abandonImportOperation(key: request.operation.operationKey)
+            await abandonEntry(request.operation.operationKey, staging: nil, store: request.store, reason: "namespaceLeaseUnavailable")
             OtosLog.catalog.notice(
                 "op=mediaOperation.publish phase=blocked reason=namespaceLeaseUnavailable"
             )
@@ -1524,8 +1543,7 @@ actor MediaImportExecutor {
             return await Self.journalFailureBeforePublication(request, error: error)
         }
         guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
-            try? FileManager.default.removeItem(at: request.stagingURL)
-            try? await request.store.abandonImportOperation(key: operation.operationKey)
+            await Self.abandonEntry(operation.operationKey, staging: request.stagingURL, store: request.store, reason: "namespaceLeaseUnavailable")
             OtosLog.catalog.notice(
                 "op=mediaOperation.publish phase=blocked reason=namespaceLeaseUnavailable"
             )
@@ -1668,6 +1686,7 @@ actor MediaImportExecutor {
         }
         return .published(
             reuseResult,
+            bytes: settledByteSize,
             companionsNotCopied: request.companionsNotCopied + companions.notCopied
         )
     }
@@ -2073,6 +2092,29 @@ actor MediaImportExecutor {
                 "op=mediaOperation.journal phase=sourceDeletionCompletionFailed error=\(String(describing: error), privacy: .public)"
             )
             return false
+        }
+    }
+
+    /// Ends an entry that will not publish: removes its staging file, then abandons its
+    /// journal row. A failed abandon is logged, not hidden; startup recovery finds the row
+    /// and abandons it then. A staging file that will not go is collected by the orphan
+    /// staging sweep.
+    private nonisolated static func abandonEntry(
+        _ key: ActiveFileOperationKey,
+        staging: URL?,
+        store: CatalogStore,
+        reason: String
+    ) async {
+        if let staging {
+            try? FileManager.default.removeItem(at: staging)
+        }
+        do {
+            try await store.abandonImportOperation(key: key)
+        } catch {
+            OtosLog.catalog.errorOperation("mediaOperation.journal", phase: "abandonFailed", fields: [
+                "reason": reason,
+                "error": String(describing: error),
+            ])
         }
     }
 
