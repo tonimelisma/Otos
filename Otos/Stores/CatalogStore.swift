@@ -1050,6 +1050,8 @@ extension CatalogStore {
     /// Re-catalogs an item undo moved back from the Trash and re-applies its authored
     /// overlay. The paths are reconciled from the filesystem exactly as a file event
     /// would (the file is the truth); only then is the overlay written onto the row.
+    /// Returns whether the item is back: its row exists and, when it had an overlay,
+    /// the overlay is on that row. A failed read or write is logged and answers false.
     func restoreTrashedItem(_ trashed: TrashedItem) async -> Bool {
         guard let rootRowID = roots[trashed.item.root.path]?.rowID else {
             return false
@@ -1065,11 +1067,11 @@ extension CatalogStore {
                 rootRowID: rootRowID
             ) || changed
         }
-        if let overlay = trashed.overlay {
-            // A failed write leaves the file back on disk without the choice and batch it
-            // had; that loss is logged rather than swallowed, so it can be found.
-            do {
-                let applied = try await database().write { db in
+        let primaryPath = trashed.item.id.relativePath.rawValue
+        let isBack: Bool
+        do {
+            isBack = try await database().write { db in
+                if let overlay = trashed.overlay {
                     try db.execute(
                         sql: """
                         UPDATE media_asset SET media_choice = ?, import_batch_unix_ms = ?
@@ -1079,23 +1081,33 @@ extension CatalogStore {
                             overlay.mediaChoice.rawValue,
                             overlay.importBatch?.unixMilliseconds,
                             rootRowID,
-                            trashed.item.id.relativePath.rawValue,
+                            primaryPath,
                         ]
                     )
-                    return db.changesCount > 0
+                    return db.changesCount == 1
                 }
-                changed = applied || changed
-            } catch {
-                OtosLog.catalog.errorOperation("mediaTrash.undo", phase: "overlayRestoreFailed", fields: [
-                    "path": trashed.item.id.relativePath.rawValue,
-                    "error": String(describing: error),
-                ])
+                return try Bool.fetchOne(
+                    db,
+                    sql: "SELECT EXISTS(SELECT 1 FROM media_asset WHERE library_root_id = ? AND relative_path = ?)",
+                    arguments: [rootRowID, primaryPath]
+                ) ?? false
             }
+        } catch {
+            OtosLog.catalog.errorOperation("mediaTrash.undo", phase: "restoreWriteFailed", fields: [
+                "path": primaryPath,
+                "error": String(describing: error),
+            ])
+            isBack = false
         }
-        if changed {
+        if changed || isBack {
             notifyCatalogChanged()
         }
-        return changed
+        OtosLog.catalog.noticeOperation("mediaTrash.undo", phase: "restored", fields: [
+            "path": primaryPath,
+            "rowBack": "\(isBack)",
+            "overlay": "\(trashed.overlay != nil)",
+        ])
+        return isBack
     }
 
     /// Every item still waiting to move to the Trash, oldest command first, each
@@ -4035,6 +4047,10 @@ private extension CatalogStore {
         do {
             observed = try CatalogScannedFileReader.observedItem(fileURL: fileURL, rootPath: root)
         } catch {
+            OtosLog.catalog.errorOperation("catalog.reconcile", phase: "upsertFailed", fields: [
+                "path": absolutePath,
+                "error": String(describing: error),
+            ])
             return false
         }
         guard let observed else {
@@ -4048,6 +4064,10 @@ private extension CatalogStore {
         do {
             dbQueue = try database()
         } catch {
+            OtosLog.catalog.errorOperation("catalog.reconcile", phase: "upsertFailed", fields: [
+                "path": absolutePath,
+                "error": String(describing: error),
+            ])
             return false
         }
         guard let dbQueue else {
@@ -4110,6 +4130,10 @@ private extension CatalogStore {
                 }
             }
         } catch {
+            OtosLog.catalog.errorOperation("catalog.reconcile", phase: "upsertFailed", fields: [
+                "path": absolutePath,
+                "error": String(describing: error),
+            ])
             return false
         }
     }

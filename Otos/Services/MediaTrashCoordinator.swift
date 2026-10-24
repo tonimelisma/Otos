@@ -670,8 +670,10 @@ actor MediaTrashCoordinator {
                 logFailure(error, operation: "trashItem", member: member)
             }
         }
-        _ = await store.releaseNamespaceMutationLease(lease)
+        // The catalog follows the moves while the lease that covers them is still held,
+        // so no scan or reconcile of this root can run between the two.
         await store.reconcileTrashedPaths(results.filter(\.succeeded))
+        _ = await store.releaseNamespaceMutationLease(lease)
         await settleMove(
             TrashedItem(item: item, members: moved, overlay: overlay),
             batch: batch,
@@ -726,8 +728,8 @@ actor MediaTrashCoordinator {
                 logFailure(error, operation: "removeItem", member: member)
             }
         }
-        _ = await store.releaseNamespaceMutationLease(lease)
         await store.reconcileTrashedPaths(results.filter(\.succeeded))
+        _ = await store.releaseNamespaceMutationLease(lease)
         forget([item.id])
         if results.contains(where: { !$0.succeeded }) {
             _ = await clearPending([item.id], operation: "removeFailed")
@@ -852,14 +854,21 @@ actor MediaTrashCoordinator {
                 }
             }
         }
-        _ = await store.releaseNamespaceMutationLease(lease)
         guard primaryBack else {
+            _ = await store.releaseNamespaceMutationLease(lease)
             return false
         }
-        _ = await store.restoreTrashedItem(
+        // Re-cataloged, choice included, under the same lease that put the files back.
+        let restored = await store.restoreTrashedItem(
             TrashedItem(item: item, members: returned, overlay: trashedItem.overlay)
         )
-        return true
+        _ = await store.releaseNamespaceMutationLease(lease)
+        if !restored {
+            OtosLog.catalog.errorOperation("mediaTrash.undo", phase: "catalogRestoreFailed", fields: [
+                "path": item.id.relativePath.rawValue,
+            ])
+        }
+        return restored
     }
 
     private static func memberOrder(
