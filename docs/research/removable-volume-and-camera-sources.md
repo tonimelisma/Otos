@@ -700,13 +700,6 @@ What the implementation added to what was measured here:
 - **Reads are bounded.** A read that never answers times out rather than parking a dedicated
   thread.
 
-**What is still unproven is the same thing throughout: one body.** Everything here is the
-Sony ILCE-6700. The capability gate exists for devices that cannot serve ranges and has never
-been run against one; the preview path is measured for ARW and HIF only; and the per-card
-figure of ~93 s is arithmetic over per-file measurements rather than a timed run. Attaching a
-card to a build carrying this would confirm all three at once, and is the single most useful
-next measurement.
-
 ### Measured on hardware (2026-08-31): it works, and running it found two defects
 
 The 2026-08-30 design shipped, and was then run against the same attached ILCE-6700 with
@@ -834,35 +827,9 @@ termination to show a clearing window and then delete nothing. And the release i
 path, so it refuses any path outside the staging container rather than following it; a path
 wrong by one component would otherwise be a delete inside the user's own media.
 
-### Still open after this round
+### Questions this research answered
 
-- Removable-volumes TCC prompt behavior for the real app bundle (signed,
-  hardened) rather than an inherited-grant CLI context.
-- Surprise-yank of the card (DA disappeared callback vs workspace
-  notification) — not exercised to avoid disturbing the connected devices.
-- Same physical card moved between camera-MSC and the built-in reader
-  (expected same volume UUID — same synthesized-from-filesystem mechanism
-  shown stable across remounts, but not physically confirmed).
-- Canon/Nikon PTP bodies and Android-phone MTP/PTP visibility and their
-  metadata/thumbnail behavior (only the Sony MTP path measured). The ranged-read
-  capability gate exists precisely for a device that cannot serve `GetPartialObject`
-  and has still never been run against one.
-- Locked/unlocked iPhone access-restriction flow.
-- Whether Sony Mass Storage mode (full filesystem, real EXIF, ranged reads of
-  embedded previews via plain file I/O) should be the *recommended* connection
-  mode in-product, with MTP as fallback.
-- Whether any non-Sony device supports `GetPartialObject` at all, and how a
-  non-supporting device fails — no such device was available. This is now the
-  load-bearing unknown for range-driven reading, in place of the prefix-size question
-  retired below.
-- Whether another vendor's ICC thumbnail honours a 256 px request, which the SDK header
-  says is possible and which would remove the need to extract previews by range for that
-  vendor.
-- Whether ranged reads contend with a concurrent download on the same serial
-  `ICDeviceCommandQueue`. Measured only with the queue otherwise idle.
-
-**Retired from this list, because sections above answer them.** Recorded rather than
-deleted so a later reader does not re-run the measurement:
+Recorded so a later reader does not re-run the measurement:
 
 - *Whether the 16-way admission window reduces MTP throughput.* **Answered** in
   "Transport measurements" above: single-stream `requestDownload` gives 37.2 MB/s (32 MB

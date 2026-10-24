@@ -32,9 +32,7 @@ row), APP-027 (the queue, the delete-immediately questions at a definitive downl
 failure or the 5 GB floor), APP-039 (trash on the undo stack), APP-045 and DES-090
 (the over-100 MB download question and its setting), DES-089 and
 `docs/design/trash-status-bar.md` (the trash status bar), DES-076, MED-001 and ADR
-0022. Its research is `docs/research/trash-dataless-placeholders.md`. One question
-stays open there: whether Finder's own Move to Trash downloads a large cloud-only
-file, which only a manual Finder test can settle.
+0022. Its research is `docs/research/trash-dataless-placeholders.md`.
 
 Plan 0103 (Share, Open With, context menus, drag-out, curation undo, loupe zoom and
 info, trash confirmation) is complete across eight increments A–H and was removed at
@@ -67,9 +65,6 @@ F's Stopped variant; the floor's rendering; a recorded failure outranks the re-p
 ARC-047 (a run's outcome is a fact, not a phase; the executor never refuses for
 space) and `docs/design/import-bar.md` (F · Stopped, J8, J9, G). Its research pass is
 `docs/research/2026-09-09-destination-free-space-and-import-failure-recovery.md`.
-Two observations it left open, recorded in that research doc's closing note: a
-possible stale Ready between two Done frames after a *completed* run, and MTP
-writes that refuse for space classifying as per-file failures.
 
 Plan 0100 (camera import: prove naming from ranges, stage only what is imported) is complete
 and was removed at closure. It opened from a live MTP session where a 991-item card staged in
@@ -85,10 +80,6 @@ Plan 0101 shipped as `MediaMetadata` 0.4.1: a transport-independent byte source,
 three-outcome read contract, public read cost, `identify(source:)`, `CachingByteSource`, and
 embedded preview descriptors. Its boundary rule — every change must be justifiable to a
 second consumer who has never heard of Otos — lives in that package's `ARCHITECTURE.md`.
-
-The residual risk is recorded in `docs/research/removable-volume-and-camera-sources.md`:
-every measurement behind the work comes from one Sony body, and a timed run with a card
-attached is the next useful measurement.
 
 ## Closed
 
