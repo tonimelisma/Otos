@@ -14,18 +14,13 @@ import Testing
 struct EnrichmentClaimIndexContractTests {
     @Test func broadIndexesImplyCurrentHashRequiredPredicate() async throws {
         let dbQueue = try await Self.migratedDatabase()
-        let now = Date().timeIntervalSince1970
         let rootQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
             rootIDs: [1],
-            now: now,
-            claimNotAfter: now + 300,
             limit: 4,
             hashRequired: true
         ))
         let globalQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
             rootIDs: [1, 2],
-            now: now,
-            claimNotAfter: now + 300,
             limit: 4,
             hashRequired: true
         ))
@@ -41,18 +36,13 @@ struct EnrichmentClaimIndexContractTests {
 
     @Test func metadataOnlyIndexesImplyCurrentMetadataOnlyPredicate() async throws {
         let dbQueue = try await Self.migratedDatabase()
-        let now = Date().timeIntervalSince1970
         let rootQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
             rootIDs: [1],
-            now: now,
-            claimNotAfter: now + 300,
             limit: 4,
             hashRequired: false
         ))
         let globalQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
             rootIDs: [1, 2],
-            now: now,
-            claimNotAfter: now + 300,
             limit: 4,
             hashRequired: false
         ))
@@ -99,16 +89,13 @@ struct EnrichmentClaimIndexContractTests {
         FROM media_asset INDEXED BY \(EnrichmentLeaseGateway.broadRootIndexName)
         WHERE library_root_id = ?
           AND (\(reparenthesized))
-          AND (
-            enrichment_claimed_until IS NULL
-            OR enrichment_claimed_until < ?
-          )
+          AND enrichment_claimed IS NULL
         ORDER BY best_capture_unix DESC, relative_path
         LIMIT ?
         """
         await #expect(throws: (any Error).self) {
             try await dbQueue.read { db in
-                _ = try Row.fetchAll(db, sql: sql, arguments: [1, Date().timeIntervalSince1970, 4])
+                _ = try Row.fetchAll(db, sql: sql, arguments: [1, 4])
             }
         }
     }

@@ -317,6 +317,15 @@ extension CatalogStore {
             WHERE pending_trash_batch_unix_ms IS NOT NULL
             """)
         }
+        // An enrichment claim is a process fact, not a lease with an expiry: it holds
+        // until released or until the process that took it ends, and loading the catalog
+        // clears every claim (plan 0106). The column `mediaAssetTableSQL` creates under
+        // its v3 name is renamed here for every catalog, so new and migrated ones match;
+        // claims left by the last process are cleared with it.
+        migrator.registerMigration("v21_enrichment_claim_is_a_process_fact") { db in
+            try db.execute(sql: "ALTER TABLE media_asset RENAME COLUMN enrichment_claimed_until TO enrichment_claimed")
+            try db.execute(sql: "UPDATE media_asset SET enrichment_claimed = NULL WHERE enrichment_claimed IS NOT NULL")
+        }
         return migrator
     }
 
@@ -1949,7 +1958,7 @@ private nonisolated func requiredCurrentMediaAssetColumns() -> Set<String> {
         "thumbnail_path",
         "duration_seconds",
         "media_choice",
-        "enrichment_claimed_until",
+        "enrichment_claimed",
         "import_batch_unix_ms",
         "capture_wall_compact",
         "capture_wall_precision",

@@ -144,7 +144,7 @@ private func enrichmentClaimedRowCount(databaseURL: URL) async throws -> Int {
             sql: """
             SELECT COUNT(*)
             FROM media_asset
-            WHERE enrichment_claimed_until IS NOT NULL
+            WHERE enrichment_claimed IS NOT NULL
             """
         ) ?? 0
     }

@@ -36,14 +36,10 @@ extension EnrichmentCoordinator {
             materializationDemands[id] = pending
             materializingIDs.remove(id)
             materializationClaimIDs.insert(id)
-            var fields = ["sourceSize": "\(work.sourceSize ?? -1)"]
-            if let leaseRefreshedUntil = await refreshClaims([id], visibleID: id) {
-                fields["leaseRefreshedUntil"] = Self.diagnosticTimestamp(leaseRefreshedUntil)
-            }
             await recordVisibleThumbnailLifecycle(
                 phase: "notMaterialized",
                 id: id,
-                fields: fields
+                fields: ["sourceSize": "\(work.sourceSize ?? -1)"]
             )
         case .transient:
             // `.transient` means the byte source could not be opened. The metadata
@@ -125,16 +121,11 @@ extension EnrichmentCoordinator {
                 materializationDemands[id] = retry
                 materializingIDs.remove(id)
                 scheduleDownloadRetrySignal()
-                if let leaseRefreshedUntil = await refreshClaims([id], visibleID: id) {
-                    await recordVisibleThumbnailLifecycle(
-                        phase: "materializationRetryScheduled",
-                        id: id,
-                        fields: [
-                            "leaseRefreshedUntil": Self.diagnosticTimestamp(leaseRefreshedUntil),
-                            "attemptCount": "\(retry.attemptCount)",
-                        ]
-                    )
-                }
+                await recordVisibleThumbnailLifecycle(
+                    phase: "materializationRetryScheduled",
+                    id: id,
+                    fields: ["attemptCount": "\(retry.attemptCount)"]
+                )
             } else {
                 materializationDemands[id] = nil
                 materializingIDs.remove(id)
@@ -393,25 +384,6 @@ extension EnrichmentCoordinator {
         }
     }
 
-    private func refreshClaims(_ ids: [MediaAssetID], visibleID: MediaAssetID) async -> Date? {
-        do {
-            return try await store.refreshEnrichmentClaims(ids)
-        } catch {
-            await recordVisibleThumbnailLifecycle(
-                phase: "claimRefreshFailed",
-                id: visibleID,
-                fields: ["error": String(describing: error)]
-            )
-            OtosLog.metadata.error(
-                """
-                Enrichment claim refresh failed count=\(ids.count, privacy: .public) \
-                error=\(String(describing: error), privacy: .public)
-                """
-            )
-            return nil
-        }
-    }
-
     private nonisolated static func diagnosticTimestamp(_ date: Date) -> String {
         diagnosticTimestampFormatter.withLock { formatter in
             formatter.string(from: date)
@@ -431,17 +403,6 @@ extension EnrichmentCoordinator {
         pendingApply.append(result)
         pendingApplyClaimIDs.insert(id)
         scheduleApplyFlushIfNeeded()
-    }
-
-    func refreshOutstandingMaterializationClaims() async {
-        guard !isShuttingDown else {
-            return
-        }
-        let ids = Array(materializationClaimIDs)
-        guard let visibleID = ids.first, !ids.isEmpty else {
-            return
-        }
-        _ = await refreshClaims(ids, visibleID: visibleID)
     }
 
     private func handleApplyOutcome(_ outcome: EnrichmentApplyOutcome, batchCount: Int) {

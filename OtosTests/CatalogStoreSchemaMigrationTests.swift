@@ -308,11 +308,9 @@ struct CatalogStoreSchemaMigrationTests {
             )
         }
         #expect(persistedHash == XXH3Digest128.empty.data)
-        let now = Date().timeIntervalSince1970
         let metadataOnlyClaimed = try await dbQueue.write { db in
             try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [removableRootID],
-                claimNotAfter: now + 300,
                 limit: 4,
                 hashRequired: false,
                 db: db
@@ -409,6 +407,45 @@ struct CatalogStoreSchemaMigrationTests {
     /// path as temporarily missing, not deleted (`docs/adr/0008-…`). Mounts a
     /// real disk image rather than mocking `DiskArbitration`, since the fact
     /// under test is what the system actually reports for one.
+    /// A claim is a process fact: v21 renames the column for every catalog and clears the
+    /// claims the last process left, whatever expiry it had written.
+    @Test func v21RenamesTheClaimColumnAndClearsLeftoverClaims() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue, upTo: "v20_pending_trash")
+        try await dbQueue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/otos-v21"])
+            try db.execute(
+                sql: """
+                INSERT INTO media_asset (
+                    library_root_id, relative_path, sort_key, name_sort_key, name,
+                    content_type_identifier, byte_size, enrichment_claimed_until
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [db.lastInsertedRowID, "a.jpg", "a.jpg", "a.jpg", "a.jpg", "public.jpeg", 1, 4_102_444_800]
+            )
+        }
+
+        try CatalogStore.migrator.migrate(dbQueue)
+
+        let (columns, claimed) = try await dbQueue.read { db in
+            let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(media_asset)").compactMap { $0["name"] as String? }
+            let claimed = try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM media_asset WHERE enrichment_claimed IS NOT NULL"
+            ) ?? -1
+            return (columns, claimed)
+        }
+        #expect(columns.contains("enrichment_claimed"))
+        #expect(!columns.contains("enrichment_claimed_until"))
+        #expect(claimed == 0)
+    }
+
     @Test func v16RemovesDiskImageRemovableRootsButPreservesUnmountedOnes() async throws {
         let image = try MountedTestDiskImage.attach(named: "OtosV16MigrationTest")
         defer { image.detach() }

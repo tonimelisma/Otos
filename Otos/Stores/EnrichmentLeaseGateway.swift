@@ -3,13 +3,16 @@ import GRDB
 
 /// Enrichment lease gateway guide
 ///
-/// Cohesive claim/refresh/release SQL and `enrichment_claimed_until` lease policy
-/// for enrichment scheduling. `CatalogStore` owns orchestration (DB writes, root
-/// availability, diagnostics); this type groups the lease bookkeeping and
-/// persistence helpers synchronously inside Store isolation — not a second actor.
+/// Cohesive claim/release SQL over `enrichment_claimed` for enrichment scheduling.
+/// `CatalogStore` owns orchestration (DB writes, root availability, diagnostics); this
+/// type groups the claim bookkeeping and persistence helpers synchronously inside Store
+/// isolation — not a second actor.
+///
+/// A claim is a process fact, not a lease: it holds until its owner releases it or the
+/// process that took it ends, and `CatalogStore` clears every claim when it loads the
+/// catalog, which is the one point where the previous owner is known to be gone. No
+/// expiry stands in for "the claimant is still alive".
 nonisolated enum EnrichmentLeaseGateway {
-    static let claimLeaseDuration: TimeInterval = 300
-
     /// Partial-index names for the claim queries' `INDEXED BY`. Two pairs (broad vs
     /// metadata-only) so a root that never hashes (`.removableVolume`) leaves the
     /// index as soon as its metadata is current, instead of staying pinned forever
@@ -25,10 +28,6 @@ nonisolated enum EnrichmentLeaseGateway {
 
     static func rootIndexName(hashRequired: Bool) -> String {
         hashRequired ? broadRootIndexName : metadataOnlyRootIndexName
-    }
-
-    static func claimedUntil(from date: Date = Date()) -> TimeInterval {
-        date.timeIntervalSince1970 + claimLeaseDuration
     }
 
     static func unclaimedPriorityIDs(
@@ -115,16 +114,12 @@ nonisolated enum EnrichmentLeaseGateway {
 
     static func fetchStoredAssetsNeedingEnrichment(
         rootIDs: [Int64],
-        claimNotAfter: TimeInterval,
         limit: Int,
         hashRequired: Bool,
         db: Database
     ) throws -> [StoredAsset] {
-        let now = Date().timeIntervalSince1970
         guard let query = enrichmentClaimQuery(
             rootIDs: rootIDs,
-            now: now,
-            claimNotAfter: claimNotAfter,
             limit: limit,
             hashRequired: hashRequired
         ) else {
@@ -136,8 +131,6 @@ nonisolated enum EnrichmentLeaseGateway {
         }
         try claimStoredAssetsNeedingEnrichment(
             keys,
-            now: now,
-            claimedUntil: claimNotAfter,
             hashRequired: hashRequired,
             db: db
         )
@@ -150,8 +143,6 @@ nonisolated enum EnrichmentLeaseGateway {
 
     static func enrichmentClaimQuery(
         rootIDs: [Int64],
-        now: TimeInterval,
-        claimNotAfter _: TimeInterval,
         limit: Int,
         hashRequired: Bool
     ) -> SQLQuery? {
@@ -161,7 +152,6 @@ nonisolated enum EnrichmentLeaseGateway {
         if rootIDs.count == 1, let rootID = rootIDs.first {
             return rootEnrichmentClaimQuery(
                 rootID: rootID,
-                now: now,
                 limit: limit,
                 hashRequired: hashRequired
             )
@@ -169,7 +159,6 @@ nonisolated enum EnrichmentLeaseGateway {
 
         return globalEnrichmentClaimQuery(
             rootIDs: rootIDs,
-            now: now,
             limit: limit,
             hashRequired: hashRequired
         )
@@ -178,24 +167,19 @@ nonisolated enum EnrichmentLeaseGateway {
     static func claimEnrichmentAsset(
         libraryRootID: Int64,
         relativePath: MediaRelativePath,
-        claimedUntil: TimeInterval,
         hashRequired: Bool,
         db: Database
     ) throws -> Bool {
-        let now = Date().timeIntervalSince1970
         try db.execute(
             sql: """
             UPDATE media_asset
-            SET enrichment_claimed_until = ?
+            SET enrichment_claimed = 1
             WHERE library_root_id = ?
               AND relative_path = ?
               AND (\(stalenessSQLPredicate(hashRequired: hashRequired)))
-              AND (
-                enrichment_claimed_until IS NULL
-                OR enrichment_claimed_until < ?
-              )
+              AND enrichment_claimed IS NULL
             """,
-            arguments: [claimedUntil, libraryRootID, relativePath.rawValue, now]
+            arguments: [libraryRootID, relativePath.rawValue]
         )
         return db.changesCount > 0
     }
@@ -212,7 +196,7 @@ nonisolated enum EnrichmentLeaseGateway {
             try db.execute(
                 sql: """
                 UPDATE media_asset
-                SET enrichment_claimed_until = NULL
+                SET enrichment_claimed = NULL
                 WHERE library_root_id = ? AND relative_path = ?
                 """,
                 arguments: [rootID, id.relativePath.rawValue]
@@ -224,7 +208,7 @@ nonisolated enum EnrichmentLeaseGateway {
         try db.execute(
             sql: """
             UPDATE media_asset
-            SET enrichment_claimed_until = NULL
+            SET enrichment_claimed = NULL
             WHERE library_root_id = ?
             """,
             arguments: [rootID]
@@ -236,32 +220,11 @@ nonisolated enum EnrichmentLeaseGateway {
         try db.execute(
             sql: """
             UPDATE media_asset
-            SET enrichment_claimed_until = NULL
-            WHERE enrichment_claimed_until IS NOT NULL
+            SET enrichment_claimed = NULL
+            WHERE enrichment_claimed IS NOT NULL
             """
         )
         return db.changesCount
-    }
-
-    static func refreshEnrichmentClaims(
-        ids: [MediaAssetID],
-        rootIDsByPath: [LibraryRootPath: Int64],
-        claimedUntil: TimeInterval,
-        db: Database
-    ) throws {
-        for id in ids {
-            guard let rootID = rootIDsByPath[id.libraryRootPath] else {
-                continue
-            }
-            try db.execute(
-                sql: """
-                UPDATE media_asset
-                SET enrichment_claimed_until = ?
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
-                arguments: [claimedUntil, rootID, id.relativePath.rawValue]
-            )
-        }
     }
 }
 
@@ -279,7 +242,6 @@ private nonisolated func enrichmentCandidateKey(from row: Row) -> EnrichmentCand
 
 private nonisolated func rootEnrichmentClaimQuery(
     rootID: Int64,
-    now: TimeInterval,
     limit: Int,
     hashRequired: Bool
 ) -> SQLQuery {
@@ -290,26 +252,21 @@ private nonisolated func rootEnrichmentClaimQuery(
         FROM media_asset INDEXED BY \(indexName)
         WHERE library_root_id = ?
           AND (\(EnrichmentLeaseGateway.stalenessSQLPredicate(hashRequired: hashRequired)))
-          AND (
-            enrichment_claimed_until IS NULL
-            OR enrichment_claimed_until < ?
-          )
+          AND enrichment_claimed IS NULL
         ORDER BY best_capture_unix DESC, relative_path
         LIMIT ?
         """,
-        arguments: sqlArguments(rootID, now, limit)
+        arguments: sqlArguments(rootID, limit)
     )
 }
 
 private nonisolated func globalEnrichmentClaimQuery(
     rootIDs: [Int64],
-    now: TimeInterval,
     limit: Int,
     hashRequired: Bool
 ) -> SQLQuery {
     let placeholders = sqlPlaceholders(count: rootIDs.count)
     var arguments = rootIDs.map { $0 as any DatabaseValueConvertible }
-    arguments.append(now)
     arguments.append(limit)
     let indexName = EnrichmentLeaseGateway.globalIndexName(hashRequired: hashRequired)
     return SQLQuery(
@@ -318,10 +275,7 @@ private nonisolated func globalEnrichmentClaimQuery(
         FROM media_asset INDEXED BY \(indexName)
         WHERE library_root_id IN (\(placeholders))
           AND (\(EnrichmentLeaseGateway.stalenessSQLPredicate(hashRequired: hashRequired)))
-          AND (
-            enrichment_claimed_until IS NULL
-            OR enrichment_claimed_until < ?
-          )
+          AND enrichment_claimed IS NULL
         ORDER BY best_capture_unix DESC, library_root_id, relative_path
         LIMIT ?
         """,
@@ -331,27 +285,20 @@ private nonisolated func globalEnrichmentClaimQuery(
 
 private nonisolated func claimStoredAssetsNeedingEnrichment(
     _ keys: [EnrichmentCandidateKey],
-    now: TimeInterval,
-    claimedUntil: TimeInterval,
     hashRequired: Bool,
     db: Database
 ) throws {
     guard !keys.isEmpty else {
         return
     }
-    var arguments: [any DatabaseValueConvertible] = [claimedUntil]
-    arguments.append(contentsOf: enrichmentCandidateKeyArguments(keys))
-    arguments.append(now)
+    let arguments: [any DatabaseValueConvertible] = enrichmentCandidateKeyArguments(keys)
     try db.execute(
         sql: """
         UPDATE media_asset
-        SET enrichment_claimed_until = ?
+        SET enrichment_claimed = 1
         WHERE (library_root_id, relative_path) IN (\(sqlTuplePlaceholders(rowCount: keys.count, columnCount: 2)))
           AND (\(EnrichmentLeaseGateway.stalenessSQLPredicate(hashRequired: hashRequired)))
-          AND (
-            enrichment_claimed_until IS NULL
-            OR enrichment_claimed_until < ?
-          )
+          AND enrichment_claimed IS NULL
         """,
         arguments: StatementArguments(arguments)
     )

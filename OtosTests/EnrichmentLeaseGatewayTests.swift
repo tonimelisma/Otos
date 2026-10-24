@@ -24,12 +24,6 @@ struct EnrichmentLeaseGatewayTests {
         )
     }
 
-    @Test func claimedUntilAddsLeaseDuration() {
-        let now = Date(timeIntervalSince1970: 1000)
-        let claimedUntil = EnrichmentLeaseGateway.claimedUntil(from: now)
-        #expect(claimedUntil == now.timeIntervalSince1970 + EnrichmentLeaseGateway.claimLeaseDuration)
-    }
-
     @Test func unclaimedPriorityIDsSkipsDuplicatesInClaimedSet() {
         let first = assetID()
         let second = MediaAssetID(
@@ -86,8 +80,6 @@ struct EnrichmentLeaseGatewayTests {
         #expect(
             EnrichmentLeaseGateway.enrichmentClaimQuery(
                 rootIDs: [],
-                now: 0,
-                claimNotAfter: 300,
                 limit: 1,
                 hashRequired: true
             ) == nil
@@ -95,8 +87,6 @@ struct EnrichmentLeaseGatewayTests {
         #expect(
             EnrichmentLeaseGateway.enrichmentClaimQuery(
                 rootIDs: [1],
-                now: 0,
-                claimNotAfter: 300,
                 limit: 0,
                 hashRequired: true
             ) == nil

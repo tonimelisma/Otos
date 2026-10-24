@@ -1343,32 +1343,12 @@ extension CatalogStore {
         }
     }
 
-    @discardableResult
-    func refreshEnrichmentClaims(_ ids: [MediaAssetID]) async throws -> Date? {
-        guard !ids.isEmpty else {
-            return nil
-        }
-        let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
-        let claimedUntil = EnrichmentLeaseGateway.claimedUntil()
-        let dbWriter = try database()
-        try await dbWriter.write { db in
-            try EnrichmentLeaseGateway.refreshEnrichmentClaims(
-                ids: ids,
-                rootIDsByPath: rootIDsByPathBeforeWrite,
-                claimedUntil: claimedUntil,
-                db: db
-            )
-        }
-        return Date(timeIntervalSince1970: claimedUntil)
-    }
-
     private func priorityEnrichmentCandidates(
         ids: [MediaAssetID],
         limit: Int
     ) async throws -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]> {
         let priorityAssetsByID = try await mediaAssets(for: ids)
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
-        let claimedUntil = EnrichmentLeaseGateway.claimedUntil()
         let dbWriter = try database()
         let eligibleClaims = EnrichmentLeaseGateway.priorityClaimInputs(
             ids: ids,
@@ -1390,7 +1370,6 @@ extension CatalogStore {
                 guard try EnrichmentLeaseGateway.claimEnrichmentAsset(
                     libraryRootID: rootID,
                     relativePath: asset.relativePath,
-                    claimedUntil: claimedUntil,
                     hashRequired: hashRequired,
                     db: db
                 ) else {
@@ -1424,7 +1403,6 @@ extension CatalogStore {
     private func claimedEnrichmentCandidates(limit: Int) async throws
         -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]>
     {
-        let claimedUntil = EnrichmentLeaseGateway.claimedUntil()
         let prioritizedRootIDs = roots.enrichableRootIDsByRemovablePriority()
         let (hashRequiredRootIDs, hashNotRequiredRootIDs) = roots.enrichableRootIDsByHashRequirement()
         let dbWriter = try database()
@@ -1449,7 +1427,6 @@ extension CatalogStore {
                 let remaining = limit - storedAssets.count
                 let claimed = try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
                     rootIDs: group.rootIDs,
-                    claimNotAfter: claimedUntil,
                     limit: remaining,
                     hashRequired: group.hashRequired,
                     db: db
