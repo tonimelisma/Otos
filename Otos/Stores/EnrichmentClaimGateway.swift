@@ -1,7 +1,7 @@
 import Foundation
 import GRDB
 
-/// Enrichment lease gateway guide
+/// Enrichment claim gateway guide
 ///
 /// Cohesive claim/release SQL over `enrichment_claimed` for enrichment scheduling.
 /// `CatalogStore` owns orchestration (DB writes, root availability, diagnostics); this
@@ -12,7 +12,7 @@ import GRDB
 /// process that took it ends, and `CatalogStore` clears every claim when it loads the
 /// catalog, which is the one point where the previous owner is known to be gone. No
 /// expiry stands in for "the claimant is still alive".
-nonisolated enum EnrichmentLeaseGateway {
+nonisolated enum EnrichmentClaimGateway {
     /// Partial-index names for the claim queries' `INDEXED BY`. Two pairs (broad vs
     /// metadata-only) so a root that never hashes (`.removableVolume`) leaves the
     /// index as soon as its metadata is current, instead of staying pinned forever
@@ -245,13 +245,13 @@ private nonisolated func rootEnrichmentClaimQuery(
     limit: Int,
     hashRequired: Bool
 ) -> SQLQuery {
-    let indexName = EnrichmentLeaseGateway.rootIndexName(hashRequired: hashRequired)
+    let indexName = EnrichmentClaimGateway.rootIndexName(hashRequired: hashRequired)
     return SQLQuery(
         sql: """
         SELECT library_root_id, relative_path
         FROM media_asset INDEXED BY \(indexName)
         WHERE library_root_id = ?
-          AND (\(EnrichmentLeaseGateway.stalenessSQLPredicate(hashRequired: hashRequired)))
+          AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(hashRequired: hashRequired)))
           AND enrichment_claimed IS NULL
         ORDER BY best_capture_unix DESC, relative_path
         LIMIT ?
@@ -268,13 +268,13 @@ private nonisolated func globalEnrichmentClaimQuery(
     let placeholders = sqlPlaceholders(count: rootIDs.count)
     var arguments = rootIDs.map { $0 as any DatabaseValueConvertible }
     arguments.append(limit)
-    let indexName = EnrichmentLeaseGateway.globalIndexName(hashRequired: hashRequired)
+    let indexName = EnrichmentClaimGateway.globalIndexName(hashRequired: hashRequired)
     return SQLQuery(
         sql: """
         SELECT library_root_id, relative_path
         FROM media_asset INDEXED BY \(indexName)
         WHERE library_root_id IN (\(placeholders))
-          AND (\(EnrichmentLeaseGateway.stalenessSQLPredicate(hashRequired: hashRequired)))
+          AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(hashRequired: hashRequired)))
           AND enrichment_claimed IS NULL
         ORDER BY best_capture_unix DESC, library_root_id, relative_path
         LIMIT ?
@@ -297,7 +297,7 @@ private nonisolated func claimStoredAssetsNeedingEnrichment(
         UPDATE media_asset
         SET enrichment_claimed = 1
         WHERE (library_root_id, relative_path) IN (\(sqlTuplePlaceholders(rowCount: keys.count, columnCount: 2)))
-          AND (\(EnrichmentLeaseGateway.stalenessSQLPredicate(hashRequired: hashRequired)))
+          AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(hashRequired: hashRequired)))
           AND enrichment_claimed IS NULL
         """,
         arguments: StatementArguments(arguments)

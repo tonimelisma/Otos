@@ -1263,7 +1263,7 @@ extension CatalogStore {
         var candidates: [ClaimedEnrichmentCandidate] = []
         candidates.reserveCapacity(limit)
         var claimedIDs = Set<MediaAssetID>()
-        let uniquePriorityIDs = EnrichmentLeaseGateway.unclaimedPriorityIDs(priorityIDs, claimedIDs: &claimedIDs)
+        let uniquePriorityIDs = EnrichmentClaimGateway.unclaimedPriorityIDs(priorityIDs, claimedIDs: &claimedIDs)
         var waitMs = 0
         var execMs = 0
 
@@ -1335,7 +1335,7 @@ extension CatalogStore {
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
         let dbWriter = try database()
         try await dbWriter.write { db in
-            try EnrichmentLeaseGateway.releaseEnrichmentClaims(
+            try EnrichmentClaimGateway.releaseEnrichmentClaims(
                 ids: ids,
                 rootIDsByPath: rootIDsByPathBeforeWrite,
                 db: db
@@ -1350,7 +1350,7 @@ extension CatalogStore {
         let priorityAssetsByID = try await mediaAssets(for: ids)
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
         let dbWriter = try database()
-        let eligibleClaims = EnrichmentLeaseGateway.priorityClaimInputs(
+        let eligibleClaims = EnrichmentClaimGateway.priorityClaimInputs(
             ids: ids,
             assetsByID: priorityAssetsByID,
             rootIDsByPath: rootIDsByPathBeforeWrite,
@@ -1367,7 +1367,7 @@ extension CatalogStore {
                 guard candidates.count < limit else {
                     break
                 }
-                guard try EnrichmentLeaseGateway.claimEnrichmentAsset(
+                guard try EnrichmentClaimGateway.claimEnrichmentAsset(
                     libraryRootID: rootID,
                     relativePath: asset.relativePath,
                     hashRequired: hashRequired,
@@ -1425,7 +1425,7 @@ extension CatalogStore {
             ]
             for group in claimGroups where storedAssets.count < limit && !group.rootIDs.isEmpty {
                 let remaining = limit - storedAssets.count
-                let claimed = try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
+                let claimed = try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                     rootIDs: group.rootIDs,
                     limit: remaining,
                     hashRequired: group.hashRequired,
@@ -1570,7 +1570,7 @@ extension CatalogStore {
 
     private func clearAbandonedEnrichmentClaims(_ dbQueue: any DatabaseWriter) async throws {
         let clearedCount = try await dbQueue.write { db in
-            try EnrichmentLeaseGateway.clearEnrichmentClaims(db: db)
+            try EnrichmentClaimGateway.clearEnrichmentClaims(db: db)
         }
         guard clearedCount > 0 else {
             return
@@ -1964,7 +1964,7 @@ extension CatalogStore {
         }
         do {
             try await dbWriter.write { db in
-                try EnrichmentLeaseGateway.releaseEnrichmentClaims(rootID: rootRowID, db: db)
+                try EnrichmentClaimGateway.releaseEnrichmentClaims(rootID: rootRowID, db: db)
             }
         } catch {
             OtosLog.metadata.error(

@@ -200,7 +200,7 @@ extension CatalogStore {
         }
         // FROZEN 2026-08. This is the SQL that shipped; it is a historical record of
         // what existing catalogs contain, not a description of current behaviour.
-        // Never regenerate it from EnrichmentLeaseGateway, and never "fix" it to match
+        // Never regenerate it from EnrichmentClaimGateway, and never "fix" it to match
         // a newer predicate — doing so rewrites history for fresh installs only and
         // silently diverges them from every catalog already migrated through v12 in
         // the field. A new predicate needs a NEW migration. Text extracted verbatim
@@ -250,7 +250,7 @@ extension CatalogStore {
         // instead of staying pinned forever on `content_hash_xxh3_128 IS NULL`.
         //
         // FROZEN 2026-08, same rule as v12 above: this is a historical record, never
-        // regenerated from EnrichmentLeaseGateway. Text extracted verbatim from a live
+        // regenerated from EnrichmentClaimGateway. Text extracted verbatim from a live
         // migrated catalog.
         migrator.registerMigration("v13_hash_gated_enrichment_claim_indexes") { db in
             try db.execute(sql: """
@@ -1852,10 +1852,10 @@ private nonisolated func createOrderIndexes(_ db: Database) throws {
 private nonisolated func createEnrichmentClaimIndexes(
     _ db: Database,
     includeContentHash: Bool,
-    globalIndexName: String = EnrichmentLeaseGateway.broadGlobalIndexName,
-    rootIndexName: String = EnrichmentLeaseGateway.broadRootIndexName
+    globalIndexName: String = EnrichmentClaimGateway.broadGlobalIndexName,
+    rootIndexName: String = EnrichmentClaimGateway.broadRootIndexName
 ) throws {
-    let predicate = EnrichmentLeaseGateway.stalenessSQLPredicate(hashRequired: includeContentHash)
+    let predicate = EnrichmentClaimGateway.stalenessSQLPredicate(hashRequired: includeContentHash)
     try db.execute(
         sql: """
         CREATE INDEX \(globalIndexName)

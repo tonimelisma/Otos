@@ -54,12 +54,12 @@ struct CatalogStoreQueryPlanTests {
             descriptor: .default,
             scope: CatalogScopePredicate(rootIDs: [rootID1, rootID2])
         ))
-        let rootEnrichmentQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
+        let rootEnrichmentQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID1],
             limit: 4,
             hashRequired: true
         ))
-        let globalEnrichmentQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
+        let globalEnrichmentQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID1, rootID2],
             limit: 4,
             hashRequired: true
@@ -95,7 +95,7 @@ struct CatalogStoreQueryPlanTests {
         let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let rootID = try await insertEnrichmentClaimFixture(dbQueue, assetCount: 200, claimedCount: 50)
-        let claimQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
+        let claimQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID],
             limit: 4,
             hashRequired: true
@@ -135,7 +135,7 @@ struct CatalogStoreQueryPlanTests {
         let rootID = try await insertEnrichmentClaimFixture(dbQueue, assetCount: 3, claimedCount: 0)
 
         let claimed = try await dbQueue.write { db in
-            try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
+            try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [rootID],
                 limit: 2,
                 hashRequired: true,
@@ -173,12 +173,12 @@ struct CatalogStoreQueryPlanTests {
         let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
-        let rootMetadataOnlyQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
+        let rootMetadataOnlyQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID1],
             limit: 4,
             hashRequired: false
         ))
-        let globalMetadataOnlyQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
+        let globalMetadataOnlyQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID1, rootID2],
             limit: 4,
             hashRequired: false
@@ -189,8 +189,8 @@ struct CatalogStoreQueryPlanTests {
             let global = try explainPlan(db, query: globalMetadataOnlyQuery)
             return (root: root, global: global)
         }
-        #expect(plans.root.contains(EnrichmentLeaseGateway.metadataOnlyRootIndexName))
-        #expect(plans.global.contains(EnrichmentLeaseGateway.metadataOnlyGlobalIndexName))
+        #expect(plans.root.contains(EnrichmentClaimGateway.metadataOnlyRootIndexName))
+        #expect(plans.global.contains(EnrichmentClaimGateway.metadataOnlyGlobalIndexName))
     }
 
     /// Regression guard: a metadata-current asset with no digest is claimed by
@@ -225,7 +225,7 @@ struct CatalogStoreQueryPlanTests {
         }
 
         let metadataOnlyClaimed = try await dbQueue.write { db in
-            try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
+            try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [rootID],
                 limit: 4,
                 hashRequired: false,
@@ -235,7 +235,7 @@ struct CatalogStoreQueryPlanTests {
         #expect(metadataOnlyClaimed.isEmpty)
 
         let broadClaimed = try await dbQueue.write { db in
-            try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
+            try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [rootID],
                 limit: 4,
                 hashRequired: true,

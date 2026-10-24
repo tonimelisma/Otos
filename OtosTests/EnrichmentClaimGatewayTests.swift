@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-struct EnrichmentLeaseGatewayTests {
+struct EnrichmentClaimGatewayTests {
     private let rootPath = LibraryRootPath(rawValue: "/tmp/enrichment-lease-root")
     private let assetPath = MediaRelativePath(rawValue: "photo.jpg")
 
@@ -32,7 +32,7 @@ struct EnrichmentLeaseGatewayTests {
         )
         var claimedIDs: Set<MediaAssetID> = [first]
 
-        let unique = EnrichmentLeaseGateway.unclaimedPriorityIDs([first, second], claimedIDs: &claimedIDs)
+        let unique = EnrichmentClaimGateway.unclaimedPriorityIDs([first, second], claimedIDs: &claimedIDs)
 
         #expect(unique == [second])
         #expect(claimedIDs == [first, second])
@@ -63,7 +63,7 @@ struct EnrichmentLeaseGatewayTests {
         ]
         let rootIDsByPath = [rootPath: Int64(7)]
 
-        let eligible = EnrichmentLeaseGateway.priorityClaimInputs(
+        let eligible = EnrichmentClaimGateway.priorityClaimInputs(
             ids: [id, currentAsset.id],
             assetsByID: assetsByID,
             rootIDsByPath: rootIDsByPath,
@@ -78,14 +78,14 @@ struct EnrichmentLeaseGatewayTests {
 
     @Test func enrichmentClaimQueryReturnsNilForEmptyInputs() {
         #expect(
-            EnrichmentLeaseGateway.enrichmentClaimQuery(
+            EnrichmentClaimGateway.enrichmentClaimQuery(
                 rootIDs: [],
                 limit: 1,
                 hashRequired: true
             ) == nil
         )
         #expect(
-            EnrichmentLeaseGateway.enrichmentClaimQuery(
+            EnrichmentClaimGateway.enrichmentClaimQuery(
                 rootIDs: [1],
                 limit: 0,
                 hashRequired: true

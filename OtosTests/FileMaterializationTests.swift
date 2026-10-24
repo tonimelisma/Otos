@@ -274,18 +274,15 @@ struct FileMaterializationTests {
     }
 }
 
-/// Covers the polling retry/timeout bookkeeping that
-/// `materializationRerequestsUntilProviderClearsDataless` used to exercise indirectly
-/// through three real `Task.sleep` calls inside a fixed wall-clock deadline — flaky
-/// under a loaded parallel `script/verify.sh` run because the cooperative pool can
-/// stall any one of those sleeps arbitrarily. `materializationPollDecision` is pure
-/// (no clock reads, no I/O), so every case here is driven by synthetic instants built
-/// with `Instant.advanced(by:)` off a single real sample — no waiting, ever.
-struct MaterializationPollDecisionTests {
+/// Covers the re-request bookkeeping of one arrival-wait wake.
+/// `materializationWakeDecision` is pure (no clock reads, no I/O), so every case here is
+/// driven by synthetic instants built with `Instant.advanced(by:)` off a single real
+/// sample — no waiting, ever.
+struct MaterializationWakeDecisionTests {
     @Test func materializedStatusStopsRegardlessOfRetryTiming() {
         let now = ContinuousClock().now
         #expect(
-            FileMaterialization.materializationPollDecision(
+            FileMaterialization.materializationWakeDecision(
                 now: now,
                 nextRetry: now.advanced(by: .seconds(1)),
                 status: .materialized
@@ -296,7 +293,7 @@ struct MaterializationPollDecisionTests {
     @Test func datalessBeforeNextRetryWaits() {
         let now = ContinuousClock().now
         #expect(
-            FileMaterialization.materializationPollDecision(
+            FileMaterialization.materializationWakeDecision(
                 now: now,
                 nextRetry: now.advanced(by: .milliseconds(1)),
                 status: .dataless
@@ -307,14 +304,14 @@ struct MaterializationPollDecisionTests {
     @Test func datalessAtOrPastNextRetryRetriesNow() {
         let now = ContinuousClock().now
         #expect(
-            FileMaterialization.materializationPollDecision(
+            FileMaterialization.materializationWakeDecision(
                 now: now,
                 nextRetry: now,
                 status: .dataless
             ) == .retryNow
         )
         #expect(
-            FileMaterialization.materializationPollDecision(
+            FileMaterialization.materializationWakeDecision(
                 now: now.advanced(by: .milliseconds(1)),
                 nextRetry: now,
                 status: .dataless
@@ -325,7 +322,7 @@ struct MaterializationPollDecisionTests {
     @Test func unknownStatusStopsPolling() {
         let now = ContinuousClock().now
         #expect(
-            FileMaterialization.materializationPollDecision(
+            FileMaterialization.materializationWakeDecision(
                 now: now,
                 nextRetry: now,
                 status: .unknown
@@ -345,11 +342,11 @@ struct MaterializationPollDecisionTests {
         let materializesOnRequest = 3
 
         var tick = base
-        var finalDecision: MaterializationPollDecision?
+        var finalDecision: MaterializationWakeDecision?
         while finalDecision != .materialized {
             tick = tick.advanced(by: retryInterval)
             let status: FileMaterializationStatus = requestCount >= materializesOnRequest ? .materialized : .dataless
-            let decision = FileMaterialization.materializationPollDecision(
+            let decision = FileMaterialization.materializationWakeDecision(
                 now: tick,
                 nextRetry: nextRetry,
                 status: status

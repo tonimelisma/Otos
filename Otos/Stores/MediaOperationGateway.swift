@@ -14,7 +14,7 @@ nonisolated enum MediaOperationGateway {
         unreadableSourceIDs: Set<MediaAssetID> = [],
         db: Database
     ) throws -> [PlanningFileFacts] {
-        let settledPredicate = EnrichmentLeaseGateway.metadataStalenessSQLPredicate()
+        let settledPredicate = EnrichmentClaimGateway.metadataStalenessSQLPredicate()
         return try Row.fetchAll(
             db,
             sql: """

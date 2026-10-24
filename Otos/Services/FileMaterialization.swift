@@ -370,7 +370,7 @@ extension FileMaterialization {
                 )
                 lastBlocks = sample.blocks
             }
-            switch materializationPollDecision(now: clock.now, nextRetry: nextRetry, status: providers.status(url)) {
+            switch materializationWakeDecision(now: clock.now, nextRetry: nextRetry, status: providers.status(url)) {
             case .materialized:
                 return (.materialized, rerequestCount)
             case .retryNow:
@@ -437,23 +437,17 @@ extension FileMaterialization {
         }
     }
 
-    /// Pure decision for one polling tick once the deadline guard has already passed:
-    /// given the current status, has the file materialized, should a retry fire now,
-    /// or is it too soon since the last request? No I/O, no clock reads — the answer
-    /// is a threshold comparison against already-sampled instants — so this is
-    /// isolated from `Task.sleep` and the wall clock the way `FilesystemReconciler
-    /// .decide` sits outside its FSEvents stream. That lets retry-counting behavior be
-    /// tested by constructing synthetic instants with `Instant.advanced(by:)` instead
-    /// of racing real scheduler timing, which is what made
-    /// `materializationRerequestsUntilProviderClearsDataless` flake under a loaded
-    /// parallel test run: three real `Task.sleep(for: .milliseconds(1))` calls need to
-    /// land inside a fixed wall-clock budget, and the cooperative pool can delay any
-    /// one of them arbitrarily under contention.
-    nonisolated static func materializationPollDecision(
+    /// Pure decision for one wake of `awaitArrival` once the deadline guard has passed:
+    /// given the current status, has the file materialized, should a re-request fire
+    /// now, or is it too soon since the last one? No I/O and no clock reads — the
+    /// answer is a threshold comparison against already-sampled instants, the way
+    /// `FilesystemReconciler.decide` sits outside its FSEvents stream — so re-request
+    /// counting is tested with synthetic instants built by `Instant.advanced(by:)`.
+    nonisolated static func materializationWakeDecision(
         now: ContinuousClock.Instant,
         nextRetry: ContinuousClock.Instant,
         status: FileMaterializationStatus
-    ) -> MaterializationPollDecision {
+    ) -> MaterializationWakeDecision {
         switch status {
         case .materialized:
             .materialized
@@ -539,15 +533,15 @@ nonisolated struct FileMaterializationProviders {
     let changes: @Sendable (URL) -> AsyncStream<Void>
 }
 
-/// Outcome of `materializationPollDecision`, one polling tick's pure verdict.
-nonisolated enum MaterializationPollDecision: Equatable {
-    /// The provider reports the file materialized; stop polling.
+/// Outcome of `materializationWakeDecision`: what one wake of the arrival wait does.
+nonisolated enum MaterializationWakeDecision: Equatable {
+    /// The provider reports the file materialized; the wait ends.
     case materialized
     /// Still dataless, and `requestRetryInterval` has elapsed since the last request.
     case retryNow
     /// Still dataless, but too soon to re-request.
     case waitMore
-    /// The provider's status could not be read; stop polling.
+    /// The provider's status could not be read; the wait ends.
     case statusUnavailable
 }
 

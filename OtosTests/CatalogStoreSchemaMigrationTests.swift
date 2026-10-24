@@ -277,8 +277,8 @@ struct CatalogStoreSchemaMigrationTests {
                     XXH3Digest128.empty.data, 1, 1000,
                 ]
             )
-            try db.drop(index: EnrichmentLeaseGateway.metadataOnlyGlobalIndexName)
-            try db.drop(index: EnrichmentLeaseGateway.metadataOnlyRootIndexName)
+            try db.drop(index: EnrichmentClaimGateway.metadataOnlyGlobalIndexName)
+            try db.drop(index: EnrichmentClaimGateway.metadataOnlyRootIndexName)
             try db.execute(
                 sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
                 arguments: ["v13_hash_gated_enrichment_claim_indexes"]
@@ -293,10 +293,10 @@ struct CatalogStoreSchemaMigrationTests {
         let indexNames = try await dbQueue.read { db in
             try String.fetchSet(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index'")
         }
-        #expect(indexNames.contains(EnrichmentLeaseGateway.broadGlobalIndexName))
-        #expect(indexNames.contains(EnrichmentLeaseGateway.broadRootIndexName))
-        #expect(indexNames.contains(EnrichmentLeaseGateway.metadataOnlyGlobalIndexName))
-        #expect(indexNames.contains(EnrichmentLeaseGateway.metadataOnlyRootIndexName))
+        #expect(indexNames.contains(EnrichmentClaimGateway.broadGlobalIndexName))
+        #expect(indexNames.contains(EnrichmentClaimGateway.broadRootIndexName))
+        #expect(indexNames.contains(EnrichmentClaimGateway.metadataOnlyGlobalIndexName))
+        #expect(indexNames.contains(EnrichmentClaimGateway.metadataOnlyRootIndexName))
 
         // The pre-existing digest survives and its row is not re-claimable under the
         // metadata-only predicate the removable root now claims with.
@@ -309,7 +309,7 @@ struct CatalogStoreSchemaMigrationTests {
         }
         #expect(persistedHash == XXH3Digest128.empty.data)
         let metadataOnlyClaimed = try await dbQueue.write { db in
-            try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
+            try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [removableRootID],
                 limit: 4,
                 hashRequired: false,
