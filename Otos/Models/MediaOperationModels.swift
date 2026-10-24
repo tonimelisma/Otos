@@ -209,8 +209,8 @@ nonisolated enum ImportStopReason: Equatable, Sendable {
     /// The next entry would have left the destination volume below
     /// `FreeSpaceFloor.bytes`, or a write refused for space first
     /// (ADR 0027). `bytesFree` is the capacity read at the stop, for the
-    /// bar's clause.
-    case diskFloor(bytesFree: Int64)
+    /// bar's clause; `nil` when the volume did not report it.
+    case diskFloor(bytesFree: Int64?)
 }
 
 /// The free space Otos never takes a volume below (ADR 0027): the import
@@ -353,13 +353,65 @@ nonisolated func elapsedMilliseconds(
     "\(DiagnosticsTiming.milliseconds(from: start, to: end))"
 }
 
+/// A byte total that may leave some items unsized: `knownBytes` sums the sizes that are
+/// known and `unknownCount` counts the items whose size is not. It is exact only when
+/// nothing is unsized, and a lower bound otherwise; an unknown size is never taken as zero.
+nonisolated struct PartialByteCount: Equatable, Sendable, ExpressibleByIntegerLiteral {
+    var knownBytes: Int64
+    var unknownCount: Int
+
+    static let zero = PartialByteCount(knownBytes: 0, unknownCount: 0)
+
+    init(knownBytes: Int64, unknownCount: Int) {
+        self.knownBytes = knownBytes
+        self.unknownCount = unknownCount
+    }
+
+    /// An exact count: every size known.
+    init(integerLiteral value: Int64) {
+        self.init(knownBytes: value, unknownCount: 0)
+    }
+
+    init(sizes: some Sequence<Int64?>) {
+        self = .zero
+        for size in sizes {
+            add(size)
+        }
+    }
+
+    var isExact: Bool {
+        unknownCount == 0
+    }
+
+    mutating func add(_ size: Int64?) {
+        if let size {
+            knownBytes += size
+        } else {
+            unknownCount += 1
+        }
+    }
+
+    static func + (lhs: PartialByteCount, rhs: PartialByteCount) -> PartialByteCount {
+        PartialByteCount(knownBytes: lhs.knownBytes + rhs.knownBytes, unknownCount: lhs.unknownCount + rhs.unknownCount)
+    }
+}
+
 nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {
     var copyCount: Int
     var skipCount: Int
     var blockedCount: Int
     var companionCopyCount: Int
+    /// The sizes of the items to copy that the plan knows. An item whose size is unknown
+    /// is counted in `unknownSizeCopyCount` instead, and the executor refuses it before it
+    /// copies a byte, so this is what the run can copy.
     var copyBytes: Int64
+    var unknownSizeCopyCount: Int
     var excludedCount: Int
+
+    /// What the items to copy weigh, as far as it is known.
+    var copyByteCount: PartialByteCount {
+        PartialByteCount(knownBytes: copyBytes, unknownCount: unknownSizeCopyCount)
+    }
 
     init(
         copyCount: Int,
@@ -367,6 +419,7 @@ nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {
         blockedCount: Int,
         companionCopyCount: Int,
         copyBytes: Int64,
+        unknownSizeCopyCount: Int = 0,
         excludedCount: Int = 0
     ) {
         self.copyCount = copyCount
@@ -374,6 +427,7 @@ nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {
         self.blockedCount = blockedCount
         self.companionCopyCount = companionCopyCount
         self.copyBytes = copyBytes
+        self.unknownSizeCopyCount = unknownSizeCopyCount
         self.excludedCount = excludedCount
     }
 }

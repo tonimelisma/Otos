@@ -49,9 +49,9 @@ nonisolated struct TrashStatusPresentation: Equatable, Sendable {
             return TrashStatusPresentation(
                 badge: .none,
                 primaryLine: "Moving \(items(state.runTotal)) to the Trash",
-                secondaryLine: state.bytesToDownload > 0
-                    ? "\(ImportBarByteFormat.string(bytes: state.bytesToDownload)) to download"
-                    : nil,
+                secondaryLine: state.bytesToDownload == .zero
+                    ? nil
+                    : ImportBarByteFormat.phrase(state.bytesToDownload).map { "\($0) to download" },
                 progress: (state.movedCount, state.runTotal)
             )
         }

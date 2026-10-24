@@ -144,7 +144,7 @@ actor MediaImportExecutor {
     /// The floor stop's one fact for the bar: the capacity read when the
     /// run stopped (ADR 0027).
     private struct SpaceStop: Sendable {
-        let bytesFree: Int64
+        let bytesFree: Int64?
     }
 
     /// What erasing landed entries one by one, as they settled, did. A path it erased or
@@ -577,7 +577,7 @@ actor MediaImportExecutor {
                     // never landed and the re-plan offers it again — so it is
                     // neither counted nor revealed; it ends admission.
                     if spaceStop == nil {
-                        spaceStop = SpaceStop(bytesFree: self.volumeCapacity(destinationURL) ?? 0)
+                        spaceStop = SpaceStop(bytesFree: self.volumeCapacity(destinationURL))
                         OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "diskFloor", fields: [
                             "run": context.runID,
                             "batch": "\(context.batch.unixMilliseconds)",

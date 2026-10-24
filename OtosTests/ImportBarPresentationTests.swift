@@ -51,14 +51,16 @@ struct ImportBarPresentationTests {
         skipCount: Int = 0,
         blockedCount: Int = 0,
         companionCopyCount: Int = 0,
-        copyBytes: Int64 = 0
+        copyBytes: Int64 = 0,
+        unknownSizeCopyCount: Int = 0
     ) -> MediaOperationPlanTotals {
         MediaOperationPlanTotals(
             copyCount: copyCount,
             skipCount: skipCount,
             blockedCount: blockedCount,
             companionCopyCount: companionCopyCount,
-            copyBytes: copyBytes
+            copyBytes: copyBytes,
+            unknownSizeCopyCount: unknownSizeCopyCount
         )
     }
 
@@ -906,6 +908,27 @@ struct ImportBarPresentationTests {
         )
         #expect(unexpected.primaryLine == "Couldn't prepare the import")
         #expect(unexpected.secondaryLine == .none)
+    }
+
+    /// A weight is stated only when every size is known; a partial sum would read as the
+    /// whole, and the capacity at a floor stop is stated only when the volume reported it.
+    @Test func aFigureThatIsNotKnownIsNotStated() {
+        let ready = Self.map(Self.presentation(
+            state: .ready(
+                summary: Self.totals(copyCount: 42, copyBytes: 68_000_000, unknownSizeCopyCount: 1),
+                generation: 1,
+                skippedPackageCount: 0
+            )
+        ))
+        #expect(ready.primaryLine == "42 new items")
+        let stopped = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 268), generation: 2, skippedPackageCount: 0),
+            copiedJustNow: 412,
+            isFullyClean: false,
+            stopReason: .diskFloor(bytesFree: nil),
+            plannedCount: 680
+        ))
+        #expect(stopped.secondaryLine == .plain("Not enough room on the disk"))
     }
 
     /// ADR 0027: running out of room is a Stopped outcome, not a failure. The

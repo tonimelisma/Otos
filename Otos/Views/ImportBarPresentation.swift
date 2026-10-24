@@ -626,7 +626,8 @@ nonisolated enum ImportBarPresentation {
         case .user:
             copiedCount > 0 ? "They're in \(destinationName)" : nil
         case let .diskFloor(bytesFree):
-            "Not enough room on the disk · \(ImportBarByteFormat.string(bytes: bytesFree)) left"
+            bytesFree.map { "Not enough room on the disk · \(ImportBarByteFormat.string(bytes: $0)) left" }
+                ?? "Not enough room on the disk"
         }
         guard let (summary, attentionItems) = remainder else {
             // The re-plan has not landed yet: the act is coming, its count is not.
@@ -812,8 +813,12 @@ nonisolated enum ImportBarPresentation {
 
     // MARK: - Shared copy
 
+    /// The count, then what the items weigh. A weight is stated only when every size is
+    /// known: a partial sum here would read as the whole.
     private static func newItemsHeadline(summary: MediaOperationPlanTotals) -> String {
-        "\(summary.copyCount) \(summary.copyCount == 1 ? "new item" : "new items") · \(ImportBarByteFormat.string(bytes: summary.copyBytes))"
+        let count = "\(summary.copyCount) \(summary.copyCount == 1 ? "new item" : "new items")"
+        guard summary.copyByteCount.isExact else { return count }
+        return "\(count) · \(ImportBarByteFormat.string(bytes: summary.copyBytes))"
     }
 
     private static func alreadyInLibraryLine(skipCount: Int, destinationName: String) -> String? {
@@ -841,5 +846,16 @@ nonisolated enum ImportBarByteFormat {
             return String(format: "%.1f GB", gigabytes)
         }
         return "\(Int(gigabytes.rounded())) GB"
+    }
+
+    /// A partial total as a phrase: the figure when it is exact, `lowerBound` and the
+    /// figure when some sizes are unknown, and `nil` when no size is known, since no
+    /// figure would be true.
+    static func phrase(_ count: PartialByteCount, lowerBound: String = "at least") -> String? {
+        if count.isExact {
+            return string(bytes: count.knownBytes)
+        }
+        guard count.knownBytes > 0 else { return nil }
+        return "\(lowerBound) \(string(bytes: count.knownBytes))"
     }
 }

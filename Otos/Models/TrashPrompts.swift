@@ -53,15 +53,20 @@ nonisolated struct LargeTrashDownloadPrompt: Equatable, Sendable {
     static let thresholdBytes: Int64 = 100_000_000
 
     let ids: [MediaAssetID]
-    let bytes: Int64
+    /// What the download weighs. Sizes the catalog does not know are not counted, so the
+    /// title states the known part as a lower bound when there are any.
+    let bytes: PartialByteCount
 
-    /// Whether a command needing `bytes` of downloads must ask first.
-    static func asks(bytes: Int64, preference: Bool) -> Bool {
-        preference && bytes > thresholdBytes
+    /// Whether a command needing `bytes` of downloads must ask first: when what is known of
+    /// it is already over the threshold. A download the catalog cannot size proceeds on its
+    /// own safeguards, the free-space floor and a failed download, which both stop and ask.
+    static func asks(bytes: PartialByteCount, preference: Bool) -> Bool {
+        preference && bytes.knownBytes > thresholdBytes
     }
 
     var title: String {
-        let size = ImportBarByteFormat.string(bytes: bytes)
+        let known = ImportBarByteFormat.string(bytes: bytes.knownBytes)
+        let size = bytes.isExact ? known : "at Least \(known)"
         if ids.count == 1, let only = ids.first {
             let name = only.relativePath.fileName
             return "Download \(size) to Move “\(name)” to Trash?"
