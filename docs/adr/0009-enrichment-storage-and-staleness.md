@@ -301,7 +301,7 @@ Adjacent decisions requiring separate ADRs or specs:
 
 11. **The enrichment claim queries pin their partial index with `INDEXED BY`, and
     this is deliberate, measured policy, not an unexamined default.** Both claim
-    queries (`EnrichmentLeaseGateway.rootEnrichmentClaimQuery`/
+    queries (`EnrichmentClaimGateway.rootEnrichmentClaimQuery`/
     `globalEnrichmentClaimQuery`) name their partial index explicitly rather than
     letting the planner choose freely. Measured 2026-08-03 against a read-only copy
     of the live catalog (28,392 assets): for the single-root

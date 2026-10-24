@@ -2,7 +2,7 @@ import Foundation
 import GRDB
 
 // Shared persistence value types used by `CatalogStore`, `CatalogQueryGateway`,
-// and `EnrichmentLeaseGateway`. Free (not nested under `CatalogStore`) so the
+// and `EnrichmentClaimGateway`. Free (not nested under `CatalogStore`) so the
 // gateways depend on SQL/mapping types rather than the actor type itself.
 //
 // SQLite row IDs stay confined to these stored records. Product identity remains

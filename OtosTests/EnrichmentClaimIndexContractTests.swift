@@ -5,7 +5,7 @@ import Testing
 
 /// Guards the frozen claim indexes: the v12/v13 migration bodies in
 /// `CatalogStorePersistence.swift` inline literal, frozen `CREATE INDEX` SQL rather
-/// than calling `EnrichmentLeaseGateway.stalenessSQLPredicate` at migration time, so a
+/// than calling `EnrichmentClaimGateway.stalenessSQLPredicate` at migration time, so a
 /// fresh install's stored index text can never silently diverge from an existing
 /// catalog's just because the predicate builder was edited. These tests assert the
 /// *current* predicate still implies the frozen index (the everyday case) and that a
@@ -14,12 +14,12 @@ import Testing
 struct EnrichmentClaimIndexContractTests {
     @Test func broadIndexesImplyCurrentHashRequiredPredicate() async throws {
         let dbQueue = try await Self.migratedDatabase()
-        let rootQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
+        let rootQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [1],
             limit: 4,
             hashRequired: true
         ))
-        let globalQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
+        let globalQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [1, 2],
             limit: 4,
             hashRequired: true
@@ -30,18 +30,18 @@ struct EnrichmentClaimIndexContractTests {
                 global: Self.explainPlan(db, query: globalQuery)
             )
         }
-        #expect(plans.root.contains(EnrichmentLeaseGateway.broadRootIndexName))
-        #expect(plans.global.contains(EnrichmentLeaseGateway.broadGlobalIndexName))
+        #expect(plans.root.contains(EnrichmentClaimGateway.broadRootIndexName))
+        #expect(plans.global.contains(EnrichmentClaimGateway.broadGlobalIndexName))
     }
 
     @Test func metadataOnlyIndexesImplyCurrentMetadataOnlyPredicate() async throws {
         let dbQueue = try await Self.migratedDatabase()
-        let rootQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
+        let rootQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [1],
             limit: 4,
             hashRequired: false
         ))
-        let globalQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
+        let globalQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [1, 2],
             limit: 4,
             hashRequired: false
@@ -52,8 +52,8 @@ struct EnrichmentClaimIndexContractTests {
                 global: Self.explainPlan(db, query: globalQuery)
             )
         }
-        #expect(plans.root.contains(EnrichmentLeaseGateway.metadataOnlyRootIndexName))
-        #expect(plans.global.contains(EnrichmentLeaseGateway.metadataOnlyGlobalIndexName))
+        #expect(plans.root.contains(EnrichmentClaimGateway.metadataOnlyRootIndexName))
+        #expect(plans.global.contains(EnrichmentClaimGateway.metadataOnlyGlobalIndexName))
     }
 
     /// The negative twin. Without this, the frozen strings above look like redundant
@@ -86,7 +86,7 @@ struct EnrichmentClaimIndexContractTests {
         """
         let sql = """
         SELECT library_root_id, relative_path
-        FROM media_asset INDEXED BY \(EnrichmentLeaseGateway.broadRootIndexName)
+        FROM media_asset INDEXED BY \(EnrichmentClaimGateway.broadRootIndexName)
         WHERE library_root_id = ?
           AND (\(reparenthesized))
           AND enrichment_claimed IS NULL
