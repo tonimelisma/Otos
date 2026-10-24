@@ -127,8 +127,7 @@ struct CatalogStoreEnrichmentTests {
         let store = CatalogStore(
             location: .inMemory,
             scanner: singleFileScanner(rel, mtime: mtime),
-            filesystemWatcher: watcher,
-            filesystemEventDebounce: .milliseconds(20)
+            filesystemWatcher: watcher
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
@@ -281,8 +280,7 @@ struct CatalogStoreEnrichmentTests {
         let store = CatalogStore(
             location: .databaseFile(databaseURL),
             scanner: singleFileScanner(rel, mtime: mtime),
-            filesystemWatcher: watcher,
-            filesystemEventDebounce: .milliseconds(20)
+            filesystemWatcher: watcher
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
@@ -520,8 +518,7 @@ struct CatalogStoreEnrichmentTests {
         let store = CatalogStore(
             location: .databaseFile(databaseURL),
             scanner: presenceScanner(rel, present: present),
-            filesystemWatcher: watcher,
-            filesystemEventDebounce: .milliseconds(20)
+            filesystemWatcher: watcher
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)

@@ -49,7 +49,6 @@ struct EnrichmentCoordinatorTests {
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             enrichConcurrency: 8,
             claimBatchSize: 8,
-            applyFlushInterval: .seconds(60),
             admissionPolicy: policy
         )
         await coordinator.start()
@@ -109,8 +108,7 @@ struct EnrichmentCoordinatorTests {
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             enrichConcurrency: 1,
-            claimBatchSize: 3,
-            applyFlushInterval: .seconds(60)
+            claimBatchSize: 3
         )
         await coordinator.start()
         await blocker.waitForStarted()
@@ -143,8 +141,7 @@ struct EnrichmentCoordinatorTests {
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             enrichConcurrency: 1,
-            claimBatchSize: 3,
-            applyFlushInterval: .seconds(60)
+            claimBatchSize: 3
         )
         await coordinator.start()
         await enrichment.waitForStartedCount(1)
@@ -239,8 +236,7 @@ struct EnrichmentCoordinatorTests {
                 await state.materialize(url.path(percentEncoded: false))
                 return .testMaterialized
             },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
-            applyFlushInterval: .milliseconds(1)
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
         await coordinator.start()
 
@@ -299,8 +295,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: enricher,
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
-            applyFlushInterval: .milliseconds(1)
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
         await coordinator.start()
 
@@ -344,8 +339,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: enricher,
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
-            applyFlushInterval: .milliseconds(1)
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
         await coordinator.start()
 
@@ -386,8 +380,7 @@ struct EnrichmentCoordinatorTests {
                 Issue.record("materialize must not run for zero-byte short-circuit")
                 return .testMaterialized
             },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
-            applyFlushInterval: .milliseconds(1)
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
         await coordinator.start()
         let enriched = try await waitForCatalogStoreState(store) {
@@ -433,8 +426,7 @@ struct EnrichmentCoordinatorTests {
             enricher: MediaEnricher { _, _, _, _, _ in .notMaterialized },
             materializationRequester: materializer,
             readinessChecker: TestEnrichmentReadinessChecker(result: .dataless),
-            claimBatchSize: 32,
-            applyFlushInterval: .seconds(60)
+            claimBatchSize: 32
         )
         await materializer.start()
         await coordinator.start()
@@ -1107,8 +1099,7 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: enricher,
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
-            applyFlushInterval: .milliseconds(1)
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
         await coordinator.start()
 
@@ -1338,8 +1329,7 @@ private func visibleLifecycleCoordinator(
         materialize: { _ in .testMaterialized },
         readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
         enrichConcurrency: 2,
-        claimBatchSize: 2,
-        applyFlushInterval: .milliseconds(1)
+        claimBatchSize: 2
     )
 }
 

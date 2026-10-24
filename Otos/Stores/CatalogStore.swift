@@ -36,8 +36,8 @@ nonisolated struct ClaimedEnrichmentCandidate: Sendable {
 /// membership, launch scans, detach, and Forget. Filesystem scans and device catalog
 /// batches write SQLite and notify consumers only when those writes actually inserted,
 /// updated, or deleted rows. While the app runs, `CatalogFilesystemWatcher` forwards
-/// macOS events to per-root debounced reconciliation via `FilesystemReconciler`
-/// (pure batch classification) plus Store-owned debounce/execution: safe single-file
+/// macOS events, in order, to one reconciliation pass per root via `FilesystemReconciler`
+/// (pure batch classification) plus Store-owned execution: safe single-file
 /// events update one row and unsafe events fall back to the full scan pipeline. Views
 /// never access persistence directly. The app owns one Store for the process lifetime;
 /// `shutdown()` is therefore a cancellation and watcher boundary, while the database
@@ -219,9 +219,11 @@ actor CatalogStore {
     private let location: Location
     private let scanner: CatalogScanner
     private let filesystemWatcher: CatalogFilesystemWatcher
+    /// How often a running scan flushes what it has found: at most once a second. A rate
+    /// limit standing on a measurement: a 20,000-file scan took 8–9 s at 1 s, 11–12 s at
+    /// 100 ms and over a minute flushing every file, since each flush is a write
+    /// transaction and a change notification (`docs/research/2026-10-23-cadence-audit.md`).
     private let scanCadence: Duration
-    private let filesystemEventDebounce: Duration
-    private let filesystemEventSleep: @Sendable (Duration) async -> Void
     private let initialLoadDidRead: (@Sendable () async -> Void)?
     private let importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)?
     private var dbWriter: (any DatabaseWriter)?
@@ -237,28 +239,35 @@ actor CatalogStore {
     private var scanLeases = ScanLeaseController()
     private var currentScanTask: Task<Void, Never>?
     private var filesystemWatchingStarted = false
+    private var filesystemEventSink: AsyncStream<FilesystemEvent>.Continuation?
+    private var filesystemEventConsumer: Task<Void, Never>?
     /// True while `afterFilesystemLeaseCleared` revisits every dirty root so a
     /// mid-pass `enqueueScans` cannot start the next full-root scan early.
     private var isRevisitingDirtyRoots = false
     private var filesystemWatchingArmed: Set<LibraryRootPath> = []
-    private var filesystemDebounceTasks: [LibraryRootPath: Task<Void, Never>] = [:]
-    /// Which debounce task is current per root, so a finished task clears its entry
-    /// only when no newer event has replaced it.
-    private var filesystemDebounceGenerations: [LibraryRootPath: UInt64] = [:]
+    /// One pass per root acts on that root's filesystem events. Events that arrive while
+    /// it awaits join `filesystemEventBatches` and the same pass takes them next, so a
+    /// burst is coalesced by the work itself, never by waiting for a quiet period.
+    private var filesystemEventPasses: [LibraryRootPath: Task<Void, Never>] = [:]
+    /// Which pass is current per root, so a pass that ends clears its entry only when a
+    /// cancellation has not already replaced it.
+    private var filesystemEventPassGenerations: [LibraryRootPath: UInt64] = [:]
     private var filesystemEventBatches: [LibraryRootPath: [FilesystemEvent]] = [:]
     /// Filesystem events this Store has handled — dropped, deferred or batched. With
     /// `isFilesystemQuiescent` it says what the Store did with an event, so a caller
     /// never has to guess how long event delivery and reconciliation take.
     private(set) var handledFilesystemEventCount = 0
+    /// Filesystem events a pass has taken from its batch and classified, so a caller can
+    /// wait for the dirt they record rather than for their intake alone.
+    private(set) var classifiedFilesystemEventCount = 0
     /// Callers that found the initial load already running and awaited it instead of
     /// starting their own database read.
     private(set) var joinedInitialLoadCount = 0
 
-    /// True when no filesystem event is waiting out its debounce or unprocessed in a
-    /// batch, no scan is active or queued, and no dirty scope is retained: everything
+    /// True when no filesystem event is being acted on or unprocessed in a batch, no scan is active or queued, and no dirty scope is retained: everything
     /// the Store was told about the filesystem has been acted on.
     var isFilesystemQuiescent: Bool {
-        filesystemDebounceTasks.isEmpty
+        filesystemEventPasses.isEmpty
             && filesystemEventBatches.isEmpty
             && scanLeases.activeScan == nil
             && scanLeases.pendingScanPaths.isEmpty
@@ -295,10 +304,6 @@ actor CatalogStore {
         scanner: CatalogScanner = .live,
         filesystemWatcher: CatalogFilesystemWatcher = .live,
         scanCadence: Duration = .seconds(1),
-        filesystemEventDebounce: Duration = .seconds(1),
-        filesystemEventSleep: @escaping @Sendable (Duration) async -> Void = { duration in
-            try? await Task.sleep(for: duration)
-        },
         initialLoadDidRead: (@Sendable () async -> Void)? = nil,
         importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)? = nil
     ) {
@@ -306,8 +311,6 @@ actor CatalogStore {
         self.scanner = scanner
         self.filesystemWatcher = filesystemWatcher
         self.scanCadence = scanCadence
-        self.filesystemEventDebounce = filesystemEventDebounce
-        self.filesystemEventSleep = filesystemEventSleep
         self.initialLoadDidRead = initialLoadDidRead
         self.importJournalFailure = importJournalFailure
     }
@@ -1965,7 +1968,7 @@ extension CatalogStore {
     @discardableResult
     private func cancelRuntimeWork(for path: LibraryRootPath) -> Task<Void, Never>? {
         unrequestedLoadedRootPaths.removeAll { $0 == path }
-        cancelFilesystemDebounce(for: path)
+        cancelFilesystemEventPass(for: path)
         filesystemDirty.removeValue(forKey: path)
         lastSuccessfulFullRootScanAt.removeValue(forKey: path)
         knownMaterializationSuppression.removeAll(under: path)
@@ -2503,11 +2506,15 @@ extension CatalogStore {
         integrityScanTask?.cancel()
         integrityScanTask = nil
         scanLeases.resetAll()
-        cancelAllFilesystemDebounces()
+        cancelAllFilesystemEventPasses()
         filesystemDirty.removeAll()
         lastSuccessfulFullRootScanAt.removeAll()
         knownMaterializationSuppression.clear()
         filesystemWatcher.stop()
+        filesystemEventSink?.finish()
+        filesystemEventSink = nil
+        filesystemEventConsumer?.cancel()
+        filesystemEventConsumer = nil
         filesystemWatchingStarted = false
         filesystemWatchingArmed.removeAll()
         notifyCatalogChanged()
@@ -3463,13 +3470,21 @@ private extension CatalogStore {
             return
         }
         filesystemWatchingStarted = true
-        filesystemWatcher.start(watchedRootPaths) { [weak self] event in
-            // FSEvents reaches us through a synchronous C callback. The Store
-            // actor is still the owner of debounce and scan scheduling, so the
-            // callback performs only this actor hop.
-            Task {
-                await self?.handleFilesystemEvent(event)
+        // FSEvents reaches us through a synchronous C callback. Events travel one
+        // ordered stream to one consumer on this actor (ADR 0032), which holds the Store
+        // weakly while it waits and ends with it.
+        let (events, sink) = AsyncStream<FilesystemEvent>.makeStream(bufferingPolicy: .unbounded)
+        filesystemEventSink = sink
+        filesystemEventConsumer = Task { [weak self] in
+            for await event in events {
+                guard let self else {
+                    return
+                }
+                await handleFilesystemEvent(event)
             }
+        }
+        filesystemWatcher.start(watchedRootPaths) { event in
+            sink.yield(event)
         }
     }
 
@@ -3478,10 +3493,10 @@ private extension CatalogStore {
     }
 
     private func handleFilesystemEvent(_ event: FilesystemEvent) {
-        let signpost = OtosSignpost.catalog.beginInterval("FilesystemEventDebounce")
+        let signpost = OtosSignpost.catalog.beginInterval("FilesystemEventIntake")
         defer {
             handledFilesystemEventCount += 1
-            OtosSignpost.catalog.endInterval("FilesystemEventDebounce", signpost)
+            OtosSignpost.catalog.endInterval("FilesystemEventIntake", signpost)
         }
 
         guard let root = CatalogPath.owningRoot(for: event.path, among: roots.keys) else {
@@ -3515,7 +3530,7 @@ private extension CatalogStore {
             return
         }
         filesystemEventBatches[root, default: []].append(event)
-        debounceFilesystemReconcile(for: root)
+        startFilesystemEventPassIfIdle(for: root)
     }
 
     private func recordFilesystemEventDrop(path: String, root: LibraryRootPath?, reason: String) {
@@ -3545,20 +3560,20 @@ private extension CatalogStore {
         )
     }
 
-    private func debounceFilesystemReconcile(for root: LibraryRootPath) {
-        filesystemDebounceTasks[root]?.cancel()
-        let debounce = filesystemEventDebounce
-        let sleep = filesystemEventSleep
-        let generation = (filesystemDebounceGenerations[root] ?? 0) &+ 1
-        filesystemDebounceGenerations[root] = generation
-        filesystemDebounceTasks[root] = Task { [root, sleep] in
-            await sleep(debounce)
-            guard !Task.isCancelled else {
-                return
+    private func startFilesystemEventPassIfIdle(for root: LibraryRootPath) {
+        guard filesystemEventPasses[root] == nil else {
+            return
+        }
+        let generation = (filesystemEventPassGenerations[root] ?? 0) &+ 1
+        filesystemEventPassGenerations[root] = generation
+        filesystemEventPasses[root] = Task { [root] in
+            while !Task.isCancelled, filesystemEventBatches[root]?.isEmpty == false {
+                await processFilesystemEventBatch(for: root)
             }
-            await processFilesystemEventBatch(for: root)
-            if filesystemDebounceGenerations[root] == generation {
-                filesystemDebounceTasks.removeValue(forKey: root)
+            // Checked and cleared with no await between them: an event that arrives
+            // after this either finds the pass gone and starts one, or was taken above.
+            if filesystemEventPassGenerations[root] == generation {
+                filesystemEventPasses.removeValue(forKey: root)
             }
         }
     }
@@ -3658,6 +3673,7 @@ private extension CatalogStore {
             isArmed: filesystemWatchingArmed.contains(root),
             isAvailable: rootIsAvailable(root)
         )
+        classifiedFilesystemEventCount += pendingEvents.count
 
         switch decision {
         case let .drop(reason):
@@ -4154,19 +4170,22 @@ private extension CatalogStore {
         )
     }
 
-    private func cancelFilesystemDebounce(for root: LibraryRootPath) {
-        filesystemDebounceTasks[root]?.cancel()
-        filesystemDebounceTasks.removeValue(forKey: root)
-        filesystemDebounceGenerations.removeValue(forKey: root)
+    private func cancelFilesystemEventPass(for root: LibraryRootPath) {
+        filesystemEventPasses[root]?.cancel()
+        filesystemEventPasses.removeValue(forKey: root)
+        filesystemEventPassGenerations[root] = (filesystemEventPassGenerations[root] ?? 0) &+ 1
         filesystemEventBatches.removeValue(forKey: root)
         filesystemDirty.removeValue(forKey: root)
     }
 
-    private func cancelAllFilesystemDebounces() {
-        for task in filesystemDebounceTasks.values {
+    private func cancelAllFilesystemEventPasses() {
+        for task in filesystemEventPasses.values {
             task.cancel()
         }
-        filesystemDebounceTasks.removeAll()
+        filesystemEventPasses.removeAll()
+        for root in filesystemEventPassGenerations.keys {
+            filesystemEventPassGenerations[root] = (filesystemEventPassGenerations[root] ?? 0) &+ 1
+        }
         filesystemEventBatches.removeAll()
         filesystemDirty.removeAll()
     }

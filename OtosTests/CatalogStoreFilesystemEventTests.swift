@@ -16,8 +16,7 @@ struct CatalogStoreFilesystemEventTests {
         let store = CatalogStore(
             location: .inMemory,
             scanner: recordingScanner(recorder),
-            filesystemWatcher: watcher,
-            filesystemEventDebounce: .milliseconds(20)
+            filesystemWatcher: watcher
         )
 
         try await store.start(scansSavedLibraries: false)
@@ -57,8 +56,7 @@ struct CatalogStoreFilesystemEventTests {
         let store = CatalogStore(
             location: .inMemory,
             scanner: recordingScanner(recorder),
-            filesystemWatcher: watcher,
-            filesystemEventDebounce: .milliseconds(20)
+            filesystemWatcher: watcher
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
@@ -83,81 +81,39 @@ struct CatalogStoreFilesystemEventTests {
         )
     }
 
-    @Test func debounceCoalescesBurst() async throws {
+    /// Events are acted on as they arrive, and a burst that lands while a rescan runs
+    /// is coalesced by that work: five events cost the rescan they started plus one
+    /// follow-up, with no quiet period waited out.
+    @Test func burstDuringARescanCoalescesIntoOneFollowUp() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
+        let probe = FilesystemScanProbe()
         let recorder = FilesystemEventScanInvocationRecorder()
-        let debounceGate = ManualSleepGate()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
         let store = CatalogStore(
             location: .inMemory,
-            scanner: recordingScanner(recorder),
-            filesystemWatcher: watcher,
-            filesystemEventDebounce: .seconds(1),
-            filesystemEventSleep: { duration in
-                await debounceGate.sleep(for: duration)
-            }
+            scanner: deferredHangingScanner(probe: probe, recorder: recorder),
+            filesystemWatcher: watcher
         )
 
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         let baseline = await recorder.invocations().count
+        let classified = await store.classifiedFilesystemEventCount
 
-        for index in 0 ..< 5 {
-            emit(
-                FilesystemEvent(
-                    path: root.appending(path: "file-\(index).jpg").path,
-                    flags: 0
-                )
-            )
+        emit(FilesystemEvent(path: root.appending(path: "file-0.jpg").path, flags: 0))
+        await probe.waitForInvocationCount(2)
+        for index in 1 ..< 5 {
+            emit(FilesystemEvent(path: root.appending(path: "file-\(index).jpg").path, flags: 0))
         }
+        try await waitUntil { await store.classifiedFilesystemEventCount >= classified + 5 }
 
-        await debounceGate.waitForSleepRequestCount(5)
-        await debounceGate.releaseAll()
-        try await waitForFilesystemRescan(store: store, recorder: recorder, baseline: baseline, expectedAdditional: 1)
-    }
-
-    @Test func debounceResetsOnNewEvent() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
-        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-
-        let recorder = FilesystemEventScanInvocationRecorder()
-        let debounceGate = ManualSleepGate()
-        let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
-            location: .inMemory,
-            scanner: recordingScanner(recorder),
-            filesystemWatcher: watcher,
-            filesystemEventDebounce: .seconds(1),
-            filesystemEventSleep: { duration in
-                await debounceGate.sleep(for: duration)
-            }
-        )
-
-        try await store.start(scansSavedLibraries: false)
-        try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        let baseline = await recorder.invocations().count
-
-        emit(FilesystemEvent(path: root.appending(path: "first.jpg").path, flags: 0))
-        await debounceGate.waitForSleepRequestCount(1)
-        emit(FilesystemEvent(path: root.appending(path: "second.jpg").path, flags: 0))
-        await debounceGate.waitForSleepRequestCount(2)
-
-        await debounceGate.releaseNext()
-        #expect(await recorder.invocations().count == baseline)
-
-        await debounceGate.releaseNext()
-        try await waitForFilesystemRescan(
-            store: store,
-            recorder: recorder,
-            baseline: baseline,
-            expectedAdditional: 1
-        )
+        await probe.release(2)
+        try await waitUntil { await store.isFilesystemQuiescent }
+        #expect(await recorder.invocations().count == baseline + 2)
     }
 
     @Test func eventDuringActiveScanSchedulesFollowUp() async throws {
@@ -167,30 +123,23 @@ struct CatalogStoreFilesystemEventTests {
 
         let probe = FilesystemScanProbe()
         let recorder = FilesystemEventScanInvocationRecorder()
-        let debounceGate = ManualSleepGate()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
         let store = CatalogStore(
             location: .inMemory,
             scanner: deferredHangingScanner(probe: probe, recorder: recorder),
-            filesystemWatcher: watcher,
-            filesystemEventDebounce: .seconds(1),
-            filesystemEventSleep: { duration in
-                await debounceGate.sleep(for: duration)
-            }
+            filesystemWatcher: watcher
         )
 
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
 
+        let classified = await store.classifiedFilesystemEventCount
         emit(FilesystemEvent(path: root.appending(path: "trigger-second.jpg").path, flags: 0))
-        await debounceGate.waitForSleepRequestCount(1)
-        await debounceGate.releaseNext()
         await probe.waitForInvocationCount(2)
 
         emit(FilesystemEvent(path: root.appending(path: "during-second.jpg").path, flags: 0))
-        await debounceGate.waitForSleepRequestCount(2)
-        await debounceGate.releaseNext()
+        try await waitUntil { await store.classifiedFilesystemEventCount >= classified + 2 }
 
         await probe.release(2)
         await probe.waitForInvocationCount(3)
@@ -204,16 +153,11 @@ struct CatalogStoreFilesystemEventTests {
 
         let probe = FilesystemScanProbe()
         let recorder = FilesystemEventScanInvocationRecorder()
-        let debounceGate = ManualSleepGate()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
         let store = CatalogStore(
             location: .inMemory,
             scanner: deferredHangingScanner(probe: probe, recorder: recorder),
-            filesystemWatcher: watcher,
-            filesystemEventDebounce: .seconds(1),
-            filesystemEventSleep: { duration in
-                await debounceGate.sleep(for: duration)
-            }
+            filesystemWatcher: watcher
         )
 
         try await store.start(scansSavedLibraries: false)
@@ -229,8 +173,7 @@ struct CatalogStoreFilesystemEventTests {
                 flags: UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemIsFile)
             )
         )
-        await debounceGate.waitForSleepRequestCount(1)
-        await debounceGate.releaseNext()
+        try await waitUntil { await store.classifiedFilesystemEventCount >= 1 }
 
         await probe.release(1)
         _ = try await waitForCatalogStoreState(store) { snapshot in
@@ -255,8 +198,7 @@ struct CatalogStoreFilesystemEventTests {
             location: .inMemory,
             scanner: recordingLiveScanner(recorder),
             filesystemWatcher: watcher,
-            scanCadence: .milliseconds(10),
-            filesystemEventDebounce: .milliseconds(30)
+            scanCadence: .milliseconds(10)
         )
 
         try await store.start(scansSavedLibraries: false)
@@ -295,8 +237,7 @@ struct CatalogStoreFilesystemEventTests {
         let store = CatalogStore(
             location: .inMemory,
             scanner: firstScanHangingScanner(probe: probe, recorder: recorder),
-            filesystemWatcher: watcher,
-            filesystemEventDebounce: .milliseconds(20)
+            filesystemWatcher: watcher
         )
 
         try await store.start(scansSavedLibraries: false)
@@ -324,8 +265,7 @@ struct CatalogStoreFilesystemEventTests {
         let store = CatalogStore(
             location: .inMemory,
             scanner: recordingScanner(recorder),
-            filesystemWatcher: watcher,
-            filesystemEventDebounce: .milliseconds(20)
+            filesystemWatcher: watcher
         )
 
         try await store.start(scansSavedLibraries: false)
@@ -353,8 +293,7 @@ struct CatalogStoreFilesystemEventTests {
             location: .inMemory,
             scanner: recordingLiveScanner(recorder),
             filesystemWatcher: watcher,
-            scanCadence: .milliseconds(10),
-            filesystemEventDebounce: .milliseconds(30)
+            scanCadence: .milliseconds(10)
         )
 
         try await store.start(scansSavedLibraries: false)
@@ -395,8 +334,7 @@ struct CatalogStoreFilesystemEventTests {
             location: .inMemory,
             scanner: recordingLiveScanner(recorder),
             filesystemWatcher: watcher,
-            scanCadence: .milliseconds(10),
-            filesystemEventDebounce: .milliseconds(30)
+            scanCadence: .milliseconds(10)
         )
 
         try await store.start(scansSavedLibraries: false)
@@ -431,8 +369,7 @@ struct CatalogStoreFilesystemEventTests {
         let store = CatalogStore(
             location: .inMemory,
             filesystemWatcher: watcher,
-            scanCadence: .milliseconds(10),
-            filesystemEventDebounce: .milliseconds(30)
+            scanCadence: .milliseconds(10)
         )
 
         try await store.start(scansSavedLibraries: false)
@@ -470,7 +407,6 @@ struct CatalogStoreFilesystemEventTests {
 
         let probe = FilesystemScanProbe()
         let recorder = FilesystemEventScanInvocationRecorder()
-        let debounceGate = ManualSleepGate()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
         let store = CatalogStore(
             location: .inMemory,
@@ -480,11 +416,7 @@ struct CatalogStoreFilesystemEventTests {
                 recorder: recorder,
                 hangRoot: pathA
             ),
-            filesystemWatcher: watcher,
-            filesystemEventDebounce: .milliseconds(20),
-            filesystemEventSleep: { duration in
-                await debounceGate.sleep(for: duration)
-            }
+            filesystemWatcher: watcher
         )
 
         try await store.start(scansSavedLibraries: false)
@@ -495,9 +427,8 @@ struct CatalogStoreFilesystemEventTests {
         }
 
         // Force a full-root scan of A that hangs and cannot observe later file dirt.
+        let classified = await store.classifiedFilesystemEventCount
         emit(FilesystemEvent(path: rootA.path, flags: 0))
-        await debounceGate.waitForSleepRequestCount(1)
-        await debounceGate.releaseNext()
         await probe.waitForInvocationCount(3)
 
         try writeCatalogStoreFile(rootA.appending(path: "during.jpg"), contents: "jpeg")
@@ -509,8 +440,7 @@ struct CatalogStoreFilesystemEventTests {
         )
         // Queue a full-root scan of B while A still holds the lease.
         emit(FilesystemEvent(path: rootB.path, flags: 0))
-        await debounceGate.waitForSleepRequestCount(3)
-        await debounceGate.releaseAll()
+        try await waitUntil { await store.classifiedFilesystemEventCount >= classified + 3 }
 
         await probe.release(3)
         let settled = try await waitForCatalogStoreState(store) { snapshot in
@@ -539,8 +469,7 @@ struct CatalogStoreFilesystemEventTests {
             location: .inMemory,
             scanner: recordingLiveScanner(recorder),
             filesystemWatcher: watcher,
-            scanCadence: .milliseconds(10),
-            filesystemEventDebounce: .milliseconds(30)
+            scanCadence: .milliseconds(10)
         )
 
         try await store.start(scansSavedLibraries: false)
@@ -584,8 +513,7 @@ struct CatalogStoreFilesystemEventTests {
             location: .inMemory,
             scanner: recordingLiveScanner(recorder),
             filesystemWatcher: watcher,
-            scanCadence: .milliseconds(10),
-            filesystemEventDebounce: .milliseconds(30)
+            scanCadence: .milliseconds(10)
         )
 
         try await store.start(scansSavedLibraries: false)

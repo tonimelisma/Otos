@@ -104,10 +104,13 @@ suppresses needless
 SwiftUI/AppKit work as before.
 
 Direct user query intents wake publication immediately. Background dirt from
-Store notifications is coalesced by a roughly one-second cadence. Store scan
-flush cadence, filesystem-event debounce, and enrichment apply flushing align to
-that same background scale. Viewport priority hints remain immediate because
-they affect scheduling, not UI publication.
+Store notifications is coalesced by a roughly one-second cadence, which stands on
+the measured MainActor cost of a reordering apply
+(`docs/research/grid-reorder-cadence-and-appkit-diffable-apply.md`). The Store scan
+flush keeps the same one-second scale on its own measurement; filesystem events and
+enrichment results are coalesced by their owners' in-flight work instead of a timer
+(`docs/research/2026-10-23-cadence-audit.md`). Viewport priority hints remain
+immediate because they affect scheduling, not UI publication.
 
 Toolbar and View menu controls share `CatalogFilterMenuContent` and
 `CatalogSortMenuContent`, so native checked/mixed state, scoped availability, and

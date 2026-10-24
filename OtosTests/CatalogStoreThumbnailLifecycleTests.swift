@@ -244,8 +244,7 @@ private func makeThumbnailLifecycleFixture() async throws -> ThumbnailLifecycleF
     let store = CatalogStore(
         location: .databaseFile(databaseURL),
         scanner: thumbnailLifecycleScanner(rel, mtime: mtime),
-        filesystemWatcher: watcher,
-        filesystemEventDebounce: .milliseconds(20)
+        filesystemWatcher: watcher
     )
     try await store.start(scansSavedLibraries: false)
     try await store.addLibrary(url: root)

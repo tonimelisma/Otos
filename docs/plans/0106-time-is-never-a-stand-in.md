@@ -42,5 +42,11 @@ No allowlist and no exceptions: the guard lands only when nothing violates it.
 4. **Cadence audit.** Projection cadence (1 s), filesystem-event debounce (1 s),
    scan flush cadence, enrichment apply flush, import progress emit, grid scroll
    coalescing. Each points at its measurement or becomes owner coalescing.
-5. **Rule and guard.** An ADR and a CLAUDE.md principle, plus a CI check over
+5. **Enrichment claims are a process fact.** A claim is stored with a 300 s expiry
+   and renewed every 120 s, so time stands in for "the claiming process is alive".
+   Claims end when their owner releases them or the process that took them ends.
+6. **Materialization arrival.** `FileMaterialization` polls `SF_DATALESS` every
+   250 ms. Research what reports a dataless file becoming local (a vnode
+   `NOTE_ATTRIB`, FSEvents) and wait on it where it exists.
+7. **Rule and guard.** An ADR and a CLAUDE.md principle, plus a CI check over
    `Otos/`, `OtosTests/` and `script/`. This increment deletes this plan.

@@ -311,13 +311,7 @@ extension EnrichmentCoordinator {
         guard applyFlushTask == nil, !pendingApply.isEmpty else {
             return
         }
-        let interval = applyFlushInterval
-        let sleep = applyFlushSleep
-        applyFlushTask = Task { [weak self, sleep] in
-            await sleep(interval)
-            guard !Task.isCancelled else {
-                return
-            }
+        applyFlushTask = Task { [weak self] in
             await self?.flushPendingApply()
         }
     }
@@ -326,8 +320,8 @@ extension EnrichmentCoordinator {
         guard !isShuttingDown else {
             return
         }
-        applyFlushTask = nil
         guard !pendingApply.isEmpty else {
+            applyFlushTask = nil
             return
         }
         let batch = pendingApply
@@ -347,6 +341,9 @@ extension EnrichmentCoordinator {
             await releaseClaims(claimedIDs, visibleID: visibleID)
         }
         handleApplyOutcome(outcome, batchCount: batch.count)
+        // Cleared only now, with no await before the reschedule: results that arrived
+        // during the write are taken by the next apply, and none starts beside this one.
+        applyFlushTask = nil
         scheduleApplyFlushIfNeeded()
     }
 

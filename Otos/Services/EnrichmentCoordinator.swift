@@ -154,8 +154,6 @@ actor EnrichmentCoordinator {
     let materializationRequester: any MaterializationRequesting
     let enrichConcurrency: Int
     let claimBatchSize: Int
-    let applyFlushInterval: Duration
-    let applyFlushSleep: @Sendable (Duration) async -> Void
     let admissionPolicy: EnrichmentAdmissionPolicy
     let handoffPolicy: EnrichmentMaterializationHandoffPolicy
     let claimWindowLimit: Int
@@ -217,6 +215,10 @@ actor EnrichmentCoordinator {
 
     private var supervisor: Task<Void, Never>?
     private var changeConsumer: Task<Void, Never>?
+    /// The one apply in flight, if any. Results that complete while it writes wait in
+    /// `pendingApply` and the next apply takes them all, so batching comes from the
+    /// write itself rather than from a timer: a write measured ~0.4 ms for one row and
+    /// ~0.1 ms a row in larger batches (`docs/research/2026-10-23-cadence-audit.md`).
     var applyFlushTask: Task<Void, Never>?
     var writeRetryTask: Task<Void, Never>?
     var downloadRetryTask: Task<Void, Never>?
@@ -235,10 +237,6 @@ actor EnrichmentCoordinator {
         readinessChecker: any EnrichmentReadinessChecking = LiveEnrichmentReadinessChecker(),
         enrichConcurrency: Int = EnrichmentAdmissionPolicy.production.enrichConcurrency,
         claimBatchSize: Int = 32,
-        applyFlushInterval: Duration = .seconds(1),
-        applyFlushSleep: @escaping @Sendable (Duration) async -> Void = { duration in
-            try? await Task.sleep(for: duration)
-        },
         writeFailureBackoff: Duration = .seconds(5),
         admissionPolicy: EnrichmentAdmissionPolicy = .production,
         handoffPolicy: EnrichmentMaterializationHandoffPolicy = .production(),
@@ -258,8 +256,6 @@ actor EnrichmentCoordinator {
         self.admissionPolicy = policy
         self.enrichConcurrency = enrichConcurrency
         self.claimBatchSize = max(claimBatchSize, enrichConcurrency)
-        self.applyFlushInterval = applyFlushInterval
-        self.applyFlushSleep = applyFlushSleep
         self.writeFailureBackoff = writeFailureBackoff
         self.handoffPolicy = handoffPolicy
         self.claimWindowLimit = max(claimWindowLimit, enrichConcurrency)
