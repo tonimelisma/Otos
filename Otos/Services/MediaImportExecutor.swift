@@ -1232,9 +1232,8 @@ actor MediaImportExecutor {
         }
     }
 
-    // The cohesive entry transaction deliberately keeps revalidation, journal,
-    // transfer, and publish handoff visible in one crash-recovery boundary.
-    // swiftlint:disable:next function_body_length
+    /// The cohesive entry transaction deliberately keeps revalidation, journal,
+    /// transfer, and publish handoff visible in one crash-recovery boundary.
     private nonisolated func copyEntry(
         _ entry: MediaOperationPlanEntry,
         context: EntryExecutionContext,

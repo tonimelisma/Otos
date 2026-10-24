@@ -86,6 +86,13 @@ struct CatalogStoreEnrichmentTests {
         #expect(makeAsset(bestCaptureDate: nil, createdAt: nil, modifiedAt: nil).bestCaptureDate == nil)
     }
 
+    /// A stored record that does not decode is an error, never an asset without metadata.
+    @Test func anUndecodableMetadataRecordIsAnErrorNotAbsence() {
+        #expect(throws: DecodingError.self) {
+            try CatalogStore.decodeMetadataExtraJSON(#"{"family": 3}"#)
+        }
+    }
+
     @Test func metadataExtraJSONRoundTrips() throws {
         let meta = AssetMetadata(
             family: "image",
@@ -109,8 +116,8 @@ struct CatalogStoreEnrichmentTests {
             pixelHeight: 3000,
             durationSeconds: nil
         )
-        let json = try #require(CatalogStore.encodeMetadataExtraJSON(meta))
-        #expect(CatalogStore.decodeMetadataExtraJSON(json) == meta)
+        let json = try CatalogStore.encodeMetadataExtraJSON(meta)
+        #expect(try CatalogStore.decodeMetadataExtraJSON(json) == meta)
     }
 
     // MARK: - Store: rescan merge, persistence, and purge

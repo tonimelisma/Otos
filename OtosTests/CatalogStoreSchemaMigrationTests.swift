@@ -621,7 +621,7 @@ private extension CatalogStoreSchemaMigrationTests {
                     ),
                 ]
             )
-            let json = try #require(CatalogStore.encodeMetadataExtraJSON(metadata))
+            let json = try CatalogStore.encodeMetadataExtraJSON(metadata)
             try db.execute(
                 sql: """
                 INSERT INTO asset_metadata (library_root_id, relative_path, metadata_extra_json)

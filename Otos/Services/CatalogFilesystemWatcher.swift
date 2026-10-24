@@ -190,8 +190,7 @@ private final nonisolated class WatcherState: Sendable {
     }
 }
 
-// The parameter list is `FSEventStreamCallback`'s, fixed by CoreServices.
-// swiftlint:disable:next function_parameter_count
+/// The parameter list is `FSEventStreamCallback`'s, fixed by CoreServices.
 private nonisolated func filesystemEventStreamCallback(
     _: ConstFSEventStreamRef,
     clientCallBackInfo: UnsafeMutableRawPointer?,
