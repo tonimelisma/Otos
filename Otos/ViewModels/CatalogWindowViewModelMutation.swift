@@ -227,7 +227,7 @@ extension CatalogWindowViewModel {
                 await coordinator.drainWork(under: root.path)
             }
         } catch {
-            return await ejectFailed(root: root, error: error)
+            return await ejectFailed(root: root, store: store, error: error)
         }
         var attempt = 0
         while true {
@@ -240,7 +240,7 @@ extension CatalogWindowViewModel {
             } catch {
                 let outcome = removableEjectOutcome(for: error, displayName: root.displayName)
                 guard case .busy = outcome, attempt < retryDelays.count else {
-                    return await ejectFailed(root: root, error: error)
+                    return await ejectFailed(root: root, store: store, error: error)
                 }
                 let delay = retryDelays[attempt]
                 attempt += 1
@@ -252,8 +252,26 @@ extension CatalogWindowViewModel {
         }
     }
 
-    private nonisolated static func ejectFailed(root: LibraryRoot, error: Error) async -> RemovableEjectOutcome {
+    /// An eject Otos asked for reports its own outcome, so a failed one resumes the source
+    /// at once: the card is still mounted and its scan and enrichment have no reason to
+    /// stay stopped. An eject started elsewhere reports nothing when it is refused, which
+    /// is why `RemovableVolumeMonitor` keeps its own limit for that case.
+    private nonisolated static func ejectFailed(
+        root: LibraryRoot,
+        store: CatalogStore,
+        error: Error
+    ) async -> RemovableEjectOutcome {
         let outcome = removableEjectOutcome(for: error, displayName: root.displayName)
+        if let identity = root.deviceIdentity {
+            do {
+                try await store.resumeRemovableSource(identity: identity)
+            } catch {
+                OtosLog.catalog.errorOperation("catalog.removable.eject", phase: "resumeFailed", fields: [
+                    "rootPath": root.path.rawValue,
+                    "error": String(describing: error),
+                ])
+            }
+        }
         await recordMutationError(
             "Catalog eject removable source failed",
             operation: "catalog.removable.eject",

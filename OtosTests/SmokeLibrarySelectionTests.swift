@@ -118,4 +118,53 @@ struct SmokeLibrarySelectionTests {
             registered: []
         ))
     }
+
+    /// A state still loading the catalog answers nothing; the first loaded one answers.
+    @Test func aStateStillLoadingTheCatalogAnswersNothing() {
+        let requested = LibraryRootPath(rawValue: "/Pictures")
+        var state = CatalogWindowState.empty
+        state.libraries = [libraryState(path: "/Pictures")]
+
+        #expect(SmokeLibrarySelection.resolution(requested: requested, in: state) == nil)
+        state.mediaEmptyState = .noMedia
+        #expect(SmokeLibrarySelection.resolution(requested: requested, in: state) == .select(.library(requested)))
+        state.libraries = [libraryState(path: "/Other")]
+        #expect(SmokeLibrarySelection.resolution(requested: requested, in: state) == .notRegistered(
+            requested: requested,
+            registered: [LibraryRootPath(rawValue: "/Other")]
+        ))
+    }
+
+    /// The seam waits on what the window publishes, not on a clock: the first loaded
+    /// state that lists the root applies the ordinary sidebar selection.
+    @MainActor
+    @Test func selectsTheRootFromTheFirstLoadedStateThatListsIt() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appending(path: "SmokeSelection-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let requested = try CatalogPath.normalizedDirectoryPath(for: directory)
+        let viewModel = CatalogWindowViewModel(
+            catalogStore: CatalogStore(location: .inMemory, scanCadence: .milliseconds(10)),
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
+            startsStallMonitor: false,
+            startsEnrichment: false,
+            startsSourceMonitoring: false,
+            preferencesDomain: .suite(UUID().uuidString)
+        )
+
+        SmokeLibrarySelection.applyIfPresent(to: viewModel, environment: [
+            SmokeLibrarySelection.environmentVariable: requested.rawValue,
+        ])
+        // Two libraries, so the window's own launch default is not the requested root.
+        var loading = CatalogWindowState.empty
+        loading.libraries = [libraryState(path: "/Other"), libraryState(path: requested.rawValue)]
+        viewModel.applyState(loading)
+
+        var loaded = loading
+        loaded.mediaEmptyState = .noMedia
+        viewModel.applyState(loaded)
+
+        try await waitUntil { viewModel.sidebarSelection == .library(requested) }
+    }
 }
