@@ -44,6 +44,38 @@ struct CatalogStoreRemovableSourceTests {
         #expect(afterResume.contains { $0.asset.id == cardID })
     }
 
+    /// Otos's own eject reports its outcome, so a refused one resumes the card at once:
+    /// it is still mounted, and its enrichment must not wait on a limit meant for ejects
+    /// started elsewhere, which report nothing.
+    @Test func aRefusedEjectResumesTheCardWithoutWaiting() async throws {
+        let fixture = try await makeRemountFixture()
+        let store = fixture.store
+        try await store.attachRemovableVolume(
+            mountURL: fixture.firstMount,
+            identity: "volume:test-card",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: fixture.firstMount)
+        _ = try await waitForSelectedRelativePaths(store, rootPath: cardPath, expected: ["card.jpg"])
+        let cardID = MediaAssetID(libraryRootPath: cardPath, relativePath: MediaRelativePath(rawValue: "card.jpg"))
+        let root = try #require(try await catalogStoreTestState(store).removableSources.first?.root)
+
+        let outcome = await CatalogWindowViewModel.performEjectRemovableSource(
+            root,
+            store: store,
+            coordinator: nil,
+            retryDelays: [],
+            unmount: { _ in
+                throw NSError(domain: NSOSStatusErrorDomain, code: -47, userInfo: nil)
+            }
+        )
+
+        #expect(outcome == .busy(displayName: root.displayName))
+        let afterRefusal = try await store.enrichmentCandidates(prioritizing: [cardID], limit: 10)
+        #expect(afterRefusal.contains { $0.asset.id == cardID })
+    }
+
     @Test func removableVolumeRemountsByIdentityAndStaysOutOfAllMedia() async throws {
         let fixture = try await makeRemountFixture()
         let store = fixture.store

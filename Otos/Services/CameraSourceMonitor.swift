@@ -358,7 +358,7 @@ final class DeviceCameraSession: NSObject {
             "identity": identity,
         ])
         try await openAndWaitForCatalogReady()
-        let isStable = await waitForCatalogStability(timeout: .seconds(30))
+        let isStable = await waitForCatalogStability(timeout: Self.catalogSettleLimit)
         let items = currentCatalogItems()
         let elapsedMs = DiagnosticsTiming.milliseconds(from: started, to: .now)
         OtosLog.fileAccess.noticeOperation("camera.enumerate", phase: "finish", fields: [
@@ -725,10 +725,16 @@ final class DeviceCameraSession: NSObject {
             throw DeviceCameraSessionError.disconnected
         }
         if !device.hasOpenSession {
-            try await requestOpenSession(timeout: .seconds(10))
+            try await requestOpenSession(timeout: Self.sessionOpenLimit)
         }
-        try await waitForCatalogReady(timeout: .seconds(240))
+        try await waitForCatalogReady(timeout: Self.catalogReadyLimit)
     }
+
+    /// When a camera that has not opened its session, or not finished its catalog, is
+    /// reported as failed. The PTP link may never answer, so these are product decisions
+    /// about when the user is told, not stand-ins for a fact the device reports.
+    nonisolated static let sessionOpenLimit = Duration.seconds(10)
+    nonisolated static let catalogReadyLimit = Duration.seconds(240)
 
     private func requestOpenSession(timeout: Duration) async throws {
         let timeoutTask = Task { [weak self] in
@@ -866,6 +872,21 @@ final class DeviceCameraSession: NSObject {
         resolveWaiters(condition: .catalogReady, result: .success(()))
     }
 
+    /// How long a camera's item list may keep changing before the enumeration gives up
+    /// proving deletions. A product decision, because ImageCaptureCore reports no fact
+    /// that the list is whole: `deviceDidBecomeReadyWithCompleteContentCatalog` has been
+    /// observed with one item of a full card listed, and `deviceDidBecomeReady` with none
+    /// (`docs/research/removable-volume-and-camera-sources.md`), and
+    /// `wasAddedAfterContentCatalogCompleted` marks only items captured later. Two equal
+    /// samples of the `didAdd` count and `mediaFiles` are the evidence available, and
+    /// they gate one thing: whether this pass may delete rows. A list still changing at
+    /// the limit records what it saw and deletes nothing (ADR 0008: a missing item is
+    /// not a deleted one).
+    nonisolated static let catalogSettleLimit = Duration.seconds(30)
+
+    /// The gap between the two samples that must agree.
+    nonisolated static let catalogSettleSampleInterval = Duration.milliseconds(500)
+
     private func waitForCatalogStability(timeout: Duration) async -> Bool {
         let startedAt = Date()
         var previous: (didAdd: Int, media: Int)?
@@ -885,7 +906,7 @@ final class DeviceCameraSession: NSObject {
                 return false
             }
             do {
-                try await Task.sleep(for: .milliseconds(500))
+                try await Task.sleep(for: Self.catalogSettleSampleInterval)
             } catch {
                 return false
             }

@@ -1,5 +1,6 @@
 #if DEBUG
     import Foundation
+    import Observation
     import OSLog
 
     /// Developer smoke-launch selection guide
@@ -17,18 +18,11 @@
     /// environment variable to steer the catalog at all.
     ///
     /// Resolution is pure (`resolve(requested:among:)`); only `applyIfPresent` touches
-    /// the ViewModel, and it waits because roots are published asynchronously after
-    /// `start()`.
+    /// the ViewModel. Roots are published asynchronously after `start()`, so it resolves
+    /// against each published window state once the catalog's first load has finished,
+    /// and never against elapsed time.
     nonisolated enum SmokeLibrarySelection {
         static let environmentVariable = "OTOS_SMOKE_SELECT_ROOT"
-
-        /// How long the requested root has to appear after launch. Store loads and
-        /// publishes roots asynchronously, so the seam cannot resolve at launch time.
-        /// Expiring is a normal outcome, not an error path: it reports what is
-        /// registered so the caller can fix the argument.
-        static let appearanceTimeout = Duration.seconds(30)
-
-        private static let pollInterval = Duration.milliseconds(100)
 
         enum Resolution: Equatable {
             case select(SidebarSelection)
@@ -69,8 +63,26 @@
             )
         }
 
-        /// Waits for the requested root to appear, then applies the ordinary selection
-        /// intent. Never registers, removes, or otherwise mutates catalog configuration.
+        /// What one published window state means for the requested root: nothing yet while
+        /// the catalog's first load is unfinished, then a selection or the registered roots.
+        static func resolution(
+            requested: LibraryRootPath,
+            in state: CatalogWindowState
+        ) -> Resolution? {
+            guard state.mediaEmptyState != .loadingCatalog else {
+                return nil
+            }
+            return resolve(requested: requested, among: state.libraries + state.removableSources)
+        }
+
+        /// Applies the ordinary selection intent once the requested root is published.
+        /// Never registers, removes, or otherwise mutates catalog configuration.
+        ///
+        /// It follows the window states the ViewModel publishes. The first state past the
+        /// catalog's first load answers whether the root is registered: if it is not, that
+        /// is reported once, with the roots that are, and the seam keeps following in case
+        /// it is a removable source that attaches later. The loop holds the ViewModel
+        /// weakly and ends with it.
         @MainActor
         static func applyIfPresent(
             to viewModel: CatalogWindowViewModel,
@@ -82,28 +94,33 @@
             OtosLog.app.notice(
                 "op=smoke.select phase=start requestedPath=\(requested.rawValue, privacy: .public)"
             )
+            let states = Observations { @MainActor [weak viewModel] in
+                viewModel?.state
+            }
             Task { @MainActor [weak viewModel] in
-                let deadline = ContinuousClock().now.advanced(by: appearanceTimeout)
-                while true {
-                    guard let viewModel else {
+                var reportedUnregistered = false
+                for await state in states {
+                    guard let state, let viewModel else {
                         return
                     }
-                    let sources = viewModel.state.libraries + viewModel.state.removableSources
-                    if case let .select(selection) = resolve(requested: requested, among: sources) {
+                    switch resolution(requested: requested, in: state) {
+                    case nil:
+                        continue
+                    case let .select(selection):
                         viewModel.selectSidebar(selection)
                         OtosLog.app.notice(
                             "op=smoke.select phase=finish outcome=selected path=\(requested.rawValue, privacy: .public)"
                         )
                         return
-                    }
-                    guard ContinuousClock().now < deadline else {
-                        let registered = sources.map(\.path.rawValue).sorted().joined(separator: ", ")
+                    case let .notRegistered(_, registered) where !reportedUnregistered:
+                        reportedUnregistered = true
+                        let names = registered.map(\.rawValue).joined(separator: ", ")
                         OtosLog.app.error(
-                            "op=smoke.select phase=finish outcome=notRegistered requestedPath=\(requested.rawValue, privacy: .public) registeredRoots=[\(registered, privacy: .public)] hint=a smoke run never adds a root; pass one that is already registered"
+                            "op=smoke.select phase=report outcome=notRegistered requestedPath=\(requested.rawValue, privacy: .public) registeredRoots=[\(names, privacy: .public)] hint=a smoke run never adds a root; pass one that is already registered"
                         )
-                        return
+                    case .notRegistered:
+                        continue
                     }
-                    try? await Task.sleep(for: pollInterval)
                 }
             }
         }

@@ -160,6 +160,17 @@ final class RemovableVolumeMonitor {
         )
     }
 
+    /// How long a source an eject quiesced waits for that eject to finish before it
+    /// resumes. This is a product decision, not a guess at a fact: an unmount another
+    /// process asks for and the system then refuses as busy reports its refusal to that
+    /// process alone. Measured on 2026-10-23 against a held file on a scratch volume, the
+    /// refusal came 226 ms after `willUnmount`, and neither NSWorkspace nor
+    /// DiskArbitration delivered anything after it
+    /// (`docs/research/2026-10-23-removable-and-camera-state-reports.md`). A success is
+    /// a fact and detaches the source at once; only the refusal is waited out. Otos's own
+    /// Eject knows its outcome and resumes without this limit.
+    nonisolated static let unreportedUnmountRefusalLimit = Duration.seconds(2)
+
     private func quiesce(matching disk: RemovableVolumeDetachedDisk) {
         guard let identity = identity(matching: disk) else {
             return
@@ -167,7 +178,7 @@ final class RemovableVolumeMonitor {
         onQuiesce(identity)
         Task { @MainActor [weak self, identity] in
             do {
-                try await Task.sleep(for: .seconds(2))
+                try await Task.sleep(for: Self.unreportedUnmountRefusalLimit)
             } catch {
                 return
             }
