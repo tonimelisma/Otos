@@ -361,12 +361,18 @@ final class DeviceCameraSession: NSObject {
     /// queue it made them on; `eventLoop` is the one consumer.
     private let events: AsyncStream<SessionEvent>.Continuation
     private var eventLoop: Task<Void, Never>?
+    /// The doorbell `CameraCatalogSync` waits on. Newest-wins: any number of reports
+    /// while a pass runs become one more pass.
+    let catalogChanges: AsyncStream<Void>
+    private let catalogChangeBell: AsyncStream<Void>.Continuation
 
     fileprivate nonisolated enum SessionEvent: Sendable {
         /// The framework error, reduced to its description at the boundary.
         case opened(frameworkErrorDescription: String?)
         case closed
         case itemsAdded(Int)
+        /// Items removed or renamed: the list changed without growing.
+        case itemsChanged
         case catalogComplete
     }
 
@@ -381,6 +387,7 @@ final class DeviceCameraSession: NSObject {
         DeviceStagingLocation.claimOwnership(identity: identity)
         let (stream, continuation) = AsyncStream.makeStream(of: SessionEvent.self, bufferingPolicy: .unbounded)
         events = continuation
+        (catalogChanges, catalogChangeBell) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
         super.init()
         eventLoop = Task { [weak self] in
             for await event in stream {
@@ -401,6 +408,9 @@ final class DeviceCameraSession: NSObject {
             applySessionClosed()
         case let .itemsAdded(count):
             didAddItemCount += count
+            ringCatalogChange()
+        case .itemsChanged:
+            ringCatalogChange()
         case .catalogComplete:
             markCatalogReady()
         }
@@ -874,6 +884,7 @@ final class DeviceCameraSession: NSObject {
     private func failAllWaiters(_ error: Error) {
         terminalFailure = error
         isClosed = true
+        catalogChangeBell.finish()
         let currentWaiters = waiters
         waiters.removeAll()
         for waiter in currentWaiters.values {
@@ -917,6 +928,15 @@ final class DeviceCameraSession: NSObject {
         OtosLog.fileAccess.noticeOperation("camera.session", phase: "close", fields: [
             "identity": identity,
         ])
+    }
+
+    /// Items reported before the catalog is complete are the initial enumeration, which
+    /// the first pass reads; only a change after it is news.
+    private func ringCatalogChange() {
+        guard isCatalogReady, !isClosed else {
+            return
+        }
+        catalogChangeBell.yield()
     }
 
     private func markCatalogReady() {
@@ -1030,7 +1050,14 @@ final class DeviceCameraSession: NSObject {
     }
 }
 
+extension DeviceCameraSession: CameraCatalogSource {
+    func answersRangedReads(relativePath: MediaRelativePath, size: UInt64) async -> Bool {
+        await CameraMetadataReader.isRangeCapable(session: self, relativePath: relativePath, size: size)
+    }
+}
+
 extension DeviceCameraSession: ICCameraDeviceDelegate {
+    /// Readiness Otos waits for is the complete catalog, reported below.
     nonisolated func deviceDidBecomeReady(_ device: ICDevice) {}
 
     nonisolated func device(_ device: ICDevice, didOpenSessionWithError error: (any Error)?) {
@@ -1044,8 +1071,11 @@ extension DeviceCameraSession: ICCameraDeviceDelegate {
         events.yield(.closed)
     }
 
+    /// Otos shows no device status; open and close arrive through their own reports.
     nonisolated func device(_ device: ICDevice, didReceiveStatusInformation status: [ICDeviceStatus: Any]) {}
 
+    /// Every request Otos makes reports its own failure through its completion; this
+    /// unsolicited report answers nothing Otos asked.
     nonisolated func device(_ device: ICDevice, didEncounterError error: (any Error)?) {}
 
     nonisolated func didRemove(_ device: ICDevice) {
@@ -1060,10 +1090,17 @@ extension DeviceCameraSession: ICCameraDeviceDelegate {
         events.yield(.itemsAdded(items.count))
     }
 
-    nonisolated func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {}
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {
+        events.yield(.itemsChanged)
+    }
 
-    nonisolated func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {}
+    /// A renamed item has a new relative path, which only a pass can record.
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {
+        events.yield(.itemsChanged)
+    }
 
+    /// Thumbnails and metadata are read by request (`requestThumbnailData`, ranged
+    /// reads), each with its own completion; these unsolicited deliveries are not used.
     nonisolated func cameraDevice(
         _ camera: ICCameraDevice,
         didReceiveThumbnail thumbnail: CGImage?,
@@ -1078,6 +1115,7 @@ extension DeviceCameraSession: ICCameraDeviceDelegate {
         error: (any Error)?
     ) {}
 
+    /// Capabilities are read when they are used (delete, eject), so a change needs no report.
     nonisolated func cameraDeviceDidChangeCapability(_ camera: ICCameraDevice) {}
 
     /// Delivered on the framework's own `ICDeviceOperationQueue`, not the main thread —
@@ -1085,6 +1123,8 @@ extension DeviceCameraSession: ICCameraDeviceDelegate {
     /// events, so it stays empty; it must stay `nonisolated`.
     nonisolated func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {}
 
+    /// A lifted restriction is followed by the items' own add reports and the catalog's
+    /// completion; a new one surfaces as the requests that then fail.
     nonisolated func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {}
 
     nonisolated func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {}
