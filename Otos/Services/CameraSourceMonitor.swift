@@ -579,10 +579,10 @@ final class DeviceCameraSession: NSObject {
             throw error
         }
         let elapsedMs = DiagnosticsTiming.milliseconds(from: started, to: .now)
-        let bytes = (try? destinationURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        let bytes = try? destinationURL.resourceValues(forKeys: [.fileSizeKey]).fileSize
         OtosLog.fileAccess.noticeOperation("camera.download", phase: "finish", fields: [
             "relativePath": relativePath.rawValue,
-            "bytes": "\(bytes)",
+            "bytes": bytes.flatMap(\.self).map { "\($0)" } ?? "unknown",
             "elapsedMs": "\(elapsedMs)",
         ])
     }

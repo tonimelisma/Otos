@@ -78,6 +78,13 @@ custom_rules:
     message: "A failed Store read publishes nothing (ADR 0032, rule 4): throw it to the pass instead of assigning or returning [], .empty or 0 in a catch."
     severity: error
 
+  error_becomes_value:
+    name: "A failed operation must not become a value"
+    included: 'Otos/.*\.swift'
+    regex: 'try\?[^\n]*\?\?\s*(\[\]|\[:\]|0\b|""|false\b|\.empty\b)'
+    message: "An error is not a fact (ADR 0032, rule 4): `try? … ?? []/0/\"\"/false/.empty` turns a failure into a value someone reads as true. Handle the error (log it, publish nothing, report it), or keep the result Optional so unknown stays unknown."
+    severity: error
+
   wall_clock_interval:
     name: "An interval inside the process is measured on ContinuousClock"
     regex: 'Date\(\)\.(timeIntervalSince|addingTimeInterval)\(|\btimeIntervalSinceNow\b|Date\.distant(Past|Future)\b|Date\(timeIntervalSinceNow:'

@@ -193,11 +193,11 @@ nonisolated enum DeviceStagingLocation {
         guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else {
             return
         }
-        let bytes = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        let bytes = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
         do {
             try FileManager.default.removeItem(at: url)
             OtosLog.fileAccess.noticeOperation("camera.staging", phase: "released", fields: [
-                "bytes": "\(bytes)",
+                "bytes": bytes.flatMap(\.self).map { "\($0)" } ?? "unknown",
             ])
         } catch {
             OtosLog.fileAccess.errorOperation("camera.staging", phase: "releaseFailed", fields: [

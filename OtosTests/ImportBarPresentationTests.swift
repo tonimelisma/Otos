@@ -165,7 +165,6 @@ struct ImportBarPresentationTests {
             state: .completed(summary: Self.totals(skipCount: 4)),
             eraseOutcome: EraseOutcome(
                 deletedCount: 4,
-                deletedBytes: 400,
                 skippedCount: 0,
                 failedCount: 0
             )

@@ -165,7 +165,7 @@ and let instrumentation prove a real bottleneck before optimizing it.
      cancels published work; cancel only for teardown. A cancelled result is never published.
   4. **An error is not a fact.** A failed read publishes nothing, leaves the request
      outstanding and is logged; never substitute `[]`, `0`, `.empty` or `nil` for a value a
-     user sees.
+     user sees (lint `error_becomes_value`).
   5. **Intents travel in one ordered stream with one consumer** (`.unbounded` for commands,
      `.bufferingNewest(1)` for newest-wins state), never one `Task {}` per call. An intent
      that starts long work returns when it is applied.

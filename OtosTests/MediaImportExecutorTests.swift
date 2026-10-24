@@ -1166,6 +1166,171 @@ struct ImportExecutionProgressTests {
         #expect(failedCount == 0)
     }
 
+    // MARK: - Companions travel only when their bytes do
+
+    /// A copied companion lands beside its primary, is recorded with it, and its
+    /// source is erased with it.
+    @Test func aCopiedCompanionIsRecordedBesideItsPrimaryAndErasedWithIt() async throws {
+        let fixture = try await makeCompanionFixture()
+        let result = await executeCompanionRun(fixture, transfer: CopyfileTransfer.copy)
+        guard case let .completedWithErase(publishedCount, _, _, _, _, incompleteItems, _) = result else {
+            Issue.record("Expected a completed erase run, got \(result)")
+            return
+        }
+        #expect(publishedCount == 1)
+        #expect(incompleteItems.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: fixture.destinationRoot.appending(path: "IMG_0.xmp").path))
+        let companions = try await fixture.store.companions(in: fixture.destinationPath)
+        #expect(companions.map(\.relativePath.rawValue) == ["IMG_0.xmp"])
+        #expect(companions.first?.primaryRelativePath?.rawValue == "IMG_0.jpg")
+        #expect(!FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_0.xmp").path))
+        #expect(try Self.stagingLeftovers(under: fixture.destinationRoot).isEmpty)
+    }
+
+    /// A companion whose copy fails is not in the library, so it is not recorded and
+    /// its source is never erased; the primary still imports and the item is incomplete.
+    @Test func aCompanionThatFailsToCopyStaysOnTheCardAndOutOfTheCatalog() async throws {
+        let fixture = try await makeCompanionFixture()
+        let result = await executeCompanionRun(fixture) { source, destination, onProgress, shouldContinue in
+            if source.pathExtension == "xmp" {
+                return .failed(errno: EIO)
+            }
+            return CopyfileTransfer.copy(
+                from: source,
+                to: destination,
+                onProgress: onProgress,
+                shouldContinue: shouldContinue
+            )
+        }
+        try await expectCompanionLeftOnCard(fixture, result: result)
+        #expect(!FileManager.default.fileExists(atPath: fixture.destinationRoot.appending(path: "IMG_0.xmp").path))
+    }
+
+    /// A file that took the companion's destination after planning is never
+    /// overwritten, and the companion it displaced stays on the card.
+    @Test func aCompanionWhoseDestinationWasTakenIsNotCopiedOverIt() async throws {
+        let fixture = try await makeCompanionFixture()
+        let occupant = fixture.destinationRoot.appending(path: "IMG_0.xmp")
+        try Data("someone else".utf8).write(to: occupant)
+        let result = await executeCompanionRun(fixture, transfer: CopyfileTransfer.copy)
+        try await expectCompanionLeftOnCard(fixture, result: result)
+        #expect(try Data(contentsOf: occupant) == Data("someone else".utf8))
+    }
+
+    private func expectCompanionLeftOnCard(
+        _ fixture: CardFixture,
+        result: MediaImportExecutionResult
+    ) async throws {
+        guard case let .completedWithErase(publishedCount, _, hasEntryFailures, _, failedCount, incompleteItems, _) = result
+        else {
+            Issue.record("Expected a completed erase run, got \(result)")
+            return
+        }
+        #expect(publishedCount == 0, "an item is copied only when all of its files are in the library")
+        #expect(failedCount == 1)
+        #expect(hasEntryFailures)
+        #expect(incompleteItems == fixture.plan.entries.map(\.source.id))
+        #expect(FileManager.default.fileExists(atPath: fixture.destinationRoot.appending(path: "IMG_0.jpg").path))
+        #expect(try await fixture.store.companions(in: fixture.destinationPath).isEmpty)
+        #expect(
+            FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_0.xmp").path),
+            "a companion that is not in the library is never erased"
+        )
+        #expect(!FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_0.jpg").path))
+        #expect(try Self.stagingLeftovers(under: fixture.destinationRoot).isEmpty)
+    }
+
+    private func executeCompanionRun(
+        _ fixture: CardFixture,
+        transfer: @escaping MediaImportExecutor.VolumeTransfer
+    ) async -> MediaImportExecutionResult {
+        await MediaImportExecutor(store: fixture.store, volumeCapacity: { _ in nil }, transfer: transfer).execute(
+            plan: fixture.plan,
+            batch: ImportBatchID(),
+            sourceKind: .removableVolume,
+            sourceDeviceIdentity: "volume:companion",
+            deleteSourceRequested: true,
+            runID: UUID().uuidString
+        ) { _ in }
+    }
+
+    /// One JPEG with an `.xmp` companion on an attached card, planned into an empty
+    /// library with original names.
+    private func makeCompanionFixture() async throws -> CardFixture {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let sourceRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        let destinationRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
+        let sourcePath = try CatalogPath.normalizedDirectoryPath(for: sourceRoot)
+        let destinationPath = try CatalogPath.normalizedDirectoryPath(for: destinationRoot)
+        let modifiedAt = Date(timeIntervalSince1970: 100)
+        let primary = MediaRelativePath(rawValue: "IMG_0.jpg")
+        let sidecar = MediaRelativePath(rawValue: "IMG_0.xmp")
+        for (relative, bytes) in [(primary, Data(repeating: 1, count: 1024)), (sidecar, Data("<x:xmpmeta/>".utf8))] {
+            let url = sourceRoot.appending(path: relative.rawValue)
+            try bytes.write(to: url)
+            try FileManager.default.setAttributes([.modificationDate: modifiedAt], ofItemAtPath: url.path)
+        }
+        let facts = PlanningFileFacts(
+            id: MediaAssetID(libraryRootPath: sourcePath, relativePath: primary),
+            sourceURL: sourceRoot.appending(path: primary.rawValue),
+            relativePath: primary,
+            byteSize: 1024,
+            contentModifiedAt: modifiedAt,
+            captureWallCompact: nil,
+            mediaKind: .image,
+            fileExtension: "jpg",
+            companions: [MediaCompanion(
+                relativePath: sidecar,
+                primaryRelativePath: primary,
+                kind: .xmp,
+                byteSize: Int64(Data("<x:xmpmeta/>".utf8).count),
+                contentModifiedAt: modifiedAt
+            )],
+            contentTypeIdentifier: "public.jpeg"
+        )
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        let plan = MediaTransferPlanner.buildImportPlan(snapshot: ImportPlanningSnapshot(
+            generation: 1,
+            sourceRoot: sourcePath,
+            destinationRoot: destinationPath,
+            sourceNamespaceRevision: 1,
+            sourceNamingRevision: 0,
+            destinationNamespaceRevision: 1,
+            sourceMedia: [facts],
+            destinationOccupants: [:],
+            policy: policy,
+            calendar: Calendar(identifier: .gregorian),
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+        ))
+        #expect(plan.entries.first?.companionDestinations == [sidecar: sidecar])
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destinationRoot)
+        try await store.attachRemovableVolume(
+            mountURL: sourceRoot,
+            identity: "volume:companion",
+            displayName: "Card",
+            isEjectable: true
+        )
+        return CardFixture(
+            store: store,
+            plan: plan,
+            sourceRoot: sourceRoot,
+            destinationRoot: destinationRoot,
+            destinationPath: destinationPath
+        )
+    }
+
+    /// Hidden staging files left in a library: an import that ended must leave none.
+    private static func stagingLeftovers(under root: URL) throws -> [String] {
+        let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
+        return names.filter { $0.hasSuffix(MediaImportExecutor.destinationTempSuffix) }
+    }
+
     @Test func containmentHelperAcceptsDirectoryURLSlashAndNormalizedRoot() throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = try CatalogPath.normalizedDirectoryPath(for: temp)

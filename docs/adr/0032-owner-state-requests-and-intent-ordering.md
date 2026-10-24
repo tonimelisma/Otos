@@ -58,7 +58,9 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
 4. **An error is not a fact.** A failed read publishes nothing: the last published state
    stands, the request stays outstanding, and the error is logged with `errorOperation`.
    No `catch` or `try?` substitutes `[]`, `0`, `.empty` or `nil` for a value a user sees; a
-   value that is genuinely unknown is optional and shown as unknown.
+   value that is genuinely unknown is optional and shown as unknown. SwiftLint rule
+   `error_becomes_value` rejects `try? … ?? []/0/""/false/.empty` anywhere in the app, and
+   `projection_catch_substitutes_value` rejects the `catch` form in the projection.
 5. **Intents to an owner travel in one ordered channel.** Commands (must not be dropped,
    must stay in order) use one `.unbounded` `AsyncStream<Intent>` with one consumer.
    State-valued intents (only the newest matters) use `.bufferingNewest(1)`. Never one
