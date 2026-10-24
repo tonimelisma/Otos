@@ -46,8 +46,8 @@ scale × window long edge). It:
 1. Checks `FileMaterialization.status` immediately before every byte read.
 2. On `.dataless`, submits an interactive request to the shared
    `MaterializationCoordinator` and awaits it. Interactive materialization is
-   *persistent*: it re-asserts the provider request every 500 ms and polls until the
-   bytes arrive or the request is cancelled, with no fail-fast and no deadline
+   *persistent*: it re-asserts the provider request every 500 ms and waits until the
+   bytes arrive, which the file's vnode reports, or the request is cancelled, with no fail-fast and no deadline
    (APP-023). There is therefore no "attempt did not materialize" outcome to report —
    the loader returns the decoded image, or `.unavailable` when the file is genuinely
    absent or the request was cancelled.
