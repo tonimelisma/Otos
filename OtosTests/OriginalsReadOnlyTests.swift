@@ -27,10 +27,18 @@ struct FilesystemTreeSnapshot: Equatable, Sendable {
             at: root,
             includingPropertiesForKeys: Array(keys),
             options: [.skipsPackageDescendants]
-        ) else { return Self(entries: entries) }
+        ) else { throw SnapshotError.unreadableRoot(root.path) }
 
+        // The enumerator may report the root's real path (`/private/var/…` for `/var/…`)
+        // or its given spelling; a key is the path below whichever prefix it carries, and
+        // an entry under neither is a capture error, never a key. `realpath(3)` is used
+        // because `resolvingSymlinksInPath` strips `/private` back off.
+        let prefixes = try [Self.realPath(of: root), root.path].map { $0 + "/" }
         while let url = enumerator.nextObject() as? URL {
-            let relative = url.path.replacingOccurrences(of: root.path + "/", with: "")
+            guard let prefix = prefixes.first(where: { url.path.hasPrefix($0) }) else {
+                throw SnapshotError.entryOutsideRoot(url.path)
+            }
+            let relative = String(url.path.dropFirst(prefix.count))
             let attributes = try manager.attributesOfItem(atPath: url.path)
             let type = attributes[.type] as? FileAttributeType
             let isDirectory = type == .typeDirectory
@@ -56,6 +64,14 @@ struct FilesystemTreeSnapshot: Equatable, Sendable {
         return Self(entries: entries)
     }
 
+    private static func realPath(of url: URL) throws -> String {
+        guard let resolved = realpath(url.path, nil) else {
+            throw SnapshotError.unreadableRoot(url.path)
+        }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
     func difference(from other: Self) -> String {
         let keys = Set(entries.keys).union(other.entries.keys).sorted()
         return keys.compactMap { key in
@@ -66,6 +82,8 @@ struct FilesystemTreeSnapshot: Equatable, Sendable {
 }
 
 private enum SnapshotError: Error {
+    case unreadableRoot(String)
+    case entryOutsideRoot(String)
     case digestFailed(String)
 }
 
@@ -195,17 +213,29 @@ struct OriginalsReadOnlyTests {
         try assertUnchanged(before, root: root)
     }
 
+    /// The reconcile an external change schedules must read the root and leave the
+    /// originals already there untouched. The event is delivered by the test, so the
+    /// rescan is known to have happened: the catalog lists the new file only after it.
     @Test func externalChangeRescanWindowDoesNotRewriteExistingOriginals() async throws {
         let root = try makeFixtureRoot(named: "rescan")
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        let store = CatalogStore(location: .inMemory, filesystemWatcher: watcher, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        #expect(Set(scanned.testAssets.map(\.relativePath.rawValue)) == ["original.jpg", "nested/other.jpg"])
         let before = try FilesystemTreeSnapshot.capture(root: root)
-        try Data("new external file".utf8).write(to: root.appending(path: "external.jpg"))
-        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        let external = root.appending(path: "external.jpg")
+        try Data("new external file".utf8).write(to: external)
+        emit(FilesystemEvent(path: external.path, flags: 0))
+        let rescanned = try await waitForCatalogStoreState(store) { state in
+            !state.isScanning && state.testAssets.contains { $0.relativePath.rawValue == "external.jpg" }
+        }
+        let rescannedPaths = Set(rescanned.testAssets.map(\.relativePath.rawValue))
+        #expect(rescannedPaths == ["original.jpg", "nested/other.jpg", "external.jpg"])
         let afterExternalChange = try FilesystemTreeSnapshot.capture(root: root)
-        #expect(afterExternalChange.entries["original.jpg"] == before.entries["original.jpg"])
+        let original = try #require(before.entries["original.jpg"])
+        #expect(afterExternalChange.entries["original.jpg"] == original)
     }
 
     private func makeFixtureRoot(named name: String) throws -> URL {
@@ -237,6 +267,7 @@ struct OriginalsReadOnlyTests {
     }
 
     private func assertUnchanged(_ before: FilesystemTreeSnapshot, root: URL) throws {
+        try #require(!before.entries.isEmpty, "An empty snapshot proves nothing about the originals")
         let after = try FilesystemTreeSnapshot.capture(root: root)
         #expect(after == before, "Original tree changed at: \(after.difference(from: before))")
     }
