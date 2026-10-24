@@ -20,8 +20,7 @@ struct CatalogWindowViewModelEnrichmentTests {
             store: store,
             enricher: completeEnricher(captureDate: captureDate),
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
-            applyFlushInterval: .milliseconds(1)
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
@@ -95,8 +94,7 @@ struct CatalogWindowViewModelEnrichmentTests {
             store: secondStore,
             enricher: completeEnricher(captureDate: captureDate),
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
-            applyFlushInterval: .milliseconds(1)
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(

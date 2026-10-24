@@ -38,6 +38,12 @@ actor CatalogProjection {
         case structural
     }
 
+    /// How often background Store changes may publish: at most once a second. A rate
+    /// limit standing on a measurement: each publication that reorders the grid costs
+    /// the MainActor an apply of ~25 ms for an enrichment trickle and ~200 ms for a
+    /// reloadData-class apply at 23k items
+    /// (`docs/research/grid-reorder-cadence-and-appkit-diffable-apply.md`). User intents
+    /// ring the doorbell directly and never wait for it.
     private let cadence: Duration
     let stateBuilder: WindowStateBuilder?
 

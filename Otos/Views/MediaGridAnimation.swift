@@ -15,9 +15,13 @@ nonisolated enum MediaGridAnimation {
     static let applyDuration: TimeInterval = 0.35
 
     /// Quiet window after the last scroll-bounds tick before a move animation is
-    /// allowed and before the mutation gate releases scroll-hold (Part C). One
-    /// coalesced scroll flush is 16 ms; 250 ms of quiet means the user has
-    /// plausibly stopped. Shared by animation suppress and `endScrollHold`.
+    /// allowed and before the mutation gate releases scroll-hold (Part C). Shared by
+    /// animation suppress and `endScrollHold`. A product decision, because nothing
+    /// reports that every scroll has ended: AppKit brackets gesture and scroller
+    /// tracking with will-start/did-end live-scroll notifications, but its header states
+    /// that legacy mice send no such pair (`NSScrollView.h`,
+    /// `NSScrollViewDidLiveScrollNotification`). One coalesced scroll flush is 16 ms;
+    /// 250 ms without a tick is when the grid treats the user as having stopped.
     static let applyAnimationScrollQuietThreshold: TimeInterval = 0.25
 
     /// During live scrolling a move animation is invisible churn; apply instantly

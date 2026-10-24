@@ -27,8 +27,7 @@ func makeDownloadLifecycleContext() async throws -> DownloadLifecycleContext {
         store: store,
         enricher: datalessLifecycleEnricher(state: state),
         materialize: datalessLifecycleMaterializer(state: state),
-        readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
-        applyFlushInterval: .milliseconds(1)
+        readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
     )
     return DownloadLifecycleContext(store: store, coordinator: coordinator, id: id)
 }

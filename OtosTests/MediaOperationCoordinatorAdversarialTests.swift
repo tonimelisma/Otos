@@ -2052,8 +2052,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let store = CatalogStore(
             location: .inMemory,
             filesystemWatcher: watcher,
-            scanCadence: .milliseconds(10),
-            filesystemEventDebounce: .milliseconds(20)
+            scanCadence: .milliseconds(10)
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)

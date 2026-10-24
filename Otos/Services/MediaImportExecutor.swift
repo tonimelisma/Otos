@@ -2021,6 +2021,10 @@ private final nonisolated class ByteProgressTracker: Sendable {
         var lastEmit: ContinuousClock.Instant?
     }
 
+    /// At most ten samples a second leave the copy workers. A rate limit standing on a
+    /// measurement: `copyfile` reports once a megabyte, ~1,840 times a second for one
+    /// worker on an internal SSD, and each delivered sample wakes a coordinator pass and
+    /// a MainActor presentation apply (`docs/research/2026-10-23-cadence-audit.md`).
     private static let emitInterval: Duration = .milliseconds(100)
 
     private let totalCount: Int

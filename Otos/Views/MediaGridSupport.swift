@@ -228,6 +228,12 @@ nonisolated enum MediaGridDayBarPolicy {
 /// Store-backed work to ten passes a second during a fling, where before it got none,
 /// while staying well inside the time a thumbnail has to appear before a reader notices
 /// it missing.
+///
+/// A rate limit standing on a measurement: a live session logged 3,594 scroll-bounds
+/// ticks against 221 flushes when the trailing edge stood alone, and the maximum wait
+/// is what serves sustained scrolling
+/// (`docs/research/2026-09-04-grid-day-header-pinning-and-scroll-edge-effect.md`,
+/// "Measurement (2026-09-05)").
 nonisolated enum MediaGridScrollWorkCadence {
     /// Trailing edge for a burst that ends. One display frame at 60 Hz.
     static let coalesceWindow: TimeInterval = 0.016

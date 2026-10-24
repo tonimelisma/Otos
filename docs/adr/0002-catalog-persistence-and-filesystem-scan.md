@@ -17,7 +17,7 @@ or the full library-root access schema.
 Verified repo facts:
 
 - `CatalogStore` is the single actor owner of GRDB, root runtime state, scan
-  lifecycle, filesystem-event debounce, and Store-owned catalog query APIs.
+  lifecycle, filesystem-event coalescing, and Store-owned catalog query APIs.
 - File-backed catalog locations use a GRDB `DatabasePool`; `.inMemory` test
   locations use a GRDB `DatabaseQueue`.
 - SQLite is the per-asset working set. The Store keeps root identity,
@@ -107,7 +107,8 @@ This ADR owns:
   by ADR 0011's two-tier publication model.
 - Scan-time media eligibility: which regular files become `media_asset` rows based on
   `NSURLContentTypeKey` and `UTType` conformance.
-- Running-app filesystem watching: macOS FSEvents are debounced hints. Store
+- Running-app filesystem watching: macOS FSEvents are hints acted on as they
+  arrive, one pass per root at a time. Store
   accumulates typed dirty scopes (file / subtree / root) per root and reconciles
   the narrowest safely known scope. Events during an active lease retain their
   granularity in the next dirty generation instead of forcing a full-root rescan.
@@ -333,9 +334,12 @@ catalog memory. Provider hydration runs outside the Otos process, so `IgnoreSelf
 cannot identify those events.
 
 `CatalogStore` maps each event path to exactly one library root, ignores events
-until that root's first scan has completed ("arming"), and coalesces bursts with a
-per-root quiet-period debounce (roughly one second by default). When the debounce
-fires, Store classifies the batch with `FilesystemEventFlags` /
+until that root's first scan has completed ("arming"), and receives them through one
+ordered stream. One pass per root acts on its events as they arrive; events that land
+while the pass awaits join the root's batch and the same pass takes them next, so a
+burst is coalesced by the work itself rather than by a quiet period
+(`docs/research/2026-10-23-cadence-audit.md`). Each pass classifies its batch with
+`FilesystemEventFlags` /
 `FilesystemReconciler` into typed dirty scopes and merges them into one
 process-local accumulator per root:
 
