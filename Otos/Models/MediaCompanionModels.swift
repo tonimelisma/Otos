@@ -86,15 +86,11 @@ nonisolated enum MediaCompanionPairing {
     /// Re-derives pairings for companions that share a directory with the given
     /// relative paths (targeted FSEvents / single-file reconcile).
     static func directoryKey(of relativePath: MediaRelativePath) -> String {
-        let raw = relativePath.rawValue
-        guard let slash = raw.lastIndex(of: "/") else {
-            return ""
-        }
-        return String(raw[..<slash])
+        relativePath.folder
     }
 
     static func stem(of relativePath: MediaRelativePath) -> String {
-        let name = URL(fileURLWithPath: relativePath.rawValue).deletingPathExtension().lastPathComponent
+        let name = relativePath.stem
         return name.lowercased()
     }
 

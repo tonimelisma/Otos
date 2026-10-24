@@ -18,27 +18,15 @@ nonisolated enum MediaTransferPlanner {
     /// further observation — the reason planning is one pass and not a fixed point.
     static func destinationFolders(for snapshot: ImportPlanningSnapshot) -> Set<String> {
         var folders: Set<String> = []
-        for bundle in namingBundles(from: snapshot.sourceMedia, policy: snapshot.policy) {
-            guard !needsDate(policy: snapshot.policy)
-                || !bundle.members.contains(where: { !$0.hasAnyDate })
-            else {
-                // Undatable bundles are blocked without a destination name,
-                // but only when the selected policy actually needs a date.
-                continue
+        for bundle in ImportNaming.bundles(from: snapshot.sourceMedia, policy: snapshot.policy)
+            where bundle.isNameable(under: snapshot.policy)
+        {
+            let timestamp = ImportNaming.timestamp(of: bundle, calendar: snapshot.calendar, timeZone: snapshot.timeZone)
+            if let folder = ImportNaming.folder(timestamp: timestamp, policy: snapshot.policy) {
+                folders.insert(folder)
             }
-            let timestamp = namingTimestamp(for: bundle, snapshot: snapshot)
-            guard !needsDate(policy: snapshot.policy) || timestamp != nil else { continue }
-            folders.insert(folderPath(timestamp: timestamp, policy: snapshot.policy))
         }
         return folders
-    }
-
-    /// Whether the current import policy requires a usable date to name a
-    /// destination. Under `.none`/`.original` the timestamp is never consulted,
-    /// so an undatable bundle must not be blocked.
-    static func needsDate(policy: ImportPolicy) -> Bool {
-        policy.destinationFolderPolicy == .yearMonth
-            || policy.destinationNamePolicy == .captureDateTime
     }
 
     /// Single pure pass over the source bundles against an already-read destination
@@ -62,7 +50,7 @@ nonisolated enum MediaTransferPlanner {
                 capabilities: snapshot.destinationCapabilities
             )
         })
-        let bundles = namingBundles(from: snapshot.sourceMedia, policy: snapshot.policy)
+        let bundles = ImportNaming.bundles(from: snapshot.sourceMedia, policy: snapshot.policy)
         var entries: [MediaOperationPlanEntry] = []
 
         for bundle in bundles {
@@ -110,106 +98,32 @@ nonisolated enum MediaTransferPlanner {
 }
 
 private nonisolated extension MediaTransferPlanner {
-    struct NamingBundle {
-        let members: [PlanningFileFacts]
-        let stem: String
-        let directoryKey: String
-        let wallCompact: Int64?
-        let fallbackModifiedAt: Date?
-    }
-
-    struct SuffixAttempt {
-        var memberDestinations: [(PlanningFileFacts, MediaRelativePath)] = []
-        var companionDestinations: [MediaRelativePath: MediaRelativePath] = [:]
-        var dispositions: [MediaAssetID: MediaOperationDisposition] = [:]
-        var blocked: MediaOperationBlockReason?
-        var advanceSuffix = false
-    }
-
-    static func namingBundles(
-        from media: [PlanningFileFacts],
-        policy: ImportPolicy
-    ) -> [NamingBundle] {
-        let sorted = media.sorted { left, right in
-            if policy.destinationNamePolicy == .captureDateTime {
-                let leftKey = left.captureWallCompact ?? Int64.max
-                let rightKey = right.captureWallCompact ?? Int64.max
-                if leftKey != rightKey {
-                    return leftKey < rightKey
-                }
-                let leftDate = left.contentModifiedAt ?? .distantFuture
-                let rightDate = right.contentModifiedAt ?? .distantFuture
-                if leftDate != rightDate {
-                    return leftDate < rightDate
-                }
-            }
-            let leftNatural = MediaSortKey.naturalKey(left.relativePath.rawValue)
-            let rightNatural = MediaSortKey.naturalKey(right.relativePath.rawValue)
-            if leftNatural != rightNatural {
-                return leftNatural < rightNatural
-            }
-            return left.relativePath.rawValue < right.relativePath.rawValue
-        }
-
-        var groups: [String: [PlanningFileFacts]] = [:]
-        var order: [String] = []
-        for item in sorted {
-            let key = MediaCompanionPairing.directoryKey(of: item.relativePath)
-                + "\u{1}"
-                + MediaCompanionPairing.stem(of: item.relativePath)
-            if groups[key] == nil {
-                order.append(key)
-            }
-            groups[key, default: []].append(item)
-        }
-
-        return order.compactMap { key in
-            guard let members = groups[key], let first = members.first else {
-                return nil
-            }
-            let wall = members.compactMap(\.captureWallCompact).max()
-            let fallback = members.compactMap(\.contentModifiedAt).min()
-            return NamingBundle(
-                members: members,
-                stem: MediaCompanionPairing.stem(of: first.relativePath),
-                directoryKey: MediaCompanionPairing.directoryKey(of: first.relativePath),
-                wallCompact: wall,
-                fallbackModifiedAt: fallback
-            )
-        }
-    }
-
+    /// Plans one naming bundle: every member under one name and one collision suffix,
+    /// or the whole bundle blocked. Empty members are excluded first and the rest are
+    /// planned as their own bundle.
     // The pure import reservation loop is intentionally cohesive; splitting it only
     // to satisfy arithmetic lint caps would obscure the collision algorithm.
     // swiftlint:disable:next cyclomatic_complexity function_body_length
     static func planBundle(
-        _ bundle: NamingBundle,
+        _ bundle: ImportNaming.Bundle,
         snapshot: ImportPlanningSnapshot,
         reserved: inout Set<FilesystemNameKey>,
         namespace: DestinationNamespace
     ) -> [MediaOperationPlanEntry] {
+        func blockAll(_ reason: MediaOperationBlockReason) -> [MediaOperationPlanEntry] {
+            bundle.members.map { member in
+                MediaOperationPlanEntry(source: member, companionDestinations: [:], disposition: .blocked(reason))
+            }
+        }
         let emptyMembers = bundle.members.filter { $0.byteSize == 0 }
         if !emptyMembers.isEmpty {
             let excluded = emptyMembers.map { member in
-                MediaOperationPlanEntry(
-                    source: member,
-                    idealDestination: member.relativePath,
-                    finalDestination: member.relativePath,
-                    companionDestinations: [:],
-                    disposition: .excluded(.empty)
-                )
+                MediaOperationPlanEntry(source: member, companionDestinations: [:], disposition: .excluded(.empty))
             }
             let nonEmptyMembers = bundle.members.filter { $0.byteSize != 0 }
             guard !nonEmptyMembers.isEmpty else { return excluded }
-            let nonEmptyBundle = NamingBundle(
-                members: nonEmptyMembers,
-                stem: bundle.stem,
-                directoryKey: bundle.directoryKey,
-                wallCompact: nonEmptyMembers.compactMap(\.captureWallCompact).max(),
-                fallbackModifiedAt: nonEmptyMembers.compactMap(\.contentModifiedAt).min()
-            )
             return excluded + planBundle(
-                nonEmptyBundle,
+                ImportNaming.Bundle(members: nonEmptyMembers),
                 snapshot: snapshot,
                 reserved: &reserved,
                 namespace: namespace
@@ -219,62 +133,22 @@ private nonisolated extension MediaTransferPlanner {
         // Blocking surfaces the file in state D instead of letting it be silently
         // skipped or silently retried forever (ARC-057).
         if bundle.members.contains(where: \.isSourceUnreadable) {
-            return bundle.members.map { member in
-                MediaOperationPlanEntry(
-                    source: member,
-                    idealDestination: MediaRelativePath(rawValue: member.relativePath.rawValue),
-                    finalDestination: MediaRelativePath(rawValue: member.relativePath.rawValue),
-                    companionDestinations: [:],
-                    disposition: .blocked(.sourceUnreadable)
-                )
-            }
+            return blockAll(.sourceUnreadable)
         }
-        if needsDate(policy: snapshot.policy),
-           bundle.members.contains(where: { !$0.hasAnyDate })
-        {
-            return bundle.members.map { member in
-                MediaOperationPlanEntry(
-                    source: member,
-                    idealDestination: MediaRelativePath(rawValue: member.relativePath.rawValue),
-                    finalDestination: MediaRelativePath(rawValue: member.relativePath.rawValue),
-                    companionDestinations: [:],
-                    disposition: .blocked(.noUsableDate)
-                )
-            }
+        guard bundle.isNameable(under: snapshot.policy) else {
+            return blockAll(.noUsableDate)
         }
-
-        let timestamp = namingTimestamp(for: bundle, snapshot: snapshot)
-        guard !needsDate(policy: snapshot.policy) || timestamp != nil else {
-            return bundle.members.map { member in
-                MediaOperationPlanEntry(
-                    source: member,
-                    idealDestination: member.relativePath,
-                    finalDestination: member.relativePath,
-                    companionDestinations: [:],
-                    disposition: .blocked(.noUsableDate)
-                )
-            }
-        }
-        let folder = folderPath(timestamp: timestamp, policy: snapshot.policy)
-        guard let baseName = baseFileName(
-            stem: bundle.stem,
+        let timestamp = ImportNaming.timestamp(of: bundle, calendar: snapshot.calendar, timeZone: snapshot.timeZone)
+        guard let unsuffixed = ImportNaming.destination(
+            for: bundle.members[0],
             timestamp: timestamp,
             policy: snapshot.policy,
-            primary: bundle.members[0]
+            suffix: 0
         ) else {
-            return bundle.members.map { member in
-                MediaOperationPlanEntry(
-                    source: member,
-                    idealDestination: member.relativePath,
-                    finalDestination: member.relativePath,
-                    companionDestinations: [:],
-                    disposition: .blocked(.noUsableDate)
-                )
-            }
+            return blockAll(.noUsableDate)
         }
 
         for suffix in 0 ..< 10000 {
-            let suffixToken = suffix == 0 ? "" : String(format: "_%03d", suffix)
             var memberDestinations: [(PlanningFileFacts, MediaRelativePath)] = []
             var companionDestinations: [MediaRelativePath: MediaRelativePath] = [:]
             var dispositions: [MediaAssetID: MediaOperationDisposition] = [:]
@@ -282,28 +156,23 @@ private nonisolated extension MediaTransferPlanner {
             var advanceSuffix = false
 
             memberLoop: for member in bundle.members {
-                let memberBaseName = switch snapshot.policy.destinationNamePolicy {
-                case .original:
-                    URL(fileURLWithPath: member.relativePath.rawValue)
-                        .deletingPathExtension()
-                        .lastPathComponent
-                case .captureDateTime:
-                    baseName
+                guard let relative = ImportNaming.destination(
+                    for: member,
+                    timestamp: timestamp,
+                    policy: snapshot.policy,
+                    suffix: suffix
+                ) else {
+                    return blockAll(.noUsableDate)
                 }
-                let ext = destinationExtension(for: member, policy: snapshot.policy)
-                let fileName = memberBaseName + suffixToken + (ext.isEmpty ? "" : ".\(ext)")
-                let relative = MediaRelativePath(
-                    rawValue: folder.isEmpty ? fileName : "\(folder)/\(fileName)"
-                )
                 memberDestinations.append((member, relative))
 
                 if snapshot.policy.importSidecarFiles {
                     for companion in member.companions where companion.primaryRelativePath == member.relativePath {
-                        let companionName = memberBaseName + suffixToken + ".\(companion.kind.rawValue)"
-                        let companionRelative = MediaRelativePath(
-                            rawValue: folder.isEmpty ? companionName : "\(folder)/\(companionName)"
+                        companionDestinations[companion.relativePath] = ImportNaming.companionDestination(
+                            companion,
+                            primaryDestination: relative,
+                            policy: snapshot.policy
                         )
-                        companionDestinations[companion.relativePath] = companionRelative
                     }
                 }
 
@@ -331,17 +200,7 @@ private nonisolated extension MediaTransferPlanner {
                 continue
             }
             if let blocked {
-                return bundle.members.map { member in
-                    let ideal = memberDestinations.first(where: { $0.0.id == member.id })?.1
-                        ?? MediaRelativePath(rawValue: member.relativePath.rawValue)
-                    return MediaOperationPlanEntry(
-                        source: member,
-                        idealDestination: ideal,
-                        finalDestination: ideal,
-                        companionDestinations: [:],
-                        disposition: .blocked(blocked)
-                    )
-                }
+                return blockAll(blocked)
             }
 
             for companionPath in companionDestinations.values {
@@ -356,15 +215,7 @@ private nonisolated extension MediaTransferPlanner {
                 guard let result = namespace.occupancy(of: companionPath) else {
                     // Companion folder unobservable: block rather than risk a
                     // sidecar overwrite on an unread namespace.
-                    return bundle.members.map { member in
-                        MediaOperationPlanEntry(
-                            source: member,
-                            idealDestination: companionPath,
-                            finalDestination: companionPath,
-                            companionDestinations: [:],
-                            disposition: .blocked(.filesystemObservationUnavailable(destination: companionPath))
-                        )
-                    }
+                    return blockAll(.filesystemObservationUnavailable(destination: companionPath))
                 }
                 if case .absent = result {
                     continue
@@ -382,8 +233,6 @@ private nonisolated extension MediaTransferPlanner {
                 planned.append(
                     MediaOperationPlanEntry(
                         source: member,
-                        idealDestination: relative,
-                        finalDestination: relative,
                         companionDestinations: companionDestinations.filter { key, _ in
                             member.companions.contains { $0.relativePath == key }
                         },
@@ -396,7 +245,7 @@ private nonisolated extension MediaTransferPlanner {
                         relativePath: relative,
                         capabilities: snapshot.destinationCapabilities
                     ))
-                case .blocked, .relocate, .noOp, .excluded:
+                case .blocked, .excluded:
                     break
                 }
             }
@@ -409,17 +258,7 @@ private nonisolated extension MediaTransferPlanner {
             return planned
         }
 
-        return bundle.members.map { member in
-            MediaOperationPlanEntry(
-                source: member,
-                idealDestination: MediaRelativePath(rawValue: member.relativePath.rawValue),
-                finalDestination: MediaRelativePath(rawValue: member.relativePath.rawValue),
-                companionDestinations: [:],
-                disposition: .blocked(.noFreeDestinationName(
-                    destination: MediaRelativePath(rawValue: member.relativePath.rawValue)
-                ))
-            )
-        }
+        return blockAll(.noFreeDestinationName(destination: unsuffixed))
     }
 
     enum CandidateDecision {
@@ -446,6 +285,9 @@ private nonisolated extension MediaTransferPlanner {
             return .advanceSuffix
         }
 
+        if let occupant = namespace.folderOccupant(of: candidate) {
+            return .blocked(.destinationFolderOccupied(occupant: occupant))
+        }
         guard let probe = namespace.occupancy(of: candidate) else {
             // The candidate's folder was not readable, so freeness is unproven.
             // Blocking keeps an unreadable namespace from planning an overwrite.
@@ -489,56 +331,6 @@ private nonisolated extension MediaTransferPlanner {
         return Int(left.timeIntervalSince1970) == Int(right.timeIntervalSince1970)
     }
 
-    static func namingTimestamp(
-        for bundle: NamingBundle,
-        snapshot: ImportPlanningSnapshot
-    ) -> CaptureWallComponents? {
-        ImportNaming.timestamp(
-            wallCompact: bundle.wallCompact,
-            fallbackModifiedAt: bundle.fallbackModifiedAt,
-            calendar: snapshot.calendar,
-            timeZone: snapshot.timeZone
-        )
-    }
-
-    static func folderPath(
-        timestamp: CaptureWallComponents?,
-        policy: ImportPolicy
-    ) -> String {
-        switch policy.destinationFolderPolicy {
-        case .none:
-            ""
-        case .yearMonth:
-            timestamp?.yearMonthFolder ?? ""
-        }
-    }
-
-    static func baseFileName(
-        stem _: String = "",
-        timestamp: CaptureWallComponents?,
-        policy: ImportPolicy,
-        primary: PlanningFileFacts
-    ) -> String? {
-        switch policy.destinationNamePolicy {
-        case .original:
-            URL(fileURLWithPath: primary.relativePath.rawValue).deletingPathExtension().lastPathComponent
-        case .captureDateTime:
-            timestamp?.dateTimeFileName
-        }
-    }
-
-    static func destinationExtension(for member: PlanningFileFacts, policy: ImportPolicy) -> String {
-        switch policy.destinationNamePolicy {
-        case .original:
-            member.fileExtension
-        case .captureDateTime:
-            CanonicalMediaExtension.forDateTimeName(
-                contentTypeIdentifier: member.contentTypeIdentifier,
-                sourceExtension: member.fileExtension
-            )
-        }
-    }
-
     static func totals(from entries: [MediaOperationPlanEntry]) -> MediaOperationPlanTotals {
         var totals = MediaOperationPlanTotals(
             copyCount: 0,
@@ -560,8 +352,6 @@ private nonisolated extension MediaTransferPlanner {
                 totals.blockedCount += 1
             case .excluded:
                 totals.excludedCount += 1
-            case .relocate, .noOp:
-                break
             }
         }
         return totals

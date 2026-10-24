@@ -134,6 +134,49 @@ nonisolated struct MediaRelativePath: Hashable, Codable, RawRepresentable, Custo
     }
 }
 
+/// The parts of a root-relative path, split on "/" as text. Never through
+/// `URL(fileURLWithPath:)`: a relative path handed to it resolves against the process's
+/// working directory, so its folder comes back absolute.
+nonisolated extension MediaRelativePath {
+    /// Joins a folder ("" at the root) and a file name.
+    init(folder: String, fileName: String) {
+        self.init(rawValue: folder.isEmpty ? fileName : "\(folder)/\(fileName)")
+    }
+
+    /// The folder part, "" at the root.
+    var folder: String {
+        guard let slash = rawValue.lastIndex(of: "/") else { return "" }
+        return String(rawValue[..<slash])
+    }
+
+    var fileName: String {
+        guard let slash = rawValue.lastIndex(of: "/") else { return rawValue }
+        return String(rawValue[rawValue.index(after: slash)...])
+    }
+
+    /// The file name without its last extension. A leading dot does not start an
+    /// extension (".hidden" has stem ".hidden").
+    var stem: String {
+        let name = fileName
+        guard let dot = name.lastIndex(of: "."), dot != name.startIndex else { return name }
+        return String(name[..<dot])
+    }
+
+    /// The last extension without its dot, "" when there is none.
+    var fileExtension: String {
+        let name = fileName
+        guard let dot = name.lastIndex(of: "."), dot != name.startIndex else { return "" }
+        return String(name[name.index(after: dot)...])
+    }
+
+    /// Every folder above this path, outermost first: "a/b/c.jpg" → ["a", "a/b"].
+    var ancestorFolders: [String] {
+        let parts = rawValue.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count > 1 else { return [] }
+        return (1 ..< parts.count).map { parts[0 ..< $0].joined(separator: "/") }
+    }
+}
+
 /// Media identity is the natural filesystem identity inside Otos: which library
 /// root the file belongs to plus its path inside that root. Keeping this as a
 /// pair avoids ambiguous string concatenation and avoids generated IDs.

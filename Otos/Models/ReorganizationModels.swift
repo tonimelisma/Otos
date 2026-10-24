@@ -7,7 +7,6 @@ import Foundation
 
 nonisolated struct ReorganizationPlanningSnapshot: Equatable, Sendable {
     let libraryRoot: LibraryRootPath
-    let volumeIdentifier: String
     let capabilities: VolumeNamespaceCapabilities
     let generation: UInt64
     let rootRevision: UInt64
@@ -15,8 +14,6 @@ nonisolated struct ReorganizationPlanningSnapshot: Equatable, Sendable {
     let calendar: Calendar
     let timeZone: TimeZone
     let media: [PlanningFileFacts]
-    /// Relative paths known to be stationary foreign occupants (from prior probes).
-    let knownForeignOccupants: Set<MediaRelativePath>
 }
 
 nonisolated enum ReorganizationDisposition: Equatable, Sendable {
@@ -25,27 +22,32 @@ nonisolated enum ReorganizationDisposition: Equatable, Sendable {
     case blocked(ReorganizationBlockReason)
 }
 
+/// Why an item stays where it is. Each one is reported as "can't be processed".
 nonisolated enum ReorganizationBlockReason: Equatable, Sendable {
+    /// The naming policy needs a date and the item has none.
     case noUsableDate
-    case crossVolume
-    case ambiguousFilesystemName
-    case ancestorConflict(MediaRelativePath)
-    case stationaryConflict(MediaRelativePath)
+    /// A file holds the name of the folder the item would go in, or of a folder above it.
+    case folderOccupied(occupant: String)
+    /// The destination folder exists but could not be listed, so no name in it is proven free.
+    case folderUnreadable(folder: String)
+    /// Every suffix the naming policy allows is taken.
+    case noFreeName(destination: MediaRelativePath)
 }
 
 nonisolated struct ReorganizationPhysicalMember: Equatable, Sendable, Identifiable {
     let id: String
     let source: MediaRelativePath
-    let idealDestination: MediaRelativePath
     var finalDestination: MediaRelativePath
     let isCompanion: Bool
     let primarySource: MediaRelativePath?
     let mediaID: MediaAssetID?
 }
 
+/// One no-overwrite rename. A member that has to step aside (a cycle, or a case-only
+/// relabel on a case-insensitive volume) takes two: to a temporary name in its own
+/// folder, then to its destination.
 nonisolated enum ReorganizationMoveStep: Equatable, Sendable {
     case move(from: MediaRelativePath, to: MediaRelativePath)
-    case moveViaTemporary(from: MediaRelativePath, temporary: MediaRelativePath, to: MediaRelativePath)
 }
 
 nonisolated struct ReorganizationComponent: Equatable, Sendable, Identifiable {
@@ -87,7 +89,7 @@ nonisolated struct ReorganizationPlan: Equatable, Sendable {
 }
 
 nonisolated enum ReorganizationPlanBuildOutcome: Equatable, Sendable {
-    case needsProbes(occupancy: [NamespaceOccupancyRequest])
     case ready(ReorganizationPlan)
-    case blocked(reason: String)
+    /// The plan broke its own invariant (two members claiming one name); never presented.
+    case inconsistent(reason: String)
 }

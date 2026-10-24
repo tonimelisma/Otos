@@ -180,33 +180,27 @@ private struct RunnerFixture {
         var preferences = ImportPreferences.default
         preferences.destinationFolderPolicy = .yearMonth
         preferences.destinationNamePolicy = .original
+        let capabilities = FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: root)
         let snapshot = ReorganizationPlanningSnapshot(
             libraryRoot: rootPath,
-            volumeIdentifier: rootPath.rawValue,
-            capabilities: FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: root),
+            capabilities: capabilities,
             generation: 1,
             rootRevision: revision,
             policy: ImportPolicy.from(preferences),
             calendar: .current,
             timeZone: .current,
-            media: media,
-            knownForeignOccupants: []
+            media: media
         )
-        var occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult] = [:]
-        while true {
-            switch ReorganizationPlanner.plan(snapshot: snapshot, occupancy: occupancy) {
-            case let .ready(plan):
-                return plan
-            case let .needsProbes(requests):
-                for request in requests {
-                    occupancy[request] = FilesystemNamespaceSemantics.occupancy(
-                        rootPath: request.rootPath,
-                        relativePath: request.relativePath
-                    )
-                }
-            case let .blocked(reason):
-                throw RunnerFixtureError.planBlocked(reason)
-            }
+        let namespace = FilesystemNamespaceSemantics.enumerateNamespace(
+            root: rootPath,
+            folders: ReorganizationPlanner.destinationFolders(for: snapshot),
+            capabilities: capabilities
+        )
+        switch ReorganizationPlanner.plan(snapshot: snapshot, namespace: namespace) {
+        case let .ready(plan):
+            return plan
+        case let .inconsistent(reason):
+            throw RunnerFixtureError.planInconsistent(reason)
         }
     }
 
@@ -221,5 +215,5 @@ private struct RunnerFixture {
 }
 
 private enum RunnerFixtureError: Error {
-    case planBlocked(String)
+    case planInconsistent(String)
 }

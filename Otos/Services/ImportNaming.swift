@@ -17,7 +17,162 @@ nonisolated struct CaptureWallComponents: Equatable, Sendable {
     }
 }
 
+/// Import naming guide
+///
+/// The one implementation of the import naming policy (ARC-046): which files name
+/// together, which date names them, the destination folder and file name, the collision
+/// suffix, and a companion's name beside its primary. Import planning uses it to name
+/// copies; Reorganize uses it to apply the same policy to a library already in place
+/// (ARC-050), so the two can never name one file differently.
 nonisolated enum ImportNaming {
+    /// Files that name together: one folder, one stem compared case-insensitively — a
+    /// RAW and its JPEG, say. They share one name date and one collision suffix.
+    struct Bundle: Equatable, Sendable {
+        let members: [PlanningFileFacts]
+        let stem: String
+        let directoryKey: String
+        /// The latest capture wall time any member has.
+        let wallCompact: Int64?
+        /// The earliest modification date any member has, used when no member has a
+        /// capture wall time.
+        let fallbackModifiedAt: Date?
+
+        init(members: [PlanningFileFacts]) {
+            self.members = members
+            stem = members.first.map { MediaCompanionPairing.stem(of: $0.relativePath) } ?? ""
+            directoryKey = members.first.map { MediaCompanionPairing.directoryKey(of: $0.relativePath) } ?? ""
+            wallCompact = members.compactMap(\.captureWallCompact).max()
+            fallbackModifiedAt = members.compactMap(\.contentModifiedAt).min()
+        }
+
+        /// Whether the policy can name this bundle: a policy that needs a date names a
+        /// bundle only when every member has one.
+        func isNameable(under policy: ImportPolicy) -> Bool {
+            !ImportNaming.needsDate(policy) || members.allSatisfy(\.hasAnyDate)
+        }
+    }
+
+    /// Groups files into naming bundles, in the order the policy names them: by capture
+    /// time under a date-time name, then by natural file order.
+    static func bundles(from media: [PlanningFileFacts], policy: ImportPolicy) -> [Bundle] {
+        let sorted = media.sorted { left, right in
+            if policy.destinationNamePolicy == .captureDateTime {
+                let leftKey = left.captureWallCompact ?? Int64.max
+                let rightKey = right.captureWallCompact ?? Int64.max
+                if leftKey != rightKey {
+                    return leftKey < rightKey
+                }
+                let leftDate = left.contentModifiedAt ?? .distantFuture
+                let rightDate = right.contentModifiedAt ?? .distantFuture
+                if leftDate != rightDate {
+                    return leftDate < rightDate
+                }
+            }
+            let leftNatural = MediaSortKey.naturalKey(left.relativePath.rawValue)
+            let rightNatural = MediaSortKey.naturalKey(right.relativePath.rawValue)
+            if leftNatural != rightNatural {
+                return leftNatural < rightNatural
+            }
+            return left.relativePath.rawValue < right.relativePath.rawValue
+        }
+        var groups: [String: [PlanningFileFacts]] = [:]
+        var order: [String] = []
+        for item in sorted {
+            let key = MediaCompanionPairing.directoryKey(of: item.relativePath)
+                + "\u{1}"
+                + MediaCompanionPairing.stem(of: item.relativePath)
+            if groups[key] == nil {
+                order.append(key)
+            }
+            groups[key, default: []].append(item)
+        }
+        return order.compactMap { key in groups[key].map(Bundle.init(members:)) }
+    }
+
+    /// Whether the policy needs a capture date: a dated folder or a date-time name.
+    static func needsDate(_ policy: ImportPolicy) -> Bool {
+        policy.destinationFolderPolicy == .yearMonth || policy.destinationNamePolicy == .captureDateTime
+    }
+
+    /// The date a bundle is named by, or nil when it has none.
+    static func timestamp(of bundle: Bundle, calendar: Calendar, timeZone: TimeZone) -> CaptureWallComponents? {
+        timestamp(
+            wallCompact: bundle.wallCompact,
+            fallbackModifiedAt: bundle.fallbackModifiedAt,
+            calendar: calendar,
+            timeZone: timeZone
+        )
+    }
+
+    /// The folder a bundle named by `timestamp` goes in, "" at the root.
+    static func folder(timestamp: CaptureWallComponents?, policy: ImportPolicy) -> String? {
+        switch policy.destinationFolderPolicy {
+        case .none:
+            ""
+        case .yearMonth:
+            timestamp?.yearMonthFolder
+        }
+    }
+
+    /// Where `member` goes under the policy with collision suffix `suffix` (0 for none),
+    /// or nil when the policy needs a date that `timestamp` does not supply.
+    static func destination(
+        for member: PlanningFileFacts,
+        timestamp: CaptureWallComponents?,
+        policy: ImportPolicy,
+        suffix: Int
+    ) -> MediaRelativePath? {
+        guard let folder = folder(timestamp: timestamp, policy: policy) else { return nil }
+        let baseName: String
+        switch policy.destinationNamePolicy {
+        case .original:
+            baseName = member.relativePath.stem
+        case .captureDateTime:
+            guard let timestamp else { return nil }
+            baseName = timestamp.dateTimeFileName
+        }
+        let ext = destinationExtension(for: member, policy: policy)
+        let fileName = baseName + suffixToken(suffix) + (ext.isEmpty ? "" : ".\(ext)")
+        return MediaRelativePath(folder: folder, fileName: fileName)
+    }
+
+    /// A companion's destination beside its primary's, under the primary's new name.
+    /// Original naming keeps the companion's own extension spelling (`IMG_1.XMP` stays
+    /// `.XMP`); date-time naming uses the companion's kind (`.xmp`, `.srt`).
+    static func companionDestination(
+        _ companion: MediaCompanion,
+        primaryDestination: MediaRelativePath,
+        policy: ImportPolicy
+    ) -> MediaRelativePath {
+        let ext = switch policy.destinationNamePolicy {
+        case .original:
+            companion.relativePath.fileExtension
+        case .captureDateTime:
+            companion.kind.rawValue
+        }
+        return MediaRelativePath(
+            folder: primaryDestination.folder,
+            fileName: ext.isEmpty ? primaryDestination.stem : "\(primaryDestination.stem).\(ext)"
+        )
+    }
+
+    /// "" for no suffix, "_001" for the first.
+    static func suffixToken(_ suffix: Int) -> String {
+        suffix == 0 ? "" : String(format: "_%03d", suffix)
+    }
+
+    static func destinationExtension(for member: PlanningFileFacts, policy: ImportPolicy) -> String {
+        switch policy.destinationNamePolicy {
+        case .original:
+            member.fileExtension
+        case .captureDateTime:
+            CanonicalMediaExtension.forDateTimeName(
+                contentTypeIdentifier: member.contentTypeIdentifier,
+                sourceExtension: member.fileExtension
+            )
+        }
+    }
+
     static func timestamp(
         wallCompact: Int64?,
         fallbackModifiedAt: Date?,

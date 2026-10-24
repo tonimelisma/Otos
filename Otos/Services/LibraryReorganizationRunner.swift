@@ -301,43 +301,32 @@ actor LibraryReorganizationRunner {
         }
         let policy = ImportPolicy.from(ImportPreferencesStore.load(defaults: preferences))
         let capabilities = FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: libraryRoot.url)
-        var occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult] = [:]
         let snapshot = ReorganizationPlanningSnapshot(
             libraryRoot: libraryRoot,
-            volumeIdentifier: libraryRoot.rawValue,
             capabilities: capabilities,
             generation: 1,
             rootRevision: revision,
             policy: policy,
             calendar: .current,
             timeZone: .current,
-            media: media,
-            knownForeignOccupants: []
+            media: media
         )
-        // Each pass asks only for paths the previous one did not resolve, so the loop
-        // ends; the bound turns a planner that keeps asking into a reported failure.
-        for _ in 0 ..< 8 {
-            switch ReorganizationPlanner.plan(snapshot: snapshot, occupancy: occupancy) {
-            case let .ready(plan):
-                return .ready(plan)
-            case let .needsProbes(requests):
-                for request in requests {
-                    occupancy[request] = FilesystemNamespaceSemantics.occupancy(
-                        rootPath: request.rootPath,
-                        relativePath: request.relativePath
-                    )
-                }
-            case let .blocked(reason):
-                OtosLog.catalog.errorOperation("reorganization.plan", phase: "inconsistent", fields: [
-                    "rootPath": libraryRoot.rawValue,
-                    "reason": reason,
-                ])
-                return .unavailable(.planInconsistent)
-            }
+        // One read of exactly the folders the plan can use answers every name it asks
+        // about, suffixed retries included, so planning is one pure pass.
+        let namespace = FilesystemNamespaceSemantics.enumerateNamespace(
+            root: libraryRoot,
+            folders: ReorganizationPlanner.destinationFolders(for: snapshot),
+            capabilities: capabilities
+        )
+        switch ReorganizationPlanner.plan(snapshot: snapshot, namespace: namespace) {
+        case let .ready(plan):
+            return .ready(plan)
+        case let .inconsistent(reason):
+            OtosLog.catalog.errorOperation("reorganization.plan", phase: "inconsistent", fields: [
+                "rootPath": libraryRoot.rawValue,
+                "reason": reason,
+            ])
+            return .unavailable(.planInconsistent)
         }
-        OtosLog.catalog.errorOperation("reorganization.plan", phase: "probesUnresolved", fields: [
-            "rootPath": libraryRoot.rawValue,
-        ])
-        return .unavailable(.planInconsistent)
     }
 }

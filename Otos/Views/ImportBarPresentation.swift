@@ -408,6 +408,7 @@ nonisolated enum ImportBarPresentation {
         case noUsableDate
         case filesystemObservationUnavailable
         case noFreeDestinationName
+        case destinationFolderOccupied
         case sourceUnreadable
     }
 
@@ -416,6 +417,7 @@ nonisolated enum ImportBarPresentation {
         case .noUsableDate: .noUsableDate
         case .filesystemObservationUnavailable: .filesystemObservationUnavailable
         case .noFreeDestinationName: .noFreeDestinationName
+        case .destinationFolderOccupied: .destinationFolderOccupied
         case .sourceUnreadable: .sourceUnreadable
         }
     }
@@ -439,6 +441,11 @@ nonisolated enum ImportBarPresentation {
             return count == 1
                 ? "Otos couldn't find a free name for 1 item in \(destinationName)"
                 : "Otos couldn't find a free name for \(count) items in \(destinationName)"
+        case .destinationFolderOccupied:
+            // Names the cause the user can act on: a file is where a folder must go.
+            return count == 1
+                ? "A file in \(destinationName) is in the way of 1 item's folder"
+                : "A file in \(destinationName) is in the way of \(count) items' folder"
         case .sourceUnreadable:
             // Names what the user can act on — the file will not copy either — without
             // the internal vocabulary DES-035 forbids.

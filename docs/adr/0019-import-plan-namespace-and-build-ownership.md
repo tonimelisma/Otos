@@ -151,6 +151,11 @@ a deliberate decision to fix a problem that no longer exists.
 - Enumeration reads whole folders, so a plan observes occupants no candidate asked
   about. That is what lets one read answer every suffix retry, and it is why foreign
   occupants need no separate bookkeeping.
-- `FilesystemNamespaceSemantics` now exposes two observation shapes. Reorganization
-  keeps per-candidate `occupancy(rootPath:relativePath:)` because its destinations
-  are scattered rather than clustered; only import planning enumerates.
+- Reorganize plans the same way. It applies the import naming policy (`ImportNaming`),
+  so its destinations cluster into the same small set of policy folders, and one
+  enumeration answers every candidate. Its earlier per-candidate probe loop was
+  dropped with the claim that its destinations were scattered; they never were.
+- A folder a file makes impossible — the file holds the folder's own name or an
+  ancestor's — is recorded as an occupied folder, not as an unreadable one. It is a
+  fact about the library that waiting does not change, so its candidates are blocked
+  (`destinationFolderOccupied`) instead of the build being retried forever.

@@ -114,6 +114,12 @@ custom_rules:
     message: "Error text is localized and unstable: matching it silently stops working on another language or OS release. Classify by domain and code, or by the API's typed status."
     severity: error
 
+  relative_path_through_url:
+    name: "Relative path through URL"
+    included: 'Otos/.*\.swift'
+    regex: 'URL\(fileURLWithPath:\s*[A-Za-z_.]*[Rr]elative[A-Za-z_]*\.rawValue'
+    message: "A root-relative path handed to URL(fileURLWithPath:) resolves against the process's working directory, so its folder comes back absolute. Use MediaRelativePath's folder, fileName, stem and fileExtension."
+    severity: error
   wall_clock_interval:
     name: "An interval inside the process is measured on ContinuousClock"
     regex: 'Date\(\)\.(timeIntervalSince|addingTimeInterval)\(|\btimeIntervalSinceNow\b|Date\.distant(Past|Future)\b|Date\(timeIntervalSinceNow:'

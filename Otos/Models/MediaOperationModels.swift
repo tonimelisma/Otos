@@ -161,8 +161,6 @@ nonisolated struct DestinationOccupantFacts: Equatable, Sendable {
 nonisolated enum MediaOperationDisposition: Equatable, Sendable {
     case copy(destination: MediaRelativePath)
     case skipPreexisting(destination: MediaRelativePath)
-    case relocate(destination: MediaRelativePath)
-    case noOp
     case excluded(ExclusionReason)
     case blocked(MediaOperationBlockReason)
 }
@@ -181,6 +179,10 @@ nonisolated enum MediaOperationBlockReason: Equatable, Sendable {
     case filesystemObservationUnavailable(destination: MediaRelativePath)
     /// Every suffix the naming policy allows is taken in the destination folder.
     case noFreeDestinationName(destination: MediaRelativePath)
+    /// A file in the destination holds the name of the folder this item would go in
+    /// (or of a folder above it), so the folder cannot be created. Waiting does not
+    /// change it; the user moves or renames that file.
+    case destinationFolderOccupied(occupant: String)
     /// The source file's bytes could not be opened, so enrichment could not read it
     /// and a copy could not read it either. On a card this is a failing card or a
     /// file that vanished — never a transient condition worth waiting out, since a
@@ -256,10 +258,19 @@ nonisolated enum MediaOperationFailureReason: Equatable, Sendable {
 
 nonisolated struct MediaOperationPlanEntry: Equatable, Sendable {
     let source: PlanningFileFacts
-    let idealDestination: MediaRelativePath
-    let finalDestination: MediaRelativePath
     let companionDestinations: [MediaRelativePath: MediaRelativePath]
     let disposition: MediaOperationDisposition
+
+    /// Where the entry lands in the library: the copy's destination, or the file that is
+    /// already there. A blocked or excluded entry has none.
+    var destination: MediaRelativePath? {
+        switch disposition {
+        case let .copy(destination), let .skipPreexisting(destination):
+            destination
+        case .blocked, .excluded:
+            nil
+        }
+    }
 
     var isSkipPreexisting: Bool {
         if case .skipPreexisting = disposition {
@@ -296,7 +307,7 @@ nonisolated struct EraseManifest: Equatable, Sendable {
         for entry in planEntries {
             let eligible = switch entry.disposition {
             case .copy, .skipPreexisting, .excluded: true
-            case .relocate, .noOp, .blocked: false
+            case .blocked: false
             }
             guard eligible else { continue }
             byPath[entry.source.relativePath] = EraseManifestEntry(
@@ -632,11 +643,6 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     }
 }
 
-nonisolated struct NamespaceOccupancyRequest: Hashable, Sendable {
-    let rootPath: LibraryRootPath
-    let relativePath: MediaRelativePath
-}
-
 nonisolated enum NamespaceOccupancyResult: Equatable, Sendable {
     case absent
     case regularFile(byteSize: Int64?, contentModifiedAt: Date?)
@@ -722,12 +728,18 @@ nonisolated struct DestinationNamespace: Equatable, Sendable {
     /// coordinator treats a build carrying any of these as a transient
     /// condition to retry, not a plan to present.
     let unreadableFolders: [String: String]
+    /// Folders a file makes impossible: the file holds the folder's own name or an
+    /// ancestor's, keyed by folder, valued by that file's path. A fact about the
+    /// library, not a failed read, so it blocks the candidates in it rather than
+    /// being retried.
+    let occupiedFolders: [String: String]
     let capabilities: VolumeNamespaceCapabilities
 
     init(
         entries: [MediaRelativePath: NamespaceOccupancyResult],
         enumeratedFolders: Set<String>,
         unreadableFolders: [String: String] = [:],
+        occupiedFolders: [String: String] = [:],
         capabilities: VolumeNamespaceCapabilities = .unknown
     ) {
         var keyed: [FilesystemNameKey: Entry] = [:]
@@ -742,7 +754,13 @@ nonisolated struct DestinationNamespace: Equatable, Sendable {
         self.entries = keyed
         self.enumeratedFolders = enumeratedFolders
         self.unreadableFolders = unreadableFolders
+        self.occupiedFolders = occupiedFolders
         self.capabilities = capabilities
+    }
+
+    /// The file that makes `relativePath`'s folder impossible, if one does.
+    func folderOccupant(of relativePath: MediaRelativePath) -> String? {
+        occupiedFolders[relativePath.folder]
     }
 
     static let empty = DestinationNamespace(entries: [:], enumeratedFolders: [])
@@ -768,12 +786,8 @@ nonisolated struct DestinationNamespace: Equatable, Sendable {
     }
 
     /// Folder component under the destination root; `""` addresses the root itself,
-    /// matching `MediaTransferPlanner.folderPath` under `DestinationFolderPolicy.none`.
+    /// matching `ImportNaming.folder` under `DestinationFolderPolicy.none`.
     static func folder(of relativePath: MediaRelativePath) -> String {
-        let raw = relativePath.rawValue
-        guard let separator = raw.lastIndex(of: "/") else {
-            return ""
-        }
-        return String(raw[raw.startIndex ..< separator])
+        relativePath.folder
     }
 }

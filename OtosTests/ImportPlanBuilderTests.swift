@@ -91,15 +91,11 @@ struct ImportPlanBuilderTests {
         #expect(built.plan.entries == [
             MediaOperationPlanEntry(
                 source: first,
-                idealDestination: suffixed,
-                finalDestination: suffixed,
                 companionDestinations: [:],
                 disposition: .copy(destination: suffixed)
             ),
             MediaOperationPlanEntry(
                 source: second,
-                idealDestination: free,
-                finalDestination: free,
                 companionDestinations: [:],
                 disposition: .copy(destination: free)
             ),
@@ -202,7 +198,7 @@ struct ImportPlanBuilderTests {
         let resultB = await buildB
         #expect(resultA.plan.entries.count == 1)
         #expect(resultB.plan.entries.count == 1)
-        #expect(resultA.plan.entries.first?.finalDestination != resultB.plan.entries.first?.finalDestination)
+        #expect(resultA.plan.entries.first?.destination != resultB.plan.entries.first?.destination)
     }
 
     @Test func cancellingSuspendedBuildRecordsCancelAndReleasesContinuation() async throws {
