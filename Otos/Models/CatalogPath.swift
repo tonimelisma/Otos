@@ -43,16 +43,27 @@ nonisolated enum CatalogPath {
         // The root path was resolved once at registration. Resolving every file
         // again can rewrite `/private` to `/` and break this prefix comparison;
         // standardization is sufficient for scanner-relative identity.
-        let filePath = fileURL.standardizedFileURL.path(percentEncoded: false)
+        relativePath(rootPath: rootPath, absolutePath: fileURL.standardizedFileURL.path(percentEncoded: false))
+    }
+
+    /// Maps an absolute path inside `rootPath` to its root-relative path by text alone.
+    /// A directory URL's trailing slash is not part of the name, so a path that is a
+    /// directory now maps exactly as it did when it was a file. `nil` for the root
+    /// itself and for a path outside it.
+    static func relativePath(rootPath: LibraryRootPath, absolutePath: String) -> MediaRelativePath? {
         var normalizedRoot = rootPath.rawValue
         while normalizedRoot.count > 1, normalizedRoot.hasSuffix("/") {
             normalizedRoot.removeLast()
         }
-        let prefix = normalizedRoot + "/"
-        guard filePath.hasPrefix(prefix) else {
+        var path = absolutePath
+        while path.count > 1, path.hasSuffix("/") {
+            path.removeLast()
+        }
+        let prefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
+        guard path.hasPrefix(prefix), path.count > prefix.count else {
             return nil
         }
-        return MediaRelativePath(rawValue: String(filePath.dropFirst(prefix.count)))
+        return MediaRelativePath(rawValue: String(path.dropFirst(prefix.count)))
     }
 
     /// Maps an absolute filesystem event path to the saved root that owns it.

@@ -6,6 +6,22 @@ import Testing
 struct FilesystemReconcilerTests {
     private let root = LibraryRootPath(rawValue: "/tmp/otos-test-root")
 
+    /// ARC-041: a path's catalog name never depends on whether it is a directory right
+    /// now. A file that became a directory keeps the name its row has, so a file event for
+    /// it reconciles that row.
+    @Test func aDirectoryURLMapsToTheSameNameAsTheFileItReplaced() {
+        let directory = URL(fileURLWithPath: "/tmp/otos-test-root/a.jpg", isDirectory: true)
+        #expect(CatalogPath.relativePath(rootPath: root, fileURL: directory) == MediaRelativePath(rawValue: "a.jpg"))
+    }
+
+    @Test func anAbsolutePathMapsByTextAlone() {
+        #expect(CatalogPath.relativePath(rootPath: root, absolutePath: "/tmp/otos-test-root/d/a.jpg/")
+            == MediaRelativePath(rawValue: "d/a.jpg"))
+        #expect(CatalogPath.relativePath(rootPath: root, absolutePath: "/tmp/otos-test-root") == nil)
+        #expect(CatalogPath.relativePath(rootPath: root, absolutePath: "/tmp/otos-test-root/") == nil)
+        #expect(CatalogPath.relativePath(rootPath: root, absolutePath: "/tmp/otos-test-rootb/a.jpg") == nil)
+    }
+
     @Test func dropsWhenRootMissing() {
         let decision = FilesystemReconciler.decide(
             events: [fileEvent("a.jpg")],

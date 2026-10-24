@@ -47,6 +47,11 @@ nonisolated struct CatalogScanner {
         _ batchHandler: @Sendable ([ScannedMediaFile]) async throws -> Void
     ) async throws -> CatalogScanObservation
 
+    /// What one path holds now: nothing, or the catalog item it reads as (`nil` when
+    /// the file is not catalog media, such as an unsupported type). A file reconcile
+    /// acts on this one observation and never stats the path again.
+    var observeFile: @Sendable (_ fileURL: URL, _ rootPath: LibraryRootPath) async throws -> CatalogFileObservation
+
     init(
         scanRoot: @escaping @Sendable (
             _ rootPath: LibraryRootPath,
@@ -65,10 +70,15 @@ nonisolated struct CatalogScanner {
                 cadence: cadence,
                 batchHandler: batchHandler
             )
-        }
+        },
+        observeFile: @escaping @Sendable (_ fileURL: URL, _ rootPath: LibraryRootPath) async throws
+            -> CatalogFileObservation = { fileURL, rootPath in
+                try await CatalogFileObservation.observe(fileURL: fileURL, rootPath: rootPath)
+            }
     ) {
         self.scanRoot = scanRoot
         self.scanSubtree = scanSubtree
+        self.observeFile = observeFile
     }
 
     static let live = CatalogScanner(
@@ -89,6 +99,20 @@ nonisolated struct CatalogScanner {
             )
         }
     )
+}
+
+nonisolated enum CatalogFileObservation: Sendable {
+    case absent
+    case present(CatalogScannedFileReader.ObservedItem?)
+
+    /// Reads one path's filesystem facts off the caller's actor; reads no bytes.
+    @concurrent
+    static func observe(fileURL: URL, rootPath: LibraryRootPath) async throws -> CatalogFileObservation {
+        guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) else {
+            return .absent
+        }
+        return try .present(CatalogScannedFileReader.observedItem(fileURL: fileURL, rootPath: rootPath))
+    }
 }
 
 nonisolated struct CatalogScanIssueSummary: Equatable {

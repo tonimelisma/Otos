@@ -160,7 +160,11 @@ everything expensive happens on an actor off the main thread.
 - **Scan freshness and import settlement**: each active scan captures the root's
   namespace-mutation epoch. Independent import, reorganization, and filesystem-event
   mutations advance the epoch and retain typed dirty scopes; a stale scan can still
-  upsert facts but defers destructive missing-row reconciliation. Import settlement
+  upsert facts but defers destructive missing-row reconciliation. A single-file
+  reconcile observes its path once through `CatalogScanner.observeFile` and checks the
+  epoch and the namespace lease right before its write; a stale one re-queues its
+  dirt. One reconcile loop per Store, woken by a revision-counted doorbell, is the only
+  drainer of dirt, and every dirt insertion requests a pass. Import settlement
   validates current source `(size, mtime)` facts plus the Plan-0060 XXH3-128 digest,
   and may clone the source's normalized enrichment overlay while copying an
   independent destination thumbnail. Reuse is available only for sources whose bytes
