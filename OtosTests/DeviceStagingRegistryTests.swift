@@ -53,11 +53,11 @@ struct DeviceStagingRegistryTests {
         try await store.start(scansSavedLibraries: false)
         _ = try await store.attachDeviceMTP(
             stagingRootURL: stagingRoot,
-            identity: "camera:reuse",
+            identity: .camera(id: "reuse"),
             displayName: "Camera"
         )
 
-        try await store.detachRemovableSource(identity: "camera:reuse", reason: .disconnected)
+        try await store.detachRemovableSource(identity: .camera(id: "reuse"), reason: .disconnected)
         #expect(
             FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)),
             "an eject discarded bytes that were already transferred off the camera"
@@ -65,7 +65,7 @@ struct DeviceStagingRegistryTests {
 
         _ = try await store.attachDeviceMTP(
             stagingRootURL: stagingRoot,
-            identity: "camera:reuse",
+            identity: .camera(id: "reuse"),
             displayName: "Camera"
         )
         #expect(
@@ -83,12 +83,12 @@ struct DeviceStagingRegistryTests {
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        let first = DeviceStagingLocation.sessionRootURL(identity: "camera:abc", inContainer: container)
-        let second = DeviceStagingLocation.sessionRootURL(identity: "camera:abc", inContainer: container)
+        let first = DeviceStagingLocation.sessionRootURL(identity: .camera(id: "abc"), inContainer: container)
+        let second = DeviceStagingLocation.sessionRootURL(identity: .camera(id: "abc"), inContainer: container)
 
         #expect(first == second, "a camera's staging path must not depend on which process asked")
         #expect(
-            first != DeviceStagingLocation.sessionRootURL(identity: "camera:xyz", inContainer: container),
+            first != DeviceStagingLocation.sessionRootURL(identity: .camera(id: "xyz"), inContainer: container),
             "different cameras must still get different trees"
         )
     }
@@ -100,7 +100,7 @@ struct DeviceStagingRegistryTests {
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        let stale = DeviceStagingLocation.sessionRootURL(identity: "camera:ended", inContainer: container)
+        let stale = DeviceStagingLocation.sessionRootURL(identity: .camera(id: "ended"), inContainer: container)
             .appending(path: "2020-01-01", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: stale, withIntermediateDirectories: true)
         let file = stale.appending(path: "STALE.ARW", directoryHint: .notDirectory)
@@ -119,10 +119,10 @@ struct DeviceStagingRegistryTests {
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        #expect(DeviceStagingLocation.claimOwnership(identity: "camera:live", inContainer: container))
+        #expect(DeviceStagingLocation.claimOwnership(identity: .camera(id: "live"), inContainer: container))
         defer { DeviceStagingLocation.releaseOwnership() }
 
-        let held = DeviceStagingLocation.sessionRootURL(identity: "camera:live", inContainer: container)
+        let held = DeviceStagingLocation.sessionRootURL(identity: .camera(id: "live"), inContainer: container)
         let inFlight = held.appending(path: "DSC00001.ARW", directoryHint: .notDirectory)
         try Data(repeating: 9, count: 256).write(to: inFlight)
 
@@ -141,8 +141,8 @@ struct DeviceStagingRegistryTests {
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        DeviceStagingLocation.claimOwnership(identity: "camera:quitting", inContainer: container)
-        let root = DeviceStagingLocation.sessionRootURL(identity: "camera:quitting", inContainer: container)
+        DeviceStagingLocation.claimOwnership(identity: .camera(id: "quitting"), inContainer: container)
+        let root = DeviceStagingLocation.sessionRootURL(identity: .camera(id: "quitting"), inContainer: container)
         let staged = root.appending(path: "A.ARW", directoryHint: .notDirectory)
         try Data(repeating: 3, count: 128).write(to: staged)
         #expect(DeviceStagingLocation.hasStagedBytes(inContainer: container))
@@ -161,7 +161,7 @@ struct DeviceStagingRegistryTests {
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        DeviceStagingLocation.claimOwnership(identity: "camera:empty", inContainer: container)
+        DeviceStagingLocation.claimOwnership(identity: .camera(id: "empty"), inContainer: container)
         defer { DeviceStagingLocation.releaseOwnership() }
 
         #expect(
@@ -178,7 +178,7 @@ struct DeviceStagingRegistryTests {
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        let inside = DeviceStagingLocation.sessionRootURL(identity: "camera:a", inContainer: container)
+        let inside = DeviceStagingLocation.sessionRootURL(identity: .camera(id: "a"), inContainer: container)
             .appending(path: "DSC00001.ARW", directoryHint: .notDirectory)
         #expect(DeviceStagingLocation.isInsideStaging(inside, inContainer: container))
 

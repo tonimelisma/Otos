@@ -13,7 +13,7 @@ nonisolated protocol ImportExecuting: Sendable {
         plan: MediaOperationPlan,
         batch: ImportBatchID,
         sourceKind: LibraryRootKind,
-        sourceDeviceIdentity: String?,
+        sourceDeviceIdentity: DeviceIdentity?,
         deleteSourceRequested: Bool,
         runID: String,
         onProgress: @Sendable @escaping (MediaOperationProgress) -> Void
@@ -49,7 +49,7 @@ actor LiveImportExecutor: ImportExecuting {
         plan: MediaOperationPlan,
         batch: ImportBatchID,
         sourceKind: LibraryRootKind,
-        sourceDeviceIdentity: String?,
+        sourceDeviceIdentity: DeviceIdentity?,
         deleteSourceRequested: Bool,
         runID: String,
         onProgress: @Sendable @escaping (MediaOperationProgress) -> Void
@@ -225,7 +225,7 @@ actor ControlledImportExecutor: ImportExecuting {
         plan: MediaOperationPlan,
         batch: ImportBatchID,
         sourceKind: LibraryRootKind,
-        sourceDeviceIdentity: String?,
+        sourceDeviceIdentity: DeviceIdentity?,
         deleteSourceRequested: Bool,
         runID: String,
         onProgress: @Sendable @escaping (MediaOperationProgress) -> Void

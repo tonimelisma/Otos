@@ -73,7 +73,7 @@ nonisolated struct RootRegistry {
         return true
     }
 
-    func rootForDeviceIdentity(_ identity: String) -> LibraryRoot? {
+    func rootForDeviceIdentity(_ identity: DeviceIdentity) -> LibraryRoot? {
         statesByPath.values.map(\.root).first { $0.deviceIdentity == identity }
     }
 

@@ -10,7 +10,7 @@ struct SidebarView: View {
     let removableSources: [CatalogLibraryState]
     let importPresentations: [MediaOperationSourcePresentation]
     let sidebarSelection: SidebarSelection
-    let ejectingSourceIdentities: Set<String>
+    let ejectingSourceIdentities: Set<DeviceIdentity>
     let selectSidebar: @MainActor @Sendable (SidebarSelection) -> Void
     let ejectSource: @MainActor @Sendable (LibraryRoot) -> Void
     @Environment(\.colorScheme) private var colorScheme
@@ -22,7 +22,7 @@ struct SidebarView: View {
         removableSources: [CatalogLibraryState],
         importPresentations: [MediaOperationSourcePresentation] = [],
         sidebarSelection: SidebarSelection,
-        ejectingSourceIdentities: Set<String>,
+        ejectingSourceIdentities: Set<DeviceIdentity>,
         selectSidebar: @MainActor @Sendable @escaping (SidebarSelection) -> Void,
         ejectSource: @MainActor @Sendable @escaping (LibraryRoot) -> Void
     ) {
@@ -225,7 +225,7 @@ private struct SidebarRow<Trailing: View>: View {
                 root: LibraryRoot(
                     path: LibraryRootPath(rawValue: "/Volumes/CARD"),
                     kind: .removableVolume,
-                    deviceIdentity: "volume:card",
+                    deviceIdentity: .volume(uuid: "card"),
                     displayName: "CARD",
                     lastSeenAt: Date()
                 ),

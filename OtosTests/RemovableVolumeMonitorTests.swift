@@ -68,7 +68,7 @@ struct RemovableVolumeMonitorLiveDiskImageTests {
 struct RemovableVolumeTrackerTests {
     private static let card = RemovableVolumeAttachment(
         mountURL: URL(fileURLWithPath: "/Volumes/CARD", isDirectory: true),
-        identity: "volume:CARD-UUID",
+        identity: .volume(uuid: "CARD-UUID"),
         displayName: "CARD",
         isEjectable: true
     )

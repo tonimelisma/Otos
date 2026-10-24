@@ -43,16 +43,16 @@ final class CatalogWindowViewModel {
         case ejectRemovableSource(LibraryRoot)
         case forgetRemovableSource(LibraryRoot)
         case attachRemovableVolume(RemovableVolumeAttachment)
-        case quiesceRemovableSource(String)
-        case resumeRemovableSource(String)
-        case detachRemovableSource(String, RemovableSourceDetachReason)
+        case quiesceRemovableSource(DeviceIdentity)
+        case resumeRemovableSource(DeviceIdentity)
+        case detachRemovableSource(DeviceIdentity, RemovableSourceDetachReason)
         case acknowledgeIdentityRemaps([Int64])
     }
 
     private(set) var sidebarSelection: SidebarSelection = .allMedia
     private(set) var queryDescriptor: CatalogQueryDescriptor = .default
     private(set) var isFilterPresented = false
-    private(set) var ejectingSourceIdentities: Set<String> = []
+    private(set) var ejectingSourceIdentities: Set<DeviceIdentity> = []
     var ejectAlertMessage: String?
     /// Last drawn signature per source, so the apply log records what changed on screen
     /// rather than a timer's sample of it (B4).
@@ -75,7 +75,7 @@ final class CatalogWindowViewModel {
     /// pattern as `gridColumnCount`; injected into `MediaGridView` rather than read via
     /// `@AppStorage`, which would silently fall back to `UserDefaults.standard`
     /// regardless of the ViewModel's own injected `preferences` (ADR 0020).
-    private(set) var dismissedCameraBannerIdentities: Set<String>
+    private(set) var dismissedCameraBannerIdentities: Set<DeviceIdentity>
     /// Ephemeral mouse-selection truth (selection, ⇧-range anchor, base islands). Owned
     /// here so grid and filmstrip renderers share one model across mode switches; mutated
     /// only through the intents in `CatalogWindowViewModelSelection.swift`. Not
@@ -234,7 +234,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private let viewportContinuation: AsyncStream<[MediaAssetID]>.Continuation
     @ObservationIgnored var removableVolumeMonitor: RemovableVolumeMonitor?
     @ObservationIgnored var cameraSourceMonitor: CameraSourceMonitor?
-    @ObservationIgnored var deviceCatalogTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored var deviceCatalogTasks: [DeviceIdentity: Task<Void, Never>] = [:]
     @ObservationIgnored var mediaOperationCoordinator: MediaOperationCoordinator?
     @ObservationIgnored var importPresentationTask: Task<Void, Never>?
     /// Import intents travel in one lossless, ordered stream with one consumer, so "change
@@ -388,7 +388,7 @@ final class CatalogWindowViewModel {
             as? Bool ?? true
         let storedDismissedIdentities = preferences.string(forKey: Self.dismissedCameraBannersDefaultsKey)
         dismissedCameraBannerIdentities = Set(
-            (storedDismissedIdentities ?? "").split(separator: "\n").map(String.init)
+            (storedDismissedIdentities ?? "").split(separator: "\n").map { DeviceIdentity(rawValue: String($0)) }
         )
         importPreferences = ImportPreferencesStore.load(defaults: preferences)
         self.catalogStore = catalogStore
@@ -862,11 +862,11 @@ extension CatalogWindowViewModel {
         ])
     }
 
-    func clearEjectingSourceIdentity(_ identity: String) {
+    func clearEjectingSourceIdentity(_ identity: DeviceIdentity) {
         ejectingSourceIdentities.remove(identity)
     }
 
-    func beginEjectingSource(_ identity: String) {
+    func beginEjectingSource(_ identity: DeviceIdentity) {
         ejectingSourceIdentities.insert(identity)
     }
 }
@@ -1096,13 +1096,13 @@ extension CatalogWindowViewModel {
     }
 
     /// A no-op re-dismiss does not re-persist, matching `setGridColumnCount`'s pattern.
-    func dismissCameraConnectionBanner(_ identity: String) {
+    func dismissCameraConnectionBanner(_ identity: DeviceIdentity) {
         guard !dismissedCameraBannerIdentities.contains(identity) else {
             return
         }
         dismissedCameraBannerIdentities.insert(identity)
         preferences.set(
-            dismissedCameraBannerIdentities.sorted().joined(separator: "\n"),
+            dismissedCameraBannerIdentities.sorted().map(\.rawValue).joined(separator: "\n"),
             forKey: Self.dismissedCameraBannersDefaultsKey
         )
     }

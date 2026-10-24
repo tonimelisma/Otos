@@ -11,7 +11,7 @@ struct RootRegistryTests {
         path: LibraryRootPath,
         rowID: Int64,
         availability: LibraryAvailability = .available,
-        deviceIdentity: String? = nil
+        deviceIdentity: DeviceIdentity? = nil
     ) -> RootRuntimeState {
         RootRuntimeState(
             root: LibraryRoot(
@@ -33,7 +33,7 @@ struct RootRegistryTests {
             root: LibraryRoot(
                 path: volumePath,
                 kind: .removableVolume,
-                deviceIdentity: "volume:card",
+                deviceIdentity: .volume(uuid: "card"),
                 displayName: "Card"
             ),
             rowID: rowID,
@@ -171,9 +171,9 @@ struct RootRegistryTests {
 
     @Test func rootForDeviceIdentityFindsMatchingRoot() {
         var registry = RootRegistry()
-        registry.upsert(libraryState(path: libraryPath, rowID: 1, deviceIdentity: "camera:1"))
-        #expect(registry.rootForDeviceIdentity("camera:1")?.path == libraryPath)
-        #expect(registry.rootForDeviceIdentity("missing") == nil)
+        registry.upsert(libraryState(path: libraryPath, rowID: 1, deviceIdentity: .camera(id: "1")))
+        #expect(registry.rootForDeviceIdentity(.camera(id: "1"))?.path == libraryPath)
+        #expect(registry.rootForDeviceIdentity(.camera(id: "missing")) == nil)
     }
 
     @Test func ownsLeaseRequiresMatchingPathAndRowID() {

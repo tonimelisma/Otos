@@ -21,7 +21,7 @@ struct MediaOperationCoordinatorTests {
         let destination = try CatalogPath.normalizedDirectoryPath(for: destinationURL)
         try await store.attachRemovableVolume(
             mountURL: sourceURL,
-            identity: "volume:one-execution",
+            identity: .volume(uuid: "one-execution"),
             displayName: "Card",
             isEjectable: true
         )
@@ -69,7 +69,7 @@ struct MediaOperationCoordinatorTests {
         let destination = try CatalogPath.normalizedDirectoryPath(for: destinationURL)
         try await store.attachRemovableVolume(
             mountURL: sourceURL,
-            identity: "volume:display-name",
+            identity: .volume(uuid: "display-name"),
             displayName: "Card",
             isEjectable: true
         )
@@ -124,7 +124,7 @@ struct MediaOperationCoordinatorTests {
         // `.ready` via the stream alone.
         try await store.attachRemovableVolume(
             mountURL: cardRoot,
-            identity: "volume:stream-card",
+            identity: .volume(uuid: "stream-card"),
             displayName: "Card",
             isEjectable: true
         )
@@ -189,7 +189,7 @@ struct MediaOperationCoordinatorTests {
         try await store.addLibrary(url: fixedRoot)
         try await store.attachRemovableVolume(
             mountURL: cardRoot,
-            identity: "volume:metadata-wake",
+            identity: .volume(uuid: "metadata-wake"),
             displayName: "Card",
             isEjectable: true
         )
@@ -265,7 +265,7 @@ struct MediaOperationCoordinatorTests {
 
         try await store.attachRemovableVolume(
             mountURL: cardRoot,
-            identity: "volume:import-plan-card",
+            identity: .volume(uuid: "import-plan-card"),
             displayName: "Card",
             isEjectable: true
         )
@@ -339,7 +339,7 @@ struct MediaOperationCoordinatorTests {
 
         try await store.attachRemovableVolume(
             mountURL: cardRoot,
-            identity: "volume:churn-card",
+            identity: .volume(uuid: "churn-card"),
             displayName: "Card",
             isEjectable: true
         )
@@ -426,7 +426,7 @@ struct MediaOperationCoordinatorTests {
 
         try await store.attachRemovableVolume(
             mountURL: cardRoot,
-            identity: "volume:hold-last-plan",
+            identity: .volume(uuid: "hold-last-plan"),
             displayName: "Card",
             isEjectable: true
         )
@@ -496,7 +496,7 @@ struct MediaOperationCoordinatorTests {
 
         try await store.attachRemovableVolume(
             mountURL: cardRoot,
-            identity: "volume:held-plan-metadata-wait",
+            identity: .volume(uuid: "held-plan-metadata-wait"),
             displayName: "Card",
             isEjectable: true
         )
@@ -578,7 +578,7 @@ struct MediaOperationCoordinatorTests {
 
         try await store.attachRemovableVolume(
             mountURL: cardRoot,
-            identity: "volume:destination-change",
+            identity: .volume(uuid: "destination-change"),
             displayName: "Card",
             isEjectable: true
         )
@@ -639,7 +639,7 @@ struct MediaOperationCoordinatorTests {
 
         try await store.attachRemovableVolume(
             mountURL: cardRoot,
-            identity: "volume:naming-churn-card",
+            identity: .volume(uuid: "naming-churn-card"),
             displayName: "Card",
             isEjectable: true
         )
@@ -709,7 +709,7 @@ struct MediaOperationCoordinatorTests {
 
         try await store.attachRemovableVolume(
             mountURL: cardRoot,
-            identity: "volume:source-naming-card",
+            identity: .volume(uuid: "source-naming-card"),
             displayName: "Card",
             isEjectable: true
         )
@@ -738,7 +738,7 @@ struct MediaOperationCoordinatorTests {
     @Test func destinationDefaultsToFirstAddedLibrary() async throws {
         let fixture = try await makeDestinationFixture(
             libraryNames: ["Zebra", "Alpha", "Middle"],
-            identity: "volume:first-added"
+            identity: .volume(uuid: "first-added")
         )
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
@@ -779,7 +779,7 @@ struct MediaOperationCoordinatorTests {
         }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:skip-unavailable",
+            identity: .volume(uuid: "skip-unavailable"),
             displayName: "Card",
             isEjectable: true
         )
@@ -806,11 +806,11 @@ struct MediaOperationCoordinatorTests {
     @Test func staleLegacyDestinationPreferencesAreIgnored() async throws {
         let fixture = try await makeDestinationFixture(
             libraryNames: ["Zebra", "Alpha", "Middle"],
-            identity: "volume:stale-legacy"
+            identity: .volume(uuid: "stale-legacy")
         )
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         defaults.makeDefaults().set(
-            [fixture.identity: fixture.libraries[2].rawValue],
+            [fixture.identity.rawValue: fixture.libraries[2].rawValue],
             forKey: "import.destinationByDeviceIdentity"
         )
         defaults.makeDefaults().set(fixture.libraries[1].rawValue, forKey: "import.lastUsedDestination")
@@ -834,7 +834,7 @@ struct MediaOperationCoordinatorTests {
     @Test func destinationFollowsUserReorderWhileAttached() async throws {
         let fixture = try await makeDestinationFixture(
             libraryNames: ["Zebra", "Alpha", "Middle"],
-            identity: "volume:reorder-attached"
+            identity: .volume(uuid: "reorder-attached")
         )
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
@@ -863,7 +863,7 @@ struct MediaOperationCoordinatorTests {
     @Test func explicitDestinationSurvivesReorderWhileStillAvailable() async throws {
         let fixture = try await makeDestinationFixture(
             libraryNames: ["Zebra", "Alpha", "Middle"],
-            identity: "volume:explicit-survives-reorder"
+            identity: .volume(uuid: "explicit-survives-reorder")
         )
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
@@ -890,7 +890,7 @@ struct MediaOperationCoordinatorTests {
     @Test func explicitDestinationResumesTrackingDefaultAfterItBecomesUnavailable() async throws {
         let fixture = try await makeDestinationFixture(
             libraryNames: ["Zebra", "Alpha", "Middle"],
-            identity: "volume:explicit-then-unavailable"
+            identity: .volume(uuid: "explicit-then-unavailable")
         )
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
@@ -933,7 +933,7 @@ struct MediaOperationCoordinatorTests {
     @Test func reattachedSourceGetsRememberedDestination() async throws {
         let fixture = try await makeDestinationFixture(
             libraryNames: ["Zebra", "Alpha", "Middle"],
-            identity: "volume:reattach-remembers"
+            identity: .volume(uuid: "reattach-remembers")
         )
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
@@ -966,12 +966,12 @@ struct MediaOperationCoordinatorTests {
         let store: CatalogStore
         let libraries: [LibraryRootPath]
         let source: LibraryRootPath
-        let identity: String
+        let identity: DeviceIdentity
     }
 
     private func makeDestinationFixture(
         libraryNames: [String],
-        identity: String
+        identity: DeviceIdentity
     ) async throws -> DestinationFixture {
         let temp = try makeTestDirectory()
         let libraryURLs = libraryNames.map { temp.appending(path: $0, directoryHint: .isDirectory) }

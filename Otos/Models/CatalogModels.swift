@@ -218,20 +218,70 @@ nonisolated struct MediaAssetID: Hashable {
     }
 }
 
+/// Who a removable source is, as its monitor identified it: a volume by its UUID, or by
+/// where it is mounted when it reports none; a camera by its persistent id, or by its name
+/// when it reports none. The text is what the catalog and the import journal persist, so
+/// it is built and read only here. An identity from a mount path or a name is transient: it
+/// names one attachment, not the device, so the catalog does not keep a root for it.
+nonisolated struct DeviceIdentity: Hashable, Comparable, Sendable, CustomStringConvertible {
+    let rawValue: String
+
+    /// Reads persisted text back. Monitors build identities with the constructors below.
+    init(rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    static func volume(uuid: String) -> DeviceIdentity {
+        DeviceIdentity(rawValue: "volume:\(uuid)")
+    }
+
+    static func volume(mountPath: String) -> DeviceIdentity {
+        DeviceIdentity(rawValue: "volume:path:\(mountPath)")
+    }
+
+    static func camera(id: String) -> DeviceIdentity {
+        DeviceIdentity(rawValue: "camera:\(id)")
+    }
+
+    static func camera(name: String) -> DeviceIdentity {
+        DeviceIdentity(rawValue: "camera:transient:\(name)")
+    }
+
+    /// Two attached volumes that report one identity: each after the first is told apart
+    /// by where it is mounted, which makes it transient.
+    func disambiguated(mountPath: String) -> DeviceIdentity {
+        DeviceIdentity(rawValue: "\(rawValue)#path:\(mountPath)")
+    }
+
+    var isTransient: Bool {
+        rawValue.hasPrefix("volume:path:")
+            || rawValue.contains("#path:")
+            || rawValue.hasPrefix("camera:transient:")
+    }
+
+    var description: String {
+        rawValue
+    }
+
+    static func < (lhs: DeviceIdentity, rhs: DeviceIdentity) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
 /// Durable saved library identity. This intentionally contains no scan status
 /// and no SQLite rowid: the path is the product identity, while storage keys stay
 /// private to persistence.
 nonisolated struct LibraryRoot: Identifiable, Hashable {
     let path: LibraryRootPath
     let kind: LibraryRootKind
-    let deviceIdentity: String?
+    let deviceIdentity: DeviceIdentity?
     let displayNameOverride: String?
     let lastSeenAt: Date?
 
     init(
         path: LibraryRootPath,
         kind: LibraryRootKind = .library,
-        deviceIdentity: String? = nil,
+        deviceIdentity: DeviceIdentity? = nil,
         displayName: String? = nil,
         lastSeenAt: Date? = nil
     ) {
@@ -450,7 +500,7 @@ nonisolated struct CatalogLibraryState: Identifiable, Hashable {
         root.kind
     }
 
-    var deviceIdentity: String? {
+    var deviceIdentity: DeviceIdentity? {
         root.deviceIdentity
     }
 

@@ -54,7 +54,7 @@ struct RemovableEjectOutcomeTests {
     /// A busy volume is retried on a bounded schedule; the first attempt that
     /// succeeds ends it.
     @Test func ejectRetriesWhileTheVolumeIsBusyAndStopsOnceItIsNot() async throws {
-        let (store, root) = try await Self.attachedCard(identity: "volume:eject-retry")
+        let (store, root) = try await Self.attachedCard(identity: .volume(uuid: "eject-retry"))
         let attempts = Counter()
         let outcome = await CatalogWindowViewModel.performEjectRemovableSource(
             root,
@@ -71,7 +71,7 @@ struct RemovableEjectOutcomeTests {
     /// Past the last delay a still-busy volume is reported busy — the alert's
     /// wording, not silence.
     @Test func ejectReportsBusyOnceRetriesAreExhausted() async throws {
-        let (store, root) = try await Self.attachedCard(identity: "volume:eject-exhausted")
+        let (store, root) = try await Self.attachedCard(identity: .volume(uuid: "eject-exhausted"))
         let attempts = Counter()
         let outcome = await CatalogWindowViewModel.performEjectRemovableSource(
             root,
@@ -90,7 +90,7 @@ struct RemovableEjectOutcomeTests {
 
     /// A refusal that is not "busy" is not retried.
     @Test func ejectDoesNotRetryANonBusyRefusal() async throws {
-        let (store, root) = try await Self.attachedCard(identity: "volume:eject-failed")
+        let (store, root) = try await Self.attachedCard(identity: .volume(uuid: "eject-failed"))
         let attempts = Counter()
         let outcome = await CatalogWindowViewModel.performEjectRemovableSource(
             root,
@@ -113,7 +113,7 @@ struct RemovableEjectOutcomeTests {
     /// An import copying from the card holds its files open, and it is Otos's own work:
     /// the eject is refused at once, before any unmount attempt or retry.
     @Test func anEjectDuringAnImportIsRefusedAtOnce() async throws {
-        let (store, root) = try await Self.attachedCard(identity: "volume:eject-importing")
+        let (store, root) = try await Self.attachedCard(identity: .volume(uuid: "eject-importing"))
         let attempts = Counter()
         let outcome = await CatalogWindowViewModel.performEjectRemovableSource(
             root,
@@ -134,7 +134,7 @@ struct RemovableEjectOutcomeTests {
     /// The preview loader has finished its reads on the card before the first unmount
     /// attempt, and is released again once the eject has its outcome.
     @Test func previewReadsAreReleasedBeforeTheUnmountAndResumedAfterIt() async throws {
-        for (identity, result) in [("volume:eject-drain-ok", DiskEjector.Outcome.ejected), ("volume:eject-drain-busy", .busy)] {
+        for (identity, result) in [(DeviceIdentity.volume(uuid: "eject-drain-ok"), DiskEjector.Outcome.ejected), (.volume(uuid: "eject-drain-busy"), .busy)] {
             let (store, root) = try await Self.attachedCard(identity: identity)
             let readers = ReaderEvents()
             _ = await CatalogWindowViewModel.performEjectRemovableSource(
@@ -184,7 +184,7 @@ struct RemovableEjectOutcomeTests {
         }
     }
 
-    private static func attachedCard(identity: String) async throws -> (CatalogStore, LibraryRoot) {
+    private static func attachedCard(identity: DeviceIdentity) async throws -> (CatalogStore, LibraryRoot) {
         let temp = try makeTestDirectory()
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)

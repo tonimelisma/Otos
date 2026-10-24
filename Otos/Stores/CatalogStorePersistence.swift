@@ -774,7 +774,7 @@ extension CatalogStore {
     static func insertLibraryRoot(
         path: LibraryRootPath,
         kind: LibraryRootKind = .library,
-        deviceIdentity: String? = nil,
+        deviceIdentity: DeviceIdentity? = nil,
         displayName: String? = nil,
         lastSeenAt: Date? = nil,
         sortIndex: Int64? = nil,
@@ -2113,4 +2113,15 @@ private nonisolated func assetMetadataStatementArguments(
         CatalogStore.encodeMetadataExtraJSON(metadata),
     ]
     return StatementArguments(values)
+}
+
+/// A device identity is stored as its text.
+nonisolated extension DeviceIdentity: DatabaseValueConvertible {
+    var databaseValue: DatabaseValue {
+        rawValue.databaseValue
+    }
+
+    static func fromDatabaseValue(_ dbValue: DatabaseValue) -> DeviceIdentity? {
+        String.fromDatabaseValue(dbValue).map(DeviceIdentity.init(rawValue:))
+    }
 }

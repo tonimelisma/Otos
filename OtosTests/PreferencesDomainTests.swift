@@ -75,11 +75,6 @@ struct PreferencesDomainTests {
         let storeA = CatalogStore(location: .inMemory)
         let coordinatorA = MediaOperationCoordinator(store: storeA, preferencesDomain: temp)
         await coordinatorA.setDestination(destPath, for: sourcePath)
-        // Also persist via the device-identity path to exercise that mapping.
-        let deviceIdentity = "volume:test-device-123"
-        // Simulate the device mapping by directly writing via the coordinator's
-        // persistence (setDestination also writes lastUsed; we also test that a new
-        // coordinator loads it).
         let loadedA = await coordinatorA.allDestinations()
         #expect(loadedA[sourcePath] == destPath)
 
@@ -99,6 +94,5 @@ struct PreferencesDomainTests {
         #expect(controlDefaults.string(forKey: "import.lastUsedDestination") == nil)
 
         _ = loadedB
-        _ = deviceIdentity
     }
 }

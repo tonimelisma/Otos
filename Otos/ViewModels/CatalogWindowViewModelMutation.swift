@@ -406,7 +406,7 @@ private extension CatalogWindowViewModel {
                 "Catalog attach removable volume failed",
                 operation: "catalog.removable.attach",
                 fields: [
-                    "identity": attachment.identity,
+                    "identity": attachment.identity.rawValue,
                     "url": attachment.mountURL.path(percentEncoded: false),
                 ],
                 error: error
@@ -415,7 +415,7 @@ private extension CatalogWindowViewModel {
     }
 
     nonisolated static func performQuiesceRemovableSource(
-        _ identity: String,
+        _ identity: DeviceIdentity,
         store: CatalogStore
     ) async {
         do {
@@ -424,14 +424,14 @@ private extension CatalogWindowViewModel {
             await recordMutationError(
                 "Catalog quiesce removable source failed",
                 operation: "catalog.removable.quiesce",
-                fields: ["identity": identity],
+                fields: ["identity": identity.rawValue],
                 error: error
             )
         }
     }
 
     nonisolated static func performResumeRemovableSource(
-        _ identity: String,
+        _ identity: DeviceIdentity,
         store: CatalogStore
     ) async {
         do {
@@ -440,14 +440,14 @@ private extension CatalogWindowViewModel {
             await recordMutationError(
                 "Catalog resume removable source failed",
                 operation: "catalog.removable.resume",
-                fields: ["identity": identity],
+                fields: ["identity": identity.rawValue],
                 error: error
             )
         }
     }
 
     nonisolated static func performDetachRemovableSource(
-        _ identity: String,
+        _ identity: DeviceIdentity,
         reason: RemovableSourceDetachReason,
         store: CatalogStore
     ) async {
@@ -457,7 +457,7 @@ private extension CatalogWindowViewModel {
             await recordMutationError(
                 "Catalog detach removable source failed",
                 operation: "catalog.removable.detach",
-                fields: ["identity": identity],
+                fields: ["identity": identity.rawValue],
                 error: error
             )
         }

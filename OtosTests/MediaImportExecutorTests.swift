@@ -85,7 +85,7 @@ struct ActiveFileOperationJournalTests {
         let operation = ActiveFileOperation(
             operationKey: .make(),
             sourceKind: .removableVolume,
-            sourceDeviceIdentity: "volume:test",
+            sourceDeviceIdentity: .volume(uuid: "test"),
             sourceRootPath: LibraryRootPath(rawValue: "/Volumes/CARD"),
             sourceRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
             destinationRootPath: LibraryRootPath(rawValue: "/Users/example/Pictures"),
@@ -182,7 +182,7 @@ struct ImportRecoveryTests {
         ActiveFileOperation(
             operationKey: .make(),
             sourceKind: .removableVolume,
-            sourceDeviceIdentity: "volume:test",
+            sourceDeviceIdentity: .volume(uuid: "test"),
             sourceRootPath: LibraryRootPath(rawValue: "/Volumes/CARD"),
             sourceRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
             destinationRootPath: rootPath,
@@ -225,7 +225,7 @@ struct ImportRecoveryTests {
         let operation = ActiveFileOperation(
             operationKey: .make(),
             sourceKind: .removableVolume,
-            sourceDeviceIdentity: "volume:test",
+            sourceDeviceIdentity: .volume(uuid: "test"),
             sourceRootPath: LibraryRootPath(rawValue: "/Volumes/CARD"),
             sourceRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
             destinationRootPath: rootPath,
@@ -474,7 +474,7 @@ struct CameraImportAccessTests {
     @Test func mockGatewayRevalidatesAndReportsDeleteCapability() async throws {
         let access = CameraImportAccess(
             revalidate: { identity, path, size, _ in
-                identity == "cam-1" && path.rawValue == "IMG_1.JPG" && size == 10 ? .matches : .sourceNotReady
+                identity == DeviceIdentity.camera(id: "cam-1") && path.rawValue == "IMG_1.JPG" && size == 10 ? .matches : .sourceNotReady
             },
             ensureBytes: { _, _, enrichment, staging in
                 do {
@@ -486,26 +486,26 @@ struct CameraImportAccessTests {
                 }
             },
             deleteItem: { _, _ in true },
-            canDelete: { $0 == "cam-1" },
+            canDelete: { $0 == DeviceIdentity.camera(id: "cam-1") },
             eject: { _ in .ejected }
         )
         #expect(
             await access.revalidateItem(
-                identity: "cam-1",
+                identity: .camera(id: "cam-1"),
                 relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
                 byteSize: 10,
                 modifiedAt: nil
             ) == .matches
         )
-        #expect(await access.canDelete(identity: "cam-1"))
-        #expect(await access.eject(identity: "cam-1") == .ejected)
+        #expect(await access.canDelete(identity: .camera(id: "cam-1")))
+        #expect(await access.eject(identity: .camera(id: "cam-1")) == .ejected)
 
         let temp = try makeTestDirectory()
         let enrichment = temp.appending(path: "enrich.bin")
         let staging = temp.appending(path: "stage.bin")
         try Data([0x01, 0x02]).write(to: enrichment)
         let result = await access.ensureImportBytes(
-            identity: "cam-1",
+            identity: .camera(id: "cam-1"),
             relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
             enrichmentURL: enrichment,
             destinationTempURL: staging
@@ -574,7 +574,7 @@ struct ImportExecutionProgressTests {
         let destination = try CatalogPath.normalizedDirectoryPath(for: destinationURL)
         try await store.attachRemovableVolume(
             mountURL: sourceURL,
-            identity: "volume:byte-progress",
+            identity: .volume(uuid: "byte-progress"),
             displayName: "Card",
             isEjectable: true
         )
@@ -596,7 +596,7 @@ struct ImportExecutionProgressTests {
             plan: plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
-            sourceDeviceIdentity: "volume:byte-progress",
+            sourceDeviceIdentity: .volume(uuid: "byte-progress"),
             deleteSourceRequested: false,
             runID: UUID().uuidString
         ) { progress in
@@ -686,7 +686,7 @@ struct ImportExecutionProgressTests {
             plan: plan,
             batch: ImportBatchID(),
             sourceKind: .deviceMTP,
-            sourceDeviceIdentity: "camera:serial",
+            sourceDeviceIdentity: .camera(id: "serial"),
             deleteSourceRequested: false,
             runID: UUID().uuidString
         ) { _ in }
@@ -765,7 +765,7 @@ struct ImportExecutionProgressTests {
             plan: plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
-            sourceDeviceIdentity: "volume:mixed-failure",
+            sourceDeviceIdentity: .volume(uuid: "mixed-failure"),
             deleteSourceRequested: false,
             runID: UUID().uuidString
         ) { _ in }
@@ -849,7 +849,7 @@ struct ImportExecutionProgressTests {
             plan: plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
-            sourceDeviceIdentity: "volume:d12-destination-identity",
+            sourceDeviceIdentity: .volume(uuid: "d12-destination-identity"),
             deleteSourceRequested: false,
             runID: UUID().uuidString
         ) { _ in }
@@ -871,7 +871,7 @@ struct ImportExecutionProgressTests {
             plan: fixture.plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
-            sourceDeviceIdentity: "volume:zero-copy-delete",
+            sourceDeviceIdentity: .volume(uuid: "zero-copy-delete"),
             deleteSourceRequested: true,
             runID: UUID().uuidString
         ) { _ in }
@@ -892,7 +892,7 @@ struct ImportExecutionProgressTests {
             plan: fixture.plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
-            sourceDeviceIdentity: "volume:zero-copy-no-delete",
+            sourceDeviceIdentity: .volume(uuid: "zero-copy-no-delete"),
             deleteSourceRequested: false,
             runID: UUID().uuidString
         ) { _ in }
@@ -952,7 +952,7 @@ struct ImportExecutionProgressTests {
             plan: plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
-            sourceDeviceIdentity: "volume:failed-copy-survival",
+            sourceDeviceIdentity: .volume(uuid: "failed-copy-survival"),
             deleteSourceRequested: true,
             runID: UUID().uuidString
         ) { _ in }
@@ -986,7 +986,7 @@ struct ImportExecutionProgressTests {
             plan: fixture.plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
-            sourceDeviceIdentity: "volume:busy-source-namespace",
+            sourceDeviceIdentity: .volume(uuid: "busy-source-namespace"),
             deleteSourceRequested: true,
             runID: UUID().uuidString
         ) { _ in }
@@ -1060,7 +1060,7 @@ struct ImportExecutionProgressTests {
         let inFlight = ActiveFileOperation(
             operationKey: .make(),
             sourceKind: .removableVolume,
-            sourceDeviceIdentity: "volume:other-card",
+            sourceDeviceIdentity: .volume(uuid: "other-card"),
             sourceRootPath: LibraryRootPath(rawValue: "/Volumes/OTHER"),
             sourceRelativePath: MediaRelativePath(rawValue: "IMG_9.JPG"),
             destinationRootPath: otherPath,
@@ -1103,7 +1103,7 @@ struct ImportExecutionProgressTests {
                 ActiveSourceEraseOperation(
                     key: .make(),
                     sourceKind: .removableVolume,
-                    sourceDeviceIdentity: "volume:zero-copy-fixture",
+                    sourceDeviceIdentity: .volume(uuid: "zero-copy-fixture"),
                     sourceRootPath: sourcePath,
                     sourceRelativePath: relative,
                     sourceByteSize: 4,
@@ -1185,7 +1185,7 @@ struct ImportExecutionProgressTests {
         // Attached the way a card is, so erasing from it takes its namespace lease.
         try await store.attachRemovableVolume(
             mountURL: sourceRoot,
-            identity: "volume:card-fixture",
+            identity: .volume(uuid: "card-fixture"),
             displayName: "Card",
             isEjectable: true
         )
@@ -1226,7 +1226,7 @@ struct ImportExecutionProgressTests {
             plan: fixture.plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
-            sourceDeviceIdentity: "volume:disk-floor",
+            sourceDeviceIdentity: .volume(uuid: "disk-floor"),
             deleteSourceRequested: deleteSourceRequested,
             runID: UUID().uuidString
         ) { _ in }
@@ -1339,7 +1339,7 @@ struct ImportExecutionProgressTests {
             plan: fixture.plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
-            sourceDeviceIdentity: "volume:enospc",
+            sourceDeviceIdentity: .volume(uuid: "enospc"),
             deleteSourceRequested: false,
             runID: UUID().uuidString
         ) { _ in }
@@ -1445,7 +1445,7 @@ struct ImportExecutionProgressTests {
             plan: fixture.plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
-            sourceDeviceIdentity: "volume:companion",
+            sourceDeviceIdentity: .volume(uuid: "companion"),
             deleteSourceRequested: true,
             runID: UUID().uuidString
         ) { _ in }
@@ -1509,7 +1509,7 @@ struct ImportExecutionProgressTests {
         try await store.addLibrary(url: destinationRoot)
         try await store.attachRemovableVolume(
             mountURL: sourceRoot,
-            identity: "volume:companion",
+            identity: .volume(uuid: "companion"),
             displayName: "Card",
             isEjectable: true
         )
@@ -1605,7 +1605,7 @@ struct ImportExecutionProgressTests {
         // namespace lease, is correctly refused for a root the catalog does not own.
         try await store.attachRemovableVolume(
             mountURL: sourceRoot,
-            identity: "volume:zero-copy-fixture",
+            identity: .volume(uuid: "zero-copy-fixture"),
             displayName: "Card",
             isEjectable: true
         )

@@ -40,12 +40,12 @@ struct ViewModelDefaultSelectionTests {
         let model = makePolicyTestViewModel()
         let unavailable = removableSource(
             path: "/Volumes/CARD",
-            identity: "volume:card",
+            identity: .volume(uuid: "card"),
             availability: .unavailable
         )
         let available = removableSource(
             path: "/Volumes/CARD",
-            identity: "volume:card",
+            identity: .volume(uuid: "card"),
             availability: .available
         )
         let previous = windowState(removableSources: [unavailable])
@@ -82,7 +82,7 @@ struct ViewModelDefaultSelectionTests {
         let empty = CatalogWindowState.empty
         let card = removableSource(
             path: "/Volumes/CARD",
-            identity: "volume:card",
+            identity: .volume(uuid: "card"),
             availability: .available
         )
         let loaded = windowState(removableSources: [card])
@@ -108,7 +108,7 @@ struct ViewModelDefaultSelectionTests {
         model.selectSidebar(.library(library.path))
 
         let card = removableSource(
-            path: "/Volumes/CARD", identity: "volume:card", availability: .available, attachmentGeneration: 1
+            path: "/Volumes/CARD", identity: .volume(uuid: "card"), availability: .available, attachmentGeneration: 1
         )
         let withCard = windowState(libraries: [library], removableSources: [card])
         model.applySidebarSelectionPolicy(previous: loaded, next: withCard)
@@ -153,7 +153,7 @@ struct ViewModelDefaultSelectionTests {
 
     private func removableSource(
         path: String,
-        identity: String,
+        identity: DeviceIdentity,
         availability: LibraryAvailability,
         attachmentGeneration: UInt64 = 0
     ) -> CatalogLibraryState {

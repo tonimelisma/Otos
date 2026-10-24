@@ -82,7 +82,7 @@ actor CatalogStore {
         let id: Int64
         let path: LibraryRootPath
         let kind: LibraryRootKind
-        let deviceIdentity: String?
+        let deviceIdentity: DeviceIdentity?
         let displayName: String?
         let lastSeenAt: Date?
         let sortIndex: Int64
@@ -110,7 +110,7 @@ actor CatalogStore {
     private struct RemovableRootAttachment {
         let kind: LibraryRootKind
         let path: LibraryRootPath
-        let identity: String
+        let identity: DeviceIdentity
         let displayName: String
         let isEjectable: Bool
         let activity: CatalogLibraryActivity
@@ -1976,14 +1976,8 @@ extension CatalogStore {
         }
     }
 
-    private func rootForDeviceIdentity(_ identity: String) -> LibraryRoot? {
+    private func rootForDeviceIdentity(_ identity: DeviceIdentity) -> LibraryRoot? {
         roots.rootForDeviceIdentity(identity)
-    }
-
-    private func isTransientDeviceIdentity(_ identity: String) -> Bool {
-        identity.hasPrefix("volume:path:")
-            || identity.contains("#path:")
-            || identity.hasPrefix("camera:transient:")
     }
 
     /// Returns the scan task it cancelled, if the root's scan was running, so a caller
@@ -2234,7 +2228,7 @@ extension CatalogStore {
 
     func attachRemovableVolume(
         mountURL: URL,
-        identity: String,
+        identity: DeviceIdentity,
         displayName: String,
         isEjectable: Bool,
         capabilities: VolumeNamespaceCapabilities = .unknown,
@@ -2260,7 +2254,7 @@ extension CatalogStore {
     @discardableResult
     func attachDeviceMTP(
         stagingRootURL: URL,
-        identity: String,
+        identity: DeviceIdentity,
         displayName: String
     ) async throws -> LibraryRootPath {
         let path = try CatalogPath.normalizedDirectoryPath(for: stagingRootURL)
@@ -2281,7 +2275,7 @@ extension CatalogStore {
         return path
     }
 
-    func detachRemovableSource(identity: String, reason: RemovableSourceDetachReason) async throws {
+    func detachRemovableSource(identity: DeviceIdentity, reason: RemovableSourceDetachReason) async throws {
         try await ensureStartedForMutation()
         guard let root = rootForDeviceIdentity(identity),
               root.kind != .library,
@@ -2289,7 +2283,7 @@ extension CatalogStore {
         else {
             return
         }
-        if isTransientDeviceIdentity(identity) {
+        if identity.isTransient {
             try await removeLibrary(path: root.path)
             return
         }
@@ -2321,7 +2315,7 @@ extension CatalogStore {
         startNextScanIfNeeded()
     }
 
-    func quiesceRemovableSource(identity: String) async throws {
+    func quiesceRemovableSource(identity: DeviceIdentity) async throws {
         try await ensureStartedForMutation()
         guard let root = rootForDeviceIdentity(identity),
               root.kind != .library,
@@ -2345,7 +2339,7 @@ extension CatalogStore {
         )
     }
 
-    func resumeRemovableSource(identity: String) async throws {
+    func resumeRemovableSource(identity: DeviceIdentity) async throws {
         try await ensureStartedForMutation()
         guard let root = rootForDeviceIdentity(identity),
               root.kind != .library

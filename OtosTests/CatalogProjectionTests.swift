@@ -431,7 +431,7 @@ extension CatalogProjectionTests {
         let card = LibraryRoot(
             path: LibraryRootPath(rawValue: "/Volumes/Card"),
             kind: .removableVolume,
-            deviceIdentity: "volume:card",
+            deviceIdentity: .volume(uuid: "card"),
             displayName: "Card"
         )
         let fixture = makeProjectionFixture(
@@ -462,7 +462,7 @@ extension CatalogProjectionTests {
         let camera = LibraryRoot(
             path: LibraryRootPath(rawValue: "/tmp/Otos/DeviceStaging/camera"),
             kind: .deviceMTP,
-            deviceIdentity: "camera:serial",
+            deviceIdentity: .camera(id: "serial"),
             displayName: "Camera"
         )
         let fixture = makeProjectionFixture(
@@ -477,7 +477,7 @@ extension CatalogProjectionTests {
         #expect(state.libraries.isEmpty)
         #expect(state.removableSources.map(\.path) == [camera.path])
         #expect(state.mediaEmptyState == .deviceEnumerating("Camera"))
-        #expect(state.deviceConnectionBanner?.identity == "camera:serial")
+        #expect(state.deviceConnectionBanner?.identity == .camera(id: "serial"))
         #expect(state.deviceConnectionBanner?.message.contains("Mass Storage") == true)
     }
 }

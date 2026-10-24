@@ -191,7 +191,7 @@ nonisolated enum CameraMetadataReader {
                 let format = MediaMetadataReader.identify(source: source, filenameHint: relativePath.rawValue)
                 let capable = format.detectedByMagic && format.family != .unknown
                 OtosLog.metadata.noticeOperation("camera.rangedRead", phase: "capability", fields: [
-                    "identity": session.identity,
+                    "identity": session.identity.rawValue,
                     "capable": "\(capable)",
                     "probe": relativePath.rawValue,
                     "family": format.family.rawValue,

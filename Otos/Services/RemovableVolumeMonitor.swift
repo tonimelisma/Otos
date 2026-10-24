@@ -4,7 +4,7 @@ import OSLog
 
 nonisolated struct RemovableVolumeAttachment: Equatable {
     let mountURL: URL
-    let identity: String
+    let identity: DeviceIdentity
     let displayName: String
     let isEjectable: Bool
     let capabilities: VolumeNamespaceCapabilities
@@ -13,7 +13,7 @@ nonisolated struct RemovableVolumeAttachment: Equatable {
 
     init(
         mountURL: URL,
-        identity: String,
+        identity: DeviceIdentity,
         displayName: String,
         isEjectable: Bool,
         capabilities: VolumeNamespaceCapabilities = .unknown,
@@ -60,25 +60,25 @@ final class RemovableVolumeMonitor {
         /// unmount, Otos's own included, before it happens.
         case unmountRequested(RemovableVolumeDisk)
         case disappeared(RemovableVolumeDisk)
-        case refusalLimitElapsed(identity: String, request: UInt64)
+        case refusalLimitElapsed(identity: DeviceIdentity, request: UInt64)
     }
 
     private let onAttach: @MainActor @Sendable (RemovableVolumeAttachment) -> Void
-    private let onQuiesce: @MainActor @Sendable (String) -> Void
-    private let onResume: @MainActor @Sendable (String) -> Void
-    private let onDetach: @MainActor @Sendable (String, RemovableSourceDetachReason) -> Void
+    private let onQuiesce: @MainActor @Sendable (DeviceIdentity) -> Void
+    private let onResume: @MainActor @Sendable (DeviceIdentity) -> Void
+    private let onDetach: @MainActor @Sendable (DeviceIdentity, RemovableSourceDetachReason) -> Void
 
     private var tracker = RemovableVolumeTracker()
     private var events: AsyncStream<Event>.Continuation?
     private var diskArbitration: DiskArbitrationEvents?
     private var loop: Task<Void, Never>?
-    private var refusalLimits: [String: Task<Void, Never>] = [:]
+    private var refusalLimits: [DeviceIdentity: Task<Void, Never>] = [:]
 
     init(
         onAttach: @escaping @MainActor @Sendable (RemovableVolumeAttachment) -> Void,
-        onQuiesce: @escaping @MainActor @Sendable (String) -> Void,
-        onResume: @escaping @MainActor @Sendable (String) -> Void,
-        onDetach: @escaping @MainActor @Sendable (String, RemovableSourceDetachReason) -> Void
+        onQuiesce: @escaping @MainActor @Sendable (DeviceIdentity) -> Void,
+        onResume: @escaping @MainActor @Sendable (DeviceIdentity) -> Void,
+        onDetach: @escaping @MainActor @Sendable (DeviceIdentity, RemovableSourceDetachReason) -> Void
     ) {
         self.onAttach = onAttach
         self.onQuiesce = onQuiesce
@@ -198,7 +198,7 @@ final class RemovableVolumeMonitor {
             let mountPath = normalizedMountPath(for: attachment.mountURL)
             return RemovableVolumeAttachment(
                 mountURL: attachment.mountURL,
-                identity: "\(attachment.identity)#path:\(mountPath)",
+                identity: attachment.identity.disambiguated(mountPath: mountPath),
                 displayName: attachment.displayName,
                 isEjectable: attachment.isEjectable,
                 capabilities: attachment.capabilities,
@@ -252,7 +252,7 @@ final class RemovableVolumeMonitor {
                 return nil
             }
             let path = url.path(percentEncoded: false)
-            let identity = values.volumeUUIDString.map { "volume:\($0)" } ?? "volume:path:\(path)"
+            let identity = values.volumeUUIDString.map { DeviceIdentity.volume(uuid: $0) } ?? .volume(mountPath: path)
             return RemovableVolumeAttachment(
                 mountURL: url,
                 identity: identity,
@@ -265,7 +265,7 @@ final class RemovableVolumeMonitor {
         }
         return disambiguatedAttachments(attachments)
             .sorted { left, right in
-                left.identity.localizedStandardCompare(right.identity) == .orderedAscending
+                left.identity.rawValue.localizedStandardCompare(right.identity.rawValue) == .orderedAscending
             }
     }
 
@@ -313,18 +313,18 @@ final class RemovableVolumeMonitor {
 nonisolated struct RemovableVolumeTracker {
     enum Effect: Equatable {
         case attach(RemovableVolumeAttachment)
-        case quiesce(String)
-        case resume(String)
-        case detach(String, RemovableSourceDetachReason)
+        case quiesce(DeviceIdentity)
+        case resume(DeviceIdentity)
+        case detach(DeviceIdentity, RemovableSourceDetachReason)
         /// Start the refusal limit for this unmount request; when it elapses the monitor
         /// reports `refusalLimitElapsed` with the same request number.
-        case awaitRefusalLimit(identity: String, request: UInt64)
+        case awaitRefusalLimit(identity: DeviceIdentity, request: UInt64)
     }
 
-    private(set) var attachmentsByIdentity: [String: RemovableVolumeAttachment] = [:]
+    private(set) var attachmentsByIdentity: [DeviceIdentity: RemovableVolumeAttachment] = [:]
     /// The latest unmount request per quiesced source. A request is a revision: a limit
     /// started for an older request never resumes a source a newer request quiesced.
-    private var pendingUnmount: [String: UInt64] = [:]
+    private var pendingUnmount: [DeviceIdentity: UInt64] = [:]
     private var requests: UInt64 = 0
 
     mutating func reconcile(_ mounted: [RemovableVolumeAttachment]) -> [Effect] {
@@ -361,7 +361,7 @@ nonisolated struct RemovableVolumeTracker {
 
     /// The source is still mounted when the limit elapses, so the unmount was refused:
     /// resume it — unless it detached meanwhile, or a newer request quiesced it again.
-    mutating func refusalLimitElapsed(identity: String, request: UInt64) -> [Effect] {
+    mutating func refusalLimitElapsed(identity: DeviceIdentity, request: UInt64) -> [Effect] {
         guard pendingUnmount[identity] == request, attachmentsByIdentity[identity] != nil else {
             return []
         }
@@ -369,9 +369,9 @@ nonisolated struct RemovableVolumeTracker {
         return [.resume(identity)]
     }
 
-    private func identity(matching disk: RemovableVolumeDisk) -> String? {
+    private func identity(matching disk: RemovableVolumeDisk) -> DeviceIdentity? {
         if let volumeUUID = disk.volumeUUID {
-            let identity = "volume:\(volumeUUID)"
+            let identity = DeviceIdentity.volume(uuid: volumeUUID)
             if attachmentsByIdentity[identity] != nil {
                 return identity
             }

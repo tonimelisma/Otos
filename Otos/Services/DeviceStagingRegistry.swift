@@ -11,7 +11,7 @@ import OSLog
 /// keeps using `FileMaterialization`.
 @MainActor
 final class DeviceStagingRegistry {
-    private var sessionsByIdentity: [String: DeviceCameraSession] = [:]
+    private var sessionsByIdentity: [DeviceIdentity: DeviceCameraSession] = [:]
 
     init() {}
 
@@ -24,7 +24,7 @@ final class DeviceStagingRegistry {
     /// whole device on the next attach — tens of gigabytes for a full card. Staging
     /// lives for the session and is cleared at app close, with a startup sweep as the
     /// crash-safe backstop (APP-018, owner decision 2026-08-30).
-    func unregister(identity: String) {
+    func unregister(identity: DeviceIdentity) {
         sessionsByIdentity.removeValue(forKey: identity)
     }
 
@@ -56,7 +56,7 @@ final class DeviceStagingRegistry {
             )
         } catch {
             var fields = ErrorDiagnostics.fields(for: error)
-            fields["identity"] = route.session.identity
+            fields["identity"] = route.session.identity.rawValue
             fields["relativePath"] = route.relativePath.rawValue
             fields["stagingRoot"] = route.session.stagingRootURL.path(percentEncoded: false)
             OtosLog.fileAccess.errorOperation("camera.staging", phase: "failed", fields: fields)
@@ -206,7 +206,7 @@ final class DeviceStagingRegistry {
     }
 
     private func ensureImportBytes(
-        identity: String,
+        identity: DeviceIdentity,
         relativePath: MediaRelativePath,
         enrichmentURL: URL,
         destinationTempURL: URL
@@ -300,18 +300,18 @@ nonisolated enum CameraByteFailure: Equatable, Sendable {
 
 /// Camera-side import hooks used by `MediaImportExecutor` (ARC-049).
 nonisolated struct CameraImportAccess: Sendable {
-    private let revalidate: @Sendable (String, MediaRelativePath, Int64?, Date?) async -> SourceValidation
-    private let ensureBytes: @Sendable (String, MediaRelativePath, URL, URL) async -> CameraByteOutcome
-    private let deleteItemHook: @Sendable (String, MediaRelativePath) async -> Bool
-    private let canDeleteHook: @Sendable (String) async -> Bool
-    private let ejectHook: @Sendable (String) async -> RemovableEjectOutcome
+    private let revalidate: @Sendable (DeviceIdentity, MediaRelativePath, Int64?, Date?) async -> SourceValidation
+    private let ensureBytes: @Sendable (DeviceIdentity, MediaRelativePath, URL, URL) async -> CameraByteOutcome
+    private let deleteItemHook: @Sendable (DeviceIdentity, MediaRelativePath) async -> Bool
+    private let canDeleteHook: @Sendable (DeviceIdentity) async -> Bool
+    private let ejectHook: @Sendable (DeviceIdentity) async -> RemovableEjectOutcome
 
     init(
-        revalidate: @escaping @Sendable (String, MediaRelativePath, Int64?, Date?) async -> SourceValidation,
-        ensureBytes: @escaping @Sendable (String, MediaRelativePath, URL, URL) async -> CameraByteOutcome,
-        deleteItem: @escaping @Sendable (String, MediaRelativePath) async -> Bool,
-        canDelete: @escaping @Sendable (String) async -> Bool,
-        eject: @escaping @Sendable (String) async -> RemovableEjectOutcome
+        revalidate: @escaping @Sendable (DeviceIdentity, MediaRelativePath, Int64?, Date?) async -> SourceValidation,
+        ensureBytes: @escaping @Sendable (DeviceIdentity, MediaRelativePath, URL, URL) async -> CameraByteOutcome,
+        deleteItem: @escaping @Sendable (DeviceIdentity, MediaRelativePath) async -> Bool,
+        canDelete: @escaping @Sendable (DeviceIdentity) async -> Bool,
+        eject: @escaping @Sendable (DeviceIdentity) async -> RemovableEjectOutcome
     ) {
         self.revalidate = revalidate
         self.ensureBytes = ensureBytes
@@ -321,7 +321,7 @@ nonisolated struct CameraImportAccess: Sendable {
     }
 
     func revalidateItem(
-        identity: String,
+        identity: DeviceIdentity,
         relativePath: MediaRelativePath,
         byteSize: Int64?,
         modifiedAt: Date?
@@ -330,7 +330,7 @@ nonisolated struct CameraImportAccess: Sendable {
     }
 
     func ensureImportBytes(
-        identity: String,
+        identity: DeviceIdentity,
         relativePath: MediaRelativePath,
         enrichmentURL: URL,
         destinationTempURL: URL
@@ -338,15 +338,15 @@ nonisolated struct CameraImportAccess: Sendable {
         await ensureBytes(identity, relativePath, enrichmentURL, destinationTempURL)
     }
 
-    func deleteItem(identity: String, relativePath: MediaRelativePath) async -> Bool {
+    func deleteItem(identity: DeviceIdentity, relativePath: MediaRelativePath) async -> Bool {
         await deleteItemHook(identity, relativePath)
     }
 
-    func canDelete(identity: String) async -> Bool {
+    func canDelete(identity: DeviceIdentity) async -> Bool {
         await canDeleteHook(identity)
     }
 
-    func eject(identity: String) async -> RemovableEjectOutcome {
+    func eject(identity: DeviceIdentity) async -> RemovableEjectOutcome {
         await ejectHook(identity)
     }
 }

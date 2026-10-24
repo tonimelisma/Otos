@@ -34,20 +34,20 @@ struct CameraSourcePolicyTests {
         let attachments = RemovableVolumeMonitor.disambiguatedAttachments([
             RemovableVolumeAttachment(
                 mountURL: URL(fileURLWithPath: "/Volumes/CardA", isDirectory: true),
-                identity: "volume:duplicate",
+                identity: .volume(uuid: "duplicate"),
                 displayName: "Card A",
                 isEjectable: true
             ),
             RemovableVolumeAttachment(
                 mountURL: URL(fileURLWithPath: "/Volumes/CardB", isDirectory: true),
-                identity: "volume:duplicate",
+                identity: .volume(uuid: "duplicate"),
                 displayName: "Card B",
                 isEjectable: true
             ),
         ])
 
         #expect(Set(attachments.map(\.identity)).count == 2)
-        #expect(attachments[0].identity == "volume:duplicate")
-        #expect(attachments[1].identity == "volume:duplicate#path:/Volumes/CardB")
+        #expect(attachments[0].identity == .volume(uuid: "duplicate"))
+        #expect(attachments[1].identity == DeviceIdentity(rawValue: "volume:duplicate#path:/Volumes/CardB"))
     }
 }

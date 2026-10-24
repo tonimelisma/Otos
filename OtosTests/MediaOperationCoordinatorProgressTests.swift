@@ -30,7 +30,7 @@ struct MediaOperationCoordinatorProgressTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:progress-order",
+            identity: .volume(uuid: "progress-order"),
             displayName: "Card",
             isEjectable: true
         )

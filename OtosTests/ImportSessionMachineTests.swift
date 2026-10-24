@@ -24,7 +24,7 @@ struct ImportSessionMachineTests {
         activity: CatalogLibraryActivity = .idle
     ) -> CatalogLibraryState {
         CatalogLibraryState(
-            root: LibraryRoot(path: card, kind: .removableVolume, deviceIdentity: "volume:card"),
+            root: LibraryRoot(path: card, kind: .removableVolume, deviceIdentity: .volume(uuid: "card")),
             availability: .available,
             activity: activity,
             attachmentGeneration: attachment
@@ -248,7 +248,7 @@ struct ImportSessionMachineTests {
     @Test func settlementFlushesRebuildsForTheLibraryTheRunReleased() throws {
         let otherCard = LibraryRootPath(rawValue: "/Volumes/OTHER")
         let otherCardState = CatalogLibraryState(
-            root: LibraryRoot(path: otherCard, kind: .removableVolume, deviceIdentity: "volume:other"),
+            root: LibraryRoot(path: otherCard, kind: .removableVolume, deviceIdentity: .volume(uuid: "other")),
             availability: .available,
             activity: .idle,
             attachmentGeneration: 2

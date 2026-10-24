@@ -114,7 +114,7 @@ struct CameraCatalogSyncTests {
 /// ImageCaptureCore's add/remove reports.
 @MainActor
 private final class ScriptedCamera: CameraCatalogSource {
-    let identity = "camera:scripted"
+    let identity = DeviceIdentity.camera(id: "scripted")
     let displayName = "Camera"
     let stagingRootURL: URL
     let catalogChanges: AsyncStream<Void>

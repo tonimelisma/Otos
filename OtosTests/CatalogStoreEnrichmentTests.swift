@@ -655,7 +655,7 @@ struct CatalogStoreEnrichmentTests {
         try await store.start(scansSavedLibraries: false)
         try await store.attachRemovableVolume(
             mountURL: card,
-            identity: "volume:test",
+            identity: .volume(uuid: "test"),
             displayName: "CARD",
             isEjectable: true
         )
@@ -671,7 +671,7 @@ struct CatalogStoreEnrichmentTests {
         let operation = ActiveFileOperation(
             operationKey: .make(),
             sourceKind: .removableVolume,
-            sourceDeviceIdentity: "volume:test",
+            sourceDeviceIdentity: .volume(uuid: "test"),
             sourceRootPath: cardPath,
             sourceRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
             destinationRootPath: destinationPath,

@@ -26,7 +26,7 @@ struct CatalogWindowViewModelImportIntentTests {
         try await store.addLibrary(url: secondURL)
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:intent-order",
+            identity: .volume(uuid: "intent-order"),
             displayName: "Card",
             isEjectable: true
         )

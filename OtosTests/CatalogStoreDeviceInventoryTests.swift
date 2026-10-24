@@ -17,7 +17,7 @@ struct CatalogStoreDeviceInventoryTests {
 
         let rootPath = try await store.attachDeviceMTP(
             stagingRootURL: stagingRoot,
-            identity: "camera:serial",
+            identity: .camera(id: "serial"),
             displayName: "Camera"
         )
         let changes = await store.planningChangeNotifications()
@@ -51,7 +51,7 @@ struct CatalogStoreDeviceInventoryTests {
 
         let rootPath = try await store.attachDeviceMTP(
             stagingRootURL: stagingRoot,
-            identity: "camera:serial",
+            identity: .camera(id: "serial"),
             displayName: "Camera"
         )
         let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)

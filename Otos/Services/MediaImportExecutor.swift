@@ -54,7 +54,7 @@ nonisolated enum StagedSourceReleaser {
 nonisolated enum SourceEraser {
     static func erase(
         kind: LibraryRootKind,
-        identity: String?,
+        identity: DeviceIdentity?,
         relativePath: MediaRelativePath,
         filesystemURL: URL,
         cameraImport: CameraImportAccess?
@@ -204,7 +204,7 @@ actor MediaImportExecutor {
         let batch: ImportBatchID
         let runID: String
         let sourceKind: LibraryRootKind
-        let sourceDeviceIdentity: String?
+        let sourceDeviceIdentity: DeviceIdentity?
         let allowSourceDeletion: Bool
         let namespaceLease: RootNamespaceMutationLease?
         /// The library the run copies into, for the disk-floor capacity reads.
@@ -264,7 +264,7 @@ actor MediaImportExecutor {
         plan: MediaOperationPlan,
         batch: ImportBatchID,
         sourceKind: LibraryRootKind,
-        sourceDeviceIdentity: String?,
+        sourceDeviceIdentity: DeviceIdentity?,
         deleteSourceRequested: Bool,
         runID: String,
         onProgress: @escaping @Sendable (MediaOperationProgress) -> Void
@@ -881,7 +881,7 @@ actor MediaImportExecutor {
         candidate: EraseManifestEntry,
         sourceRoot: LibraryRootPath,
         sourceKind: LibraryRootKind,
-        sourceDeviceIdentity: String?
+        sourceDeviceIdentity: DeviceIdentity?
     ) async -> SourceEraseOutcome {
         let relativePath = candidate.relativePath
         guard !relativePath.rawValue.split(separator: "/").contains("..") else { return .failed }
@@ -946,7 +946,7 @@ actor MediaImportExecutor {
     private nonisolated func sourceStillMatches(
         entry: MediaOperationPlanEntry,
         sourceKind: LibraryRootKind,
-        sourceDeviceIdentity: String?,
+        sourceDeviceIdentity: DeviceIdentity?,
         sourceURL: URL,
         sourceByteSize: Int64,
         sourceModified: Date?
@@ -978,7 +978,7 @@ actor MediaImportExecutor {
     private nonisolated func transferBytesToStaging(
         entry: MediaOperationPlanEntry,
         sourceKind: LibraryRootKind,
-        sourceDeviceIdentity: String?,
+        sourceDeviceIdentity: DeviceIdentity?,
         sourceURL: URL,
         stagingURL: URL,
         operationKey: ActiveFileOperationKey,
@@ -1051,7 +1051,7 @@ actor MediaImportExecutor {
 
     private nonisolated func transferCameraBytes(
         entry: MediaOperationPlanEntry,
-        identity: String?,
+        identity: DeviceIdentity?,
         enrichmentURL: URL,
         stagingURL: URL,
         operationKey: ActiveFileOperationKey,
@@ -1120,7 +1120,7 @@ actor MediaImportExecutor {
         entry: MediaOperationPlanEntry,
         operation: inout ActiveFileOperation,
         sourceKind: LibraryRootKind,
-        sourceDeviceIdentity: String?,
+        sourceDeviceIdentity: DeviceIdentity?,
         destinationRoot: LibraryRootPath
     ) async -> CompanionStaging {
         var staged: [StagedCompanion] = []
@@ -1196,7 +1196,7 @@ actor MediaImportExecutor {
     private nonisolated func companionBytes(
         companion: MediaCompanion,
         sourceKind: LibraryRootKind,
-        sourceDeviceIdentity: String?,
+        sourceDeviceIdentity: DeviceIdentity?,
         sourceURL: URL,
         stagingURL: URL
     ) async -> CompanionByteOutcome {
@@ -1484,7 +1484,7 @@ actor MediaImportExecutor {
         let destinationRelative: MediaRelativePath
         let sourceURL: URL
         let sourceKind: LibraryRootKind
-        let sourceDeviceIdentity: String?
+        let sourceDeviceIdentity: DeviceIdentity?
         let sourceRelativePath: MediaRelativePath
         let sourceByteSize: Int64
         let destinationModified: Date
