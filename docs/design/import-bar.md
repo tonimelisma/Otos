@@ -236,7 +236,9 @@ the primary action stays `Import`, disabled.
 
 ### C · Ready
 
-L1 `42 new items · 68 MB` · L3 `139 already in Summer Photos`, omitted at zero.
+L1 `42 new items · 68 MB` · L3 `139 already in Summer Photos`, omitted at zero. The
+weight is stated only when every new item's size is known; with any unknown, L1 is the
+count alone (`42 new items`), because a partial sum would read as the whole.
 Action: `Import` — no count: the number is L1's primary fact, and Otos imports
 everything new, so the title has no scope to name (DES-036). Photos does the same,
 reserving a count for a user-chosen subset (`Import 3 Selected`) that Otos does not
@@ -354,7 +356,8 @@ copied is lost. What differs is that the bar must *say* the run stopped, from th
 run's own facts, and offer what is left. L1 `Stopped — 12 of 42 items copied` · L3
 one clause for the cause: `They're in Summer Photos` after a Cancel (omitted when
 nothing was copied), `Not enough room on the disk · 5.4 GB left` at the floor — the
-capacity read when the run stopped, in the bar's byte units. Choices present. The act is **`Import`** for what is left — and this is the one F
+capacity read when the run stopped, in the bar's byte units, or `Not enough room on the
+disk` alone when the volume did not report it. Choices present. The act is **`Import`** for what is left — and this is the one F
 variant with a prominent act, because its subject exists: items are still on an
 attached card, so DES-053's exception does not apply. What it imports is the
 re-plan's remainder, not the run's arithmetic: the coordinator drops the plan the run

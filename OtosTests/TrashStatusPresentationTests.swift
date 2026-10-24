@@ -16,7 +16,7 @@ struct TrashStatusPresentationTests {
         MediaTrashCoordinator.QueueState(
             pendingCount: pending,
             movedCount: moved,
-            bytesToDownload: bytes,
+            bytesToDownload: PartialByteCount(knownBytes: bytes, unknownCount: 0),
             attention: attention
         )
     }
@@ -104,6 +104,27 @@ struct LargeTrashDownloadPromptTests {
                 == "Download 0.3 GB to Move 2 Items to Trash?"
         )
         #expect(LargeTrashDownloadPrompt.confirmTitle == "Download and Move to Trash")
+    }
+
+    /// A download with sizes the catalog does not know states the known part as a lower
+    /// bound, asks only when that part is already over the threshold, and the status bar
+    /// states no figure when no size is known.
+    @Test func unknownSizesAreALowerBoundNeverZero() {
+        let one = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Pictures"), relativePath: MediaRelativePath(rawValue: "a.mov"))
+        let two = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Pictures"), relativePath: MediaRelativePath(rawValue: "b.mov"))
+        let partial = PartialByteCount(knownBytes: 1_200_000_000, unknownCount: 1)
+        #expect(LargeTrashDownloadPrompt(ids: [one, two], bytes: partial).title
+            == "Download at Least 1.2 GB to Move 2 Items to Trash?")
+        #expect(LargeTrashDownloadPrompt.asks(bytes: partial, preference: true))
+        #expect(!LargeTrashDownloadPrompt.asks(bytes: PartialByteCount(knownBytes: 0, unknownCount: 3), preference: true))
+        let working = TrashStatusPresentation.map(
+            .init(pendingCount: 2, movedCount: 0, bytesToDownload: partial, attention: nil)
+        )
+        #expect(working?.secondaryLine == "at least 1.2 GB to download")
+        let unsized = TrashStatusPresentation.map(
+            .init(pendingCount: 2, movedCount: 0, bytesToDownload: PartialByteCount(knownBytes: 0, unknownCount: 2), attention: nil)
+        )
+        #expect(unsized?.secondaryLine == nil)
     }
 }
 

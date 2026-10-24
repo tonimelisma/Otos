@@ -145,14 +145,14 @@ actor MediaTrashCoordinator {
 
         var pendingCount: Int
         var movedCount: Int
-        var bytesToDownload: Int64
+        var bytesToDownload: PartialByteCount
         var attention: Attention?
 
         var runTotal: Int {
             pendingCount + movedCount
         }
 
-        static let idle = QueueState(pendingCount: 0, movedCount: 0, bytesToDownload: 0, attention: nil)
+        static let idle = QueueState(pendingCount: 0, movedCount: 0, bytesToDownload: .zero, attention: nil)
     }
 
     nonisolated enum Event: Equatable, Sendable {
@@ -387,10 +387,10 @@ actor MediaTrashCoordinator {
     /// Bytes the requested items still need downloaded before they can be trashed:
     /// catalog sizes of members that are cloud-only right now. Reads no file bytes. `nil`
     /// means the catalog could not be read — unknown, not zero.
-    func downloadBytes(for ids: [MediaAssetID]) async -> Int64? {
+    func downloadBytes(for ids: [MediaAssetID]) async -> PartialByteCount? {
         do {
             let items = try await reads.trashItems(ids)
-            return items.reduce(Int64(0)) { $0 + datalessBytes(of: $1) }
+            return items.reduce(PartialByteCount.zero) { $0 + datalessBytes(of: $1) }
         } catch {
             logReadFailure(error, read: "downloadBytes")
             return nil
@@ -432,7 +432,10 @@ actor MediaTrashCoordinator {
                 waitingOnRetry = true
                 continue
             }
-            let bytes = dataless.reduce(Int64(0)) { $0 + ($1.byteSize ?? 0) }
+            // The floor is judged on the sizes that are known. An unknown size is not
+            // evidence of room, but neither is it evidence of none; ENOSPC from the provider
+            // is the backstop and stays transient, as for an unknown capacity.
+            let bytes = PartialByteCount(sizes: dataless.map(\.byteSize)).knownBytes
             guard fitsAboveFloor(bytes, root: item.root.path) else {
                 if !waitingForSpace.contains(item.id) {
                     floorBlocked.append(item.id)
@@ -488,7 +491,7 @@ actor MediaTrashCoordinator {
         let state = QueueState(
             pendingCount: remaining.count,
             movedCount: movedInRun,
-            bytesToDownload: remaining.reduce(Int64(0)) { $0 + datalessBytes(of: $1.item) },
+            bytesToDownload: remaining.reduce(PartialByteCount.zero) { $0 + datalessBytes(of: $1.item) },
             attention: remaining.isEmpty ? nil : attention
         )
         guard state != lastState else { return }
@@ -524,8 +527,8 @@ actor MediaTrashCoordinator {
         item.members.filter { status(url(of: $0, in: item)) == .dataless }
     }
 
-    private func datalessBytes(of item: MediaTrashItem) -> Int64 {
-        datalessMembers(of: item).reduce(Int64(0)) { $0 + ($1.byteSize ?? 0) }
+    private func datalessBytes(of item: MediaTrashItem) -> PartialByteCount {
+        PartialByteCount(sizes: datalessMembers(of: item).map(\.byteSize))
     }
 
     private func fitsAboveFloor(_ bytes: Int64, root: LibraryRootPath) -> Bool {

@@ -344,7 +344,11 @@ private nonisolated extension MediaTransferPlanner {
             switch entry.disposition {
             case .copy:
                 totals.copyCount += 1
-                totals.copyBytes += entry.source.byteSize ?? 0
+                if let size = entry.source.byteSize {
+                    totals.copyBytes += size
+                } else {
+                    totals.unknownSizeCopyCount += 1
+                }
                 totals.companionCopyCount += entry.companionDestinations.count
             case .skipPreexisting:
                 totals.skipCount += 1

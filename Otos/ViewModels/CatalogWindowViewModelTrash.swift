@@ -80,9 +80,11 @@ extension CatalogWindowViewModel {
             }
             if LargeTrashDownloadPrompt.asks(bytes: bytes, preference: asksBeforeLargeTrashDownload) {
                 largeTrashDownloadPrompt = LargeTrashDownloadPrompt(ids: ids, bytes: bytes)
-                OtosLog.ui.notice(
-                    "op=mediaTrash.prompt phase=shown count=\(ids.count, privacy: .public) bytes=\(bytes, privacy: .public)"
-                )
+                OtosLog.ui.noticeOperation("mediaTrash.prompt", phase: "shown", fields: [
+                    "count": "\(ids.count)",
+                    "knownBytes": "\(bytes.knownBytes)",
+                    "unknownSizeCount": "\(bytes.unknownCount)",
+                ])
             } else {
                 performMoveToTrash(ids)
             }

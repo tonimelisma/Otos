@@ -66,6 +66,21 @@ struct MediaTransferPlannerTests {
         )
     }
 
+    /// A copy whose size is unknown is counted as unknown, never as zero bytes, so the
+    /// plan's byte total says it is a lower bound.
+    @Test func aCopyWithAnUnknownSizeIsCountedAsUnknown() {
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        let snapshot = Self.snapshot(
+            sourceMedia: [Self.facts(name: "A.JPG", byteSize: 10), Self.facts(name: "B.JPG", byteSize: nil)],
+            policy: policy
+        )
+        let plan = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
+        #expect(plan.totals.copyCount == 2)
+        #expect(plan.totals.copyByteCount == PartialByteCount(knownBytes: 10, unknownCount: 1))
+    }
+
     @Test func matchingLiveFactsSkipEvenWhenDestinationIsNotInCatalog() {
         let source = Self.facts()
         let relative = source.relativePath
