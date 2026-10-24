@@ -401,7 +401,9 @@ extension CatalogWindowViewModel {
     /// the single owner of the pane's progress indicator; a second writer could clear
     /// the spinner while the other fetch was still running.
     func prepareLoupeVideo(id: MediaAssetID, startPlaying: Bool) {
-        guard viewMode == .loupe, focusedAssetID == id, loupeVideoState?.id != id else {
+        guard viewMode == .loupe, focusedAssetID == id, loupeVideoState?.id != id,
+              !isEjecting(id.libraryRootPath)
+        else {
             return
         }
         let detailReader = tileDetailReader
@@ -440,6 +442,25 @@ extension CatalogWindowViewModel {
     /// Explicit play intent from the poster's play glyph — same path, playing.
     func playLoupeVideo(id: MediaAssetID) {
         prepareLoupeVideo(id: id, startPlaying: true)
+    }
+
+    /// An eject of `root` is about to unmount it, and a player showing a file there holds
+    /// that file open. The player, or its preparation, is released before the unmount.
+    func releaseLoupeVideo(under root: LibraryRootPath) {
+        guard focusedAssetID?.libraryRootPath == root || loupeVideoState?.id.libraryRootPath == root else {
+            return
+        }
+        OtosLog.ui.noticeOperation("loupe.video", phase: "released", fields: [
+            "reason": "eject",
+            "rootPath": root.rawValue,
+        ])
+        clearLoupeVideo()
+    }
+
+    private func isEjecting(_ root: LibraryRootPath) -> Bool {
+        state.removableSources.contains { source in
+            source.path == root && source.root.deviceIdentity.map(ejectingSourceIdentities.contains) == true
+        }
     }
 
     private func clearLoupeVideo() {

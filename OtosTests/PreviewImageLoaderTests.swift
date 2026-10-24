@@ -37,6 +37,59 @@ struct PreviewImageLoaderTests {
         #expect(request.priority == .interactive)
     }
 
+    /// An eject quiesces the card's root: a decode already running finishes, a new one
+    /// there is refused without reading the file, other roots are untouched, and resume
+    /// lets decodes start again.
+    @Test func quiescingARootFinishesItsDecodesAndRefusesNewOnesUntilResumed() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "otos-preview-quiesce-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeTinyJPEG(to: directory.appending(path: "running.jpg"))
+        try writeTinyJPEG(to: directory.appending(path: "later.jpg"))
+        let root = LibraryRootPath(rawValue: directory.path(percentEncoded: false))
+        let running = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "running.jpg"))
+        let later = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "later.jpg"))
+        let (started, startedContinuation) = AsyncStream.makeStream(of: Void.self)
+        let (gate, gateContinuation) = AsyncStream.makeStream(of: Void.self)
+        let materialized = Mutex<Set<String>>([])
+        let recorder = PreviewMaterializationRecorder {
+            startedContinuation.yield()
+            for await _ in gate {
+                break
+            }
+            return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 1)
+        }
+        let loader = PreviewImageLoader(
+            status: { url in materialized.withLock { $0.contains(url.lastPathComponent) } ? .materialized : .dataless },
+            materializationRequester: recorder
+        )
+
+        let first = Task { await loader.preview(for: .init(id: running, detail: nil, targetLongEdge: 64)) }
+        for await _ in started {
+            break
+        }
+        materialized.withLock { _ = $0.insert("running.jpg") }
+        let quiesce = Task { await loader.quiesce(under: root) }
+        gateContinuation.yield()
+        await quiesce.value
+        guard case .image = await first.value else {
+            Issue.record("A decode already running is finished, never cut short")
+            return
+        }
+
+        materialized.withLock { _ = $0.insert("later.jpg") }
+        guard case .unavailable = await loader.preview(for: .init(id: later, detail: nil, targetLongEdge: 64)) else {
+            Issue.record("A decode on a quiesced root is refused")
+            return
+        }
+        await loader.resume(under: root)
+        guard case .image = await loader.preview(for: .init(id: later, detail: nil, targetLongEdge: 64)) else {
+            Issue.record("Resume lets decodes start again")
+            return
+        }
+    }
+
     @Test func materializedLocalJPEGDecodes() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "otos-preview-\(UUID().uuidString)", directoryHint: .isDirectory)

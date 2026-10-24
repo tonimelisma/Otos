@@ -65,10 +65,9 @@ struct CatalogStoreRemovableSourceTests {
             root,
             store: store,
             coordinator: nil,
+            previewLoader: nil,
             retryDelays: [],
-            unmount: { _ in
-                throw NSError(domain: NSOSStatusErrorDomain, code: -47, userInfo: nil)
-            }
+            eject: { _ in .busy }
         )
 
         #expect(outcome == .busy(displayName: root.displayName))

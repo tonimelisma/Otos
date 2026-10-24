@@ -97,6 +97,10 @@ final class FakePreviewLoader: PreviewLoading {
         }
         return state.withLock { $0.outcomes[request.id] ?? $0.defaultOutcome ?? .unavailable }
     }
+
+    func quiesce(under root: LibraryRootPath) async {}
+
+    func resume(under root: LibraryRootPath) async {}
 }
 
 @MainActor

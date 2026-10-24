@@ -90,16 +90,19 @@ single `setQueryDescriptor` writer, so automatic and manual selection share one 
   new enrichment is claimed there until it resumes — but **does not** flip
   availability, so the row stays visible. The sidebar
   shows a per-identity "ejecting" spinner while the eject is in flight.
-- The eject drains in-flight enrichment under the root — the work already running,
-  however long it takes, since nothing new starts there — then calls
-  `NSWorkspace.unmountAndEjectDevice`. Success unmounts the volume, and the row
+- The eject releases Otos's own reads on the card first — it drains in-flight
+  enrichment under the root (the work already running, however long it takes, since
+  nothing new starts there), lets the preview loader finish its decodes there while
+  refusing new ones, and releases a loupe player showing a card file — then unmounts
+  the whole disk and ejects it through DiskArbitration (`DiskEjector`). An eject while
+  an import is copying from the card is refused at once with the in-use alert. Success unmounts the volume, and the row
   disappears because the real unmount report (DiskArbitration removing the volume path) → detach removes it — UI and
   reality never diverge. Failure returns a typed `RemovableEjectOutcome`
-  (`.ejected` / `.cancelled` / `.busy(displayName)` / `.failed(description)`).
-  User-cancelled eject clears the spinner with no alert. Busy/failed surface a
-  localized alert, the spinner clears, and the source stays mounted and visible.
-  Busy detection prefers typed underlying errors (POSIX `EBUSY`, DiskArbitration
-  dissenter) over English substring matching.
+  (`.ejected` / `.busy(displayName)` / `.failed(description)`), classified from the
+  dissenter's status alone — `unix_err(EBUSY)` or `kDAReturnBusy` is busy
+  (`docs/research/2026-10-23-diskarbitration-eject-status.md`); error text is never
+  read. Busy/failed surface an alert, the spinner clears, and the source stays mounted
+  and visible.
 
 ## Why This Is Simplest Correct
 

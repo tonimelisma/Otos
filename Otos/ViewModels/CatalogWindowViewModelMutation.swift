@@ -1,5 +1,5 @@
-import AppKit
 import Darwin
+import DiskArbitration
 import Foundation
 import OSLog
 
@@ -65,6 +65,7 @@ extension CatalogWindowViewModel {
             return
         }
         beginEjectingSource(identity)
+        releaseLoupeVideo(under: source.path)
         submitCatalogMutation(.ejectRemovableSource(source))
     }
 
@@ -80,7 +81,9 @@ extension CatalogWindowViewModel {
     nonisolated static func performCatalogMutation(
         _ intent: CatalogMutationIntent,
         store: CatalogStore,
-        coordinator: EnrichmentCoordinator?
+        coordinator: EnrichmentCoordinator?,
+        previewLoader: (any PreviewLoading)?,
+        importer: MediaOperationCoordinator?
     ) async -> RemovableEjectOutcome? {
         switch intent {
         case let .addLibrary(url):
@@ -99,7 +102,9 @@ extension CatalogWindowViewModel {
             return await performEjectRemovableSource(
                 root,
                 store: store,
-                coordinator: coordinator
+                coordinator: coordinator,
+                previewLoader: previewLoader,
+                importInProgress: importer?.isImporting(from: root.path) ?? false
             )
         case let .forgetRemovableSource(root):
             await performForgetRemovableSource(root, store: store)
@@ -121,76 +126,10 @@ extension CatalogWindowViewModel {
 }
 
 extension CatalogWindowViewModel {
-    nonisolated static func removableEjectOutcome(for error: Error, displayName: String) -> RemovableEjectOutcome {
-        let nsError = error as NSError
-        if isUserCancelledEjectError(nsError) {
-            return .cancelled
-        }
-        if isVolumeBusyError(nsError) {
-            return .busy(displayName: displayName)
-        }
-        OtosLog.catalog.error(
-            "op=removableEject unrecognizedError domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public)"
-        )
-        return .failed(description: nsError.localizedDescription)
-    }
-
-    /// User declined the system eject UI — not a busy failure.
-    nonisolated static func isUserCancelledEjectError(_ error: NSError) -> Bool {
-        if error.domain == NSCocoaErrorDomain, error.code == NSUserCancelledError {
-            return true
-        }
-        if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError {
-            return isUserCancelledEjectError(underlying)
-        }
-        return false
-    }
-
-    /// Prefer typed underlying errors (DiskArbitration dissenter / POSIX EBUSY) over
-    /// English substring matching on `localizedDescription`. The substring check remains
-    /// only as a last-chance fallback for unrecognized shapes.
-    nonisolated static func isVolumeBusyError(_ error: NSError) -> Bool {
-        if isTypedBusyError(error) {
-            return true
-        }
-        if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError,
-           isTypedBusyError(underlying) || isVolumeBusyError(underlying)
-        {
-            return true
-        }
-        let description = error.localizedDescription
-        return description.localizedCaseInsensitiveContains("in use")
-            || description.localizedCaseInsensitiveContains("busy")
-    }
-
-    /// `fBsyErr` from CarbonCore/MacErrors.h, spelled out because the Carbon
-    /// error enums do not import into Swift by name.
-    nonisolated static let fileBusyOSStatus = -47
-
-    nonisolated static func isTypedBusyError(_ error: NSError) -> Bool {
-        if error.domain == NSPOSIXErrorDomain, error.code == EBUSY {
-            return true
-        }
-        // `NSWorkspace.unmountAndEjectDevice` reports a held volume as the
-        // Carbon `fBsyErr` ("File is busy", CarbonCore/MacErrors.h) —
-        // observed 2026-09-13.
-        if error.domain == NSOSStatusErrorDomain, error.code == fileBusyOSStatus {
-            return true
-        }
-        // DiskArbitration dissenter domain; busy/in-use dissent codes vary by OS, so any
-        // dissenter error is treated as busy rather than a generic failure.
-        if error.domain == "com.apple.DiskArbitration.DADissenterError" {
-            return true
-        }
-        return false
-    }
-
     nonisolated static func outcomeDiagnosticCase(_ outcome: RemovableEjectOutcome) -> String {
         switch outcome {
         case .ejected:
             "ejected"
-        case .cancelled:
-            "cancelled"
         case .busy:
             "busy"
         case .failed:
@@ -198,15 +137,13 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// Backoff after the system refuses an unmount as busy. Scanning and enrichment on
-    /// the card have ended before the first attempt: quiesce awaits the cancelled scan
-    /// and stops new claims, and the drain waits for the enrichment that was running.
-    /// A busy refusal can still come from an interactive preview decode, which the
-    /// drain deliberately does not wait for, or from a process outside Otos. On
-    /// 2026-09-13 an attempt 120 ms after the erase sweep released the card was refused
-    /// this way; what held it was not identified.
-    /// Retrying a few times outlasts a short-lived holder without hiding a volume that
-    /// stays held.
+    /// Backoff after the system refuses an unmount as busy. Before the first attempt Otos
+    /// has released every read it owns on the card: quiesce awaits the cancelled scan and
+    /// stops new claims, the enrichment drain waits for the work already running, the
+    /// preview loader finishes its decodes there and refuses new ones, and the window has
+    /// released a loupe player showing a card file. A busy refusal after that is a holder
+    /// outside Otos — Spotlight, Finder, another app — which Otos cannot ask to finish, so
+    /// a few retries outlast a short-lived one without hiding a volume that stays held.
     nonisolated static let ejectBusyRetryDelays: [Duration] = [
         .milliseconds(500), .seconds(1), .seconds(2), .seconds(4),
     ]
@@ -215,54 +152,98 @@ extension CatalogWindowViewModel {
         _ root: LibraryRoot,
         store: CatalogStore,
         coordinator: EnrichmentCoordinator?,
+        previewLoader: (any PreviewLoading)?,
+        importInProgress: Bool = false,
         retryDelays: [Duration] = ejectBusyRetryDelays,
-        unmount: @Sendable (URL) async throws -> Void = unmountAndEjectDeviceOffMain
+        eject: @Sendable (URL) async -> DiskEjector.Outcome = DiskEjector.eject(volumeAt:)
     ) async -> RemovableEjectOutcome {
         guard let identity = root.deviceIdentity else {
             return .failed(description: "The disk could not be ejected.")
         }
+        // The import holds the card's files open until it ends, and is Otos's own work:
+        // the eject is refused now with the in-use alert, and nothing was quiesced.
+        guard !importInProgress else {
+            OtosLog.catalog.noticeOperation("catalog.removable.eject", phase: "refused", fields: [
+                "rootPath": root.path.rawValue,
+                "reason": "importRunning",
+            ])
+            return .busy(displayName: root.displayName)
+        }
         do {
             try await store.quiesceRemovableSource(identity: identity)
-            if let coordinator {
-                await coordinator.drainWork(under: root.path)
-            }
         } catch {
-            return await ejectFailed(root: root, store: store, error: error)
+            await recordMutationError(
+                "Catalog eject removable source failed",
+                operation: "catalog.removable.eject",
+                fields: ["rootPath": root.path.rawValue, "phase": "quiesce"],
+                error: error
+            )
+            return await ejectFailed(root: root, store: store, previewLoader: previewLoader, reason: .quiesceFailed)
         }
+        if let coordinator {
+            await coordinator.drainWork(under: root.path)
+        }
+        await previewLoader?.quiesce(under: root.path)
         var attempt = 0
         while true {
-            do {
-                try await unmount(root.path.url)
+            let outcome = await eject(root.path.url)
+            switch outcome {
+            case .ejected:
                 OtosLog.catalog.notice(
                     "op=catalog.removable.eject phase=finish outcome=ejected attempts=\(attempt + 1, privacy: .public) rootPath=\(root.path.rawValue, privacy: .public)"
                 )
+                await previewLoader?.resume(under: root.path)
                 return .ejected
-            } catch {
-                let outcome = removableEjectOutcome(for: error, displayName: root.displayName)
-                guard case .busy = outcome, attempt < retryDelays.count else {
-                    return await ejectFailed(root: root, store: store, error: error)
-                }
+            case .busy where attempt < retryDelays.count:
                 let delay = retryDelays[attempt]
                 attempt += 1
                 OtosLog.catalog.notice(
                     "op=catalog.removable.eject phase=retry reason=busy attempt=\(attempt, privacy: .public) delayMs=\(DiagnosticsTiming.milliseconds(delay), privacy: .public) rootPath=\(root.path.rawValue, privacy: .public)"
                 )
-                // time: backoff — the system refused the unmount as busy
-                try? await Task.sleep(for: delay)
+                do {
+                    // time: backoff — a holder outside Otos keeps the card busy
+                    try await Task.sleep(for: delay)
+                } catch {
+                    return await ejectFailed(root: root, store: store, previewLoader: previewLoader, reason: .cancelled)
+                }
+            case .busy:
+                return await ejectFailed(root: root, store: store, previewLoader: previewLoader, reason: .busy)
+            case let .refused(status):
+                return await ejectFailed(root: root, store: store, previewLoader: previewLoader, reason: .refused(status))
+            case .diskUnavailable:
+                return await ejectFailed(root: root, store: store, previewLoader: previewLoader, reason: .diskUnavailable)
+            }
+        }
+    }
+
+    private nonisolated enum EjectFailure {
+        case quiesceFailed
+        case cancelled
+        case busy
+        case refused(DAReturn)
+        case diskUnavailable
+
+        var logReason: String {
+            switch self {
+            case .quiesceFailed: "quiesceFailed"
+            case .cancelled: "cancelled"
+            case .busy: "busy"
+            case let .refused(status): String(format: "refused:0x%08X", UInt32(bitPattern: status))
+            case .diskUnavailable: "diskUnavailable"
             }
         }
     }
 
     /// An eject Otos asked for reports its own outcome, so a failed one resumes the source
-    /// at once: the card is still mounted and its scan and enrichment have no reason to
-    /// stay stopped. An eject started elsewhere reports nothing when it is refused, which
-    /// is why `RemovableVolumeMonitor` keeps its own limit for that case.
+    /// at once: the card is still mounted and its scan, enrichment and previews have no
+    /// reason to stay stopped. An eject started elsewhere reports nothing when it is
+    /// refused, which is why `RemovableVolumeMonitor` keeps its own limit for that case.
     private nonisolated static func ejectFailed(
         root: LibraryRoot,
         store: CatalogStore,
-        error: Error
+        previewLoader: (any PreviewLoading)?,
+        reason: EjectFailure
     ) async -> RemovableEjectOutcome {
-        let outcome = removableEjectOutcome(for: error, displayName: root.displayName)
         if let identity = root.deviceIdentity {
             do {
                 try await store.resumeRemovableSource(identity: identity)
@@ -273,22 +254,32 @@ extension CatalogWindowViewModel {
                 ])
             }
         }
-        await recordMutationError(
-            "Catalog eject removable source failed",
-            operation: "catalog.removable.eject",
-            fields: [
-                "rootPath": root.path.rawValue,
-                "outcome": outcomeDiagnosticCase(outcome),
-            ],
-            error: error
-        )
+        await previewLoader?.resume(under: root.path)
+        let outcome: RemovableEjectOutcome = switch reason {
+        case .busy:
+            .busy(displayName: root.displayName)
+        case let .refused(status):
+            .failed(description: ejectFailureDescription(displayName: root.displayName, status: status))
+        case .quiesceFailed, .cancelled, .diskUnavailable:
+            .failed(description: ejectFailureDescription(displayName: root.displayName, status: nil))
+        }
+        OtosLog.catalog.errorOperation("catalog.removable.eject", phase: "finish", fields: [
+            "rootPath": root.path.rawValue,
+            "outcome": outcomeDiagnosticCase(outcome),
+            "reason": reason.logReason,
+        ])
         return outcome
     }
 
-    nonisolated static func unmountAndEjectDeviceOffMain(_ url: URL) async throws {
-        try await Task.detached(priority: .utility) {
-            try NSWorkspace.shared.unmountAndEjectDevice(at: url)
-        }.value
+    /// The alert text for a refusal that is not "busy": the BSD error the status encodes,
+    /// in the system's own words, or no cause at all when the status is DiskArbitration's
+    /// own — never a guess at one.
+    nonisolated static func ejectFailureDescription(displayName: String, status: DAReturn?) -> String {
+        let base = "The disk \u{201C}\(displayName)\u{201D} couldn\u{2019}t be ejected."
+        guard let status, let code = DiskEjector.bsdError(in: status), let reason = strerror(code) else {
+            return base
+        }
+        return "\(base) \(String(cString: reason))."
     }
 }
 

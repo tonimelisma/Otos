@@ -93,6 +93,12 @@ custom_rules:
     message: "Tasks started one per callback have no order, so a later report can be handled before an earlier one (ADR 0032, rule 5). Yield into one ordered AsyncStream with one consumer, assert MainActor.assumeIsolated where the API documents the main thread, or own the task as a named property."
     severity: error
 
+  error_text_matching:
+    name: "An error is classified by its type, never by its text"
+    regex: '(localizedDescription|localizedFailureReason|describing:\s*error\))\s*\.\s*(localizedCaseInsensitiveContains|localizedStandardContains|contains|hasPrefix|hasSuffix|range|lowercased|uppercased)\b'
+    message: "Error text is localized and unstable: matching it silently stops working on another language or OS release. Classify by domain and code, or by the API's typed status."
+    severity: error
+
   wall_clock_interval:
     name: "An interval inside the process is measured on ContinuousClock"
     regex: 'Date\(\)\.(timeIntervalSince|addingTimeInterval)\(|\btimeIntervalSinceNow\b|Date\.distant(Past|Future)\b|Date\(timeIntervalSinceNow:'

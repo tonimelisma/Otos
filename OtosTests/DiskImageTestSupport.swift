@@ -15,14 +15,17 @@ struct MountedTestDiskImage {
     let mountURL: URL
     private let dmgPath: URL
 
-    static func attach(named name: String = "OtosTestDMG") throws -> MountedTestDiskImage {
+    static func attach(
+        named name: String = "OtosTestDMG",
+        filesystem: String = "APFS"
+    ) throws -> MountedTestDiskImage {
         let dmgPath = FileManager.default.temporaryDirectory
             .appending(path: "otos-test-dmg-\(UUID().uuidString).dmg", directoryHint: .notDirectory)
 
         let create = Process()
         create.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
         create.arguments = [
-            "create", "-size", "5m", "-fs", "APFS", "-volname", name,
+            "create", "-size", "40m", "-fs", filesystem, "-volname", name,
             dmgPath.path(percentEncoded: false),
         ]
         create.standardOutput = FileHandle.nullDevice
