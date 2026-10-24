@@ -5,12 +5,13 @@ import Testing
 /// Import intents reach the coordinator in the order the user made them. The view model
 /// funnels them through one lossless stream with one consumer, because Swift does not order
 /// separate `Task {}` blocks started from the main actor.
+@Suite(.testDirectory)
 @MainActor
 struct CatalogWindowViewModelImportIntentTests {
     /// "Change the destination, then Import" — two synchronous calls, back to back — must
     /// import into the new destination, never the one the card started with.
     @Test func destinationThenImportImportsIntoTheNewDestination() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let firstURL = temp.appending(path: "First", directoryHint: .isDirectory)
         let secondURL = temp.appending(path: "Second", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -64,7 +65,7 @@ struct CatalogWindowViewModelImportIntentTests {
         model.setImportDestination(second, for: source)
         model.queueImport(for: source)
 
-        try await waitUntil { await (try? store.importBatches().first?.assetCount) == 1 }
+        try await waitUntil { try await store.importBatches().first?.assetCount == 1 }
         #expect(FileManager.default.fileExists(atPath: secondURL.appending(path: "f.jpg").path))
         #expect(!FileManager.default.fileExists(atPath: firstURL.appending(path: "f.jpg").path))
         await coordinator.shutdown()

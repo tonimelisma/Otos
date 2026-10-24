@@ -5,6 +5,7 @@ import Testing
 /// The smoke seam may steer which root a developer run looks at; it may never
 /// change which roots exist. These cover resolution: which requested paths select
 /// something, and what an unregistered path reports instead of registering itself.
+@Suite(.testDirectory)
 struct SmokeLibrarySelectionTests {
     private func libraryState(
         path: String,
@@ -29,10 +30,7 @@ struct SmokeLibrarySelectionTests {
     /// literal, because the answer depends on how the running machine's filesystem
     /// resolves.
     @Test func configuredRootPathMatchesTheNormalizationStoreUsesForRoots() throws {
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appending(path: "SmokeSelection-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let directory = try makeTestDirectory()
         let expected = try CatalogPath.normalizedDirectoryPath(for: directory)
 
         let plain = SmokeLibrarySelection.configuredRootPath(environment: [
@@ -139,10 +137,7 @@ struct SmokeLibrarySelectionTests {
     /// state that lists the root applies the ordinary sidebar selection.
     @MainActor
     @Test func selectsTheRootFromTheFirstLoadedStateThatListsIt() async throws {
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appending(path: "SmokeSelection-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let directory = try makeTestDirectory()
         let requested = try CatalogPath.normalizedDirectoryPath(for: directory)
         let viewModel = CatalogWindowViewModel(
             catalogStore: CatalogStore(location: .inMemory, scanCadence: .milliseconds(10)),
@@ -165,6 +160,9 @@ struct SmokeLibrarySelectionTests {
         loaded.mediaEmptyState = .noMedia
         viewModel.applyState(loaded)
 
-        try await waitUntil { viewModel.sidebarSelection == .library(requested) }
+        // The seam acts through the ordinary sidebar intent, which records a source
+        // choice; once it has, the selection it made is final.
+        try await waitUntil { viewModel.userHasChosenSource }
+        #expect(viewModel.sidebarSelection == .library(requested))
     }
 }

@@ -3,9 +3,10 @@ import Foundation
 import Synchronization
 import Testing
 
+@Suite(.testDirectory)
 struct ExclusivePublicationTests {
     @Test func publishesStagingToAbsentFinalOnAPFS() throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let staging = temp.appending(path: ".stage.otos-import-staging")
         let final = temp.appending(path: "final.jpg")
         try Data([0x01, 0x02, 0x03]).write(to: staging)
@@ -17,7 +18,7 @@ struct ExclusivePublicationTests {
     }
 
     @Test func refusesOverwriteWhenFinalExists() throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let staging = temp.appending(path: ".stage.otos-import-staging")
         let final = temp.appending(path: "final.jpg")
         try Data([0x01]).write(to: staging)
@@ -29,9 +30,10 @@ struct ExclusivePublicationTests {
     }
 }
 
+@Suite(.testDirectory)
 struct CopyfileTransferTests {
     @Test func copiesBytesAndReportsCompletion() throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let source = temp.appending(path: "source.bin")
         let destination = temp.appending(path: "dest.bin")
         let payload = Data(repeating: 0xAB, count: 64 * 1024)
@@ -47,28 +49,34 @@ struct CopyfileTransferTests {
         #expect(try Data(contentsOf: destination) == payload)
     }
 
+    /// `copyfile(3)` reports data progress once per block it writes, and asks whether to
+    /// continue before each report. Answering "stop" at the first ask after bytes have
+    /// landed cancels with the destination genuinely partial: some bytes written, not
+    /// all. The written count is asserted rather than assumed, so a copy that finished
+    /// in one block fails here instead of passing as a cancellation.
     @Test func cancelRemovesPartialDestination() throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let source = temp.appending(path: "source.bin")
         let destination = temp.appending(path: "dest.bin")
-        try Data(repeating: 0xCD, count: 2 * 1024 * 1024).write(to: source)
+        let total: Int64 = 8 * 1024 * 1024
+        try Data(repeating: 0xCD, count: Int(total)).write(to: source)
 
-        let counter = TestCounter()
+        let written = Mutex<Int64>(0)
         let outcome = CopyfileTransfer.copy(
             from: source,
             to: destination,
-            onProgress: { _ in },
-            shouldContinue: {
-                counter.incrementAndGet() < 2
-            }
+            onProgress: { progress in written.withLock { $0 = progress.completedBytes } },
+            shouldContinue: { written.withLock { $0 } == 0 }
         )
-        #expect(outcome == .cancelled || outcome == .completed)
-        if outcome == .cancelled {
-            #expect(!FileManager.default.fileExists(atPath: destination.path))
-        }
+
+        #expect(outcome == .cancelled)
+        let writtenAtCancel = written.withLock { $0 }
+        #expect(writtenAtCancel > 0 && writtenAtCancel < total)
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
     }
 }
 
+@Suite(.testDirectory)
 struct ActiveFileOperationJournalTests {
     @Test func journalRoundTripsThroughStore() async throws {
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
@@ -162,6 +170,7 @@ struct ActiveFileOperationJournalTests {
     }
 }
 
+@Suite(.testDirectory)
 struct ImportRecoveryTests {
     private func operation(
         rootPath: LibraryRootPath,
@@ -194,7 +203,7 @@ struct ImportRecoveryTests {
     }
 
     @Test func readyToPublishRecoveryPublishesAndSettlesJournaledDigest() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         let final = destination.appending(path: "final.jpg", directoryHint: .notDirectory)
@@ -248,7 +257,7 @@ struct ImportRecoveryTests {
     }
 
     @Test func finalAndStagingRecoveryTreatsFinalAsForeign() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         let final = destination.appending(path: "final.jpg")
@@ -281,7 +290,7 @@ struct ImportRecoveryTests {
     }
 
     @Test func matchingFinalOnlyRecoverySettlesAfterOwnershipProof() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         let final = destination.appending(path: "final.jpg")
@@ -313,7 +322,7 @@ struct ImportRecoveryTests {
     }
 
     @Test func mismatchingFinalOnlyRecoveryRetainsForeignFinal() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         let final = destination.appending(path: "final.jpg")
@@ -351,7 +360,7 @@ struct ImportRecoveryTests {
     /// the persisted roots are loaded. The registered destination root must still
     /// be recognized and the interrupted copy recovered in that same pass.
     @Test func coordinatorStartRecoversJournalBeforeStoreLoadsRoots() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         let staging = destination.appending(path: ".stage.otos-import-staging")
@@ -385,6 +394,7 @@ struct ImportRecoveryTests {
     }
 }
 
+@Suite(.testDirectory)
 struct CameraImportAccessTests {
     @Test func mockGatewayRevalidatesAndReportsDeleteCapability() async throws {
         let access = CameraImportAccess(
@@ -415,7 +425,7 @@ struct CameraImportAccessTests {
         #expect(await access.canDelete(identity: "cam-1"))
         #expect(await access.eject(identity: "cam-1") == .ejected)
 
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let enrichment = temp.appending(path: "enrich.bin")
         let staging = temp.appending(path: "stage.bin")
         try Data([0x01, 0x02]).write(to: enrichment)
@@ -455,9 +465,10 @@ struct CameraImportAccessTests {
     }
 }
 
+@Suite(.testDirectory)
 struct VolumeRenameCapabilityTests {
     @Test func temporaryDirectoryReportsAKnownCapability() throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let capability = VolumeRenameCapability.probe(url: temp)
         #expect(
             capability == .renameExcl
@@ -467,9 +478,10 @@ struct VolumeRenameCapabilityTests {
     }
 }
 
+@Suite(.testDirectory)
 struct ImportExecutionProgressTests {
     @Test func byteProgressIsMonotonicAndReachesPlanTotals() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let destinationURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let sourceURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
@@ -552,7 +564,7 @@ struct ImportExecutionProgressTests {
     /// device session that never opened — the run must report itself as a failure,
     /// not a misleadingly-labeled `.completed(failedCount: N of N)`.
     @Test func allEntriesFailingSourceNotReadyClassifiesRunAsFailed() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let sourceRoot = temp.appending(path: "Camera", directoryHint: .isDirectory)
         let destinationRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
@@ -615,7 +627,7 @@ struct ImportExecutionProgressTests {
     /// `.completed(failedCount:)` — only a run where every attempted entry fails
     /// the *same* `.sourceNotReady` way is systemic.
     @Test func mixedFailureReasonsStayCompletedNotSystemic() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let sourceRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         let destinationRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
@@ -696,7 +708,7 @@ struct ImportExecutionProgressTests {
     /// entry records the card's own identity. The destination path holds a
     /// foreign file that is not this item, and the item never landed there.
     @Test func incompleteItemsCarrySourceIdentityNotDestinationIdentity() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let sourceRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         let destinationRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
@@ -958,7 +970,7 @@ struct ImportExecutionProgressTests {
     /// `count` real files of `bytesEach` on a card, planned into an empty
     /// library with original names — the shape every floor test starts from.
     private func makeCardFixture(count: Int, bytesEach: Int) async throws -> CardFixture {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let sourceRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         let destinationRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
@@ -1259,7 +1271,7 @@ struct ImportExecutionProgressTests {
     /// One JPEG with an `.xmp` companion on an attached card, planned into an empty
     /// library with original names.
     private func makeCompanionFixture() async throws -> CardFixture {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let sourceRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         let destinationRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
@@ -1334,7 +1346,7 @@ struct ImportExecutionProgressTests {
     }
 
     @Test func containmentHelperAcceptsDirectoryURLSlashAndNormalizedRoot() throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = try CatalogPath.normalizedDirectoryPath(for: temp)
         let inside = root.url.appending(path: "same.jpg")
         let outside = temp.deletingLastPathComponent().appending(path: "same.jpg")
@@ -1354,7 +1366,7 @@ struct ImportExecutionProgressTests {
     }
 
     private func makeZeroCopyFixture() async throws -> ZeroCopyFixture {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let sourceRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         let destinationRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)

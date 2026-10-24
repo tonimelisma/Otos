@@ -4,6 +4,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct RemovableEjectOutcomeTests {
     @MainActor
     @Test func missingIdentitySurfacesEjectFailure() {
@@ -183,7 +184,7 @@ struct RemovableEjectOutcomeTests {
     }
 
     private static func attachedCard(identity: String) async throws -> (CatalogStore, LibraryRoot) {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))

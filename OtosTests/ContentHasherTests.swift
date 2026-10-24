@@ -4,6 +4,7 @@ import OtosXXH3
 import Synchronization
 import Testing
 
+@Suite(.testDirectory)
 struct ContentHasherTests {
     @Test func officialCanonicalVectorsAndDigestRoundTrip() throws {
         let vectors: [(Data, String)] = [
@@ -66,15 +67,13 @@ struct ContentHasherTests {
         #expect(checks.withLock { $0 } == 2)
     }
 
-    @Test func missingFileReturnsTypedOpenFailure() {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("otos-content-hasher-missing-\(UUID().uuidString)")
+    @Test func missingFileReturnsTypedOpenFailure() throws {
+        let url = try makeTestDirectory().appending(path: "missing")
         #expect(ContentHasher().hashMaterializedFile(at: url) == .failed(category: .open))
     }
 
     private func temporaryFile(_ data: Data) throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("otos-content-hasher-\(UUID().uuidString)")
+        let url = try makeTestDirectory().appending(path: "content")
         try data.write(to: url, options: .atomic)
         return url
     }

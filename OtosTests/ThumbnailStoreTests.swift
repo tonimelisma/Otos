@@ -5,6 +5,7 @@ import ImageIO
 import Testing
 import UniformTypeIdentifiers
 
+@Suite(.testDirectory)
 struct ThumbnailStoreTests {
     @Test func relativeNameUsesJPEGExtension() {
         let id = MediaAssetID(
@@ -18,7 +19,7 @@ struct ThumbnailStoreTests {
     }
 
     @Test func stageAndPromoteNormalizeToLoadableJPEG() throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
         let image = try makeThumbnailTestImage()
 
@@ -38,7 +39,7 @@ struct ThumbnailStoreTests {
     }
 
     @Test func stageDoesNotPublishUntilPromoted() throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
         let image = try makeThumbnailTestImage()
 
@@ -55,7 +56,7 @@ struct ThumbnailStoreTests {
     }
 
     @Test func stageCopyUsesIndependentDestinationIdentity() throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
         let image = try makeThumbnailTestImage()
         let sourceID = MediaAssetID(
@@ -86,7 +87,7 @@ struct ThumbnailStoreTests {
     }
 
     @Test func deleteAllPurgesOnlyThumbnailDirectoryContents() throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let nested = directory.appending(path: "thumb.jpg", directoryHint: .notDirectory)
@@ -101,7 +102,7 @@ struct ThumbnailStoreTests {
     }
 
     @Test func deleteRemovesThumbnailFile() throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let name = "thumb.jpg"
@@ -114,7 +115,7 @@ struct ThumbnailStoreTests {
     }
 
     @Test func startupCleanupDeletesOnlyHiddenTemporaryThumbnailFiles() throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
         let outside = temp.appending(path: ".outside.tmp", directoryHint: .notDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

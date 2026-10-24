@@ -3,9 +3,10 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogStoreFilesystemEventTests {
     @Test func eventRescansOnlyAffectedRoot() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let rootA = temp.appending(path: "A", directoryHint: .isDirectory)
         let rootB = temp.appending(path: "B", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootA, withIntermediateDirectories: true)
@@ -47,7 +48,7 @@ struct CatalogStoreFilesystemEventTests {
     /// namespace mutations, or bump occupancy — that self-inflicted churn would fire a
     /// reconcile + replan on every staging write. A real media event still reconciles.
     @Test func importStagingEventsDoNotTriggerReconciliation() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
@@ -85,7 +86,7 @@ struct CatalogStoreFilesystemEventTests {
     /// is coalesced by that work: five events cost the rescan they started plus one
     /// follow-up, with no quiet period waited out.
     @Test func burstDuringARescanCoalescesIntoOneFollowUp() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
@@ -117,7 +118,7 @@ struct CatalogStoreFilesystemEventTests {
     }
 
     @Test func eventDuringActiveScanSchedulesFollowUp() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
@@ -133,6 +134,7 @@ struct CatalogStoreFilesystemEventTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        let baseline = await recorder.invocations().count
 
         let classified = await store.classifiedFilesystemEventCount
         emit(FilesystemEvent(path: root.appending(path: "trigger-second.jpg").path, flags: 0))
@@ -141,13 +143,15 @@ struct CatalogStoreFilesystemEventTests {
         emit(FilesystemEvent(path: root.appending(path: "during-second.jpg").path, flags: 0))
         try await waitUntil { await store.classifiedFilesystemEventCount >= classified + 2 }
 
+        // Once everything the store was told has been acted on, the event that landed
+        // during the rescan has cost exactly one follow-up scan.
         await probe.release(2)
-        await probe.waitForInvocationCount(3)
-        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await waitUntil { await store.isFilesystemQuiescent }
+        #expect(await recorder.invocations().count == baseline + 2)
     }
 
     @Test func safeFileEventDuringActiveScanDoesNotForceFullRescan() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
@@ -183,7 +187,7 @@ struct CatalogStoreFilesystemEventTests {
     }
 
     @Test func subtreeDirectoryEventReconcilesWithoutSiblingMutation() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let left = root.appending(path: "a/b", directoryHint: .isDirectory)
         let sibling = root.appending(path: "a/b2", directoryHint: .isDirectory)
@@ -227,7 +231,7 @@ struct CatalogStoreFilesystemEventTests {
     }
 
     @Test func eventsIgnoredBeforeFirstScanCompletes() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
@@ -256,7 +260,7 @@ struct CatalogStoreFilesystemEventTests {
     }
 
     @Test func removeLibraryStopsScheduling() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
@@ -281,7 +285,7 @@ struct CatalogStoreFilesystemEventTests {
     }
 
     @Test func targetedFileEventReconcilesWithoutFullScan() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let first = root.appending(path: "first.jpg")
@@ -322,7 +326,7 @@ struct CatalogStoreFilesystemEventTests {
     }
 
     @Test func targetedFileRemovalDeletesWithoutFullScan() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let file = root.appending(path: "removed.jpg")
@@ -359,7 +363,7 @@ struct CatalogStoreFilesystemEventTests {
     }
 
     @Test func diskChangeReconcilesAfterRescan() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let first = root.appending(path: "first.jpg")
@@ -391,7 +395,7 @@ struct CatalogStoreFilesystemEventTests {
     }
 
     @Test func fileDirtSurvivesQueuedOtherRootScan() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let rootA = temp.appending(path: "A", directoryHint: .isDirectory)
         let rootB = temp.appending(path: "B", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootA, withIntermediateDirectories: true)
@@ -453,7 +457,7 @@ struct CatalogStoreFilesystemEventTests {
     }
 
     @Test func removedDirectoryPurgesSubtreeRowsAndCompanions() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let album = root.appending(path: "album", directoryHint: .isDirectory)
         let sibling = root.appending(path: "keep", directoryHint: .isDirectory)
@@ -501,7 +505,7 @@ struct CatalogStoreFilesystemEventTests {
     }
 
     @Test func renamedDirectoryEscalatesToRootAndAvoidsDuplicates() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let oldDir = root.appending(path: "old", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: oldDir, withIntermediateDirectories: true)

@@ -2,6 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogProjectionLifecycleTests {
     /// A projection's publication loop must end when the projection does, not merely
     /// skip a beat. Both long-lived loops hold their owner weakly across an indefinite
@@ -14,7 +15,7 @@ struct CatalogProjectionLifecycleTests {
     /// Proven by ownership, not by timing: the store is held weakly here, so if the
     /// loop still retained it the reference could not go nil.
     @Test func releasingAProjectionEndsItsLoopsAndReleasesTheStore() async throws {
-        let temp = try makeProjectionLifecycleTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
 
@@ -42,7 +43,7 @@ struct CatalogProjectionLifecycleTests {
     }
 
     @Test func coalescedRemoveAndSamePathReaddResetsSelection() async throws {
-        let temp = try makeProjectionLifecycleTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let scanner = CatalogScanner { _, _, _ in .empty }
@@ -79,7 +80,7 @@ struct CatalogProjectionLifecycleTests {
     }
 
     @Test func removedSelectionRemainsAllMediaWhenSamePathIsReadded() async throws {
-        let temp = try makeProjectionLifecycleTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let scanner = CatalogScanner { _, _, _ in .empty }
@@ -122,7 +123,7 @@ struct CatalogProjectionLifecycleTests {
         let newer = SidebarSelection.library(
             LibraryRootPath(rawValue: "/Users/example/Newer")
         )
-        let gate = SelectionBuildGate(blockedSelection: missing)
+        let gate = ArrivalGate()
         let store = CatalogStore(location: .inMemory)
         let projection = selectionNormalizingProjection(missing: missing, gate: gate)
         let recorder = LifecycleStateRecorder()
@@ -137,9 +138,9 @@ struct CatalogProjectionLifecycleTests {
         try await store.start(scansSavedLibraries: false)
         _ = try await recorder.waitForLast { $0.resolvedSidebarSelection == .allMedia }
         await projection.updateSidebarSelection(missing)
-        await gate.waitUntilPaused()
+        await gate.waitForArrivals(1)
         await projection.updateSidebarSelection(newer)
-        await gate.release()
+        await gate.open()
 
         let latest = try await recorder.waitForLast { state in
             state.resolvedSidebarSelection == newer
@@ -150,13 +151,17 @@ struct CatalogProjectionLifecycleTests {
 
 private typealias LifecycleStateRecorder = AsyncValueRecorder<CatalogWindowState>
 
+/// Builds states whose resolved selection normalizes `missing` to All Media, holding
+/// every build for `missing` at `gate` so a newer intent can arrive mid-build.
 private func selectionNormalizingProjection(
     missing: SidebarSelection,
-    gate: SelectionBuildGate
+    gate: ArrivalGate
 ) -> CatalogProjection {
     CatalogProjection(cadence: .milliseconds(10)) { _, _, request in
         let selection = request.descriptor.scope
-        await gate.pauseIfNeeded(selection)
+        if selection == missing {
+            await gate.arrive()
+        }
         let resolved = selection == missing ? SidebarSelection.allMedia : selection
         return CatalogWindowState(
             title: "Selection",
@@ -188,59 +193,4 @@ private extension AsyncValueRecorder where Value == CatalogWindowState {
         }
         return try #require(states.last)
     }
-}
-
-private actor SelectionBuildGate {
-    private let blockedSelection: SidebarSelection
-    private var isPaused = false
-    private var releaseContinuation: CheckedContinuation<Void, Never>?
-    private var pauseWaiters: [CheckedContinuation<Void, Never>] = []
-
-    init(blockedSelection: SidebarSelection) {
-        self.blockedSelection = blockedSelection
-    }
-
-    func pauseIfNeeded(_ selection: SidebarSelection) async {
-        guard selection == blockedSelection else {
-            return
-        }
-        isPaused = true
-        resumePauseWaiters()
-        await withCheckedContinuation { continuation in
-            releaseContinuation = continuation
-        }
-    }
-
-    func waitUntilPaused() async {
-        if isPaused {
-            return
-        }
-        await withCheckedContinuation { continuation in
-            pauseWaiters.append(continuation)
-            resumePauseWaiters()
-        }
-    }
-
-    func release() {
-        releaseContinuation?.resume()
-        releaseContinuation = nil
-    }
-
-    private func resumePauseWaiters() {
-        guard isPaused else {
-            return
-        }
-        let waiters = pauseWaiters
-        pauseWaiters.removeAll()
-        for waiter in waiters {
-            waiter.resume()
-        }
-    }
-}
-
-private func makeProjectionLifecycleTemporaryDirectory() throws -> URL {
-    let url = FileManager.default.temporaryDirectory
-        .appending(path: "OtosTests-\(UUID().uuidString)", directoryHint: .isDirectory)
-    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    return url
 }

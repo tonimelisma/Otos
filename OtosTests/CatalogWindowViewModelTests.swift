@@ -2,15 +2,16 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogWindowViewModelTests {
     @MainActor
     @Test func activeStateSubscriptionDoesNotRetainViewModel() async throws {
         let store = CatalogStore(location: .inMemory)
-        let buildProbe = WindowStateBuildProbe()
+        let builds = AsyncValueRecorder<CatalogQueryRequest>()
         var projection: CatalogProjection? = CatalogProjection(
             cadence: .milliseconds(10),
             stateBuilder: { libraries, _, request in
-                await buildProbe.recordBuild()
+                await builds.append(request)
                 return CatalogWindowState(
                     title: "Test",
                     libraries: libraries,
@@ -41,7 +42,7 @@ struct CatalogWindowViewModelTests {
         weak let weakModel = model
 
         model?.start()
-        await buildProbe.waitForBuildCount(1)
+        _ = await builds.waitForValues { !$0.isEmpty }
         model = nil
 
         try await waitUntil { weakModel == nil }
@@ -56,7 +57,7 @@ struct CatalogWindowViewModelTests {
 
     @MainActor
     @Test func storeChangesUpdateWindowState() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeFile(root.appending(path: "one.jpg"), contents: "jpeg")
@@ -86,7 +87,7 @@ struct CatalogWindowViewModelTests {
 
     @MainActor
     @Test func sidebarSelectionChangesRouteThroughProjection() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let picturesURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let archiveURL = temp.appending(path: "Archive", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: picturesURL, withIntermediateDirectories: true)
@@ -135,7 +136,7 @@ struct CatalogWindowViewModelTests {
 
     @MainActor
     @Test func removedSelectedLibraryResetsSidebarSelectionToAllMedia() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
@@ -169,7 +170,7 @@ struct CatalogWindowViewModelTests {
 
     @MainActor
     @Test func startIsIdempotentAndAddRemoveIntentsRouteToStore() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeFile(root.appending(path: "one.jpg"), contents: "jpeg")
@@ -205,7 +206,7 @@ struct CatalogWindowViewModelTests {
 
     @MainActor
     @Test func addRemoveCommandsExecuteInSubmissionOrder() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let firstURL = temp.appending(path: "First", directoryHint: .isDirectory)
         let secondURL = temp.appending(path: "Second", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: firstURL, withIntermediateDirectories: true)
@@ -239,7 +240,7 @@ struct CatalogWindowViewModelTests {
 
     @MainActor
     @Test func failedMutationDoesNotTerminateOrderedConsumer() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let firstURL = temp.appending(path: "First", directoryHint: .isDirectory)
         let secondURL = temp.appending(path: "Second", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: firstURL, withIntermediateDirectories: true)
@@ -271,54 +272,64 @@ struct CatalogWindowViewModelTests {
         #expect(state.libraries.map(\.path) == [secondPath])
     }
 
+    /// Ending the window ends its mutation lane: no command it accepted reaches the
+    /// catalog once the window is gone. Both adds are accepted while the catalog's
+    /// initial load is held, so neither can have written before the window ends. The
+    /// one already waiting on the load is cancelled with the lane (its write checks
+    /// cancellation before it starts), and the queued one never begins.
+    ///
+    /// "The lane has ended" is observed, not waited out: the mutation consumer is the
+    /// last holder of the preview loader the window was given, so the loader's release
+    /// is the consumer's end. A lane that outlived the window would still end — its
+    /// stream finishes with the window — but only after running both adds, so the
+    /// catalog check below fails rather than hangs.
     @MainActor
-    @Test func endingViewModelDropsQueuedMutationAfterCurrentMutation() async throws {
-        let temp = try makeTemporaryDirectory()
+    @Test func endingViewModelStartsNoAcceptedMutation() async throws {
+        let temp = try makeTestDirectory()
         let firstURL = temp.appending(path: "First", directoryHint: .isDirectory)
         let secondURL = temp.appending(path: "Second", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: firstURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: secondURL, withIntermediateDirectories: true)
 
-        let loadGate = ViewModelInitialLoadGate()
+        let loadGate = ArrivalGate()
         let scanner = CatalogScanner { _, _, _ in .empty }
         let store = CatalogStore(
             location: .inMemory,
             scanner: scanner,
             initialLoadDidRead: {
-                await loadGate.pause()
+                await loadGate.arrive()
             }
         )
-        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
+        var previewLoader: FakePreviewLoader? = FakePreviewLoader()
+        weak let weakPreviewLoader = previewLoader
         var model: CatalogWindowViewModel? = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults
+            preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
+            previewLoader: previewLoader
         )
+        previewLoader = nil
         weak let weakModel = model
-        let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
 
         model?.start()
         model?.addLibrary(url: firstURL)
         model?.addLibrary(url: secondURL)
-        await loadGate.waitUntilPaused()
+        await loadGate.waitForArrivals(1)
         model = nil
         try await waitUntil { weakModel == nil }
 
-        await loadGate.release()
+        await loadGate.open()
+        try await waitUntil { weakPreviewLoader == nil }
         try await store.start(scansSavedLibraries: false)
-        await yieldForQueuedMutationCancellation()
-        let paths = try await catalogStoreTestState(store).libraries.map(\.path)
-        let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
-        #expect(!paths.contains(secondPath))
-        #expect(paths.isEmpty || paths == [firstPath])
+        #expect(try await catalogStoreTestState(store).libraries.isEmpty)
     }
 
     @MainActor
     @Test func rapidSidebarIntentsResolveToLatestSelection() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let picturesURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let archiveURL = temp.appending(path: "Archive", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: picturesURL, withIntermediateDirectories: true)
@@ -355,91 +366,6 @@ struct CatalogWindowViewModelTests {
     }
 }
 
-private func yieldForQueuedMutationCancellation() async {
-    for _ in 0 ..< 10 {
-        await Task.yield()
-    }
-}
-
-private func makeTemporaryDirectory() throws -> URL {
-    let url = FileManager.default.temporaryDirectory
-        .appending(path: "OtosTests-\(UUID().uuidString)", directoryHint: .isDirectory)
-    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    return url
-}
-
 private func writeFile(_ url: URL, contents: String) throws {
     try Data(contents.utf8).write(to: url)
-}
-
-private actor WindowStateBuildProbe {
-    private(set) var buildCount = 0
-    private var buildWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
-
-    func recordBuild() {
-        buildCount += 1
-        resumeBuildWaiters()
-    }
-
-    func waitForBuildCount(_ expectedCount: Int) async {
-        if buildCount >= expectedCount {
-            return
-        }
-        await withCheckedContinuation { continuation in
-            buildWaiters.append((expectedCount, continuation))
-            resumeBuildWaiters()
-        }
-    }
-
-    private func resumeBuildWaiters() {
-        var remaining: [(Int, CheckedContinuation<Void, Never>)] = []
-        for waiter in buildWaiters {
-            if buildCount >= waiter.0 {
-                waiter.1.resume()
-            } else {
-                remaining.append(waiter)
-            }
-        }
-        buildWaiters = remaining
-    }
-}
-
-private actor ViewModelInitialLoadGate {
-    private var isPaused = false
-    private var continuation: CheckedContinuation<Void, Never>?
-    private var pauseWaiters: [CheckedContinuation<Void, Never>] = []
-
-    func pause() async {
-        isPaused = true
-        resumePauseWaiters()
-        await withCheckedContinuation { continuation in
-            self.continuation = continuation
-        }
-    }
-
-    func waitUntilPaused() async {
-        if isPaused {
-            return
-        }
-        await withCheckedContinuation { continuation in
-            pauseWaiters.append(continuation)
-            resumePauseWaiters()
-        }
-    }
-
-    func release() {
-        continuation?.resume()
-        continuation = nil
-    }
-
-    private func resumePauseWaiters() {
-        guard isPaused else {
-            return
-        }
-        let waiters = pauseWaiters
-        pauseWaiters.removeAll()
-        for waiter in waiters {
-            waiter.resume()
-        }
-    }
 }

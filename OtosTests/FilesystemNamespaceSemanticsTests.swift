@@ -2,6 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct FilesystemNamespaceSemanticsTests {
     private func key(_ path: String, _ capabilities: VolumeNamespaceCapabilities) -> FilesystemNameKey {
         FilesystemNamespaceSemantics.nameKey(
@@ -49,7 +50,7 @@ struct FilesystemNamespaceSemanticsTests {
     }
 
     @Test func aRealVolumeProbeIsKnown() throws {
-        let root = try makeCatalogStoreTemporaryDirectory()
+        let root = try makeTestDirectory()
         #expect(FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: root).isKnown)
     }
 

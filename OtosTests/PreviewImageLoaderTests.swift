@@ -5,12 +5,10 @@ import ImageIO
 import Synchronization
 import Testing
 
+@Suite(.testDirectory)
 struct PreviewImageLoaderTests {
     @Test func datalessPreviewSubmitsInteractiveRequestThenDecodes() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appending(path: "otos-preview-interactive-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let directory = try makeTestDirectory()
         let file = directory.appending(path: "sample.jpg")
         try writeTinyJPEG(to: file)
         let id = MediaAssetID(
@@ -41,10 +39,7 @@ struct PreviewImageLoaderTests {
     /// there is refused without reading the file, other roots are untouched, and resume
     /// lets decodes start again.
     @Test func quiescingARootFinishesItsDecodesAndRefusesNewOnesUntilResumed() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appending(path: "otos-preview-quiesce-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let directory = try makeTestDirectory()
         try writeTinyJPEG(to: directory.appending(path: "running.jpg"))
         try writeTinyJPEG(to: directory.appending(path: "later.jpg"))
         let root = LibraryRootPath(rawValue: directory.path(percentEncoded: false))
@@ -91,10 +86,7 @@ struct PreviewImageLoaderTests {
     }
 
     @Test func materializedLocalJPEGDecodes() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appending(path: "otos-preview-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let directory = try makeTestDirectory()
 
         let file = directory.appending(path: "sample.jpg")
         try writeTinyJPEG(to: file)
@@ -124,10 +116,7 @@ struct PreviewImageLoaderTests {
     }
 
     @Test func decodeReportsNativePixelSize() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appending(path: "otos-preview-native-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let directory = try makeTestDirectory()
         let file = directory.appending(path: "sample.jpg")
         try writeTinyJPEG(to: file)
         let id = MediaAssetID(
@@ -194,10 +183,7 @@ struct PreviewImageLoaderTests {
     }
 
     @Test func coalescesConcurrentRequestsForSameID() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appending(path: "otos-preview-coalesce-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let directory = try makeTestDirectory()
         let file = directory.appending(path: "sample.jpg")
         try writeTinyJPEG(to: file)
         let id = MediaAssetID(
@@ -226,10 +212,7 @@ struct PreviewImageLoaderTests {
     }
 
     @Test func cacheMissesWhenStoredLongEdgeIsSmaller() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appending(path: "otos-preview-edge-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let directory = try makeTestDirectory()
         let file = directory.appending(path: "sample.jpg")
         try writeTinyJPEG(to: file)
         let id = MediaAssetID(

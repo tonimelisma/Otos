@@ -91,6 +91,51 @@ func waitForProjectionQuiescence(_ projection: CatalogProjection) async throws {
     try await waitUntil { await projection.isQuiescent }
 }
 
+/// Holds work at a suspension point a test chose until the test opens the gate, so the
+/// test can deliver a competing event at exactly that point instead of hoping a
+/// scheduler interleaves it there.
+///
+/// Every `arrive()` is counted and held while the gate is closed; `open()` resumes all
+/// of them and lets every later arrival straight through, so no caller is ever stranded
+/// or overwritten by the next one.
+actor ArrivalGate {
+    private var arrivals = 0
+    private var isOpen = false
+    private var held: [CheckedContinuation<Void, Never>] = []
+    private var arrivalWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+
+    /// Records an arrival and, while the gate is closed, suspends until it opens.
+    func arrive() async {
+        arrivals += 1
+        let reached = arrivalWaiters.filter { $0.count <= arrivals }
+        arrivalWaiters.removeAll { $0.count <= arrivals }
+        reached.forEach { $0.continuation.resume() }
+        guard !isOpen else {
+            return
+        }
+        await withCheckedContinuation { held.append($0) }
+    }
+
+    var arrivalCount: Int {
+        arrivals
+    }
+
+    /// Returns once `count` arrivals have reached the gate.
+    func waitForArrivals(_ count: Int) async {
+        guard arrivals < count else {
+            return
+        }
+        await withCheckedContinuation { arrivalWaiters.append((count, $0)) }
+    }
+
+    func open() {
+        isOpen = true
+        let released = held
+        held.removeAll()
+        released.forEach { $0.resume() }
+    }
+}
+
 actor AsyncValueRecorder<Value: Sendable> {
     private struct Waiter {
         let predicate: @Sendable ([Value]) -> Bool

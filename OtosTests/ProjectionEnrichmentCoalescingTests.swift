@@ -6,6 +6,7 @@ import Testing
 /// (`best_capture`, `best_kind`, `best_format`) unchanged is a detail-only change, and
 /// the projection must refresh visible detail without re-running the full ordered-asset
 /// query. Only an effective order/scope change is structural and triggers a rebuild.
+@Suite(.testDirectory)
 struct ProjectionEnrichmentCoalescingTests {
     private static let assetCount = 2000
     private static let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
@@ -28,7 +29,7 @@ struct ProjectionEnrichmentCoalescingTests {
     }
 
     private func seededStore() async throws -> (CatalogStore, CatalogStoreTestState) {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let store = CatalogStore(location: .inMemory, scanner: seededScanner())
@@ -79,7 +80,7 @@ struct ProjectionEnrichmentCoalescingTests {
     /// End-to-end: M detail-only enrichment batches must not re-run the full order query,
     /// while a structural batch must re-run it once and reorder.
     @Test func detailOnlyEnrichmentBatchesSkipTheFullOrderQuery() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
 

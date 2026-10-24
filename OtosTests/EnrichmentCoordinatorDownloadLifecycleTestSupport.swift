@@ -9,7 +9,7 @@ struct DownloadLifecycleContext {
 }
 
 func makeDownloadLifecycleContext() async throws -> DownloadLifecycleContext {
-    let temp = try makeCatalogStoreTemporaryDirectory()
+    let temp = try makeTestDirectory()
     let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)

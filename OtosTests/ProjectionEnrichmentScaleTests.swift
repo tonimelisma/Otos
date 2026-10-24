@@ -16,6 +16,7 @@ import Testing
 /// not inferred from process presence). Inventing a number here would violate that
 /// instruction; only `orderQueryCount` — a mechanism assertion, not a performance
 /// budget — is checked.
+@Suite(.testDirectory)
 struct ProjectionEnrichmentScaleTests {
     private static let assetCount = 25000
     private static let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
@@ -57,7 +58,7 @@ struct ProjectionEnrichmentScaleTests {
     /// `OTOS_UI_VERBOSE` convention (`Instrumentation.swift`), not mere presence.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["OTOS_SCALE_TEST"] == "1"))
     func detailOnlyEnrichmentStormOnDiskKeepsOrderQueriesBounded() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let databaseURL = temp.appending(path: "db/catalog.sqlite")

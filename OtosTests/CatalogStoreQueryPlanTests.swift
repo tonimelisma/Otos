@@ -3,9 +3,10 @@ import GRDB
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogStoreQueryPlanTests {
     @Test func descriptorQueryFiltersAndSortsBySQLiteBestValues() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
@@ -36,7 +37,7 @@ struct CatalogStoreQueryPlanTests {
     }
 
     @Test func querySchemaStreamsCatalogOrderAndEnrichmentCandidatesFromIndexes() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
@@ -85,7 +86,7 @@ struct CatalogStoreQueryPlanTests {
     }
 
     @Test func enrichmentClaimQueryUsesPartialIndexWithoutNotInExclusion() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
@@ -123,7 +124,7 @@ struct CatalogStoreQueryPlanTests {
     }
 
     @Test func enrichmentClaimUpdateReturningClaimsRows() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
@@ -163,7 +164,7 @@ struct CatalogStoreQueryPlanTests {
     /// assertion would not catch a narrow query silently planning against the broad
     /// index.
     @Test func metadataOnlyClaimQueriesUseMetadataOnlyIndexes() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
@@ -198,7 +199,7 @@ struct CatalogStoreQueryPlanTests {
     /// (a library root) still — the wiring that must hold or removable enrichment spins
     /// forever.
     @Test func metadataCurrentNoHashIsClaimedOnlyWhenHashRequired() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),

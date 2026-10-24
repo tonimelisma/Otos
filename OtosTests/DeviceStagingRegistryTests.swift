@@ -9,7 +9,7 @@ import Testing
 /// Run in parallel, one test's cleanup revokes another's claim, the sweep can then take that
 /// tree's lock, and it is deleted. Observed 2026-09-01 as a flaky failure of
 /// `theSweepLeavesATreeALiveInstanceHolds`, which had passed in the preceding runs.
-@Suite(.serialized)
+@Suite(.serialized, .testDirectory)
 struct DeviceStagingRegistryTests {
     /// `stagingRootURL` is a directory URL, so its path already ends in "/". Appending
     /// another produced a "…/root//" prefix that no requested path could match, so
@@ -39,7 +39,7 @@ struct DeviceStagingRegistryTests {
     /// `detachRemovableSource` is the same path the camera monitor drives when the
     /// device physically leaves the bus, so this covers the real eject without one.
     @Test func stagedBytesSurviveDetachAndAreStillThereOnReattach() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/camera-reuse", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: stagingRoot, withIntermediateDirectories: true)
         let staged = stagingRoot.appending(path: "2026-08-20/DSC00001.ARW", directoryHint: .notDirectory)
@@ -79,7 +79,7 @@ struct DeviceStagingRegistryTests {
     /// run and recreated all overlay keyed to it — catalog rows, and thumbnails whose names
     /// hash the root. Measured on a 991-item card: 9,997 thumbnail files against 9,304 rows.
     @Test func acameraGetsTheSamePathOnEveryLaunch() throws {
-        let container = try makeCatalogStoreTemporaryDirectory().appending(
+        let container = try makeTestDirectory().appending(
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
@@ -96,7 +96,7 @@ struct DeviceStagingRegistryTests {
     /// The launch backstop: a tree whose owner is gone is collected. Ownership is asked of
     /// the kernel rather than encoded in a name, so nothing has to be reconciled.
     @Test func theSweepRemovesTreesNoLiveInstanceHolds() throws {
-        let container = try makeCatalogStoreTemporaryDirectory().appending(
+        let container = try makeTestDirectory().appending(
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
@@ -115,7 +115,7 @@ struct DeviceStagingRegistryTests {
     /// is still transferring into. Two instances ran on this machine on 2026-08-30, and a
     /// whole-container delete would have destroyed the first's card transfer.
     @Test func theSweepLeavesATreeALiveInstanceHolds() throws {
-        let container = try makeCatalogStoreTemporaryDirectory().appending(
+        let container = try makeTestDirectory().appending(
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
@@ -137,7 +137,7 @@ struct DeviceStagingRegistryTests {
     /// Quit is the same operation as the backstop: release the claims, then sweep. An
     /// instance that has let go of its locks is indistinguishable from one that has exited.
     @Test func quitReleasesItsClaimsAndThenClearsThem() throws {
-        let container = try makeCatalogStoreTemporaryDirectory().appending(
+        let container = try makeTestDirectory().appending(
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
@@ -157,7 +157,7 @@ struct DeviceStagingRegistryTests {
     /// since ranged reads became the normal path that is the common case. Counting directory
     /// entries made quit defer termination and show a clearing window to delete nothing.
     @Test func anEmptyClaimedTreeIsNotStagedBytes() throws {
-        let container = try makeCatalogStoreTemporaryDirectory().appending(
+        let container = try makeTestDirectory().appending(
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
@@ -174,7 +174,7 @@ struct DeviceStagingRegistryTests {
     /// takes a path, and a path wrong by one component would be a delete inside the user's
     /// own media.
     @Test func onlyPathsInsideStagingCountAsReleasable() throws {
-        let container = try makeCatalogStoreTemporaryDirectory().appending(
+        let container = try makeTestDirectory().appending(
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )

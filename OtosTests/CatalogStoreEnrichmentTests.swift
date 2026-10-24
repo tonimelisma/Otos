@@ -3,6 +3,7 @@ import GRDB
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogStoreEnrichmentTests {
     // MARK: - Pure model: staleness signature and best-date
 
@@ -115,7 +116,7 @@ struct CatalogStoreEnrichmentTests {
     // MARK: - Store: rescan merge, persistence, and purge
 
     @Test func rescanPreservesEnrichmentAndMtimeChangeMakesStale() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
@@ -172,7 +173,7 @@ struct CatalogStoreEnrichmentTests {
     }
 
     @Test func enrichmentPersistsAndReloads() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
@@ -227,7 +228,7 @@ struct CatalogStoreEnrichmentTests {
     }
 
     @Test func malformedStoredHashIsUnavailableAndStale() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
@@ -267,7 +268,7 @@ struct CatalogStoreEnrichmentTests {
     }
 
     @Test func staleEnrichmentCompletionDoesNotStampChangedSourceCurrent() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
@@ -344,7 +345,7 @@ struct CatalogStoreEnrichmentTests {
     /// `best_capture_unix` source cannot silently desync a Swift twin that no longer
     /// exists.
     @Test func timestampClearingStructuralChangeIsCatalogChanged() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
@@ -408,7 +409,7 @@ struct CatalogStoreEnrichmentTests {
     /// `metadata_extra_json`; now both derive from the JSON, so this proves the
     /// sortable instant survives that change and still agrees with the wall.
     @Test func reusedOverlayClonesBothDateProjectionsFromStoredTimestamps() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let source = temp.appending(path: "Source", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
         let sourceFile = source.appending(path: "IMG_1.JPG")
@@ -501,7 +502,7 @@ struct CatalogStoreEnrichmentTests {
     }
 
     @Test func provenDeletionPurgesThumbnailFile() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -552,7 +553,7 @@ struct CatalogStoreEnrichmentTests {
     }
 
     @Test func removeLibraryPurgesThumbnailFiles() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -593,7 +594,7 @@ struct CatalogStoreEnrichmentTests {
     }
 
     @Test func enrichmentWithoutThumbnailStampsDefinitiveUnavailableOutcome() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -641,7 +642,7 @@ struct CatalogStoreEnrichmentTests {
     /// digest computed from its local staged copy and needs enrichment until ordinary
     /// enrichment stamps it.
     @Test func removableSourceImportSettlementRecordsTypedReuseMiss() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let card = temp.appending(path: "CARD", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: card, withIntermediateDirectories: true)
         try Data("camera".utf8).write(to: card.appending(path: "IMG_1.JPG"))

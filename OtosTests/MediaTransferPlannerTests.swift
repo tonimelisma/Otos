@@ -2,6 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct MediaTransferPlannerTests {
     private static let source = LibraryRootPath(rawValue: "/tmp/card")
     private static let destination = LibraryRootPath(rawValue: "/tmp/library")
@@ -183,7 +184,7 @@ struct MediaTransferPlannerTests {
     /// scenario like this one is only observable at the boundary that reads the
     /// destination folders off the filesystem.
     @Test func differentLiveSizeAdvancesTheWholeBundleSuffix() throws {
-        let destinationDir = try makeCatalogStoreTemporaryDirectory()
+        let destinationDir = try makeTestDirectory()
         defer { try? FileManager.default.removeItem(at: destinationDir) }
         let destinationRoot = LibraryRootPath(rawValue: destinationDir.path)
 
@@ -207,7 +208,7 @@ struct MediaTransferPlannerTests {
     }
 
     @Test func differentLiveMtimeAdvancesTheWholeBundleSuffix() throws {
-        let destinationDir = try makeCatalogStoreTemporaryDirectory()
+        let destinationDir = try makeTestDirectory()
         defer { try? FileManager.default.removeItem(at: destinationDir) }
         let destinationRoot = LibraryRootPath(rawValue: destinationDir.path)
 
@@ -437,7 +438,7 @@ struct MediaTransferPlannerTests {
     /// only a live read can see. Enumeration finds it without anyone having asked
     /// about that specific path.
     @Test func foreignOccupantAdvancesSuffix() throws {
-        let destinationDir = try makeCatalogStoreTemporaryDirectory()
+        let destinationDir = try makeTestDirectory()
         defer { try? FileManager.default.removeItem(at: destinationDir) }
         let destinationRoot = LibraryRootPath(rawValue: destinationDir.path)
 
@@ -520,7 +521,7 @@ struct MediaTransferPlannerTests {
     /// A folder that does not exist yet is still fully observed: every candidate in it
     /// is free. This is the first import into a fresh `YYYY/MM`.
     @Test func absentDestinationFolderPlansCopies() throws {
-        let destinationDir = try makeCatalogStoreTemporaryDirectory()
+        let destinationDir = try makeTestDirectory()
         defer { try? FileManager.default.removeItem(at: destinationDir) }
 
         let source = Self.facts(name: "a.jpg", captureWallCompact: 20_260_101_120_000)

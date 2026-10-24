@@ -2,138 +2,142 @@ import AppKit
 @testable import OtosKit
 import Testing
 
-/// APP-022: horizontal strip scroll loading,
-/// focus centering (including window-attach / layout retry), key consumption,
-/// and first-responder claim after mode switches.
-///
-/// Uses the same synchronous snapshot + gate adoption pattern as
-/// `MediaGridSelectionControllerTests` so structural applies never spin
-/// `RunLoop`. Focus-centering tests that host a previously unhosted controller
-/// flush one short main-queue turn so the deferred `viewDidLayout` retry can
-/// run (scrolling mid-layout is a silent no-op). Serialized so concurrent
-/// NSWindow hosts cannot race AppKit teardown (SIGSEGV in objc_release during
-/// suite runs).
-@Suite(.serialized)
-@MainActor
-struct MediaGridStripInputTests {
-    @Test func stripScrollTriggersDetailQueries() throws {
-        let harness = try StripHarness(itemCount: 40, windowWidth: 320)
-        harness.controller.flushScrollDrivenWorkNow()
-        let before = harness.controller.lastDetailQueryIDs
-        #expect(!before.isEmpty)
+extension AppKitWindowTests {
+    /// APP-022: horizontal strip scroll loading,
+    /// focus centering (including window-attach / layout retry), key consumption,
+    /// and first-responder claim after mode switches.
+    ///
+    /// Uses the same synchronous snapshot + gate adoption pattern as
+    /// `MediaGridSelectionControllerTests` so structural applies never spin
+    /// `RunLoop`. Focus-centering tests that host a previously unhosted controller
+    /// flush one short main-queue turn so the deferred `viewDidLayout` retry can
+    /// run (scrolling mid-layout is a silent no-op). Its tests host real windows, so it
+    /// is nested in `AppKitWindowTests`, which runs them one at a time against every
+    /// other window-hosting test.
+    @MainActor
+    struct MediaGridStripInputTests {
+        /// The detail query covers exactly the tiles on screen — a contiguous run of the
+        /// strip that starts at the first tile, then, after a scroll, a later run.
+        @Test func stripScrollTriggersDetailQueries() throws {
+            let harness = try StripHarness(itemCount: 40, windowWidth: 320)
+            harness.controller.flushScrollDrivenWorkNow()
+            let before = harness.controller.lastDetailQueryIDs
+            #expect(before == harness.controller.visibleAssetIDs())
+            #expect(try harness.runStart(of: before) == 0)
 
-        harness.scrollClipHorizontally(by: 600)
-        harness.controller.flushScrollDrivenWorkNow()
+            harness.scrollClipHorizontally(by: 600)
+            harness.controller.flushScrollDrivenWorkNow()
 
-        let after = harness.controller.lastDetailQueryIDs
-        #expect(after != before)
-        #expect(!after.isEmpty)
-    }
-
-    @Test func focusTargetParksUntilItemsExist() {
-        let controller = MediaGridViewController(
-            presentation: .strip(tileEdge: MediaGridPresentation.defaultStripTileEdge)
-        )
-        _ = controller.view
-        let ids = (0 ..< 40).map { makeStripAssetID(path: "focus-\($0).jpg") }
-        let target = ids[25]
-        controller.receiveFocusTarget(target)
-        #expect(controller.pendingFocusTargetID == target)
-
-        adoptStripGrid(controller, ids: ids)
-        #expect(controller.dataSource.indexPath(for: target) != nil)
-        // Pending remains until a post-layout scroll retry (production apply completion).
-        #expect(controller.pendingFocusTargetID == target)
-    }
-
-    @Test func focusTargetParkedBeforeWindowScrollsOnViewDidAppear() async {
-        let controller = MediaGridViewController(
-            presentation: .strip(tileEdge: MediaGridPresentation.defaultStripTileEdge)
-        )
-        _ = controller.view
-        let ids = (0 ..< 40).map { makeStripAssetID(path: "appear-\($0).jpg") }
-        let target = ids[25]
-        adoptStripGrid(controller, ids: ids)
-        controller.receiveFocusTarget(target)
-        #expect(controller.pendingFocusTargetID == target)
-        #expect(controller.view.window == nil)
-
-        let window = orderedInTestWindow(width: 320, height: 120, contentView: controller.view)
-        // AppKit's window list retains an ordered-in window, so a local binding
-        // going out of scope is not enough to release it.
-        defer { window.close() }
-        controller.view.layoutSubtreeIfNeeded()
-        controller.collectionView.layoutSubtreeIfNeeded()
-        // Flush the deferred viewDidLayout focus retry (scroll mid-layout is a no-op).
-        await drainMainQueue()
-        if controller.pendingFocusTargetID != nil {
-            controller.viewDidAppear()
+            let after = harness.controller.lastDetailQueryIDs
+            #expect(after == harness.controller.visibleAssetIDs())
+            #expect(try harness.runStart(of: after) > 0)
         }
 
-        #expect(controller.pendingFocusTargetID == nil)
-        assertStripFocusCentered(controller, target: target)
-    }
+        @Test func focusTargetParksUntilItemsExist() {
+            let controller = MediaGridViewController(
+                presentation: .strip(tileEdge: MediaGridPresentation.defaultStripTileEdge)
+            )
+            _ = controller.view
+            let ids = (0 ..< 40).map { makeStripAssetID(path: "focus-\($0).jpg") }
+            let target = ids[25]
+            controller.receiveFocusTarget(target)
+            #expect(controller.pendingFocusTargetID == target)
 
-    @Test func focusTargetRetryOnRedeliveredSameID() async {
-        let controller = MediaGridViewController(
-            presentation: .strip(tileEdge: MediaGridPresentation.defaultStripTileEdge)
-        )
-        _ = controller.view
-        let ids = (0 ..< 40).map { makeStripAssetID(path: "redeliver-\($0).jpg") }
-        let target = ids[25]
-        adoptStripGrid(controller, ids: ids)
-        controller.receiveFocusTarget(target)
-        #expect(controller.pendingFocusTargetID == target)
+            adoptStripGrid(controller, ids: ids)
+            #expect(controller.dataSource.indexPath(for: target) != nil)
+            // Pending remains until a post-layout scroll retry (production apply completion).
+            #expect(controller.pendingFocusTargetID == target)
+        }
 
-        let window = orderedInTestWindow(width: 320, height: 120, contentView: controller.view)
-        // AppKit's window list retains an ordered-in window, so a local binding
-        // going out of scope is not enough to release it.
-        defer { window.close() }
-        controller.view.layoutSubtreeIfNeeded()
-        controller.collectionView.layoutSubtreeIfNeeded()
-        // Flush deferred layout retry so the park is cleared before redelivery,
-        // or still pending if layout attributes were not ready yet.
-        await drainMainQueue()
+        @Test func focusTargetParkedBeforeWindowScrollsOnViewDidAppear() async {
+            let controller = MediaGridViewController(
+                presentation: .strip(tileEdge: MediaGridPresentation.defaultStripTileEdge)
+            )
+            _ = controller.view
+            let ids = (0 ..< 40).map { makeStripAssetID(path: "appear-\($0).jpg") }
+            let target = ids[25]
+            adoptStripGrid(controller, ids: ids)
+            controller.receiveFocusTarget(target)
+            #expect(controller.pendingFocusTargetID == target)
+            #expect(controller.view.window == nil)
 
-        // Same id redelivery must retry a parked target (belt-and-braces for
-        // update-pass ordering where appear has not yet run).
-        controller.receiveFocusTarget(target)
-        #expect(controller.pendingFocusTargetID == nil)
-        assertStripFocusCentered(controller, target: target)
-    }
+            let window = orderedInTestWindow(width: 320, height: 120, contentView: controller.view)
+            // AppKit's window list retains an ordered-in window, so a local binding
+            // going out of scope is not enough to release it.
+            defer { window.close() }
+            controller.view.layoutSubtreeIfNeeded()
+            controller.collectionView.layoutSubtreeIfNeeded()
+            // Flush the deferred viewDidLayout focus retry (scroll mid-layout is a no-op).
+            await drainMainQueue()
+            if controller.pendingFocusTargetID != nil {
+                controller.viewDidAppear()
+            }
 
-    @Test func focusTargetUnchangedDoesNotScroll() throws {
-        let harness = try StripHarness(itemCount: 40, windowWidth: 320)
-        let target = harness.ids[20]
-        harness.controller.receiveFocusTarget(target)
-        harness.layout()
+            #expect(controller.pendingFocusTargetID == nil)
+            assertStripFocusCentered(controller, target: target)
+        }
 
-        harness.scrollClipHorizontally(by: 200)
-        _ = harness.controller.mutationGate.endScrollHold()
-        let boundsBefore = harness.controller.scrollView.contentView.bounds
-        harness.controller.receiveFocusTarget(target)
-        let boundsAfter = harness.controller.scrollView.contentView.bounds
-        #expect(boundsBefore.origin == boundsAfter.origin)
-    }
+        @Test func focusTargetRetryOnRedeliveredSameID() async {
+            let controller = MediaGridViewController(
+                presentation: .strip(tileEdge: MediaGridPresentation.defaultStripTileEdge)
+            )
+            _ = controller.view
+            let ids = (0 ..< 40).map { makeStripAssetID(path: "redeliver-\($0).jpg") }
+            let target = ids[25]
+            adoptStripGrid(controller, ids: ids)
+            controller.receiveFocusTarget(target)
+            #expect(controller.pendingFocusTargetID == target)
 
-    @Test func stripConsumesVerticalAndExtensionKeys() throws {
-        let harness = try StripHarness(itemCount: 12, windowWidth: 640)
-        harness.seedSelection(harness.ids[2])
-        #expect(harness.controller.selectedIdentities() == [harness.ids[2]])
-        #expect(harness.modelSelection.selection == [harness.ids[2]])
+            let window = orderedInTestWindow(width: 320, height: 120, contentView: controller.view)
+            // AppKit's window list retains an ordered-in window, so a local binding
+            // going out of scope is not enough to release it.
+            defer { window.close() }
+            controller.view.layoutSubtreeIfNeeded()
+            controller.collectionView.layoutSubtreeIfNeeded()
+            // Flush deferred layout retry so the park is cleared before redelivery,
+            // or still pending if layout attributes were not ready yet.
+            await drainMainQueue()
 
-        harness.sendKey(keyCode: 126) // up
-        harness.sendKey(keyCode: 124, modifiers: [.shift]) // ⇧→
-        harness.controller.collectionView.selectAll(nil)
+            // Same id redelivery must retry a parked target (belt-and-braces for
+            // update-pass ordering where appear has not yet run).
+            controller.receiveFocusTarget(target)
+            #expect(controller.pendingFocusTargetID == nil)
+            assertStripFocusCentered(controller, target: target)
+        }
 
-        #expect(harness.controller.selectedIdentities() == [harness.ids[2]])
-        #expect(harness.modelSelection.selection == [harness.ids[2]])
-    }
+        @Test func focusTargetUnchangedDoesNotScroll() throws {
+            let harness = try StripHarness(itemCount: 40, windowWidth: 320)
+            let target = harness.ids[20]
+            harness.controller.receiveFocusTarget(target)
+            harness.layout()
 
-    @Test func stripClaimsFirstResponderOnAppear() throws {
-        let harness = try StripHarness(itemCount: 8, windowWidth: 640)
-        harness.controller.viewDidAppear()
-        #expect(harness.window.firstResponder === harness.controller.collectionView)
+            harness.scrollClipHorizontally(by: 200)
+            _ = harness.controller.mutationGate.endScrollHold()
+            let boundsBefore = harness.controller.scrollView.contentView.bounds
+            harness.controller.receiveFocusTarget(target)
+            let boundsAfter = harness.controller.scrollView.contentView.bounds
+            #expect(boundsBefore.origin == boundsAfter.origin)
+        }
+
+        @Test func stripConsumesVerticalAndExtensionKeys() throws {
+            let harness = try StripHarness(itemCount: 12, windowWidth: 640)
+            harness.seedSelection(harness.ids[2])
+            #expect(harness.controller.selectedIdentities() == [harness.ids[2]])
+            #expect(harness.modelSelection.selection == [harness.ids[2]])
+
+            harness.sendKey(keyCode: 126) // up
+            harness.sendKey(keyCode: 124, modifiers: [.shift]) // ⇧→
+            harness.controller.collectionView.selectAll(nil)
+
+            #expect(harness.controller.selectedIdentities() == [harness.ids[2]])
+            #expect(harness.modelSelection.selection == [harness.ids[2]])
+        }
+
+        @Test func stripClaimsFirstResponderOnAppear() throws {
+            let harness = try StripHarness(itemCount: 8, windowWidth: 640)
+            harness.controller.viewDidAppear()
+            #expect(harness.window.firstResponder === harness.controller.collectionView)
+        }
     }
 }
 
@@ -171,6 +175,16 @@ private final class StripHarness {
     func layout() {
         controller.view.layoutSubtreeIfNeeded()
         controller.collectionView.layoutSubtreeIfNeeded()
+    }
+
+    /// Requires `run` to be a non-empty contiguous run of the strip's items and returns
+    /// the index it starts at.
+    func runStart(of run: [MediaAssetID]) throws -> Int {
+        let first = try #require(run.first, "expected at least one tile on screen")
+        let start = try #require(ids.firstIndex(of: first))
+        try #require(start + run.count <= ids.count)
+        #expect(Array(ids[start ..< start + run.count]) == run)
+        return start
     }
 
     func scrollClipHorizontally(by delta: CGFloat) {
@@ -317,122 +331,122 @@ private func makeStripAssetID(path: String) -> MediaAssetID {
     )
 }
 
-/// Two defects the 2026-09-02 import surfaced, both of the same shape: the grid
-/// only reacted to *scrolling*, so a grid at rest under a stationary cursor was
-/// left stale.
-///
-/// Serialized for the same reason as `MediaGridStripInputTests` — concurrent
-/// NSWindow hosts race AppKit teardown.
-@Suite(.serialized)
-@MainActor
-struct MediaGridAtRestTests {
-    /// The blank-import-grid bug, at its actual condition: the scroll view is
-    /// laid out and the layout knows the items, but AppKit has attached no item
-    /// views. `indexPathsForVisibleItems()` reports only attached items, so the
-    /// post-apply pass asked for detail on nothing — and nothing re-asked until
-    /// the next scroll tick. In the field that was twelve consecutive applies
-    /// logging `visibleDetailRequestCount=0`, with the first tile-detail query of
-    /// the whole import landing 240 ms after the first scroll in 26 s.
+extension AppKitWindowTests {
+    /// Two defects the 2026-09-02 import surfaced, both of the same shape: the grid
+    /// only reacted to *scrolling*, so a grid at rest under a stationary cursor was
+    /// left stale.
     ///
-    /// `reloadData()` without a following layout pass is what makes that state
-    /// deterministic: it detaches every item view while the laid-out scroll view
-    /// keeps its bounds and the layout still answers for the visible rect.
-    /// Skipping layout entirely would *not* reproduce it — the scroll view would
-    /// have no bounds either, and reporting nothing visible would be correct.
-    @Test func aGridWithNoAttachedItemsStillKnowsWhatIsVisible() throws {
-        let harness = try StripHarness(itemCount: 40, windowWidth: 320)
-        #expect(!harness.controller.collectionView.indexPathsForVisibleItems().isEmpty)
+    /// Its tests host real windows, so it is nested in `AppKitWindowTests`.
+    @MainActor
+    struct MediaGridAtRestTests {
+        /// The blank-import-grid bug, at its actual condition: the scroll view is
+        /// laid out and the layout knows the items, but AppKit has attached no item
+        /// views. `indexPathsForVisibleItems()` reports only attached items, so the
+        /// post-apply pass asked for detail on nothing — and nothing re-asked until
+        /// the next scroll tick. In the field that was twelve consecutive applies
+        /// logging `visibleDetailRequestCount=0`, with the first tile-detail query of
+        /// the whole import landing 240 ms after the first scroll in 26 s.
+        ///
+        /// `reloadData()` without a following layout pass is what makes that state
+        /// deterministic: it detaches every item view while the laid-out scroll view
+        /// keeps its bounds and the layout still answers for the visible rect.
+        /// Skipping layout entirely would *not* reproduce it — the scroll view would
+        /// have no bounds either, and reporting nothing visible would be correct.
+        @Test func aGridWithNoAttachedItemsStillKnowsWhatIsVisible() throws {
+            let harness = try StripHarness(itemCount: 40, windowWidth: 320)
+            #expect(!harness.controller.collectionView.indexPathsForVisibleItems().isEmpty)
 
-        harness.controller.collectionView.reloadData()
+            harness.controller.collectionView.reloadData()
 
-        #expect(harness.controller.collectionView.indexPathsForVisibleItems().isEmpty)
-        #expect(!harness.controller.visibleAssetIDs().isEmpty)
-        #expect(harness.controller.requestVisibleDetails(reason: "test") > 0)
-    }
-
-    /// The hover-overlay leak. A tile that scrolls *under* a stationary cursor
-    /// gets `mouseEntered`, but the one scrolling away never gets `mouseExited`,
-    /// so with per-tile tracking areas every tile the pointer passed kept its
-    /// control lit. Hover now has one owner that recomputes on every scroll tick.
-    ///
-    /// The pointer is placed explicitly. Reading the real one made this depend on
-    /// where the mouse happened to be sitting, which is not a test. The scroll is
-    /// also deliberately small: a long scroll recycles the hovered tile and
-    /// `prepareForReuse` hides the control on its own, so it would pass whether
-    /// or not hover is ever recomputed.
-    @Test func scrollingClearsHoverOnATileThatStaysAttached() throws {
-        let harness = try StripHarness(itemCount: 40, windowWidth: 320)
-        harness.hoverItem(0)
-        harness.layout()
-        #expect(harness.hoveredItemIndexes() == [0])
-        let hovered = try #require(harness.controller.dataSource.indexPath(for: harness.ids[0]))
-
-        // The pointer leaves the grid while the tiles move under it — the exact
-        // shape of the leak, since neither produces a `mouseExited`.
-        harness.placePointer(nil)
-        harness.scrollClipHorizontally(by: 24)
-        harness.controller.flushScrollDrivenWorkNow()
-        harness.layout()
-
-        // Still on screen, so recycling is not what cleared it.
-        #expect(harness.controller.collectionView.indexPathsForVisibleItems().contains(hovered))
-        #expect(harness.tilesShowingChoiceControl() == 0)
-    }
-
-    /// The other half: a pointer that *is* over a tile after the scroll lights
-    /// exactly that tile, so the recompute is a real reassignment rather than a
-    /// blanket clear.
-    @Test func scrollingReassignsHoverToTheTileNowUnderThePointer() throws {
-        let harness = try StripHarness(itemCount: 40, windowWidth: 320)
-        harness.hoverItem(0)
-        harness.layout()
-        #expect(harness.hoveredItemIndexes() == [0])
-
-        harness.hoverItem(2)
-        harness.controller.flushScrollDrivenWorkNow()
-        harness.layout()
-
-        #expect(harness.hoveredItemIndexes() == [2])
-    }
-
-    /// The invariant the leak violated, stated directly: hover is a single
-    /// assignment, so no two tiles can ever show the control at once.
-    @Test func atMostOneTileEverShowsTheChoiceControl() throws {
-        let harness = try StripHarness(itemCount: 40, windowWidth: 320)
-
-        for item in 0 ..< 5 {
-            harness.hoverItem(item)
-            harness.layout()
-            #expect(harness.tilesShowingChoiceControl() <= 1)
+            #expect(harness.controller.collectionView.indexPathsForVisibleItems().isEmpty)
+            #expect(!harness.controller.visibleAssetIDs().isEmpty)
+            #expect(harness.controller.requestVisibleDetails(reason: "test") > 0)
         }
 
-        harness.placePointer(nil)
-        harness.controller.collectionView.refreshHover()
-        harness.layout()
-        #expect(harness.tilesShowingChoiceControl() == 0)
-    }
+        /// The hover-overlay leak. A tile that scrolls *under* a stationary cursor
+        /// gets `mouseEntered`, but the one scrolling away never gets `mouseExited`,
+        /// so with per-tile tracking areas every tile the pointer passed kept its
+        /// control lit. Hover now has one owner that recomputes on every scroll tick.
+        ///
+        /// The pointer is placed explicitly. Reading the real one made this depend on
+        /// where the mouse happened to be sitting, which is not a test. The scroll is
+        /// also deliberately small: a long scroll recycles the hovered tile and
+        /// `prepareForReuse` hides the control on its own, so it would pass whether
+        /// or not hover is ever recomputed.
+        @Test func scrollingClearsHoverOnATileThatStaysAttached() throws {
+            let harness = try StripHarness(itemCount: 40, windowWidth: 320)
+            harness.hoverItem(0)
+            harness.layout()
+            #expect(harness.hoveredItemIndexes() == [0])
+            let hovered = try #require(harness.controller.dataSource.indexPath(for: harness.ids[0]))
 
-    /// The flicker regression: a tile clears its own control whenever its content
-    /// resets, and while the pointer holds on one thumbnail neither the asset-id
-    /// guard in `setHoveredAssetID` nor the index-path guard in the collection
-    /// view fires to repair it. The control then stayed dark until some unrelated
-    /// apply happened to run. Hover must be re-asserted by the render itself.
-    @Test func aRenderMidScrollDoesNotDropTheHoveredTilesControl() throws {
-        let harness = try StripHarness(itemCount: 40, windowWidth: 320)
-        harness.hoverItem(2)
-        harness.layout()
-        #expect(harness.tilesShowingChoiceControl() == 1)
+            // The pointer leaves the grid while the tiles move under it — the exact
+            // shape of the leak, since neither produces a `mouseExited`.
+            harness.placePointer(nil)
+            harness.scrollClipHorizontally(by: 24)
+            harness.controller.flushScrollDrivenWorkNow()
+            harness.layout()
 
-        let hovered = harness.ids[2]
-        // A content reset for the hovered tile — exactly what an enrichment
-        // trickle or a visible-detail requery produces mid-scroll.
-        harness.controller.renderVisibleItem(id: hovered, change: .firstImage)
-        harness.layout()
-        #expect(harness.tilesShowingChoiceControl() == 1)
+            // Still on screen, so recycling is not what cleared it.
+            #expect(harness.controller.collectionView.indexPathsForVisibleItems().contains(hovered))
+            #expect(harness.tilesShowingChoiceControl() == 0)
+        }
 
-        // And it is still the tile under the pointer, not some other one.
-        harness.controller.flushScrollDrivenWorkNow()
-        harness.layout()
-        #expect(harness.tilesShowingChoiceControl() == 1)
+        /// The other half: a pointer that *is* over a tile after the scroll lights
+        /// exactly that tile, so the recompute is a real reassignment rather than a
+        /// blanket clear.
+        @Test func scrollingReassignsHoverToTheTileNowUnderThePointer() throws {
+            let harness = try StripHarness(itemCount: 40, windowWidth: 320)
+            harness.hoverItem(0)
+            harness.layout()
+            #expect(harness.hoveredItemIndexes() == [0])
+
+            harness.hoverItem(2)
+            harness.controller.flushScrollDrivenWorkNow()
+            harness.layout()
+
+            #expect(harness.hoveredItemIndexes() == [2])
+        }
+
+        /// The invariant the leak violated, stated directly: hover is a single
+        /// assignment, so no two tiles can ever show the control at once.
+        @Test func atMostOneTileEverShowsTheChoiceControl() throws {
+            let harness = try StripHarness(itemCount: 40, windowWidth: 320)
+
+            for item in 0 ..< 5 {
+                harness.hoverItem(item)
+                harness.layout()
+                #expect(harness.tilesShowingChoiceControl() <= 1)
+            }
+
+            harness.placePointer(nil)
+            harness.controller.collectionView.refreshHover()
+            harness.layout()
+            #expect(harness.tilesShowingChoiceControl() == 0)
+        }
+
+        /// The flicker regression: a tile clears its own control whenever its content
+        /// resets, and while the pointer holds on one thumbnail neither the asset-id
+        /// guard in `setHoveredAssetID` nor the index-path guard in the collection
+        /// view fires to repair it. The control then stayed dark until some unrelated
+        /// apply happened to run. Hover must be re-asserted by the render itself.
+        @Test func aRenderMidScrollDoesNotDropTheHoveredTilesControl() throws {
+            let harness = try StripHarness(itemCount: 40, windowWidth: 320)
+            harness.hoverItem(2)
+            harness.layout()
+            #expect(harness.tilesShowingChoiceControl() == 1)
+
+            let hovered = harness.ids[2]
+            // A content reset for the hovered tile — exactly what an enrichment
+            // trickle or a visible-detail requery produces mid-scroll.
+            harness.controller.renderVisibleItem(id: hovered, change: .firstImage)
+            harness.layout()
+            #expect(harness.tilesShowingChoiceControl() == 1)
+
+            // And it is still the tile under the pointer, not some other one.
+            harness.controller.flushScrollDrivenWorkNow()
+            harness.layout()
+            #expect(harness.tilesShowingChoiceControl() == 1)
+        }
     }
 }

@@ -2,9 +2,10 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogScannerIssueAggregationTests {
     @Test func scanAggregatesRepeatedRelativePathIssuesForMismatchedRootSpelling() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let realRoot = temp.appending(path: "CloudStorage/Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: realRoot, withIntermediateDirectories: true)
         for index in 0 ..< 12 {

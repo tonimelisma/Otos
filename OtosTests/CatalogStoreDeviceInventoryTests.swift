@@ -7,9 +7,10 @@ import Testing
 /// revision and emit a `RootPlanningChange`; without that, a plan built the moment a
 /// device root became available (from whatever rows were already persisted) would
 /// never be invalidated once the live device inventory landed.
+@Suite(.testDirectory)
 struct CatalogStoreDeviceInventoryTests {
     @Test func changedBatchEmitsPlanningChangeForDeviceRoot() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
@@ -43,7 +44,7 @@ struct CatalogStoreDeviceInventoryTests {
     }
 
     @Test func completionAlwaysEmitsPlanningChangeEvenWithoutRowChanges() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)

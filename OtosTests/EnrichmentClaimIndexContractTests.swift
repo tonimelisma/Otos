@@ -11,6 +11,7 @@ import Testing
 /// *current* predicate still implies the frozen index (the everyday case) and that a
 /// logically-equivalent but re-parenthesized predicate fails to prepare against it (the
 /// hazard this freeze exists to prevent from ever reaching a migration again).
+@Suite(.testDirectory)
 struct EnrichmentClaimIndexContractTests {
     @Test func broadIndexesImplyCurrentHashRequiredPredicate() async throws {
         let dbQueue = try await Self.migratedDatabase()
@@ -101,7 +102,7 @@ struct EnrichmentClaimIndexContractTests {
     }
 
     private static func migratedDatabase() async throws -> DatabaseQueue {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),

@@ -8,6 +8,7 @@ import Testing
 /// result cannot be produced in a unit test because only a File Provider can create
 /// a dataless placeholder; that branch was validated against a real OneDrive library
 /// (see `docs/research/2026-07-11-onedrive-materialization-fsevents.md`).
+@Suite(.testDirectory)
 struct FileMaterializationTests {
     @Test func materializationOutcomeDiagnosticsClassifyTerminalStates() {
         #expect(MaterializationOutcome.alreadyMaterialized.isMaterialized)
@@ -25,10 +26,7 @@ struct FileMaterializationTests {
     }
 
     @Test func localFileIsMaterialized() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appending(path: "otos-materialization-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let directory = try makeTestDirectory()
 
         let file = directory.appending(path: "local.bin")
         try Data([0x01, 0x02, 0x03]).write(to: file)
@@ -103,38 +101,44 @@ struct FileMaterializationTests {
         #expect(result.rerequestCount == 2)
     }
 
+    /// Probes answer unavailable, inconclusive (healed), unavailable: never two refusals
+    /// in a row, so the fail-fast must not fire. The bytes arrive once the third probe
+    /// has answered, so the wait ends by the file's own report, not by a deadline — a
+    /// streak that failed to reset on the healed probe returns `.providerUnavailable`
+    /// at the third probe instead.
     @Test func singleTransientProviderUnavailableDoesNotShortCircuit() async {
         let url = URL(fileURLWithPath: "/tmp/otos-transient-\(UUID().uuidString).jpg")
-        let probeCalls = AtomicCounter()
+        let answers: [FileMaterializationProbeResult] = [.providerUnavailable, .inconclusive, .providerUnavailable]
+        let probeCalls = Mutex(0)
         let result = await FileMaterialization.materialize(
             url,
             persistence: FileMaterialization.Persistence(
                 failsFastOnProviderUnavailable: true,
-                deadline: .milliseconds(80),
-                requestRetryInterval: .milliseconds(20)
+                deadline: nil,
+                requestRetryInterval: .milliseconds(1)
             ),
             providers: FileMaterializationProviders(
-                status: { _ in .dataless },
+                status: { _ in
+                    probeCalls.withLock { $0 } < answers.count ? .dataless : .materialized
+                },
                 request: { _ in },
                 probe: { _ async in
-                    let call = probeCalls.next()
-                    // First probe unavailable, second inconclusive (healed), then unavailable again
-                    // Never two in a row → should time out, not providerUnavailable
-                    return call == 1 ? .providerUnavailable : .inconclusive
+                    let call = probeCalls.withLock { (count: inout Int) -> Int in
+                        count += 1
+                        return count
+                    }
+                    guard call <= answers.count else {
+                        Issue.record("probed \(call) times; the bytes had already arrived")
+                        return .inconclusive
+                    }
+                    return answers[call - 1]
                 },
                 changes: noAttributeChanges
             )
         )
-        #expect(result.outcome == .timedOut)
-    }
-
-    private final class AtomicCounter: Sendable {
-        private let storage = Mutex(0)
-        func next() -> Int {
-            storage.withLock { $0 += 1
-                return $0
-            }
-        }
+        #expect(result.outcome == .materialized)
+        #expect(result.rerequestCount == answers.count)
+        #expect(probeCalls.withLock { $0 } == answers.count)
     }
 
     /// The oracle for APP-023's persistence rule.
@@ -252,10 +256,8 @@ struct FileMaterializationTests {
     /// descriptor. `chmod` stands in for the kernel clearing `SF_DATALESS`, which only a
     /// File Provider can do.
     @Test func attributeChangesReportsAnAttributeChangeOnAFile() async throws {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appending(path: "otos-watch-\(UUID().uuidString).jpg")
+        let url = try makeTestDirectory().appending(path: "watched.jpg")
         try Data("jpeg".utf8).write(to: url)
-        defer { try? FileManager.default.removeItem(at: url) }
 
         let changes = FileMaterialization.attributeChanges(of: url)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)

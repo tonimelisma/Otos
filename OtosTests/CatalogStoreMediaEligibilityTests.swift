@@ -3,9 +3,10 @@ import GRDB
 @testable import OtosKit
 import Testing
 
+@Suite(.testDirectory)
 struct CatalogStoreMediaEligibilityTests {
     @Test func scanCatalogsImageAndVideoMediaAndSkipsNonMedia() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "photo.jpg"), contents: "jpeg")
@@ -29,7 +30,7 @@ struct CatalogStoreMediaEligibilityTests {
     }
 
     @Test func completedScanRemovesPreviouslyCatalogedNonMediaRows() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "photo.jpg"), contents: "jpeg")
@@ -60,7 +61,7 @@ struct CatalogStoreMediaEligibilityTests {
     }
 
     @Test func scanSkipsHiddenAppleDoubleAndCameraJunkPaths() async throws {
-        let temp = try makeCatalogStoreTemporaryDirectory()
+        let temp = try makeTestDirectory()
         let root = temp.appending(path: "Card", directoryHint: .isDirectory)
         let junkDirectories = [
             ".Trashes",
