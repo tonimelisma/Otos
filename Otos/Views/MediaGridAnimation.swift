@@ -22,15 +22,19 @@ nonisolated enum MediaGridAnimation {
     /// that legacy mice send no such pair (`NSScrollView.h`,
     /// `NSScrollViewDidLiveScrollNotification`). One coalesced scroll flush is 16 ms;
     /// 250 ms without a tick is when the grid treats the user as having stopped.
-    static let applyAnimationScrollQuietThreshold: TimeInterval = 0.25
+    static let applyAnimationScrollQuietThreshold = Duration.milliseconds(250)
 
     /// During live scrolling a move animation is invisible churn; apply instantly
     /// instead. Never downgrades `animatingDifferences` — downgrading is the
     /// reloadData teardown this suppression exists to avoid.
+    /// `nil` is a grid that has never scrolled.
     nonisolated static func suppressesApplyAnimation(
-        lastScrollTickAge: TimeInterval
+        lastScrollTickAge: Duration?
     ) -> Bool {
-        lastScrollTickAge < applyAnimationScrollQuietThreshold
+        guard let lastScrollTickAge else {
+            return false
+        }
+        return lastScrollTickAge < applyAnimationScrollQuietThreshold
     }
 
     /// An anchored strip apply that moves the anchored tile along the order is one the

@@ -187,7 +187,7 @@ final class MediaGridViewController: NSViewController {
     var preheatIDs = Set<MediaAssetID>()
     var preheatGeneration = 0
     /// Scroll-bounds diagnostic window: tick/query/preheat counters flushed each second.
-    private var scrollBoundsWindowStart = Date()
+    private var scrollBoundsWindowStart = ContinuousClock.now
     /// The asset the pointer is over, if any — the single owner of hover across
     /// the whole grid. Kept as an *identity*, not an index path, so a structural
     /// apply that renumbers rows cannot leave the highlight on the wrong tile.
@@ -201,7 +201,7 @@ final class MediaGridViewController: NSViewController {
     private var scrollPreheatReused = 0
     private var scrollWorkDirty = false
     /// When scroll-driven work last ran, for `MediaGridScrollWorkCadence`'s maximum wait.
-    private var lastScrollWorkRunAt = Date.distantPast
+    private var lastScrollWorkRunAt: ContinuousClock.Instant?
     private var scrollCoalesceTask: Task<Void, Never>?
     /// Cancels/restarts on each scroll tick; fires after the shared quiet
     /// threshold to release the mutation gate's scroll hold.
@@ -210,11 +210,11 @@ final class MediaGridViewController: NSViewController {
     private(set) var lastDetailQueryIDs: [MediaAssetID] = []
     /// Last scroll-bounds notification time. Structural applies suppress move
     /// animation while this is recent (`MediaGridAnimation.suppressesApplyAnimation`).
-    private(set) var lastScrollTickAt = Date.distantPast
+    private(set) var lastScrollTickAt: ContinuousClock.Instant?
     /// Reconfigure pin-cost counters (reset each reconfigure).
     private var reconfigurePinCallCount = 0
-    private var reconfigurePinElapsed: TimeInterval = 0
-    private var reconfigureVisibleIDsElapsed: TimeInterval = 0
+    private var reconfigurePinElapsed = Duration.zero
+    private var reconfigureVisibleIDsElapsed = Duration.zero
     private var decodeStartedCount = 0
     private var decodeAppliedCount = 0
     /// Test hook: pin calls during the last `reconfigureVisibleItems` pass.
@@ -342,7 +342,7 @@ final class MediaGridViewController: NSViewController {
     }
 
     @objc private func scrollBoundsChanged() {
-        lastScrollTickAt = Date()
+        lastScrollTickAt = .now
         scrollBoundsTickCount += 1
         scrollWorkDirty = true
         // Not deferred to the coalesced flush below: that is a trailing-edge debounce
@@ -357,18 +357,18 @@ final class MediaGridViewController: NSViewController {
         // shortfall. The maximum wait is what serves sustained scrolling; the trailing
         // edge still collapses a burst that ends.
         if MediaGridScrollWorkCadence.runsImmediately(
-            sinceLastRun: Date().timeIntervalSince(lastScrollWorkRunAt)
+            sinceLastRun: lastScrollWorkRunAt.map { $0.duration(to: .now) }
         ) {
             scrollCoalesceTask?.cancel()
             scrollCoalesceTask = nil
             runScrollDrivenWork()
         } else {
             scrollCoalesceTask?.cancel()
-            let window = Int(MediaGridScrollWorkCadence.coalesceWindow * 1000)
+            let window = MediaGridScrollWorkCadence.coalesceWindow
             scrollCoalesceTask = Task { [weak self] in
                 do {
                     // time: cadence docs/research/2026-09-04-grid-day-header-pinning-and-scroll-edge-effect.md
-                    try await Task.sleep(for: .milliseconds(window))
+                    try await Task.sleep(for: window)
                 } catch {
                     return
                 }
@@ -385,11 +385,11 @@ final class MediaGridViewController: NSViewController {
     /// and perform any drained gate actions (newest parked grid / pending zoom).
     private func scheduleScrollHoldQuietRelease() {
         scrollHoldQuietTask?.cancel()
-        let quietMs = Int(MediaGridAnimation.applyAnimationScrollQuietThreshold * 1000)
+        let quiet = MediaGridAnimation.applyAnimationScrollQuietThreshold
         scrollHoldQuietTask = Task { [weak self] in
             do {
                 // time: deadline — a legacy mouse reports no end of scrolling (`MediaGridAnimation`)
-                try await Task.sleep(for: .milliseconds(quietMs))
+                try await Task.sleep(for: quiet)
             } catch {
                 return
             }
@@ -440,7 +440,7 @@ final class MediaGridViewController: NSViewController {
             return
         }
         scrollWorkDirty = false
-        lastScrollWorkRunAt = Date()
+        lastScrollWorkRunAt = .now
         flushScrollDrivenWork()
     }
 
@@ -450,8 +450,8 @@ final class MediaGridViewController: NSViewController {
     }
 
     private func flushScrollBoundsDiagnosticsIfNeeded() {
-        let now = Date()
-        guard now.timeIntervalSince(scrollBoundsWindowStart) >= 1.0 else {
+        let now = ContinuousClock.now
+        guard scrollBoundsWindowStart.duration(to: now) >= .seconds(1) else {
             return
         }
         let windowMs = DiagnosticsTiming.milliseconds(since: scrollBoundsWindowStart, now: now)
@@ -877,7 +877,7 @@ extension MediaGridViewController {
             return visibleIDs.count
         }
 
-        let queryStart = Date()
+        let queryStart = ContinuousClock.now
         let verbose = OtosUIVerbose.enabled
         let signpost = verbose
             ? OtosSignpost.ui.beginInterval("MediaGridVisibleDetailQuery")
@@ -937,18 +937,18 @@ extension MediaGridViewController {
         guard !visibleIndexPaths.isEmpty else {
             return
         }
-        let reconfigureStart = Date()
+        let reconfigureStart = ContinuousClock.now
         reconfigurePinCallCount = 0
-        reconfigurePinElapsed = 0
-        reconfigureVisibleIDsElapsed = 0
+        reconfigurePinElapsed = .zero
+        reconfigureVisibleIDsElapsed = .zero
         lastReconfigurePinCallCount = 0
         let decodeStartsBefore = decodeStartedCount
-        let visibleStart = Date()
+        let visibleStart = ContinuousClock.now
         let visibleIDs = visibleIndexPaths.compactMap { dataSource.itemIdentifier(for: $0) }
-        reconfigureVisibleIDsElapsed += Date().timeIntervalSince(visibleStart)
-        let pinStart = Date()
+        reconfigureVisibleIDsElapsed += visibleStart.duration(to: .now)
+        let pinStart = ContinuousClock.now
         tileContents.pinVisible(Set(visibleIDs))
-        reconfigurePinElapsed += Date().timeIntervalSince(pinStart)
+        reconfigurePinElapsed += pinStart.duration(to: .now)
         reconfigurePinCallCount = 1
         lastReconfigurePinCallCount = 1
         let reconfigureSignpost = OtosUIVerbose.enabled
@@ -958,8 +958,8 @@ extension MediaGridViewController {
         var thumbnailLoadsStarted = 0
         var missingAssetCount = 0
         var missingItemCount = 0
-        var ensureElapsed: TimeInterval = 0
-        var renderElapsed: TimeInterval = 0
+        var ensureElapsed = Duration.zero
+        var renderElapsed = Duration.zero
 
         for indexPath in visibleIndexPaths {
             guard let assetID = dataSource.itemIdentifier(for: indexPath) else {
@@ -970,15 +970,15 @@ extension MediaGridViewController {
                 missingItemCount += 1
                 continue
             }
-            let ensureStart = Date()
+            let ensureStart = ContinuousClock.now
             let change = ensureContentAndMaybeDecode(for: assetID)
-            ensureElapsed += Date().timeIntervalSince(ensureStart)
+            ensureElapsed += ensureStart.duration(to: .now)
             if case .awaitingDecode = change {
                 thumbnailLoadsStarted += 1
             }
-            let renderStart = Date()
+            let renderStart = ContinuousClock.now
             renderItem(item, assetID: assetID, change: change)
-            renderElapsed += Date().timeIntervalSince(renderStart)
+            renderElapsed += renderStart.duration(to: .now)
             configuredCount += 1
         }
 
@@ -987,10 +987,10 @@ extension MediaGridViewController {
         }
         let reconfigureMs = DiagnosticsTiming.milliseconds(since: reconfigureStart)
         let decodeStarts = decodeStartedCount - decodeStartsBefore
-        let pinMs = max(0, Int((reconfigurePinElapsed * 1000).rounded()))
-        let visibleIDsMs = max(0, Int((reconfigureVisibleIDsElapsed * 1000).rounded()))
-        let ensureMs = max(0, Int((ensureElapsed * 1000).rounded()))
-        let renderMs = max(0, Int((renderElapsed * 1000).rounded()))
+        let pinMs = DiagnosticsTiming.milliseconds(reconfigurePinElapsed)
+        let visibleIDsMs = DiagnosticsTiming.milliseconds(reconfigureVisibleIDsElapsed)
+        let ensureMs = DiagnosticsTiming.milliseconds(ensureElapsed)
+        let renderMs = DiagnosticsTiming.milliseconds(renderElapsed)
         OtosLog.ui.noticeOperation(
             "ui.mediaGrid.reconfigure",
             phase: "finish",

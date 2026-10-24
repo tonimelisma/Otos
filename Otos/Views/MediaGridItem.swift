@@ -57,7 +57,7 @@ final class MediaGridItem: NSCollectionViewItem {
         let signpost = OtosSignpost.ui.beginInterval("MediaGridCellConfiguration")
         defer { OtosSignpost.ui.endInterval("MediaGridCellConfiguration", signpost) }
 
-        let start = Date()
+        let start = ContinuousClock.now
         tileView.render(content, change: change)
         let elapsedMs = DiagnosticsTiming.milliseconds(since: start)
         guard elapsedMs >= 5, let content else {

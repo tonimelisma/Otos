@@ -69,7 +69,7 @@ nonisolated enum ThumbnailStore {
         finalRelativeName: String,
         in directory: URL
     ) throws -> GeneratedThumbnail {
-        let writeStart = Date()
+        let writeStart = ContinuousClock.now
         let signpost = OtosSignpost.thumbnails.beginInterval("ThumbnailWrite")
         defer {
             OtosSignpost.thumbnails.endInterval("ThumbnailWrite", signpost)

@@ -236,15 +236,18 @@ nonisolated enum MediaGridDayBarPolicy {
 /// "Measurement (2026-09-05)").
 nonisolated enum MediaGridScrollWorkCadence {
     /// Trailing edge for a burst that ends. One display frame at 60 Hz.
-    static let coalesceWindow: TimeInterval = 0.016
+    static let coalesceWindow = Duration.milliseconds(16)
 
     /// Longest a dirty grid may go unflushed while scrolling continues.
-    static let maximumWait: TimeInterval = 0.1
+    static let maximumWait = Duration.milliseconds(100)
 
     /// True when scroll-driven work has waited long enough that it must run now rather
-    /// than be rescheduled behind another trailing edge.
-    static func runsImmediately(sinceLastRun: TimeInterval) -> Bool {
-        sinceLastRun >= maximumWait
+    /// than be rescheduled behind another trailing edge. `nil` is work that has never run.
+    static func runsImmediately(sinceLastRun: Duration?) -> Bool {
+        guard let sinceLastRun else {
+            return true
+        }
+        return sinceLastRun >= maximumWait
     }
 }
 

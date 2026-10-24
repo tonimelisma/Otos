@@ -304,7 +304,7 @@ extension FileMaterialization {
         persistence: Persistence = .background,
         providers: FileMaterializationProviders
     ) async -> MaterializationResult {
-        let start = Date()
+        let start = ContinuousClock.now
         if providers.status(url) == .materialized {
             return finishMaterialization(.alreadyMaterialized, url: url, start: start, rerequestCount: 0)
         }
@@ -488,7 +488,7 @@ extension FileMaterialization {
     private nonisolated static func finishMaterialization(
         _ outcome: MaterializationOutcome,
         url: URL,
-        start: Date,
+        start: ContinuousClock.Instant,
         rerequestCount: Int
     ) -> MaterializationResult {
         let elapsedMs = DiagnosticsTiming.milliseconds(since: start)

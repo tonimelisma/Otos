@@ -109,7 +109,7 @@ actor EnrichmentCoordinator {
         let isVideo: Bool
         let isDeviceStaging: Bool
         let attemptCount: Int
-        let retryNotBefore: Date?
+        let retryNotBefore: ContinuousClock.Instant?
 
         init(
             id: MediaAssetID,
@@ -119,7 +119,7 @@ actor EnrichmentCoordinator {
             isVideo: Bool,
             isDeviceStaging: Bool = false,
             attemptCount: Int = 0,
-            retryNotBefore: Date? = nil
+            retryNotBefore: ContinuousClock.Instant? = nil
         ) {
             self.id = id
             self.url = url
@@ -144,7 +144,7 @@ actor EnrichmentCoordinator {
     /// holding one per permanently-failing identity is far cheaper than the
     /// claim-window slot it replaces.
     struct RetryLedgerEntry: Equatable {
-        let notBefore: Date
+        let notBefore: ContinuousClock.Instant
         let attemptCount: Int
         let sourceSize: Int64?
     }
@@ -189,7 +189,7 @@ actor EnrichmentCoordinator {
     var lastDownloadCandidateEvaluationCount = 0
     var lastEnrichmentAdmissionSnapshot: AdmissionDiagnosticSnapshot?
     var enrichmentAdmissionTransitionCount = 0
-    var readinessRetryNotBefore: [MediaAssetID: Date] = [:]
+    var readinessRetryNotBefore: [MediaAssetID: ContinuousClock.Instant] = [:]
     /// Resolves a device root to its live session, so a camera row can be enriched from
     /// ranges instead of from a downloaded copy. Nil when no camera is attached, or in
     /// tests that do not exercise the device path.
@@ -590,7 +590,7 @@ extension EnrichmentCoordinator {
                 for work in await dequeueMaterializationSubmissions() {
                     let requester = materializationRequester
                     group.addTask {
-                        let start = Date()
+                        let start = ContinuousClock.now
                         let result = await requester.materialize(
                             MaterializationCoordinator.Request(
                                 id: work.id,

@@ -84,7 +84,7 @@ extension EnrichmentCoordinator {
                 var releasedIDs: [MediaAssetID] = []
                 for candidate in claimed.ready {
                     let asset = candidate.asset
-                    if let retryAt = readinessRetryNotBefore[asset.id], retryAt > Date() {
+                    if let retryAt = readinessRetryNotBefore[asset.id], retryAt > .now {
                         releasedIDs.append(asset.id)
                         continue
                     }
@@ -130,7 +130,7 @@ extension EnrichmentCoordinator {
                         materializationClaimIDs.insert(asset.id)
                         readinessCounts["needsMaterialization", default: 0] += 1
                     case .unknown:
-                        readinessRetryNotBefore[asset.id] = Date().addingTimeInterval(1)
+                        readinessRetryNotBefore[asset.id] = .now.advanced(by: .seconds(1))
                         releasedIDs.append(asset.id)
                         readinessCounts["retryReadiness", default: 0] += 1
                     }
@@ -189,16 +189,15 @@ extension EnrichmentCoordinator {
     /// wake source — a completed download admits queued seeds and signals directly.
     private func scheduleReadinessRetrySignal() {
         readinessRetryTask?.cancel()
-        let now = Date()
+        let now = ContinuousClock.now
         readinessRetryNotBefore = readinessRetryNotBefore.filter { $0.value > now }
         guard let nextRetry = readinessRetryNotBefore.values.min() else {
             readinessRetryTask = nil
             return
         }
-        let delay = max(nextRetry.timeIntervalSince(now), 0)
         readinessRetryTask = Task { [weak self] in
             // time: backoff — the filesystem could not say whether the file is local
-            do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
+            do { try await ContinuousClock().sleep(until: nextRetry) } catch { return }
             await self?.signal()
         }
     }
@@ -252,7 +251,7 @@ extension EnrichmentCoordinator {
         }
         var ready: [ClaimedEnrichmentCandidate] = []
         var deferred: [MediaAssetID] = []
-        let now = Date()
+        let now = ContinuousClock.now
         for candidate in candidates {
             let asset = candidate.asset
             guard let entry = retryLedger[asset.id] else {
@@ -620,6 +619,6 @@ private extension EnrichmentCoordinator.DownloadWork {
         guard let retryNotBefore else {
             return true
         }
-        return retryNotBefore <= Date()
+        return retryNotBefore <= .now
     }
 }

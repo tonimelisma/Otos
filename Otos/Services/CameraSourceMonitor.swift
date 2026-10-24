@@ -890,7 +890,7 @@ final class DeviceCameraSession: NSObject {
     nonisolated static let catalogSettleSampleInterval = Duration.milliseconds(500)
 
     private func waitForCatalogStability(timeout: Duration) async -> Bool {
-        let startedAt = Date()
+        let startedAt = ContinuousClock.now
         var previous: (didAdd: Int, media: Int)?
         while !Task.isCancelled {
             let sample = (didAddItemCount, (device.mediaFiles ?? []).count)

@@ -9,10 +9,10 @@ struct KnownMaterializationSuppressionTests {
             libraryRootPath: LibraryRootPath(rawValue: "/library"),
             relativePath: MediaRelativePath(rawValue: "slow.mov")
         )
-        let now = Date(timeIntervalSince1970: 1000)
+        let now = ContinuousClock.now
         state.begin(id: id, now: now)
 
-        let midOperation = now.addingTimeInterval(90)
+        let midOperation = now.advanced(by: .seconds(90))
         let active = state.activeExpiries(now: midOperation)
         #expect(active[id] != nil)
         #expect(
@@ -31,14 +31,14 @@ struct KnownMaterializationSuppressionTests {
             libraryRootPath: LibraryRootPath(rawValue: "/library"),
             relativePath: MediaRelativePath(rawValue: "done.heic")
         )
-        let now = Date(timeIntervalSince1970: 1000)
+        let now = ContinuousClock.now
         state.begin(id: id, now: now)
-        let finished = now.addingTimeInterval(60)
+        let finished = now.advanced(by: .seconds(60))
         state.endSuccess(id: id, now: finished)
 
-        let duringGrace = finished.addingTimeInterval(2)
+        let duringGrace = finished.advanced(by: .seconds(2))
         #expect(state.activeExpiries(now: duringGrace)[id] != nil)
-        let afterGrace = finished.addingTimeInterval(6)
+        let afterGrace = finished.advanced(by: .seconds(6))
         #expect(state.activeExpiries(now: afterGrace)[id] == nil)
     }
 
@@ -48,10 +48,10 @@ struct KnownMaterializationSuppressionTests {
             libraryRootPath: LibraryRootPath(rawValue: "/library"),
             relativePath: MediaRelativePath(rawValue: "fail.heic")
         )
-        let now = Date(timeIntervalSince1970: 1000)
+        let now = ContinuousClock.now
         state.begin(id: id, now: now)
-        state.endFailure(id: id, now: now.addingTimeInterval(1))
-        #expect(state.activeExpiries(now: now.addingTimeInterval(1)).isEmpty)
+        state.endFailure(id: id, now: now.advanced(by: .seconds(1)))
+        #expect(state.activeExpiries(now: now.advanced(by: .seconds(1))).isEmpty)
     }
 
     @Test func activeCeilingIsAtLeastMaterializationTimeoutPlusLag() {

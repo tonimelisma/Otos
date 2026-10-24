@@ -113,7 +113,7 @@ actor PreviewImageLoader: PreviewLoading {
     private func decode(_ request: Request) async -> Outcome {
         let url = request.id.fileURL
         let signpost = OtosSignpost.mediaIO.beginInterval("PreviewDecode")
-        let start = Date()
+        let start = ContinuousClock.now
         defer {
             OtosSignpost.mediaIO.endInterval("PreviewDecode", signpost)
         }

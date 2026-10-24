@@ -46,6 +46,18 @@ that, and that a cadence's measurement exists, in `script/check.sh`'s fast gates
 CI. There is no allowlist: a wait without a tag fails, and a tag is a claim a reviewer
 checks against the code beside it.
 
+### Which clock
+
+Every interval and deadline inside one process is taken on `ContinuousClock` and held as
+an `Instant` or a `Duration`: it is monotonic, so a wall-clock change, an NTP step or a
+manual date change never shortens, lengthens or reverses it, and it keeps counting
+across system sleep. `DiagnosticsTiming` accepts only instants and durations. `Date` is
+for facts that outlive the process or are shown to a person — a persisted timestamp, a
+capture time, a "Yesterday" label — and is never used to measure an interval. The
+SwiftLint rule `wall_clock_interval` rejects wall-clock interval arithmetic
+(`Date()` with `timeIntervalSince(`/`addingTimeInterval`, `timeIntervalSinceNow`,
+`Date.distantPast`/`distantFuture`).
+
 ## Alternatives considered
 
 - **An allowlist of permitted call sites.** Rejected: it records that a site was

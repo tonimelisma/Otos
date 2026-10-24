@@ -1223,7 +1223,7 @@ actor MediaImportExecutor {
             return .cancelled
         }
         let copyFinished = ContinuousClock().now
-        let hashStart = Date()
+        let hashStart = ContinuousClock.now
         let hashSignpost = OtosSignpost.mediaIO.beginInterval("ContentHash")
         let hashOutcome = ContentHasher().hashMaterializedFile(
             at: stagingURL,

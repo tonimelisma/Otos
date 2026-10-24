@@ -32,7 +32,7 @@ extension CatalogProjection {
             orderQueryMs = 0
         } else {
             orderQueryCount &+= 1
-            let orderStart = Date()
+            let orderStart = ContinuousClock.now
             (orderedAssetIDs, dayBuckets) = try await store.orderedAssetIDs(
                 for: resolvedDescriptor,
                 availableLibraryPaths: availableLibraryPaths

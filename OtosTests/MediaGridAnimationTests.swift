@@ -3,11 +3,11 @@ import Testing
 
 struct MediaGridAnimationTests {
     @Test func suppressesApplyAnimationWhileScrollTickIsRecent() {
-        #expect(MediaGridAnimation.suppressesApplyAnimation(lastScrollTickAge: 0))
-        #expect(MediaGridAnimation.suppressesApplyAnimation(lastScrollTickAge: 0.16))
+        #expect(MediaGridAnimation.suppressesApplyAnimation(lastScrollTickAge: .zero))
+        #expect(MediaGridAnimation.suppressesApplyAnimation(lastScrollTickAge: .milliseconds(160)))
         #expect(
             MediaGridAnimation.suppressesApplyAnimation(
-                lastScrollTickAge: MediaGridAnimation.applyAnimationScrollQuietThreshold - 0.001
+                lastScrollTickAge: MediaGridAnimation.applyAnimationScrollQuietThreshold - .milliseconds(1)
             )
         )
     }
@@ -18,8 +18,8 @@ struct MediaGridAnimationTests {
                 lastScrollTickAge: MediaGridAnimation.applyAnimationScrollQuietThreshold
             )
         )
-        #expect(MediaGridAnimation.suppressesApplyAnimation(lastScrollTickAge: 1) == false)
-        #expect(MediaGridAnimation.suppressesApplyAnimation(lastScrollTickAge: .infinity) == false)
+        #expect(MediaGridAnimation.suppressesApplyAnimation(lastScrollTickAge: .seconds(1)) == false)
+        #expect(MediaGridAnimation.suppressesApplyAnimation(lastScrollTickAge: nil) == false, "a grid that has never scrolled")
     }
 
     /// Import arrivals land left of the strip's anchored tile. The restore scrolls the strip

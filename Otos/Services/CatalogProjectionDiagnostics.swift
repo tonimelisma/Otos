@@ -64,7 +64,7 @@ nonisolated struct CatalogProjectionChangeSummary {
             )
         }
 
-        let identityStart = Date()
+        let identityStart = ContinuousClock.now
         let mediaIdentityChanged = previous.mediaGrid.descriptor != current.mediaGrid.descriptor
             || previous.mediaGrid.orderedAssetIDs != current.mediaGrid.orderedAssetIDs
         let identityUs = DiagnosticsTiming.microseconds(since: identityStart)

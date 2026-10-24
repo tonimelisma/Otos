@@ -1,14 +1,13 @@
 import Foundation
 
+/// Elapsed-time arithmetic for diagnostics and process-local deadlines.
+///
+/// Every duration Otos measures inside one process is taken on `ContinuousClock`: it is
+/// monotonic, so a wall-clock change or a sync adjustment never shortens, lengthens or
+/// reverses an interval, and it keeps counting across system sleep. `Date` is kept for
+/// facts that outlive the process or are shown to a person — a persisted timestamp, a
+/// capture time — and is never used to measure an interval.
 nonisolated enum DiagnosticsTiming {
-    static func milliseconds(from start: Date, to end: Date) -> Int {
-        max(0, Int((end.timeIntervalSince(start) * 1000).rounded()))
-    }
-
-    static func milliseconds(since start: Date, now: Date = Date()) -> Int {
-        milliseconds(from: start, to: now)
-    }
-
     static func milliseconds(_ duration: Duration) -> Int {
         max(Int(seconds(duration) * 1000), 0)
     }
@@ -29,10 +28,20 @@ nonisolated enum DiagnosticsTiming {
         milliseconds(start.duration(to: end))
     }
 
+    static func milliseconds(
+        since start: ContinuousClock.Instant,
+        now: ContinuousClock.Instant = .now
+    ) -> Int {
+        milliseconds(from: start, to: now)
+    }
+
     /// Microsecond resolution for sub-millisecond pipeline steps (membership
     /// validation, scoped-map construction, equality) whose cost rounds to zero in
     /// milliseconds but still matters when comparing per-publication stage costs.
-    static func microseconds(since start: Date, now: Date = Date()) -> Int {
-        max(0, Int((now.timeIntervalSince(start) * 1_000_000).rounded()))
+    static func microseconds(
+        since start: ContinuousClock.Instant,
+        now: ContinuousClock.Instant = .now
+    ) -> Int {
+        max(0, Int((seconds(start.duration(to: now)) * 1_000_000).rounded()))
     }
 }

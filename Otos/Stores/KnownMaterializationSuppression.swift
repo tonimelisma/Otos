@@ -19,8 +19,8 @@ nonisolated enum KnownMaterializationSuppressionPolicy {
     static func isSuppressible(
         flags: FilesystemEventFlags,
         id: MediaAssetID,
-        active: [MediaAssetID: Date],
-        now: Date
+        active: [MediaAssetID: ContinuousClock.Instant],
+        now: ContinuousClock.Instant
     ) -> Bool {
         guard flags.isKnownMaterializationSuppressibleShape else {
             return false
@@ -34,16 +34,15 @@ nonisolated enum KnownMaterializationSuppressionPolicy {
 
 /// Process-local known-materialization suppression map owned by `CatalogStore`.
 nonisolated struct KnownMaterializationSuppressionState {
-    private var expiryByID: [MediaAssetID: Date] = [:]
+    private var expiryByID: [MediaAssetID: ContinuousClock.Instant] = [:]
 
     var count: Int {
         expiryByID.count
     }
 
-    mutating func begin(id: MediaAssetID, now: Date = Date()) {
+    mutating func begin(id: MediaAssetID, now: ContinuousClock.Instant = .now) {
         pruneExpired(now: now)
-        let ceiling = DiagnosticsTiming.seconds(KnownMaterializationSuppressionPolicy.activeCeiling)
-        let candidate = now.addingTimeInterval(ceiling)
+        let candidate = now.advanced(by: KnownMaterializationSuppressionPolicy.activeCeiling)
         // A newer begin must not shorten an overlapping newer ceiling.
         if let existing = expiryByID[id] {
             expiryByID[id] = max(existing, candidate)
@@ -52,20 +51,19 @@ nonisolated struct KnownMaterializationSuppressionState {
         }
     }
 
-    mutating func endSuccess(id: MediaAssetID, now: Date = Date()) {
+    mutating func endSuccess(id: MediaAssetID, now: ContinuousClock.Instant = .now) {
         pruneExpired(now: now)
         // Replace the active ceiling with the measured post-completion grace so
         // late duplicate provider events still suppress briefly.
-        let grace = DiagnosticsTiming.seconds(KnownMaterializationSuppressionPolicy.endGrace)
-        expiryByID[id] = now.addingTimeInterval(grace)
+        expiryByID[id] = now.advanced(by: KnownMaterializationSuppressionPolicy.endGrace)
     }
 
-    mutating func endFailure(id: MediaAssetID, now: Date = Date()) {
+    mutating func endFailure(id: MediaAssetID, now: ContinuousClock.Instant = .now) {
         pruneExpired(now: now)
         expiryByID.removeValue(forKey: id)
     }
 
-    mutating func pruneExpired(now: Date = Date()) {
+    mutating func pruneExpired(now: ContinuousClock.Instant = .now) {
         expiryByID = expiryByID.filter { $0.value > now }
     }
 
@@ -77,7 +75,7 @@ nonisolated struct KnownMaterializationSuppressionState {
         expiryByID = expiryByID.filter { $0.key.libraryRootPath != root }
     }
 
-    func activeExpiries(now: Date = Date()) -> [MediaAssetID: Date] {
+    func activeExpiries(now: ContinuousClock.Instant = .now) -> [MediaAssetID: ContinuousClock.Instant] {
         expiryByID.filter { $0.value > now }
     }
 }
