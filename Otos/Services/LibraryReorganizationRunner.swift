@@ -19,15 +19,23 @@ actor LibraryReorganizationRunner {
     }
 
     enum Outcome: Equatable, Sendable {
-        case completed(remapBatches: [CatalogIdentityRemapBatch], noOpCount: Int, relocateCount: Int)
+        /// Every component finished and settled.
+        case completed(relocatedCount: Int)
+        /// The library's plan differs from the one the user last confirmed (or none was
+        /// confirmed yet): this is what running it now would do.
         case needsConfirmation(summary: ReorganizationPlanSummary)
-        case blocked(reason: String)
-        case cancelled
-        case failed(reason: String)
+        /// Nothing was changed: the run could not start.
+        case unavailable(ReorganizationUnavailability)
+        /// The run started and stopped partway. Components before the failing one are
+        /// settled; the failing one was rolled back unless `libraryRestored` is false.
+        case stopped(ReorganizationStop)
     }
 
     struct ReorganizationPlanSummary: Equatable, Sendable {
         let libraryRoot: LibraryRootPath
+        /// The library revision this plan was built from. A run confirmed against it
+        /// proceeds only while the library is still at it.
+        let rootRevision: UInt64
         let noOpCount: Int
         let relocateCount: Int
         let blockedCount: Int
@@ -36,51 +44,89 @@ actor LibraryReorganizationRunner {
 
     /// Interprets durable component phases before Store starts filesystem scans.
     /// Store owns each transaction and scan-exclusion lease; this operation owner
-    /// decides what recovery action each journal state requires.
+    /// decides what recovery action each journal state requires: a component that was
+    /// moving resumes, one whose files all moved settles, and one that was rolling back
+    /// (or was stuck rolling back) resumes its rollback. Every resolved component
+    /// releases its lease; a component still stuck keeps the root under it.
     nonisolated static func recoverJournal(store: CatalogStore) async throws {
         let components = try await store.activeReorganizationComponents()
         for component in components {
-            switch component.phase {
-            case .catalogCommitted:
-                try await store.discardCommittedReorganizationComponent(component.componentKey)
-            case .filesystemComplete:
-                OtosLog.catalog.notice(
-                    "op=reorganization.recover phase=retrySettlement key=\(component.componentKey.rawValue, privacy: .public)"
-                )
-                do {
-                    _ = try await store.settleReorganizationComponent(
-                        key: component.componentKey,
-                        remaps: identityRemaps(for: component)
-                    )
-                } catch {
-                    OtosLog.catalog.error(
-                        "op=reorganization.recover phase=settlementFailed key=\(component.componentKey.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
-                    )
-                }
-            case .prepared, .moving, .rollingBack, .blocked:
-                OtosLog.catalog.notice(
-                    "op=reorganization.recover phase=retainJournal key=\(component.componentKey.rawValue, privacy: .public) componentPhase=\(component.phase.rawValue, privacy: .public)"
-                )
-                _ = await store.acquireNamespaceMutationLease(for: component.libraryRootPath, owner: .reorganization)
+            let root = component.libraryRootPath
+            guard case let .acquired(lease) = await store.acquireNamespaceMutationLease(
+                for: root,
+                owner: .reorganization
+            ) else {
+                OtosLog.catalog.errorOperation("reorganization.recover", phase: "leaseUnavailable", fields: [
+                    "key": component.componentKey.rawValue,
+                    "rootPath": root.rawValue,
+                ])
+                continue
+            }
+            OtosLog.catalog.noticeOperation("reorganization.recover", phase: "start", fields: [
+                "key": component.componentKey.rawValue,
+                "componentPhase": component.phase.rawValue,
+            ])
+            let resolved = await finish(component, store: store)
+            if resolved {
+                _ = await store.releaseNamespaceMutationLease(lease)
             }
         }
     }
 
-    private nonisolated static func identityRemaps(
-        for component: ActiveReorganizationComponent
-    ) -> [CatalogIdentityRemap] {
-        component.members.compactMap { member in
-            guard member.kind == .media else { return nil }
-            return CatalogIdentityRemap(
-                oldID: MediaAssetID(
-                    libraryRootPath: component.libraryRootPath,
-                    relativePath: member.logicalSourceRelativePath
-                ),
-                newID: MediaAssetID(
-                    libraryRootPath: component.libraryRootPath,
-                    relativePath: member.finalRelativePath
-                )
-            )
+    /// Drives one journaled component to an end state: settled, or rolled back. Returns
+    /// whether it got there; a component stuck rolling back stays journaled and blocked.
+    private nonisolated static func finish(
+        _ component: ActiveReorganizationComponent,
+        store: CatalogStore
+    ) async -> Bool {
+        let rootURL = component.libraryRootPath.url
+        switch component.phase {
+        case .prepared, .moving, .filesystemComplete:
+            let forward: ReorganizationExecutionOutcome = component.phase == .filesystemComplete
+                ? .filesystemComplete
+                : await ReorganizationExecutor.executeComponent(component, rootURL: rootURL, store: store)
+            if case .filesystemComplete = forward {
+                do {
+                    try await store.settleReorganizationComponent(key: component.componentKey)
+                    return true
+                } catch {
+                    OtosLog.catalog.errorOperation("reorganization.settle", phase: "failed", fields: [
+                        "key": component.componentKey.rawValue,
+                        "error": String(describing: error),
+                    ])
+                }
+            }
+            return await rollBack(component.componentKey, store: store)
+        case .rollingBack, .blocked:
+            return await rollBack(component.componentKey, store: store)
+        }
+    }
+
+    /// Rolls back from the journal as it stands now, which records every step the
+    /// forward pass completed.
+    private nonisolated static func rollBack(_ key: ReorganizationComponentKey, store: CatalogStore) async -> Bool {
+        let current: ActiveReorganizationComponent?
+        do {
+            current = try await store.activeReorganizationComponents().first { $0.componentKey == key }
+        } catch {
+            OtosLog.catalog.errorOperation("reorganization.rollback", phase: "journalUnreadable", fields: [
+                "key": key.rawValue,
+                "error": String(describing: error),
+            ])
+            return false
+        }
+        guard let current else {
+            return true
+        }
+        switch await ReorganizationExecutor.rollBackComponent(
+            current,
+            rootURL: current.libraryRootPath.url,
+            store: store
+        ) {
+        case .restored:
+            return true
+        case .stuck:
+            return false
         }
     }
 
@@ -88,178 +134,170 @@ actor LibraryReorganizationRunner {
     func preview(libraryRoot: LibraryRootPath) async -> Outcome {
         switch await buildReadyPlan(libraryRoot: libraryRoot) {
         case let .ready(plan):
-            .needsConfirmation(
-                summary: ReorganizationPlanSummary(
-                    libraryRoot: libraryRoot,
-                    noOpCount: plan.noOpCount,
-                    relocateCount: plan.relocateCount,
-                    blockedCount: plan.blockedCount,
-                    componentCount: plan.components.count
-                )
-            )
-        case let .blocked(reason):
-            .blocked(reason: reason)
-        case let .failed(reason):
-            .failed(reason: reason)
+            .needsConfirmation(summary: Self.summary(of: plan))
+        case let .unavailable(reason):
+            .unavailable(reason)
         }
     }
 
-    /// Executes a confirmed reorganization for one fixed library. The component loop
-    /// and its lease/settlement are intentionally one cohesive function.
-    func run(libraryRoot: LibraryRootPath) async -> Outcome { // swiftlint:disable:this function_body_length
+    /// Executes a reorganization the user confirmed for `confirmedRevision`. Each
+    /// component either settles whole or is rolled back; a failure stops the run there
+    /// and leaves every later component untouched. Identity remaps reach the window
+    /// through the catalog (ARC-052), never through this outcome, so a run that stops
+    /// partway delivers the components it did settle exactly like a complete one.
+    func run(libraryRoot: LibraryRootPath, confirmedRevision: UInt64) async -> Outcome {
         let lease: RootNamespaceMutationLease
         let acquisition = await store.acquireNamespaceMutationLease(for: libraryRoot, owner: .reorganization)
         switch acquisition {
         case let .acquired(acquired):
             lease = acquired
         case let .busy(owner):
-            return .failed(reason: "leaseBusy:\(owner.rawValue)")
-        case .rootNotRegistered, .catalogUnavailable:
-            return .failed(reason: acquisition.logReason)
+            return .unavailable(.libraryBusy(owner))
+        case .rootNotRegistered:
+            return .unavailable(.libraryUnavailable)
+        case .catalogUnavailable:
+            return .unavailable(.catalogUnreadable)
         }
 
-        let built = await buildReadyPlan(libraryRoot: libraryRoot)
-        guard case let .ready(plan) = built else {
+        let plan: ReorganizationPlan
+        switch await buildReadyPlan(libraryRoot: libraryRoot) {
+        case let .ready(ready):
+            plan = ready
+        case let .unavailable(reason):
             _ = await store.releaseNamespaceMutationLease(lease)
-            if case let .blocked(reason) = built {
-                return .blocked(reason: reason)
-            }
-            if case let .failed(reason) = built {
-                return .failed(reason: reason)
-            }
-            return .failed(reason: "planUnavailable")
+            return .unavailable(reason)
         }
-
-        if plan.components.isEmpty {
+        guard plan.rootRevision == confirmedRevision else {
             _ = await store.releaseNamespaceMutationLease(lease)
-            return .completed(remapBatches: [], noOpCount: plan.noOpCount, relocateCount: 0)
+            OtosLog.catalog.noticeOperation("reorganization.run", phase: "reconfirm", fields: [
+                "rootPath": libraryRoot.rawValue,
+                "confirmedRevision": "\(confirmedRevision)",
+                "currentRevision": "\(plan.rootRevision)",
+            ])
+            return .needsConfirmation(summary: Self.summary(of: plan))
         }
 
+        guard let factsByPath = await memberFacts(libraryRoot: libraryRoot) else {
+            _ = await store.releaseNamespaceMutationLease(lease)
+            return .unavailable(.catalogUnreadable)
+        }
         let rootURL = libraryRoot.url
-        var factsByPath: [MediaRelativePath: (byteSize: Int64, contentModifiedAt: Date)] = [:]
-        // Prefer snapshot facts from planning media via Store query.
-        if let snapshotMedia = await store.planningMedia(for: libraryRoot) {
-            for item in snapshotMedia {
-                if let size = item.byteSize, let modified = item.contentModifiedAt {
-                    factsByPath[item.relativePath] = (size, modified)
-                }
-                for companion in item.companions {
-                    if let size = companion.byteSize, let modified = companion.contentModifiedAt {
-                        factsByPath[companion.relativePath] = (size, modified)
-                    }
-                }
-            }
-        }
-
-        var remapBatches: [CatalogIdentityRemapBatch] = []
-        for plannerComponent in plan.components {
+        var relocatedCount = 0
+        for (index, plannerComponent) in plan.components.enumerated() {
+            let progress = ReorganizationStop.Progress(
+                settledComponentCount: index,
+                componentCount: plan.components.count,
+                relocatedCount: relocatedCount
+            )
             guard let journal = ReorganizationExecutor.makeJournalComponent(
                 plan: plan,
                 plannerComponent: plannerComponent,
-                snapshot: ReorganizationPlanningSnapshot(
-                    libraryRoot: plan.libraryRoot,
-                    volumeIdentifier: "run",
-                    capabilities: FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: plan.libraryRoot.url),
-                    generation: plan.generation,
-                    rootRevision: plan.rootRevision,
-                    policy: plan.policy,
-                    calendar: .current,
-                    timeZone: .current,
-                    media: [],
-                    knownForeignOccupants: []
-                ),
                 factsByPath: factsByPath
             ) else {
+                // The plan names a member the catalog no longer has facts for. Nothing
+                // of this component moved.
                 _ = await store.releaseNamespaceMutationLease(lease)
-                return .failed(reason: "journalBuildFailed")
+                return stop(.libraryChanged, progress: progress, libraryRestored: true, root: libraryRoot)
             }
-
             do {
                 try await store.prepareReorganizationComponent(journal)
             } catch {
                 _ = await store.releaseNamespaceMutationLease(lease)
-                return .failed(reason: "journalInsert")
+                return stop(.journalWrite, progress: progress, libraryRestored: true, root: libraryRoot)
             }
 
-            let key = journal.componentKey
-            let outcome = await ReorganizationExecutor.executeComponent(
-                component: journal,
-                rootURL: rootURL,
-                markWillMove: { step in
-                    try await self.store.recordReorganizationMoveIntent(
-                        key: key,
-                        stepIndex: step.stepIndex
-                    )
-                },
-                markDidMove: { step, _ in
-                    try await self.store.recordReorganizationMoveCompletion(
-                        key: key,
-                        step: step,
-                        nextStepIndex: step.stepIndex + 1
-                    )
-                },
-                markFilesystemComplete: {
-                    try await self.store.recordReorganizationFilesystemCompletion(
-                        key: key,
-                        nextStepIndex: journal.steps.count
-                    )
-                },
-                shouldContinue: { true }
-            )
-
-            switch outcome {
+            let fault: ReorganizationFault
+            switch await ReorganizationExecutor.executeComponent(journal, rootURL: rootURL, store: store) {
             case .filesystemComplete:
-                let remaps = journal.members.compactMap { member -> CatalogIdentityRemap? in
-                    guard member.kind == .media else { return nil }
-                    return CatalogIdentityRemap(
-                        oldID: MediaAssetID(
-                            libraryRootPath: libraryRoot,
-                            relativePath: member.logicalSourceRelativePath
-                        ),
-                        newID: MediaAssetID(
-                            libraryRootPath: libraryRoot,
-                            relativePath: member.finalRelativePath
-                        )
-                    )
-                }
                 do {
-                    let batch = try await store.settleReorganizationComponent(key: key, remaps: remaps)
-                    remapBatches.append(batch)
+                    try await store.settleReorganizationComponent(key: journal.componentKey)
+                    relocatedCount += journal.members.count(where: { $0.kind == .media })
+                    continue
                 } catch {
-                    _ = await store.releaseNamespaceMutationLease(lease)
-                    return .failed(reason: "settlementFailed")
+                    OtosLog.catalog.errorOperation("reorganization.settle", phase: "failed", fields: [
+                        "key": journal.componentKey.rawValue,
+                        "error": String(describing: error),
+                    ])
+                    fault = .journalWrite
                 }
-            case .cancelled:
-                _ = await store.releaseNamespaceMutationLease(lease)
-                return .cancelled
-            case let .blocked(reason), let .failed(reason):
-                _ = await store.releaseNamespaceMutationLease(lease)
-                return .failed(reason: reason)
+            case let .stopped(stopFault):
+                fault = stopFault
             }
+            let restored = await Self.rollBack(journal.componentKey, store: store)
+            if restored {
+                _ = await store.releaseNamespaceMutationLease(lease)
+            }
+            return stop(fault, progress: progress, libraryRestored: restored, root: libraryRoot)
         }
 
-        OtosLog.catalog.notice(
-            "op=reorganization.run phase=finish rootPath=\(libraryRoot.rawValue, privacy: .public) components=\(remapBatches.count, privacy: .public)"
-        )
+        OtosLog.catalog.noticeOperation("reorganization.run", phase: "finish", fields: [
+            "rootPath": libraryRoot.rawValue,
+            "components": "\(plan.components.count)",
+            "relocated": "\(relocatedCount)",
+        ])
         _ = await store.releaseNamespaceMutationLease(lease)
-        return .completed(
-            remapBatches: remapBatches,
+        return .completed(relocatedCount: relocatedCount)
+    }
+
+    private func stop(
+        _ fault: ReorganizationFault,
+        progress: ReorganizationStop.Progress,
+        libraryRestored: Bool,
+        root: LibraryRootPath
+    ) -> Outcome {
+        OtosLog.catalog.errorOperation("reorganization.run", phase: "stopped", fields: [
+            "rootPath": root.rawValue,
+            "fault": fault.logCode,
+            "settledComponents": "\(progress.settledComponentCount)",
+            "components": "\(progress.componentCount)",
+            "libraryRestored": "\(libraryRestored)",
+        ])
+        return .stopped(ReorganizationStop(fault: fault, progress: progress, libraryRestored: libraryRestored))
+    }
+
+    private static func summary(of plan: ReorganizationPlan) -> ReorganizationPlanSummary {
+        ReorganizationPlanSummary(
+            libraryRoot: plan.libraryRoot,
+            rootRevision: plan.rootRevision,
             noOpCount: plan.noOpCount,
-            relocateCount: plan.relocateCount
+            relocateCount: plan.relocateCount,
+            blockedCount: plan.blockedCount,
+            componentCount: plan.components.count
         )
+    }
+
+    /// Size and modification date for every media and companion path the catalog knows,
+    /// which the journal records so recovery can tell a moved file from a different one.
+    private func memberFacts(
+        libraryRoot: LibraryRootPath
+    ) async -> [MediaRelativePath: (byteSize: Int64, contentModifiedAt: Date)]? {
+        guard let media = await store.planningMedia(for: libraryRoot) else {
+            return nil
+        }
+        var factsByPath: [MediaRelativePath: (byteSize: Int64, contentModifiedAt: Date)] = [:]
+        for item in media {
+            if let size = item.byteSize, let modified = item.contentModifiedAt {
+                factsByPath[item.relativePath] = (size, modified)
+            }
+            for companion in item.companions {
+                if let size = companion.byteSize, let modified = companion.contentModifiedAt {
+                    factsByPath[companion.relativePath] = (size, modified)
+                }
+            }
+        }
+        return factsByPath
     }
 
     private enum BuildResult {
         case ready(ReorganizationPlan)
-        case blocked(String)
-        case failed(String)
+        case unavailable(ReorganizationUnavailability)
     }
 
     private func buildReadyPlan(libraryRoot: LibraryRootPath) async -> BuildResult {
         guard let media = await store.planningMedia(for: libraryRoot),
               let revision = await store.planRevision(for: libraryRoot)
         else {
-            return .failed("snapshotUnavailable")
+            return .unavailable(.catalogUnreadable)
         }
         let policy = ImportPolicy.from(ImportPreferencesStore.load(defaults: preferences))
         let capabilities = FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: libraryRoot.url)
@@ -276,9 +314,10 @@ actor LibraryReorganizationRunner {
             media: media,
             knownForeignOccupants: []
         )
+        // Each pass asks only for paths the previous one did not resolve, so the loop
+        // ends; the bound turns a planner that keeps asking into a reported failure.
         for _ in 0 ..< 8 {
-            let outcome = ReorganizationPlanner.plan(snapshot: snapshot, occupancy: occupancy)
-            switch outcome {
+            switch ReorganizationPlanner.plan(snapshot: snapshot, occupancy: occupancy) {
             case let .ready(plan):
                 return .ready(plan)
             case let .needsProbes(requests):
@@ -289,9 +328,16 @@ actor LibraryReorganizationRunner {
                     )
                 }
             case let .blocked(reason):
-                return .blocked(reason)
+                OtosLog.catalog.errorOperation("reorganization.plan", phase: "inconsistent", fields: [
+                    "rootPath": libraryRoot.rawValue,
+                    "reason": reason,
+                ])
+                return .unavailable(.planInconsistent)
             }
         }
-        return .failed("probeLoopExhausted")
+        OtosLog.catalog.errorOperation("reorganization.plan", phase: "probesUnresolved", fields: [
+            "rootPath": libraryRoot.rawValue,
+        ])
+        return .unavailable(.planInconsistent)
     }
 }

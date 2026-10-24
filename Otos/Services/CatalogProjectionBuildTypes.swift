@@ -24,9 +24,17 @@ nonisolated struct CatalogProjectionWindowStateParts {
 nonisolated struct CatalogProjectionOrderReuse {
     let orderedAssetIDs: [MediaAssetID]?
     let dayBuckets: [Date?]?
+    /// Reused with the order it was read with: the order is unchanged, so no identity in
+    /// it needs a batch the previous read did not carry.
+    let pendingIdentityRemaps: [CatalogIdentityRemapBatch]?
     let descriptor: CatalogQueryDescriptor?
 
-    static let none = CatalogProjectionOrderReuse(orderedAssetIDs: nil, dayBuckets: nil, descriptor: nil)
+    static let none = CatalogProjectionOrderReuse(
+        orderedAssetIDs: nil,
+        dayBuckets: nil,
+        pendingIdentityRemaps: nil,
+        descriptor: nil
+    )
 }
 
 /// Everything a window state is derived from once the Store has been read. Production

@@ -372,3 +372,12 @@ nonisolated enum LibraryOrderMove: Equatable, Sendable {
         return result
     }
 }
+
+/// One ordered-ID read of the catalog: the identities in display order, their day
+/// buckets when sorted by date, and the identity remaps not yet acknowledged by the
+/// window — all from one read transaction (ARC-052).
+nonisolated struct CatalogOrderedAssets: Equatable, Sendable {
+    let ids: [MediaAssetID]
+    let dayBuckets: [Date?]
+    let pendingIdentityRemaps: [CatalogIdentityRemapBatch]
+}

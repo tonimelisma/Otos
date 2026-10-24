@@ -307,17 +307,15 @@ private extension CatalogProjection {
         // identities (a cheap `.refreshVisible`) and the identity comparison
         // short-circuits on the shared array buffer. A structural change or a newer
         // user intent re-runs the full query.
-        let reuseOrderedAssetIDs: [MediaAssetID]?
-        let reuseDayBuckets: [Date?]?
-        let reuseDescriptor: CatalogQueryDescriptor?
-        if kind == .detailOnly, let previous = lastPublishedState {
-            reuseOrderedAssetIDs = previous.mediaGrid.orderedAssetIDs
-            reuseDayBuckets = previous.mediaGrid.dayBuckets
-            reuseDescriptor = previous.queryDescriptor
+        let reuse: CatalogProjectionOrderReuse = if kind == .detailOnly, let previous = lastPublishedState {
+            CatalogProjectionOrderReuse(
+                orderedAssetIDs: previous.mediaGrid.orderedAssetIDs,
+                dayBuckets: previous.mediaGrid.dayBuckets,
+                pendingIdentityRemaps: previous.pendingIdentityRemaps,
+                descriptor: previous.queryDescriptor
+            )
         } else {
-            reuseOrderedAssetIDs = nil
-            reuseDayBuckets = nil
-            reuseDescriptor = nil
+            .none
         }
 
         let publicationStart = ContinuousClock.now
@@ -345,11 +343,7 @@ private extension CatalogProjection {
                 store: store,
                 libraries: libraries,
                 request: selectedRequest,
-                reuse: CatalogProjectionOrderReuse(
-                    orderedAssetIDs: reuseOrderedAssetIDs,
-                    dayBuckets: reuseDayBuckets,
-                    descriptor: reuseDescriptor
-                )
+                reuse: reuse
             )
             // A cancelled pass is a teardown: whatever it read is not the catalog.
             try Task.checkCancellation()

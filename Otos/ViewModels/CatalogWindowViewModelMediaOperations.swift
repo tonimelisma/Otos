@@ -291,81 +291,95 @@ extension CatalogWindowViewModel {
         guard let path = selectedFixedLibraryPath, reorganizationTask == nil else {
             return
         }
-        let runner = reorganizationRunner ?? LibraryReorganizationRunner(
-            store: catalogStore,
-            preferencesDomain: preferencesDomain
-        )
-        reorganizationRunner = runner
+        let runner = reorganizationRunner()
         // One preview or run in flight, owned here: a second request while one runs is
         // ignored, and the window's teardown cancels it.
         reorganizationTask = Task { [weak self] in
             let outcome = await runner.preview(libraryRoot: path)
             guard let self else { return }
             reorganizationTask = nil
-            switch outcome {
-            case let .needsConfirmation(summary):
-                reorganizationSummaryText = ReorganizationSummaryPresentation.string(for: summary)
-                showsReorganizationConfirmation = true
-            case let .blocked(reason), let .failed(reason):
-                reorganizationAlertMessage = reason
-            case .completed, .cancelled:
-                break
-            }
+            presentReorganizationOutcome(outcome)
         }
     }
 
     func cancelReorganizationConfirmation() {
-        showsReorganizationConfirmation = false
-        reorganizationSummaryText = nil
+        reorganizationConfirmation = nil
     }
 
+    /// Runs the plan the dialog showed: its library and its revision, whatever the
+    /// sidebar selects now. If the library changed since, the run reports the new plan
+    /// and the dialog asks again.
     func confirmReorganization() {
-        guard let path = selectedFixedLibraryPath, reorganizationTask == nil else {
+        guard let confirmation = reorganizationConfirmation, reorganizationTask == nil else {
             return
         }
-        showsReorganizationConfirmation = false
-        let runner = reorganizationRunner ?? LibraryReorganizationRunner(
-            store: catalogStore,
-            preferencesDomain: preferencesDomain
-        )
-        reorganizationRunner = runner
+        reorganizationConfirmation = nil
+        let runner = reorganizationRunner()
         reorganizationTask = Task { [weak self] in
-            let outcome = await runner.run(libraryRoot: path)
+            let outcome = await runner.run(
+                libraryRoot: confirmation.libraryRoot,
+                confirmedRevision: confirmation.rootRevision
+            )
             guard let self else { return }
             reorganizationTask = nil
-            switch outcome {
-            case let .completed(batches, _, _):
-                for batch in batches {
-                    applyIdentityRemapBatch(batch)
-                }
-            case let .blocked(reason), let .failed(reason):
-                reorganizationAlertMessage = reason
-            case .cancelled, .needsConfirmation:
-                break
-            }
+            presentReorganizationOutcome(outcome)
         }
     }
 
-    /// Atomically remaps selection, loupe/compare focus, and publishes a batch for
-    /// `TileContentStore` via `identityRemapEpoch`.
-    func applyIdentityRemapBatch(_ batch: CatalogIdentityRemapBatch) {
-        guard !batch.remaps.isEmpty else { return }
-        let map = Dictionary(uniqueKeysWithValues: batch.remaps.map { ($0.oldID, $0.newID) })
-        gridSelection = gridSelection.remapped(by: batch)
-        comparePair = comparePair.remapped(by: batch)
-        // A pane holding a decode under the old identity must be re-requested under the
-        // new one: `setFocus` reconciles every slot, and a plain reconcile covers a
-        // compare pair that moved while focus did not.
-        if let focus = focusedAssetID, let mapped = map[focus], mapped != focus {
-            setFocus(mapped)
-        } else {
+    private func reorganizationRunner() -> LibraryReorganizationRunner {
+        if let runner = reorganizationRunnerInstance {
+            return runner
+        }
+        let runner = LibraryReorganizationRunner(store: catalogStore, preferencesDomain: preferencesDomain)
+        reorganizationRunnerInstance = runner
+        return runner
+    }
+
+    private func presentReorganizationOutcome(_ outcome: LibraryReorganizationRunner.Outcome) {
+        OtosLog.ui.noticeOperation("reorganization.outcome", phase: "presented", fields: [
+            "outcome": String(describing: outcome),
+        ])
+        switch outcome {
+        case let .needsConfirmation(summary):
+            reorganizationConfirmation = ReorganizationConfirmation(summary: summary)
+        case .completed:
+            break
+        case let .unavailable(reason):
+            reorganizationAlertMessage = ReorganizationOutcomePresentation.message(for: reason)
+        case let .stopped(stop):
+            reorganizationAlertMessage = ReorganizationOutcomePresentation.message(for: stop)
+        }
+    }
+
+    /// Carries selection, compare pair, focus and painted tiles across every batch this
+    /// window has not applied yet, then asks the Store to drop them. Runs inside
+    /// `applyState`, before the new order is compared with the old one, so a remapped
+    /// identity is never pruned or shown without its thumbnail (ARC-052, APP-015).
+    func applyPendingIdentityRemaps(_ batches: [CatalogIdentityRemapBatch]) {
+        let unapplied = batches.filter { !appliedIdentityRemapBatchIDs.contains($0.id) }
+        guard !unapplied.isEmpty else { return }
+        var focusChanged = false
+        for batch in unapplied {
+            appliedIdentityRemapBatchIDs.insert(batch.id)
+            guard !batch.remaps.isEmpty else { continue }
+            let map = Dictionary(uniqueKeysWithValues: batch.remaps.map { ($0.oldID, $0.newID) })
+            gridSelection = gridSelection.remapped(by: batch)
+            comparePair = comparePair.remapped(by: batch)
+            tileContentStore.applyIdentityRemapBatch(batch)
+            if let focus = focusedAssetID, let mapped = map[focus], mapped != focus {
+                // `setFocus` re-requests every pane under the new identity.
+                setFocus(mapped)
+                focusChanged = true
+            }
+            OtosLog.ui.noticeOperation("reorganization.remapUI", phase: "applied", fields: [
+                "batch": "\(batch.id)",
+                "remapCount": "\(batch.remaps.count)",
+            ])
+        }
+        if !focusChanged {
+            // A compare pair can move while focus does not.
             refreshPanePreviews()
         }
-        identityRemapBatch = batch
-        identityRemapEpoch &+= 1
-        let epoch = identityRemapEpoch
-        OtosLog.ui.notice(
-            "op=reorganization.remapUI phase=applied remapCount=\(batch.remaps.count, privacy: .public) epoch=\(epoch, privacy: .public)"
-        )
+        submitCatalogMutation(.acknowledgeIdentityRemaps(unapplied.map(\.id)))
     }
 }

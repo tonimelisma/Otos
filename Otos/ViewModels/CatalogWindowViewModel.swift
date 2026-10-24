@@ -46,6 +46,7 @@ final class CatalogWindowViewModel {
         case quiesceRemovableSource(String)
         case resumeRemovableSource(String)
         case detachRemovableSource(String, RemovableSourceDetachReason)
+        case acknowledgeIdentityRemaps([Int64])
     }
 
     private(set) var sidebarSelection: SidebarSelection = .allMedia
@@ -261,8 +262,9 @@ final class CatalogWindowViewModel {
     /// `cancelImport` is called and cleared once that source's presentation
     /// leaves `.executing` (`applyImportPresentations`).
     var cancellingImportSources: Set<LibraryRootPath> = []
-    var showsReorganizationConfirmation = false
-    var reorganizationSummaryText: String?
+    /// The plan the confirmation dialog shows, or nil when it is not shown. Confirming
+    /// runs exactly this library at exactly this revision.
+    var reorganizationConfirmation: ReorganizationConfirmation?
     var reorganizationAlertMessage: String?
     var trashAlertMessage: String?
     var trashFailedIDs: [MediaAssetID] = []
@@ -274,9 +276,10 @@ final class CatalogWindowViewModel {
     var trashDecisions: [MediaTrashCoordinator.Decision] = []
     /// The failure alert's message line; set with `trashAlertMessage`.
     var trashAlertDetail = ""
-    var identityRemapEpoch: UInt64 = 0
-    var identityRemapBatch: CatalogIdentityRemapBatch?
-    @ObservationIgnored var reorganizationRunner: LibraryReorganizationRunner?
+    /// Remap batches already carried into selection, focus and tiles. A batch stays in
+    /// published states until the Store has deleted it, so this keeps it applied once.
+    @ObservationIgnored var appliedIdentityRemapBatchIDs: Set<Int64> = []
+    @ObservationIgnored var reorganizationRunnerInstance: LibraryReorganizationRunner?
     /// The reorganization preview or run in flight; at most one.
     @ObservationIgnored var reorganizationTask: Task<Void, Never>?
     @ObservationIgnored let mediaTrashCoordinator: MediaTrashCoordinator
@@ -799,6 +802,9 @@ extension CatalogWindowViewModel {
         }
 
         state = nextState
+        // Before anything compares the new order with the old: a remapped selection or
+        // focus must already carry its new identity, or the prune below would drop it.
+        applyPendingIdentityRemaps(nextState.pendingIdentityRemaps)
 
         // A new scope is a different collection, so the user's place in the old one means
         // nothing there. A filter or sort change narrows or reorders the same collection,

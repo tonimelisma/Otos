@@ -326,6 +326,27 @@ extension CatalogStore {
             try db.execute(sql: "ALTER TABLE media_asset RENAME COLUMN enrichment_claimed_until TO enrichment_claimed")
             try db.execute(sql: "UPDATE media_asset SET enrichment_claimed = NULL WHERE enrichment_claimed IS NOT NULL")
         }
+        // Identity remaps a settled reorganization committed and the window has not yet
+        // applied (ARC-052). Settlement inserts a batch in its own transaction; the window
+        // acknowledges by deleting it; loading the catalog clears batches a previous
+        // process left, because no window of that process remains to apply them.
+        migrator.registerMigration("v22_pending_identity_remap") { db in
+            try db.execute(sql: """
+            CREATE TABLE pending_identity_remap_batch (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                library_root_path TEXT NOT NULL
+            )
+            """)
+            try db.execute(sql: """
+            CREATE TABLE pending_identity_remap (
+                batch_id INTEGER NOT NULL REFERENCES pending_identity_remap_batch(id) ON DELETE CASCADE,
+                ordinal INTEGER NOT NULL,
+                old_relative_path TEXT NOT NULL,
+                new_relative_path TEXT NOT NULL,
+                PRIMARY KEY (batch_id, ordinal)
+            )
+            """)
+        }
         return migrator
     }
 

@@ -26,9 +26,46 @@ revisions.
 `MediaImportExecutor` owns import filesystem execution and recovery: staging,
 orphan-staging enumeration and deletion, byte transfer, exclusive publication, and
 optional source deletion. `ReorganizationExecutor` owns directory prerequisites,
-filesystem observations, and no-overwrite moves. `LibraryReorganizationRunner`
+filesystem observations, no-overwrite moves, and rollback. `LibraryReorganizationRunner`
 owns the reorganization use-case sequence and interprets durable journal phases at
 startup before Store starts saved-library scans.
+
+### A reorganization component happens whole or not at all
+
+Each dependency component is atomic against the library. A component that cannot
+finish — a destination taken, a folder that cannot be created, a refused move, a
+journal or settlement write that fails — is rolled back: every step it completed is
+moved back newest first, every folder it created is removed once empty, and its
+journal is deleted, so the library and the catalog are as they were before it. Only
+then is the root's lease released. The run stops at that component; components that
+settled before it stay settled, and later ones are never started.
+
+Releasing the lease over a half-moved component was rejected: the next scan would
+see moved files under new names and their catalog rows missing, purge those rows,
+and lose the overlay the reorganization was carrying across (ADR 0008). Settling
+the moved members alone was rejected too: a cycle's temporary hop would leave a
+`.otos-reorg-*` file in the user's library (ARC-031).
+
+A rollback that cannot put a file back (the original name was taken meanwhile)
+marks the component `blocked`, keeps its journal, and keeps the root under the
+lease. Startup recovery resumes every journal it finds — `prepared`/`moving` run
+forward and settle, `filesystemComplete` settles, `rollingBack`/`blocked` roll
+back — and a component that reaches an end state releases its lease. Any forward
+failure during recovery rolls back, exactly as in a run.
+
+### Identity remaps travel through the catalog
+
+Settlement writes the component's identity remaps as a `pending_identity_remap`
+batch in the same transaction that remaps the rows; the ordered-ID read that every
+window publication makes returns the pending batches from the same read transaction.
+A published state that shows a renamed identity therefore always carries the batch
+that renamed it, and the window applies each batch to selection, focus, compare pair
+and painted tiles before comparing the new order with the old, then acknowledges it,
+which deletes it. Returning batches from the run was rejected: a run that stopped
+partway dropped the batches it had settled, and a projection publication could reach
+the window before the run returned, pruning the selection and blanking tiles.
+Batches left by a previous process are cleared when the catalog loads; no window of
+that process remains to apply them.
 
 The import and reorganization journal files remain non-owning SQL/mapping helpers.
 They execute only inside Store-owned transactions and perform no filesystem work,

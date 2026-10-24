@@ -83,6 +83,19 @@ extension Logger {
         )
     }
 
+    /// Fault-level twin of `errorOperation`, for a state Otos cannot get out of by
+    /// itself (a reorganization rollback that could not restore a file).
+    nonisolated func faultOperation(_ operation: String, phase: String, fields: [String: String] = [:]) {
+        if fields.isEmpty {
+            fault("op=\(operation, privacy: .public) phase=\(phase, privacy: .public)")
+            return
+        }
+        let pairs = otosLogFields(fields)
+        fault(
+            "op=\(operation, privacy: .public) phase=\(phase, privacy: .public) \(pairs, privacy: .public)"
+        )
+    }
+
     /// Debug-level twin of `noticeOperation` for signals we accept losing (per-frame or
     /// per-asset chatter). Never use for a signal named in docs/requirements.md as a
     /// diagnostic contract — macOS does not persist `.debug` for a subsystem without an

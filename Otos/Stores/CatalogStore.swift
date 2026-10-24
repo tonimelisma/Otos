@@ -699,7 +699,7 @@ extension CatalogStore {
     func orderedAssetIDs(
         for descriptor: CatalogQueryDescriptor,
         availableLibraryPaths: Set<LibraryRootPath>
-    ) async throws -> (ids: [MediaAssetID], dayBuckets: [Date?]) {
+    ) async throws -> CatalogOrderedAssets {
         let scope = scopePredicate(selection: descriptor.scope, availableLibraryPaths: availableLibraryPaths)
         guard !scope.selectsNothing else {
             var fields = [
@@ -711,16 +711,24 @@ extension CatalogStore {
                 fields["pathRegistered"] = "\(roots[path] != nil)"
             }
             OtosLog.catalog.noticeOperation("catalog.store.query.order", phase: "selectsNothing", fields: fields)
-            return ([], [])
+            let pending = try await database().read { db in
+                try Self.fetchPendingIdentityRemapBatches(db: db)
+            }
+            return CatalogOrderedAssets(ids: [], dayBuckets: [], pendingIdentityRemaps: pending)
         }
 
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreOrderedAssetIDQuery")
         let dbWriter = try database()
+        // One read transaction: a row this read sees under a new identity always comes
+        // with the pending batch that renamed it (ARC-052).
         let timedRows = try await timedRead(dbWriter) { db in
-            try CatalogQueryGateway.fetchOrderedAssetIDRows(
-                descriptor: descriptor,
-                scope: scope,
-                db: db
+            try (
+                rows: CatalogQueryGateway.fetchOrderedAssetIDRows(
+                    descriptor: descriptor,
+                    scope: scope,
+                    db: db
+                ),
+                pending: Self.fetchPendingIdentityRemapBatches(db: db)
             )
         }
         OtosSignpost.persistence.endInterval("CatalogStoreOrderedAssetIDQuery", signpost)
@@ -731,11 +739,11 @@ extension CatalogStore {
         let groupsByDate = descriptor.sort.field == .bestDate
         var ids: [MediaAssetID] = []
         var dayBuckets: [Date?] = []
-        ids.reserveCapacity(timedRows.value.count)
+        ids.reserveCapacity(timedRows.value.rows.count)
         if groupsByDate {
-            dayBuckets.reserveCapacity(timedRows.value.count)
+            dayBuckets.reserveCapacity(timedRows.value.rows.count)
         }
-        for row in timedRows.value {
+        for row in timedRows.value.rows {
             guard let rootPath = validRootPathsByRowID[row.libraryRootID] else {
                 continue
             }
@@ -758,7 +766,7 @@ extension CatalogStore {
         OtosLog.catalog.notice(
             "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )
-        return (ids, dayBuckets)
+        return CatalogOrderedAssets(ids: ids, dayBuckets: dayBuckets, pendingIdentityRemaps: timedRows.value.pending)
     }
 
     func orderedAssetIDs(
@@ -1544,6 +1552,11 @@ extension CatalogStore {
             try Self.fetchCatalog(db)
         }
         try await clearAbandonedEnrichmentClaims(dbQueue)
+        // Remap batches a previous process settled had a window that no longer exists;
+        // no identity this process shows was ever under their old paths (ARC-052).
+        try await dbQueue.write { db in
+            try Self.deleteAllPendingIdentityRemapBatches(db: db)
+        }
         // Tests pause precisely at this real suspension boundary to prove that
         // concurrent mutation callers join this load. Production leaves the
         // hook nil and performs no additional work.
@@ -4694,10 +4707,79 @@ extension CatalogStore {
         }
     }
 
-    func settleReorganizationComponent(
+    /// A directory the component needed did not exist and the executor created it, so
+    /// a rollback may remove it again once it is empty.
+    func recordReorganizationDirectoryCreated(
         key: ReorganizationComponentKey,
-        remaps: [CatalogIdentityRemap]
-    ) async throws -> CatalogIdentityRemapBatch {
+        relativePath: MediaRelativePath
+    ) async throws {
+        let dbWriter = try database()
+        try Self.writeWithJournalDurability(dbWriter) { db in
+            try Self.updateDirectoryPhase(key: key, relativePath: relativePath, phase: .created, db: db)
+        }
+    }
+
+    /// The component will not finish: from here its completed steps are undone.
+    func recordReorganizationRollbackStart(key: ReorganizationComponentKey, nextStepIndex: Int) async throws {
+        let dbWriter = try database()
+        try Self.writeWithJournalDurability(dbWriter) { db in
+            try Self.updateComponentPhase(
+                key: key,
+                phase: .rollingBack,
+                nextStepIndex: nextStepIndex,
+                updatedAt: Date(),
+                db: db
+            )
+        }
+    }
+
+    /// One completed step was moved back: its member is at the step's source again.
+    func recordReorganizationStepRolledBack(
+        key: ReorganizationComponentKey,
+        step: ActiveReorganizationStep
+    ) async throws {
+        let dbWriter = try database()
+        try Self.writeWithJournalDurability(dbWriter) { db in
+            try Self.updateStepPhase(key: key, stepIndex: step.stepIndex, phase: .rolledBack, db: db)
+            try Self.updateMemberCurrentPath(
+                key: key,
+                memberIndex: step.memberIndex,
+                currentRelativePath: step.sourceRelativePath,
+                db: db
+            )
+        }
+    }
+
+    /// A rollback could not move a file back. The journal stays, so the next launch's
+    /// recovery tries the rollback again, and the root stays under the lease until then.
+    func recordReorganizationBlocked(key: ReorganizationComponentKey) async throws {
+        let dbWriter = try database()
+        try Self.writeWithJournalDurability(dbWriter) { db in
+            guard let component = try Self.fetchActiveReorganizationComponent(key: key, db: db) else {
+                throw CatalogStoreError.catalogUnavailable
+            }
+            try Self.updateComponentPhase(
+                key: key,
+                phase: .blocked,
+                nextStepIndex: component.nextStepIndex,
+                updatedAt: Date(),
+                db: db
+            )
+        }
+    }
+
+    /// Every step the component made was undone: the library is as it was before the
+    /// component, so its journal goes and no catalog row changes.
+    func discardRolledBackReorganizationComponent(key: ReorganizationComponentKey) async throws {
+        let dbWriter = try database()
+        try Self.writeWithJournalDurability(dbWriter) { db in
+            try Self.deleteActiveReorganizationComponent(key: key, db: db)
+        }
+    }
+
+    /// Remaps the catalog rows a component moved and records the remaps as a pending
+    /// batch for the window, in one transaction (ARC-051, ARC-052).
+    func settleReorganizationComponent(key: ReorganizationComponentKey) async throws {
         let dbWriter = try database()
         let component = try await dbWriter.read { db in
             try Self.fetchActiveReorganizationComponent(key: key, db: db)
@@ -4718,9 +4800,7 @@ extension CatalogStore {
             }
             return try Self.settleRelocationComponent(
                 rootRowID: rootRowID,
-                libraryRootPath: currentComponent.libraryRootPath,
                 component: currentComponent,
-                remaps: remaps,
                 db: db
             )
         }
@@ -4729,25 +4809,20 @@ extension CatalogStore {
         // planRevision, which the occupancy bump also advances.
         bumpNamespaceRevision(for: settled.libraryRootPath)
         Task { await self.drainDirtyReconcile(for: settled.libraryRootPath) }
-        let revision = planRevision(for: settled.libraryRootPath) ?? 0
         notifyCatalogChanged()
         OtosLog.catalog.notice(
-            "op=reorganization.settle phase=finish rootPath=\(settled.libraryRootPath.rawValue, privacy: .public) remapCount=\(settled.remaps.count, privacy: .public)"
-        )
-        return CatalogIdentityRemapBatch(
-            libraryRootPath: settled.libraryRootPath,
-            remaps: settled.remaps,
-            rootRevision: revision
+            "op=reorganization.settle phase=finish rootPath=\(settled.libraryRootPath.rawValue, privacy: .public) remapCount=\(settled.remaps.count, privacy: .public) batch=\(settled.id, privacy: .public)"
         )
     }
 
-    func discardCommittedReorganizationComponent(_ key: ReorganizationComponentKey) async throws {
+    /// The window applied these batches; they no longer travel with published states.
+    func acknowledgeIdentityRemaps(_ batchIDs: [Int64]) async throws {
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
-            guard try Self.fetchActiveReorganizationComponent(key: key, db: db)?.phase == .catalogCommitted else {
-                throw CatalogStoreError.catalogUnavailable
-            }
-            try Self.deleteActiveReorganizationComponent(key: key, db: db)
+        try await dbWriter.write { db in
+            try Self.deletePendingIdentityRemapBatches(ids: batchIDs, db: db)
         }
+        OtosLog.catalog.noticeOperation("reorganization.remapAcknowledged", phase: "finish", fields: [
+            "batches": batchIDs.map(String.init).joined(separator: ","),
+        ])
     }
 }

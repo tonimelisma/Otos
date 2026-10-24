@@ -24,8 +24,6 @@ struct MediaGridView: View {
     var contextMenu: () -> NSMenu? = { nil }
     /// Centers the grid on this asset after loupe/compare exit (fresh controller).
     var focusTargetID: MediaAssetID?
-    var identityRemapEpoch: UInt64 = 0
-    var identityRemapBatch: CatalogIdentityRemapBatch?
     var dismissedCameraBannerIdentities: Set<String> = []
     var onDismissCameraBanner: (CatalogDeviceConnectionBanner) -> Void = { _ in }
     @Environment(\.colorScheme) private var colorScheme
@@ -74,9 +72,7 @@ struct MediaGridView: View {
                         onMediaChoiceKey: onMediaChoiceKey,
                         onMediaChoice: onMediaChoice,
                         contextMenu: contextMenu,
-                        focusTargetID: focusTargetID,
-                        identityRemapEpoch: identityRemapEpoch,
-                        identityRemapBatch: identityRemapBatch
+                        focusTargetID: focusTargetID
                     )
                 }
             }

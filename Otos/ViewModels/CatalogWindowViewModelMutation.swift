@@ -121,6 +121,9 @@ extension CatalogWindowViewModel {
         case let .detachRemovableSource(identity, reason):
             await performDetachRemovableSource(identity, reason: reason, store: store)
             return nil
+        case let .acknowledgeIdentityRemaps(batchIDs):
+            await performAcknowledgeIdentityRemaps(batchIDs, store: store)
+            return nil
         }
     }
 }
@@ -344,6 +347,25 @@ private extension CatalogWindowViewModel {
                 "Catalog move library failed",
                 operation: "catalog.library.move",
                 fields: ["path": path.rawValue, "move": String(describing: move)],
+                error: error
+            )
+        }
+    }
+
+    /// A failed acknowledgement leaves the batches pending: they keep arriving with
+    /// published states, the window skips them as applied, and the next launch's load
+    /// clears them.
+    nonisolated static func performAcknowledgeIdentityRemaps(
+        _ batchIDs: [Int64],
+        store: CatalogStore
+    ) async {
+        do {
+            try await store.acknowledgeIdentityRemaps(batchIDs)
+        } catch {
+            await recordMutationError(
+                "Identity remap acknowledgement failed",
+                operation: "reorganization.remapAcknowledged",
+                fields: ["batches": batchIDs.map(String.init).joined(separator: ",")],
                 error: error
             )
         }

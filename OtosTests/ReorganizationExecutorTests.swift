@@ -214,30 +214,18 @@ struct ReorganizationSettlementTests {
         )
         try await store.prepareReorganizationComponent(component)
 
-        let remaps = [
-            CatalogIdentityRemap(
-                oldID: MediaAssetID(
-                    libraryRootPath: rootPath,
-                    relativePath: MediaRelativePath(rawValue: "a.jpg")
-                ),
-                newID: MediaAssetID(
-                    libraryRootPath: rootPath,
-                    relativePath: MediaRelativePath(rawValue: "b.jpg")
-                )
-            ),
-            CatalogIdentityRemap(
-                oldID: MediaAssetID(
-                    libraryRootPath: rootPath,
-                    relativePath: MediaRelativePath(rawValue: "b.jpg")
-                ),
-                newID: MediaAssetID(
-                    libraryRootPath: rootPath,
-                    relativePath: MediaRelativePath(rawValue: "a.jpg")
-                )
-            ),
-        ]
-        let batch = try await store.settleReorganizationComponent(key: key, remaps: remaps)
-        #expect(batch.remaps.count == 2)
+        try await store.settleReorganizationComponent(key: key)
+        let bID = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "b.jpg"))
+        let ordered = try await store.orderedAssetIDs(
+            for: CatalogQueryDescriptor(scope: .allMedia),
+            availableLibraryPaths: [rootPath]
+        )
+        let batch = try #require(ordered.pendingIdentityRemaps.first)
+        #expect(ordered.pendingIdentityRemaps.count == 1)
+        #expect(batch.remaps == [
+            CatalogIdentityRemap(oldID: aID, newID: bID),
+            CatalogIdentityRemap(oldID: bID, newID: aID),
+        ])
         #expect(try await store.activeReorganizationComponents().isEmpty)
 
         let state = try await catalogStoreTestState(store)
@@ -250,9 +238,17 @@ struct ReorganizationSettlementTests {
             ),
         ])
         #expect(remapped.values.first?.mediaChoice == .liked)
+
+        try await store.acknowledgeIdentityRemaps([batch.id])
+        let afterAcknowledgement = try await store.orderedAssetIDs(
+            for: CatalogQueryDescriptor(scope: .allMedia),
+            availableLibraryPaths: [rootPath]
+        )
+        #expect(afterAcknowledgement.pendingIdentityRemaps.isEmpty)
+        await store.shutdown()
     }
 
-    @Test func journalStepsBindCurrentPathNotFinal() {
+    @Test func journalStepsBindCurrentPathNotFinal() throws {
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
@@ -305,26 +301,11 @@ struct ReorganizationSettlementTests {
             MediaRelativePath(rawValue: "a.jpg"): (1, now),
             MediaRelativePath(rawValue: "b.jpg"): (1, now),
         ]
-        guard let journal = ReorganizationExecutor.makeJournalComponent(
+        let journal = try #require(ReorganizationExecutor.makeJournalComponent(
             plan: plan,
             plannerComponent: plan.components[0],
-            snapshot: ReorganizationPlanningSnapshot(
-                libraryRoot: root,
-                volumeIdentifier: "vol",
-                capabilities: .caseInsensitiveAPFS,
-                generation: 1,
-                rootRevision: 1,
-                policy: ImportPolicy.from(prefs),
-                calendar: .current,
-                timeZone: .current,
-                media: [],
-                knownForeignOccupants: []
-            ),
             factsByPath: facts
-        ) else {
-            Issue.record("journal build failed")
-            return
-        }
+        ))
         #expect(journal.steps.count == 2)
         // First step from b.jpg must bind member B (index of b.jpg source), not A whose final is b.jpg.
         let bIndex = journal.members.first { $0.logicalSourceRelativePath.rawValue == "b.jpg" }?.memberIndex
@@ -337,92 +318,157 @@ struct ReorganizationSettlementTests {
 
 struct ReorganizationExecutorMoveTests {
     @Test func executesSingleMoveAndMarksComplete() async throws {
+        let fixture = try await ExecutorFixture.make(files: ["old.jpg": [0x11, 0x22]])
+        let sourceInode = try fixture.inode("old.jpg")
+        let component = try fixture.component(
+            moves: [("old.jpg", "new.jpg")],
+            directories: []
+        )
+        try await fixture.store.prepareReorganizationComponent(component)
+
+        let outcome = await ReorganizationExecutor.executeComponent(component, rootURL: fixture.root, store: fixture.store)
+
+        #expect(outcome == .filesystemComplete)
+        let journal = try #require(try await fixture.store.activeReorganizationComponents().first)
+        #expect(journal.phase == .filesystemComplete)
+        #expect(journal.steps.map(\.phase) == [.didMove])
+        #expect(journal.members.map(\.currentRelativePath.rawValue) == ["new.jpg"])
+        #expect(!fixture.exists("old.jpg"))
+        #expect(try fixture.inode("new.jpg") == sourceInode)
+        await fixture.store.shutdown()
+    }
+
+    /// A component that cannot finish is undone: the step that moved is moved back, the
+    /// folder the component created is removed, the journal is deleted, and the foreign
+    /// file that stopped it is untouched.
+    @Test func aStoppedComponentRollsBackToTheLibraryItFound() async throws {
+        let fixture = try await ExecutorFixture.make(files: ["a.jpg": [0x01], "b.jpg": [0x02]])
+        try Data("foreign".utf8).write(to: fixture.root.appending(path: "taken.jpg"))
+        let component = try fixture.component(
+            moves: [("a.jpg", "2024/a.jpg"), ("b.jpg", "taken.jpg")],
+            directories: ["2024"]
+        )
+        try await fixture.store.prepareReorganizationComponent(component)
+
+        let outcome = await ReorganizationExecutor.executeComponent(component, rootURL: fixture.root, store: fixture.store)
+        #expect(outcome == .stopped(.destinationTaken(MediaRelativePath(rawValue: "taken.jpg"))))
+        #expect(fixture.exists("2024/a.jpg"))
+
+        let journal = try #require(try await fixture.store.activeReorganizationComponents().first)
+        let rollback = await ReorganizationExecutor.rollBackComponent(journal, rootURL: fixture.root, store: fixture.store)
+
+        #expect(rollback == .restored)
+        #expect(fixture.exists("a.jpg"))
+        #expect(fixture.exists("b.jpg"))
+        #expect(!fixture.exists("2024"))
+        #expect(try Data(contentsOf: fixture.root.appending(path: "taken.jpg")) == Data("foreign".utf8))
+        #expect(try await fixture.store.activeReorganizationComponents().isEmpty)
+        await fixture.store.shutdown()
+    }
+
+    /// A rollback that cannot put a file back keeps the journal, marked blocked, so the
+    /// next launch's recovery can try again.
+    @Test func aRollbackThatCannotRestoreAFileKeepsTheJournalBlocked() async throws {
+        let fixture = try await ExecutorFixture.make(files: ["a.jpg": [0x01]])
+        let component = try fixture.component(moves: [("a.jpg", "b.jpg")], directories: [])
+        try await fixture.store.prepareReorganizationComponent(component)
+        #expect(await ReorganizationExecutor.executeComponent(
+            component,
+            rootURL: fixture.root,
+            store: fixture.store
+        ) == .filesystemComplete)
+        // Something else takes the original name before the rollback runs.
+        try Data("newcomer".utf8).write(to: fixture.root.appending(path: "a.jpg"))
+
+        let journal = try #require(try await fixture.store.activeReorganizationComponents().first)
+        let rollback = await ReorganizationExecutor.rollBackComponent(journal, rootURL: fixture.root, store: fixture.store)
+
+        #expect(rollback == .stuck(.destinationTaken(MediaRelativePath(rawValue: "a.jpg"))))
+        #expect(try await fixture.store.activeReorganizationComponents().map(\.phase) == [.blocked])
+        #expect(fixture.exists("b.jpg"))
+        #expect(try Data(contentsOf: fixture.root.appending(path: "a.jpg")) == Data("newcomer".utf8))
+        await fixture.store.shutdown()
+    }
+}
+
+/// A real store over a temporary root whose files carry known sizes and modification
+/// dates, and journal components built from simple moves.
+private struct ExecutorFixture {
+    let store: CatalogStore
+    let root: URL
+    let rootPath: LibraryRootPath
+    let modified: Date
+
+    static func make(files: [String: [UInt8]]) async throws -> ExecutorFixture {
         let temp = try makeCatalogStoreTemporaryDirectory()
-        let source = temp.appending(path: "old.jpg")
+        let root = temp.appending(path: "Library", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let modified = Date(timeIntervalSince1970: 1_700_000_300)
-        try Data([0x11, 0x22]).write(to: source)
-        try FileManager.default.setAttributes(
-            [.modificationDate: modified],
-            ofItemAtPath: source.path
-        )
-        let sourceInode = try #require(
-            FileManager.default.attributesOfItem(atPath: source.path)[.systemFileNumber] as? NSNumber
-        )
-
-        let now = Date()
-        let key = ReorganizationComponentKey.make()
-        final class Counter: Sendable {
-            private let willMoveStorage = Mutex(0)
-            private let didMoveStorage = Mutex(0)
-            private let completeStorage = Mutex(0)
-
-            func bumpWillMove() {
-                willMoveStorage.withLock { $0 += 1 }
-            }
-
-            func bumpDidMove() {
-                didMoveStorage.withLock { $0 += 1 }
-            }
-
-            func bumpComplete() {
-                completeStorage.withLock { $0 += 1 }
-            }
-
-            var counts: (Int, Int, Int) {
-                (willMoveStorage.withLock { $0 }, didMoveStorage.withLock { $0 }, completeStorage.withLock { $0 })
-            }
+        for (name, bytes) in files {
+            let url = root.appending(path: name)
+            try Data(bytes).write(to: url)
+            try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
         }
-        let counter = Counter()
-        let component = ActiveReorganizationComponent(
-            componentKey: key,
-            libraryRootPath: LibraryRootPath(rawValue: temp.path),
+        let store = CatalogStore(location: .inMemory, filesystemWatcher: .noop)
+        try await store.start(scansSavedLibraries: false)
+        return ExecutorFixture(
+            store: store,
+            root: root,
+            rootPath: LibraryRootPath(rawValue: root.path),
+            modified: modified
+        )
+    }
+
+    func component(moves: [(String, String)], directories: [String]) throws -> ActiveReorganizationComponent {
+        let now = Date()
+        let sizes = try moves.map { move in
+            try #require(
+                FileManager.default.attributesOfItem(atPath: root.appending(path: move.0).path)[.size] as? NSNumber
+            ).int64Value
+        }
+        return ActiveReorganizationComponent(
+            componentKey: ReorganizationComponentKey.make(),
+            libraryRootPath: rootPath,
             planGeneration: 1,
             plannedRootRevision: 1,
             phase: .prepared,
             nextStepIndex: 0,
             createdAt: now,
             updatedAt: now,
-            members: [
+            members: moves.enumerated().map { index, move in
                 ActiveReorganizationMember(
-                    memberIndex: 0,
+                    memberIndex: index,
                     kind: .media,
-                    logicalSourceRelativePath: MediaRelativePath(rawValue: "old.jpg"),
-                    currentRelativePath: MediaRelativePath(rawValue: "old.jpg"),
-                    finalRelativePath: MediaRelativePath(rawValue: "new.jpg"),
-                    byteSize: 2,
+                    logicalSourceRelativePath: MediaRelativePath(rawValue: move.0),
+                    currentRelativePath: MediaRelativePath(rawValue: move.0),
+                    finalRelativePath: MediaRelativePath(rawValue: move.1),
+                    byteSize: sizes[index],
                     contentModifiedAt: modified
-                ),
-            ],
-            steps: [
+                )
+            },
+            steps: moves.enumerated().map { index, move in
                 ActiveReorganizationStep(
-                    stepIndex: 0,
-                    memberIndex: 0,
-                    sourceRelativePath: MediaRelativePath(rawValue: "old.jpg"),
-                    destinationRelativePath: MediaRelativePath(rawValue: "new.jpg"),
+                    stepIndex: index,
+                    memberIndex: index,
+                    sourceRelativePath: MediaRelativePath(rawValue: move.0),
+                    destinationRelativePath: MediaRelativePath(rawValue: move.1),
                     phase: .planned
-                ),
-            ],
-            directories: []
+                )
+            },
+            directories: directories.map {
+                ActiveReorganizationDirectory(relativePath: MediaRelativePath(rawValue: $0), phase: .planned)
+            }
         )
+    }
 
-        let outcome = await ReorganizationExecutor.executeComponent(
-            component: component,
-            rootURL: temp,
-            markWillMove: { _ in counter.bumpWillMove() },
-            markDidMove: { _, _ in counter.bumpDidMove() },
-            markFilesystemComplete: { counter.bumpComplete() },
-            shouldContinue: { true }
+    func exists(_ relative: String) -> Bool {
+        FileManager.default.fileExists(atPath: root.appending(path: relative).path)
+    }
+
+    func inode(_ relative: String) throws -> NSNumber {
+        try #require(
+            FileManager.default.attributesOfItem(atPath: root.appending(path: relative).path)[.systemFileNumber]
+                as? NSNumber
         )
-        #expect(outcome == .filesystemComplete(key))
-        let counts = counter.counts
-        #expect(counts.0 == 1)
-        #expect(counts.1 == 1)
-        #expect(counts.2 == 1)
-        #expect(FileManager.default.fileExists(atPath: temp.appending(path: "new.jpg").path))
-        #expect(!FileManager.default.fileExists(atPath: source.path))
-        let destinationURL = temp.appending(path: "new.jpg")
-        let destinationAttributes = try FileManager.default.attributesOfItem(atPath: destinationURL.path)
-        let destinationInode = try #require(destinationAttributes[.systemFileNumber] as? NSNumber)
-        #expect(destinationInode == sourceInode)
     }
 }

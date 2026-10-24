@@ -15,7 +15,6 @@ nonisolated enum ActiveReorganizationComponentPhase: String, Equatable, Sendable
     case prepared
     case moving
     case filesystemComplete
-    case catalogCommitted
     case rollingBack
     case blocked
 }
@@ -80,10 +79,17 @@ nonisolated struct CatalogIdentityRemap: Equatable, Sendable {
     let newID: MediaAssetID
 }
 
+/// The identity changes one settled reorganization component committed, waiting for the
+/// window to carry its selection, focus and painted tiles across them (ARC-052).
+///
+/// Written in the same transaction that remaps the catalog rows and read in the same
+/// transaction as the window's ordered IDs, so a published state that shows a new
+/// identity always carries the batch that created it. `id` is the durable row the
+/// window acknowledges once applied; acknowledging deletes it.
 nonisolated struct CatalogIdentityRemapBatch: Equatable, Sendable {
+    let id: Int64
     let libraryRootPath: LibraryRootPath
     let remaps: [CatalogIdentityRemap]
-    let rootRevision: UInt64
 }
 
 nonisolated enum RootNamespaceMutationOwner: String, Equatable, Sendable {
@@ -137,9 +143,76 @@ nonisolated enum ReorganizationRecoveryObservation: Equatable, Sendable {
     case ambiguousNeitherExists
 }
 
+/// Why a reorganization component stopped short of finishing. Each case names the
+/// path it stopped at; the user-facing wording lives in `ReorganizationOutcomePresentation`.
+nonisolated enum ReorganizationFault: Equatable, Sendable {
+    /// A durable journal or catalog transition could not be written.
+    case journalWrite
+    /// A folder a destination needs could not be created (a file holds its name, or
+    /// the volume refused).
+    case folderUnavailable(MediaRelativePath)
+    /// A file that is not part of this reorganization already holds a destination name.
+    case destinationTaken(MediaRelativePath)
+    /// The volume refused to move a file.
+    case moveRefused(MediaRelativePath)
+    /// A file changed while it was being moved, so whether its move happened is unknown.
+    case fileChanged(MediaRelativePath)
+    /// The catalog no longer describes a file the plan moves.
+    case libraryChanged
+
+    var logCode: String {
+        switch self {
+        case .journalWrite: "journalWrite"
+        case let .folderUnavailable(path): "folderUnavailable:\(path.rawValue)"
+        case let .destinationTaken(path): "destinationTaken:\(path.rawValue)"
+        case let .moveRefused(path): "moveRefused:\(path.rawValue)"
+        case let .fileChanged(path): "fileChanged:\(path.rawValue)"
+        case .libraryChanged: "libraryChanged"
+        }
+    }
+}
+
+/// Why a reorganization could not start. Nothing in the library changed.
+nonisolated enum ReorganizationUnavailability: Equatable, Sendable {
+    /// Another operation holds the library: an import, Move to Trash, or a reorganization.
+    case libraryBusy(RootNamespaceMutationOwner)
+    /// The library is no longer one of the user's libraries.
+    case libraryUnavailable
+    /// The catalog could not be read for this library.
+    case catalogUnreadable
+    /// The planner could not produce a consistent plan.
+    case planInconsistent
+}
+
+/// A run that started and stopped partway.
+nonisolated struct ReorganizationStop: Equatable, Sendable {
+    struct Progress: Equatable, Sendable {
+        /// Components that settled before the failing one; their files moved and the
+        /// catalog follows them.
+        let settledComponentCount: Int
+        let componentCount: Int
+        /// Items (media, not companions) in the settled components.
+        let relocatedCount: Int
+    }
+
+    let fault: ReorganizationFault
+    let progress: Progress
+    /// Whether the failing component was fully rolled back. When false its journal is
+    /// kept blocked, the library stays under the reorganization lease, and the next
+    /// launch's recovery retries the rollback.
+    let libraryRestored: Bool
+}
+
 nonisolated enum ReorganizationExecutionOutcome: Equatable, Sendable {
-    case filesystemComplete(ReorganizationComponentKey)
-    case blocked(reason: String)
-    case cancelled
-    case failed(reason: String)
+    /// Every step is done and the journal says so; the catalog is ready to settle.
+    case filesystemComplete
+    case stopped(ReorganizationFault)
+}
+
+nonisolated enum ReorganizationRollbackOutcome: Equatable, Sendable {
+    /// Every completed step was moved back and the journal deleted: the library is as
+    /// it was before the component.
+    case restored
+    /// A file could not be moved back. The journal is marked blocked and kept.
+    case stuck(ReorganizationFault)
 }

@@ -247,21 +247,25 @@ struct ContentView: View {
         }
         .confirmationDialog(
             "Reorganize Library?",
-            isPresented: $viewModel.showsReorganizationConfirmation,
-            titleVisibility: .visible
-        ) {
+            isPresented: Binding(
+                get: { viewModel.reorganizationConfirmation != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.cancelReorganizationConfirmation()
+                    }
+                }
+            ),
+            titleVisibility: .visible,
+            presenting: viewModel.reorganizationConfirmation
+        ) { _ in
             Button("Reorganize", role: .destructive) {
                 viewModel.confirmReorganization()
             }
             Button("Cancel", role: .cancel) {
                 viewModel.cancelReorganizationConfirmation()
             }
-        } message: {
-            if let summary = viewModel.reorganizationSummaryText {
-                Text(summary)
-            } else {
-                Text("Apply the current import naming policy to this library.")
-            }
+        } message: { confirmation in
+            Text(confirmation.summaryText)
         }
         .alert(
             "Reorganization",
@@ -310,8 +314,6 @@ struct ContentView: View {
                 },
                 contextMenu: viewModel.makeMediaItemContextMenu,
                 focusTargetID: viewModel.focusedAssetID,
-                identityRemapEpoch: viewModel.identityRemapEpoch,
-                identityRemapBatch: viewModel.identityRemapBatch,
                 dismissedCameraBannerIdentities: viewModel.dismissedCameraBannerIdentities,
                 onDismissCameraBanner: { viewModel.dismissCameraConnectionBanner($0.identity) }
             )
