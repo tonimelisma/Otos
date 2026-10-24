@@ -130,7 +130,21 @@ extension CatalogWindowViewModel {
         // Move to Trash waits for this Store mark rather than racing it.
         mediaTrashTask = Task { [weak self, store = catalogStore, coordinator] in
             let batch = MediaTrashBatchID()
-            let hidden = await (try? store.markPendingTrash(ids, batch: batch)) ?? []
+            let hidden: [MediaAssetID]
+            do {
+                hidden = try await store.markPendingTrash(ids, batch: batch)
+            } catch {
+                // Nothing was hidden or queued: the items stay where they are, with no
+                // undo for a move that did not happen.
+                OtosLog.ui.error(
+                    """
+                    op=trash.queue phase=failed batch=\(batch.unixMilliseconds, privacy: .public) \
+                    requested=\(ids.count, privacy: .public) error=\(String(describing: error), privacy: .public)
+                    """
+                )
+                self?.mediaTrashTask = nil
+                return
+            }
             await coordinator.start()
             coordinator.kick()
             guard let self else { return }

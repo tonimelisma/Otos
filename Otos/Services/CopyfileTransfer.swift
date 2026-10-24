@@ -13,9 +13,11 @@ nonisolated enum CopyfileTransfer {
         case failed(errno: Int32)
     }
 
+    /// The bytes `copyfile(3)` reports it has written so far — its own counter, read from
+    /// `COPYFILE_STATE_COPIED`. There is no total: the copy never states one, and a size
+    /// read separately can fail, so none is invented.
     struct Progress: Equatable, Sendable {
         let completedBytes: Int64
-        let totalBytes: Int64
     }
 
     static func copy(
@@ -52,8 +54,9 @@ nonisolated enum CopyfileTransfer {
             try? FileManager.default.removeItem(at: destination)
             return .failed(errno: code)
         }
-        let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
-        onProgress(Progress(completedBytes: size, totalBytes: size))
+        // The last progress callback can precede the final block; report the count
+        // copyfile ends on, so a completed copy's progress is its full length.
+        onProgress(Progress(completedBytes: copiedBytes(state)))
         return .completed
     }
 
@@ -75,11 +78,7 @@ nonisolated enum CopyfileTransfer {
                 return COPYFILE_QUIT
             }
             if what == COPYFILE_COPY_DATA, stage == COPYFILE_PROGRESS {
-                var copied: off_t = 0
-                _ = withUnsafeMutablePointer(to: &copied) { ptr in
-                    copyfile_state_get(state, UInt32(COPYFILE_STATE_COPIED), UnsafeMutableRawPointer(ptr))
-                }
-                context.onProgress(Progress(completedBytes: Int64(copied), totalBytes: Int64(copied)))
+                context.onProgress(Progress(completedBytes: copiedBytes(state)))
             }
             return COPYFILE_CONTINUE
         }
@@ -109,4 +108,14 @@ nonisolated enum CopyfileTransfer {
             self.shouldContinue = shouldContinue
         }
     }
+}
+
+/// The bytes `copyfile(3)` has written, from its own counter. File-level rather than a
+/// member so the C status callback can call it without capturing context.
+private nonisolated func copiedBytes(_ state: copyfile_state_t) -> Int64 {
+    var copied: off_t = 0
+    _ = withUnsafeMutablePointer(to: &copied) { pointer in
+        copyfile_state_get(state, UInt32(COPYFILE_STATE_COPIED), UnsafeMutableRawPointer(pointer))
+    }
+    return Int64(copied)
 }
