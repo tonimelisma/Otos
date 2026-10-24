@@ -55,7 +55,7 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
 }
 
 nonisolated struct CatalogDeviceConnectionBanner: Equatable {
-    let identity: String
+    let identity: DeviceIdentity
     let message: String
 }
 

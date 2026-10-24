@@ -918,7 +918,7 @@ struct EnrichmentCoordinatorTests {
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.attachDeviceMTP(
             stagingRootURL: URL(fileURLWithPath: "/tmp/RangedCameraRoute", isDirectory: true),
-            identity: "camera:ranged-route",
+            identity: .camera(id: "ranged-route"),
             displayName: "Camera"
         )
         let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
@@ -1072,7 +1072,7 @@ struct EnrichmentCoordinatorTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
         try await store.attachRemovableVolume(
             mountURL: removableRoot,
-            identity: "volume:hash-required-claim",
+            identity: .volume(uuid: "hash-required-claim"),
             displayName: "Card",
             isEjectable: false
         )

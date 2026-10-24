@@ -93,7 +93,7 @@ extension CatalogWindowViewModel {
         }
     }
 
-    private func detachCameraSession(_ identity: String) {
+    private func detachCameraSession(_ identity: DeviceIdentity) {
         deviceCatalogTasks.removeValue(forKey: identity)?.cancel()
         deviceStagingRegistry.unregister(identity: identity)
         submitCatalogMutation(.detachRemovableSource(identity, .disconnected))

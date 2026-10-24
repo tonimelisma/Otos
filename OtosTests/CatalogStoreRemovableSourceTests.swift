@@ -10,11 +10,11 @@ struct CatalogStoreRemovableSourceTests {
 
         try await store.attachRemovableVolume(
             mountURL: fixture.firstMount,
-            identity: "volume:test-card",
+            identity: .volume(uuid: "test-card"),
             displayName: "Card",
             isEjectable: true
         )
-        try await store.quiesceRemovableSource(identity: "volume:test-card")
+        try await store.quiesceRemovableSource(identity: .volume(uuid: "test-card"))
         let quiesced = try await catalogStoreTestState(store)
         #expect(quiesced.removableSources.first?.availability == .available)
     }
@@ -28,7 +28,7 @@ struct CatalogStoreRemovableSourceTests {
 
         try await store.attachRemovableVolume(
             mountURL: fixture.firstMount,
-            identity: "volume:test-card",
+            identity: .volume(uuid: "test-card"),
             displayName: "Card",
             isEjectable: true
         )
@@ -36,11 +36,11 @@ struct CatalogStoreRemovableSourceTests {
         _ = try await waitForSelectedRelativePaths(store, rootPath: cardPath, expected: ["card.jpg"])
         let cardID = MediaAssetID(libraryRootPath: cardPath, relativePath: MediaRelativePath(rawValue: "card.jpg"))
 
-        try await store.quiesceRemovableSource(identity: "volume:test-card")
+        try await store.quiesceRemovableSource(identity: .volume(uuid: "test-card"))
         let whileQuiesced = try await store.enrichmentCandidates(prioritizing: [cardID], limit: 10)
         #expect(!whileQuiesced.contains { $0.asset.id.libraryRootPath == cardPath })
 
-        try await store.resumeRemovableSource(identity: "volume:test-card")
+        try await store.resumeRemovableSource(identity: .volume(uuid: "test-card"))
         let afterResume = try await store.enrichmentCandidates(prioritizing: [cardID], limit: 10)
         #expect(afterResume.contains { $0.asset.id == cardID })
     }
@@ -53,7 +53,7 @@ struct CatalogStoreRemovableSourceTests {
         let store = fixture.store
         try await store.attachRemovableVolume(
             mountURL: fixture.firstMount,
-            identity: "volume:test-card",
+            identity: .volume(uuid: "test-card"),
             displayName: "Card",
             isEjectable: true
         )
@@ -82,7 +82,7 @@ struct CatalogStoreRemovableSourceTests {
 
         try await store.attachRemovableVolume(
             mountURL: fixture.firstMount,
-            identity: "volume:test-card",
+            identity: .volume(uuid: "test-card"),
             displayName: "Card",
             isEjectable: true
         )
@@ -95,7 +95,7 @@ struct CatalogStoreRemovableSourceTests {
         #expect(attached.removableSources.first?.isEjectable == true)
         #expect(attached.testAssets.map(\.relativePath.rawValue) == ["fixed.jpg"])
 
-        try await store.detachRemovableSource(identity: "volume:test-card", reason: .unmounted)
+        try await store.detachRemovableSource(identity: .volume(uuid: "test-card"), reason: .unmounted)
         let detached = try await waitForCatalogStoreState(store) { snapshot in
             snapshot.removableSources.first?.availability == .unavailable
         }
@@ -104,7 +104,7 @@ struct CatalogStoreRemovableSourceTests {
 
         try await store.attachRemovableVolume(
             mountURL: fixture.secondMount,
-            identity: "volume:test-card",
+            identity: .volume(uuid: "test-card"),
             displayName: "Card Renamed",
             isEjectable: false
         )
@@ -129,7 +129,7 @@ struct CatalogStoreRemovableSourceTests {
 
         let rootPath = try await store.attachDeviceMTP(
             stagingRootURL: stagingRoot,
-            identity: "camera:serial",
+            identity: .camera(id: "serial"),
             displayName: "Camera"
         )
         let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
@@ -170,7 +170,7 @@ struct CatalogStoreRemovableSourceTests {
         }
         #expect(complete.removableSources.first?.availability == .available)
 
-        try await store.detachRemovableSource(identity: "camera:serial", reason: .disconnected)
+        try await store.detachRemovableSource(identity: .camera(id: "serial"), reason: .disconnected)
         let detached = try await waitForCatalogStoreState(store) { snapshot in
             snapshot.removableSources.first?.availability == .unavailable
         }
@@ -192,7 +192,7 @@ struct CatalogStoreRemovableSourceTests {
 
         let rootPath = try await store.attachDeviceMTP(
             stagingRootURL: stagingRoot,
-            identity: "camera:serial",
+            identity: .camera(id: "serial"),
             displayName: "Camera"
         )
         let staleScan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
@@ -254,7 +254,7 @@ struct CatalogStoreRemovableSourceTests {
         try await store.addLibrary(url: fixedRoot)
         try await store.attachRemovableVolume(
             mountURL: cardRoot,
-            identity: "volume:card",
+            identity: .volume(uuid: "card"),
             displayName: "Card",
             isEjectable: true
         )

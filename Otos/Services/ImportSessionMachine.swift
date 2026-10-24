@@ -282,7 +282,7 @@ nonisolated struct ImportSessionMachine {
         let batch: ImportBatchID
         let plan: MediaOperationPlan
         let sourceKind: LibraryRootKind
-        let sourceDeviceIdentity: String?
+        let sourceDeviceIdentity: DeviceIdentity?
         let deleteSourceRequested: Bool
         let runID: String
     }

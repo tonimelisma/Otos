@@ -117,7 +117,7 @@ struct CatalogStoreEnrichmentClaimTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
         try await store.attachRemovableVolume(
             mountURL: removableRoot,
-            identity: "volume:claim-card",
+            identity: .volume(uuid: "claim-card"),
             displayName: "Card",
             isEjectable: false
         )

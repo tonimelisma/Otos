@@ -148,9 +148,9 @@ nonisolated enum CameraFileDate {
 final class CameraSourceMonitor: NSObject {
     private let browser = ICDeviceBrowser()
     private let onAttach: @MainActor @Sendable (DeviceCameraSession) -> Void
-    private let onDetach: @MainActor @Sendable (String) -> Void
-    private var sessionsByIdentity: [String: DeviceCameraSession] = [:]
-    private var identitiesByDevice: [ObjectIdentifier: String] = [:]
+    private let onDetach: @MainActor @Sendable (DeviceIdentity) -> Void
+    private var sessionsByIdentity: [DeviceIdentity: DeviceCameraSession] = [:]
+    private var identitiesByDevice: [ObjectIdentifier: DeviceIdentity] = [:]
     private var isStarted = false
     /// Browser reports in the order the browser made them; `browserLoop` is the one consumer.
     private let browserEvents: AsyncStream<BrowserEvent>.Continuation
@@ -163,7 +163,7 @@ final class CameraSourceMonitor: NSObject {
 
     init(
         onAttach: @escaping @MainActor @Sendable (DeviceCameraSession) -> Void,
-        onDetach: @escaping @MainActor @Sendable (String) -> Void
+        onDetach: @escaping @MainActor @Sendable (DeviceIdentity) -> Void
     ) {
         self.onAttach = onAttach
         self.onDetach = onDetach
@@ -242,17 +242,17 @@ final class CameraSourceMonitor: NSObject {
         onDetach(identity)
     }
 
-    private nonisolated static func identity(for device: ICCameraDevice) -> String {
+    private nonisolated static func identity(for device: ICCameraDevice) -> DeviceIdentity {
         let rawIdentity = firstNonEmpty(
             device.persistentIDString,
             device.serialNumberString,
             device.uuidString
         )
         if let rawIdentity {
-            return "camera:\(rawIdentity)"
+            return .camera(id: rawIdentity)
         }
         let display = firstNonEmpty(device.name, device.locationDescription) ?? "connected-camera"
-        return "camera:transient:\(sanitize(display))"
+        return .camera(name: sanitize(display))
     }
 
     private nonisolated static func firstNonEmpty(_ values: String?...) -> String? {
@@ -319,7 +319,7 @@ extension CameraSourceMonitor: ICDeviceBrowserDelegate {
 
 @MainActor
 final class DeviceCameraSession: NSObject {
-    let identity: String
+    let identity: DeviceIdentity
     let displayName: String
     let stagingRootURL: URL
 
@@ -376,7 +376,7 @@ final class DeviceCameraSession: NSObject {
         case catalogComplete
     }
 
-    init(identity: String, displayName: String, device: ICCameraDevice) {
+    init(identity: DeviceIdentity, displayName: String, device: ICCameraDevice) {
         self.identity = identity
         self.displayName = displayName
         self.device = device
@@ -419,14 +419,14 @@ final class DeviceCameraSession: NSObject {
     func catalogSnapshot() async throws -> DeviceCameraCatalogSnapshot {
         let started = ContinuousClock().now
         OtosLog.fileAccess.noticeOperation("camera.enumerate", phase: "start", fields: [
-            "identity": identity,
+            "identity": identity.rawValue,
         ])
         try await openAndWaitForCatalogReady()
         let isStable = await waitForCatalogStability(timeout: Self.catalogSettleLimit)
         let items = currentCatalogItems()
         let elapsedMs = DiagnosticsTiming.milliseconds(from: started, to: .now)
         OtosLog.fileAccess.noticeOperation("camera.enumerate", phase: "finish", fields: [
-            "identity": identity,
+            "identity": identity.rawValue,
             "count": "\(items.count)",
             "elapsedMs": "\(elapsedMs)",
             "isStable": "\(isStable)",
@@ -732,7 +732,7 @@ final class DeviceCameraSession: NSObject {
 
     private func logRevalidateMiss(relativePath: MediaRelativePath, validation: SourceValidation) {
         OtosLog.fileAccess.noticeOperation("camera.revalidate", phase: "miss", fields: [
-            "identity": identity,
+            "identity": identity.rawValue,
             "relativePath": relativePath.rawValue,
             "reason": String(describing: validation),
         ])
@@ -908,14 +908,14 @@ final class DeviceCameraSession: NSObject {
             sessionOpenResult = .failure(DeviceCameraSessionError.disconnected)
             resolveWaiters(condition: .open, result: .failure(DeviceCameraSessionError.disconnected))
             OtosLog.fileAccess.errorOperation("camera.session", phase: "openFailed", fields: [
-                "identity": identity,
+                "identity": identity.rawValue,
                 "error": frameworkErrorDescription,
             ])
         } else {
             sessionOpenResult = .success(())
             resolveWaiters(condition: .open, result: .success(()))
             OtosLog.fileAccess.noticeOperation("camera.session", phase: "open", fields: [
-                "identity": identity,
+                "identity": identity.rawValue,
             ])
         }
     }
@@ -926,7 +926,7 @@ final class DeviceCameraSession: NSObject {
     private func applySessionClosed() {
         failAllWaiters(DeviceCameraSessionError.disconnected)
         OtosLog.fileAccess.noticeOperation("camera.session", phase: "close", fields: [
-            "identity": identity,
+            "identity": identity.rawValue,
         ])
     }
 
@@ -969,7 +969,7 @@ final class DeviceCameraSession: NSObject {
             }
             if previous != nil {
                 OtosLog.fileAccess.noticeOperation("camera.enumerate", phase: "batch", fields: [
-                    "identity": identity,
+                    "identity": identity.rawValue,
                     "count": "\(sample.1)",
                 ])
             }

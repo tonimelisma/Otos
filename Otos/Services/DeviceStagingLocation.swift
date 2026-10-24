@@ -62,9 +62,9 @@ nonisolated enum DeviceStagingLocation {
     }
 
     /// Where one camera's bytes go. Stable across launches for the same camera.
-    static func sessionRootURL(identity: String, inContainer container: URL = containerURL()) -> URL {
+    static func sessionRootURL(identity: DeviceIdentity, inContainer container: URL = containerURL()) -> URL {
         let root = container
-            .appending(path: CameraSourceMonitor.sanitize(identity), directoryHint: .isDirectory)
+            .appending(path: CameraSourceMonitor.sanitize(identity.rawValue), directoryHint: .isDirectory)
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
         var mutableRoot = root
@@ -78,7 +78,7 @@ nonisolated enum DeviceStagingLocation {
     /// that staging cannot be used. Returning early rather than throwing keeps attach working
     /// in the pathological case of two instances sharing a camera.
     @discardableResult
-    static func claimOwnership(identity: String, inContainer container: URL = containerURL()) -> Bool {
+    static func claimOwnership(identity: DeviceIdentity, inContainer container: URL = containerURL()) -> Bool {
         let root = sessionRootURL(identity: identity, inContainer: container)
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let marker = root.appending(path: ownerMarkerName, directoryHint: .notDirectory)

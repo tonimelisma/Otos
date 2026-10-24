@@ -6,7 +6,7 @@ import OSLog
 /// scripts one, because a session cannot be made without a connected `ICCameraDevice`.
 @MainActor
 protocol CameraCatalogSource: AnyObject {
-    var identity: String { get }
+    var identity: DeviceIdentity { get }
     var displayName: String { get }
     var stagingRootURL: URL { get }
     /// Rings when the camera reports items added or removed after its catalog is
@@ -67,7 +67,7 @@ final class CameraCatalogSync {
             )
         } catch {
             OtosLog.catalog.errorOperation("catalog.device.scan", phase: "attachFailed", fields: [
-                "identity": source.identity,
+                "identity": source.identity.rawValue,
                 "error": String(describing: error),
             ])
             return
@@ -133,7 +133,7 @@ final class CameraCatalogSync {
                 )
             }
             OtosLog.catalog.noticeOperation("catalog.device.sync", phase: "pass", fields: [
-                "identity": identity,
+                "identity": identity.rawValue,
                 "pass": "\(progress.number)",
                 "count": "\(items.count)",
                 "added": "\(added.count)",
@@ -231,7 +231,7 @@ final class CameraCatalogSync {
             try await store.applyProvisionalThumbnails(thumbnailsByID)
         } catch {
             OtosLog.thumbnails.errorOperation("camera.thumbnail", phase: "recordFailed", fields: [
-                "identity": source.identity,
+                "identity": source.identity.rawValue,
                 "count": "\(thumbnailsByID.count)",
                 "error": String(describing: error),
             ])

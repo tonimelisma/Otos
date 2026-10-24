@@ -101,7 +101,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:detach-build",
+            identity: .volume(uuid: "detach-build"),
             displayName: "Card",
             isEjectable: true
         )
@@ -122,7 +122,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await waitForPendingBuilder(builder, source: cardPath)
 
         // Detach while build is suspended.
-        try await store.detachRemovableSource(identity: "volume:detach-build", reason: .ejected)
+        try await store.detachRemovableSource(identity: .volume(uuid: "detach-build"), reason: .ejected)
         _ = try await waitForCatalogStoreState(store) { snap in
             !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
         }
@@ -153,7 +153,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:prefs-mid-build",
+            identity: .volume(uuid: "prefs-mid-build"),
             displayName: "Card",
             isEjectable: true
         )
@@ -198,7 +198,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:reattach-A",
+            identity: .volume(uuid: "reattach-A"),
             displayName: "Card",
             isEjectable: true
         )
@@ -219,7 +219,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await waitForPendingBuilder(builder, source: cardPath)
 
         // Detach A while its build is suspended.
-        try await store.detachRemovableSource(identity: "volume:reattach-A", reason: .ejected)
+        try await store.detachRemovableSource(identity: .volume(uuid: "reattach-A"), reason: .ejected)
         _ = try await waitForCatalogStoreState(store) { snap in
             !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
         }
@@ -229,7 +229,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await builder.suspendNextBuild(for: cardPath)
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:reattach-B",
+            identity: .volume(uuid: "reattach-B"),
             displayName: "Card",
             isEjectable: true
         )
@@ -266,7 +266,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:clear-new",
+            identity: .volume(uuid: "clear-new"),
             displayName: "Card",
             isEjectable: true
         )
@@ -288,7 +288,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         // Simulate rapid detach/reattach while old build still pending, then detach new build while still pending and
         // ensure it stays cancelled.
-        try await store.detachRemovableSource(identity: "volume:clear-new", reason: .ejected)
+        try await store.detachRemovableSource(identity: .volume(uuid: "clear-new"), reason: .ejected)
         _ = try await waitForCatalogStoreState(store) { snap in
             !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
         }
@@ -296,7 +296,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await builder.suspendNextBuild(for: cardPath)
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:clear-new-B",
+            identity: .volume(uuid: "clear-new-B"),
             displayName: "Card",
             isEjectable: true
         )
@@ -305,7 +305,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         }
         try await waitForPendingBuilder(builder, source: cardPath)
         // Detach B while its build is still suspended — it should be cancelled.
-        try await store.detachRemovableSource(identity: "volume:clear-new-B", reason: .ejected)
+        try await store.detachRemovableSource(identity: .volume(uuid: "clear-new-B"), reason: .ejected)
         _ = try await waitForCatalogStoreState(store) { snap in
             !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
         }
@@ -338,7 +338,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardAURL,
-            identity: "volume:claim-detach-A",
+            identity: .volume(uuid: "claim-detach-A"),
             displayName: "CardA",
             isEjectable: true
         )
@@ -357,7 +357,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let planA = try await waitForReady(coordinator, source: cardAPath)
         #expect(planA.entries.first?.destination?.rawValue == "shared.jpg")
         // Detach A
-        try await store.detachRemovableSource(identity: "volume:claim-detach-A", reason: .ejected)
+        try await store.detachRemovableSource(identity: .volume(uuid: "claim-detach-A"), reason: .ejected)
         _ = try await waitForCatalogStoreState(store) { snap in
             !snap.removableSources.contains { $0.path == cardAPath && $0.availability == .available }
         }
@@ -369,7 +369,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try Data(repeating: 6, count: 1024).write(to: cardBURL.appending(path: "shared.jpg"))
         try await store.attachRemovableVolume(
             mountURL: cardBURL,
-            identity: "volume:claim-detach-B",
+            identity: .volume(uuid: "claim-detach-B"),
             displayName: "CardB",
             isEjectable: true
         )
@@ -406,14 +406,14 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardAURL,
-            identity: "volume:cancel-A",
+            identity: .volume(uuid: "cancel-A"),
             displayName: "CardA",
             isEjectable: true
         )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         try await store.attachRemovableVolume(
             mountURL: cardBURL,
-            identity: "volume:cancel-B",
+            identity: .volume(uuid: "cancel-B"),
             displayName: "CardB",
             isEjectable: true
         )
@@ -510,14 +510,14 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardAURL,
-            identity: "volume:fail-A",
+            identity: .volume(uuid: "fail-A"),
             displayName: "CardA",
             isEjectable: true
         )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         try await store.attachRemovableVolume(
             mountURL: cardBURL,
-            identity: "volume:fail-B",
+            identity: .volume(uuid: "fail-B"),
             displayName: "CardB",
             isEjectable: true
         )
@@ -596,14 +596,14 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardAURL,
-            identity: "volume:ledger-A",
+            identity: .volume(uuid: "ledger-A"),
             displayName: "CardA",
             isEjectable: true
         )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         try await store.attachRemovableVolume(
             mountURL: cardBURL,
-            identity: "volume:ledger-B",
+            identity: .volume(uuid: "ledger-B"),
             displayName: "CardB",
             isEjectable: true
         )
@@ -672,7 +672,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardAURL,
-            identity: "volume:settle-A",
+            identity: .volume(uuid: "settle-A"),
             displayName: "CardA",
             isEjectable: true
         )
@@ -702,7 +702,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         // against the real destination file rather than racing two initial claims.
         try await store.attachRemovableVolume(
             mountURL: cardBURL,
-            identity: "volume:settle-B",
+            identity: .volume(uuid: "settle-B"),
             displayName: "CardB",
             isEjectable: true
         )
@@ -741,7 +741,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:detach-exec",
+            identity: .volume(uuid: "detach-exec"),
             displayName: "Card",
             isEjectable: true
         )
@@ -769,7 +769,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await waitForPendingExecution(execControl, source: cardPath)
 
         // Detach while executing
-        try await store.detachRemovableSource(identity: "volume:detach-exec", reason: .ejected)
+        try await store.detachRemovableSource(identity: .volume(uuid: "detach-exec"), reason: .ejected)
         _ = try await waitForCatalogStoreState(store) { snap in
             !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
         }
@@ -804,7 +804,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:batch-id",
+            identity: .volume(uuid: "batch-id"),
             displayName: "Card",
             isEjectable: true
         )
@@ -884,7 +884,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:live-progress",
+            identity: .volume(uuid: "live-progress"),
             displayName: "Card",
             isEjectable: true
         )
@@ -979,7 +979,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:gone-snapshot",
+            identity: .volume(uuid: "gone-snapshot"),
             displayName: "Card",
             isEjectable: true
         )
@@ -1014,7 +1014,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         _ = try await waitForPresentation(coordinator, source: cardPath) { $0.copiedJustNow != nil }
 
-        try await store.detachRemovableSource(identity: "volume:gone-snapshot", reason: .ejected)
+        try await store.detachRemovableSource(identity: .volume(uuid: "gone-snapshot"), reason: .ejected)
         _ = try await waitForCatalogStoreState(store) { snap in
             !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
         }
@@ -1043,7 +1043,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:failed-stays",
+            identity: .volume(uuid: "failed-stays"),
             displayName: "Card",
             isEjectable: true
         )
@@ -1109,7 +1109,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:try-again",
+            identity: .volume(uuid: "try-again"),
             displayName: "Card",
             isEjectable: true
         )
@@ -1175,7 +1175,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:unreadable-defer",
+            identity: .volume(uuid: "unreadable-defer"),
             displayName: "Card",
             isEjectable: true
         )
@@ -1250,7 +1250,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:unreadable-persist",
+            identity: .volume(uuid: "unreadable-persist"),
             displayName: "Card",
             isEjectable: true
         )
@@ -1318,7 +1318,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:settlement-window",
+            identity: .volume(uuid: "settlement-window"),
             displayName: "Card",
             isEjectable: true
         )
@@ -1395,7 +1395,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:completion-scope",
+            identity: .volume(uuid: "completion-scope"),
             displayName: "Card",
             isEjectable: true
         )
@@ -1466,7 +1466,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:space-advisory",
+            identity: .volume(uuid: "space-advisory"),
             displayName: "Card",
             isEjectable: true
         )
@@ -1522,7 +1522,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:stopped-run",
+            identity: .volume(uuid: "stopped-run"),
             displayName: "Card",
             isEjectable: true
         )
@@ -1590,7 +1590,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:disk-floor",
+            identity: .volume(uuid: "disk-floor"),
             displayName: "Card",
             isEjectable: true
         )
@@ -1689,7 +1689,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:executing-reorder",
+            identity: .volume(uuid: "executing-reorder"),
             displayName: "Card",
             isEjectable: true
         )
@@ -1771,14 +1771,14 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardAURL,
-            identity: "volume:shutdown-A",
+            identity: .volume(uuid: "shutdown-A"),
             displayName: "CardA",
             isEjectable: true
         )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         try await store.attachRemovableVolume(
             mountURL: cardBURL,
-            identity: "volume:shutdown-B",
+            identity: .volume(uuid: "shutdown-B"),
             displayName: "CardB",
             isEjectable: true
         )
@@ -1847,7 +1847,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:repeat-import",
+            identity: .volume(uuid: "repeat-import"),
             displayName: "Card",
             isEjectable: true
         )
@@ -1914,7 +1914,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         try await store.attachRemovableVolume(
-            mountURL: cardURL, identity: "volume:c2-count-hold", displayName: "Card", isEjectable: true
+            mountURL: cardURL, identity: .volume(uuid: "c2-count-hold"), displayName: "Card", isEjectable: true
         )
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
@@ -1987,7 +1987,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:gains-files-after-import",
+            identity: .volume(uuid: "gains-files-after-import"),
             displayName: "Card",
             isEjectable: true
         )
@@ -2072,7 +2072,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.addLibrary(url: destURL)
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:metadata-wake-adversarial",
+            identity: .volume(uuid: "metadata-wake-adversarial"),
             displayName: "Card",
             isEjectable: true
         )
@@ -2153,7 +2153,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:zero-copy-no-delete",
+            identity: .volume(uuid: "zero-copy-no-delete"),
             displayName: "Card",
             isEjectable: true
         )
@@ -2219,7 +2219,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:zero-copy-delete",
+            identity: .volume(uuid: "zero-copy-delete"),
             displayName: "Card",
             isEjectable: true
         )
@@ -2273,7 +2273,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         let rootPath = try await store.attachDeviceMTP(
             stagingRootURL: stagingRoot,
-            identity: "camera:replan-adversarial",
+            identity: .camera(id: "replan-adversarial"),
             displayName: "Camera"
         )
 
@@ -2331,7 +2331,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         let rootPath = try await store.attachDeviceMTP(
             stagingRootURL: stagingRoot,
-            identity: "camera:readiness-gate-adversarial",
+            identity: .camera(id: "readiness-gate-adversarial"),
             displayName: "Camera"
         )
 

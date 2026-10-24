@@ -24,7 +24,7 @@ struct MediaGridView: View {
     var contextMenu: () -> NSMenu? = { nil }
     /// Centers the grid on this asset after loupe/compare exit (fresh controller).
     var focusTargetID: MediaAssetID?
-    var dismissedCameraBannerIdentities: Set<String> = []
+    var dismissedCameraBannerIdentities: Set<DeviceIdentity> = []
     var onDismissCameraBanner: (CatalogDeviceConnectionBanner) -> Void = { _ in }
     @Environment(\.colorScheme) private var colorScheme
 

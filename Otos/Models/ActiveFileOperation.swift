@@ -31,7 +31,7 @@ nonisolated struct ActiveFileOperationKey: Hashable, Sendable {
 nonisolated struct ActiveFileOperation: Equatable, Sendable {
     let operationKey: ActiveFileOperationKey
     let sourceKind: LibraryRootKind
-    let sourceDeviceIdentity: String?
+    let sourceDeviceIdentity: DeviceIdentity?
     let sourceRootPath: LibraryRootPath
     let sourceRelativePath: MediaRelativePath
     let destinationRootPath: LibraryRootPath
@@ -65,7 +65,7 @@ nonisolated struct ActiveSourceEraseKey: Hashable, Sendable {
 nonisolated struct ActiveSourceEraseOperation: Equatable, Sendable {
     let key: ActiveSourceEraseKey
     let sourceKind: LibraryRootKind
-    let sourceDeviceIdentity: String?
+    let sourceDeviceIdentity: DeviceIdentity?
     let sourceRootPath: LibraryRootPath
     let sourceRelativePath: MediaRelativePath
     let sourceByteSize: Int64?

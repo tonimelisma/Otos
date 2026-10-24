@@ -41,7 +41,7 @@ struct ImportPlanningNamingFactsTests {
         try await store.addLibrary(url: destinationURL)
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:naming-facts",
+            identity: .volume(uuid: "naming-facts"),
             displayName: "Card",
             isEjectable: true
         )
@@ -141,7 +141,7 @@ struct ImportPlanningNamingFactsTests {
         try await store.addLibrary(url: destinationURL)
         try await store.attachRemovableVolume(
             mountURL: cardURL,
-            identity: "volume:naming-facts-mtime",
+            identity: .volume(uuid: "naming-facts-mtime"),
             displayName: "Card",
             isEjectable: true
         )

@@ -23,12 +23,12 @@ struct SidebarSelectionPolicyTests {
     @Test func defaultSelectionPrefersConnectedRemovable() {
         let older = removableSource(
             path: "/Volumes/OLD",
-            identity: "volume:old",
+            identity: .volume(uuid: "old"),
             lastSeenAt: Date(timeIntervalSince1970: 1)
         )
         let newer = removableSource(
             path: "/Volumes/NEW",
-            identity: "volume:new",
+            identity: .volume(uuid: "new"),
             lastSeenAt: Date(timeIntervalSince1970: 2)
         )
         let selection = SidebarSelectionPolicy.defaultSelection(
@@ -55,7 +55,7 @@ struct SidebarSelectionPolicyTests {
     }
 
     @Test func selectionOnSelectedSourceRemovedMatchesDefault() {
-        let card = removableSource(path: "/Volumes/CARD", identity: "volume:card")
+        let card = removableSource(path: "/Volumes/CARD", identity: .volume(uuid: "card"))
         let removed = SidebarSelectionPolicy.selectionOnSelectedSourceRemoved(
             libraries: [pictures],
             removableSources: [card]
@@ -68,8 +68,8 @@ struct SidebarSelectionPolicyTests {
     }
 
     @Test func sidebarVisibleRemovableSourcesFiltersUnavailable() {
-        let available = removableSource(path: "/Volumes/CARD", identity: "volume:card")
-        var unavailable = removableSource(path: "/Volumes/GONE", identity: "volume:gone")
+        let available = removableSource(path: "/Volumes/CARD", identity: .volume(uuid: "card"))
+        var unavailable = removableSource(path: "/Volumes/GONE", identity: .volume(uuid: "gone"))
         unavailable = CatalogLibraryState(
             root: unavailable.root,
             availability: .unavailable,
@@ -83,15 +83,15 @@ struct SidebarSelectionPolicyTests {
     // MARK: - Selection on attach (APP-002)
 
     @Test func selectionOnAttachSelectsANewlyAttachedCard() {
-        let card = removableSource(path: "/Volumes/CARD", identity: "volume:card", attachmentGeneration: 1)
+        let card = removableSource(path: "/Volumes/CARD", identity: .volume(uuid: "card"), attachmentGeneration: 1)
         #expect(SidebarSelectionPolicy.selectionOnAttach(previous: [], next: [card]) == .library(card.path))
     }
 
     @Test func selectionOnAttachSelectsAReinsertedCardAgain() {
         let detached = removableSource(
-            path: "/Volumes/CARD", identity: "volume:card", availability: .unavailable, attachmentGeneration: 1
+            path: "/Volumes/CARD", identity: .volume(uuid: "card"), availability: .unavailable, attachmentGeneration: 1
         )
-        let reinserted = removableSource(path: "/Volumes/CARD", identity: "volume:card", attachmentGeneration: 2)
+        let reinserted = removableSource(path: "/Volumes/CARD", identity: .volume(uuid: "card"), attachmentGeneration: 2)
         let selection = SidebarSelectionPolicy.selectionOnAttach(previous: [detached], next: [reinserted])
         #expect(selection == .library(reinserted.path))
     }
@@ -100,28 +100,28 @@ struct SidebarSelectionPolicyTests {
     /// Store's proof that a mount happened, so a flap never moves the user again.
     @Test func selectionOnAttachIgnoresASourceWhoseAttachmentIsUnchanged() {
         let flapped = removableSource(
-            path: "/Volumes/CARD", identity: "volume:card", availability: .unavailable, attachmentGeneration: 1
+            path: "/Volumes/CARD", identity: .volume(uuid: "card"), availability: .unavailable, attachmentGeneration: 1
         )
-        let card = removableSource(path: "/Volumes/CARD", identity: "volume:card", attachmentGeneration: 1)
+        let card = removableSource(path: "/Volumes/CARD", identity: .volume(uuid: "card"), attachmentGeneration: 1)
         #expect(SidebarSelectionPolicy.selectionOnAttach(previous: [card], next: [card]) == nil)
         #expect(SidebarSelectionPolicy.selectionOnAttach(previous: [flapped], next: [card]) == nil)
     }
 
     @Test func selectionOnAttachIgnoresSourcesThatAreNotConnectedOrNeverAttached() {
-        let unattached = removableSource(path: "/Volumes/OLD", identity: "volume:old")
+        let unattached = removableSource(path: "/Volumes/OLD", identity: .volume(uuid: "old"))
         let unavailable = removableSource(
-            path: "/Volumes/GONE", identity: "volume:gone", availability: .unavailable, attachmentGeneration: 3
+            path: "/Volumes/GONE", identity: .volume(uuid: "gone"), availability: .unavailable, attachmentGeneration: 3
         )
         #expect(SidebarSelectionPolicy.selectionOnAttach(previous: [], next: [unattached, unavailable]) == nil)
     }
 
     @Test func selectionOnAttachPrefersTheMostRecentlyAttached() {
         let older = removableSource(
-            path: "/Volumes/OLD", identity: "volume:old", lastSeenAt: Date(timeIntervalSince1970: 1),
+            path: "/Volumes/OLD", identity: .volume(uuid: "old"), lastSeenAt: Date(timeIntervalSince1970: 1),
             attachmentGeneration: 1
         )
         let newer = removableSource(
-            path: "/Volumes/NEW", identity: "volume:new", lastSeenAt: Date(timeIntervalSince1970: 2),
+            path: "/Volumes/NEW", identity: .volume(uuid: "new"), lastSeenAt: Date(timeIntervalSince1970: 2),
             attachmentGeneration: 1
         )
         #expect(SidebarSelectionPolicy.selectionOnAttach(previous: [], next: [older, newer]) == .library(newer.path))
@@ -129,7 +129,7 @@ struct SidebarSelectionPolicyTests {
 
     private func removableSource(
         path: String,
-        identity: String,
+        identity: DeviceIdentity,
         lastSeenAt: Date = Date(),
         availability: LibraryAvailability = .available,
         attachmentGeneration: UInt64 = 0
