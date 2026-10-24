@@ -4252,46 +4252,6 @@ extension CatalogStore {
         }
     }
 
-    /// Whether any operational journal still claims work: import or reorganization.
-    /// This is the durable truth the app and `script/smoke-run.sh` must never
-    /// kill through — `log show` windows, daemon drops, and reboots can hide
-    /// the in-memory intent, but the journal row survives and drives recovery.
-    func hasActiveOperationalWork() async throws -> Bool {
-        let dbWriter = try database()
-        return try await dbWriter.read { db in
-            if try Int.fetchOne(db, sql: "SELECT 1 FROM active_file_operation LIMIT 1") != nil {
-                return true
-            }
-            return try Int.fetchOne(
-                db,
-                sql: "SELECT 1 FROM active_reorganization_component LIMIT 1"
-            ) != nil
-        }
-    }
-
-    func activeOperationalRootPaths() async throws -> Set<LibraryRootPath> {
-        let dbWriter = try database()
-        return try await dbWriter.read { db in
-            let rows = try Row.fetchAll(
-                db,
-                sql: """
-                SELECT source_root_path AS root_path FROM active_file_operation
-                UNION
-                SELECT destination_root_path AS root_path FROM active_file_operation
-                UNION
-                SELECT library_root_path AS root_path FROM active_reorganization_component
-                """
-            )
-            var result: Set<LibraryRootPath> = []
-            for row in rows {
-                if let path: String = row["root_path"] {
-                    result.insert(LibraryRootPath(rawValue: path))
-                }
-            }
-            return result
-        }
-    }
-
     func activeImportOperations() async throws -> [ActiveFileOperation] {
         let dbWriter = try database()
         return try await dbWriter.read { db in
@@ -4313,7 +4273,7 @@ extension CatalogStore {
         }
     }
 
-    func completeSourceEraseOperation(key: String) async throws {
+    func completeSourceEraseOperation(key: ActiveSourceEraseKey) async throws {
         let dbWriter = try database()
         try Self.writeWithJournalDurability(dbWriter) { db in
             try Self.deleteActiveSourceErase(key: key, db: db)
@@ -4336,16 +4296,25 @@ extension CatalogStore {
         }
     }
 
-    func abandonImportOperation(key: ActiveFileOperationKey) async throws {
-        try importJournalFailure?(.abandon)
+    /// The entry ended without publishing and a staging file it journaled could not be
+    /// removed: the row stays, marked so startup recovery removes the file and the row,
+    /// and so nothing reads it as work in flight.
+    func markImportOperationAbandoned(key: ActiveFileOperationKey) async throws {
+        try importJournalFailure?(.progress(.abandoned))
         let dbWriter = try database()
         try Self.writeWithJournalDurability(dbWriter) { db in
-            try Self.deleteActiveFileOperation(key: key, db: db)
+            try db.execute(
+                sql: "UPDATE active_file_operation SET phase = ?, updated_at = ? WHERE operation_key = ?",
+                arguments: [ActiveFileOperationPhase.abandoned.rawValue, Date().timeIntervalSince1970, key.rawValue]
+            )
+            guard db.changesCount == 1 else {
+                throw CatalogStoreError.importOperationMissing(key)
+            }
         }
     }
 
-    func completeImportOperation(key: ActiveFileOperationKey) async throws {
-        try importJournalFailure?(.complete)
+    func abandonImportOperation(key: ActiveFileOperationKey) async throws {
+        try importJournalFailure?(.abandon)
         let dbWriter = try database()
         try Self.writeWithJournalDurability(dbWriter) { db in
             try Self.deleteActiveFileOperation(key: key, db: db)
@@ -4497,15 +4466,7 @@ extension CatalogStore {
                 destinationThumbnailPath: thumbnailPathToWrite,
                 db: db
             )
-            if operation.deleteSourceRequested {
-                var pendingDeletion = operation
-                pendingDeletion.phase = .sourceDeletionPending
-                pendingDeletion.stagingPath = nil
-                pendingDeletion.updatedAt = Date()
-                try Self.updateActiveFileOperation(pendingDeletion, db: db)
-            } else {
-                try Self.deleteActiveFileOperation(key: operation.operationKey, db: db)
-            }
+            try Self.deleteActiveFileOperation(key: operation.operationKey, db: db)
         }
         _ = bumpNamespaceRevision(for: operation.destinationRootPath)
         notifyCatalogChanged()

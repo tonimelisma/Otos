@@ -84,21 +84,20 @@ struct ActiveFileOperationJournalTests {
 
         let operation = ActiveFileOperation(
             operationKey: .make(),
-            mode: "import",
             sourceKind: .removableVolume,
             sourceDeviceIdentity: "volume:test",
             sourceRootPath: LibraryRootPath(rawValue: "/Volumes/CARD"),
             sourceRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
             destinationRootPath: LibraryRootPath(rawValue: "/Users/example/Pictures"),
             destinationRelativePath: MediaRelativePath(rawValue: "2026/07/IMG_1.JPG"),
-            stagingPath: "/Users/example/Pictures/.tmp.otos-import-staging",
+            stagingURL: URL(fileURLWithPath: "/Users/example/Pictures/.tmp.otos-import-staging"),
+            companionStagingURLs: [],
             contentHash: .empty,
-            importBatchUnixMs: 1_704_067_200_000,
+            importBatch: ImportBatchID(unixMilliseconds: 1_704_067_200_000),
             sourceByteSize: 100,
             sourceModifiedAt: Date(timeIntervalSince1970: 1000),
             destinationModifiedAt: Date(timeIntervalSince1970: 1000),
             phase: .copying,
-            deleteSourceRequested: false,
             updatedAt: Date()
         )
         try await store.beginImportOperation(operation)
@@ -143,21 +142,20 @@ struct ActiveFileOperationJournalTests {
         try await store.start(scansSavedLibraries: false)
         let operation = ActiveFileOperation(
             operationKey: .make(),
-            mode: "import",
             sourceKind: .removableVolume,
             sourceDeviceIdentity: nil,
             sourceRootPath: LibraryRootPath(rawValue: "/Volumes/CARD"),
             sourceRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
             destinationRootPath: LibraryRootPath(rawValue: "/Pictures"),
             destinationRelativePath: MediaRelativePath(rawValue: "final.jpg"),
-            stagingPath: "/Pictures/.stage.otos-import-staging",
+            stagingURL: URL(fileURLWithPath: "/Pictures/.stage.otos-import-staging"),
+            companionStagingURLs: [],
             contentHash: .empty,
-            importBatchUnixMs: 1,
+            importBatch: ImportBatchID(unixMilliseconds: 1),
             sourceByteSize: 1,
             sourceModifiedAt: Date(timeIntervalSince1970: 1),
             destinationModifiedAt: Date(timeIntervalSince1970: 1),
             phase: .copying,
-            deleteSourceRequested: false,
             updatedAt: Date()
         )
         try await store.beginImportOperation(operation)
@@ -175,7 +173,7 @@ struct ImportRecoveryTests {
     private func operation(
         rootPath: LibraryRootPath,
         destinationRelativePath: String = "final.jpg",
-        stagingPath: String?,
+        stagingURL: URL?,
         digest: XXH3Digest128,
         byteSize: Int64,
         modifiedAt: Date,
@@ -183,21 +181,20 @@ struct ImportRecoveryTests {
     ) -> ActiveFileOperation {
         ActiveFileOperation(
             operationKey: .make(),
-            mode: "import",
             sourceKind: .removableVolume,
             sourceDeviceIdentity: "volume:test",
             sourceRootPath: LibraryRootPath(rawValue: "/Volumes/CARD"),
             sourceRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
             destinationRootPath: rootPath,
             destinationRelativePath: MediaRelativePath(rawValue: destinationRelativePath),
-            stagingPath: stagingPath,
+            stagingURL: stagingURL,
+            companionStagingURLs: [],
             contentHash: digest,
-            importBatchUnixMs: 1_704_067_200_000,
+            importBatch: ImportBatchID(unixMilliseconds: 1_704_067_200_000),
             sourceByteSize: byteSize,
             sourceModifiedAt: Date(timeIntervalSince1970: 1000),
             destinationModifiedAt: modifiedAt,
             phase: phase,
-            deleteSourceRequested: false,
             updatedAt: Date()
         )
     }
@@ -227,26 +224,25 @@ struct ImportRecoveryTests {
         try await store.addLibrary(url: destination)
         let operation = ActiveFileOperation(
             operationKey: .make(),
-            mode: "import",
             sourceKind: .removableVolume,
             sourceDeviceIdentity: "volume:test",
             sourceRootPath: LibraryRootPath(rawValue: "/Volumes/CARD"),
             sourceRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
             destinationRootPath: rootPath,
             destinationRelativePath: MediaRelativePath(rawValue: "final.jpg"),
-            stagingPath: staging.path,
+            stagingURL: staging,
+            companionStagingURLs: [],
             contentHash: digest,
-            importBatchUnixMs: 1_704_067_200_000,
+            importBatch: ImportBatchID(unixMilliseconds: 1_704_067_200_000),
             sourceByteSize: 8,
             sourceModifiedAt: Date(timeIntervalSince1970: 1000),
             destinationModifiedAt: expectedDestinationDate,
             phase: .readyToPublish,
-            deleteSourceRequested: false,
             updatedAt: Date()
         )
         try await store.beginImportOperation(operation)
 
-        await MediaImportExecutor(store: store).recoverJournal()
+        await MediaImportRecovery(store: store).run()
 
         #expect(FileManager.default.fileExists(atPath: final.path))
         #expect(!FileManager.default.fileExists(atPath: staging.path))
@@ -274,14 +270,14 @@ struct ImportRecoveryTests {
         try await store.addLibrary(url: destination)
         let op = operation(
             rootPath: rootPath,
-            stagingPath: staging.path,
+            stagingURL: staging,
             digest: digest,
             byteSize: 8,
             modifiedAt: Date(timeIntervalSince1970: 1000)
         )
         try await store.beginImportOperation(op)
 
-        await MediaImportExecutor(store: store).recoverJournal()
+        await MediaImportRecovery(store: store).run()
 
         #expect(try Data(contentsOf: final) == Data("foreign!".utf8))
         #expect(!FileManager.default.fileExists(atPath: staging.path))
@@ -307,14 +303,14 @@ struct ImportRecoveryTests {
         try await store.addLibrary(url: destination)
         let op = operation(
             rootPath: rootPath,
-            stagingPath: nil,
+            stagingURL: nil,
             digest: digest,
             byteSize: 8,
             modifiedAt: modifiedAt
         )
         try await store.beginImportOperation(op)
 
-        await MediaImportExecutor(store: store).recoverJournal()
+        await MediaImportRecovery(store: store).run()
 
         #expect(try await store.activeImportOperations().isEmpty)
         let asset = try #require(try await catalogStoreTestState(store).testAssets.first)
@@ -341,14 +337,14 @@ struct ImportRecoveryTests {
         try await store.addLibrary(url: destination)
         let op = operation(
             rootPath: rootPath,
-            stagingPath: nil,
+            stagingURL: nil,
             digest: digest,
             byteSize: 8,
             modifiedAt: modifiedAt
         )
         try await store.beginImportOperation(op)
 
-        await MediaImportExecutor(store: store).recoverJournal()
+        await MediaImportRecovery(store: store).run()
 
         #expect(try Data(contentsOf: final) == Data("foreign!".utf8))
         #expect(try await store.activeImportOperations().isEmpty)
@@ -359,6 +355,85 @@ struct ImportRecoveryTests {
     /// `CatalogStore.start()`, so its startup recovery can reach the Store before
     /// the persisted roots are loaded. The registered destination root must still
     /// be recognized and the interrupted copy recovered in that same pass.
+    /// Recovery removes every staging file the journal names, companions included, and
+    /// never publishes a companion: the primary is published and settled, the companion
+    /// staging file is gone, and the row with it.
+    @Test func recoveryRemovesJournaledCompanionStaging() async throws {
+        let temp = try makeTestDirectory()
+        let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        let store = CatalogStore(location: .inMemory, filesystemWatcher: .noop)
+        try await store.start(scansSavedLibraries: false)
+        try await store.ensureLibrary(url: destination)
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: destination)
+        let staging = destination.appending(path: ".primary.otos-import-staging")
+        let companionStaging = destination.appending(path: ".companion.otos-import-staging")
+        try Data("12345678".utf8).write(to: staging)
+        try Data("sidecar".utf8).write(to: companionStaging)
+        let modified = Date(timeIntervalSince1970: 2000)
+        try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: staging.path)
+        guard case let .complete(digest) = ContentHasher().hashMaterializedFile(at: staging) else {
+            Issue.record("expected a digest")
+            return
+        }
+        var operation = operation(
+            rootPath: rootPath,
+            stagingURL: staging,
+            digest: digest,
+            byteSize: 8,
+            modifiedAt: modified
+        )
+        operation.companionStagingURLs = [companionStaging]
+        try await store.beginImportOperation(operation)
+
+        await MediaImportRecovery(store: store).run()
+
+        #expect(FileManager.default.fileExists(atPath: destination.appending(path: "final.jpg").path))
+        #expect(!FileManager.default.fileExists(atPath: staging.path))
+        #expect(!FileManager.default.fileExists(atPath: companionStaging.path))
+        #expect(try await store.activeImportOperations().isEmpty)
+        await store.shutdown()
+    }
+
+    /// A staging file that will not go keeps its row, marked abandoned, so nothing is
+    /// left in the library that no record names; the next recovery that can remove it
+    /// removes the row with it.
+    @Test func aStagingFileThatWillNotGoKeepsItsRowUntilItDoes() async throws {
+        let temp = try makeTestDirectory()
+        let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let locked = destination.appending(path: "locked", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        let store = CatalogStore(location: .inMemory, filesystemWatcher: .noop)
+        try await store.start(scansSavedLibraries: false)
+        try await store.ensureLibrary(url: destination)
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: destination)
+        let staging = locked.appending(path: ".stuck.otos-import-staging")
+        try Data("partial".utf8).write(to: staging)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+        let copying = operation(
+            rootPath: rootPath,
+            stagingURL: staging,
+            digest: .empty,
+            byteSize: 7,
+            modifiedAt: Date(),
+            phase: .copying
+        )
+        try await store.beginImportOperation(copying)
+
+        await MediaImportRecovery(store: store).run()
+
+        #expect(try await store.activeImportOperations().map(\.phase) == [.abandoned])
+        #expect(FileManager.default.fileExists(atPath: staging.path))
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+        await MediaImportRecovery(store: store).run()
+
+        #expect(try await store.activeImportOperations().isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: staging.path))
+        await store.shutdown()
+    }
+
     @Test func coordinatorStartRecoversJournalBeforeStoreLoadsRoots() async throws {
         let temp = try makeTestDirectory()
         let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -374,7 +449,7 @@ struct ImportRecoveryTests {
         _ = try await waitForCatalogStoreState(previousLaunch) { !$0.isScanning }
         try await previousLaunch.beginImportOperation(operation(
             rootPath: rootPath,
-            stagingPath: staging.path,
+            stagingURL: staging,
             digest: .empty,
             byteSize: 7,
             modifiedAt: Date(),
@@ -921,6 +996,70 @@ struct ImportExecutionProgressTests {
         #expect(FileManager.default.fileExists(atPath: fixture.sourceFile.path))
     }
 
+    /// A card file is erased only under the card's own namespace lease — on its entry's
+    /// settle or in the end-of-run sweep. With another owner holding the card for the
+    /// whole run, every copy still lands and not one card file is touched.
+    @Test func aCardAnotherOwnerHoldsIsNeverErased() async throws {
+        let fixture = try await makeCardFixture(count: 2, bytesEach: 64)
+        let sourcePath = try CatalogPath.normalizedDirectoryPath(for: fixture.sourceRoot)
+        guard case .acquired = await fixture.store.acquireNamespaceMutationLease(for: sourcePath, owner: .mediaTrash)
+        else {
+            Issue.record("Expected to hold the card's namespace for this test")
+            return
+        }
+
+        let result = await executeFloorRun(fixture, deleteSourceRequested: true) { _ in nil }
+
+        guard case let .completedWithErase(publishedCount, _, _, _, _, _, eraseOutcome) = result else {
+            Issue.record("Expected a completed erase run, got \(result)")
+            return
+        }
+        #expect(publishedCount == 2)
+        #expect(eraseOutcome == EraseOutcome(deletedCount: 0, skippedCount: 0, failedCount: 2))
+        for name in ["IMG_0.jpg", "IMG_1.jpg"] {
+            #expect(FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: name).path))
+            #expect(FileManager.default.fileExists(atPath: fixture.destinationRoot.appending(path: name).path))
+        }
+    }
+
+    /// A run never treats another run's journal as something to recover: an entry in
+    /// flight in another library keeps its row and its staging file while this one runs.
+    @Test func aRunLeavesAnotherRunsJournalAlone() async throws {
+        let fixture = try await makeCardFixture(count: 1, bytesEach: 64)
+        let otherLibrary = try makeTestDirectory()
+        try await fixture.store.ensureLibrary(url: otherLibrary)
+        let otherPath = try CatalogPath.normalizedDirectoryPath(for: otherLibrary)
+        let staging = otherLibrary.appending(path: ".in-flight.otos-import-staging")
+        try Data("half a copy".utf8).write(to: staging)
+        let inFlight = ActiveFileOperation(
+            operationKey: .make(),
+            sourceKind: .removableVolume,
+            sourceDeviceIdentity: "volume:other-card",
+            sourceRootPath: LibraryRootPath(rawValue: "/Volumes/OTHER"),
+            sourceRelativePath: MediaRelativePath(rawValue: "IMG_9.JPG"),
+            destinationRootPath: otherPath,
+            destinationRelativePath: MediaRelativePath(rawValue: "IMG_9.JPG"),
+            stagingURL: staging,
+            companionStagingURLs: [],
+            contentHash: nil,
+            importBatch: ImportBatchID(unixMilliseconds: 1),
+            sourceByteSize: 11,
+            sourceModifiedAt: Date(timeIntervalSince1970: 1),
+            destinationModifiedAt: nil,
+            phase: .copying,
+            updatedAt: Date()
+        )
+        try await fixture.store.beginImportOperation(inFlight)
+
+        _ = await executeFloorRun(fixture) { _ in nil }
+
+        let journal = try await fixture.store.activeImportOperations()
+        #expect(journal.map(\.operationKey) == [inFlight.operationKey])
+        #expect(journal.map(\.phase) == [.copying])
+        #expect(journal.map(\.stagingURL) == [staging])
+        #expect(FileManager.default.fileExists(atPath: staging.path))
+    }
+
     @Test func everyJournaledEraseForOneRootRecoversInOneSweep() async throws {
         let fixture = try await makeZeroCopyFixture()
         let sourcePath = try CatalogPath.normalizedDirectoryPath(for: fixture.sourceRoot)
@@ -936,7 +1075,7 @@ struct ImportExecutionProgressTests {
             try Data(repeating: 0x37, count: 4).write(to: url)
             try await fixture.store.beginSourceEraseOperation(
                 ActiveSourceEraseOperation(
-                    key: UUID().uuidString,
+                    key: .make(),
                     sourceKind: .removableVolume,
                     sourceDeviceIdentity: "volume:zero-copy-fixture",
                     sourceRootPath: sourcePath,
@@ -948,7 +1087,7 @@ struct ImportExecutionProgressTests {
         }
         #expect(try await fixture.store.activeSourceEraseOperations().count == 5)
 
-        await MediaImportExecutor(store: fixture.store).recoverJournal()
+        await MediaImportRecovery(store: fixture.store).run()
 
         for relative in relatives {
             let url = fixture.sourceRoot.appending(path: relative.rawValue)
@@ -1017,6 +1156,13 @@ struct ImportExecutionProgressTests {
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationRoot)
+        // Attached the way a card is, so erasing from it takes its namespace lease.
+        try await store.attachRemovableVolume(
+            mountURL: sourceRoot,
+            identity: "volume:card-fixture",
+            displayName: "Card",
+            isEjectable: true
+        )
         return CardFixture(
             store: store,
             plan: plan,

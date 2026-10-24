@@ -248,21 +248,20 @@ struct CatalogStoreTests {
 
         let operation = ActiveFileOperation(
             operationKey: .make(),
-            mode: "test",
             sourceKind: .library,
             sourceDeviceIdentity: nil,
             sourceRootPath: sourcePath,
             sourceRelativePath: sourceID.relativePath,
             destinationRootPath: destinationPath,
             destinationRelativePath: MediaRelativePath(rawValue: "imported.jpg"),
-            stagingPath: nil,
+            stagingURL: nil,
+            companionStagingURLs: [],
             contentHash: nil,
-            importBatchUnixMs: 1,
+            importBatch: ImportBatchID(unixMilliseconds: 1),
             sourceByteSize: 4,
             sourceModifiedAt: Date(timeIntervalSince1970: 1_700_000_000),
             destinationModifiedAt: Date(timeIntervalSince1970: 1_700_000_001),
             phase: .publishedPendingSettlement,
-            deleteSourceRequested: false,
             updatedAt: Date(timeIntervalSince1970: 1_700_000_001)
         )
         try await store.beginImportOperation(operation)

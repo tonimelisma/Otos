@@ -150,12 +150,13 @@ actor MediaOperationCoordinator {
         guard !isStarted else { return }
         isStarted = true
         loadDestinationMappings()
-        let executor = MediaImportExecutor(
+        // Every journal row now belongs to a process that has ended: settle or clean
+        // it up before this coordinator runs any import of its own.
+        await MediaImportRecovery(
             store: store,
             cameraImport: cameraImport,
             materializationRequester: materializationRequester
-        )
-        await executor.recoverJournal()
+        ).run()
         // Subscribe before the first refresh: a change emitted while the refresh reads
         // the Store is then buffered and handled afterwards, never lost between the two.
         let changes = await store.planningChangeNotifications(deliveries: planningChangeDeliveries)

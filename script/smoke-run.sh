@@ -102,11 +102,10 @@ quit_app() {
   fi
 }
 
-# Durable operational truth: any row in `active_file_operation` (import) or
-# `active_reorganization_component` (reorganization) proves work is in flight.
-# The Store's `hasActiveOperationalWork()` is the authoritative reader; this
-# shell copy is the same predicate via `sqlite3 -readonly` under WAL so it
-# never blocks the writer. Pessimistic: any sqlite error (SQLITE_BUSY,
+# Durable operational truth: a row in `active_file_operation` (import, except one
+# `abandoned` awaiting cleanup) or `active_reorganization_component`
+# (reorganization) proves work is in flight. `script/lib/operational-busy.sh`
+# reads it with `sqlite3 -readonly` under WAL so it never blocks the writer. Pessimistic: any sqlite error (SQLITE_BUSY,
 # SQLITE_CORRUPT, missing table) is treated as busy — the only safe direction.
 # `is_import_active` is kept as a compatibility alias; new code calls
 # `has_active_operational_work`.
