@@ -71,7 +71,8 @@ struct CatalogWindowViewModelCurationTests {
                 startsStallMonitor: false,
                 startsEnrichment: false,
                 startsSourceMonitoring: false,
-                preferencesDomain: .suite(UUID().uuidString)
+                preferencesDomain: .suite(UUID().uuidString),
+                trashFiles: .refusing
             )
             let ids = library.ids
             model.applyState(curationWindowState(ids: ids))
@@ -128,7 +129,8 @@ private func makeCurationModel() -> CatalogWindowViewModel {
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,
-        preferencesDomain: .suite(UUID().uuidString)
+        preferencesDomain: .suite(UUID().uuidString),
+        trashFiles: .refusing
     )
 }
 

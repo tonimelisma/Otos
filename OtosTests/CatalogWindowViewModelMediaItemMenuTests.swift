@@ -141,7 +141,8 @@ private func makeMenuModel(workspace: MenuRecordingWorkspace) -> CatalogWindowVi
         startsEnrichment: false,
         startsSourceMonitoring: false,
         preferencesDomain: .suite(UUID().uuidString),
-        workspace: workspace
+        workspace: workspace,
+        trashFiles: .refusing
     )
 }
 

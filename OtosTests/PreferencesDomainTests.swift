@@ -21,7 +21,8 @@ struct PreferencesDomainTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: temp
+            preferencesDomain: temp,
+            trashFiles: .refusing
         )
         first.setGridColumnCount(9)
         first.setStripTileEdge(150)
@@ -44,7 +45,8 @@ struct PreferencesDomainTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: temp
+            preferencesDomain: temp,
+            trashFiles: .refusing
         )
         #expect(second.gridColumnCount == 9)
         #expect(second.stripTileEdge == 150)

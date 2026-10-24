@@ -67,7 +67,8 @@ struct IdentityRemapUITests {
         let viewModel = CatalogWindowViewModel(
             catalogStore: CatalogStore(location: .inMemory, scanCadence: .milliseconds(10)),
             startsSourceMonitoring: false,
-            preferencesDomain: PreferencesDomain.suite(UUID().uuidString)
+            preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
+            trashFiles: .refusing
         )
         viewModel.applyState(Self.state(orderedIDs: [oldID, other], pending: []))
         viewModel.gridSelection = GridSelection(selection: [oldID], anchor: oldID, base: [oldID])

@@ -38,8 +38,8 @@ import UniformTypeIdentifiers
 /// it acts on each item and again once it holds the root lease, so an item the user took
 /// back is never moved afterwards.
 ///
-/// The injected status, requester, capacity, executors and Store reads are the test boundary
-/// for fault injection; production uses system Trash, `FileManager.removeItem`, and the
+/// The injected status, requester, capacity, file operations and Store reads are the test
+/// boundary for fault injection; production uses system Trash, `FileManager.removeItem`, and the
 /// volume's important-usage capacity.
 actor MediaTrashCoordinator {
     typealias TrashExecutor = @Sendable (URL) throws -> URL?
@@ -48,6 +48,40 @@ actor MediaTrashCoordinator {
     typealias PutBackExecutor = @Sendable (URL, URL) throws -> Void
     typealias StatusReader = @Sendable (URL) -> FileMaterializationStatus
     typealias CapacityReader = @Sendable (URL) -> Int64?
+
+    /// The filesystem acts the queue performs, as one value: the app passes `.live`, the
+    /// system Trash, and a test passes a Trash of its own. There is no default, so nothing
+    /// the coordinator does reaches the user's Trash unless its owner chose that.
+    nonisolated struct FileOperations: Sendable {
+        /// Moves a file to the Trash and returns where it went, when the Trash says.
+        var trash: TrashExecutor
+        /// Deletes a file the user chose to delete immediately.
+        var remove: RemoveExecutor
+        /// Moves a file back from the Trash: `(from, to)`. Never overwrites.
+        var putBack: PutBackExecutor
+
+        static let live = FileOperations(
+            trash: { url in
+                var resulting: NSURL?
+                try FileManager.default.trashItem(at: url, resultingItemURL: &resulting)
+                return resulting as URL?
+            },
+            remove: { url in
+                try FileManager.default.removeItem(at: url)
+            },
+            putBack: { from, to in
+                try FileManager.default.moveItem(at: from, to: to)
+            }
+        )
+
+        /// Refuses every act, so the queue moves nothing: for a window that must never
+        /// touch a file, such as a preview or a test that does not trash.
+        static let refusing = FileOperations(
+            trash: { _ in throw CocoaError(.featureUnsupported) },
+            remove: { _ in throw CocoaError(.featureUnsupported) },
+            putBack: { _, _ in throw CocoaError(.featureUnsupported) }
+        )
+    }
 
     /// The Store reads the queue depends on, injectable so a test can make one fail.
     nonisolated struct StoreReads: Sendable {
@@ -155,9 +189,7 @@ actor MediaTrashCoordinator {
     private let materializationRequester: (any MaterializationRequesting)?
     private let status: StatusReader
     private let capacity: CapacityReader
-    private let trashExecutor: TrashExecutor
-    private let removeExecutor: RemoveExecutor
-    private let putBackExecutor: PutBackExecutor
+    private let files: FileOperations
     private let retryPolicy: RetryPolicy
     private let clock = ContinuousClock()
 
@@ -203,21 +235,11 @@ actor MediaTrashCoordinator {
     init(
         store: CatalogStore,
         materializationRequester: (any MaterializationRequesting)?,
+        files: FileOperations,
         status: @escaping StatusReader = { FileMaterialization.status(of: $0) },
         capacity: @escaping CapacityReader = { url in
             (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
                 .volumeAvailableCapacityForImportantUsage
-        },
-        trashExecutor: @escaping TrashExecutor = { url in
-            var resulting: NSURL?
-            try FileManager.default.trashItem(at: url, resultingItemURL: &resulting)
-            return resulting as URL?
-        },
-        removeExecutor: @escaping RemoveExecutor = { url in
-            try FileManager.default.removeItem(at: url)
-        },
-        putBackExecutor: @escaping PutBackExecutor = { from, to in
-            try FileManager.default.moveItem(at: from, to: to)
         },
         retryPolicy: RetryPolicy = .production,
         reads: StoreReads? = nil,
@@ -229,9 +251,7 @@ actor MediaTrashCoordinator {
         self.materializationRequester = materializationRequester
         self.status = status
         self.capacity = capacity
-        self.trashExecutor = trashExecutor
-        self.removeExecutor = removeExecutor
-        self.putBackExecutor = putBackExecutor
+        self.files = files
         self.retryPolicy = retryPolicy
         let (events, eventContinuation) = AsyncStream<Event>.makeStream(bufferingPolicy: .unbounded)
         self.events = events
@@ -662,7 +682,7 @@ actor MediaTrashCoordinator {
                 break
             }
             do {
-                let trashURL = try trashExecutor(memberURL)
+                let trashURL = try files.trash(memberURL)
                 results.append(result(item, member, succeeded: true))
                 moved.append(TrashedMember(member: member, trashURL: trashURL))
             } catch {
@@ -721,7 +741,7 @@ actor MediaTrashCoordinator {
         var results: [MediaTrashPathResult] = []
         for member in item.members.sorted(by: Self.memberOrder) {
             do {
-                try removeExecutor(url(of: member, in: item))
+                try files.remove(url(of: member, in: item))
                 results.append(result(item, member, succeeded: true))
             } catch {
                 results.append(result(item, member, succeeded: false))
@@ -842,7 +862,7 @@ actor MediaTrashCoordinator {
                 continue
             }
             do {
-                try putBackExecutor(trashURL, destination)
+                try files.putBack(trashURL, destination)
                 returned.append(moved)
                 if moved.member.role == .primary {
                     primaryBack = true

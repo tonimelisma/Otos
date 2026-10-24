@@ -113,6 +113,7 @@ struct MediaTrashCoordinatorOwnershipTests {
                 await suspendUntilCancelled()
                 return MaterializationResult(outcome: .cancelled, rerequestCount: 0, elapsedMs: 0)
             },
+            files: .refusing,
             status: { _ in .dataless },
             retryPolicy: Self.retry,
             reads: reads
@@ -145,7 +146,7 @@ struct MediaTrashCoordinatorOwnershipTests {
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
             materializationRequester: nil,
-            trashExecutor: fixture.trashing(log),
+            files: .testing(trash: fixture.trashing(log)),
             retryPolicy: Self.retry,
             willHandleItem: { id in
                 let isFirst = handled.withLock { seen in
@@ -201,7 +202,7 @@ struct MediaTrashCoordinatorOwnershipTests {
         let coordinator = MediaTrashCoordinator(
             store: store,
             materializationRequester: nil,
-            trashExecutor: fixture.trashing(log),
+            files: .testing(trash: fixture.trashing(log)),
             retryPolicy: Self.retry,
             reads: reads
         )
@@ -222,7 +223,12 @@ struct MediaTrashCoordinatorOwnershipTests {
             trashedOverlay: { try await store.trashedOverlay(for: $0) },
             trashItems: { _ in throw InjectedReadFailure() }
         )
-        let coordinator = MediaTrashCoordinator(store: store, materializationRequester: nil, reads: reads)
+        let coordinator = MediaTrashCoordinator(
+            store: store,
+            materializationRequester: nil,
+            files: .refusing,
+            reads: reads
+        )
 
         #expect(await coordinator.downloadBytes(for: fixture.ids) == nil)
         await coordinator.shutdown()

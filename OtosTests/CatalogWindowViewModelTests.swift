@@ -36,7 +36,8 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults
+            preferencesDomain: tempDefaults,
+            trashFiles: .refusing
         )
         projection = nil
         weak let weakModel = model
@@ -70,7 +71,8 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults
+            preferencesDomain: tempDefaults,
+            trashFiles: .refusing
         )
 
         model.start()
@@ -111,7 +113,8 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults
+            preferencesDomain: tempDefaults,
+            trashFiles: .refusing
         )
 
         model.start()
@@ -148,7 +151,8 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults
+            preferencesDomain: tempDefaults,
+            trashFiles: .refusing
         )
 
         model.start()
@@ -183,7 +187,8 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults
+            preferencesDomain: tempDefaults,
+            trashFiles: .refusing
         )
 
         model.start()
@@ -221,7 +226,8 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults
+            preferencesDomain: tempDefaults,
+            trashFiles: .refusing
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
@@ -255,7 +261,8 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults
+            preferencesDomain: tempDefaults,
+            trashFiles: .refusing
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
@@ -309,7 +316,8 @@ struct CatalogWindowViewModelTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
-            previewLoader: previewLoader
+            previewLoader: previewLoader,
+            trashFiles: .refusing
         )
         previewLoader = nil
         weak let weakModel = model
@@ -343,7 +351,8 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults
+            preferencesDomain: tempDefaults,
+            trashFiles: .refusing
         )
 
         model.start()

@@ -21,7 +21,7 @@ check_root() {
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue; abs="${line%%:*}"; rel="${abs#"$root/"}"
     if ! is_allowlisted "$rel"; then echo "FAIL: unexpected filesystem writer may write into user media: $line" >&2; return 1; fi
-  done < <(grep -RInE 'FileManager\.default\.(createFile|createDirectory|copyItem|moveItem|removeItem|replaceItemAt)|\.write\(to:' "$root/Otos" --include='*.swift' || true)
+  done < <(grep -RInE 'FileManager\.default\.(createFile|createDirectory|copyItem|moveItem|removeItem|replaceItemAt|trashItem)|\.write\(to:' "$root/Otos" --include='*.swift' || true)
 }
 self_test() {
   local d; d="$(mktemp -d)"; trap 'rm -rf "$d"' RETURN

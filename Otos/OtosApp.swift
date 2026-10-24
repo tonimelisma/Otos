@@ -95,15 +95,16 @@ public struct OtosApp: App {
 
     @NSApplicationDelegateAdaptor(OtosAppLifecycle.self) private var lifecycle
 
-    /// The one place in the app that names the production catalog location and
-    /// UserDefaults.standard — every other type takes both as required
-    /// (no-default) parameters, so a caller cannot reach production data by
+    /// The one place in the app that names the production catalog location,
+    /// UserDefaults.standard and the system Trash — every other type takes them as
+    /// required (no-default) parameters, so a caller cannot reach production data by
     /// omitting an argument (ADR 0020).
     @State private var catalogViewModel = CatalogWindowViewModel(
         catalogStore: CatalogStore(
             location: .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos")
         ),
-        preferencesDomain: .standard
+        preferencesDomain: .standard,
+        trashFiles: .live
     )
 
     public var body: some Scene {

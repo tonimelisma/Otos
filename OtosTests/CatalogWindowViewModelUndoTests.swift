@@ -128,7 +128,8 @@ private func makeUndoModel(store: CatalogStore) -> CatalogWindowViewModel {
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,
-        preferencesDomain: .suite(UUID().uuidString)
+        preferencesDomain: .suite(UUID().uuidString),
+        trashFiles: .refusing
     )
 }
 

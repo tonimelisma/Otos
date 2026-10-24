@@ -48,7 +48,8 @@ struct CatalogWindowViewModelImportIntentTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: domain
+            preferencesDomain: domain,
+            trashFiles: .refusing
         )
         let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: domain)
         model.mediaOperationCoordinator = coordinator

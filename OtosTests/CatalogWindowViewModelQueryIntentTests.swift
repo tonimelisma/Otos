@@ -133,7 +133,8 @@ private func makeQueryIntentModel(temp: PreferencesDomain)
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,
-        preferencesDomain: temp
+        preferencesDomain: temp,
+        trashFiles: .refusing
     )
     return (model, gate)
 }

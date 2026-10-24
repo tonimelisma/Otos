@@ -30,7 +30,8 @@ struct CatalogWindowViewModelEnrichmentTests {
             enrichmentCoordinator: coordinator,
             startsStallMonitor: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults
+            preferencesDomain: tempDefaults,
+            trashFiles: .refusing
             // startsEnrichment defaults true: start() must start the injected coordinator.
         )
 
@@ -104,7 +105,8 @@ struct CatalogWindowViewModelEnrichmentTests {
             enrichmentCoordinator: coordinator,
             startsStallMonitor: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults
+            preferencesDomain: tempDefaults,
+            trashFiles: .refusing
         )
 
         model.start()

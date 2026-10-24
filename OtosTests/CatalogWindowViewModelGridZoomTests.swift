@@ -119,6 +119,7 @@ private func makeViewModel(domain: PreferencesDomain) -> CatalogWindowViewModel 
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,
-        preferencesDomain: domain
+        preferencesDomain: domain,
+        trashFiles: .refusing
     )
 }

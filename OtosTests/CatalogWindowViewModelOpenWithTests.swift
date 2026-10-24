@@ -154,7 +154,8 @@ private func makeOpenWithModel(workspace: RecordingWorkspace) -> CatalogWindowVi
         startsEnrichment: false,
         startsSourceMonitoring: false,
         preferencesDomain: .suite(UUID().uuidString),
-        workspace: workspace
+        workspace: workspace,
+        trashFiles: .refusing
     )
 }
 

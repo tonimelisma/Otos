@@ -350,7 +350,8 @@ final class CatalogWindowViewModel {
         preferencesDomain: PreferencesDomain,
         previewLoader: (any PreviewLoading)? = nil,
         videoLoader: VideoPreviewLoader? = nil,
-        workspace: any WorkspaceOpening = LaunchServicesWorkspace()
+        workspace: any WorkspaceOpening = LaunchServicesWorkspace(),
+        trashFiles: MediaTrashCoordinator.FileOperations
     ) {
         self.workspace = workspace
         // Curation undo entries are registered from store completions, outside any
@@ -421,7 +422,8 @@ final class CatalogWindowViewModel {
         self.materializationCoordinator = materializationCoordinator
         mediaTrashCoordinator = MediaTrashCoordinator(
             store: catalogStore,
-            materializationRequester: materializationCoordinator
+            materializationRequester: materializationCoordinator,
+            files: trashFiles
         )
         self.enrichmentCoordinator = enrichmentCoordinator ?? (
             startsEnrichment
