@@ -11,6 +11,10 @@ import UniformTypeIdentifiers
 /// module isolation.
 nonisolated protocol PreviewLoading: Sendable {
     func preview(for request: PreviewImageLoader.Request) async -> PreviewImageLoader.Outcome
+    /// Returns once no decode under `root` is in flight, and refuses new ones there until
+    /// `resume(under:)`: an eject must not find the loader holding a card file open.
+    func quiesce(under root: LibraryRootPath) async
+    func resume(under root: LibraryRootPath) async
 }
 
 /// Preview image loader guide
@@ -72,6 +76,9 @@ actor PreviewImageLoader: PreviewLoading {
     }
 
     private var inFlight: [MediaAssetID: InFlightDecode] = [:]
+    /// Roots an eject is releasing. A request there is answered `.unavailable` without
+    /// touching the file.
+    private var quiescedRoots: Set<LibraryRootPath> = []
 
     init(
         maxCacheBytes: Int = 256 * 1024 * 1024,
@@ -87,6 +94,12 @@ actor PreviewImageLoader: PreviewLoading {
     /// return immediately when the stored long edge is large enough. Concurrent requests
     /// for the same id share one in-flight task.
     func preview(for request: Request) async -> Outcome {
+        guard !quiescedRoots.contains(request.id.libraryRootPath) else {
+            OtosLog.mediaIO.notice(
+                "op=preview.decode phase=refused reason=sourceQuiesced id=\(request.id.relativePath.rawValue, privacy: .public)"
+            )
+            return .unavailable
+        }
         if let cached = cache[request.id], cached.longEdge >= request.targetLongEdge {
             touch(request.id)
             return .image(cached.image, nativePixelSize: cached.nativePixelSize)
@@ -108,6 +121,25 @@ actor PreviewImageLoader: PreviewLoading {
             insert(image, for: request.id, longEdge: request.targetLongEdge, nativePixelSize: nativePixelSize)
         }
         return outcome
+    }
+
+    func quiesce(under root: LibraryRootPath) async {
+        quiescedRoots.insert(root)
+        let running = inFlight.filter { $0.key.libraryRootPath == root }.map(\.value.task)
+        OtosLog.mediaIO.noticeOperation("preview.quiesce", phase: "start", fields: [
+            "rootPath": root.rawValue,
+            "running": "\(running.count)",
+        ])
+        // The decodes this root had in flight, each to its end: a decode that started is
+        // never cut short, and none can start here meanwhile.
+        for task in running {
+            _ = await task.value
+        }
+        OtosLog.mediaIO.noticeOperation("preview.quiesce", phase: "finish", fields: ["rootPath": root.rawValue])
+    }
+
+    func resume(under root: LibraryRootPath) {
+        quiescedRoots.remove(root)
     }
 
     private func decode(_ request: Request) async -> Outcome {

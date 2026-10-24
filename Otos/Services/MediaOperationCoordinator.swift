@@ -270,6 +270,17 @@ actor MediaOperationCoordinator {
         sortedPresentations()
     }
 
+    /// Whether an import is copying from `source` now. An eject asks first: the copy holds
+    /// the card's files open, so an eject during it is refused at once instead of after
+    /// the busy retries. Read from the machine itself, not from a published presentation,
+    /// which can lag the transition that ended the run.
+    func isImporting(from source: LibraryRootPath) -> Bool {
+        guard let session = machine.sessions[source], case .executing = session.phase else {
+            return false
+        }
+        return true
+    }
+
     func readyPlan(for source: LibraryRootPath) -> MediaOperationPlan? {
         guard let session = machine.sessions[source], case let .ready(ctx) = session.phase else { return nil }
         return ctx.plan

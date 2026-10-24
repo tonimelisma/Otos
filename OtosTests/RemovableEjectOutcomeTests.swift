@@ -1,4 +1,5 @@
 import Darwin
+import DiskArbitration
 import Foundation
 @testable import OtosKit
 import Testing
@@ -22,42 +23,30 @@ struct RemovableEjectOutcomeTests {
         #expect(model.ejectAlertMessage?.contains("device identity") == true)
     }
 
-    @Test func busyErrorMapsFromPOSIXUnderlyingEBUSY() {
-        let underlying = NSError(domain: NSPOSIXErrorDomain, code: Int(EBUSY), userInfo: nil)
-        let error = NSError(
-            domain: NSCocoaErrorDomain,
-            code: NSFileWriteUnknownError,
-            userInfo: [NSUnderlyingErrorKey: underlying]
-        )
-        let outcome = CatalogWindowViewModel.removableEjectOutcome(
-            for: error,
-            displayName: "CARD"
-        )
-        #expect(outcome == .busy(displayName: "CARD"))
+    /// Measured on macOS 27.0.1 against a held file on a scratch volume:
+    /// DiskArbitration refuses with `unix_err(EBUSY)`, `0xC010`, and no status string.
+    @Test func aBusyVolumeIsTheMeasuredUnixEBUSYStatus() {
+        #expect(DiskEjector.unixError(EBUSY) == 0xC010)
+        #expect(DiskEjector.outcome(refusal: 0xC010) == .busy)
+        #expect(DiskEjector.outcome(refusal: DAReturn(truncatingIfNeeded: kDAReturnBusy)) == .busy)
+        #expect(DiskEjector.outcome(refusal: DiskEjector.unixError(EPERM)) == .refused(status: DiskEjector.unixError(EPERM)))
+        #expect(DiskEjector.bsdError(in: DiskEjector.unixError(EPERM)) == EPERM)
+        #expect(DiskEjector.bsdError(in: DAReturn(truncatingIfNeeded: kDAReturnNotPermitted)) == nil)
     }
 
-    @Test func busyErrorMapsFromDiskArbitrationDissenter() {
-        let error = NSError(
-            domain: "com.apple.DiskArbitration.DADissenterError",
-            code: 1,
-            userInfo: nil
+    /// The alert names the BSD error in the system's words when the status carries one,
+    /// and invents no cause when it does not.
+    @Test func aRefusalDescribesOnlyTheCauseItCarries() {
+        let withCause = CatalogWindowViewModel.ejectFailureDescription(
+            displayName: "CARD",
+            status: DiskEjector.unixError(EPERM)
         )
-        let outcome = CatalogWindowViewModel.removableEjectOutcome(
-            for: error,
-            displayName: "CARD"
+        #expect(withCause.hasSuffix("\(String(cString: strerror(EPERM))).") == true)
+        let withoutCause = CatalogWindowViewModel.ejectFailureDescription(
+            displayName: "CARD",
+            status: DAReturn(truncatingIfNeeded: kDAReturnNotPermitted)
         )
-        #expect(outcome == .busy(displayName: "CARD"))
-    }
-
-    /// 2026-09-13: `NSWorkspace.unmountAndEjectDevice` reported the card as
-    /// `NSOSStatusErrorDomain -47` (`fBsyErr`). Typed, not matched on the
-    /// English description — an OSStatus error's generated description does
-    /// not say "busy".
-    @Test func busyErrorMapsFromCarbonFileBusyStatus() {
-        let error = NSError(domain: NSOSStatusErrorDomain, code: -47, userInfo: nil)
-        #expect(!error.localizedDescription.localizedCaseInsensitiveContains("busy"))
-        let outcome = CatalogWindowViewModel.removableEjectOutcome(for: error, displayName: "CARD")
-        #expect(outcome == .busy(displayName: "CARD"))
+        #expect(withoutCause == "The disk \u{201C}CARD\u{201D} couldn\u{2019}t be ejected.")
     }
 
     /// A busy volume is retried on a bounded schedule; the first attempt that
@@ -69,12 +58,9 @@ struct RemovableEjectOutcomeTests {
             root,
             store: store,
             coordinator: nil,
+            previewLoader: nil,
             retryDelays: [.milliseconds(10), .milliseconds(10), .milliseconds(10)],
-            unmount: { _ in
-                if await attempts.next() < 3 {
-                    throw NSError(domain: NSOSStatusErrorDomain, code: -47, userInfo: nil)
-                }
-            }
+            eject: { _ in await attempts.next() < 3 ? .busy : .ejected }
         )
         #expect(outcome == .ejected)
         #expect(await attempts.count == 3)
@@ -89,28 +75,30 @@ struct RemovableEjectOutcomeTests {
             root,
             store: store,
             coordinator: nil,
+            previewLoader: nil,
             retryDelays: [.milliseconds(10), .milliseconds(10)],
-            unmount: { _ in
+            eject: { _ in
                 _ = await attempts.next()
-                throw NSError(domain: NSOSStatusErrorDomain, code: -47, userInfo: nil)
+                return .busy
             }
         )
         #expect(outcome == .busy(displayName: root.displayName))
         #expect(await attempts.count == 3, "the first attempt and one per delay")
     }
 
-    /// A failure that is not "busy" is not retried.
-    @Test func ejectDoesNotRetryANonBusyFailure() async throws {
+    /// A refusal that is not "busy" is not retried.
+    @Test func ejectDoesNotRetryANonBusyRefusal() async throws {
         let (store, root) = try await Self.attachedCard(identity: "volume:eject-failed")
         let attempts = Counter()
         let outcome = await CatalogWindowViewModel.performEjectRemovableSource(
             root,
             store: store,
             coordinator: nil,
+            previewLoader: nil,
             retryDelays: [.milliseconds(10)],
-            unmount: { _ in
+            eject: { _ in
                 _ = await attempts.next()
-                throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError, userInfo: nil)
+                return .refused(status: DiskEjector.unixError(EPERM))
             }
         )
         guard case .failed = outcome else {
@@ -120,8 +108,74 @@ struct RemovableEjectOutcomeTests {
         #expect(await attempts.count == 1)
     }
 
+    /// An import copying from the card holds its files open, and it is Otos's own work:
+    /// the eject is refused at once, before any unmount attempt or retry.
+    @Test func anEjectDuringAnImportIsRefusedAtOnce() async throws {
+        let (store, root) = try await Self.attachedCard(identity: "volume:eject-importing")
+        let attempts = Counter()
+        let outcome = await CatalogWindowViewModel.performEjectRemovableSource(
+            root,
+            store: store,
+            coordinator: nil,
+            previewLoader: nil,
+            importInProgress: true,
+            retryDelays: [.milliseconds(10)],
+            eject: { _ in
+                _ = await attempts.next()
+                return .ejected
+            }
+        )
+        #expect(outcome == .busy(displayName: root.displayName))
+        #expect(await attempts.isUntouched)
+    }
+
+    /// The preview loader has finished its reads on the card before the first unmount
+    /// attempt, and is released again once the eject has its outcome.
+    @Test func previewReadsAreReleasedBeforeTheUnmountAndResumedAfterIt() async throws {
+        for (identity, result) in [("volume:eject-drain-ok", DiskEjector.Outcome.ejected), ("volume:eject-drain-busy", .busy)] {
+            let (store, root) = try await Self.attachedCard(identity: identity)
+            let readers = ReaderEvents()
+            _ = await CatalogWindowViewModel.performEjectRemovableSource(
+                root,
+                store: store,
+                coordinator: nil,
+                previewLoader: readers,
+                retryDelays: [],
+                eject: { _ in
+                    await readers.record("eject")
+                    return result
+                }
+            )
+            #expect(await readers.events == ["quiesce:\(root.path.rawValue)", "eject", "resume:\(root.path.rawValue)"])
+        }
+    }
+
+    private actor ReaderEvents: PreviewLoading {
+        private(set) var events: [String] = []
+
+        func record(_ event: String) {
+            events.append(event)
+        }
+
+        nonisolated func preview(for request: PreviewImageLoader.Request) async -> PreviewImageLoader.Outcome {
+            .unavailable
+        }
+
+        func quiesce(under root: LibraryRootPath) {
+            events.append("quiesce:\(root.rawValue)")
+        }
+
+        func resume(under root: LibraryRootPath) {
+            events.append("resume:\(root.rawValue)")
+        }
+    }
+
     private actor Counter {
         private(set) var count = 0
+        var isUntouched: Bool {
+            count < 1
+        }
+
         func next() -> Int {
             count += 1
             return count
@@ -147,56 +201,24 @@ struct RemovableEjectOutcomeTests {
         let root = try #require(snapshot.removableSources.first { $0.path == cardPath }?.root)
         return (store, root)
     }
+}
 
-    @Test func busyErrorMapsFromLocalizedDescriptionFallback() {
-        let error = NSError(
-            domain: "Test",
-            code: 999,
-            userInfo: [NSLocalizedDescriptionKey: "The disk couldn't be ejected because it is in use."]
-        )
-        let outcome = CatalogWindowViewModel.removableEjectOutcome(
-            for: error,
-            displayName: "CARD"
-        )
-        #expect(outcome == .busy(displayName: "CARD"))
-    }
+/// The eject itself, against a real disk: DiskArbitration's own report decides the
+/// outcome. ExFAT, as camera cards are formatted.
+struct DiskEjectorLiveDiskImageTests {
+    @Test func aHeldVolumeIsBusyAndAReleasedOneEjects() async throws {
+        // An ExFAT label holds at most 11 characters; a longer one fails the format.
+        let image = try MountedTestDiskImage.attach(named: "OtosEject", filesystem: "ExFAT")
+        defer { image.detach() }
+        let held = image.mountURL.appending(path: "held.txt")
+        try Data("held".utf8).write(to: held)
+        let handle = try FileHandle(forReadingFrom: held)
 
-    @Test func userCancelledMapsToCancelledNotBusy() {
-        let error = NSError(
-            domain: NSCocoaErrorDomain,
-            code: NSUserCancelledError,
-            userInfo: nil
-        )
-        let outcome = CatalogWindowViewModel.removableEjectOutcome(
-            for: error,
-            displayName: "CARD"
-        )
-        #expect(outcome == .cancelled)
-    }
+        #expect(await DiskEjector.eject(volumeAt: image.mountURL) == .busy)
+        #expect(FileManager.default.fileExists(atPath: image.mountURL.path(percentEncoded: false)))
 
-    @Test func failedErrorMapsGenericDescription() {
-        let error = NSError(
-            domain: "Test",
-            code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "Unmount failed for an unknown reason."]
-        )
-        let outcome = CatalogWindowViewModel.removableEjectOutcome(
-            for: error,
-            displayName: "CARD"
-        )
-        #expect(outcome == .failed(description: "Unmount failed for an unknown reason."))
-    }
-
-    @Test func unknownCocoaWriteErrorWithoutBusyUnderlyingMapsToFailed() {
-        let error = NSError(
-            domain: NSCocoaErrorDomain,
-            code: NSFileWriteUnknownError,
-            userInfo: [NSLocalizedDescriptionKey: "The operation couldn’t be completed."]
-        )
-        let outcome = CatalogWindowViewModel.removableEjectOutcome(
-            for: error,
-            displayName: "CARD"
-        )
-        #expect(outcome == .failed(description: "The operation couldn’t be completed."))
+        try handle.close()
+        #expect(await DiskEjector.eject(volumeAt: image.mountURL) == .ejected)
+        #expect(!FileManager.default.fileExists(atPath: held.path(percentEncoded: false)))
     }
 }

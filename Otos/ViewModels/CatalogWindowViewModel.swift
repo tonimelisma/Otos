@@ -674,7 +674,7 @@ extension CatalogWindowViewModel {
         // in submission order. Cancellation is checked between commands: an
         // already-started SQLite transaction may finish, but the next queued
         // command must not begin after this owner is gone.
-        mutationForwardingTask = Task { [weak self, mutationStream, store, coordinator] in
+        mutationForwardingTask = Task { [weak self, mutationStream, store, coordinator, previewLoader] in
             for await intent in mutationStream {
                 guard !Task.isCancelled else {
                     break
@@ -682,7 +682,9 @@ extension CatalogWindowViewModel {
                 let ejectOutcome = await Self.performCatalogMutation(
                     intent,
                     store: store,
-                    coordinator: coordinator
+                    coordinator: coordinator,
+                    previewLoader: previewLoader,
+                    importer: self?.mediaOperationCoordinator
                 )
                 if let ejectOutcome {
                     self?.handleEjectOutcome(ejectOutcome, for: intent)
@@ -1001,7 +1003,7 @@ extension CatalogWindowViewModel {
         }
         clearEjectingSourceIdentity(identity)
         switch outcome {
-        case .ejected, .cancelled:
+        case .ejected:
             return
         case let .busy(displayName):
             ejectAlertMessage =
