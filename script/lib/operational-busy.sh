@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 
 # Returns success when the catalog proves any import or reorganization is in
-# flight. A missing catalog is idle; inability to inspect an existing catalog
-# is busy because smoke cleanup must never terminate work on uncertain evidence.
+# flight. An import row in phase `abandoned` is cleanup owed to the next launch,
+# not work in flight. A missing catalog is idle; inability to inspect an existing
+# catalog is busy because smoke cleanup must never terminate work on uncertain
+# evidence.
 has_active_operational_work() {
   local catalog_db="$1"
   [[ -f "$catalog_db" ]] || return 1
@@ -10,7 +12,7 @@ has_active_operational_work() {
 
   local output rc
   output="$(sqlite3 -readonly "$catalog_db" \
-    "SELECT source_root_path FROM active_file_operation UNION ALL SELECT library_root_path FROM active_reorganization_component LIMIT 1;" \
+    "SELECT source_root_path FROM active_file_operation WHERE phase != 'abandoned' UNION ALL SELECT library_root_path FROM active_reorganization_component LIMIT 1;" \
     2>&1)"; rc=$?
   if [[ $rc -ne 0 ]]; then
     printf '%s\n' "$output" >&2

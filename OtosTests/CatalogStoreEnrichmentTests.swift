@@ -459,21 +459,20 @@ struct CatalogStoreEnrichmentTests {
         let batch = ImportBatchID()
         let operation = ActiveFileOperation(
             operationKey: .make(),
-            mode: "import",
             sourceKind: .library,
             sourceDeviceIdentity: nil,
             sourceRootPath: sourcePath,
             sourceRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
             destinationRootPath: destinationPath,
             destinationRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
-            stagingPath: nil,
+            stagingURL: nil,
+            companionStagingURLs: [],
             contentHash: digest,
-            importBatchUnixMs: batch.unixMilliseconds,
+            importBatch: ImportBatchID(unixMilliseconds: batch.unixMilliseconds),
             sourceByteSize: scannedSize,
             sourceModifiedAt: scannedModifiedAt,
             destinationModifiedAt: scannedModifiedAt,
             phase: .readyToPublish,
-            deleteSourceRequested: false,
             updatedAt: Date()
         )
         try await store.beginImportOperation(operation)
@@ -671,21 +670,20 @@ struct CatalogStoreEnrichmentTests {
         let batch = ImportBatchID()
         let operation = ActiveFileOperation(
             operationKey: .make(),
-            mode: "import",
             sourceKind: .removableVolume,
             sourceDeviceIdentity: "volume:test",
             sourceRootPath: cardPath,
             sourceRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
             destinationRootPath: destinationPath,
             destinationRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
-            stagingPath: staging.path,
+            stagingURL: staging,
+            companionStagingURLs: [],
             contentHash: digest,
-            importBatchUnixMs: batch.unixMilliseconds,
+            importBatch: ImportBatchID(unixMilliseconds: batch.unixMilliseconds),
             sourceByteSize: 6,
             sourceModifiedAt: Date(timeIntervalSince1970: 1000),
             destinationModifiedAt: Date(timeIntervalSince1970: 1000),
             phase: .readyToPublish,
-            deleteSourceRequested: false,
             updatedAt: Date()
         )
         try await store.beginImportOperation(operation)

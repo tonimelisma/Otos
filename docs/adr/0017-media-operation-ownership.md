@@ -23,9 +23,22 @@ state. It also owns the typed reorganization lease because that lease directly
 arbitrates Store-owned scans, filesystem-event reconciliation, and planning
 revisions.
 
-`MediaImportExecutor` owns import filesystem execution and recovery: staging,
-orphan-staging enumeration and deletion, byte transfer, exclusive publication, and
-optional source deletion. `ReorganizationExecutor` owns directory prerequisites,
+`MediaImportExecutor` owns one run's import filesystem execution: staging, byte
+transfer, exclusive publication, and the run's card-erase sweep. `MediaImportRecovery`
+owns what earlier processes left in the import and erase journals and runs once, at
+`MediaOperationCoordinator.start()`, before any import of this process. A recovery run
+inside each execution was rejected: an earlier execution of the same process could be
+mid-copy, and recovering its rows removed its staging files and abandoned its journal
+while it ran. Every staging file an entry creates — primary and companions — is
+journaled before it exists, which is what lets recovery be journal-driven; the
+directory sweep for unjournaled staging files that this replaced is gone. An entry
+whose staging file will not go keeps its row as `abandoned` (cleanup owed, nothing in
+flight) rather than leaving an unnamed file in the user's library. A landed entry's
+card file is still erased on its own settle (ADR 0027), but by one ordered consumer
+per run that takes the card's namespace lease and journals each erase in
+`active_source_erase` exactly as the sweep does; erasing it from the copy worker
+itself, without that lease and with the import row as its only journal, was the
+replaced design. A card another owner holds keeps the file for the sweep. `ReorganizationExecutor` owns directory prerequisites,
 filesystem observations, no-overwrite moves, and rollback. `LibraryReorganizationRunner`
 owns the reorganization use-case sequence and interprets durable journal phases at
 startup before Store starts saved-library scans.

@@ -6,9 +6,11 @@ self_test() {
   command -v sqlite3 >/dev/null 2>&1 || { echo "sqlite3 is required for smoke predicate self-test" >&2; return 1; }
   local d db corrupt fake_path
   d="$(mktemp -d)"; trap 'rm -rf "$d"' RETURN; db="$d/catalog.sqlite"
-  sqlite3 "$db" 'CREATE TABLE active_file_operation(source_root_path TEXT); CREATE TABLE active_reorganization_component(library_root_path TEXT);'
+  sqlite3 "$db" 'CREATE TABLE active_file_operation(source_root_path TEXT, phase TEXT); CREATE TABLE active_reorganization_component(library_root_path TEXT);'
   if has_active_operational_work "$db"; then echo "empty fixture reported busy" >&2; return 1; fi
-  sqlite3 "$db" "INSERT INTO active_file_operation VALUES ('$d/root-a');"
+  sqlite3 "$db" "INSERT INTO active_file_operation VALUES ('$d/root-a', 'abandoned');"
+  if has_active_operational_work "$db"; then echo "abandoned-cleanup fixture reported busy" >&2; return 1; fi
+  sqlite3 "$db" "INSERT INTO active_file_operation VALUES ('$d/root-b', 'copying');"
   has_active_operational_work "$db" || { echo "active import fixture reported idle" >&2; return 1; }
   sqlite3 "$db" 'DELETE FROM active_file_operation; INSERT INTO active_reorganization_component VALUES ("root-c");'
   has_active_operational_work "$db" || { echo "active reorganization fixture reported idle" >&2; return 1; }

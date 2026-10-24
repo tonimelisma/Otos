@@ -347,6 +347,61 @@ extension CatalogStore {
             )
             """)
         }
+        // The import journal names every staging file it creates, companions included,
+        // and carries only facts an entry has: no mode (every row is an import), no
+        // source-deletion flag (card erase is the run's own sweep, journaled in
+        // `active_source_erase`), and always a batch. Rows a previous build left waiting
+        // to erase their source were already settled; they are dropped, so the source
+        // stays on the card rather than being erased outside the sweep.
+        migrator.registerMigration("v23_import_journal_names_every_staging_file") { db in
+            try db.execute(sql: """
+            DELETE FROM active_file_operation
+            WHERE phase = 'sourceDeletionPending' OR import_batch_unix_ms IS NULL
+            """)
+            try db.execute(sql: """
+            CREATE TABLE active_file_operation_v23 (
+                operation_key TEXT PRIMARY KEY NOT NULL,
+                source_kind TEXT NOT NULL,
+                source_device_identity TEXT,
+                source_root_path TEXT NOT NULL,
+                source_relative_path TEXT NOT NULL,
+                destination_root_path TEXT NOT NULL,
+                destination_relative_path TEXT NOT NULL,
+                staging_path TEXT,
+                content_hash_xxh3_128 BLOB,
+                import_batch_unix_ms INTEGER NOT NULL,
+                source_byte_size INTEGER NOT NULL,
+                source_modified_at DOUBLE NOT NULL,
+                destination_modified_at DOUBLE,
+                phase TEXT NOT NULL,
+                updated_at DOUBLE NOT NULL
+            )
+            """)
+            try db.execute(sql: """
+            INSERT INTO active_file_operation_v23 (
+                operation_key, source_kind, source_device_identity, source_root_path,
+                source_relative_path, destination_root_path, destination_relative_path,
+                staging_path, content_hash_xxh3_128, import_batch_unix_ms, source_byte_size,
+                source_modified_at, destination_modified_at, phase, updated_at
+            )
+            SELECT
+                operation_key, source_kind, source_device_identity, source_root_path,
+                source_relative_path, destination_root_path, destination_relative_path,
+                staging_path, content_hash_xxh3_128, import_batch_unix_ms, source_byte_size,
+                source_modified_at, destination_modified_at, phase, updated_at
+            FROM active_file_operation
+            """)
+            try db.execute(sql: "DROP TABLE active_file_operation")
+            try db.execute(sql: "ALTER TABLE active_file_operation_v23 RENAME TO active_file_operation")
+            try db.execute(sql: """
+            CREATE TABLE active_file_operation_companion_staging (
+                operation_key TEXT NOT NULL
+                    REFERENCES active_file_operation(operation_key) ON DELETE CASCADE,
+                staging_path TEXT NOT NULL,
+                PRIMARY KEY (operation_key, staging_path)
+            )
+            """)
+        }
         return migrator
     }
 

@@ -21,7 +21,7 @@ extension CatalogStore {
              source_relative_path, source_byte_size, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """, arguments: [
-            operation.key,
+            operation.key.rawValue,
             operation.sourceKind.rawValue,
             operation.sourceDeviceIdentity,
             operation.sourceRootPath.rawValue,
@@ -31,15 +31,25 @@ extension CatalogStore {
         ])
     }
 
-    nonisolated static func deleteActiveSourceErase(key: String, db: Database) throws {
-        try db.execute(sql: "DELETE FROM active_source_erase WHERE operation_key = ?", arguments: [key])
+    nonisolated static func deleteActiveSourceErase(key: ActiveSourceEraseKey, db: Database) throws {
+        try db.execute(sql: "DELETE FROM active_source_erase WHERE operation_key = ?", arguments: [key.rawValue])
     }
 
+    /// A row whose source kind this build does not know is kept and reported, never
+    /// read as some other kind: an erase acts on the source it names.
     nonisolated static func fetchAllActiveSourceErases(db: Database) throws -> [ActiveSourceEraseOperation] {
-        try Row.fetchAll(db, sql: "SELECT * FROM active_source_erase ORDER BY operation_key").map { row in
-            ActiveSourceEraseOperation(
-                key: row["operation_key"],
-                sourceKind: LibraryRootKind(rawValue: row["source_kind"]) ?? .removableVolume,
+        try Row.fetchAll(db, sql: "SELECT * FROM active_source_erase ORDER BY operation_key").compactMap { row in
+            let key = ActiveSourceEraseKey(rawValue: row["operation_key"])
+            guard let kind = LibraryRootKind(rawValue: row["source_kind"]) else {
+                OtosLog.catalog.faultOperation("import.erase.journal", phase: "unknownSourceKind", fields: [
+                    "key": key.rawValue,
+                    "sourceKind": row["source_kind"] ?? "",
+                ])
+                return nil
+            }
+            return ActiveSourceEraseOperation(
+                key: key,
+                sourceKind: kind,
                 sourceDeviceIdentity: row["source_device_identity"],
                 sourceRootPath: LibraryRootPath(rawValue: row["source_root_path"]),
                 sourceRelativePath: MediaRelativePath(rawValue: row["source_relative_path"]),
@@ -67,16 +77,33 @@ extension CatalogStore {
         try db.execute(
             sql: """
             INSERT INTO active_file_operation (
-                operation_key, mode, source_kind, source_device_identity,
+                operation_key, source_kind, source_device_identity,
                 source_root_path, source_relative_path,
                 destination_root_path, destination_relative_path,
                 staging_path, content_hash_xxh3_128, import_batch_unix_ms,
                 source_byte_size, source_modified_at, destination_modified_at,
-                phase, delete_source_requested, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                phase, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            arguments: activeFileOperationArguments(operation)
+            arguments: [
+                operation.operationKey.rawValue,
+                operation.sourceKind.rawValue,
+                operation.sourceDeviceIdentity,
+                operation.sourceRootPath.rawValue,
+                operation.sourceRelativePath.rawValue,
+                operation.destinationRootPath.rawValue,
+                operation.destinationRelativePath.rawValue,
+                operation.stagingURL?.path(percentEncoded: false),
+                operation.contentHash?.data,
+                operation.importBatch.unixMilliseconds,
+                operation.sourceByteSize,
+                operation.sourceModifiedAt.timeIntervalSince1970,
+                operation.destinationModifiedAt?.timeIntervalSince1970,
+                operation.phase.rawValue,
+                operation.updatedAt.timeIntervalSince1970,
+            ]
         )
+        try replaceCompanionStaging(operation, db: db)
     }
 
     static func updateActiveFileOperation(_ operation: ActiveFileOperation, db: Database) throws {
@@ -91,7 +118,7 @@ extension CatalogStore {
             WHERE operation_key = ?
             """,
             arguments: [
-                operation.stagingPath,
+                operation.stagingURL?.path(percentEncoded: false),
                 operation.contentHash?.data,
                 operation.destinationModifiedAt?.timeIntervalSince1970,
                 operation.phase.rawValue,
@@ -101,6 +128,20 @@ extension CatalogStore {
         )
         guard db.changesCount == 1 else {
             throw CatalogStoreError.importOperationMissing(operation.operationKey)
+        }
+        try replaceCompanionStaging(operation, db: db)
+    }
+
+    private static func replaceCompanionStaging(_ operation: ActiveFileOperation, db: Database) throws {
+        try db.execute(
+            sql: "DELETE FROM active_file_operation_companion_staging WHERE operation_key = ?",
+            arguments: [operation.operationKey.rawValue]
+        )
+        for url in operation.companionStagingURLs {
+            try db.execute(
+                sql: "INSERT INTO active_file_operation_companion_staging (operation_key, staging_path) VALUES (?, ?)",
+                arguments: [operation.operationKey.rawValue, url.path(percentEncoded: false)]
+            )
         }
     }
 
@@ -114,9 +155,21 @@ extension CatalogStore {
         }
     }
 
+    /// A row whose phase or source kind this build does not know is kept and reported;
+    /// recovery cannot act on it correctly, so it does not act at all.
     static func fetchAllActiveFileOperations(db: Database) throws -> [ActiveFileOperation] {
-        try Row.fetchAll(db, sql: "SELECT * FROM active_file_operation ORDER BY updated_at").compactMap {
-            activeFileOperation(from: $0)
+        let stagingRows = try Row.fetchAll(
+            db,
+            sql: "SELECT operation_key, staging_path FROM active_file_operation_companion_staging ORDER BY staging_path"
+        )
+        var companionStaging: [String: [URL]] = [:]
+        for row in stagingRows {
+            let key: String = row["operation_key"]
+            let path: String = row["staging_path"]
+            companionStaging[key, default: []].append(URL(fileURLWithPath: path))
+        }
+        return try Row.fetchAll(db, sql: "SELECT * FROM active_file_operation ORDER BY updated_at").compactMap { row in
+            activeFileOperation(from: row, companionStaging: companionStaging)
         }
     }
 
@@ -250,55 +303,41 @@ extension CatalogStore {
         )
     }
 
-    private static func activeFileOperationArguments(_ operation: ActiveFileOperation) -> StatementArguments {
-        [
-            operation.operationKey.rawValue,
-            operation.mode,
-            operation.sourceKind.rawValue,
-            operation.sourceDeviceIdentity,
-            operation.sourceRootPath.rawValue,
-            operation.sourceRelativePath.rawValue,
-            operation.destinationRootPath.rawValue,
-            operation.destinationRelativePath.rawValue,
-            operation.stagingPath,
-            operation.contentHash?.data,
-            operation.importBatchUnixMs,
-            operation.sourceByteSize,
-            operation.sourceModifiedAt.timeIntervalSince1970,
-            operation.destinationModifiedAt?.timeIntervalSince1970,
-            operation.phase.rawValue,
-            operation.deleteSourceRequested ? 1 : 0,
-            operation.updatedAt.timeIntervalSince1970,
-        ]
-    }
-
-    private static func activeFileOperation(from row: Row) -> ActiveFileOperation? {
+    private static func activeFileOperation(
+        from row: Row,
+        companionStaging: [String: [URL]]
+    ) -> ActiveFileOperation? {
+        let key: String = row["operation_key"]
         guard let phase = ActiveFileOperationPhase(rawValue: row["phase"]),
               let kind = LibraryRootKind(rawValue: row["source_kind"])
         else {
+            OtosLog.catalog.faultOperation("mediaOperation.journal", phase: "unknownRow", fields: [
+                "key": key,
+                "phase": row["phase"] ?? "",
+                "sourceKind": row["source_kind"] ?? "",
+            ])
             return nil
         }
         let sourceModified: Double = row["source_modified_at"]
         let destinationModified: Double? = row["destination_modified_at"]
         let updated: Double = row["updated_at"]
-        let deleteRequested: Int = row["delete_source_requested"]
+        let stagingPath: String? = row["staging_path"]
         return ActiveFileOperation(
-            operationKey: ActiveFileOperationKey(rawValue: row["operation_key"]),
-            mode: row["mode"],
+            operationKey: ActiveFileOperationKey(rawValue: key),
             sourceKind: kind,
             sourceDeviceIdentity: row["source_device_identity"],
             sourceRootPath: LibraryRootPath(rawValue: row["source_root_path"]),
             sourceRelativePath: MediaRelativePath(rawValue: row["source_relative_path"]),
             destinationRootPath: LibraryRootPath(rawValue: row["destination_root_path"]),
             destinationRelativePath: MediaRelativePath(rawValue: row["destination_relative_path"]),
-            stagingPath: row["staging_path"],
+            stagingURL: stagingPath.map { URL(fileURLWithPath: $0) },
+            companionStagingURLs: companionStaging[key] ?? [],
             contentHash: (row["content_hash_xxh3_128"] as Data?).flatMap(XXH3Digest128.init(data:)),
-            importBatchUnixMs: row["import_batch_unix_ms"],
+            importBatch: ImportBatchID(unixMilliseconds: row["import_batch_unix_ms"]),
             sourceByteSize: row["source_byte_size"],
             sourceModifiedAt: Date(timeIntervalSince1970: sourceModified),
             destinationModifiedAt: destinationModified.map(Date.init(timeIntervalSince1970:)),
             phase: phase,
-            deleteSourceRequested: deleteRequested != 0,
             updatedAt: Date(timeIntervalSince1970: updated)
         )
     }

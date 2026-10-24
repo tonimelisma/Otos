@@ -37,7 +37,7 @@ nonisolated enum SourceEraseOutcome: Equatable, Sendable {
 /// decision -- confusing the two would be deleting someone's photos.
 nonisolated enum StagedSourceReleaser {
     /// Synchronous, and that matters. Settlement runs inside the executor actor for every
-    /// copied entry, and `recoverJournal()` runs it again for every interrupted one at
+    /// copied entry, and `MediaImportRecovery` runs it again for every interrupted one at
     /// `MediaOperationCoordinator.start()`. An `await` here would add a suspension to both
     /// hot paths to delete a file that needs no actor at all.
     static func releaseIfCached(kind: LibraryRootKind, sourceURL: URL) {
@@ -236,61 +236,6 @@ actor MediaImportExecutor {
         cancelFlag.cancel()
     }
 
-    /// Journal-row recovery. Runs at coordinator start and again before each
-    /// execution. The coordinator start pass may precede `CatalogStore.start()`;
-    /// each row's namespace lease awaits the Store's initial load, so persisted
-    /// roots are registered by the time a row is judged. Does not walk library
-    /// trees — orphan staging cleanup is
-    /// destination-parent scoped via `removeOrphanedDestinationTemps(near:)`.
-    func recoverJournal() async {
-        let signpost = OtosSignpost.catalog.beginInterval("ImportJournalRecovery")
-        defer { OtosSignpost.catalog.endInterval("ImportJournalRecovery", signpost) }
-        do {
-            let operations = try await store.activeImportOperations()
-            for operation in operations {
-                await recover(operation)
-            }
-            let eraseOperations = try await store.activeSourceEraseOperations()
-            await recoverSourceErases(eraseOperations)
-        } catch {
-            OtosLog.catalog.error(
-                "op=mediaOperation.recover phase=failed error=\(String(describing: error), privacy: .public)"
-            )
-        }
-    }
-
-    /// Removes abandoned `*.otos-import-staging` files only in parent directories
-    /// of planned destinations. Full-library enumeration is forbidden — large
-    /// cloud libraries would hang startup and tests.
-    func removeOrphanedDestinationTemps(near destinationURLs: [URL]) async {
-        let journaledStaging: Set<String>
-        do {
-            journaledStaging = try await Set(store.activeImportOperations().compactMap(\.stagingPath))
-        } catch {
-            return
-        }
-        let parents = destinationURLs
-        await Task.detached {
-            let fileManager = FileManager.default
-            for parent in parents {
-                guard let items = try? fileManager.contentsOfDirectory(
-                    at: parent,
-                    includingPropertiesForKeys: nil,
-                    options: []
-                ) else {
-                    continue
-                }
-                for item in items where item.lastPathComponent.hasSuffix(Self.destinationTempSuffix) {
-                    guard !journaledStaging.contains(item.path) else { continue }
-                    try? fileManager.removeItem(at: item)
-                    OtosLog.catalog.notice(
-                        "op=mediaOperation.recover phase=orphanStagingRemoved path=\(item.path, privacy: .public)"
-                    )
-                }
-            }
-        }.value
-    }
-
     func execute(
         plan: MediaOperationPlan,
         batch: ImportBatchID,
@@ -304,8 +249,6 @@ actor MediaImportExecutor {
         guard case let .import(_, destination, _) = plan.mode else {
             return .failed(reason: .unexpected(detail: "notAnImportPlan"))
         }
-        await recoverJournal()
-        await removeOrphanedDestinationTemps(near: destinationParentURLs(plan: plan, destination: destination))
         let copyEntries = plan.entries.filter {
             if case .copy = $0.disposition {
                 return true
@@ -382,19 +325,32 @@ actor MediaImportExecutor {
         if let namespaceLease {
             _ = await store.releaseNamespaceMutationLease(namespaceLease)
         }
-        let storedBatchCount = await (try? store.importBatchAssetCount(batch)) ?? -1
-        let batchIntegrityMismatch = storedBatchCount != entryTotals.publishedCount
-        OtosLog.catalog.notice(
-            "op=mediaOperation.batch phase=verified run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public) skippedPreexisting=\(plan.totals.skipCount, privacy: .public) skippedForeign=\(entryTotals.skippedForeignCount, privacy: .public) failed=\(entryTotals.failedCount, privacy: .public) blocked=\(plan.totals.blockedCount, privacy: .public)"
-        )
+        // The catalog's own count of the batch checks the run's: a mismatch is a fault. A
+        // count that could not be read proves nothing either way, so it is logged and the
+        // run's outcome stands on what the run itself observed.
+        let batchIntegrityMismatch: Bool
+        do {
+            let storedBatchCount = try await store.importBatchAssetCount(batch)
+            batchIntegrityMismatch = storedBatchCount != entryTotals.publishedCount
+            OtosLog.catalog.notice(
+                "op=mediaOperation.batch phase=verified run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public) skippedPreexisting=\(plan.totals.skipCount, privacy: .public) skippedForeign=\(entryTotals.skippedForeignCount, privacy: .public) failed=\(entryTotals.failedCount, privacy: .public) blocked=\(plan.totals.blockedCount, privacy: .public)"
+            )
+            if batchIntegrityMismatch {
+                OtosLog.catalog.fault(
+                    "op=mediaOperation.batch phase=integrityMismatch run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public)"
+                )
+            }
+        } catch {
+            batchIntegrityMismatch = false
+            OtosLog.catalog.errorOperation("mediaOperation.batch", phase: "verificationUnavailable", fields: [
+                "run": runID,
+                "batch": "\(batch.unixMilliseconds)",
+                "error": String(describing: error),
+            ])
+        }
         OtosLog.catalog.notice(
             "op=mediaOperation.batch phase=overlayReuse run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) metadataCloned=\(entryTotals.overlayReuse.metadataCloned, privacy: .public) thumbnailCopied=\(entryTotals.overlayReuse.thumbnailCopied, privacy: .public) misses=\(entryTotals.overlayReuse.missDescription, privacy: .public)"
         )
-        if batchIntegrityMismatch {
-            OtosLog.catalog.fault(
-                "op=mediaOperation.batch phase=integrityMismatch run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public)"
-            )
-        }
         OtosSignpost.mediaIO.endInterval("MediaImportBatch", batchSignpost)
         let elapsedMs = max(DiagnosticsTiming.milliseconds(from: started, to: .now), 1)
         OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "finish", fields: [
@@ -463,27 +419,6 @@ actor MediaImportExecutor {
         )
     }
 
-    private func destinationParentURLs(
-        plan: MediaOperationPlan,
-        destination: LibraryRootPath
-    ) -> [URL] {
-        var parents = Set<URL>()
-        let destinationRoot = URL(fileURLWithPath: destination.rawValue, isDirectory: true)
-        for entry in plan.entries {
-            if case let .copy(destRel) = entry.disposition {
-                parents.insert(
-                    destinationRoot.appending(path: destRel.rawValue).deletingLastPathComponent()
-                )
-            }
-            for companionDest in entry.companionDestinations.values {
-                parents.insert(
-                    destinationRoot.appending(path: companionDest.rawValue).deletingLastPathComponent()
-                )
-            }
-        }
-        return Array(parents)
-    }
-
     private func runPlanEntries(
         context: EntryExecutionContext,
         totalCount: Int,
@@ -509,6 +444,18 @@ actor MediaImportExecutor {
         }
         let byteProgress = ByteProgressTracker(totalCount: totalCount, totalBytes: totalBytes)
         let destinationURL = URL(fileURLWithPath: context.destinationRoot.rawValue, isDirectory: true)
+        // ADR 0027: a landed entry's source is erased on its own settle, so a floor stop
+        // still erases what landed. One consumer takes them in settle order, each under
+        // the card's namespace lease and journaled; the run waits for it before the sweep.
+        let (landedSources, landedSink) = AsyncStream<MediaOperationPlanEntry>.makeStream(bufferingPolicy: .unbounded)
+        let landedEraser: Task<Void, Never>? = context.allowSourceDeletion
+            ? Task { [weak self] in
+                for await entry in landedSources {
+                    guard let self else { return }
+                    await eraseLandedSource(entry, context: context)
+                }
+            }
+            : nil
         // ADR 0027: an entry is admitted only while the destination volume
         // keeps the floor after it *and every entry still in flight* lands.
         // With `workerCount` entries in flight, a check that looked only at
@@ -600,6 +547,7 @@ actor MediaImportExecutor {
                     let entry = copyEntries[result.index]
                     let notCopied = Set(companionsNotCopied)
                     erasableSourcePaths.insert(entry.source.relativePath)
+                    landedSink.yield(entry)
                     for companion in entry.companionDestinations.keys where !notCopied.contains(companion) {
                         erasableSourcePaths.insert(companion)
                     }
@@ -648,6 +596,8 @@ actor MediaImportExecutor {
             }
             return spaceStop
         }
+        landedSink.finish()
+        await landedEraser?.value
         // A floor stop is never fully clean: the un-copied entries exist only
         // on the card, so the erase sweep does not run (ADR 0027).
         if context.allowSourceDeletion, spaceStop == nil {
@@ -739,7 +689,7 @@ actor MediaImportExecutor {
         for candidate in candidates {
             guard !cancelFlag.isCancelled else { break }
             let journal = ActiveSourceEraseOperation(
-                key: UUID().uuidString,
+                key: .make(),
                 sourceKind: context.sourceKind,
                 sourceDeviceIdentity: context.sourceDeviceIdentity,
                 sourceRootPath: sourceRoot,
@@ -775,10 +725,10 @@ actor MediaImportExecutor {
                     ])
                     logged += 1
                 }
-                await Self.completeEraseJournal(journal.key, store: store)
+                await ImportStaging.completeEraseJournal(journal.key, store: store)
             case .alreadyGone:
                 skipped += 1
-                await Self.completeEraseJournal(journal.key, store: store)
+                await ImportStaging.completeEraseJournal(journal.key, store: store)
             case .refused, .failed:
                 failed += 1
             }
@@ -802,91 +752,6 @@ actor MediaImportExecutor {
         )
     }
 
-    /// One lease per source root for the whole sweep.
-    ///
-    /// Acquiring per entry and releasing from a detached `Task` inside a `defer`
-    /// raced the next iteration's acquire — `defer` only *enqueues* the release —
-    /// so every entry after the first could bail on an unsatisfiable acquire with
-    /// no log at all, leaving journal rows and files the user asked to reclaim.
-    /// It also left the lease held past the sweep, which an ordinary import then
-    /// saw as a busy source namespace.
-    private func recoverSourceErases(_ operations: [ActiveSourceEraseOperation]) async {
-        let byRoot = Dictionary(grouping: operations, by: \.sourceRootPath)
-        for (root, rootOperations) in byRoot.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
-            let lease: RootNamespaceMutationLease
-            let acquisition = await store.acquireNamespaceMutationLease(for: root, owner: .sourceErase)
-            switch acquisition {
-            case let .acquired(acquired):
-                lease = acquired
-            case let .busy(owner):
-                // Retained, not dropped: the journal rows survive for the next
-                // launch's sweep.
-                OtosLog.mediaIO.noticeOperation("import.erase.recover", phase: "deferred", fields: [
-                    "reason": "namespaceBusy",
-                    "heldBy": owner.rawValue,
-                    "rootPath": root.rawValue,
-                    "pendingCount": "\(rootOperations.count)",
-                ])
-                continue
-            case .rootNotRegistered, .catalogUnavailable:
-                OtosLog.mediaIO.noticeOperation("import.erase.recover", phase: "deferred", fields: [
-                    "reason": acquisition.logReason,
-                    "rootPath": root.rawValue,
-                    "pendingCount": "\(rootOperations.count)",
-                ])
-                continue
-            }
-            for operation in rootOperations {
-                await recoverSourceErase(operation)
-            }
-            _ = await store.releaseNamespaceMutationLease(lease)
-        }
-    }
-
-    /// The caller holds `operation.sourceRootPath`'s namespace lease.
-    private func recoverSourceErase(_ operation: ActiveSourceEraseOperation) async {
-        let url = operation.sourceRootPath.url
-            .appending(path: operation.sourceRelativePath.rawValue)
-            .standardizedFileURL
-        let contained = CatalogPath.relativePath(
-            rootPath: operation.sourceRootPath,
-            fileURL: url
-        )
-        guard contained == operation.sourceRelativePath else {
-            // Unreachable through `eraseSourceFiles`, which validates containment
-            // before journaling. A row that fails it can never be acted on, so it
-            // is surfaced rather than retried in silence, and retained rather than
-            // deleted on a fact this code could not prove.
-            OtosLog.mediaIO.fault(
-                "op=import.erase.recover phase=uncontained rootPath=\(operation.sourceRootPath.rawValue, privacy: .public) relativePath=\(operation.sourceRelativePath.rawValue, privacy: .public)"
-            )
-            return
-        }
-        guard await SourceEraser.erase(
-            kind: operation.sourceKind,
-            identity: operation.sourceDeviceIdentity,
-            relativePath: operation.sourceRelativePath,
-            filesystemURL: url,
-            cameraImport: cameraImport
-        ).isSettled else { return }
-        await Self.completeEraseJournal(operation.key, store: store)
-    }
-
-    /// Clears an erase journal row once its file is gone. A failed clear is logged; the
-    /// row is found again at startup, where the file is already gone and the row settles.
-    private nonisolated static func completeEraseJournal(
-        _ key: String,
-        store: CatalogStore
-    ) async {
-        do {
-            try await store.completeSourceEraseOperation(key: key)
-        } catch {
-            OtosLog.catalog.errorOperation("import.erase.journal", phase: "completeFailed", fields: [
-                "error": String(describing: error),
-            ])
-        }
-    }
-
     private func sourceDeletionCandidates(
         plan: MediaOperationPlan,
         erasableSourcePaths publishedPaths: Set<MediaRelativePath>
@@ -908,6 +773,60 @@ actor MediaImportExecutor {
     /// this once carried its own `FileManager.removeItem` for `.removableVolume`
     /// *and* `.library`, which contradicted `SourceEraser`'s own read-only rule
     /// for library roots.
+    /// Erases one landed entry's source as soon as it settled (ADR 0027), under the
+    /// card's namespace lease and journaled exactly as the sweep journals, so a crash
+    /// between the two is recovered. A card another owner holds keeps the file; the
+    /// end-of-run sweep tries again under its own lease.
+    private func eraseLandedSource(_ entry: MediaOperationPlanEntry, context: EntryExecutionContext) async {
+        guard case let .import(sourceRoot, _, _) = context.plan.mode else { return }
+        let acquisition = await store.acquireNamespaceMutationLease(for: sourceRoot, owner: .sourceErase)
+        guard case let .acquired(lease) = acquisition else {
+            OtosLog.mediaIO.noticeOperation("import.erase", phase: "landedDeferred", fields: [
+                "run": context.runID,
+                "reason": acquisition.logReason,
+                "relativePath": entry.source.relativePath.rawValue,
+            ])
+            return
+        }
+        let journal = ActiveSourceEraseOperation(
+            key: .make(),
+            sourceKind: context.sourceKind,
+            sourceDeviceIdentity: context.sourceDeviceIdentity,
+            sourceRootPath: sourceRoot,
+            sourceRelativePath: entry.source.relativePath,
+            sourceByteSize: entry.source.byteSize,
+            updatedAt: Date()
+        )
+        do {
+            try await store.beginSourceEraseOperation(journal)
+            switch await eraseSourceFile(
+                candidate: EraseManifestEntry(
+                    relativePath: entry.source.relativePath,
+                    byteSize: entry.source.byteSize,
+                    fileClass: .classify(relativePath: entry.source.relativePath)
+                ),
+                sourceRoot: sourceRoot,
+                sourceKind: context.sourceKind,
+                sourceDeviceIdentity: context.sourceDeviceIdentity
+            ) {
+            case .deleted, .alreadyGone:
+                await ImportStaging.completeEraseJournal(journal.key, store: store)
+            case .refused, .failed:
+                OtosLog.mediaIO.errorOperation("import.erase", phase: "landedNotErased", fields: [
+                    "run": context.runID,
+                    "relativePath": entry.source.relativePath.rawValue,
+                ])
+            }
+        } catch {
+            OtosLog.mediaIO.errorOperation("import.erase", phase: "landedJournalFailed", fields: [
+                "run": context.runID,
+                "relativePath": entry.source.relativePath.rawValue,
+                "error": String(describing: error),
+            ])
+        }
+        _ = await store.releaseNamespaceMutationLease(lease)
+    }
+
     private func eraseSourceFile(
         candidate: EraseManifestEntry,
         sourceRoot: LibraryRootPath,
@@ -1033,7 +952,7 @@ actor MediaImportExecutor {
                 onByteProgress: onByteProgress
             )
         case .library:
-            await Self.abandonEntry(operationKey, staging: nil, store: store, reason: "libraryAsSource")
+            await Self.abandonEntry(operationKey, stagingFiles: [], store: store, reason: "libraryAsSource")
             return .failed(.other)
         }
     }
@@ -1046,11 +965,11 @@ actor MediaImportExecutor {
     ) async -> EntryOutcome? {
         let copyOutcome = await copyOffActor(from: sourceURL, to: stagingURL, onByteProgress: onByteProgress)
         if cancelFlag.isCancelled || copyOutcome == .cancelled {
-            await Self.abandonEntry(operationKey, staging: stagingURL, store: store, reason: "cancelled")
+            await Self.abandonEntry(operationKey, stagingFiles: [stagingURL], store: store, reason: "cancelled")
             return .cancelled
         }
         if case let .failed(code) = copyOutcome {
-            await Self.abandonEntry(operationKey, staging: stagingURL, store: store, reason: "transferFailed")
+            await Self.abandonEntry(operationKey, stagingFiles: [stagingURL], store: store, reason: "transferFailed")
             OtosLog.catalog.error(
                 "op=mediaOperation.copy phase=failed errno=\(code, privacy: .public)"
             )
@@ -1089,11 +1008,11 @@ actor MediaImportExecutor {
         onByteProgress: @escaping @Sendable (Int64) -> Void
     ) async -> EntryOutcome? {
         guard let identity, let cameraImport else {
-            await Self.abandonEntry(operationKey, staging: nil, store: store, reason: "cameraUnavailable")
+            await Self.abandonEntry(operationKey, stagingFiles: [], store: store, reason: "cameraUnavailable")
             return .failed(.other)
         }
         if cancelFlag.isCancelled {
-            await Self.abandonEntry(operationKey, staging: stagingURL, store: store, reason: "cancelled")
+            await Self.abandonEntry(operationKey, stagingFiles: [stagingURL], store: store, reason: "cancelled")
             return .cancelled
         }
         switch await cameraImport.ensureImportBytes(
@@ -1108,15 +1027,15 @@ actor MediaImportExecutor {
             }
             return nil
         case .cancelled:
-            await Self.abandonEntry(operationKey, staging: stagingURL, store: store, reason: "cancelled")
+            await Self.abandonEntry(operationKey, stagingFiles: [stagingURL], store: store, reason: "cancelled")
             return .cancelled
         case .failed(.outOfSpace):
             // The staging write refused for space: the floor, reached the hard
             // way, on a camera — the same stop as a refused `copyfile` on a card.
-            await Self.abandonEntry(operationKey, staging: stagingURL, store: store, reason: "outOfSpace")
+            await Self.abandonEntry(operationKey, stagingFiles: [stagingURL], store: store, reason: "outOfSpace")
             return .failed(.outOfSpace)
         case let .failed(.other(message)):
-            await Self.abandonEntry(operationKey, staging: stagingURL, store: store, reason: "transferFailed")
+            await Self.abandonEntry(operationKey, stagingFiles: [stagingURL], store: store, reason: "transferFailed")
             OtosLog.catalog.error(
                 "op=mediaOperation.camera phase=failed detail=\(message, privacy: .public)"
             )
@@ -1143,36 +1062,46 @@ actor MediaImportExecutor {
 
     /// Copies each planned companion into staging beside its final destination, through
     /// the same byte path as the primary. A failed companion is reported, never recorded.
+    /// Copies each planned companion to a staging file beside its destination. Every
+    /// staging path is journaled on the entry before the file is created, so a process
+    /// that ends mid-companion leaves nothing recovery cannot find. On `.stop` the
+    /// caller abandons the entry, which removes every staging file the journal names.
     private nonisolated func stageCompanions(
         entry: MediaOperationPlanEntry,
+        operation: inout ActiveFileOperation,
         sourceKind: LibraryRootKind,
         sourceDeviceIdentity: String?,
         destinationRoot: LibraryRootPath
     ) async -> CompanionStaging {
         var staged: [StagedCompanion] = []
         var notCopied: [MediaRelativePath] = []
-        func stop(_ outcome: EntryOutcome) -> CompanionStaging {
-            for companion in staged {
-                try? FileManager.default.removeItem(at: companion.stagingURL)
-            }
-            return .stop(outcome)
-        }
         for companion in entry.source.companions {
             guard let destinationRelative = entry.companionDestinations[companion.relativePath] else {
                 continue
             }
             if cancelFlag.isCancelled {
-                return stop(.cancelled)
+                return .stop(.cancelled)
             }
             let finalURL = destinationRoot.url.appendingPathComponent(destinationRelative.rawValue)
             let stagingURL = Self.stagingURL(adjacentTo: finalURL)
             let sourceURL = entry.source.sourceURL
                 .deletingLastPathComponent()
-                .appendingPathComponent((companion.relativePath.rawValue as NSString).lastPathComponent)
-            try? FileManager.default.createDirectory(
-                at: stagingURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
+                .appendingPathComponent(companion.relativePath.fileName)
+            operation.companionStagingURLs.append(stagingURL)
+            operation.updatedAt = Date()
+            do {
+                try await store.recordImportOperationProgress(operation)
+                try FileManager.default.createDirectory(
+                    at: stagingURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+            } catch {
+                OtosLog.mediaIO.errorOperation("mediaOperation.companion", phase: "stagingUnavailable", fields: [
+                    "relativePath": companion.relativePath.rawValue,
+                    "error": String(describing: error),
+                ])
+                return .stop(.failed(.other))
+            }
             let result = await companionBytes(
                 companion: companion,
                 sourceKind: sourceKind,
@@ -1192,13 +1121,11 @@ actor MediaImportExecutor {
                     finalURL: finalURL
                 ))
             case .cancelled:
-                try? FileManager.default.removeItem(at: stagingURL)
-                return stop(.cancelled)
+                return .stop(.cancelled)
             case .outOfSpace:
-                try? FileManager.default.removeItem(at: stagingURL)
-                return stop(.failed(.outOfSpace))
+                return .stop(.failed(.outOfSpace))
             case let .failed(detail):
-                try? FileManager.default.removeItem(at: stagingURL)
+                ImportStaging.remove([stagingURL], key: operation.operationKey, reason: "companionNotCopied")
                 notCopied.append(companion.relativePath)
                 OtosLog.mediaIO.errorOperation("mediaOperation.companion", phase: "notCopied", fields: [
                     "relativePath": companion.relativePath.rawValue,
@@ -1323,20 +1250,19 @@ actor MediaImportExecutor {
         let operationSourceModified = sourceModified ?? destinationModified
         var operation = ActiveFileOperation(
             operationKey: .make(),
-            mode: "import",
             sourceKind: context.sourceKind,
             sourceDeviceIdentity: context.sourceDeviceIdentity,
             sourceRootPath: sourceRoot,
             sourceRelativePath: entry.source.relativePath,
             destinationRootPath: destinationRoot,
             destinationRelativePath: destinationRelative,
-            stagingPath: stagingURL.path,
-            importBatchUnixMs: context.batch.unixMilliseconds,
+            stagingURL: stagingURL,
+            companionStagingURLs: [],
+            importBatch: context.batch,
             sourceByteSize: sourceByteSize,
             sourceModifiedAt: operationSourceModified,
             destinationModifiedAt: destinationModified,
             phase: .copying,
-            deleteSourceRequested: context.allowSourceDeletion,
             updatedAt: Date()
         )
         do {
@@ -1346,10 +1272,16 @@ actor MediaImportExecutor {
             return .failed(.other)
         }
 
-        try? FileManager.default.createDirectory(
-            at: stagingURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
+        do {
+            try FileManager.default.createDirectory(
+                at: stagingURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+        } catch {
+            logSkipped(reason: "destinationFolderUnavailable", extra: ["error": String(describing: error)])
+            await Self.abandonEntry(operation.operationKey, stagingFiles: [], store: store, reason: "destinationFolderUnavailable")
+            return .failed(.other)
+        }
         if let early = await transferBytesToStaging(
             entry: entry,
             sourceKind: context.sourceKind,
@@ -1368,7 +1300,7 @@ actor MediaImportExecutor {
         }
 
         guard !cancelFlag.isCancelled else {
-            await Self.abandonEntry(operation.operationKey, staging: stagingURL, store: store, reason: "cancelled")
+            await Self.abandonEntry(operation.operationKey, stagingFiles: [stagingURL], store: store, reason: "cancelled")
             logSkipped(reason: "cancelled")
             return .cancelled
         }
@@ -1401,7 +1333,7 @@ actor MediaImportExecutor {
                 ]
             )
         case .cancelled:
-            await Self.abandonEntry(operation.operationKey, staging: stagingURL, store: store, reason: "hashCancelled")
+            await Self.abandonEntry(operation.operationKey, stagingFiles: [stagingURL], store: store, reason: "hashCancelled")
             OtosLog.mediaIO.noticeOperation(
                 "contentHash",
                 phase: "cancelled",
@@ -1416,7 +1348,7 @@ actor MediaImportExecutor {
             logSkipped(reason: "cancelled")
             return .cancelled
         case let .failed(category):
-            await Self.abandonEntry(operation.operationKey, staging: stagingURL, store: store, reason: "hashFailed")
+            await Self.abandonEntry(operation.operationKey, stagingFiles: [stagingURL], store: store, reason: "hashFailed")
             OtosLog.mediaIO.errorOperation(
                 "contentHash",
                 phase: "failed",
@@ -1441,6 +1373,7 @@ actor MediaImportExecutor {
         let companionsNotCopied: [MediaRelativePath]
         switch await stageCompanions(
             entry: entry,
+            operation: &operation,
             sourceKind: context.sourceKind,
             sourceDeviceIdentity: context.sourceDeviceIdentity,
             destinationRoot: destinationRoot
@@ -1449,14 +1382,18 @@ actor MediaImportExecutor {
             stagedCompanions = staged
             companionsNotCopied = notCopied
         case let .stop(stop):
-            await Self.abandonEntry(operation.operationKey, staging: stagingURL, store: store, reason: "companionTransferStopped")
+            await Self.abandonEntry(
+                operation.operationKey,
+                stagingFiles: operation.stagingFiles,
+                store: store,
+                reason: "companionTransferStopped"
+            )
             logSkipped(reason: "companionTransferStopped")
             return stop
         }
         let outcome = await Self.publishAndSettle(PublishSettleRequest(
             operation: operation,
             store: store,
-            cameraImport: cameraImport,
             stagingURL: stagingURL,
             finalURL: finalURL,
             stagedCompanions: stagedCompanions,
@@ -1471,7 +1408,6 @@ actor MediaImportExecutor {
             destinationModified: destinationModified,
             batch: context.batch,
             namespaceLease: namespaceLease,
-            deleteSourceRequested: context.allowSourceDeletion,
             workerID: workerID,
             copyStarted: started,
             copyFinished: copyFinished,
@@ -1490,7 +1426,6 @@ actor MediaImportExecutor {
     private struct PublishSettleRequest {
         var operation: ActiveFileOperation
         let store: CatalogStore
-        let cameraImport: CameraImportAccess?
         let stagingURL: URL
         let finalURL: URL
         let stagedCompanions: [StagedCompanion]
@@ -1505,7 +1440,6 @@ actor MediaImportExecutor {
         let destinationModified: Date
         let batch: ImportBatchID
         let namespaceLease: RootNamespaceMutationLease
-        let deleteSourceRequested: Bool
         let workerID: Int
         let copyStarted: ContinuousClock.Instant
         let copyFinished: ContinuousClock.Instant
@@ -1514,53 +1448,62 @@ actor MediaImportExecutor {
 
     /// The publication handoff is one crash boundary: journal gate, exclusive rename,
     /// durable pending-settlement transition, and the single Store settlement transaction.
-    /// A staged companion that was not published by the time the entry ends is removed:
-    /// staging is Otos's own hidden file, never a library item.
+    /// Before the primary is published, an entry that stops is abandoned with every
+    /// staging file its journal names. After it is published, a failure leaves the row
+    /// for startup recovery to settle; the companion staging files it would not publish
+    /// are removed now, and recovery removes any that would not go.
     private nonisolated static func publishAndSettle(_ request: PublishSettleRequest) async -> EntryOutcome {
-        defer {
-            for companion in request.stagedCompanions {
-                try? FileManager.default.removeItem(at: companion.stagingURL)
-            }
+        let outcome = await publishAndSettleBody(request)
+        if case .published = outcome {
+            return outcome
         }
-        guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
-            await abandonEntry(request.operation.operationKey, staging: nil, store: request.store, reason: "namespaceLeaseUnavailable")
-            OtosLog.catalog.notice(
-                "op=mediaOperation.publish phase=blocked reason=namespaceLeaseUnavailable"
-            )
-            return .failed(.other)
-        }
-        return await publishAndSettleBody(request)
+        let unpublished = request.stagedCompanions.map(\.stagingURL)
+            .filter { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
+        ImportStaging.remove(unpublished, key: request.operation.operationKey, reason: "entryNotPublished")
+        return outcome
     }
 
     private nonisolated static func publishAndSettleBody(_ request: PublishSettleRequest) async -> EntryOutcome {
         var operation = request.operation
+        func abandonBeforePublication(_ reason: String) async {
+            await abandonEntry(
+                operation.operationKey,
+                stagingFiles: operation.stagingFiles,
+                store: request.store,
+                reason: reason
+            )
+        }
+        guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
+            await abandonBeforePublication("namespaceLeaseUnavailable")
+            OtosLog.catalog.noticeOperation("mediaOperation.publish", phase: "blocked", fields: [
+                "reason": "namespaceLeaseUnavailable",
+            ])
+            return .failed(.other)
+        }
         Self.stampModificationDate(request.destinationModified, at: request.stagingURL)
         operation.phase = .readyToPublish
         operation.updatedAt = Date()
         do {
             try await request.store.recordImportOperationProgress(operation)
         } catch {
-            return await Self.journalFailureBeforePublication(request, error: error)
+            OtosLog.catalog.errorOperation("mediaOperation.journal", phase: "readyToPublishFailed", fields: [
+                "key": operation.operationKey.rawValue,
+                "error": String(describing: error),
+            ])
+            await abandonBeforePublication("readyToPublishFailed")
+            return .failed(.other)
         }
         guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
-            await Self.abandonEntry(operation.operationKey, staging: request.stagingURL, store: request.store, reason: "namespaceLeaseUnavailable")
-            OtosLog.catalog.notice(
-                "op=mediaOperation.publish phase=blocked reason=namespaceLeaseUnavailable"
-            )
+            await abandonBeforePublication("namespaceLeaseUnavailable")
+            OtosLog.catalog.noticeOperation("mediaOperation.publish", phase: "blocked", fields: [
+                "reason": "namespaceLeaseUnavailable",
+            ])
             return .failed(.other)
         }
 
         switch ExclusivePublication.publish(staging: request.stagingURL, final: request.finalURL) {
         case .destinationExists:
-            try? FileManager.default.removeItem(at: request.stagingURL)
-            do {
-                try await request.store.abandonImportOperation(key: operation.operationKey)
-            } catch {
-                OtosLog.catalog.error(
-                    "op=mediaOperation.journal phase=foreignAbandonFailed error=\(String(describing: error), privacy: .public)"
-                )
-                return .failed(.other)
-            }
+            await abandonBeforePublication("destinationExists")
             guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
                 return .failed(.other)
             }
@@ -1570,55 +1513,55 @@ actor MediaImportExecutor {
             )
             return .skippedForeign
         case let .failed(message):
-            try? FileManager.default.removeItem(at: request.stagingURL)
-            do {
-                try await request.store.abandonImportOperation(key: operation.operationKey)
-            } catch {
-                OtosLog.catalog.error(
-                    "op=mediaOperation.journal phase=publishFailureAbandonFailed error=\(String(describing: error), privacy: .public)"
-                )
-                return .failed(.other)
-            }
-            OtosLog.catalog.error(
-                "op=mediaOperation.publish phase=failed detail=\(message, privacy: .public)"
-            )
+            OtosLog.catalog.errorOperation("mediaOperation.publish", phase: "failed", fields: [
+                "key": operation.operationKey.rawValue,
+                "detail": message,
+            ])
+            await abandonBeforePublication("publishFailed")
             return .failed(.other)
         case .published:
             break
         }
         let publishFinished = ContinuousClock().now
-        guard let finalValues = try? request.finalURL.resourceValues(
-            forKeys: [.fileSizeKey, .contentModificationDateKey]
-        ),
-            let finalSize = finalValues.fileSize,
-            let settledModified = finalValues.contentModificationDate
-        else {
-            OtosLog.catalog.error("op=mediaOperation.publish phase=finalFactsUnavailable")
+        let finalValues: URLResourceValues
+        do {
+            finalValues = try request.finalURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        } catch {
+            OtosLog.catalog.errorOperation("mediaOperation.publish", phase: "finalFactsUnavailable", fields: [
+                "key": operation.operationKey.rawValue,
+                "error": String(describing: error),
+            ])
+            return .failed(.other)
+        }
+        guard let finalSize = finalValues.fileSize, let settledModified = finalValues.contentModificationDate else {
+            OtosLog.catalog.errorOperation("mediaOperation.publish", phase: "finalFactsUnavailable", fields: [
+                "key": operation.operationKey.rawValue,
+            ])
             return .failed(.other)
         }
         let settledByteSize = Int64(finalSize)
 
         operation.phase = .publishedPendingSettlement
-        operation.stagingPath = nil
+        operation.stagingURL = nil
         operation.destinationModifiedAt = settledModified
         operation.updatedAt = Date()
         do {
             try await request.store.recordImportOperationProgress(operation)
         } catch {
-            OtosLog.catalog.error(
-                "op=mediaOperation.journal phase=publishedPendingSettlementFailed error=\(String(describing: error), privacy: .public)"
-            )
+            OtosLog.catalog.errorOperation("mediaOperation.journal", phase: "publishedPendingSettlementFailed", fields: [
+                "key": operation.operationKey.rawValue,
+                "error": String(describing: error),
+            ])
             return .failed(.other)
         }
         guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
-            OtosLog.catalog.notice(
-                "op=mediaOperation.settle phase=blocked reason=namespaceLeaseUnavailable"
-            )
+            OtosLog.catalog.noticeOperation("mediaOperation.settle", phase: "blocked", fields: [
+                "reason": "namespaceLeaseUnavailable",
+            ])
             return .failed(.other)
         }
 
         let companions = Self.publishCompanions(request)
-        let companionRows = companions.published
         var reuseResult = ImportOverlayReuseResult.notReused
         do {
             reuseResult = try await request.store.settleImportedAsset(
@@ -1626,12 +1569,13 @@ actor MediaImportExecutor {
                 byteSize: settledByteSize,
                 contentModifiedAt: settledModified,
                 batch: request.batch,
-                companions: companionRows
+                companions: companions.published
             )
         } catch {
-            OtosLog.catalog.error(
-                "op=mediaOperation.settle phase=failed error=\(String(describing: error), privacy: .public)"
-            )
+            OtosLog.catalog.errorOperation("mediaOperation.settle", phase: "failed", fields: [
+                "key": operation.operationKey.rawValue,
+                "error": String(describing: error),
+            ])
             return .failed(.other)
         }
         // A1. The one route from "durably in the library" to "cache copy gone". Placed
@@ -1661,29 +1605,6 @@ actor MediaImportExecutor {
             "copyMs": elapsedMilliseconds(from: request.copyStarted, to: request.copyFinished),
             "worker": "\(request.workerID)",
         ])
-
-        if request.deleteSourceRequested {
-            guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
-                return .failed(.other)
-            }
-            guard await SourceEraser.erase(
-                kind: request.sourceKind,
-                identity: request.sourceDeviceIdentity,
-                relativePath: request.sourceRelativePath,
-                filesystemURL: request.sourceURL,
-                cameraImport: request.cameraImport
-            ).isSettled else {
-                return .failed(.other)
-            }
-            do {
-                try await request.store.completeImportOperation(key: operation.operationKey)
-            } catch {
-                OtosLog.catalog.error(
-                    "op=mediaOperation.journal phase=sourceDeletionCompletionFailed error=\(String(describing: error), privacy: .public)"
-                )
-                return .failed(.other)
-            }
-        }
         return .published(
             reuseResult,
             bytes: settledByteSize,
@@ -1713,14 +1634,14 @@ actor MediaImportExecutor {
                     contentModifiedAt: values?.contentModificationDate
                 ))
             case .destinationExists:
-                try? FileManager.default.removeItem(at: companion.stagingURL)
+                ImportStaging.remove([companion.stagingURL], key: request.operation.operationKey, reason: "companionDestinationExists")
                 notCopied.append(companion.source.relativePath)
                 OtosLog.mediaIO.noticeOperation("mediaOperation.companion", phase: "notCopied", fields: [
                     "relativePath": companion.source.relativePath.rawValue,
                     "reason": "destinationExists",
                 ])
             case let .failed(message):
-                try? FileManager.default.removeItem(at: companion.stagingURL)
+                ImportStaging.remove([companion.stagingURL], key: request.operation.operationKey, reason: "companionPublishFailed")
                 notCopied.append(companion.source.relativePath)
                 OtosLog.mediaIO.errorOperation("mediaOperation.companion", phase: "notCopied", fields: [
                     "relativePath": companion.source.relativePath.rawValue,
@@ -1731,388 +1652,28 @@ actor MediaImportExecutor {
         return (published, notCopied)
     }
 
-    private nonisolated static func journalFailureBeforePublication(
-        _ request: PublishSettleRequest,
-        error: Error
-    ) async -> EntryOutcome {
-        try? FileManager.default.removeItem(at: request.stagingURL)
-        do {
-            try await request.store.abandonImportOperation(key: request.operation.operationKey)
-        } catch {
-            OtosLog.catalog.error(
-                "op=mediaOperation.journal phase=readyToPublishAbandonFailed error=\(String(describing: error), privacy: .public)"
-            )
-        }
-        OtosLog.catalog.error(
-            "op=mediaOperation.journal phase=readyToPublishFailed error=\(String(describing: error), privacy: .public)"
-        )
-        return .failed(.other)
-    }
-
-    private enum RecoveryOwnership: Sendable {
-        case proven(byteSize: Int64, modifiedAt: Date)
-        case foreign
-        case deferredMaterialization
-    }
-
-    private func recover(_ operation: ActiveFileOperation) async {
-        let lease: RootNamespaceMutationLease
-        let acquisition = await store.acquireNamespaceMutationLease(
-            for: operation.destinationRootPath,
-            owner: .importPublication
-        )
-        switch acquisition {
-        case let .acquired(acquired):
-            lease = acquired
-        case let .busy(owner):
-            OtosLog.catalog.noticeOperation("mediaOperation.recover", phase: "blocked", fields: [
-                "reason": "namespaceBusy",
-                "heldBy": owner.rawValue,
-                "rootPath": operation.destinationRootPath.rawValue,
-            ])
-            return
-        case .rootNotRegistered, .catalogUnavailable:
-            OtosLog.catalog.noticeOperation("mediaOperation.recover", phase: "blocked", fields: [
-                "reason": acquisition.logReason,
-                "rootPath": operation.destinationRootPath.rawValue,
-            ])
-            return
-        }
-        let staging = operation.stagingPath.map { URL(fileURLWithPath: $0) }
-        let final = operation.destinationRootPath.url
-            .appendingPathComponent(operation.destinationRelativePath.rawValue)
-        let stagingExists = staging.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
-        let finalExists = FileManager.default.fileExists(atPath: final.path)
-
-        switch operation.phase {
-        case .copying:
-            if let staging, stagingExists {
-                try? FileManager.default.removeItem(at: staging)
-            }
-            await abandonRecovery(operation, reason: "incompleteCopy")
-        case .readyToPublish:
-            if finalExists, stagingExists {
-                // Both paths exist: the final occupant is not provably ours. Only
-                // the journaled staging file belongs to Otos and may be removed.
-                if let staging {
-                    try? FileManager.default.removeItem(at: staging)
-                }
-                await recordForeignAndAbandon(operation)
-            } else if finalExists {
-                await recoverFinalOnly(operation, final: final)
-            } else if let staging, stagingExists {
-                switch ExclusivePublication.publish(staging: staging, final: final) {
-                case .published:
-                    await persistPublishedPendingSettlement(operation, final: final)
-                case .destinationExists:
-                    // A race that wins the exclusive create is always foreign.
-                    try? FileManager.default.removeItem(at: staging)
-                    await recordForeignAndAbandon(operation)
-                case let .failed(message):
-                    try? FileManager.default.removeItem(at: staging)
-                    await abandonRecovery(operation, reason: "publishFailed")
-                    OtosLog.catalog.error(
-                        "op=mediaOperation.recover phase=publishFailed detail=\(message, privacy: .public)"
-                    )
-                }
-            } else {
-                await abandonRecovery(operation, reason: "incompletePublish")
-            }
-        case .publishedPendingSettlement:
-            if finalExists {
-                await settleIfOwned(operation, final: final)
-            } else if let staging, stagingExists {
-                try? FileManager.default.removeItem(at: staging)
-                await abandonRecovery(operation, reason: "publishedFinalMissing")
-            } else {
-                await abandonRecovery(operation, reason: "publishedFinalMissing")
-            }
-        case .sourceDeletionPending:
-            let sourceURL = operation.sourceRootPath.url
-                .appendingPathComponent(operation.sourceRelativePath.rawValue)
-            guard await SourceEraser.erase(
-                kind: operation.sourceKind,
-                identity: operation.sourceDeviceIdentity,
-                relativePath: operation.sourceRelativePath,
-                filesystemURL: sourceURL,
-                cameraImport: cameraImport
-            ).isSettled else {
-                _ = await store.releaseNamespaceMutationLease(lease)
-                return
-            }
-            do {
-                try await store.completeImportOperation(key: operation.operationKey)
-            } catch {
-                OtosLog.catalog.error(
-                    "op=mediaOperation.recover phase=sourceDeletionCompletionFailed error=\(String(describing: error), privacy: .public)"
-                )
-            }
-        }
-        OtosLog.catalog.notice(
-            "op=mediaOperation.recover phase=\(operation.phase.rawValue, privacy: .public) key=\(operation.operationKey.rawValue, privacy: .public) stagingExists=\(stagingExists, privacy: .public) finalExists=\(finalExists, privacy: .public)"
-        )
-        _ = await store.releaseNamespaceMutationLease(lease)
-    }
-
-    private func recoverFinalOnly(_ operation: ActiveFileOperation, final: URL) async {
-        switch await proveFinalOwnership(operation, final: final) {
-        case let .proven(byteSize, modifiedAt):
-            await settleRecovered(
-                operation: operation,
-                byteSize: byteSize,
-                modifiedAt: modifiedAt
-            )
-        case .foreign:
-            await recordForeignAndAbandon(operation)
-        case .deferredMaterialization:
-            return
-        }
-    }
-
-    private func persistPublishedPendingSettlement(
-        _ operation: ActiveFileOperation,
-        final: URL
-    ) async {
-        guard let values = try? final.resourceValues(
-            forKeys: [.fileSizeKey, .contentModificationDateKey]
-        ),
-            values.fileSize != nil,
-            let modifiedAt = values.contentModificationDate
-        else {
-            OtosLog.catalog.error("op=mediaOperation.recover phase=finalFactsUnavailable")
-            return
-        }
-        var pending = operation
-        pending.phase = .publishedPendingSettlement
-        pending.stagingPath = nil
-        pending.destinationModifiedAt = modifiedAt
-        pending.updatedAt = Date()
-        do {
-            try await store.recordImportOperationProgress(pending)
-        } catch {
-            OtosLog.catalog.error(
-                "op=mediaOperation.recover phase=publishedPendingSettlementFailed error=\(String(describing: error), privacy: .public)"
-            )
-            return
-        }
-        await settleIfOwned(pending, final: final)
-    }
-
-    private func settleIfOwned(_ operation: ActiveFileOperation, final: URL) async {
-        switch await proveFinalOwnership(operation, final: final) {
-        case let .proven(byteSize, modifiedAt):
-            await settleRecovered(
-                operation: operation,
-                byteSize: byteSize,
-                modifiedAt: modifiedAt
-            )
-        case .foreign, .deferredMaterialization:
-            return
-        }
-    }
-
-    private func proveFinalOwnership(
-        _ operation: ActiveFileOperation,
-        final: URL
-    ) async -> RecoveryOwnership {
-        guard let expectedModifiedAt = operation.destinationModifiedAt,
-              let expectedHash = operation.contentHash
-        else {
-            OtosLog.catalog.notice(
-                "op=mediaOperation.recover phase=foreignOccupant reason=missingOwnershipFacts"
-            )
-            return .foreign
-        }
-        if FileMaterialization.status(of: final) != .materialized {
-            OtosLog.catalog.notice(
-                "op=mediaOperation.recover phase=deferredMaterialization key=\(operation.operationKey.rawValue, privacy: .public)"
-            )
-            guard let materializationRequester else {
-                return .deferredMaterialization
-            }
-            let result = await materializationRequester.materialize(
-                MaterializationCoordinator.Request(
-                    id: MediaAssetID(
-                        libraryRootPath: operation.destinationRootPath,
-                        relativePath: operation.destinationRelativePath
-                    ),
-                    sourceSize: operation.sourceByteSize,
-                    isVideo: UTType(filenameExtension: final.pathExtension)?.conforms(to: .movie) == true,
-                    priority: .background
-                )
-            )
-            guard result.isMaterialized,
-                  FileMaterialization.status(of: final) == .materialized
-            else {
-                return .deferredMaterialization
-            }
-        }
-        guard case let .complete(actualHash) = ContentHasher().hashMaterializedFile(at: final)
-        else {
-            return .deferredMaterialization
-        }
-        guard let values = try? final.resourceValues(
-            forKeys: [.fileSizeKey, .contentModificationDateKey]
-        ),
-            let actualSize = values.fileSize,
-            let actualModifiedAt = values.contentModificationDate,
-            Int64(actualSize) == operation.sourceByteSize,
-            Int(actualModifiedAt.timeIntervalSince1970) == Int(expectedModifiedAt.timeIntervalSince1970),
-            actualHash == expectedHash
-        else {
-            OtosLog.catalog.notice(
-                "op=mediaOperation.recover phase=foreignOccupant key=\(operation.operationKey.rawValue, privacy: .public)"
-            )
-            return .foreign
-        }
-        OtosLog.catalog.notice(
-            "op=mediaOperation.recover phase=publishedByOperation key=\(operation.operationKey.rawValue, privacy: .public)"
-        )
-        return .proven(byteSize: Int64(actualSize), modifiedAt: actualModifiedAt)
-    }
-
-    private func settleRecovered(
-        operation: ActiveFileOperation,
-        byteSize: Int64,
-        modifiedAt: Date
-    ) async {
-        guard let batchMs = operation.importBatchUnixMs else {
-            OtosLog.catalog.error("op=mediaOperation.recover phase=settleFailed reason=missingBatch")
-            return
-        }
-        do {
-            try await store.settleImportedAsset(
-                operation: operation,
-                byteSize: byteSize,
-                contentModifiedAt: modifiedAt,
-                batch: ImportBatchID(unixMilliseconds: batchMs),
-                companions: []
-            )
-            // Crash recovery settles the same way, so it must release the same way --
-            // otherwise a run that was interrupted leaves its staged bytes behind forever,
-            // which is the leak A1 exists to close.
-            StagedSourceReleaser.releaseIfCached(
-                kind: operation.sourceKind,
-                sourceURL: operation.sourceRootPath.url
-                    .appendingPathComponent(operation.sourceRelativePath.rawValue)
-            )
-            if operation.deleteSourceRequested {
-                let sourceURL = operation.sourceRootPath.url
-                    .appendingPathComponent(operation.sourceRelativePath.rawValue)
-                guard await SourceEraser.erase(
-                    kind: operation.sourceKind,
-                    identity: operation.sourceDeviceIdentity,
-                    relativePath: operation.sourceRelativePath,
-                    filesystemURL: sourceURL,
-                    cameraImport: cameraImport
-                ).isSettled else {
-                    return
-                }
-                try await store.completeImportOperation(key: operation.operationKey)
-            }
-        } catch {
-            OtosLog.catalog.error(
-                "op=mediaOperation.recover phase=settleFailed error=\(String(describing: error), privacy: .public)"
-            )
-        }
-    }
-
-    private func recordForeignAndAbandon(_ operation: ActiveFileOperation) async {
-        await store.recordForeignOccupant(
-            root: operation.destinationRootPath,
-            relativePath: operation.destinationRelativePath
-        )
-        await abandonRecovery(operation, reason: "foreignOccupant")
-    }
-
-    private func abandonRecovery(_ operation: ActiveFileOperation, reason: String) async {
-        do {
-            try await store.abandonImportOperation(key: operation.operationKey)
-        } catch {
-            OtosLog.catalog.error(
-                "op=mediaOperation.recover phase=abandonFailed reason=\(reason, privacy: .public) error=\(String(describing: error), privacy: .public)"
-            )
-        }
-    }
-
-    private func deleteSourceIfRequested(
-        entry: MediaOperationPlanEntry,
-        plan: MediaOperationPlan,
-        sourceKind: LibraryRootKind,
-        sourceDeviceIdentity: String?,
-        batch: ImportBatchID?
-    ) async -> Bool {
-        guard case let .import(sourceRoot, destinationRoot, _) = plan.mode,
-              case let .skipPreexisting(destinationRelative) = entry.disposition,
-              let sourceByteSize = entry.source.byteSize,
-              let sourceModified = entry.source.contentModifiedAt
-        else {
-            return true
-        }
-        let operation = ActiveFileOperation(
-            operationKey: .make(),
-            mode: "import",
-            sourceKind: sourceKind,
-            sourceDeviceIdentity: sourceDeviceIdentity,
-            sourceRootPath: sourceRoot,
-            sourceRelativePath: entry.source.relativePath,
-            destinationRootPath: destinationRoot,
-            destinationRelativePath: destinationRelative,
-            stagingPath: nil,
-            importBatchUnixMs: batch?.unixMilliseconds,
-            sourceByteSize: sourceByteSize,
-            sourceModifiedAt: sourceModified,
-            destinationModifiedAt: nil,
-            phase: .sourceDeletionPending,
-            deleteSourceRequested: true,
-            updatedAt: Date()
-        )
-        do {
-            try await store.beginImportOperation(operation)
-        } catch {
-            OtosLog.catalog.error(
-                "op=mediaOperation.journal phase=sourceDeletionBeginFailed error=\(String(describing: error), privacy: .public)"
-            )
-            return false
-        }
-        guard await SourceEraser.erase(
-            kind: sourceKind,
-            identity: sourceDeviceIdentity,
-            relativePath: entry.source.relativePath,
-            filesystemURL: entry.source.sourceURL,
-            cameraImport: cameraImport
-        ).isSettled else {
-            return false
-        }
-        do {
-            try await store.completeImportOperation(key: operation.operationKey)
-            return true
-        } catch {
-            OtosLog.catalog.error(
-                "op=mediaOperation.journal phase=sourceDeletionCompletionFailed error=\(String(describing: error), privacy: .public)"
-            )
-            return false
-        }
-    }
-
-    /// Ends an entry that will not publish: removes its staging file, then abandons its
-    /// journal row. A failed abandon is logged, not hidden; startup recovery finds the row
-    /// and abandons it then. A staging file that will not go is collected by the orphan
-    /// staging sweep.
+    /// Ends an entry that will not publish: removes the staging files it created, then
+    /// deletes its journal row. A file that will not go keeps the row, marked
+    /// `abandoned`, so the next launch's recovery removes it; nothing is left in the
+    /// library that no record names.
     private nonisolated static func abandonEntry(
         _ key: ActiveFileOperationKey,
-        staging: URL?,
+        stagingFiles: [URL],
         store: CatalogStore,
         reason: String
     ) async {
-        if let staging {
-            try? FileManager.default.removeItem(at: staging)
-        }
+        let removed = ImportStaging.remove(stagingFiles, key: key, reason: reason)
         do {
-            try await store.abandonImportOperation(key: key)
+            if removed {
+                try await store.abandonImportOperation(key: key)
+            } else {
+                try await store.markImportOperationAbandoned(key: key)
+            }
         } catch {
             OtosLog.catalog.errorOperation("mediaOperation.journal", phase: "abandonFailed", fields: [
+                "key": key.rawValue,
                 "reason": reason,
+                "stagingRemoved": "\(removed)",
                 "error": String(describing: error),
             ])
         }
@@ -2124,11 +1685,17 @@ actor MediaImportExecutor {
         return parent.appendingPathComponent(name)
     }
 
+    /// Gives a staged file the date it lands with. A refusal is logged: the file then
+    /// keeps its copy time, which settlement reads back as the fact it is.
     private nonisolated static func stampModificationDate(_ date: Date, at url: URL) {
-        try? FileManager.default.setAttributes(
-            [.modificationDate: date],
-            ofItemAtPath: url.path
-        )
+        do {
+            try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+        } catch {
+            OtosLog.mediaIO.errorOperation("mediaOperation.staging", phase: "stampFailed", fields: [
+                "path": url.path(percentEncoded: false),
+                "error": String(describing: error),
+            ])
+        }
     }
 
     private nonisolated static func fileValidation(url: URL, byteSize: Int64, modifiedAt: Date) -> SourceValidation {
@@ -2281,5 +1848,45 @@ private final nonisolated class CancelFlag: Sendable {
 
     nonisolated var isCancelled: Bool {
         flag.withLock { $0 }
+    }
+}
+
+/// The removal of Otos's own staging files in a destination library, shared by the
+/// executor and recovery so every failure is logged the same way.
+nonisolated enum ImportStaging {
+    /// Removes each file. A file already gone counts as removed. Returns whether all
+    /// of them are gone; each one that is not is logged with its error.
+    @discardableResult
+    static func remove(_ urls: [URL], key: ActiveFileOperationKey, reason: String) -> Bool {
+        var allGone = true
+        for url in urls {
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch let error as CocoaError where error.code == .fileNoSuchFile {
+                continue
+            } catch {
+                allGone = false
+                OtosLog.mediaIO.errorOperation("mediaOperation.staging", phase: "removeFailed", fields: [
+                    "key": key.rawValue,
+                    "reason": reason,
+                    "path": url.path(percentEncoded: false),
+                    "error": String(describing: error),
+                ])
+            }
+        }
+        return allGone
+    }
+
+    /// Clears an erase journal row once its file is gone. A failed clear is logged; the
+    /// row is found again at startup, where the file is already gone and the row settles.
+    static func completeEraseJournal(_ key: ActiveSourceEraseKey, store: CatalogStore) async {
+        do {
+            try await store.completeSourceEraseOperation(key: key)
+        } catch {
+            OtosLog.catalog.errorOperation("import.erase.journal", phase: "completeFailed", fields: [
+                "key": key.rawValue,
+                "error": String(describing: error),
+            ])
+        }
     }
 }
