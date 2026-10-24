@@ -36,11 +36,12 @@ extension CatalogWindowViewModel {
         focusedAssetKind = nil
         resetLoupeZoomForFocusChange()
         refreshPanePreviews()
+        focusedKindTask?.cancel()
         guard let id else { return }
         let reader = tileDetailReader
-        Task { @MainActor [weak self] in
+        focusedKindTask = Task { [weak self] in
             let details = await reader.details(for: [id])
-            guard let self, focusedAssetID == id else { return }
+            guard let self, !Task.isCancelled, focusedAssetID == id else { return }
             focusedAssetKind = details[id]?.bestKind
             refreshLoupeInfo()
             // Opening a video prepares it, exactly as opening an image decodes it: no

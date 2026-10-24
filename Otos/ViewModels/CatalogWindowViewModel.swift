@@ -330,6 +330,9 @@ final class CatalogWindowViewModel {
     /// The one in-flight loupe video preparation (materialize + build player). Named so
     /// a focus move can cancel the previous asset's preparation before starting another.
     @ObservationIgnored var loupeVideoPrepareTask: Task<Void, Never>?
+    /// The newest read of the focused asset's kind. A focus move replaces it: the older
+    /// read's answer belongs to an asset no longer focused.
+    @ObservationIgnored var focusedKindTask: Task<Void, Never>?
 
     init(
         catalogStore: CatalogStore,
@@ -480,6 +483,7 @@ final class CatalogWindowViewModel {
         mediaTrashIntentTask?.cancel()
         openWithMenuTask?.cancel()
         loupeInfoTask?.cancel()
+        focusedKindTask?.cancel()
         currentTargetChoiceTask?.cancel()
         viewportForwardingTask?.cancel()
         enrichmentStartTask?.cancel()

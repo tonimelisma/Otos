@@ -97,7 +97,7 @@
             let states = Observations { @MainActor [weak viewModel] in
                 viewModel?.state
             }
-            Task { @MainActor [weak viewModel] in
+            Task { [weak viewModel] in
                 var reportedUnregistered = false
                 for await state in states {
                     guard let state, let viewModel else {

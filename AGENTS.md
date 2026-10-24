@@ -168,7 +168,9 @@ and let instrumentation prove a real bottleneck before optimizing it.
      user sees (lint `error_becomes_value`).
   5. **Intents travel in one ordered stream with one consumer** (`.unbounded` for commands,
      `.bufferingNewest(1)` for newest-wins state), never one `Task {}` per call. An intent
-     that starts long work returns when it is applied.
+     that starts long work returns when it is applied. A platform callback yields into its
+     owner's stream; it never hops through its own `Task { @MainActor … }` (lint
+     `unordered_main_actor_hop`).
   6. **Blocking work leaves the actor by a named mechanism** (`@concurrent`,
      `Task.detached`, a task-group child, a dedicated queue): this target compiles with
      `NonisolatedNonsendingByDefault`, so a `nonisolated async` call runs on its caller's
