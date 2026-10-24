@@ -264,4 +264,6 @@ private struct RecordingWorkspace: WorkspaceOpening {
     func open(_ urls: [URL], withApplicationAt applicationURL: URL) async throws {
         await log.record(application: applicationURL, targets: urls)
     }
+
+    func revealInFinder(_: [URL]) {}
 }

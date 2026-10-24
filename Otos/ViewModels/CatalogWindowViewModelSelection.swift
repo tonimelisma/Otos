@@ -118,11 +118,6 @@ extension CatalogWindowViewModel {
         )
     }
 
-    /// Selected asset IDs for menu enablement. Non-empty means File/Edit commands apply.
-    var selectedAssetIDs: Set<MediaAssetID> {
-        gridSelection.selection
-    }
-
     /// Selects all visible assets. Used by Edit → Select All (\u2318A).
     func selectAll() {
         let ordered = state.mediaGrid.orderedAssetIDs
@@ -157,19 +152,20 @@ extension CatalogWindowViewModel {
     /// URLs in display order — the Grid selection, the Loupe focus, or the active
     /// Compare pane, the same targets every other Photo command acts on.
     func copyCurrentTargets(to pasteboard: NSPasteboard = .general) {
-        let ids = mediaChoiceTargetIDs(.current)
+        let ids = targetIDs(.current)
         guard !ids.isEmpty else { return }
         MediaGridClipboard.write(ids, to: pasteboard)
     }
 
-    /// Reveals selected originals in Finder. Reads no bytes and never materializes
-    /// a dataless original — `activateFileViewerSelecting` takes URLs only.
-    func revealSelectionInFinder() {
-        let ids = orderedSelectedAssetIDs
-        guard !ids.isEmpty else { return }
-        let urls = ids.map(\.fileURL)
-        NSWorkspace.shared.activateFileViewerSelecting(urls)
-        OtosLog.ui.notice("op=ui.revealInFinder count=\(urls.count, privacy: .public)")
+    /// Reveals the current targets in Finder — the Grid selection, the Loupe focus, or
+    /// the active Compare pane, the same targets Open, Share and Copy act on. Reads no
+    /// bytes and never materializes a dataless original.
+    func revealCurrentTargetsInFinder() {
+        let urls = currentTargetFileURLs
+        guard !urls.isEmpty else { return }
+        workspace.revealInFinder(urls)
+        let mode = viewMode.rawValue
+        OtosLog.ui.notice("op=ui.revealInFinder count=\(urls.count, privacy: .public) mode=\(mode, privacy: .public)")
     }
 }
 

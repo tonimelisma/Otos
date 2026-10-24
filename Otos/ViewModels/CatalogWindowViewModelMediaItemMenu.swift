@@ -35,7 +35,7 @@ extension CatalogWindowViewModel {
         return MediaItemMenuModel(
             openWith: openWith,
             shareItems: targets,
-            canReveal: !orderedSelectedAssetIDs.isEmpty,
+            canReveal: !targets.isEmpty,
             canTrash: canMoveTargetedMediaToTrash
         )
     }
@@ -65,7 +65,7 @@ extension CatalogWindowViewModel {
         case .share:
             shareCurrentTargets(origin: .contextMenu)
         case .revealInFinder:
-            revealSelectionInFinder()
+            revealCurrentTargetsInFinder()
         case let .choice(choice):
             submitMediaChoice(choice, origin: .contextMenu)
         case .moveToTrash:

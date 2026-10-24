@@ -21,6 +21,9 @@ nonisolated protocol WorkspaceOpening: Sendable {
     func displayName(forApplicationAt url: URL) -> String
     /// One launch-services call for the whole list; the app decides how to present it.
     func open(_ urls: [URL], withApplicationAt applicationURL: URL) async throws
+    /// Shows `urls` selected in Finder. Passes URLs only, so a dataless original is
+    /// never materialized.
+    func revealInFinder(_ urls: [URL])
 }
 
 /// The production conformer over `NSWorkspace.shared`. Its query methods are
@@ -41,5 +44,9 @@ nonisolated struct LaunchServicesWorkspace: WorkspaceOpening {
     func open(_ urls: [URL], withApplicationAt applicationURL: URL) async throws {
         let configuration = NSWorkspace.OpenConfiguration()
         _ = try await NSWorkspace.shared.open(urls, withApplicationAt: applicationURL, configuration: configuration)
+    }
+
+    func revealInFinder(_ urls: [URL]) {
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
     }
 }

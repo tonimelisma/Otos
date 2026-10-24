@@ -175,12 +175,12 @@ struct ContentView: View {
                 CatalogActionToolbarMenu(
                     openWith: viewModel.openWithMenu,
                     icons: viewModel.openWithApplicationIcons,
-                    canReveal: !viewModel.selectedAssetIDs.isEmpty,
+                    canReveal: !viewModel.currentTargetFileURLs.isEmpty,
                     canTrash: viewModel.canMoveTargetedMediaToTrash,
                     open: viewModel.openTargetsInDefaultApplication,
                     openWithApplication: viewModel.openTargets(with:),
                     openWithOther: viewModel.openTargetsWithChosenApplication,
-                    reveal: viewModel.revealSelectionInFinder,
+                    reveal: viewModel.revealCurrentTargetsInFinder,
                     moveToTrash: viewModel.moveTargetedMediaToTrash
                 )
             }
