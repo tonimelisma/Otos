@@ -46,12 +46,30 @@ nonisolated enum CopyfileTransfer {
         }
 
         if context.cancelled {
-            try? FileManager.default.removeItem(at: destination)
+            do {
+                try FileManager.default.removeItem(at: destination)
+            } catch where ErrorDiagnostics.isMissingFile(error) {
+                // Already gone: the outcome this removal wanted.
+            } catch {
+                OtosLog.mediaIO.errorOperation("mediaOperation.copy", phase: "partialRemoveFailed", fields: [
+                    "path": destination.path(percentEncoded: false),
+                    "error": String(describing: error),
+                ])
+            }
             return .cancelled
         }
         if result != 0 {
             let code = errno
-            try? FileManager.default.removeItem(at: destination)
+            do {
+                try FileManager.default.removeItem(at: destination)
+            } catch where ErrorDiagnostics.isMissingFile(error) {
+                // Already gone: the outcome this removal wanted.
+            } catch {
+                OtosLog.mediaIO.errorOperation("mediaOperation.copy", phase: "partialRemoveFailed", fields: [
+                    "path": destination.path(percentEncoded: false),
+                    "error": String(describing: error),
+                ])
+            }
             return .failed(errno: code)
         }
         // The last progress callback can precede the final block; report the count

@@ -68,7 +68,17 @@ nonisolated enum DeviceStagingLocation {
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
         var mutableRoot = root
-        try? mutableRoot.setResourceValues(values)
+        do {
+            try mutableRoot.setResourceValues(values)
+        } catch where ErrorDiagnostics.isMissingFile(error) {
+            // Already gone: the outcome this removal wanted.
+        } catch {
+            // The folder may not exist yet; it is excluded again whenever it is resolved.
+            OtosLog.fileAccess.errorOperation("camera.staging", phase: "excludeFromBackupFailed", fields: [
+                "path": root.path(percentEncoded: false),
+                "error": String(describing: error),
+            ])
+        }
         return root
     }
 
@@ -80,7 +90,15 @@ nonisolated enum DeviceStagingLocation {
     @discardableResult
     static func claimOwnership(identity: DeviceIdentity, inContainer container: URL = containerURL()) -> Bool {
         let root = sessionRootURL(identity: identity, inContainer: container)
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        } catch {
+            // Without the folder the marker cannot be opened, so the claim reports false.
+            OtosLog.fileAccess.errorOperation("camera.staging", phase: "createFailed", fields: [
+                "path": root.path(percentEncoded: false),
+                "error": String(describing: error),
+            ])
+        }
         let marker = root.appending(path: ownerMarkerName, directoryHint: .notDirectory)
         let key = root.standardizedFileURL.path(percentEncoded: false)
         return ownedDescriptors.withLock { owned in
@@ -125,6 +143,7 @@ nonisolated enum DeviceStagingLocation {
         }
         var removed = 0
         var skipped = 0
+        var failed = 0
         for tree in contents {
             let marker = tree.appending(path: ownerMarkerName, directoryHint: .notDirectory)
             let descriptor = open(marker.path(percentEncoded: false), O_CREAT | O_RDWR, 0o644)
@@ -134,12 +153,23 @@ nonisolated enum DeviceStagingLocation {
                 skipped += 1
                 continue
             }
-            try? FileManager.default.removeItem(at: tree)
-            removed += 1
+            do {
+                try FileManager.default.removeItem(at: tree)
+                removed += 1
+            } catch where ErrorDiagnostics.isMissingFile(error) {
+                removed += 1
+            } catch {
+                failed += 1
+                OtosLog.fileAccess.errorOperation("camera.staging", phase: "sweepRemoveFailed", fields: [
+                    "path": tree.path(percentEncoded: false),
+                    "error": String(describing: error),
+                ])
+            }
         }
         OtosLog.fileAccess.noticeOperation("camera.staging", phase: "sweepUnowned", fields: [
             "removed": "\(removed)",
             "skippedLive": "\(skipped)",
+            "failed": "\(failed)",
         ])
     }
 

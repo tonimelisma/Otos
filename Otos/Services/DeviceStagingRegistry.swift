@@ -130,7 +130,16 @@ final class DeviceStagingRegistry {
         )
         let tempURL = destinationURL.deletingLastPathComponent()
             .appending(path: ".\(destinationURL.lastPathComponent).\(UUID().uuidString).tmp")
-        try? FileManager.default.removeItem(at: tempURL)
+        do {
+            try FileManager.default.removeItem(at: tempURL)
+        } catch where ErrorDiagnostics.isMissingFile(error) {
+            // Already gone: the outcome this removal wanted.
+        } catch {
+            OtosLog.fileAccess.errorOperation("camera.staging", phase: "tempRemoveFailed", fields: [
+                "path": tempURL.path(percentEncoded: false),
+                "error": String(describing: error),
+            ])
+        }
         try await route.session.download(relativePath: route.relativePath, to: tempURL)
         if FileManager.default.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
             _ = try FileManager.default.replaceItemAt(destinationURL, withItemAt: tempURL)
@@ -214,10 +223,18 @@ final class DeviceStagingRegistry {
         guard let session = sessionsByIdentity[identity] else {
             return .failed(.other("cameraSessionMissing"))
         }
-        try? FileManager.default.createDirectory(
-            at: destinationTempURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
+        do {
+            try FileManager.default.createDirectory(
+                at: destinationTempURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+        } catch {
+            // The copy into it fails next and reports its own outcome; this says why.
+            OtosLog.fileAccess.errorOperation("camera.staging", phase: "createFailed", fields: [
+                "path": destinationTempURL.deletingLastPathComponent().path(percentEncoded: false),
+                "error": String(describing: error),
+            ])
+        }
         if FileManager.default.fileExists(atPath: enrichmentURL.path),
            let size = try? enrichmentURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
            let file = session.file(for: relativePath),
