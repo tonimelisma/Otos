@@ -233,6 +233,8 @@ func waitForCoordinatorQuiescence(_ coordinator: MediaOperationCoordinator) asyn
 }
 
 extension MediaImportRunTally {
+    static let nothingAttempted = MediaImportRunTally.tally(published: 0)
+
     /// A run's tally for a test: what it published, with nothing else happening unless
     /// the test says so.
     static func tally(

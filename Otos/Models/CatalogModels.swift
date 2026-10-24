@@ -311,11 +311,10 @@ nonisolated struct LibraryRoot: Identifiable, Hashable {
     /// fixed library is. A removable volume is not — hashing in place would read the whole
     /// card to checksum it.
     ///
-    /// `.deviceMTP` joins the second group now that a camera row is enriched from a few
-    /// kilobytes of ranged reads rather than from a downloaded copy. Requiring a digest
-    /// would reintroduce exactly the whole-file transfer that removal was for. Those rows
-    /// receive their digest after import, from the destination's local bytes — which is
-    /// what ADR 0018 already prescribes for a removable volume.
+    /// `.deviceMTP` is in the second group: a camera row is enriched from a few kilobytes
+    /// of ranged reads, not from a downloaded copy, and requiring a digest would force the
+    /// whole-file transfer. Those rows receive their digest after import, from the
+    /// destination's local bytes, as ADR 0018 prescribes for a removable volume.
     ///
     /// Single home for the rule so a future root kind cannot diverge one caller.
     var isContentHashRequired: Bool {

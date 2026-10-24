@@ -46,6 +46,17 @@ final class MediaGridCollectionView: NSCollectionView {
     /// The pointer has travelled `MediaGridDragPolicy.dragThreshold` from a mouse-down
     /// on this tile; the controller starts the dragging session (ADR 0028).
     var onDragBegin: ((IndexPath, NSEvent) -> Void)?
+    /// The view entered a window. The controller claims first responder then when it
+    /// appeared before the window existed (`NSViewControllerRepresentable` can show the
+    /// view first).
+    var onMovedToWindow: (() -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            onMovedToWindow?()
+        }
+    }
 
     /// A plain mouse-down on a selected tile whose selection change is waiting for
     /// mouse-up, in case the gesture becomes a drag (`MediaGridClickDecision`).

@@ -809,10 +809,6 @@ actor MediaImportExecutor {
         }
     }
 
-    /// Validates containment, then delegates. There is no second delete here:
-    /// this once carried its own `FileManager.removeItem` for `.removableVolume`
-    /// *and* `.library`, which contradicted `SourceEraser`'s own read-only rule
-    /// for library roots.
     /// Erases one landed entry's source as soon as it settled (ADR 0027), under the
     /// card's namespace lease and journaled exactly as the sweep journals, so a crash
     /// between the two is recovered. A card another owner holds keeps the file; the
@@ -877,6 +873,8 @@ actor MediaImportExecutor {
         return outcome
     }
 
+    /// Validates containment, then delegates to `SourceEraser`, the one deletion path,
+    /// which refuses fixed library roots as read-only.
     private func eraseSourceFile(
         candidate: EraseManifestEntry,
         sourceRoot: LibraryRootPath,
@@ -1780,14 +1778,6 @@ nonisolated struct MediaImportRunTally: Equatable, Sendable {
     let hasEntryFailures: Bool
     let skippedForeignCount: Int
     let failedCount: Int
-
-    static let nothingAttempted = MediaImportRunTally(
-        publishedCount: 0,
-        hasBlockedEntries: false,
-        hasEntryFailures: false,
-        skippedForeignCount: 0,
-        failedCount: 0
-    )
 }
 
 nonisolated enum MediaImportExecutionResult: Equatable, Sendable {

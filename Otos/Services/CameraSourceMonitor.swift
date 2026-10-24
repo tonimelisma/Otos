@@ -994,8 +994,15 @@ final class DeviceCameraSession: NSObject {
         guard file.fileSize >= 0 else {
             return nil
         }
-        let name = firstNonEmpty(file.originalFilename, file.name, file.createdFilename)
-            ?? "camera-item-\(itemsHashSeed(file))"
+        // An item's path is its identity (ADR 0008), so an item the camera gives no name
+        // has none that would survive the next enumeration; it is not cataloged.
+        guard let name = firstNonEmpty(file.originalFilename, file.name, file.createdFilename) else {
+            OtosLog.fileAccess.noticeOperation("camera.inventory", phase: "unnamedItemSkipped", fields: [
+                "identity": identity.rawValue,
+                "fileSize": "\(file.fileSize)",
+            ])
+            return nil
+        }
         let baseRelativePath = cameraRelativePath(for: file, name: name)
         let collisionIndex = collisionCounts[baseRelativePath, default: 0]
         collisionCounts[baseRelativePath] = collisionIndex + 1
@@ -1042,10 +1049,6 @@ final class DeviceCameraSession: NSObject {
             let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed?.isEmpty == false ? trimmed : nil
         }.first
-    }
-
-    private func itemsHashSeed(_ file: ICCameraFile) -> String {
-        String(UInt(bitPattern: Unmanaged.passUnretained(file).toOpaque()))
     }
 }
 

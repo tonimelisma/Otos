@@ -331,8 +331,8 @@ struct ImportPlanFooter: View {
     // MARK: - The act
 
     /// One owner for every action's enabled state: `renderedPrimary.isEnabled`
-    /// is applied here, not per-case — a case that forgets `.disabled` used to
-    /// render a live button (the cancelling state, `primaryEnabled: false`).
+    /// is applied here, not per case, so no case can render a live button by
+    /// forgetting `.disabled` (the cancelling state, `primaryEnabled: false`).
     /// The zone holds its width whether or not it draws anything, so the states
     /// with no act (`.none`) leave the other two zones exactly where they were.
     private var actZone: some View {
