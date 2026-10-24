@@ -201,14 +201,22 @@ check_provider_readiness() {
   # A capture that silently measures a dead provider is worse than no capture.
   # Do a real open()+read(4096) on one file under SMOKE_ROOT; if it times out with ETIMEDOUT,
   # refuse to start or loudly annotate. Process presence (pgrep OneDrive) is not readiness.
+  # A still image is preferred: a read of a cloud-only file downloads all of it, and the
+  # first video under a root can be hundreds of megabytes.
   local sample
-  sample="$(find "$SMOKE_ROOT" -type f \( -name "*.jpg" -o -name "*.heic" -o -name "*.png" -o -name "*.mp4" -o -name "*.mov" \) -print -quit 2>/dev/null || true)"
+  sample="$(find "$SMOKE_ROOT" -type f \( -name "*.jpg" -o -name "*.heic" -o -name "*.png" \) -print -quit 2>/dev/null || true)"
+  if [[ -z "$sample" ]]; then
+    sample="$(find "$SMOKE_ROOT" -type f \( -name "*.mp4" -o -name "*.mov" \) -print -quit 2>/dev/null || true)"
+  fi
   if [[ -z "$sample" ]]; then
     echo "Warning: no sample file found under $SMOKE_ROOT to probe provider readiness; proceeding." >&2
     return 0
   fi
-  if ! python3 -c "
-import os, sys
+  # The probe is a quoted heredoc so the shell passes it to Python unchanged; its exit
+  # status is captured directly, since `$?` after `if !` is the negation's, always 0.
+  local probe_status=0
+  python3 - "$sample" <<'PY' || probe_status=$?
+import sys
 p = sys.argv[1]
 try:
     with open(p, 'rb') as f:
@@ -221,14 +229,14 @@ except OSError as e:
         sys.exit(2)
     print(f'Probe read failed for {p}: {e} (errno {getattr(e, "errno", "?")})', file=sys.stderr)
     sys.exit(1)
-" "$sample"; then
-    local rc=$?
-    if [[ $rc -eq 2 ]]; then
-      echo "Provider readiness check failed: $SMOKE_ROOT's File Provider is not serving reads (ETIMEDOUT)." >&2
-      echo "Re-auth OneDrive / wait for the provider to finish initialising, then re-run. A dead-provider capture would look like data." >&2
-      exit 2
-    fi
-    echo "Provider probe failed for $sample (exit $rc); proceeding but capture may be invalid." >&2
+PY
+  if [[ "$probe_status" -eq 2 ]]; then
+    echo "Provider readiness check failed: $SMOKE_ROOT's File Provider is not serving reads (ETIMEDOUT)." >&2
+    echo "Re-auth OneDrive / wait for the provider to finish initialising, then re-run. A dead-provider capture would look like data." >&2
+    exit 2
+  fi
+  if [[ "$probe_status" -ne 0 ]]; then
+    echo "Provider probe failed for $sample (exit $probe_status); proceeding but capture may be invalid." >&2
   fi
 }
 
