@@ -216,7 +216,13 @@ Two lenses on every PR:
   construct a violation?" pass. Diff against the plan, check blast radius, run
   every agent-owned check, then invert every "this is fine."
   For each `await` in the diff: what can change here, and is it re-read before being
-  written?
+  written? Three questions that no lint can ask:
+  - For each platform delegate method or callback: is every report it can deliver
+    either consumed or ignored with a stated reason? An empty method is a decision.
+  - For each wait, retry or timeout: does Otos itself hold the fact being waited out?
+    Then its owner releases or reports it, and time is not used (ADR 0033).
+  - For each name the diff's behavior change touches — type, method, log `op=` —
+    does it still say what the code now does? A changed behavior renames itself.
 - **(B) Architecture.** Is this the simplest correct design? One owner per
   question? Would a blank-slate build arrive here, or is this a patch around a
   wrong boundary?
