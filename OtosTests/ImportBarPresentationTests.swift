@@ -430,6 +430,24 @@ struct ImportBarPresentationTests {
         ))
     }
 
+    @Test func needsAttentionNamesTheOccupiedFolderCause() {
+        let itemID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "a.jpg"))
+        let item = MediaAttentionItem(id: itemID, reason: .destinationFolderOccupied(occupant: "2026"))
+        let drawn = Self.map(Self.presentation(
+            state: .ready(
+                summary: Self.totals(copyCount: 1, copyBytes: 1000),
+                generation: 1,
+                skippedPackageCount: 0,
+                attentionItems: [item, item]
+            )
+        ))
+        #expect(drawn.secondaryLine == .attention(
+            clause: "A file in Summer Photos is in the way of 2 items' folder",
+            revealLabel: "Show them",
+            itemIDs: [itemID, itemID]
+        ))
+    }
+
     /// 2026-09-13: every item blocked, and the bar offered `Import 0 Items`,
     /// enabled. A control whose subject does not exist is omitted (DES-053).
     @Test func needsAttentionWithNothingImportableOffersNoAct() {

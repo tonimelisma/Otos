@@ -1292,9 +1292,9 @@ nonisolated struct ImportSessionMachine {
     ) -> Set<FilesystemNameKey> {
         var claims: Set<FilesystemNameKey> = []
         for entry in plan.entries {
-            guard case .copy = entry.disposition else { continue }
+            guard case let .copy(destination) = entry.disposition else { continue }
             claims.insert(FilesystemNamespaceSemantics.nameKey(
-                relativePath: entry.finalDestination,
+                relativePath: destination,
                 capabilities: capabilities
             ))
             for dest in entry.companionDestinations.values {

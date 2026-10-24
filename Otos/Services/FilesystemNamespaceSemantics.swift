@@ -7,13 +7,11 @@ import OSLog
 /// reorganization. Never trusts the catalog alone for destination freeness —
 /// symlinks, packages, and foreign files are invisible to media queries.
 ///
-/// Two observation shapes, both `lstat`-scale per name:
-/// - `occupancy(rootPath:relativePath:)` answers one candidate. Reorganization
-///   resolves its candidates this way because its destinations are scattered.
-/// - `enumerateNamespace(root:folders:)` reads whole folders. Import planning uses
-///   this because its candidates cluster into a small, pre-computable folder set,
-///   so one enumeration answers every candidate — including suffixed retries —
-///   and reveals foreign occupants no per-candidate probe would have asked about.
+/// `enumerateNamespace(root:folders:)` reads whole folders, `lstat`-scale per name.
+/// Import planning and Reorganize both use it: a plan's candidates cluster into a
+/// small folder set known before any name is chosen, so one enumeration answers every
+/// candidate — including suffixed retries — and reveals foreign occupants no
+/// per-candidate probe would have asked about.
 ///
 /// Pure observation only: no mutation, no materialization, no catalog writes.
 /// Byte-reading is never triggered: directory and `lstat` facts read without
@@ -71,27 +69,45 @@ nonisolated enum FilesystemNamespaceSemantics {
         var entries: [MediaRelativePath: NamespaceOccupancyResult] = [:]
         var enumerated: Set<String> = []
         var unreadable: [String: String] = [:]
+        var occupiedFolders: [String: String] = [:]
         let fileManager = FileManager.default
 
         for folder in folders {
+            // `.notDirectory`: a directory hint adds a trailing slash, and a regular file
+            // at a trailing-slash path reports as absent, hiding a file where a folder
+            // belongs. Whether it is a directory is read from `isDirectory` below.
             let folderURL = folder.isEmpty
                 ? root.url
-                : root.url.appending(path: folder, directoryHint: .isDirectory)
+                : root.url.appending(path: folder, directoryHint: .notDirectory)
             var isDirectory: ObjCBool = false
             let exists = fileManager.fileExists(
                 atPath: folderURL.path(percentEncoded: false),
                 isDirectory: &isDirectory
             )
             if !exists {
-                // Absent folder: nothing occupies it, and every candidate is free.
+                // Absent folder: nothing occupies it and every candidate is free — unless
+                // a file holds one of its ancestors' names, which makes the folder
+                // impossible to create. That is a fact about the library, not a read
+                // that failed, so it is recorded as an occupied folder, not retried.
+                if let occupant = MediaRelativePath(rawValue: folder + "/_").ancestorFolders.first(where: {
+                    var ancestorIsDirectory: ObjCBool = false
+                    let ancestorURL = root.url.appending(path: $0, directoryHint: .notDirectory)
+                    return fileManager.fileExists(
+                        atPath: ancestorURL.path(percentEncoded: false),
+                        isDirectory: &ancestorIsDirectory
+                    ) && !ancestorIsDirectory.boolValue
+                }) {
+                    occupiedFolders[folder] = occupant
+                    logOccupiedFolder(folder: folder, occupant: occupant)
+                    continue
+                }
                 enumerated.insert(folder)
                 continue
             }
             guard isDirectory.boolValue else {
-                // A file where a folder belongs: leave it unenumerated so
-                // candidates surface as unobservable, not as free.
-                unreadable[folder] = "notADirectory"
-                logUnreadable(folder: folder, error: "notADirectory")
+                // A file where the folder belongs.
+                occupiedFolders[folder] = folder
+                logOccupiedFolder(folder: folder, occupant: folder)
                 continue
             }
             let names: [String]
@@ -120,8 +136,16 @@ nonisolated enum FilesystemNamespaceSemantics {
             entries: entries,
             enumeratedFolders: enumerated,
             unreadableFolders: unreadable,
+            occupiedFolders: occupiedFolders,
             capabilities: capabilities
         )
+    }
+
+    private static func logOccupiedFolder(folder: String, occupant: String) {
+        OtosLog.fileAccess.noticeOperation("namespace.enumerate", phase: "folderOccupied", fields: [
+            "folder": folder,
+            "occupant": occupant,
+        ])
     }
 
     private static func logUnreadable(folder: String, error: String) {

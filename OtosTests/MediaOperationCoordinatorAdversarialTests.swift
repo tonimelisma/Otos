@@ -355,7 +355,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
         await coordinator.start()
         let planA = try await waitForReady(coordinator, source: cardAPath)
-        #expect(planA.entries.first?.finalDestination.rawValue == "shared.jpg")
+        #expect(planA.entries.first?.destination?.rawValue == "shared.jpg")
         // Detach A
         try await store.detachRemovableSource(identity: "volume:claim-detach-A", reason: .ejected)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -380,7 +380,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let planB = try await waitForReady(coordinator, source: cardBPath)
         // After detach, B should get base name, not suffix.
         #expect(
-            planB.entries.first?.finalDestination.rawValue == "shared.jpg",
+            planB.entries.first?.destination?.rawValue == "shared.jpg",
             "Claim should be released on detach, B should get base name"
         )
         await coordinator.shutdown()
@@ -450,15 +450,13 @@ struct MediaOperationCoordinatorAdversarialTests {
         // Ensure A builds first and gets base name, then B gets suffix.
         log("STEP waitForReady A")
         let planA = try await waitForReady(coordinator, source: cardAPath)
-        #expect(planA.entries.first?.finalDestination.rawValue == "shared.jpg")
+        #expect(planA.entries.first?.destination?.rawValue == "shared.jpg")
         await builder.resumePendingBuild(for: cardBPath)
         log("STEP waitForReady B")
         let planBBefore = try await waitForReady(coordinator, source: cardBPath)
         #expect(
-            planBBefore.entries.first?.finalDestination.rawValue == "shared 2.jpg"
-                || planBBefore.entries.first?.finalDestination.rawValue == "shared-2.jpg"
-                || (planBBefore.entries.first?.finalDestination.rawValue.contains("shared") ?? false),
-            "B should have suffix while A holds claim"
+            planBBefore.entries.first?.destination?.rawValue == "shared_001.jpg",
+            "B takes the first suffix while A holds the base name"
         )
 
         log("STEP queueImport")
@@ -494,7 +492,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         // Poll until B's plan shows base name, since waitForReady may return old suffix immediately.
         // After A's cancel, B should reclaim base name.
         try await waitUntil(every: .milliseconds(50)) {
-            await coordinator.readyPlan(for: cardBPath)?.entries.first?.finalDestination.rawValue == "shared.jpg"
+            await coordinator.readyPlan(for: cardBPath)?.entries.first?.destination?.rawValue == "shared.jpg"
         }
         await coordinator.shutdown()
     }
@@ -560,11 +558,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         )
         await coordinator.start()
         let planA = try await waitForReady(coordinator, source: cardAPath)
-        #expect(planA.entries.first?.finalDestination.rawValue == "shared.jpg")
+        #expect(planA.entries.first?.destination?.rawValue == "shared.jpg")
         await builder2.resumePendingBuild(for: cardBPath)
         log("STEP waitForReady B")
         let planBBefore = try await waitForReady(coordinator, source: cardBPath)
-        #expect(planBBefore.entries.first?.finalDestination.rawValue != "shared.jpg")
+        #expect(planBBefore.entries.first?.destination?.rawValue == "shared_001.jpg")
 
         log("STEP queueImport")
         let queueTask2 = Task { await coordinator.queueImport(for: cardAPath) }
@@ -580,7 +578,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         log("STEP waitForReady B after")
         // After failure, B should reclaim base name.
         try await waitUntil(every: .milliseconds(50)) {
-            await coordinator.readyPlan(for: cardBPath)?.entries.first?.finalDestination.rawValue == "shared.jpg"
+            await coordinator.readyPlan(for: cardBPath)?.entries.first?.destination?.rawValue == "shared.jpg"
         }
         await coordinator.shutdown()
     }
@@ -639,7 +637,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         // Resume A first — it should become Ready with base name.
         await builder.resumePendingBuild(for: cardAPath)
         let planA = try await waitForReady(coordinator, source: cardAPath)
-        #expect(planA.entries.first?.finalDestination.rawValue == "shared.jpg")
+        #expect(planA.entries.first?.destination?.rawValue == "shared.jpg")
         // Resume B — it was built against same namespace snapshot without seeing A's claim, so it will have base name
         // too,
         // but coordinator's conflict check should detect that its newClaims intersect currentLedger and re-dirty +
@@ -650,13 +648,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         // suffix.
         let planB = try await waitForReady(coordinator, source: cardBPath)
         #expect(
-            planB.entries.first?.finalDestination.rawValue != "shared.jpg",
-            "B should have suffix after conflict rebuild"
+            planB.entries.first?.destination?.rawValue == "shared_001.jpg",
+            "B takes the first suffix after the conflict rebuild"
         )
-        #expect(planB.entries.first?.finalDestination.rawValue.contains("shared") == true)
         // Verify A still holds base.
         let planAAfter = await coordinator.readyPlan(for: cardAPath)
-        #expect(planAAfter?.entries.first?.finalDestination.rawValue == "shared.jpg")
+        #expect(planAAfter?.entries.first?.destination?.rawValue == "shared.jpg")
         await coordinator.shutdown()
     }
 
@@ -701,7 +698,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
         await coordinator.start()
         let planA = try await waitForReady(coordinator, source: cardAPath)
-        #expect(planA.entries.first?.finalDestination.rawValue == "shared.jpg")
+        #expect(planA.entries.first?.destination?.rawValue == "shared.jpg")
         await coordinator.queueImport(for: cardAPath)
         // Wait for import to complete and file to appear
         try await waitUntil(every: .milliseconds(50)) {
@@ -728,8 +725,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         // deliver a transient plan before the explicit retry settles.
         // B should still have a suffix due to the real file, even after A's claim dies.
         try await waitUntil(every: .milliseconds(50)) {
-            let destination = await coordinator.readyPlan(for: cardBPath)?.entries.first?.finalDestination.rawValue
-            return destination != "shared.jpg" && destination?.contains("shared") == true
+            let destination = await coordinator.readyPlan(for: cardBPath)?.entries.first?.destination?.rawValue
+            return destination == "shared_001.jpg"
         }
         await coordinator.shutdown()
     }

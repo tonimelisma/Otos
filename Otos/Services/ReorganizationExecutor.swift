@@ -49,53 +49,22 @@ nonisolated enum ReorganizationExecutor {
 
         var steps: [ActiveReorganizationStep] = []
         var stepIndex = 0
-        for move in plannerComponent.steps {
-            switch move {
-            case let .move(from, to):
-                guard let memberIndex = memberIndexByCurrentPath[from.rawValue] else {
-                    return nil
-                }
-                steps.append(
-                    ActiveReorganizationStep(
-                        stepIndex: stepIndex,
-                        memberIndex: memberIndex,
-                        sourceRelativePath: from,
-                        destinationRelativePath: to,
-                        phase: .planned
-                    )
-                )
-                stepIndex += 1
-                memberIndexByCurrentPath.removeValue(forKey: from.rawValue)
-                memberIndexByCurrentPath[to.rawValue] = memberIndex
-            case let .moveViaTemporary(from, temporary, to):
-                guard let memberIndex = memberIndexByCurrentPath[from.rawValue] else {
-                    return nil
-                }
-                steps.append(
-                    ActiveReorganizationStep(
-                        stepIndex: stepIndex,
-                        memberIndex: memberIndex,
-                        sourceRelativePath: from,
-                        destinationRelativePath: temporary,
-                        phase: .planned
-                    )
-                )
-                stepIndex += 1
-                memberIndexByCurrentPath.removeValue(forKey: from.rawValue)
-                memberIndexByCurrentPath[temporary.rawValue] = memberIndex
-                steps.append(
-                    ActiveReorganizationStep(
-                        stepIndex: stepIndex,
-                        memberIndex: memberIndex,
-                        sourceRelativePath: temporary,
-                        destinationRelativePath: to,
-                        phase: .planned
-                    )
-                )
-                stepIndex += 1
-                memberIndexByCurrentPath.removeValue(forKey: temporary.rawValue)
-                memberIndexByCurrentPath[to.rawValue] = memberIndex
+        for case let .move(from, to) in plannerComponent.steps {
+            guard let memberIndex = memberIndexByCurrentPath[from.rawValue] else {
+                return nil
             }
+            steps.append(
+                ActiveReorganizationStep(
+                    stepIndex: stepIndex,
+                    memberIndex: memberIndex,
+                    sourceRelativePath: from,
+                    destinationRelativePath: to,
+                    phase: .planned
+                )
+            )
+            stepIndex += 1
+            memberIndexByCurrentPath.removeValue(forKey: from.rawValue)
+            memberIndexByCurrentPath[to.rawValue] = memberIndex
         }
 
         let directories = directoryPrerequisites(for: members).map {

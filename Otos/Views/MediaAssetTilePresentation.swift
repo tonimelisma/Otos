@@ -162,7 +162,7 @@ nonisolated enum MediaAssetTilePresentation {
         detail: MediaTileDetail,
         badgeContent: TileBadgeContent
     ) -> String {
-        let name = (detail.relativePath.rawValue as NSString).lastPathComponent
+        let name = detail.relativePath.fileName
         let base: String = if detail.thumbnailUnavailable {
             detail.bestKind == .video
                 ? "\(name), video, preview unavailable"

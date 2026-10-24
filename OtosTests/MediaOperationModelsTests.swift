@@ -25,8 +25,6 @@ struct MediaOperationModelsTests {
         let relative = MediaRelativePath(rawValue: name)
         return MediaOperationPlanEntry(
             source: facts(name: name),
-            idealDestination: relative,
-            finalDestination: relative,
             companionDestinations: [:],
             disposition: disposition
         )

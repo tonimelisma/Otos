@@ -2018,7 +2018,7 @@ private nonisolated func scannedFileUpsertArguments(
         file.relativePath.rawValue,
         pathKey,
         MediaSortKey.make(libraryRootPath: libraryRootPath, relativePath: file.relativePath),
-        MediaSortKey.naturalKey(file.name ?? URL(fileURLWithPath: file.relativePath.rawValue).lastPathComponent),
+        MediaSortKey.naturalKey(file.name ?? file.relativePath.fileName),
         file.name,
         file.contentTypeIdentifier,
         file.kind?.rawValue,

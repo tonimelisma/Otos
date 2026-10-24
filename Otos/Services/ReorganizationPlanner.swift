@@ -1,450 +1,250 @@
 import Foundation
 
-// Reorganization reservation + graph construction is intentionally cohesive.
-// swiftlint:disable cyclomatic_complexity function_body_length type_body_length
-
-/// Pure reorganization planner (ARC-050).
+/// Reorganization planner guide
 ///
-/// Accepts only immutable Sendable values. Emits occupancy probe requests for
-/// targets/ancestors the catalog cannot prove free. Never writes the filesystem.
+/// Pure planning for Reorganize (ARC-050): applies the import naming policy
+/// (`ImportNaming`) to a library already in place. It takes the catalog's media and the
+/// destination folders already read into a `DestinationNamespace`, and returns where
+/// every file goes and the order of renames that gets it there. No I/O, no actors.
+///
+/// Names are chosen per naming bundle exactly as import chooses them: one date, one
+/// collision suffix, companions named after their primary. Every comparison between
+/// paths is by the volume's name key, so a case-only difference on a case-insensitive
+/// volume is the same slot. A path the catalog knows is not a foreign occupant: the
+/// member there moves away (and frees it) or stays (and keeps it).
 nonisolated enum ReorganizationPlanner {
+    /// Every folder a plan of `snapshot` can put a file in. A suffix changes a file name,
+    /// never its folder, so this set is complete before any name is chosen; the caller
+    /// reads exactly these folders and passes the result to `plan`.
+    static func destinationFolders(for snapshot: ReorganizationPlanningSnapshot) -> Set<String> {
+        var folders: Set<String> = []
+        for bundle in ImportNaming.bundles(from: snapshot.media, policy: snapshot.policy)
+            where bundle.isNameable(under: snapshot.policy)
+        {
+            let timestamp = ImportNaming.timestamp(of: bundle, calendar: snapshot.calendar, timeZone: snapshot.timeZone)
+            if let folder = ImportNaming.folder(timestamp: timestamp, policy: snapshot.policy) {
+                folders.insert(folder)
+            }
+        }
+        return folders
+    }
+
+    /// One pure pass over the library's bundles against `namespace`.
+    ///
+    /// Bundles that cannot move — undated, or whose folder a file occupies or could not
+    /// be read — and bundles already named as the policy names them keep their names.
+    /// Every other bundle takes the first suffix whose names are all free: not kept by
+    /// a staying bundle, not taken by an earlier moving bundle, and not held by a file
+    /// the catalog does not know. A bundle that finds no free suffix stays too; since
+    /// it then keeps names an earlier bundle may have counted on, the pass restarts
+    /// with it staying, which ends because each restart adds a staying bundle.
     static func plan(
         snapshot: ReorganizationPlanningSnapshot,
-        occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult] = [:]
+        namespace: DestinationNamespace
     ) -> ReorganizationPlanBuildOutcome {
-        if snapshot.media.contains(where: { !$0.hasAnyDate }) {
-            // Undatable media block individually; still build the rest.
+        let bundles = ImportNaming.bundles(from: snapshot.media, policy: snapshot.policy)
+            .map { PlannedBundle(bundle: $0, snapshot: snapshot) }
+        var staying = Set<Int>()
+        var blocks: [Int: ReorganizationBlockReason] = [:]
+        for (index, bundle) in bundles.enumerated() {
+            if let block = bundle.fixedBlock(namespace: namespace) {
+                staying.insert(index)
+                blocks[index] = block
+            } else if bundle.isAlreadyNamed {
+                staying.insert(index)
+            }
         }
 
-        var pendingOccupancy: [NamespaceOccupancyRequest] = []
-        let capabilities = snapshot.capabilities
-        let volumeID = snapshot.volumeIdentifier
+        let keyOf = { (path: MediaRelativePath) in
+            FilesystemNamespaceSemantics.nameKey(relativePath: path, capabilities: snapshot.capabilities)
+        }
+        let catalogKeys = Set(bundles.flatMap(\.sourcePaths).map(keyOf))
 
-        // 1. Build physical members from media + companions with ideal destinations.
+        while true {
+            var claimed: [FilesystemNameKey: Int] = [:]
+            for index in staying {
+                for path in bundles[index].sourcePaths {
+                    claimed[keyOf(path)] = index
+                }
+            }
+            var finals: [Int: [MediaRelativePath: MediaRelativePath]] = [:]
+            var newlyStaying: Int?
+            bundleLoop: for (index, bundle) in bundles.enumerated() where !staying.contains(index) {
+                for suffix in 0 ..< 10000 {
+                    let destinations = bundle.destinations(suffix: suffix)
+                    let free = destinations.values.allSatisfy { destination in
+                        let key = keyOf(destination)
+                        if claimed[key] != nil {
+                            return false
+                        }
+                        if catalogKeys.contains(key) {
+                            // A catalog member is there now. Every staying member's name
+                            // is already claimed, so this one moves away first.
+                            return true
+                        }
+                        if case .absent = namespace.occupancy(of: destination) {
+                            return true
+                        }
+                        return false
+                    }
+                    if free {
+                        for destination in destinations.values {
+                            claimed[keyOf(destination)] = index
+                        }
+                        finals[index] = destinations
+                        continue bundleLoop
+                    }
+                }
+                let unsuffixed = bundle.destinations(suffix: 0).values.min { $0.rawValue < $1.rawValue }
+                blocks[index] = .noFreeName(destination: unsuffixed ?? bundle.sourcePaths[0])
+                newlyStaying = index
+                break
+            }
+            if let newlyStaying {
+                staying.insert(newlyStaying)
+                continue
+            }
+            return assemble(
+                bundles: bundles,
+                finals: finals,
+                blocks: blocks,
+                snapshot: snapshot,
+                keyOf: keyOf
+            )
+        }
+    }
+
+    // MARK: - Assembly
+
+    private static func assemble(
+        bundles: [PlannedBundle],
+        finals: [Int: [MediaRelativePath: MediaRelativePath]],
+        blocks: [Int: ReorganizationBlockReason],
+        snapshot: ReorganizationPlanningSnapshot,
+        keyOf: (MediaRelativePath) -> FilesystemNameKey
+    ) -> ReorganizationPlanBuildOutcome {
         var members: [ReorganizationPhysicalMember] = []
         var mediaDispositions: [MediaAssetID: ReorganizationDisposition] = [:]
-        let sortedMedia = snapshot.media.sorted {
-            $0.relativePath.rawValue.localizedStandardCompare($1.relativePath.rawValue) == .orderedAscending
-        }
-
-        for media in sortedMedia {
-            guard media.hasAnyDate else {
-                mediaDispositions[media.id] = .blocked(.noUsableDate)
-                continue
-            }
-            let ideal = idealRelativePath(for: media, snapshot: snapshot)
-            let primaryID = "media:\(media.relativePath.rawValue)"
-            members.append(
-                ReorganizationPhysicalMember(
-                    id: primaryID,
-                    source: media.relativePath,
-                    idealDestination: ideal,
-                    finalDestination: ideal,
-                    isCompanion: false,
-                    primarySource: nil,
-                    mediaID: media.id
-                )
-            )
-            for companion in media.companions.sorted(by: {
-                $0.relativePath.rawValue.localizedStandardCompare($1.relativePath.rawValue) == .orderedAscending
-            }) {
-                let companionIdeal = companionDestination(
-                    companion: companion,
-                    primaryIdeal: ideal
-                )
-                members.append(
-                    ReorganizationPhysicalMember(
-                        id: "companion:\(companion.relativePath.rawValue)",
-                        source: companion.relativePath,
-                        idealDestination: companionIdeal,
-                        finalDestination: companionIdeal,
-                        isCompanion: true,
-                        primarySource: media.relativePath,
-                        mediaID: media.id
-                    )
-                )
-            }
-        }
-
-        // 2. Exact spelling no-ops.
-        for index in members.indices where members[index].source == members[index].finalDestination {
-            if let mediaID = members[index].mediaID, !members[index].isCompanion {
-                mediaDispositions[mediaID] = .noOp
-            }
-        }
-
-        // 3. Reserve final lookup keys; suffix colliding bundles deterministically.
-        var reservedKeys: [FilesystemNameKey: String] = [:]
-        for index in members.indices where members[index].source != members[index].finalDestination {
-            var destination = members[index].finalDestination
-            var key = FilesystemNamespaceSemantics.nameKey(
-                relativePath: destination,
-                capabilities: capabilities
-            )
-            var suffix = 0
-            while let owner = reservedKeys[key], owner != members[index].id {
-                suffix += 1
-                destination = suffixed(destination, suffix: suffix)
-                key = FilesystemNamespaceSemantics.nameKey(
-                    relativePath: destination,
-                    capabilities: capabilities
-                )
-            }
-            // Stationary occupant (exact no-op member or known foreign) forces suffix.
-            let stationaryConflict = members.contains {
-                $0.source == destination && $0.source == $0.finalDestination && $0.id != members[index].id
-            } || snapshot.knownForeignOccupants.contains(destination)
-            if stationaryConflict {
-                suffix += 1
-                destination = suffixed(members[index].idealDestination, suffix: suffix)
-                key = FilesystemNamespaceSemantics.nameKey(
-                    relativePath: destination,
-                    capabilities: capabilities
-                )
-                while reservedKeys[key] != nil {
-                    suffix += 1
-                    destination = suffixed(members[index].idealDestination, suffix: suffix)
-                    key = FilesystemNamespaceSemantics.nameKey(
-                        relativePath: destination,
-                        capabilities: capabilities
-                    )
-                }
-            }
-            members[index].finalDestination = destination
-            reservedKeys[key] = members[index].id
-        }
-
-        // Keep companion finals aligned with primary when primary was suffixed.
-        for index in members.indices where members[index].isCompanion {
-            guard let primarySource = members[index].primarySource,
-                  let primary = members.first(where: { $0.source == primarySource && !$0.isCompanion })
-            else {
-                continue
-            }
-            let aligned = companionDestination(
-                companionRelative: members[index].source,
-                primaryIdeal: primary.finalDestination
-            )
-            members[index].finalDestination = aligned
-        }
-
-        // 4. Emit occupancy probes for finals/ancestors not answered by catalog.
-        let currentSources = Set(members.map(\.source))
-        for member in members where member.source != member.finalDestination {
-            let request = NamespaceOccupancyRequest(
-                rootPath: snapshot.libraryRoot,
-                relativePath: member.finalDestination
-            )
-            if occupancy[request] == nil,
-               !currentSources.contains(member.finalDestination),
-               !snapshot.knownForeignOccupants.contains(member.finalDestination)
-            {
-                pendingOccupancy.append(request)
-            }
-            for ancestor in directoryAncestors(of: member.finalDestination) {
-                let ancestorRequest = NamespaceOccupancyRequest(
-                    rootPath: snapshot.libraryRoot,
-                    relativePath: ancestor
-                )
-                if occupancy[ancestorRequest] == nil {
-                    pendingOccupancy.append(ancestorRequest)
-                }
-            }
-        }
-        if !pendingOccupancy.isEmpty {
-            return .needsProbes(occupancy: uniqueOccupancy(pendingOccupancy))
-        }
-
-        // 5. Apply probe results.
-        // Ancestors: only non-directory occupants block (existing date folders are valid).
-        for member in members where member.source != member.finalDestination {
-            for ancestor in directoryAncestors(of: member.finalDestination) {
-                let ancestorRequest = NamespaceOccupancyRequest(
-                    rootPath: snapshot.libraryRoot,
-                    relativePath: ancestor
-                )
-                if isBlockingAncestorOccupancy(occupancy[ancestorRequest]),
-                   let mediaID = member.mediaID
-                {
-                    mediaDispositions[mediaID] = .blocked(.ancestorConflict(ancestor))
+        for (index, bundle) in bundles.enumerated() {
+            let bundleFinals = finals[index] ?? [:]
+            for member in bundle.members {
+                let final = bundleFinals[member.source] ?? member.source
+                members.append(ReorganizationPhysicalMember(
+                    id: member.id,
+                    source: member.source,
+                    finalDestination: final,
+                    isCompanion: member.isCompanion,
+                    primarySource: member.primarySource,
+                    mediaID: member.mediaID
+                ))
+                guard !member.isCompanion, let mediaID = member.mediaID else { continue }
+                if let block = blocks[index] {
+                    mediaDispositions[mediaID] = .blocked(block)
+                } else if final == member.source {
+                    mediaDispositions[mediaID] = .noOp
+                } else {
+                    mediaDispositions[mediaID] = .relocate(destination: final)
                 }
             }
         }
 
-        // Finals: occupied non-catalog paths force suffixing like knownForeignOccupants.
-        var pendingAfterResuffix: [NamespaceOccupancyRequest] = []
-        for index in members.indices where members[index].source != members[index].finalDestination {
-            if let mediaID = members[index].mediaID,
-               case .blocked = mediaDispositions[mediaID]
-            {
-                continue
-            }
-            let destination = members[index].finalDestination
-            let finalRequest = NamespaceOccupancyRequest(
-                rootPath: snapshot.libraryRoot,
-                relativePath: destination
-            )
-            guard isOccupiedFinalOccupancy(occupancy[finalRequest]) else {
-                continue
-            }
-            // Release prior reservation for this member, then suffix away from the occupant.
-            let priorKey = FilesystemNamespaceSemantics.nameKey(
-                relativePath: destination,
-                capabilities: capabilities
-            )
-            if reservedKeys[priorKey] == members[index].id {
-                reservedKeys.removeValue(forKey: priorKey)
-            }
-            var suffix = 1
-            var candidate = suffixed(members[index].idealDestination, suffix: suffix)
-            var key = FilesystemNamespaceSemantics.nameKey(
-                relativePath: candidate,
-                capabilities: capabilities
-            )
-            while reservedKeys[key] != nil
-                || snapshot.knownForeignOccupants.contains(candidate)
-                || isOccupiedFinalOccupancy(
-                    occupancy[
-                        NamespaceOccupancyRequest(
-                            rootPath: snapshot.libraryRoot,
-                            relativePath: candidate
-                        )
-                    ]
-                )
-            {
-                suffix += 1
-                candidate = suffixed(members[index].idealDestination, suffix: suffix)
-                key = FilesystemNamespaceSemantics.nameKey(
-                    relativePath: candidate,
-                    capabilities: capabilities
-                )
-            }
-            members[index].finalDestination = candidate
-            reservedKeys[key] = members[index].id
-            let newRequest = NamespaceOccupancyRequest(
-                rootPath: snapshot.libraryRoot,
-                relativePath: candidate
-            )
-            if occupancy[newRequest] == nil {
-                pendingAfterResuffix.append(newRequest)
-            }
-            for ancestor in directoryAncestors(of: candidate) {
-                let ancestorRequest = NamespaceOccupancyRequest(
-                    rootPath: snapshot.libraryRoot,
-                    relativePath: ancestor
-                )
-                if occupancy[ancestorRequest] == nil {
-                    pendingAfterResuffix.append(ancestorRequest)
-                }
-            }
-        }
-        // Keep companion finals aligned after any primary resuffix.
-        for index in members.indices where members[index].isCompanion {
-            guard let primarySource = members[index].primarySource,
-                  let primary = members.first(where: { $0.source == primarySource && !$0.isCompanion })
-            else {
-                continue
-            }
-            members[index].finalDestination = companionDestination(
-                companionRelative: members[index].source,
-                primaryIdeal: primary.finalDestination
-            )
-        }
-        if !pendingAfterResuffix.isEmpty {
-            return .needsProbes(occupancy: uniqueOccupancy(pendingAfterResuffix))
-        }
-
-        // 6. Build move graph among relocating members.
         let relocating = members.filter { $0.source != $0.finalDestination }
-        var adjacency: [String: Set<String>] = [:]
-        for member in relocating {
-            adjacency[member.id, default: []] = []
+        let finalKeys = relocating.map { keyOf($0.finalDestination) }
+        guard Set(finalKeys).count == finalKeys.count else {
+            return .inconsistent(reason: "duplicateFinalNamespaceKeys")
         }
-        // Edge: member depends on occupant that must vacate finalDestination.
+        return .ready(ReorganizationPlan(
+            generation: snapshot.generation,
+            libraryRoot: snapshot.libraryRoot,
+            rootRevision: snapshot.rootRevision,
+            policy: snapshot.policy,
+            members: members,
+            components: moveComponents(relocating: relocating, keyOf: keyOf),
+            mediaDispositions: mediaDispositions
+        ))
+    }
+
+    /// Groups relocating members into components that must move together — a member
+    /// and the member whose slot it takes, a primary and its companions — and orders
+    /// each component's renames.
+    private static func moveComponents(
+        relocating: [ReorganizationPhysicalMember],
+        keyOf: (MediaRelativePath) -> FilesystemNameKey
+    ) -> [ReorganizationComponent] {
+        let bySourceKey = Dictionary(uniqueKeysWithValues: relocating.map { (keyOf($0.source), $0.id) })
+        var adjacency: [String: Set<String>] = Dictionary(uniqueKeysWithValues: relocating.map { ($0.id, []) })
         for member in relocating {
-            if let vacator = relocating.first(where: { $0.source == member.finalDestination }) {
-                adjacency[member.id, default: []].insert(vacator.id)
-                adjacency[vacator.id, default: []].insert(member.id)
+            if let occupant = bySourceKey[keyOf(member.finalDestination)], occupant != member.id {
+                adjacency[member.id, default: []].insert(occupant)
+                adjacency[occupant, default: []].insert(member.id)
             }
-        }
-        // Group primary + companions into the same undirected component.
-        for member in relocating where member.isCompanion {
-            if let primary = relocating.first(where: {
-                $0.source == member.primarySource && !$0.isCompanion
-            }) {
+            if member.isCompanion, let primarySource = member.primarySource,
+               let primary = relocating.first(where: { !$0.isCompanion && $0.source == primarySource })
+            {
                 adjacency[member.id, default: []].insert(primary.id)
                 adjacency[primary.id, default: []].insert(member.id)
             }
         }
-
-        let componentIDLists = connectedComponents(adjacency: adjacency, orderedIDs: relocating.map(\.id))
-        var components: [ReorganizationComponent] = []
-        for (index, ids) in componentIDLists.enumerated() {
-            let componentMembers = ids.compactMap { id in relocating.first { $0.id == id } }
-            let steps = recipe(for: componentMembers, capabilities: capabilities, volumeID: volumeID)
-            components.append(
+        let byID = Dictionary(uniqueKeysWithValues: relocating.map { ($0.id, $0) })
+        return connectedComponents(adjacency: adjacency, orderedIDs: relocating.map(\.id))
+            .enumerated()
+            .map { index, ids in
                 ReorganizationComponent(
                     id: "component-\(index)",
                     memberIDs: ids,
-                    steps: steps
+                    steps: renameOrder(ids.compactMap { byID[$0] }, keyOf: keyOf)
                 )
-            )
-        }
+            }
+    }
 
-        // 7. Fill relocate dispositions for non-blocked media.
-        for member in members where !member.isCompanion {
-            guard let mediaID = member.mediaID else { continue }
-            if case .blocked = mediaDispositions[mediaID] {
+    /// Orders one component's renames so no rename lands on an occupied slot. A member
+    /// whose destination slot is free moves; when every remaining member's slot is held
+    /// by another remaining member (a cycle, or a case-only relabel that holds its own
+    /// slot), the first by name steps aside to a temporary name in its own folder and
+    /// moves on from there once its slot is free.
+    private static func renameOrder(
+        _ members: [ReorganizationPhysicalMember],
+        keyOf: (MediaRelativePath) -> FilesystemNameKey
+    ) -> [ReorganizationMoveStep] {
+        var current = Dictionary(uniqueKeysWithValues: members.map { ($0.id, $0.source) })
+        var occupant: [FilesystemNameKey: String] = Dictionary(
+            uniqueKeysWithValues: members.map { (keyOf($0.source), $0.id) }
+        )
+        var pending = members.sorted {
+            $0.source.rawValue.localizedStandardCompare($1.source.rawValue) == .orderedAscending
+        }
+        var steps: [ReorganizationMoveStep] = []
+        while !pending.isEmpty {
+            if let index = pending.firstIndex(where: { occupant[keyOf($0.finalDestination)] == nil }) {
+                let member = pending.remove(at: index)
+                let from = current[member.id] ?? member.source
+                steps.append(.move(from: from, to: member.finalDestination))
+                occupant.removeValue(forKey: keyOf(from))
+                occupant[keyOf(member.finalDestination)] = member.id
+                current[member.id] = member.finalDestination
                 continue
             }
-            if member.source == member.finalDestination {
-                mediaDispositions[mediaID] = .noOp
-            } else {
-                mediaDispositions[mediaID] = .relocate(destination: member.finalDestination)
-            }
+            let pivot = pending[0]
+            let from = current[pivot.id] ?? pivot.source
+            let temporary = temporaryPath(for: pivot)
+            steps.append(.move(from: from, to: temporary))
+            occupant.removeValue(forKey: keyOf(from))
+            occupant[keyOf(temporary)] = pivot.id
+            current[pivot.id] = temporary
         }
+        return steps
+    }
 
-        // Invariants
-        let finalKeys = relocating.map {
-            FilesystemNamespaceSemantics.nameKey(
-                relativePath: $0.finalDestination,
-                capabilities: capabilities
-            )
-        }
-        if Set(finalKeys).count != finalKeys.count {
-            return .blocked(reason: "duplicateFinalNamespaceKeys")
-        }
-
-        return .ready(
-            ReorganizationPlan(
-                generation: snapshot.generation,
-                libraryRoot: snapshot.libraryRoot,
-                rootRevision: snapshot.rootRevision,
-                policy: snapshot.policy,
-                members: members,
-                components: components,
-                mediaDispositions: mediaDispositions
-            )
+    /// A hidden name in the member's own folder, stable across processes: it is built
+    /// from the member's id (its kind and catalog path), never from a hash.
+    private static func temporaryPath(for member: ReorganizationPhysicalMember) -> MediaRelativePath {
+        let token = member.id
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        return MediaRelativePath(
+            folder: member.source.folder,
+            fileName: ".otos-reorg-\(token)-\(member.source.fileName)"
         )
-    }
-
-    // MARK: - Helpers
-
-    private static func idealRelativePath(
-        for media: PlanningFileFacts,
-        snapshot: ReorganizationPlanningSnapshot
-    ) -> MediaRelativePath {
-        let policy = snapshot.policy
-        let components = ImportNaming.timestamp(
-            wallCompact: media.captureWallCompact,
-            fallbackModifiedAt: media.contentModifiedAt,
-            calendar: snapshot.calendar,
-            timeZone: snapshot.timeZone
-        )
-        let folder: String
-        switch policy.destinationFolderPolicy {
-        case .yearMonth:
-            if let components {
-                folder = String(format: "%04d/%02d", components.year, components.month)
-            } else if let modified = media.contentModifiedAt {
-                var calendar = snapshot.calendar
-                calendar.timeZone = snapshot.timeZone
-                let parts = calendar.dateComponents([.year, .month], from: modified)
-                folder = String(format: "%04d/%02d", parts.year ?? 0, parts.month ?? 0)
-            } else {
-                folder = "undated"
-            }
-        case .none:
-            folder = ""
-        }
-        let stem: String = switch policy.destinationNamePolicy {
-        case .original:
-            URL(fileURLWithPath: media.relativePath.rawValue)
-                .deletingPathExtension()
-                .lastPathComponent
-        case .captureDateTime:
-            if let components {
-                String(
-                    format: "%04d%02d%02d_%02d%02d%02d",
-                    components.year,
-                    components.month,
-                    components.day,
-                    components.hour,
-                    components.minute,
-                    components.second
-                )
-            } else {
-                URL(fileURLWithPath: media.relativePath.rawValue)
-                    .deletingPathExtension()
-                    .lastPathComponent
-            }
-        }
-        let destinationExtension = switch policy.destinationNamePolicy {
-        case .original:
-            media.fileExtension
-        case .captureDateTime:
-            CanonicalMediaExtension.forDateTimeName(
-                contentTypeIdentifier: media.contentTypeIdentifier,
-                sourceExtension: media.fileExtension
-            )
-        }
-        let ext = destinationExtension.isEmpty ? "" : ".\(destinationExtension)"
-        let name = stem + ext
-        let relative = folder.isEmpty ? name : "\(folder)/\(name)"
-        return MediaRelativePath(rawValue: relative)
-    }
-
-    private static func companionDestination(
-        companion: MediaCompanion,
-        primaryIdeal: MediaRelativePath
-    ) -> MediaRelativePath {
-        companionDestination(companionRelative: companion.relativePath, primaryIdeal: primaryIdeal)
-    }
-
-    private static func companionDestination(
-        companionRelative: MediaRelativePath,
-        primaryIdeal: MediaRelativePath
-    ) -> MediaRelativePath {
-        let primaryURL = URL(fileURLWithPath: primaryIdeal.rawValue)
-        let dir = primaryURL.deletingLastPathComponent().path
-        let primaryStem = primaryURL.deletingPathExtension().lastPathComponent
-        let companionExt = URL(fileURLWithPath: companionRelative.rawValue).pathExtension
-        let name = companionExt.isEmpty ? primaryStem : "\(primaryStem).\(companionExt)"
-        if dir == "." || dir.isEmpty {
-            return MediaRelativePath(rawValue: name)
-        }
-        return MediaRelativePath(rawValue: "\(dir)/\(name)")
-    }
-
-    private static func suffixed(_ path: MediaRelativePath, suffix: Int) -> MediaRelativePath {
-        let url = URL(fileURLWithPath: path.rawValue)
-        let dir = url.deletingLastPathComponent().path
-        let stem = url.deletingPathExtension().lastPathComponent
-        let ext = url.pathExtension
-        let name = ext.isEmpty ? "\(stem)_\(suffix)" : "\(stem)_\(suffix).\(ext)"
-        if dir == "." || dir.isEmpty {
-            return MediaRelativePath(rawValue: name)
-        }
-        return MediaRelativePath(rawValue: "\(dir)/\(name)")
-    }
-
-    private static func directoryAncestors(of path: MediaRelativePath) -> [MediaRelativePath] {
-        let parts = path.rawValue.split(separator: "/").map(String.init)
-        guard parts.count > 1 else { return [] }
-        var ancestors: [MediaRelativePath] = []
-        for end in 1 ..< parts.count {
-            ancestors.append(MediaRelativePath(rawValue: parts[0 ..< end].joined(separator: "/")))
-        }
-        return ancestors
-    }
-
-    private static func uniqueOccupancy(_ requests: [NamespaceOccupancyRequest]) -> [NamespaceOccupancyRequest] {
-        var seen = Set<NamespaceOccupancyRequest>()
-        var unique: [NamespaceOccupancyRequest] = []
-        for request in requests where seen.insert(request).inserted {
-            unique.append(request)
-        }
-        return unique
     }
 
     private static func connectedComponents(
@@ -469,173 +269,109 @@ nonisolated enum ReorganizationPlanner {
         }
         return result
     }
-
-    /// Deterministic chain/cycle recipe (ARC-050).
-    private static func recipe(
-        for members: [ReorganizationPhysicalMember],
-        capabilities: VolumeNamespaceCapabilities,
-        volumeID: String
-    ) -> [ReorganizationMoveStep] {
-        _ = volumeID
-        let bySource = Dictionary(uniqueKeysWithValues: members.map { ($0.source.rawValue, $0) })
-        // Namespace-equivalent self-rename: same lookup key, different spelling.
-        if members.count == 1 {
-            let member = members[0]
-            let sourceKey = FilesystemNamespaceSemantics.nameKey(
-                relativePath: member.source,
-                capabilities: capabilities
-            )
-            let destKey = FilesystemNamespaceSemantics.nameKey(
-                relativePath: member.finalDestination,
-                capabilities: capabilities
-            )
-            if sourceKey == destKey, member.source != member.finalDestination {
-                let temporary = temporaryPath(for: member)
-                return [
-                    .moveViaTemporary(
-                        from: member.source,
-                        temporary: temporary,
-                        to: member.finalDestination
-                    ),
-                ]
-            }
-            return [.move(from: member.source, to: member.finalDestination)]
-        }
-
-        // Build directed edges source → final when final is another source.
-        var next: [String: String] = [:]
-        for member in members where bySource[member.finalDestination.rawValue] != nil {
-            next[member.source.rawValue] = member.finalDestination.rawValue
-        }
-
-        // Detect cycle covering all directed nodes.
-        let directedSources = Set(next.keys)
-        if !directedSources.isEmpty,
-           directedSources.count == next.values.filter({ directedSources.contains($0) }).count,
-           isSingleCycle(next)
-        {
-            let pivotSource = directedSources.min {
-                $0.localizedStandardCompare($1) == .orderedAscending
-            }!
-            let pivot = bySource[pivotSource]!
-            let temporary = temporaryPath(for: pivot)
-            var steps: [ReorganizationMoveStep] = [
-                .move(from: pivot.source, to: temporary),
-            ]
-            // Rotate remaining: walk predecessors into freed slots.
-            var currentTarget = pivotSource
-            var remaining = next
-            remaining.removeValue(forKey: pivotSource)
-            while !remaining.isEmpty {
-                guard let mover = remaining.first(where: { $0.value == currentTarget })?.key else {
-                    break
-                }
-                let member = bySource[mover]!
-                steps.append(.move(from: member.source, to: MediaRelativePath(rawValue: currentTarget)))
-                remaining.removeValue(forKey: mover)
-                currentTarget = mover
-            }
-            steps.append(.move(from: temporary, to: pivot.finalDestination))
-            // Companions without directed edges move after rotation.
-            for member in members
-                where next[member.source.rawValue] == nil && member.source != pivot.source
-            {
-                steps.append(.move(from: member.source, to: member.finalDestination))
-            }
-            return steps
-        }
-
-        // Chain: execute from free end backward.
-        var steps: [ReorganizationMoveStep] = []
-        // Members whose destination is free (not a source) go first.
-        let freeEnds = members.filter { bySource[$0.finalDestination.rawValue] == nil }
-            .sorted { $0.source.rawValue.localizedStandardCompare($1.source.rawValue) == .orderedAscending }
-        var moved = Set<String>()
-        for end in freeEnds {
-            appendChain(
-                endingAt: end,
-                bySource: bySource,
-                next: next,
-                moved: &moved,
-                steps: &steps
-            )
-        }
-        for member in members where !moved.contains(member.id) {
-            steps.append(.move(from: member.source, to: member.finalDestination))
-        }
-        return steps
-    }
-
-    private static func appendChain(
-        endingAt end: ReorganizationPhysicalMember,
-        bySource: [String: ReorganizationPhysicalMember],
-        next: [String: String],
-        moved: inout Set<String>,
-        steps: inout [ReorganizationMoveStep]
-    ) {
-        // Vacate the free end first, then move whoever claims the vacated source.
-        guard !moved.contains(end.id) else { return }
-        steps.append(.move(from: end.source, to: end.finalDestination))
-        moved.insert(end.id)
-        let predecessorKey = next.first(where: { $0.value == end.source.rawValue })?.key
-        if let predecessorKey,
-           let predecessor = bySource[predecessorKey],
-           !moved.contains(predecessor.id)
-        {
-            appendChain(
-                endingAt: predecessor,
-                bySource: bySource,
-                next: next,
-                moved: &moved,
-                steps: &steps
-            )
-        }
-    }
-
-    private static func isSingleCycle(_ next: [String: String]) -> Bool {
-        guard let start = next.keys.min() else { return false }
-        var seen = Set<String>()
-        var current = start
-        while seen.insert(current).inserted {
-            guard let nxt = next[current] else { return false }
-            current = nxt
-        }
-        return current == start && seen.count == next.count
-    }
-
-    private static func temporaryPath(for member: ReorganizationPhysicalMember) -> MediaRelativePath {
-        let url = URL(fileURLWithPath: member.source.rawValue)
-        let dir = url.deletingLastPathComponent().path
-        // member.id is stable across processes (media:/companion: + path); never use hashValue.
-        let token = member.id
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "_")
-        let name = ".otos-reorg-\(token)-\(url.lastPathComponent)"
-        if dir == "." || dir.isEmpty {
-            return MediaRelativePath(rawValue: name)
-        }
-        return MediaRelativePath(rawValue: "\(dir)/\(name)")
-    }
-
-    private static func isBlockingAncestorOccupancy(_ result: NamespaceOccupancyResult?) -> Bool {
-        switch result {
-        case .regularFile:
-            true
-        case let .foreign(kind):
-            kind != .directory
-        case .absent, .none:
-            false
-        }
-    }
-
-    private static func isOccupiedFinalOccupancy(_ result: NamespaceOccupancyResult?) -> Bool {
-        switch result {
-        case .regularFile, .foreign:
-            true
-        case .absent, .none:
-            false
-        }
-    }
 }
 
-// swiftlint:enable cyclomatic_complexity function_body_length type_body_length
+// MARK: - Bundles
+
+/// One naming bundle with its members' catalog paths: the media and every companion
+/// that belongs to them.
+private nonisolated struct PlannedBundle {
+    struct Member {
+        let id: String
+        let source: MediaRelativePath
+        let isCompanion: Bool
+        let primarySource: MediaRelativePath?
+        let mediaID: MediaAssetID?
+        let facts: PlanningFileFacts?
+        let companion: MediaCompanion?
+    }
+
+    let bundle: ImportNaming.Bundle
+    let members: [Member]
+    let policy: ImportPolicy
+    let timestamp: CaptureWallComponents?
+
+    init(bundle: ImportNaming.Bundle, snapshot: ReorganizationPlanningSnapshot) {
+        self.bundle = bundle
+        policy = snapshot.policy
+        timestamp = ImportNaming.timestamp(of: bundle, calendar: snapshot.calendar, timeZone: snapshot.timeZone)
+        var members: [Member] = []
+        for media in bundle.members {
+            members.append(Member(
+                id: "media:\(media.relativePath.rawValue)",
+                source: media.relativePath,
+                isCompanion: false,
+                primarySource: nil,
+                mediaID: media.id,
+                facts: media,
+                companion: nil
+            ))
+            for companion in media.companions where companion.primaryRelativePath == media.relativePath {
+                members.append(Member(
+                    id: "companion:\(companion.relativePath.rawValue)",
+                    source: companion.relativePath,
+                    isCompanion: true,
+                    primarySource: media.relativePath,
+                    mediaID: media.id,
+                    facts: nil,
+                    companion: companion
+                ))
+            }
+        }
+        self.members = members
+    }
+
+    var sourcePaths: [MediaRelativePath] {
+        members.map(\.source)
+    }
+
+    /// A reason the bundle cannot move, whatever suffix it would take.
+    func fixedBlock(namespace: DestinationNamespace) -> ReorganizationBlockReason? {
+        guard bundle.isNameable(under: policy),
+              let folder = ImportNaming.folder(timestamp: timestamp, policy: policy)
+        else {
+            return .noUsableDate
+        }
+        if let occupant = namespace.occupiedFolders[folder] {
+            return .folderOccupied(occupant: occupant)
+        }
+        if namespace.unreadableFolders[folder] != nil {
+            return .folderUnreadable(folder: folder)
+        }
+        return nil
+    }
+
+    /// Every member is already named as the policy names it, spelling included.
+    var isAlreadyNamed: Bool {
+        destinations(suffix: 0).allSatisfy { $0.key == $0.value }
+    }
+
+    /// Each member's destination under collision suffix `suffix`, keyed by its source.
+    /// Called only for a nameable bundle, where every media member has a destination.
+    func destinations(suffix: Int) -> [MediaRelativePath: MediaRelativePath] {
+        var result: [MediaRelativePath: MediaRelativePath] = [:]
+        for member in members where !member.isCompanion {
+            guard let facts = member.facts,
+                  let destination = ImportNaming.destination(
+                      for: facts,
+                      timestamp: timestamp,
+                      policy: policy,
+                      suffix: suffix
+                  )
+            else { continue }
+            result[member.source] = destination
+        }
+        for member in members where member.isCompanion {
+            guard let primary = member.primarySource,
+                  let primaryDestination = result[primary],
+                  let companion = member.companion
+            else { continue }
+            result[member.source] = ImportNaming.companionDestination(
+                companion,
+                primaryDestination: primaryDestination,
+                policy: policy
+            )
+        }
+        return result
+    }
+}

@@ -542,7 +542,7 @@ actor MediaOperationCoordinator {
         // A row whose bytes cannot be read is never going to become non-pending, and it
         // cannot be copied either — so it must not hold the offer open. The planner blocks
         // it and state D shows it (ARC-057).
-        guard MediaTransferPlanner.needsDate(policy: snapshot.policy),
+        guard ImportNaming.needsDate(snapshot.policy),
               snapshot.sourceMedia.contains(where: { $0.namingFactState == .pending && !$0.isSourceUnreadable })
         else {
             return nil

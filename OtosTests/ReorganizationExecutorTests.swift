@@ -261,7 +261,6 @@ struct ReorganizationSettlementTests {
         let memberA = ReorganizationPhysicalMember(
             id: "media:a.jpg",
             source: MediaRelativePath(rawValue: "a.jpg"),
-            idealDestination: MediaRelativePath(rawValue: "b.jpg"),
             finalDestination: MediaRelativePath(rawValue: "b.jpg"),
             isCompanion: false,
             primarySource: nil,
@@ -270,7 +269,6 @@ struct ReorganizationSettlementTests {
         let memberB = ReorganizationPhysicalMember(
             id: "media:b.jpg",
             source: MediaRelativePath(rawValue: "b.jpg"),
-            idealDestination: MediaRelativePath(rawValue: "c.jpg"),
             finalDestination: MediaRelativePath(rawValue: "c.jpg"),
             isCompanion: false,
             primarySource: nil,

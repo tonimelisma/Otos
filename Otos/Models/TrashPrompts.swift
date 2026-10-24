@@ -20,7 +20,7 @@ nonisolated struct TrashDecisionPrompt: Equatable, Sendable {
     var title: String {
         let ids = decision.ids
         if ids.count == 1, let only = ids.first {
-            let name = URL(fileURLWithPath: only.relativePath.rawValue).lastPathComponent
+            let name = only.relativePath.fileName
             return "Delete “\(name)” Immediately?"
         }
         return "Delete \(ids.count) Items Immediately?"
@@ -63,7 +63,7 @@ nonisolated struct LargeTrashDownloadPrompt: Equatable, Sendable {
     var title: String {
         let size = ImportBarByteFormat.string(bytes: bytes)
         if ids.count == 1, let only = ids.first {
-            let name = URL(fileURLWithPath: only.relativePath.rawValue).lastPathComponent
+            let name = only.relativePath.fileName
             return "Download \(size) to Move “\(name)” to Trash?"
         }
         return "Download \(size) to Move \(ids.count) Items to Trash?"

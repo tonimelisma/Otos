@@ -895,7 +895,7 @@ actor MediaImportExecutor {
             switch entry.disposition {
             case .skipPreexisting, .excluded:
                 entry.source.relativePath
-            case .copy, .relocate, .noOp, .blocked:
+            case .copy, .blocked:
                 nil
             }
         })

@@ -756,7 +756,7 @@ struct ImportExecutionProgressTests {
             Issue.record("Expected a .copy disposition, got \(plan.entries[0].disposition)")
             return
         }
-        let finalDestination = plan.entries[0].finalDestination
+        let finalDestination = try #require(plan.entries[0].destination)
 
         // A foreign file lands at the computed destination path after
         // planning — a race, or a stale plan — forcing copyEntry's existence
@@ -844,12 +844,12 @@ struct ImportExecutionProgressTests {
             companions: original.source.companions,
             contentTypeIdentifier: original.source.contentTypeIdentifier
         )
-        let entry = MediaOperationPlanEntry(
+        // Forced to a copy: the fixture planned this entry as already in the library,
+        // and this test needs a copy that fails on the stale size.
+        let entry = try MediaOperationPlanEntry(
             source: staleFacts,
-            idealDestination: original.idealDestination,
-            finalDestination: original.finalDestination,
             companionDestinations: original.companionDestinations,
-            disposition: .copy(destination: original.finalDestination)
+            disposition: .copy(destination: #require(original.destination))
         )
         let plan = MediaOperationPlan(
             generation: fixture.plan.generation,

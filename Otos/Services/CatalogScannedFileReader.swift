@@ -60,7 +60,7 @@ nonisolated enum CatalogScannedFileReader {
             return nil
         }
         if let kind = MediaCompanionKind.recognize(
-            fileExtension: URL(fileURLWithPath: relativePath.rawValue).pathExtension
+            fileExtension: relativePath.fileExtension
         ) {
             return .companion(
                 ScannedCompanionFile(

@@ -90,7 +90,7 @@ nonisolated enum MediaEligibility {
 
     /// Recognized useful companions are inventoried separately from catalog media.
     static func isRecognizedCompanion(relativePath: MediaRelativePath) -> Bool {
-        let ext = URL(fileURLWithPath: relativePath.rawValue).pathExtension
+        let ext = relativePath.fileExtension
         return MediaCompanionKind.recognize(fileExtension: ext) != nil
     }
 }

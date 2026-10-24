@@ -33,7 +33,7 @@ nonisolated enum MediaOperationGateway {
             let relative = MediaRelativePath(rawValue: row["relative_path"])
             let modified: Double? = row["content_modified_at_unix"]
             let kindRaw: String? = row["kind"]
-            let ext = URL(fileURLWithPath: relative.rawValue).pathExtension
+            let ext = relative.fileExtension
             // `naming_settled` is `NOT metadataStalenessSQLPredicate()`, which answers
             // "should enrichment run again for these file facts?". The naming question
             // is a different one — "do we know enough to name this file?" — and must not

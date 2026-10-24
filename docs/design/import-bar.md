@@ -296,6 +296,7 @@ diagnosis (`MediaOperationBlockReason`, `MediaOperationModels.swift:109`):
 | --- | --- | --- |
 | `noUsableDate` | `3 items have no date` | The file reads fine. It carries no capture date and no modification date, so Otos cannot choose a dated folder for it. |
 | `noFreeDestinationName` | `Otos couldn't find a free name for 3 items in Summer Photos` | Every suffix the naming policy allows is taken in the destination folder. |
+| `destinationFolderOccupied` | `A file in Summer Photos is in the way of 3 items' folder` | A file holds the name of the folder the items go in (or of a folder above it), so the folder cannot be created. Waiting does not change it; the user moves or renames that file. |
 | `filesystemObservationUnavailable` | `Otos couldn't check 3 names in Summer Photos` | The planner's safety net for a folder it could not read. Never presented: the coordinator defers such a build and retries it (ADR 0019); the clause exists so the mapper stays total. |
 | More than one cause present | `3 items need attention` | DES-034 allows one clause; a mixed set names no single cause honestly. |
 

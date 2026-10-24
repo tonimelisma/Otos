@@ -26,7 +26,7 @@ struct MediaTransferPlannerTests {
             // candidates from this extension verbatim (see `destinationExtension`),
             // so a fixture whose extension case disagrees with its own name produces
             // a candidate the fixture's own expectations never match.
-            fileExtension: (name as NSString).pathExtension,
+            fileExtension: relative.fileExtension,
             companions: [],
             contentTypeIdentifier: "public.jpeg"
         )
@@ -318,7 +318,7 @@ struct MediaTransferPlannerTests {
             snapshot: snapshot,
             namespace: Self.namespace(folders: ["2026/01"])
         )
-        #expect(plan.entries[0].finalDestination == expected)
+        #expect(plan.entries[0].destination == expected)
     }
 
     @Test func blocksWhenNoUsableDate() {
@@ -328,101 +328,134 @@ struct MediaTransferPlannerTests {
         #expect(plan.entries[0].disposition == .blocked(.noUsableDate))
     }
 
-    @Test func concurrentPlansIntoOneDestinationClaimDisjointNames() {
-        let first = Self.facts(name: "same.jpg")
-        let second = Self.facts(name: "same.jpg")
-        let firstPlan = MediaTransferPlanner.planImport(
-            snapshot: Self.snapshot(sourceMedia: [first], policy: .from(.default)),
-            namespace: Self.namespace()
-        )
-        let secondPlan = MediaTransferPlanner.planImport(
-            snapshot: Self.snapshot(sourceMedia: [second], policy: .from(.default)),
-            namespace: Self.namespace(),
-            additionalReserved: Set(firstPlan.entries.map(\.finalDestination))
-        )
+    /// Original names at the library root: every candidate lands in the one folder the
+    /// test namespace reads, so a plan's entries copy rather than block.
+    private static let rootOriginalNames: ImportPolicy = {
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        return policy
+    }()
 
-        let firstDestinations = Set(firstPlan.entries.map(\.finalDestination))
-        #expect(firstDestinations.isDisjoint(with: secondPlan.entries.map(\.finalDestination)))
+    private static let base = MediaRelativePath(rawValue: "same.jpg")
+    private static let firstSuffix = MediaRelativePath(rawValue: "same_001.jpg")
+
+    @Test func concurrentPlansIntoOneDestinationClaimDisjointNames() {
+        let snapshot = Self.snapshot(sourceMedia: [Self.facts(name: "same.jpg")], policy: Self.rootOriginalNames)
+        let firstPlan = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
+        let secondPlan = MediaTransferPlanner.planImport(
+            snapshot: snapshot,
+            namespace: Self.namespace(),
+            additionalReserved: Set(firstPlan.entries.compactMap(\.destination))
+        )
+        #expect(firstPlan.entries.map(\.disposition) == [.copy(destination: Self.base)])
+        #expect(secondPlan.entries.map(\.disposition) == [.copy(destination: Self.firstSuffix)])
     }
 
+    /// A plan built before a competing plan claimed its name starts on the same name;
+    /// replanned against that claim it moves to the next suffix, and the winner keeps it.
     @Test func conflictingPublishReplansAndNeverEvicts() {
-        let source = Self.facts(name: "same.jpg")
-        let snapshot = Self.snapshot(sourceMedia: [source], policy: .from(.default))
+        let snapshot = Self.snapshot(sourceMedia: [Self.facts(name: "same.jpg")], policy: Self.rootOriginalNames)
         let winner = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
         let loserStart = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
         let loserReplanned = MediaTransferPlanner.planImport(
             snapshot: snapshot,
             namespace: Self.namespace(),
-            additionalReserved: Set(winner.entries.map(\.finalDestination))
+            additionalReserved: Set(winner.entries.compactMap(\.destination))
         )
-
-        #expect(loserStart.entries[0].finalDestination == winner.entries[0].finalDestination)
-        #expect(loserReplanned.entries[0].finalDestination != winner.entries[0].finalDestination)
-        #expect(winner.entries[0].finalDestination != loserReplanned.entries[0].finalDestination)
+        #expect(winner.entries[0].destination == Self.base)
+        #expect(loserStart.entries[0].destination == Self.base)
+        #expect(loserReplanned.entries[0].destination == Self.firstSuffix)
     }
 
-    @Test func claimIsReleasedOnDetach() {
-        let source = Self.facts(name: "same.jpg")
-        let snapshot = Self.snapshot(sourceMedia: [source], policy: .from(.default))
-        let first = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
-        let released = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
-
-        #expect(released.entries[0].finalDestination == first.entries[0].finalDestination)
+    /// With no competing claim (the other run detached, cancelled or failed), a rebuild
+    /// takes the base name again.
+    @Test func aReleasedClaimFreesTheBaseName() {
+        let snapshot = Self.snapshot(sourceMedia: [Self.facts(name: "same.jpg")], policy: Self.rootOriginalNames)
+        let rebuilt = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
+        #expect(rebuilt.entries[0].destination == Self.base)
     }
 
-    @Test func claimIsReleasedOnCancel() {
-        let source = Self.facts(name: "same.jpg")
-        let snapshot = Self.snapshot(sourceMedia: [source], policy: .from(.default))
-        let first = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
-        let afterCancel = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
+    /// A companion lands beside its primary under the primary's name. Original naming
+    /// keeps every member's exact spelling, the companion's extension included; date-time
+    /// naming gives the companion its kind's extension.
+    @Test func companionNamesFollowThePolicy() {
+        let primary = MediaRelativePath(rawValue: "IMG_1.JPG")
+        let sidecar = MediaCompanion(
+            relativePath: MediaRelativePath(rawValue: "IMG_1.XMP"),
+            primaryRelativePath: primary,
+            kind: .xmp,
+            byteSize: 5,
+            contentModifiedAt: nil
+        )
+        let base = Self.facts(name: "IMG_1.JPG", captureWallCompact: 20_260_101_120_000)
+        let source = PlanningFileFacts(
+            id: base.id,
+            sourceURL: base.sourceURL,
+            relativePath: base.relativePath,
+            byteSize: base.byteSize,
+            contentModifiedAt: base.contentModifiedAt,
+            captureWallCompact: base.captureWallCompact,
+            mediaKind: base.mediaKind,
+            fileExtension: base.fileExtension,
+            companions: [sidecar],
+            contentTypeIdentifier: base.contentTypeIdentifier
+        )
+        var dated = ImportPolicy.from(.default)
+        dated.importSidecarFiles = true
+        dated.destinationFolderPolicy = .none
+        dated.destinationNamePolicy = .captureDateTime
+        var original = dated
+        original.destinationNamePolicy = .original
 
-        #expect(afterCancel.entries[0].finalDestination == first.entries[0].finalDestination)
+        let originalPlan = MediaTransferPlanner.planImport(
+            snapshot: Self.snapshot(sourceMedia: [source], policy: original),
+            namespace: Self.namespace()
+        )
+        let datedPlan = MediaTransferPlanner.planImport(
+            snapshot: Self.snapshot(sourceMedia: [source], policy: dated),
+            namespace: Self.namespace()
+        )
+        #expect(originalPlan.entries.map(\.companionDestinations) == [[sidecar.relativePath: sidecar.relativePath]])
+        #expect(datedPlan.entries.map(\.companionDestinations) == [[
+            sidecar.relativePath: MediaRelativePath(rawValue: "20260101_120000.xmp"),
+        ]])
     }
 
-    @Test func claimIsReleasedOnFailure() {
-        let source = Self.facts(name: "same.jpg")
-        let snapshot = Self.snapshot(sourceMedia: [source], policy: .from(.default))
-        let first = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
-        let afterFailure = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
-
-        #expect(afterFailure.entries[0].finalDestination == first.entries[0].finalDestination)
-    }
-
-    @Test func settledNameIsObservedAsOccupancyByNextBuild() {
+    @Test func settledNameIsObservedAsOccupancyByNextBuild() throws {
         let source = Self.facts(name: "same.jpg")
         var policy = ImportPolicy.from(.default)
         policy.destinationFolderPolicy = .none
         policy.destinationNamePolicy = .original
         let snapshot = Self.snapshot(sourceMedia: [source], policy: policy)
         let occupied = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
-        let settledName = occupied.entries[0].finalDestination
+        let settledName = try #require(occupied.entries[0].destination)
         let next = MediaTransferPlanner.planImport(
             snapshot: snapshot,
             namespace: Self.namespace([settledName: .foreign(kind: .other)])
         )
 
-        #expect(next.entries[0].finalDestination != settledName)
+        #expect(settledName == Self.base)
+        #expect(next.entries[0].destination == Self.firstSuffix)
     }
 
     @Test func conflictCheckUsesCurrentLedgerNotBuildStartSnapshot() {
-        let source = Self.facts(name: "same.jpg")
-        let snapshot = Self.snapshot(sourceMedia: [source], policy: .from(.default))
+        let snapshot = Self.snapshot(sourceMedia: [Self.facts(name: "same.jpg")], policy: Self.rootOriginalNames)
         let buildStart = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
-        let currentLedger = Set(buildStart.entries.map(\.finalDestination))
         let resumed = MediaTransferPlanner.planImport(
             snapshot: snapshot,
             namespace: Self.namespace(),
-            additionalReserved: currentLedger
+            additionalReserved: Set(buildStart.entries.compactMap(\.destination))
         )
-
-        #expect(resumed.entries[0].finalDestination != buildStart.entries[0].finalDestination)
+        #expect(buildStart.entries[0].destination == Self.base)
+        #expect(resumed.entries[0].destination == Self.firstSuffix)
     }
 
     @Test func policyThatNeverConsultsDateDoesNotWait() {
         var policy = ImportPolicy.from(.default)
         policy.destinationFolderPolicy = .none
         policy.destinationNamePolicy = .original
-        #expect(!MediaTransferPlanner.needsDate(policy: policy))
+        #expect(!ImportNaming.needsDate(policy))
 
         let undated = Self.facts(name: "undated.jpg", modified: nil, captureWallCompact: nil)
         let plan = MediaTransferPlanner.planImport(
@@ -458,7 +491,7 @@ struct MediaTransferPlannerTests {
         )
 
         let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
-        #expect(plan.entries[0].finalDestination == next)
+        #expect(plan.entries[0].destination == next)
     }
 
     /// The invariant that makes planning one pass: the folders declared before any
@@ -488,12 +521,12 @@ struct MediaTransferPlannerTests {
         )
         #expect(plan.entries.count == 4)
         for entry in plan.entries {
-            #expect(folders.contains(DestinationNamespace.folder(of: entry.finalDestination)))
+            #expect(entry.destination.map { folders.contains(DestinationNamespace.folder(of: $0)) } == true)
             if case .blocked = entry.disposition {
                 Issue.record("expected entry not to be blocked")
             }
         }
-        #expect(Set(plan.entries.map(\.finalDestination)).count == 4)
+        #expect(Set(plan.entries.compactMap(\.destination)).count == 4)
     }
 
     /// An unreadable destination folder must never read as free space. Planning an
@@ -511,11 +544,42 @@ struct MediaTransferPlannerTests {
             namespace: DestinationNamespace(entries: [:], enumeratedFolders: [])
         )
 
-        guard case .blocked = plan.entries[0].disposition else {
-            Issue.record("expected entry to be blocked")
-            return
-        }
+        #expect(plan.entries.map(\.disposition) == [
+            .blocked(.filesystemObservationUnavailable(destination: MediaRelativePath(rawValue: "2026/01/20260101_120000.jpeg"))),
+        ])
         #expect(plan.totals.copyCount == 0)
+    }
+
+    /// A file holding the destination folder's name (or a folder above it) makes the
+    /// folder impossible to create: the entry is blocked with that cause, not copied and
+    /// not retried as if the folder were briefly unreadable.
+    @Test func aFileInTheWayOfTheDestinationFolderBlocks() {
+        let source = Self.facts(name: "a.jpg", captureWallCompact: 20_260_101_120_000)
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .yearMonth
+        policy.destinationNamePolicy = .captureDateTime
+        let plan = MediaTransferPlanner.planImport(
+            snapshot: Self.snapshot(sourceMedia: [source], policy: policy),
+            namespace: DestinationNamespace(entries: [:], enumeratedFolders: [], occupiedFolders: ["2026/01": "2026"])
+        )
+        #expect(plan.entries.map(\.disposition) == [.blocked(.destinationFolderOccupied(occupant: "2026"))])
+    }
+
+    /// Reading the folders finds a file where a folder belongs, at the folder itself or
+    /// above it, and records it as an occupied folder — not as an unreadable one.
+    @Test func enumerationRecordsAFileInTheWayOfAFolder() throws {
+        let rootURL = try makeTestDirectory()
+        try Data("x".utf8).write(to: rootURL.appending(path: "2024"))
+        try FileManager.default.createDirectory(at: rootURL.appending(path: "2025"), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: rootURL.appending(path: "2025/05"))
+        let namespace = try FilesystemNamespaceSemantics.enumerateNamespace(
+            root: CatalogPath.normalizedDirectoryPath(for: rootURL),
+            folders: ["2024/05", "2025/05", "2026/05"],
+            capabilities: .caseInsensitiveAPFS
+        )
+        #expect(namespace.occupiedFolders == ["2024/05": "2024", "2025/05": "2025/05"])
+        #expect(namespace.unreadableFolders.isEmpty)
+        #expect(namespace.occupancy(of: MediaRelativePath(rawValue: "2026/05/a.jpg")) == .absent)
     }
 
     /// A folder that does not exist yet is still fully observed: every candidate in it

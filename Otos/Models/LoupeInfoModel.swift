@@ -24,7 +24,7 @@ nonisolated struct LoupeInfoModel: Equatable, Sendable {
         nativePixelSize: CGSize?,
         calendar: Calendar = .current
     ) -> LoupeInfoModel {
-        let fileName = asset?.name ?? URL(fileURLWithPath: id.relativePath.rawValue).lastPathComponent
+        let fileName = asset?.name ?? id.relativePath.fileName
         let captureDate: String = if let date = asset?.bestCaptureDate {
             date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, calendar: calendar))
         } else {
@@ -42,7 +42,7 @@ nonisolated struct LoupeInfoModel: Equatable, Sendable {
         case .video: "Video"
         case .none: nil
         }
-        let format = URL(fileURLWithPath: id.relativePath.rawValue).pathExtension.uppercased()
+        let format = id.relativePath.fileExtension.uppercased()
         let kindText: String = switch (kindLabel, format.isEmpty) {
         case let (label?, false): "\(label) · \(format)"
         case let (label?, true): label
