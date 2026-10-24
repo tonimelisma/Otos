@@ -125,6 +125,11 @@ custom_rules:
     regex: 'swiftlint:disable(?!:(next|this|previous))'
     message: "Suppress a rule only for the line it is wrong about (`disable:next`, with the reason in a comment above). A region disable silently covers code written later."
     severity: error
+  no_size_rule_disable:
+    name: "Size rules are not suppressed"
+    regex: 'swiftlint:disable[^\n]*\b(file_length|type_body_length|function_body_length|function_parameter_count|large_tuple)\b'
+    message: "Size limits are warnings by design (CLAUDE.md): cohesion sets boundaries, and the warning stays visible. A function past the parameter error limit takes a value that names what its parameters are."
+    severity: error
   statement_try_optional:
     name: "An error is handled, not discarded"
     included: 'Otos/.*\.swift'

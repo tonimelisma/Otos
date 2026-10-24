@@ -305,7 +305,6 @@ struct CatalogStoreTests {
             operation: operation,
             byteSize: 4,
             contentModifiedAt: operation.destinationModifiedAt ?? operation.sourceModifiedAt,
-            batch: ImportBatchID(unixMilliseconds: 1),
             companions: []
         )
 

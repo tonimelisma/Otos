@@ -4463,7 +4463,6 @@ extension CatalogStore {
         operation: ActiveFileOperation,
         byteSize: Int64,
         contentModifiedAt: Date,
-        batch: ImportBatchID,
         companions: [MediaCompanion]
     ) async throws -> ImportOverlayReuseResult {
         guard let rootRowID = roots[operation.destinationRootPath]?.rowID else {
@@ -4588,27 +4587,23 @@ extension CatalogStore {
             } else if overlayToWrite != nil {
                 reuseResult = ImportOverlayReuseResult(metadataCloned: true, thumbnailCopied: false, miss: nil)
             }
-            try Self.settleImportedAsset(
+            try Self.settleImportedAsset(LandedImport(
                 operation: operation,
                 destinationRootID: rootRowID,
                 sourceRootID: roots[operation.sourceRootPath]?.rowID,
-                destinationRootPath: operation.destinationRootPath,
-                relativePath: operation.destinationRelativePath,
                 byteSize: byteSize,
                 contentModifiedAt: contentModifiedAt,
-                batch: batch,
                 companions: companions,
                 reusableOverlay: overlayToWrite,
-                destinationThumbnailPath: thumbnailPathToWrite,
-                db: db
-            )
+                destinationThumbnailPath: thumbnailPathToWrite
+            ), db: db)
             try Self.deleteActiveFileOperation(key: operation.operationKey, db: db)
         }
         _ = bumpNamespaceRevision(for: operation.destinationRootPath)
         notifyCatalogChanged()
         requestReconcile()
         OtosLog.catalog.notice(
-            "op=mediaOperation.settle phase=finish destination=\(operation.destinationRelativePath.rawValue, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public)"
+            "op=mediaOperation.settle phase=finish destination=\(operation.destinationRelativePath.rawValue, privacy: .public) batch=\(operation.importBatch.unixMilliseconds, privacy: .public)"
         )
         if reuseResult.metadataCloned {
             OtosLog.catalog.notice(

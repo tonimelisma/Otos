@@ -13,6 +13,20 @@ nonisolated enum ImportOverlayReuseMiss: String, Equatable, Sendable {
     case detachedSource
 }
 
+/// What landed in a library for one journaled import entry, as settlement records it:
+/// the published file's facts, the companions published beside it, and the source's
+/// overlay when it is reused. Where it landed and for which batch are the operation's.
+nonisolated struct LandedImport {
+    let operation: ActiveFileOperation
+    let destinationRootID: Int64
+    let sourceRootID: Int64?
+    let byteSize: Int64
+    let contentModifiedAt: Date
+    let companions: [MediaCompanion]
+    let reusableOverlay: ReusableEnrichmentOverlay?
+    let destinationThumbnailPath: String?
+}
+
 extension CatalogStore {
     nonisolated static func insertActiveSourceErase(_ operation: ActiveSourceEraseOperation, db: Database) throws {
         try db.execute(sql: """
@@ -173,34 +187,23 @@ extension CatalogStore {
         }
     }
 
-    // swiftlint:disable:next function_parameter_count
-    static func settleImportedAsset(
-        operation: ActiveFileOperation,
-        destinationRootID: Int64,
-        sourceRootID: Int64?,
-        destinationRootPath: LibraryRootPath,
-        relativePath: MediaRelativePath,
-        byteSize: Int64,
-        contentModifiedAt: Date,
-        batch: ImportBatchID,
-        companions: [MediaCompanion],
-        reusableOverlay: ReusableEnrichmentOverlay? = nil,
-        destinationThumbnailPath: String? = nil,
-        db: Database
-    ) throws {
-        let name = relativePath.rawValue.split(separator: "/").last.map(String.init) ?? relativePath.rawValue
-        let contentType = UTType(filenameExtension: (name as NSString).pathExtension)?.identifier
+    static func settleImportedAsset(_ landed: LandedImport, db: Database) throws {
+        let operation = landed.operation
+        let relativePath = operation.destinationRelativePath
+        let destinationRootID = landed.destinationRootID
+        let byteSize = landed.byteSize
+        let contentModifiedAt = landed.contentModifiedAt
         let file = ScannedMediaFile(
             relativePath: relativePath,
-            name: name,
-            contentTypeIdentifier: contentType,
+            name: relativePath.fileName,
+            contentTypeIdentifier: UTType(filenameExtension: relativePath.fileExtension)?.identifier,
             byteSize: byteSize,
             createdAt: contentModifiedAt,
             contentModifiedAt: contentModifiedAt
         )
         _ = try upsertScannedFile(
             file,
-            libraryRootPath: destinationRootPath,
+            libraryRootPath: operation.destinationRootPath,
             libraryRootID: destinationRootID,
             db: db
         )
@@ -225,7 +228,7 @@ extension CatalogStore {
             WHERE library_root_id = ? AND relative_path = ?
             """,
             arguments: [
-                batch.unixMilliseconds,
+                operation.importBatch.unixMilliseconds,
                 operation.sourceRootPath.rawValue,
                 operation.sourceRelativePath.rawValue,
                 operation.sourceByteSize,
@@ -235,13 +238,13 @@ extension CatalogStore {
                 operation.contentHash?.data,
                 operation.contentHash == nil ? nil : byteSize,
                 operation.contentHash == nil ? nil : Int(contentModifiedAt.timeIntervalSince1970.rounded(.down)),
-                sourceRootID,
+                landed.sourceRootID,
                 operation.sourceRelativePath.rawValue,
                 destinationRootID,
                 relativePath.rawValue,
             ]
         )
-        if let reusableOverlay, let contentHash = operation.contentHash {
+        if let reusableOverlay = landed.reusableOverlay, let contentHash = operation.contentHash {
             try writeReusableEnrichmentOverlay(
                 reusableOverlay,
                 destinationRootID: destinationRootID,
@@ -249,11 +252,11 @@ extension CatalogStore {
                 destinationByteSize: byteSize,
                 destinationMTimeSeconds: Int(contentModifiedAt.timeIntervalSince1970.rounded(.down)),
                 contentHash: contentHash,
-                thumbnailPath: destinationThumbnailPath,
+                thumbnailPath: landed.destinationThumbnailPath,
                 db: db
             )
         }
-        for companion in companions {
+        for companion in landed.companions {
             try upsertCompanion(companion, libraryRootID: destinationRootID, db: db)
         }
     }

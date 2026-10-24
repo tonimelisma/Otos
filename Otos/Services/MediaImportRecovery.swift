@@ -224,7 +224,6 @@ struct MediaImportRecovery {
                     operation: operation,
                     byteSize: byteSize,
                     contentModifiedAt: modifiedAt,
-                    batch: operation.importBatch,
                     companions: []
                 )
                 // Crash recovery settles the same way, so it releases the same way:
