@@ -26,7 +26,7 @@ nonisolated enum CatalogQueryGateway {
             sql: "SELECT metadata_extra_json FROM asset_metadata WHERE library_root_id = ? AND relative_path = ?",
             arguments: [libraryRootID, relativePath.rawValue]
         )?["metadata_extra_json"]
-        return json.flatMap(CatalogStore.decodeMetadataExtraJSON)
+        return try json.map(CatalogStore.decodeMetadataExtraJSON)
     }
 
     /// `bestCaptureUnix` is carried alongside identity purely as a day-grouping

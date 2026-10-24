@@ -103,7 +103,7 @@ private nonisolated extension MediaTransferPlanner {
     /// planned as their own bundle.
     // The pure import reservation loop is intentionally cohesive; splitting it only
     // to satisfy arithmetic lint caps would obscure the collision algorithm.
-    // swiftlint:disable:next cyclomatic_complexity function_body_length
+    // swiftlint:disable:next cyclomatic_complexity
     static func planBundle(
         _ bundle: ImportNaming.Bundle,
         snapshot: ImportPlanningSnapshot,

@@ -2025,7 +2025,18 @@ extension CatalogStore {
         guard root.kind == .deviceMTP else {
             return
         }
-        try? FileManager.default.removeItem(at: root.path.url)
+        do {
+            try FileManager.default.removeItem(at: root.path.url)
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {
+            return
+        } catch {
+            // The staging folder is Otos's own; a removal that fails leaves it for the
+            // launch-time staging sweep, and is logged so the leftover is explained.
+            OtosLog.fileAccess.errorOperation("deviceStaging", phase: "removeFailed", fields: [
+                "rootPath": root.path.rawValue,
+                "error": String(describing: error),
+            ])
+        }
     }
 
     private func attachRemovableRoot(_ attachment: RemovableRootAttachment) async throws {
@@ -2146,6 +2157,9 @@ extension CatalogStore {
         state.isEjectable = attachment.isEjectable
         state.attachmentGeneration &+= 1
         state.capabilities = attachment.capabilities
+        // Quiescence belongs to one attachment's pending unmount; a new attachment
+        // starts unquiesced.
+        state.isQuiesced = false
         upsert(state)
         if attachment.kind == .removableVolume {
             filesystemWatcher.addRoot(attachment.path)
@@ -2173,20 +2187,23 @@ extension CatalogStore {
         filesystemEventBatches.removeValue(forKey: oldPath)
         filesystemDirty.removeValue(forKey: oldPath)
         lastSuccessfulFullRootScanAt.removeValue(forKey: oldPath)
-        upsert(RootRuntimeState(
+        // The root keeps every runtime fact it had (quiescence, epoch, revisions) and
+        // changes only where it is. Moving it changes its namespace, so the revisions
+        // and the mutation epoch advance: an observation taken before the move is stale.
+        var state = previous ?? RootRuntimeState(
             root: newRoot,
             rowID: rootRowID,
-            sortIndex: previous?.sortIndex ?? 0,
-            availability: previous?.availability ?? .unknown,
-            activity: previous?.activity ?? .idle,
-            isEjectable: previous?.isEjectable ?? false,
-            attachmentGeneration: previous?.attachmentGeneration ?? 0,
-            capabilities: previous?.capabilities ?? .unknown,
-            skippedPackageCount: previous?.skippedPackageCount ?? 0,
-            planRevision: (previous?.planRevision ?? 0) &+ 1,
-            namespaceRevision: (previous?.namespaceRevision ?? 0) &+ 1,
-            namingRevision: previous?.namingRevision ?? 0
-        ))
+            sortIndex: 0,
+            availability: .unknown,
+            activity: .idle,
+            isEjectable: false
+        )
+        state.root = newRoot
+        state.rowID = rootRowID
+        state.planRevision &+= 1
+        state.namespaceRevision &+= 1
+        state.namespaceMutationEpoch &+= 1
+        upsert(state)
     }
 
     /// A root's case sensitivity, read off this actor and before any write: the read is a
@@ -4409,7 +4426,6 @@ extension CatalogStore {
     }
 
     @discardableResult
-    // swiftlint:disable:next function_body_length
     func settleImportedAsset(
         operation: ActiveFileOperation,
         byteSize: Int64,

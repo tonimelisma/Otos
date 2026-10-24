@@ -280,9 +280,20 @@ extension CatalogStore {
             """,
             arguments: [sourceRootID, sourceRelativePath.rawValue]
         ),
-            let metadataJSON: String = row["metadata_extra_json"],
-            let metadata = CatalogStore.decodeMetadataExtraJSON(metadataJSON)
+            let metadataJSON: String = row["metadata_extra_json"]
         else {
+            return nil
+        }
+        let metadata: AssetMetadata
+        do {
+            metadata = try CatalogStore.decodeMetadataExtraJSON(metadataJSON)
+        } catch {
+            // Reuse is an optimization: a record this build cannot read is not reused,
+            // and settlement falls back to enriching the destination, as for any miss.
+            OtosLog.catalog.errorOperation("mediaOperation.settle", phase: "overlayUndecodable", fields: [
+                "relativePath": sourceRelativePath.rawValue,
+                "error": String(describing: error),
+            ])
             return nil
         }
         let modified: Double? = row["content_modified_at_unix"]

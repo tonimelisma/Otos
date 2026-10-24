@@ -120,6 +120,11 @@ custom_rules:
     regex: 'URL\(fileURLWithPath:\s*[A-Za-z_.]*[Rr]elative[A-Za-z_]*\.rawValue'
     message: "A root-relative path handed to URL(fileURLWithPath:) resolves against the process's working directory, so its folder comes back absolute. Use MediaRelativePath's folder, fileName, stem and fileExtension."
     severity: error
+  no_region_disable:
+    name: "A lint rule is suppressed for one line, not a region"
+    regex: 'swiftlint:disable(?!:(next|this|previous))'
+    message: "Suppress a rule only for the line it is wrong about (`disable:next`, with the reason in a comment above). A region disable silently covers code written later."
+    severity: error
   file_url_without_directory_hint:
     name: "A file URL says whether it is a directory"
     included: 'Otos/.*\.swift'

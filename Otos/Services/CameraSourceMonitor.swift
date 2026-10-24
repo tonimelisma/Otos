@@ -541,10 +541,19 @@ final class DeviceCameraSession: NSObject {
             continuation.resume(throwing: error)
             return
         }
+        // The camera may save under a name of its own; the bytes are where the caller
+        // asked only once they are moved there, so a failed move fails the download.
         if let savedFilename, savedFilename != destinationURL.lastPathComponent {
             let savedURL = destinationURL.deletingLastPathComponent().appending(path: savedFilename)
-            try? FileManager.default.removeItem(at: destinationURL)
-            try? FileManager.default.moveItem(at: savedURL, to: destinationURL)
+            do {
+                do {
+                    try FileManager.default.removeItem(at: destinationURL)
+                } catch let error as CocoaError where error.code == .fileNoSuchFile {}
+                try FileManager.default.moveItem(at: savedURL, to: destinationURL)
+            } catch {
+                continuation.resume(throwing: error)
+                return
+            }
         }
         continuation.resume(returning: ())
     }

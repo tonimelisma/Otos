@@ -1124,17 +1124,18 @@ extension CatalogStore {
         )
     }
 
-    static func encodeMetadataExtraJSON(_ metadata: AssetMetadata) -> String? {
+    /// The stored form of an asset's metadata. Encoding failing is an error, never a
+    /// silently missing record.
+    static func encodeMetadataExtraJSON(_ metadata: AssetMetadata) throws -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        return (try? encoder.encode(metadata)).flatMap { String(data: $0, encoding: .utf8) }
+        return try String(decoding: encoder.encode(metadata), as: UTF8.self)
     }
 
-    static func decodeMetadataExtraJSON(_ json: String) -> AssetMetadata? {
-        guard let data = json.data(using: .utf8) else {
-            return nil
-        }
-        return try? JSONDecoder().decode(AssetMetadata.self, from: data)
+    /// Reads a stored metadata record back. A record that does not decode is an error,
+    /// not an asset without metadata: each caller decides what that means for it.
+    static func decodeMetadataExtraJSON(_ json: String) throws -> AssetMetadata {
+        try JSONDecoder().decode(AssetMetadata.self, from: Data(json.utf8))
     }
 
     static func fetchExistingAssetRows(
@@ -1584,7 +1585,7 @@ extension CatalogStore {
         db: Database
     ) throws {
         let primaryLocation = metadata.locations.first
-        let arguments = assetMetadataStatementArguments(
+        let arguments = try assetMetadataStatementArguments(
             metadata,
             libraryRootID: libraryRootID,
             relativePath: relativePath,
@@ -1644,12 +1645,17 @@ private nonisolated func addRelativePathKeyColumns(_ db: Database) throws {
     if !companionColumns.isEmpty, !companionColumns.contains("relative_path_key") {
         try db.execute(sql: "ALTER TABLE media_companion ADD COLUMN relative_path_key TEXT NOT NULL DEFAULT ''")
     }
-    // Migration SQL stays byte-for-byte as shipped.
-    // swiftlint:disable:next line_length
-    try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_media_asset_relative_path_key ON media_asset(library_root_id, relative_path_key)")
+    // Migration SQL stays byte-for-byte as shipped (SQLite keeps it in sqlite_master);
+    // the literals are split only in source.
+    try db.execute(
+        sql: "CREATE INDEX IF NOT EXISTS idx_media_asset_relative_path_key "
+            + "ON media_asset(library_root_id, relative_path_key)"
+    )
     if !companionColumns.isEmpty {
-        // swiftlint:disable:next line_length
-        try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_media_companion_relative_path_key ON media_companion(library_root_id, relative_path_key)")
+        try db.execute(
+            sql: "CREATE INDEX IF NOT EXISTS idx_media_companion_relative_path_key "
+                + "ON media_companion(library_root_id, relative_path_key)"
+        )
     }
 }
 
@@ -1817,9 +1823,19 @@ private nonisolated func backfillCaptureWallFromMetadataJSON(_ db: Database) thr
         let libraryRootID: Int64 = row["library_root_id"]
         let relativePath: String = row["relative_path"]
         let json: String = row["metadata_extra_json"]
-        guard let metadata = CatalogStore.decodeMetadataExtraJSON(json),
-              let wall = CaptureWallClock.select(from: metadata.timestamps)
-        else {
+        let metadata: AssetMetadata
+        do {
+            metadata = try CatalogStore.decodeMetadataExtraJSON(json)
+        } catch {
+            // A record this build cannot read has no wall to backfill; the row keeps no
+            // wall, as a row enrichment has not read yet, and is logged.
+            OtosLog.persistence.errorOperation("catalog.migration", phase: "metadataUndecodable", fields: [
+                "relativePath": relativePath,
+                "error": String(describing: error),
+            ])
+            continue
+        }
+        guard let wall = CaptureWallClock.select(from: metadata.timestamps) else {
             continue
         }
         try db.execute(
@@ -2085,8 +2101,8 @@ private nonisolated func assetMetadataStatementArguments(
     libraryRootID: Int64,
     relativePath: MediaRelativePath,
     primaryLocation: GeoRecord?
-) -> StatementArguments {
-    let values: [(any DatabaseValueConvertible)?] = [
+) throws -> StatementArguments {
+    let values: [(any DatabaseValueConvertible)?] = try [
         libraryRootID,
         relativePath.rawValue,
         metadata.family,

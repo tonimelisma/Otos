@@ -45,6 +45,37 @@ struct CatalogStoreRemovableSourceTests {
         #expect(afterResume.contains { $0.asset.id == cardID })
     }
 
+    /// Quiescence belongs to one attachment's pending unmount. A card quiesced at one
+    /// mount and attached again at another is a new attachment: it offers enrichment
+    /// again, and the root keeps the rest of what it was.
+    @Test func aCardQuiescedAtOneMountIsNotQuiescedWhenItRemountsElsewhere() async throws {
+        let fixture = try await makeRemountFixture()
+        let store = fixture.store
+        let identity = DeviceIdentity.volume(uuid: "test-card")
+        try await store.attachRemovableVolume(
+            mountURL: fixture.firstMount,
+            identity: identity,
+            displayName: "Card",
+            isEjectable: true
+        )
+        let firstPath = try CatalogPath.normalizedDirectoryPath(for: fixture.firstMount)
+        _ = try await waitForSelectedRelativePaths(store, rootPath: firstPath, expected: ["card.jpg"])
+        try await store.quiesceRemovableSource(identity: identity)
+
+        try await store.attachRemovableVolume(
+            mountURL: fixture.secondMount,
+            identity: identity,
+            displayName: "Card",
+            isEjectable: true
+        )
+        let secondPath = try CatalogPath.normalizedDirectoryPath(for: fixture.secondMount)
+        _ = try await waitForSelectedRelativePaths(store, rootPath: secondPath, expected: ["card.jpg"])
+        let cardID = MediaAssetID(libraryRootPath: secondPath, relativePath: MediaRelativePath(rawValue: "card.jpg"))
+
+        let candidates = try await store.enrichmentCandidates(prioritizing: [cardID], limit: 10)
+        #expect(candidates.contains { $0.asset.id == cardID })
+    }
+
     /// Otos's own eject reports its outcome, so a refused one resumes the card at once:
     /// it is still mounted, and its enrichment must not wait on a limit meant for ejects
     /// started elsewhere, which report nothing.
