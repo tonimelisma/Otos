@@ -749,12 +749,7 @@ extension CatalogStore {
                 displayName: row["display_name"],
                 lastSeenAt: lastSeenUnix.map(Date.init(timeIntervalSince1970:)),
                 sortIndex: row["sort_index"],
-                // NULL means never probed. `isKnown` and the stored value are one
-                // fact, written and read together, so an unprobed root cannot
-                // read back as a confidently case-insensitive one.
-                capabilities: (row["case_sensitive_names"] as Int?).map {
-                    VolumeNamespaceCapabilities(isCaseSensitive: $0 == 1, isKnown: true)
-                } ?? .unknown,
+                capabilities: VolumeNamespaceCapabilities(storedCaseSensitiveColumn: row["case_sensitive_names"]),
                 deviceModel: row["device_model"]
             )
         }
@@ -1665,8 +1660,8 @@ private nonisolated func backfillRelativePathKeys(_ db: Database) throws {
     )
     for root in roots {
         let rootID: Int64 = root["id"]
-        guard let caseSensitive = root["case_sensitive_names"] as Int? else { continue }
-        let capabilities = VolumeNamespaceCapabilities(isCaseSensitive: caseSensitive == 1, isKnown: true)
+        let capabilities = VolumeNamespaceCapabilities(storedCaseSensitiveColumn: root["case_sensitive_names"])
+        guard capabilities.isKnown else { continue }
         let assets = try Row.fetchAll(
             db,
             sql: """

@@ -606,6 +606,7 @@ extension CatalogStore {
                 db: db
             )
         }
+        let destinationCapabilities = await Self.probeCapabilities(of: destination)
         return ImportPlanningSnapshot(
             generation: generation,
             sourceRoot: source,
@@ -618,9 +619,7 @@ extension CatalogStore {
             policy: policy,
             calendar: calendar,
             timeZone: timeZone,
-            destinationCapabilities: FilesystemNamespaceSemantics.probeVolumeCapabilities(
-                rootURL: destination.url
-            )
+            destinationCapabilities: destinationCapabilities
         )
     }
 
@@ -1837,8 +1836,9 @@ extension CatalogStore {
     func addLibrary(url: URL) async throws {
         let path = try CatalogPath.normalizedExistingDirectoryPath(for: url)
         try await ensureStartedForMutation()
+        let capabilities = await Self.probeCapabilities(of: path)
         try validateNoOverlap(path)
-        try await insertLibraryRootAndStartScan(path, operation: "catalog.library.add")
+        try await insertLibraryRootAndStartScan(path, capabilities: capabilities, operation: "catalog.library.add")
     }
 
     func ensureLibrary(url: URL) async throws {
@@ -1854,9 +1854,12 @@ extension CatalogStore {
             )
             return
         }
+        let capabilities = await Self.probeCapabilities(of: path)
+        guard roots[path] == nil else { return }
         try validateNoOverlap(path)
         try await insertLibraryRootAndStartScan(
             path,
+            capabilities: capabilities,
             operation: "catalog.library.ensure",
             recordsStart: false
         )
@@ -2160,7 +2163,7 @@ extension CatalogStore {
             """
         )
         OtosLog.catalog.notice(
-            "op=catalog.removable.attach phase=finish kind=\(attachment.kind.rawValue, privacy: .public) identity=\(attachment.identity, privacy: .public) rootPath=\(attachment.path.rawValue, privacy: .public) displayName=\(attachment.displayName, privacy: .public) caseSensitive=\(attachment.capabilities.isCaseSensitive, privacy: .public) capabilitiesKnown=\(attachment.capabilities.isKnown, privacy: .public) deviceModel=\(attachment.deviceModel ?? "unknown", privacy: .public) volumeFormat=\(attachment.volumeFormat ?? "unknown", privacy: .public)"
+            "op=catalog.removable.attach phase=finish kind=\(attachment.kind.rawValue, privacy: .public) identity=\(attachment.identity, privacy: .public) rootPath=\(attachment.path.rawValue, privacy: .public) displayName=\(attachment.displayName, privacy: .public) capabilities=\(String(describing: attachment.capabilities), privacy: .public) deviceModel=\(attachment.deviceModel ?? "unknown", privacy: .public) volumeFormat=\(attachment.volumeFormat ?? "unknown", privacy: .public)"
         )
         notifyCatalogChanged()
         if attachment.enqueuesScan {
@@ -2192,8 +2195,17 @@ extension CatalogStore {
         ))
     }
 
+    /// A root's case sensitivity, read off this actor and before any write: the read is a
+    /// filesystem call that can stall on a slow volume, and neither the actor nor the
+    /// database's write lock is held across it.
+    @concurrent
+    private static func probeCapabilities(of path: LibraryRootPath) async -> VolumeNamespaceCapabilities {
+        FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: path.url)
+    }
+
     private func insertLibraryRootAndStartScan(
         _ path: LibraryRootPath,
+        capabilities: VolumeNamespaceCapabilities,
         operation: String,
         recordsStart: Bool = true
     ) async throws {
@@ -2211,7 +2223,7 @@ extension CatalogStore {
         let storedRoot = try await dbQueue.write { db in
             try Self.insertLibraryRoot(
                 path: path,
-                capabilities: FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: path.url),
+                capabilities: capabilities,
                 db: db
             )
         }
@@ -2229,8 +2241,7 @@ extension CatalogStore {
         OtosLog.catalog.info("Library root added path=\(root.path.rawValue, privacy: .public)")
         let message = "op=\(operation) phase=finish "
             + "rootPath=\(root.path.rawValue) "
-            + "caseSensitive=\(storedRoot.capabilities.isCaseSensitive) "
-            + "capabilitiesKnown=\(storedRoot.capabilities.isKnown)"
+            + "capabilities=\(storedRoot.capabilities)"
         OtosLog.catalog.notice("\(message, privacy: .public)")
         notifyCatalogChanged()
         filesystemWatcher.addRoot(root.path)

@@ -4,7 +4,7 @@ import Testing
 
 struct FilesystemNameKeyTests {
     @Test func caseInsensitiveCollapsesSpelling() {
-        let caps = VolumeNamespaceCapabilities.caseInsensitiveAPFS
+        let caps = VolumeNamespaceCapabilities.caseInsensitive
         let upper = FilesystemNamespaceSemantics.nameKey(
             relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
             capabilities: caps
@@ -17,7 +17,7 @@ struct FilesystemNameKeyTests {
     }
 
     @Test func caseSensitivePreservesSpelling() {
-        let caps = VolumeNamespaceCapabilities.caseSensitiveAPFS
+        let caps = VolumeNamespaceCapabilities.caseSensitive
         let upper = FilesystemNamespaceSemantics.nameKey(
             relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
             capabilities: caps
@@ -35,10 +35,10 @@ struct FilesystemNameKeyTests {
         #expect(
             FilesystemNamespaceSemantics.nameKey(
                 relativePath: composed,
-                capabilities: .caseInsensitiveAPFS
+                capabilities: .caseInsensitive
             ) == FilesystemNamespaceSemantics.nameKey(
                 relativePath: decomposed,
-                capabilities: .caseInsensitiveAPFS
+                capabilities: .caseInsensitive
             )
         )
     }
@@ -77,7 +77,7 @@ struct ReorganizationPlannerTests {
         preferences.destinationNamePolicy = namePolicy
         return ReorganizationPlanningSnapshot(
             libraryRoot: LibraryRootPath(rawValue: "/Library"),
-            capabilities: .caseInsensitiveAPFS,
+            capabilities: .caseInsensitive,
             generation: 1,
             rootRevision: 1,
             policy: ImportPolicy.from(preferences),
