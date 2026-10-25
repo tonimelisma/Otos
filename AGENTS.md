@@ -63,7 +63,9 @@ design rules for user-facing surfaces; per-screen specs live beside it in
 - Overlay has one lifecycle. Every overlay Otos holds for an item is kept as long
   as that item exists and is purged in full only when the item is proven deleted
   (absent from a reachable, fully enumerated root) or the user removes its root.
-  A temporarily missing original is never a deletion. Asset identity is the
+  A temporarily missing original is never a deletion. The one time-based removal is
+  removable-source retention: a card or camera unseen for 90 days is forgotten as if
+  the user had removed it (ADR 0013). Asset identity is the
   filesystem path; Otos invents no durable IDs, content fingerprints, or sidecars.
   See `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md`.
 - The media grid never blanks a thumbnail already displayed for the same on-screen

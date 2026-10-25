@@ -279,6 +279,13 @@ extension CatalogStore {
         return thumbnailMigrations
     }
 
+    static func updateLibraryRootLastSeen(rootRowID: Int64, lastSeenAt: Date, db: Database) throws {
+        try db.execute(
+            sql: "UPDATE library_root SET last_seen_at = ? WHERE id = ?",
+            arguments: [lastSeenAt.timeIntervalSince1970, rootRowID]
+        )
+    }
+
     static func updateLibraryRootSourceFacts(
         rootRowID: Int64,
         path: LibraryRootPath,
