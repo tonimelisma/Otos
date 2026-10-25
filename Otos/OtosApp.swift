@@ -184,15 +184,36 @@ public struct OtosApp: App {
                 .keyboardShortcut("z", modifiers: [.command, .shift])
                 .disabled(!catalogViewModel.undoMenuState.canRedo)
             }
+            // While an edit value is being typed, Cut, Copy, Paste and Select All act on its
+            // text through the responder chain, as in any text field (Keyboards: respect
+            // standard shortcuts); otherwise Copy and Select All act on photos.
             CommandGroup(replacing: .pasteboard) {
+                Button("Cut") {
+                    NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
+                }
+                .keyboardShortcut("x", modifiers: .command)
+                .disabled(!catalogViewModel.isEnteringEditValue)
                 Button("Copy") {
-                    catalogViewModel.copyCurrentTargets()
+                    if catalogViewModel.isEnteringEditValue {
+                        NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+                    } else {
+                        catalogViewModel.copyCurrentTargets()
+                    }
                 }
                 .keyboardShortcut("c", modifiers: .command)
-                .disabled(!catalogViewModel.hasMediaChoiceTarget)
+                .disabled(!catalogViewModel.isEnteringEditValue && !catalogViewModel.hasMediaChoiceTarget)
+                Button("Paste") {
+                    NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+                }
+                .keyboardShortcut("v", modifiers: .command)
+                .disabled(!catalogViewModel.isEnteringEditValue)
                 Divider()
                 Button("Select All") {
-                    catalogViewModel.selectAll()
+                    if catalogViewModel.isEnteringEditValue {
+                        NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+                    } else {
+                        catalogViewModel.selectAll()
+                    }
                 }
                 .keyboardShortcut("a", modifiers: .command)
                 Button("Deselect All") {
@@ -326,7 +347,7 @@ public struct OtosApp: App {
                 }
                 .keyboardShortcut("i", modifiers: [])
                 .disabled(catalogViewModel.viewMode != .loupe)
-                Button(catalogViewModel.isEditPanelPresented ? "Hide Edit Panel" : "Show Edit Panel") {
+                Button(catalogViewModel.isEditPanelPresented ? "Hide Edit" : "Show Edit") {
                     catalogViewModel.toggleEditPanel()
                 }
                 .keyboardShortcut("e", modifiers: [])

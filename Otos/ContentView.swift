@@ -116,7 +116,7 @@ struct ContentView: View {
             // Hosted on its own view so `Do not ask again` applies to this alert only.
             .background { largeTrashDownloadAlertHost }
             // The trailing inspector column collapses and expands like the sidebar; the
-            // toolbar button and View ▸ Show Edit Panel drive the same intent.
+            // toolbar button and View ▸ Show Edit drive the same intent.
             .inspector(isPresented: Binding(
                 get: { viewModel.isEditPanelPresented },
                 set: { presented in
@@ -147,7 +147,8 @@ struct ContentView: View {
                         rotateAspect: viewModel.rotateCropAspect,
                         turn: viewModel.turnPhoto(clockwise:),
                         flip: viewModel.flipPhoto(horizontally:)
-                    )
+                    ),
+                    setEntering: viewModel.setEnteringEditValue
                 )
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
             }
@@ -409,9 +410,7 @@ struct ContentView: View {
                         )
                     }
                     : nil,
-                onZoomToggle: { viewModel.toggleLoupeZoom() },
-                loupeInfo: viewModel.loupeInfo,
-                onInfoToggle: viewModel.toggleLoupeInfo
+                loupeInfo: viewModel.loupeInfo
             )
             .navigationTitle(viewModel.state.title)
         case .compare:

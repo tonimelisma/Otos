@@ -618,6 +618,26 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// The slider position for a value typed into the control's field (F-15 in
+    /// `hig-validation.md`), or nil when the text is not a number. The text is what the
+    /// panel shows, so a sign, a degree mark and a kelvin unit are accepted. A RAW's
+    /// temperature is typed in kelvin. The result is not clamped: `applying` clamps it.
+    func position(fromEntered text: String, facts: EditPhotoFacts) -> Double? {
+        let trimmed = text
+            .replacingOccurrences(of: "°", with: "")
+            .replacingOccurrences(of: "K", with: "")
+            .replacingOccurrences(of: "k", with: "")
+            .replacingOccurrences(of: "\u{2212}", with: "-")
+            .trimmingCharacters(in: .whitespaces)
+        guard let number = Double(trimmed), number.isFinite else {
+            return nil
+        }
+        if self == .temperature, facts.isRAW {
+            return Self.position(ofKelvin: number)
+        }
+        return number
+    }
+
     /// Slider position 0…1 of `kelvin`: 0 is 2000 K, 1 is 50000 K, linear in mireds.
     static func position(ofKelvin kelvin: Double) -> Double {
         let clamped = min(max(kelvin, rawTemperatureRange.lowerBound), rawTemperatureRange.upperBound)

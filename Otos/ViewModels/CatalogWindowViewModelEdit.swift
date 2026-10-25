@@ -89,7 +89,7 @@ nonisolated enum EditLaneCommand: Sendable {
 extension CatalogWindowViewModel {
     // MARK: - Panel
 
-    /// View ▸ Show / Hide Edit Panel (E) and the toolbar button.
+    /// View ▸ Show Edit / Hide Edit (E) and the toolbar button.
     func toggleEditPanel() {
         isEditPanelPresented.toggle()
         OtosLog.ui.noticeOperation("edit.panel", phase: isEditPanelPresented ? "shown" : "hidden")
@@ -101,6 +101,13 @@ extension CatalogWindowViewModel {
             editTargetTask?.cancel()
             editTargetTask = nil
             clearEditTarget()
+        }
+    }
+
+    /// A value field in the panel gained or lost the keyboard.
+    func setEnteringEditValue(_ entering: Bool) {
+        if isEnteringEditValue != entering {
+            isEnteringEditValue = entering
         }
     }
 

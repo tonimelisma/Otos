@@ -319,7 +319,7 @@ struct CatalogInfoToolbarButton: View {
     }
 }
 
-/// Shows and hides the trailing edit panel; View ▸ Show Edit Panel (E) is its menu-bar
+/// Shows and hides the trailing edit panel; View ▸ Show Edit (E) is its menu-bar
 /// equivalent.
 struct CatalogEditToolbarButton: View {
     let isShowing: Bool
@@ -329,7 +329,7 @@ struct CatalogEditToolbarButton: View {
         Button(action: toggle) {
             Label("Edit", systemImage: "slider.horizontal.3")
         }
-        .help(isShowing ? "Hide Edit Panel" : "Show Edit Panel")
+        .help(isShowing ? "Hide Edit" : "Show Edit")
     }
 }
 

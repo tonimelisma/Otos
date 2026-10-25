@@ -159,7 +159,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var fullResolutionSkipLoggedID: MediaAssetID?
     /// Loupe info overlay (APP-041): session-only toggle and the facts it shows.
     var showsLoupeInfo = false
-    /// The trailing edit panel (View ▸ Show Edit Panel, E). Edit state below is
+    /// The trailing edit panel (View ▸ Show Edit, E). Edit state below is
     /// resolved only while it is shown (ADR 0036).
     var isEditPanelPresented = false
     /// The one still photo the panel edits; nil disables its controls.
@@ -172,6 +172,8 @@ final class CatalogWindowViewModel {
     var editLivePreview: EditLivePreview?
     /// The open target's facts; nil until it has been opened (the controls wait for them).
     var editPhotoFacts: EditPhotoFacts?
+    /// An edit value field holds the keyboard: the Edit menu's text commands act on it.
+    var isEnteringEditValue = false
     /// The white balance picker is armed: the next loupe click picks a neutral point.
     var isPickingNeutral = false
     /// The crop tool is on: the loupe shows the whole frame with the crop over it.

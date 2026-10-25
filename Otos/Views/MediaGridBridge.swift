@@ -79,9 +79,6 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     /// Builds the context menu for the current targets after the controller has made
     /// the clicked tile a target (APP-037). `nil` shows no menu.
     var contextMenu: () -> NSMenu? = { nil }
-    /// Strip-only key fallbacks for loupe zoom toggle (Z) and info overlay (I).
-    var onZoomToggleKey: () -> Void = {}
-    var onInfoToggleKey: () -> Void = {}
     /// Asset to keep centered (loupe focus, compare newest member, or grid return focus).
     var focusTargetID: MediaAssetID?
 
@@ -109,8 +106,6 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
         controller.onMediaChoiceKey = onMediaChoiceKey
         controller.onMediaChoice = onMediaChoice
         controller.contextMenu = contextMenu
-        controller.onZoomToggleKey = onZoomToggleKey
-        controller.onInfoToggleKey = onInfoToggleKey
         controller.applyPresentation(presentation)
         if case .grid = presentation {
             controller.receiveColumnCount(columnCount)
@@ -235,8 +230,6 @@ final class MediaGridViewController: NSViewController {
     var onMediaChoiceKey: (MediaChoice) -> Void = { _ in }
     var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
     var contextMenu: () -> NSMenu? = { nil }
-    var onZoomToggleKey: () -> Void = {}
-    var onInfoToggleKey: () -> Void = {}
     /// Source for drag-out sessions (ADR 0028); one per controller, reused.
     let dragSource = MediaGridDragSource()
     /// Current presentation; strip disables pinch and forwards arrow keys.
@@ -573,12 +566,6 @@ extension MediaGridViewController {
         }
         collectionView.onDragBegin = { [weak self] hit, event in
             self?.beginDrag(from: hit, event: event)
-        }
-        collectionView.onZoomToggleKey = { [weak self] in
-            self?.onZoomToggleKey()
-        }
-        collectionView.onInfoToggleKey = { [weak self] in
-            self?.onInfoToggleKey()
         }
         collectionView.forwardsArrowKeys = presentation.isStrip
         collectionView.register(

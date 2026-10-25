@@ -198,6 +198,20 @@ struct CatalogStoreEditRecipeTests {
         #expect(abs(EditControl.kelvin(atPosition: EditControl.position(ofKelvin: 6500)) - 6500) < 0.01)
     }
 
+    /// `hig-validation.md` F-15: a typed value is read as the panel shows it — signs, a
+    /// degree mark, a kelvin unit — and a RAW's temperature in kelvin.
+    @Test func typedValuesAreReadAsThePanelShowsThem() {
+        let still = EditPhotoFacts.still
+        let raw = EditPhotoFacts(isRAW: true, asShotTemperature: 5600, asShotTint: 4)
+        #expect(EditControl.exposure.position(fromEntered: "+0.50", facts: still) == 0.5)
+        #expect(EditControl.straighten.position(fromEntered: " -3.5° ", facts: still) == -3.5)
+        #expect(EditControl.shadows.position(fromEntered: "\u{2212}20", facts: still) == -20)
+        #expect(EditControl.exposure.position(fromEntered: "bright", facts: still) == nil)
+        let kelvin = EditControl.temperature.position(fromEntered: "6500 K", facts: raw)
+        #expect(kelvin.map { abs(EditControl.kelvin(atPosition: $0) - 6500) < 0.01 } == true)
+        #expect(EditControl.temperature.position(fromEntered: "30", facts: still) == 30)
+    }
+
     @Test func eachSectionResetsOnlyItsOwnControls() {
         let edited = EditRecipe(exposure: 1, contrast: 10, temperature: 5000, tint: 3, vibrance: 20, saturation: -5)
         #expect(EditSection.color.reset(edited) == EditRecipe(exposure: 1, contrast: 10))
