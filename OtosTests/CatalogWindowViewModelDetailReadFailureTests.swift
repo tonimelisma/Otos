@@ -32,6 +32,53 @@ struct CatalogWindowViewModelDetailReadFailureTests {
         }
     }
 
+    /// The screen-sized decode stays in the slot, so only the zoom report can ask again
+    /// for full resolution: a failed read must not count as having asked.
+    @Test func aFailedFullResolutionReadDecodesNothingAndTheNextZoomAsksAgain() async throws {
+        try await withEditableLibrary(fileCount: 1) { library in
+            let id = library.ids[0]
+            let loader = FakePreviewLoader()
+            let small = try #require(gradientImage(width: 400, height: 300))
+            await loader.setDefaultOutcome(.image(small, nativePixelSize: CGSize(width: 6000, height: 4500)))
+            let model = CatalogWindowViewModel(
+                catalogStore: library.store,
+                startsStallMonitor: false,
+                startsEnrichment: false,
+                startsSourceMonitoring: false,
+                preferencesDomain: .suite(UUID().uuidString),
+                previewLoader: loader,
+                trashFiles: .refusing
+            )
+            model.applyState(CatalogWindowState(
+                title: "Zoom",
+                libraries: [],
+                removableSources: [],
+                mediaGrid: CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: library.ids),
+                filterOptions: .empty,
+                resolvedSidebarSelection: .allMedia,
+                mediaEmptyState: .noMedia,
+                deviceConnectionBanner: nil
+            ))
+            model.openLoupe(id: id)
+            await model.paneRequestTasks[.loupe]?.value
+            try #require(model.panePreviews[.loupe]?.id == id)
+            let hidden = try await HiddenCatalogTable("asset_metadata", in: library.databaseURL)
+
+            model.reportLoupeZoom(LoupeZoomReport(magnification: 1, fit: 0.05))
+            await model.paneRequestTasks[.loupe]?.value
+            #expect(await loader.requestedEdges().count == 1)
+            #expect(model.panePreviews[.loupe]?.image === small)
+            #expect(!model.downloadingSlots.contains(.loupe))
+
+            try await hidden.restore()
+            model.reportLoupeZoom(LoupeZoomReport(magnification: 1, fit: 0.05))
+            await model.paneRequestTasks[.loupe]?.value
+            let edges = await loader.requestedEdges()
+            #expect(edges.count == 2)
+            #expect(edges.last == PreviewImageLoader.fullResolution)
+        }
+    }
+
     @Test func aFailedReadLeavesTheFocusedKindUnknownAndTheNextFocusReadsIt() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]

@@ -345,8 +345,13 @@ extension CatalogWindowViewModel {
                 }
                 // Without its row a decode would drop the photo's edit and curation, so
                 // nothing is decoded or published. This request has ended, so its spinner
-                // goes; the slot stays empty, which is what `refreshPanePreviews` asks again for.
+                // goes. A screen-sized request leaves the slot empty, which
+                // `refreshPanePreviews` asks again for; a full-resolution one forgets it
+                // was asked, so the next zoom report asks again.
                 downloadingSlots.remove(slot)
+                if target == PreviewImageLoader.fullResolution {
+                    fullResolutionRequestedIDs.remove(id)
+                }
                 return
             }
             guard !Task.isCancelled else {
