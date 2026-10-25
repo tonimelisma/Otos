@@ -923,8 +923,9 @@ nonisolated struct LibraryRemovalNotice: Equatable, Sendable {
 nonisolated enum CatalogSchemaCompatibility: Equatable, Sendable {
     /// Empty database or a known partial/current schema that additive migrations can advance.
     case readyToMigrate
-    /// Applied migration identifiers include ones this app does not know — written by a newer Otos.
-    case writtenByNewerOtos
+    /// Applied migration identifiers include ones this build does not know: a newer Otos
+    /// wrote it, or one from before the schema baseline. Which is not recorded, so not said.
+    case writtenByOtherOtos
     /// User tables exist but no known migration identifiers are present.
     case unrecognized
 
@@ -932,8 +933,8 @@ nonisolated enum CatalogSchemaCompatibility: Equatable, Sendable {
         switch self {
         case .readyToMigrate:
             "The catalog schema is compatible."
-        case .writtenByNewerOtos:
-            "This catalog was written by a newer version of Otos."
+        case .writtenByOtherOtos:
+            "This catalog was written by a different version of Otos."
         case .unrecognized:
             "This catalog is not compatible with this version of Otos."
         }

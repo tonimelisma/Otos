@@ -120,7 +120,7 @@ struct CatalogStoreTests {
             try await store.start(scansSavedLibraries: false)
             Issue.record("Expected unsupportedCatalogSchema for legacy v1")
         } catch let CatalogStoreError.unsupportedCatalogSchema(problem) {
-            #expect(problem == .writtenByNewerOtos || problem == .unrecognized)
+            #expect(problem == .writtenByOtherOtos)
         }
 
         #expect(FileManager.default.fileExists(atPath: original.path(percentEncoded: false)))

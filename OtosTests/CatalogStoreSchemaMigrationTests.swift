@@ -113,87 +113,62 @@ struct CaptureWallClockTests {
 
 @Suite(.testDirectory)
 struct CatalogStoreSchemaMigrationTests {
-    @Test func v10FixtureWithoutDestinationProvenanceMigratesAdditively() async throws {
-        let databaseURL = try await Self.makeV10FixtureWithoutDestinationProvenance()
+    /// ARC-043: a fresh catalog is the baseline schema and records only the baseline.
+    @Test func aNewCatalogIsTheBaselineSchema() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
         let store = CatalogStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
 
-        let columns = try await Self.mediaAssetColumns(databaseURL)
-        #expect(columns.contains("import_destination_byte_size"))
-        #expect(columns.contains("import_destination_modified_at_epoch"))
-        #expect(columns.contains("content_hash_xxh3_128"))
-        #expect(columns.contains("content_hash_source_size"))
-        #expect(columns.contains("content_hash_source_mtime"))
-        #expect(columns.contains("media_choice"))
-        #expect(try await Self.activeFileOperationColumns(databaseURL).contains("content_hash_xxh3_128"))
-
-        let applied = try await Self.appliedMigrationIdentifiers(databaseURL)
-        #expect(applied.contains("v11_import_destination_provenance"))
-        #expect(applied.contains("v12_xxh3_content_hashes"))
-        #expect(applied.contains("v14_media_choice"))
+        let (applied, tables) = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            let applied = try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
+            let tables = try String.fetchSet(
+                db,
+                sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+            return (applied, tables)
+        }
+        #expect(applied == [CatalogSchema.baselineMigrationIdentifier])
+        #expect(tables == [
+            "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
+            "active_file_operation", "active_file_operation_companion_staging", "active_source_erase",
+            "active_reorganization_component", "active_reorganization_member",
+            "active_reorganization_step", "active_reorganization_directory",
+            "pending_identity_remap_batch", "pending_identity_remap",
+        ])
     }
 
-    @Test func v5FixtureMigratesToImportHistoryAndCaptureWallWithoutErase() async throws {
-        let fixture = try await Self.makeV5EnrichedFixture()
-        let store = CatalogStore(location: .databaseFile(fixture.databaseURL))
-        try await store.start(scansSavedLibraries: false)
-
-        let columns = try await Self.mediaAssetColumns(fixture.databaseURL)
-        #expect(columns.contains("import_batch_unix_ms"))
-        #expect(columns.contains("capture_wall_compact"))
-        #expect(columns.contains("capture_wall_precision"))
-        #expect(columns.contains("import_source_root_path"))
-        #expect(columns.contains("import_source_relative_path"))
-        #expect(columns.contains("import_source_byte_size"))
-        #expect(columns.contains("import_source_modified_at_epoch"))
-        #expect(columns.contains("import_destination_byte_size"))
-        #expect(columns.contains("import_destination_modified_at_epoch"))
-        #expect(columns.contains("content_hash_xxh3_128"))
-        #expect(columns.contains("content_hash_source_size"))
-        #expect(columns.contains("content_hash_source_mtime"))
-        #expect(columns.contains("media_choice"))
-
-        let snapshot = try await catalogStoreTestState(store)
-        #expect(snapshot.libraries.count == 1)
-        #expect(snapshot.testAssets.count == 1)
-
-        let id = try #require(snapshot.testAssets.first?.id)
-        let wall = try await store.captureWall(for: id)
-        #expect(wall?.compact == 20_260_426_145_735)
-        #expect(wall?.precision == "localFloating")
-
-        // Original media and any pre-existing thumbnail path stay put — no erase.
-        #expect(FileManager.default.fileExists(atPath: fixture.original.path(percentEncoded: false)))
-        #expect(FileManager.default.fileExists(atPath: fixture.thumbnail.path(percentEncoded: false)))
-    }
-
-    @Test func futureSchemaIsRefusedWithoutErase() async throws {
-        let fixture = try await Self.makeFutureSchemaFixture()
+    /// ARC-043: a catalog whose migration history this build does not know — one a newer
+    /// Otos wrote, or one from before the schema baseline — is refused unopened, and
+    /// nothing in it or beside it is erased.
+    @Test(arguments: ["v999_future_history", "v21_enrichment_claim_is_a_process_fact"])
+    func aCatalogWithUnknownHistoryIsRefusedWithoutErase(identifier: String) async throws {
+        let fixture = try await Self.makeUnknownHistoryFixture(identifier: identifier)
         let store = CatalogStore(location: .databaseFile(fixture.databaseURL))
 
         do {
             try await store.start(scansSavedLibraries: false)
             Issue.record("Expected unsupportedCatalogSchema")
         } catch let CatalogStoreError.unsupportedCatalogSchema(problem) {
-            #expect(problem == .writtenByNewerOtos)
+            #expect(problem == .writtenByOtherOtos)
         }
 
-        let rootCount = try await DatabaseQueue(path: fixture.databaseURL.path(percentEncoded: false)).read { db in
-            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM library_root") ?? 0
+        let reader = try DatabaseQueue(path: fixture.databaseURL.path(percentEncoded: false))
+        let (rootCount, applied) = try await reader.read { db in
+            let rootCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM library_root") ?? 0
+            let applied = try String.fetchSet(db, sql: "SELECT identifier FROM grdb_migrations")
+            return (rootCount, applied)
         }
         #expect(rootCount == 1)
+        #expect(applied.contains(identifier))
         #expect(FileManager.default.fileExists(atPath: fixture.thumbnail.path(percentEncoded: false)))
-
-        let applied = try await DatabaseQueue(path: fixture.databaseURL.path(percentEncoded: false)).read { db in
-            try String.fetchSet(db, sql: "SELECT identifier FROM grdb_migrations")
-        }
-        #expect(applied.contains("v999_future_history"))
     }
 
     /// A refused catalog cannot say whether a persisted root is registered, so a
     /// namespace lease for that root reports the catalog, never the root, as missing.
     @Test func refusedCatalogDeniesNamespaceLeaseAsCatalogUnavailable() async throws {
-        let fixture = try await Self.makeFutureSchemaFixture()
+        let fixture = try await Self.makeUnknownHistoryFixture(identifier: "v999_future_history")
         let persistedRoot = try await DatabaseQueue(path: fixture.databaseURL.path(percentEncoded: false)).read { db in
             try String.fetchOne(db, sql: "SELECT path FROM library_root")
         }
@@ -246,78 +221,6 @@ struct CatalogStoreSchemaMigrationTests {
             #expect(problem == .unrecognized)
         }
         #expect(FileManager.default.fileExists(atPath: staleThumbnail.path(percentEncoded: false)))
-    }
-
-    @Test func v13MigrationAddsMetadataOnlyEnrichmentClaimIndexesAndKeepsDigests() async throws {
-        let temp = try makeTestDirectory()
-        let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        try FileManager.default.createDirectory(
-            at: databaseURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
-        try CatalogStore.migrator.migrate(dbQueue)
-
-        // Simulate a catalog that stopped at v12: a removable-root row carrying a valid
-        // digest and current facts, no metadata-only pair, and no v13 marker.
-        let removableRootID = try await dbQueue.writeWithoutTransaction { db in
-            try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/otos-removable"])
-            let rootID = db.lastInsertedRowID
-            try db.execute(
-                sql: """
-                INSERT INTO media_asset (
-                    library_root_id, relative_path, sort_key, name_sort_key, name,
-                    content_type_identifier, byte_size, content_modified_at_unix,
-                    enriched_source_size, enriched_source_mtime,
-                    content_hash_xxh3_128, content_hash_source_size, content_hash_source_mtime
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                arguments: [
-                    rootID, "a.jpg", "a.jpg", "a.jpg", "a.jpg", "public.jpeg",
-                    1, 1000, 1, 1000,
-                    XXH3Digest128.empty.data, 1, 1000,
-                ]
-            )
-            try db.drop(index: EnrichmentClaimGateway.metadataOnlyGlobalIndexName)
-            try db.drop(index: EnrichmentClaimGateway.metadataOnlyRootIndexName)
-            try db.execute(
-                sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
-                arguments: ["v13_hash_gated_enrichment_claim_indexes"]
-            )
-            return rootID
-        }
-
-        try CatalogStore.migrator.migrate(dbQueue)
-
-        let applied = try await Self.appliedMigrationIdentifiers(databaseURL)
-        #expect(applied.contains("v13_hash_gated_enrichment_claim_indexes"))
-        let indexNames = try await dbQueue.read { db in
-            try String.fetchSet(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index'")
-        }
-        #expect(indexNames.contains(EnrichmentClaimGateway.broadGlobalIndexName))
-        #expect(indexNames.contains(EnrichmentClaimGateway.broadRootIndexName))
-        #expect(indexNames.contains(EnrichmentClaimGateway.metadataOnlyGlobalIndexName))
-        #expect(indexNames.contains(EnrichmentClaimGateway.metadataOnlyRootIndexName))
-
-        // The pre-existing digest survives and its row is not re-claimable under the
-        // metadata-only predicate the removable root now claims with.
-        let persistedHash = try await dbQueue.read { db in
-            try Data.fetchOne(
-                db,
-                sql: "SELECT content_hash_xxh3_128 FROM media_asset WHERE library_root_id = ?",
-                arguments: [removableRootID]
-            )
-        }
-        #expect(persistedHash == XXH3Digest128.empty.data)
-        let metadataOnlyClaimed = try await dbQueue.write { db in
-            try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
-                rootIDs: [removableRootID],
-                limit: 4,
-                hashRequired: false,
-                db: db
-            )
-        }
-        #expect(metadataOnlyClaimed.isEmpty)
     }
 
     @Test func importBatchQueriesReturnNewestFirst() async throws {
@@ -400,307 +303,44 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(wall?.compact == 20_260_710_153_000)
         #expect(wall?.precision == "localWithOffset")
     }
-
-    /// APP-017 disk-image backstop. A persisted removable-volume root whose path
-    /// is *currently* a mounted disk image is removed; one whose path isn't
-    /// currently mountable at all is left alone — the migration cannot prove
-    /// it a disk image, and the overlay-lifecycle rule treats an unresolvable
-    /// path as temporarily missing, not deleted (`docs/adr/0008-…`). Mounts a
-    /// real disk image rather than mocking `DiskArbitration`, since the fact
-    /// under test is what the system actually reports for one.
-    /// A claim is a process fact: v21 renames the column for every catalog and clears the
-    /// claims the last process left, whatever expiry it had written.
-    @Test func v21RenamesTheClaimColumnAndClearsLeftoverClaims() async throws {
-        let temp = try makeTestDirectory()
-        let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        try FileManager.default.createDirectory(
-            at: databaseURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
-        try CatalogStore.migrator.migrate(dbQueue, upTo: "v20_pending_trash")
-        try await dbQueue.write { db in
-            try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/otos-v21"])
-            try db.execute(
-                sql: """
-                INSERT INTO media_asset (
-                    library_root_id, relative_path, sort_key, name_sort_key, name,
-                    content_type_identifier, byte_size, enrichment_claimed_until
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                arguments: [db.lastInsertedRowID, "a.jpg", "a.jpg", "a.jpg", "a.jpg", "public.jpeg", 1, 4_102_444_800]
-            )
-        }
-
-        try CatalogStore.migrator.migrate(dbQueue)
-
-        let (columns, claimed) = try await dbQueue.read { db in
-            let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(media_asset)").compactMap { $0["name"] as String? }
-            let claimed = try Int.fetchOne(
-                db,
-                sql: "SELECT COUNT(*) FROM media_asset WHERE enrichment_claimed IS NOT NULL"
-            ) ?? -1
-            return (columns, claimed)
-        }
-        #expect(columns.contains("enrichment_claimed"))
-        #expect(!columns.contains("enrichment_claimed_until"))
-        #expect(claimed == 0)
-    }
-
-    @Test func v16RemovesDiskImageRemovableRootsButPreservesUnmountedOnes() async throws {
-        let image = try MountedTestDiskImage.attach(named: "OtosV16MigrationTest")
-        defer { image.detach() }
-
-        let temp = try makeTestDirectory()
-        let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        try FileManager.default.createDirectory(
-            at: databaseURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
-        try CatalogStore.migrator.migrate(dbQueue)
-
-        let diskImagePath = try CatalogPath.normalizedDirectoryPath(for: image.mountURL).rawValue
-        let unmountedPath = "/Volumes/OtosNeverMounted-\(UUID().uuidString)"
-        try await dbQueue.writeWithoutTransaction { db in
-            try db.execute(
-                sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
-                arguments: ["v16_remove_disk_image_removable_roots"]
-            )
-            try db.execute(
-                sql: """
-                INSERT INTO library_root (path, kind, device_identity, display_name)
-                VALUES (?, ?, ?, ?)
-                """,
-                arguments: [
-                    diskImagePath, LibraryRootKind.removableVolume.rawValue,
-                    "volume:disk-image-test", "OtosV16MigrationTest",
-                ]
-            )
-            try db.execute(
-                sql: """
-                INSERT INTO library_root (path, kind, device_identity, display_name)
-                VALUES (?, ?, ?, ?)
-                """,
-                arguments: [
-                    unmountedPath, LibraryRootKind.removableVolume.rawValue,
-                    "volume:unmounted-test", "NeverMounted",
-                ]
-            )
-        }
-
-        let store = CatalogStore(location: .databaseFile(databaseURL))
-        try await store.start(scansSavedLibraries: false)
-
-        let remainingPaths = try await dbQueue.read { db in
-            try Set(String.fetchAll(
-                db,
-                sql: "SELECT path FROM library_root WHERE kind = ?",
-                arguments: [LibraryRootKind.removableVolume.rawValue]
-            ))
-        }
-        #expect(!remainingPaths.contains(diskImagePath), "The disk image root must be removed")
-        #expect(
-            remainingPaths.contains(unmountedPath),
-            "An unmounted root must be left alone — it cannot be proven a disk image"
-        )
-    }
 }
 
 private extension CatalogStoreSchemaMigrationTests {
-    static func activeFileOperationColumns(_ databaseURL: URL) async throws -> Set<String> {
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
-            try String.fetchSet(db, sql: "SELECT name FROM pragma_table_xinfo('active_file_operation')")
-        }
+    struct UnknownHistoryFixture {
+        let databaseURL: URL
+        let thumbnail: URL
     }
 
-    static func makeV10FixtureWithoutDestinationProvenance() async throws -> URL {
+    /// A baseline catalog with one library and one asset whose migration record also
+    /// names `identifier`, which this build does not register, beside a thumbnail.
+    static func makeUnknownHistoryFixture(identifier: String) async throws -> UnknownHistoryFixture {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        let thumbnailDirectory = databaseURL.deletingLastPathComponent()
+            .appending(path: "Thumbnails", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)
+        let thumbnail = thumbnailDirectory.appending(path: "kept.jpg", directoryHint: .notDirectory)
+        try Data("kept".utf8).write(to: thumbnail)
+
         let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
-        try await dbQueue.writeWithoutTransaction { db in
-            try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN import_destination_byte_size")
-            try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN import_destination_modified_at_epoch")
-            try db.execute(
-                sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
-                arguments: ["v11_import_destination_provenance"]
-            )
-        }
-        return databaseURL
-    }
-
-    struct V5Fixture {
-        let databaseURL: URL
-        let original: URL
-        let thumbnail: URL
-    }
-
-    struct FutureFixture {
-        let databaseURL: URL
-        let thumbnail: URL
-    }
-
-    static func makeV5EnrichedFixture() async throws -> V5Fixture {
-        let temp = try makeTestDirectory()
-        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let original = root.appending(path: "dated.jpg", directoryHint: .notDirectory)
-        try writeCatalogStoreFile(original, contents: "jpeg")
-
-        let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        try FileManager.default.createDirectory(
-            at: databaseURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        let thumbnailDirectory = databaseURL.deletingLastPathComponent()
-            .appending(path: "Thumbnails", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)
-        let thumbnail = thumbnailDirectory.appending(path: "dated.jpg", directoryHint: .notDirectory)
-        try Data("thumb".utf8).write(to: thumbnail)
-
-        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
-        try migrateThroughV5(dbQueue)
         try await dbQueue.write { db in
-            try db.execute(
-                sql: """
-                INSERT INTO library_root (path, kind, device_identity, display_name, last_seen_at)
-                VALUES (?, ?, NULL, NULL, NULL)
-                """,
-                arguments: [rootPath.rawValue, LibraryRootKind.library.rawValue]
-            )
-            let rootID = db.lastInsertedRowID
-            let relative = "dated.jpg"
-            try db.execute(
-                sql: """
-                INSERT INTO media_asset (
-                    library_root_id, relative_path, sort_key, name_sort_key, name,
-                    content_type_identifier, kind, format, byte_size,
-                    created_at_unix, content_modified_at_unix, thumbnail_path,
-                    enriched_source_size, enriched_source_mtime
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                arguments: [
-                    rootID,
-                    relative,
-                    MediaSortKey.make(
-                        libraryRootPath: rootPath,
-                        relativePath: MediaRelativePath(rawValue: relative)
-                    ),
-                    MediaSortKey.naturalKey(relative),
-                    relative,
-                    "public.jpeg",
-                    "image",
-                    "jpg",
-                    4,
-                    Date().timeIntervalSince1970,
-                    Date().timeIntervalSince1970,
-                    "dated.jpg",
-                    4,
-                    Int(Date().timeIntervalSince1970),
-                ]
-            )
-            let metadata = AssetMetadata(
-                timestamps: [
-                    CaptureTimestampRecord(
-                        role: "original",
-                        instant: nil,
-                        utcOffsetSeconds: nil,
-                        precision: "localFloating",
-                        year: 2026,
-                        month: 4,
-                        day: 26,
-                        hour: 14,
-                        minute: 57,
-                        second: 35
-                    ),
-                ]
-            )
-            let json = try CatalogStore.encodeMetadataExtraJSON(metadata)
-            try db.execute(
-                sql: """
-                INSERT INTO asset_metadata (library_root_id, relative_path, metadata_extra_json)
-                VALUES (?, ?, ?)
-                """,
-                arguments: [rootID, relative, json]
-            )
-        }
-        return V5Fixture(databaseURL: databaseURL, original: original, thumbnail: thumbnail)
-    }
-
-    static func makeFutureSchemaFixture() async throws -> FutureFixture {
-        let temp = try makeTestDirectory()
-        let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        try FileManager.default.createDirectory(
-            at: databaseURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        let thumbnailDirectory = databaseURL.deletingLastPathComponent()
-            .appending(path: "Thumbnails", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)
-        let thumbnail = thumbnailDirectory.appending(path: "future.jpg", directoryHint: .notDirectory)
-        try Data("future".utf8).write(to: thumbnail)
-
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
-        try migrateThroughV5(dbQueue)
-        try await dbQueue.write { db in
-            try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/future"])
-            try db.execute(
-                sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)",
-                arguments: ["v999_future_history"]
-            )
-            try db.execute(sql: """
-            CREATE TABLE IF NOT EXISTS future_only_table (
-                id INTEGER PRIMARY KEY
-            )
-            """)
+            try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/unknown-history"])
             try db.execute(
                 sql: """
                 INSERT INTO media_asset (
                     library_root_id, relative_path, sort_key, name_sort_key, name
-                ) VALUES (1, 'kept.jpg', 'k', 'kept.jpg', 'kept.jpg')
-                """
+                ) VALUES (?, 'kept.jpg', 'k', 'kept.jpg', 'kept.jpg')
+                """,
+                arguments: [db.lastInsertedRowID]
             )
+            try db.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)", arguments: [identifier])
         }
-        return FutureFixture(databaseURL: databaseURL, thumbnail: thumbnail)
-    }
-
-    static func migrateThroughV5(_ dbQueue: DatabaseQueue) throws {
-        try createV5SchemaMatchingProduction(dbQueue)
-    }
-
-    static func createV5SchemaMatchingProduction(_ dbQueue: DatabaseQueue) throws {
-        try CatalogStore.migrator.migrate(dbQueue)
-        try dbQueue.writeWithoutTransaction { db in
-            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = ?", arguments: [
-                "v7_media_companion",
-            ])
-            try db.execute(sql: "DROP TABLE IF EXISTS media_companion")
-            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = ?", arguments: [
-                "v6_import_history_and_capture_wall",
-            ])
-            try db.execute(sql: "DROP INDEX IF EXISTS idx_media_asset_import_batch")
-            try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN import_batch_unix_ms")
-            try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN capture_wall_compact")
-            try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN capture_wall_precision")
-        }
-    }
-
-    static func mediaAssetColumns(_ databaseURL: URL) async throws -> Set<String> {
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
-            try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_xinfo('media_asset')"))
-        }
-    }
-
-    static func appliedMigrationIdentifiers(_ databaseURL: URL) async throws -> Set<String> {
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
-            try Set(String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations"))
-        }
+        return UnknownHistoryFixture(databaseURL: databaseURL, thumbnail: thumbnail)
     }
 
     static func stampImportBatches(databaseURL: URL, stamps: [String: Int64]) async throws {
