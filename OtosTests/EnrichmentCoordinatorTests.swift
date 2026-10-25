@@ -459,32 +459,35 @@ struct EnrichmentCoordinatorTests {
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
         let freshID = try #require(scanned.testAssets.first?.id)
 
-        let coordinator = EnrichmentCoordinator(
-            store: store,
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
-            materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
-            claimBatchSize: 8,
-            claimWindowLimit: 32
-        )
-
-        // Fill the claim window with 32 synthetic permanently-failing background
-        // records already at the in-window retry bound. They hold no real Store row,
-        // isolating the window-capacity behavior from Store bookkeeping.
+        // The coordinator starts with 32 permanently-failing background demands already
+        // at the in-window retry bound. They hold no real Store row, isolating the
+        // window-capacity behavior from Store bookkeeping.
         let badRoot = LibraryRootPath(rawValue: temp.appending(path: "Bad").path(percentEncoded: false))
+        var schedule = EnrichmentSchedule(retrySchedule: .production)
         var badIDs: [MediaAssetID] = []
         for index in 0 ..< 32 {
             let badID = MediaAssetID(
                 libraryRootPath: badRoot,
                 relativePath: MediaRelativePath(rawValue: "bad-\(index).jpg")
             )
-            let work = EnrichmentCoordinator.DownloadWork(
-                id: badID, url: badID.fileURL, sourceSize: 100, captureDate: nil,
-                isVideo: false, isDeviceStaging: false, attemptCount: 4, retryNotBefore: nil
+            schedule.demand(
+                EnrichmentCoordinator.DownloadWork(
+                    id: badID, url: badID.fileURL, sourceSize: 100, captureDate: nil,
+                    isVideo: false, isDeviceStaging: false, attemptCount: 4, retryNotBefore: nil
+                ),
+                ownsStoreClaim: true
             )
-            await coordinator.testSeedMaterialization(work)
             badIDs.append(badID)
         }
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            claimBatchSize: 8,
+            schedule: schedule,
+            claimWindowLimit: 32
+        )
         #expect(await coordinator.workStateSnapshot().materializationPending == 32)
 
         // Materialization demands do not consume ready-enrichment capacity, so a
@@ -492,8 +495,9 @@ struct EnrichmentCoordinatorTests {
         let admittedWork = await coordinator.dequeueEnrichmentWork()
         #expect(admittedWork.map(\.id) == [freshID])
 
-        // Each of the 32 exceeds its retry bound on this failure: the fix releases
-        // the claim-window slot and hands pacing to the ledger instead of holding it.
+        // Each of the 32 exceeds its retry bound on this failure, which releases its
+        // claim-window slot and hands pacing to the ledger instead of holding the slot
+        // (the ledger side is `EnrichmentScheduleTests`).
         for badID in badIDs {
             let work = EnrichmentCoordinator.DownloadWork(
                 id: badID, url: badID.fileURL, sourceSize: 100, captureDate: nil,
@@ -507,9 +511,6 @@ struct EnrichmentCoordinatorTests {
         }
 
         #expect(await coordinator.workStateSnapshot().materializationPending == 0)
-        for badID in badIDs {
-            #expect(await coordinator.testRetryLedgerEntry(for: badID) != nil)
-        }
 
         // The ready candidate remains in the independent ready pool; the exhausted
         // materialization demands no longer occupy a ready-enrichment slot.
@@ -517,6 +518,9 @@ struct EnrichmentCoordinatorTests {
         #expect(await coordinator.workStateSnapshot().enriching == 1)
     }
 
+    /// ENR-009: a claimed row the ledger paces is deferred back to the Store while its
+    /// source signature matches, and claimed at once when the source changed since the
+    /// ledger entry was written.
     @Test func retryLedgerDefersMatchingSignatureAndResetsOnChange() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -527,36 +531,30 @@ struct EnrichmentCoordinatorTests {
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
         let id = try #require(scanned.testAssets.first?.id)
 
-        let coordinator = EnrichmentCoordinator(
+        let paced = pacedSchedule([(id, 100)])
+        let deferring = EnrichmentCoordinator(
             store: store,
             enricher: MediaEnricher { _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            schedule: paced
         )
-
-        // Matching source signature, notBefore in the future: must defer rather than
-        // re-claim and immediately re-fail.
-        await coordinator.testSeedRetryLedger(
-            id: id,
-            entry: EnrichmentCoordinator.RetryLedgerEntry(
-                notBefore: .now.advanced(by: .seconds(900)), attemptCount: 1, sourceSize: 100
-            )
-        )
-        let deferred = await coordinator.dequeueEnrichmentWork()
+        let deferred = await deferring.dequeueEnrichmentWork()
         #expect(deferred.isEmpty)
-        #expect(await coordinator.workStateSnapshot().claimed == 0)
+        #expect(await deferring.workStateSnapshot().claimed == 0)
+        await deferring.shutdown()
 
-        // A changed source signature resets pacing immediately even though
-        // notBefore has not arrived.
-        await coordinator.testSeedRetryLedger(
-            id: id,
-            entry: EnrichmentCoordinator.RetryLedgerEntry(
-                notBefore: .now.advanced(by: .seconds(900)), attemptCount: 1, sourceSize: 999
-            )
+        // The ledger saw a 999-byte source; the row is 100 bytes now.
+        let changed = EnrichmentCoordinator(
+            store: store,
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            schedule: pacedSchedule([(id, 999)])
         )
-        let claimed = await coordinator.dequeueEnrichmentWork()
+        let claimed = await changed.dequeueEnrichmentWork()
         #expect(claimed.map(\.id) == [id])
-        #expect(await coordinator.testRetryLedgerEntry(for: id) == nil)
+        await changed.shutdown()
     }
 
     @Test func retryLedgerSkipsPastBlockedCandidatesWithinBoundedPasses() async throws {
@@ -575,76 +573,21 @@ struct EnrichmentCoordinatorTests {
         }
         let freshID = try #require(scanned.testAssets.first { $0.relativePath.rawValue == "fresh.jpg" }?.id)
 
-        // A small claim batch (2) against 4 blocked candidates forces multiple
+        // A small claim batch (2) against 4 ledger-paced candidates forces multiple
         // claim/defer passes before "fresh" is ever reached.
+        let blocked = scanned.testAssets.filter { $0.relativePath.rawValue != "fresh.jpg" }
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: MediaEnricher { _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             enrichConcurrency: 2,
-            claimBatchSize: 2
+            claimBatchSize: 2,
+            schedule: pacedSchedule(blocked.map { ($0.id, $0.byteSize) })
         )
-        for asset in scanned.testAssets where asset.relativePath.rawValue != "fresh.jpg" {
-            await coordinator.testSeedRetryLedger(
-                id: asset.id,
-                entry: EnrichmentCoordinator.RetryLedgerEntry(
-                    notBefore: .now.advanced(by: .seconds(900)), attemptCount: 1, sourceSize: asset.byteSize
-                )
-            )
-        }
 
         let claimed = await coordinator.dequeueEnrichmentWork()
         #expect(claimed.map(\.id) == [freshID])
-    }
-
-    @Test func materializationSuccessClearsRetryLedgerEntry() async {
-        let id = MediaAssetID(
-            libraryRootPath: LibraryRootPath(rawValue: "/library"),
-            relativePath: MediaRelativePath(rawValue: "a.jpg")
-        )
-        let coordinator = EnrichmentCoordinator(
-            store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
-            materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
-        )
-        await coordinator.testSeedRetryLedger(
-            id: id,
-            entry: EnrichmentCoordinator.RetryLedgerEntry(
-                notBefore: .now.advanced(by: .seconds(900)), attemptCount: 3, sourceSize: 100
-            )
-        )
-        let work = EnrichmentCoordinator.DownloadWork(
-            id: id, url: id.fileURL, sourceSize: 100, captureDate: nil, isVideo: false, isDeviceStaging: false
-        )
-        await coordinator.testSeedMaterialization(work)
-        await coordinator.finishDownload(work, result: .testMaterialized, attemptMs: 1)
-        #expect(await coordinator.testRetryLedgerEntry(for: id) == nil)
-    }
-
-    @Test func cancelledMaterializationReleasesClaimWithoutRetry() async {
-        let id = MediaAssetID(
-            libraryRootPath: LibraryRootPath(rawValue: "/library"),
-            relativePath: MediaRelativePath(rawValue: "a.jpg")
-        )
-        let coordinator = EnrichmentCoordinator(
-            store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
-            materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
-        )
-        let work = EnrichmentCoordinator.DownloadWork(
-            id: id, url: id.fileURL, sourceSize: 100, captureDate: nil, isVideo: false, isDeviceStaging: false
-        )
-        await coordinator.testSeedMaterialization(work)
-        await coordinator.finishDownload(
-            work,
-            result: MaterializationResult(outcome: .cancelled, rerequestCount: 0, elapsedMs: 1),
-            attemptMs: 1
-        )
-        #expect(await coordinator.workStateSnapshot().materializationPending == 0)
-        #expect(await coordinator.testRetryLedgerEntry(for: id) == nil)
     }
 
     /// A camera attach offers every catalog item at once, while only
@@ -682,126 +625,6 @@ struct EnrichmentCoordinatorTests {
         let accounted = snapshot.materializationPending + snapshot.materializationInFlight + snapshot.deviceSeedsQueued
         #expect(accounted == total)
         #expect(snapshot.deviceSeedsQueued > 0, "a camera larger than the limit must leave seeds queued, not dropped")
-        await coordinator.shutdown()
-    }
-
-    /// B2. `readinessRetryNotBefore` had no coverage at all — the existing `retryLedger`
-    /// tests cover the *failure* ledger, a different mechanism — which is why a scheduler
-    /// that woke itself at zero delay shipped and ran for a whole 45-minute camera session.
-    ///
-    /// A deadline is set when a row reads `.unknown` and cleared when that row is
-    /// re-examined. An entry whose deadline has passed therefore means the row was never
-    /// reached, and waiting cannot change that. Left in the map it makes the scheduled
-    /// delay zero forever.
-    @Test func aPassDropsReadinessDeadlinesThatHaveAlreadyElapsed() async {
-        let coordinator = EnrichmentCoordinator(
-            store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
-            materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
-        )
-        let id = MediaAssetID(
-            libraryRootPath: LibraryRootPath(rawValue: "/DeviceStaging/Camera"),
-            relativePath: MediaRelativePath(rawValue: "stale.arw")
-        )
-        await coordinator.testSeedReadinessRetry(id: id, notBefore: .now.advanced(by: .seconds(-30)))
-
-        _ = await coordinator.dequeueEnrichmentWork()
-
-        let deadlines = await coordinator.testReadinessRetryDeadlines()
-        #expect(
-            deadlines.allSatisfy { $0 > .now },
-            "an elapsed deadline must not survive a pass: min() would be in the past and the wake delay zero"
-        )
-        await coordinator.shutdown()
-    }
-
-    /// B2, at the trigger that actually produced the spin. While a camera stages,
-    /// `materializationDemands` sits saturated at the outstanding limit, so every pass
-    /// takes the early exit before reaching most rows — which is what guarantees a
-    /// deferred row is never re-examined and its deadline goes stale.
-    @Test func saturatedMaterializationDemandCannotLeaveAZeroDelayWake() async {
-        let coordinator = EnrichmentCoordinator(
-            store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
-            materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .dataless)
-        )
-        let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/BigCamera")
-        let limit = EnrichmentMaterializationHandoffPolicy.production().globalOutstandingLimit
-        for index in 0 ..< limit {
-            let id = MediaAssetID(
-                libraryRootPath: rootPath,
-                relativePath: MediaRelativePath(rawValue: "saturate_\(index).arw")
-            )
-            await coordinator.testSeedMaterialization(
-                EnrichmentCoordinator.DownloadWork(
-                    id: id, url: id.fileURL, sourceSize: 100, captureDate: nil,
-                    isVideo: false, isDeviceStaging: true
-                ),
-                inFlight: true
-            )
-        }
-        let deferred = MediaAssetID(
-            libraryRootPath: rootPath,
-            relativePath: MediaRelativePath(rawValue: "never_reached.arw")
-        )
-        await coordinator.testSeedReadinessRetry(id: deferred, notBefore: .now.advanced(by: .seconds(-5)))
-
-        _ = await coordinator.dequeueEnrichmentWork()
-
-        let deadlines = await coordinator.testReadinessRetryDeadlines()
-        #expect(
-            deadlines.allSatisfy { $0 > .now },
-            "a pass that exits early on saturated demand must still leave no elapsed deadline behind"
-        )
-        await coordinator.shutdown()
-    }
-
-    /// The prune must remove only what is dead. A deferral that has not come due yet is
-    /// live state — dropping it would re-probe a row the coordinator deliberately parked.
-    @Test func aPassKeepsReadinessDeadlinesThatHaveNotComeDue() async {
-        let coordinator = EnrichmentCoordinator(
-            store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
-            materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
-        )
-        let id = MediaAssetID(
-            libraryRootPath: LibraryRootPath(rawValue: "/DeviceStaging/Camera"),
-            relativePath: MediaRelativePath(rawValue: "parked.arw")
-        )
-        let deadline = ContinuousClock.now.advanced(by: .seconds(600))
-        await coordinator.testSeedReadinessRetry(id: id, notBefore: deadline)
-
-        _ = await coordinator.dequeueEnrichmentWork()
-
-        #expect(await coordinator.testReadinessRetryDeadlines() == [deadline])
-        await coordinator.shutdown()
-    }
-
-    /// B1. The scheduler-route line was unconditional, so a spinning scheduler emitted
-    /// hundreds of identical `dispatched=0` lines per second and the unified log dropped
-    /// other messages under the volume — which is how a working download pipeline read as
-    /// dead. Identical passes must collapse into a suppressed count.
-    @Test func identicalSchedulerPassesCollapseIntoASuppressedCount() async {
-        let coordinator = EnrichmentCoordinator(
-            store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
-            materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
-        )
-
-        _ = await coordinator.dequeueEnrichmentWork()
-        #expect(await coordinator.testSuppressedSchedulerRoutes() == 0, "the first pass is a transition and is emitted")
-
-        _ = await coordinator.dequeueEnrichmentWork()
-        _ = await coordinator.dequeueEnrichmentWork()
-        #expect(
-            await coordinator.testSuppressedSchedulerRoutes() == 2,
-            "unchanged passes must be counted, not emitted"
-        )
-
         await coordinator.shutdown()
     }
 
@@ -973,7 +796,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.shutdown()
     }
 
-    @Test func stageDeviceSkipsSeedAlreadyMaterializing() async throws {
+    @Test func stageDeviceSkipsSeedAlreadyMaterializing() async {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _, _ in .transient },
@@ -982,11 +805,12 @@ struct EnrichmentCoordinatorTests {
         )
         let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/Camera")
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "video.mov"))
-        let activeWork = EnrichmentCoordinator.DownloadWork(
-            id: id, url: id.fileURL, sourceSize: 100, captureDate: Date(timeIntervalSince1970: 50),
-            isVideo: true, isDeviceStaging: true
-        )
-        await coordinator.testSeedMaterialization(activeWork, inFlight: true)
+        await coordinator.stageDevice([
+            EnrichmentCoordinator.DeviceStagingSeed(
+                id: id, sourceSize: 100, captureDate: Date(timeIntervalSince1970: 50), isVideo: true
+            ),
+        ])
+        #expect(await coordinator.dequeueMaterializationSubmissions().map(\.id) == [id])
 
         let seeds = [
             EnrichmentCoordinator.DeviceStagingSeed(
@@ -995,9 +819,10 @@ struct EnrichmentCoordinatorTests {
         ]
         await coordinator.stageDevice(seeds)
 
-        let record = try #require(await coordinator.testMaterializationWork(for: id))
-        #expect(record.id == id)
-        #expect(await coordinator.workStateSnapshot().materializationInFlight == 1)
+        let state = await coordinator.workStateSnapshot()
+        #expect(state.materializationInFlight == 1)
+        #expect(state.materializationPending == 0, "the seed already in flight is not demanded twice")
+        #expect(state.deviceSeedsQueued == 0)
     }
 
     @Test func ejectDrainIgnoresPureInteractivePreviewTraffic() async throws {

@@ -9,38 +9,23 @@ struct TestEnrichmentReadinessChecker: EnrichmentReadinessChecking, Sendable {
     }
 }
 
-/// Actor-internal seams for scheduler tests: they exercise process-local state
-/// transitions directly rather than driving a full retry schedule through real time.
-extension EnrichmentCoordinator {
-    func testSeedMaterialization(_ work: DownloadWork, inFlight: Bool = false) {
-        materializationDemands[work.id] = work
-        materializationClaimIDs.insert(work.id)
-        if inFlight {
-            materializingIDs.insert(work.id)
-        }
+/// A schedule whose ledger paces each row, built through the transitions a background
+/// materialization takes when its last in-window retry fails. The rows hold no claim in
+/// it, so a coordinator started from it owes the Store nothing for them.
+func pacedSchedule(
+    _ rows: [(id: MediaAssetID, sourceSize: Int64?)],
+    now: ContinuousClock.Instant = .now
+) -> EnrichmentSchedule {
+    var schedule = EnrichmentSchedule(retrySchedule: .production)
+    let lastAttempt = EnrichmentRetrySchedule.production.backgroundDownloadDelays.count
+    for row in rows {
+        let work = EnrichmentCoordinator.DownloadWork(
+            id: row.id, url: row.id.fileURL, sourceSize: row.sourceSize, captureDate: nil,
+            isVideo: false, attemptCount: lastAttempt
+        )
+        schedule.demand(work, ownsStoreClaim: false)
+        _ = schedule.takeSubmissions(globalLimit: .max, backgroundPerRoot: .max, viewport: [], now: now)
+        _ = schedule.finish(work, outcome: .requestFailed, now: now)
     }
-
-    func testMaterializationWork(for id: MediaAssetID) -> DownloadWork? {
-        materializationDemands[id]
-    }
-
-    func testSeedRetryLedger(id: MediaAssetID, entry: RetryLedgerEntry) {
-        retryLedger[id] = entry
-    }
-
-    func testRetryLedgerEntry(for id: MediaAssetID) -> RetryLedgerEntry? {
-        retryLedger[id]
-    }
-
-    func testSeedReadinessRetry(id: MediaAssetID, notBefore: ContinuousClock.Instant) {
-        readinessRetryNotBefore[id] = notBefore
-    }
-
-    func testReadinessRetryDeadlines() -> [ContinuousClock.Instant] {
-        Array(readinessRetryNotBefore.values)
-    }
-
-    func testSuppressedSchedulerRoutes() -> Int {
-        suppressedSchedulerRoutes
-    }
+    return schedule
 }

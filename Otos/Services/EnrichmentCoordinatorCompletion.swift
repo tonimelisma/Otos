@@ -1,6 +1,5 @@
 import Foundation
 import OSLog
-import Synchronization
 
 /// Completion/writeback extension for `EnrichmentCoordinator`.
 ///
@@ -31,9 +30,8 @@ extension EnrichmentCoordinator {
                 isDeviceStaging: work.isDeviceStaging
             )
             readyClaims[id] = nil
-            materializationDemands[id] = pending
-            materializingIDs.remove(id)
-            materializationClaimIDs.insert(id)
+            // The ready claim's Store claim passes to the demand.
+            schedule.demand(pending, ownsStoreClaim: record.ownsStoreClaim)
             await recordVisibleThumbnailLifecycle(
                 phase: "notMaterialized",
                 id: id,
@@ -102,52 +100,45 @@ extension EnrichmentCoordinator {
         guard !isShuttingDown else {
             return
         }
-        guard materializationDemands[id] != nil else {
+        let outcome = result.outcome
+        let now = ContinuousClock.now
+        guard let settlement = schedule.finish(work, outcome: outcome, now: now) else {
             return
         }
-        let outcome = result.outcome
-        let materialized = outcome.isMaterialized
-        // Cancellation says nothing about the provider's ability to materialize the
-        // asset: release the claim without consuming a retry attempt or pacing slot.
-        if outcome == .cancelled {
-            materializationDemands[id] = nil
-            materializingIDs.remove(id)
-            await releaseMaterializationClaimIfOwned(id)
-        } else {
-            let retry = retryWorkIfNeeded(work, outcome: outcome)
-            if let retry {
-                materializationDemands[id] = retry
-                materializingIDs.remove(id)
-                scheduleDownloadRetrySignal()
-                await recordVisibleThumbnailLifecycle(
-                    phase: "materializationRetryScheduled",
-                    id: id,
-                    fields: ["attemptCount": "\(retry.attemptCount)"]
-                )
-            } else {
-                materializationDemands[id] = nil
-                materializingIDs.remove(id)
-                await releaseMaterializationClaimIfOwned(id)
-                if materialized {
-                    retryLedger[id] = nil
-                } else if work.isDeviceStaging {
-                    // Device staging has exhausted its attempts, so these bytes are not
-                    // obtainable: the camera denied access, the cable went, the item is
-                    // gone. That is the same situation as a source whose bytes cannot
-                    // be opened, and it needs the same answer — because the naming gate
-                    // withholds a camera's plan until every item is enriched, and an
-                    // item that can never be staged can never be enriched. Without
-                    // this the bar sits in "Checking the camera…" indefinitely with no
-                    // stated cause (ARC-057).
-                    //
-                    // Observed on a Sony ILCE-6700 whose 875 items all failed staging
-                    // with NSCocoaErrorDomain 257: enumeration succeeded, staging did
-                    // not, and nothing said so.
-                    await store.markSourceUnreadable(id)
-                } else {
-                    await recordRetryLedgerFailure(for: work)
-                }
-            }
+        if settlement.releasesStoreClaim {
+            await releaseClaims([id], visibleID: id)
+        }
+        switch settlement.disposition {
+        case .cancelled, .materialized:
+            break
+        case let .retrying(retry):
+            await recordVisibleThumbnailLifecycle(
+                phase: "materializationRetryScheduled",
+                id: id,
+                fields: ["attemptCount": "\(retry.attemptCount)"]
+            )
+        case .unobtainable:
+            // Device staging has exhausted its attempts, so these bytes are not
+            // obtainable: the camera denied access, the cable went, the item is gone.
+            // That is the same situation as a source whose bytes cannot be opened, and it
+            // needs the same answer — because the naming gate withholds a camera's plan
+            // until every item is enriched, and an item that can never be staged can never
+            // be enriched. Without this the bar sits in "Checking the camera…"
+            // indefinitely with no stated cause (ARC-057).
+            //
+            // Observed on a Sony ILCE-6700 whose 875 items all failed staging with
+            // NSCocoaErrorDomain 257: enumeration succeeded, staging did not, and nothing
+            // said so.
+            await store.markSourceUnreadable(id)
+        case let .paced(entry):
+            await recordVisibleThumbnailLifecycle(
+                phase: "retryLedgerPaced",
+                id: id,
+                fields: [
+                    "retryInMs": "\(DiagnosticsTiming.milliseconds(from: now, to: entry.notBefore))",
+                    "attemptCount": "\(entry.attemptCount)",
+                ]
+            )
         }
         // Staging that cannot proceed for disk reasons retries every 60 s forever, and
         // the naming gate now holds a camera import until every item is enriched — so
@@ -167,7 +158,7 @@ extension EnrichmentCoordinator {
         // unstaged — the defect the queue exists to fix (ENR-011).
         admitPendingDeviceSeeds()
         await recordVisibleThumbnailLifecycle(
-            phase: materialized ? "materialized" : "materializationFailed",
+            phase: outcome.isMaterialized ? "materialized" : "materializationFailed",
             id: id,
             fields: [
                 "outcome": outcome.diagnosticDescription,
@@ -177,120 +168,15 @@ extension EnrichmentCoordinator {
                 "sourceSize": "\(work.sourceSize ?? -1)",
             ]
         )
-        if materialized {
+        if outcome.isMaterialized {
             freshly.append(id)
         }
         signal()
     }
 
-    /// Background retries stay in-window through the full `[15, 60, 300, 900]`
-    /// schedule; the fifth failure signals bound-exceeded (`nil`) so the caller
-    /// releases the claim and hands pacing to `retryLedger` instead of holding a
-    /// claim-window slot forever. Device retries are unaffected: they cap at 3
-    /// in-window attempts (unbounded for `insufficientLocalSpace`, a waiting
-    /// condition rather than a failure) and never enter the ledger, since staged
-    /// device seeds hold no Store claim to begin with.
-    private func retryWorkIfNeeded(_ work: DownloadWork, outcome: MaterializationOutcome) -> DownloadWork? {
-        guard !outcome.isMaterialized else {
-            return nil
-        }
-        let delay: Duration
-        let attemptCount = work.attemptCount + 1
-        if work.isDeviceStaging {
-            switch outcome {
-            case .insufficientLocalSpace:
-                delay = .seconds(60)
-            default:
-                guard attemptCount < 3 else {
-                    return nil
-                }
-                delay = writeFailureBackoff * attemptCount
-            }
-        } else {
-            let delays: [Duration] = [.seconds(15), .seconds(60), .seconds(300), .seconds(900)]
-            guard attemptCount <= delays.count else {
-                return nil
-            }
-            delay = delays[attemptCount - 1]
-        }
-        return DownloadWork(
-            id: work.id,
-            url: work.url,
-            sourceSize: work.sourceSize,
-            captureDate: work.captureDate,
-            isVideo: work.isVideo,
-            isDeviceStaging: work.isDeviceStaging,
-            attemptCount: attemptCount,
-            retryNotBefore: .now.advanced(by: delay)
-        )
-    }
-
-    private func recordRetryLedgerFailure(for work: DownloadWork) async {
-        let previousAttempts = retryLedger[work.id]?.attemptCount ?? 0
-        let entry = RetryLedgerEntry(
-            notBefore: .now.advanced(by: .seconds(900)),
-            attemptCount: previousAttempts + 1,
-            sourceSize: work.sourceSize
-        )
-        retryLedger[work.id] = entry
-        scheduleRetryLedgerSignal()
-        await recordVisibleThumbnailLifecycle(
-            phase: "retryLedgerPaced",
-            id: work.id,
-            fields: [
-                "retryInMs": "\(DiagnosticsTiming.milliseconds(from: .now, to: entry.notBefore))",
-                "attemptCount": "\(entry.attemptCount)",
-            ]
-        )
-    }
-
-    /// Mirrors `scheduleDownloadRetrySignal`: without an owned wake, a ledger-paced
-    /// identity would sit past its `notBefore` forever once no other signal source
-    /// (viewport change, scan, unrelated completion) happens to wake the loop.
-    private func scheduleRetryLedgerSignal() {
-        ledgerRetryTask?.cancel()
-        guard let nextRetry = retryLedger.values.map(\.notBefore).min() else {
-            ledgerRetryTask = nil
-            return
-        }
-        ledgerRetryTask = Task { [weak self] in
-            do {
-                // time: backoff — the retry ledger paces a materialization the provider failed
-                try await ContinuousClock().sleep(until: nextRetry)
-            } catch {
-                return
-            }
-            await self?.signal()
-        }
-    }
-
     private func releaseClaimIfOwned(_ record: ClaimedWorkRecord, id: MediaAssetID) async {
         guard record.ownsStoreClaim else { return }
         await releaseClaims([id], visibleID: id)
-    }
-
-    private func releaseMaterializationClaimIfOwned(_ id: MediaAssetID) async {
-        guard materializationClaimIDs.remove(id) != nil else { return }
-        await releaseClaims([id], visibleID: id)
-    }
-
-    private func scheduleDownloadRetrySignal() {
-        downloadRetryTask?.cancel()
-        let nextRetry = awaitingMaterializationWork.values
-            .compactMap(\.retryNotBefore)
-            .min()
-        guard let nextRetry else {
-            return
-        }
-        downloadRetryTask = Task { [weak self] in
-            do {
-                // time: backoff — a failed provider download retries on its schedule
-                try await ContinuousClock().sleep(until: nextRetry)
-            } catch {
-                return
-            }
-            await self?.signal()
-        }
     }
 
     func scheduleApplyFlushIfNeeded() {
@@ -337,6 +223,9 @@ extension EnrichmentCoordinator {
     }
 
     func releaseOutstandingClaimsForShutdown() async {
+        let materializationClaimIDs = schedule.materializations.compactMap { id, record in
+            record.ownsStoreClaim ? id : nil
+        }
         let ids = Set(readyClaims.compactMap { id, record in
             record.ownsStoreClaim ? id : nil
         }).union(materializationClaimIDs).union(pendingApplyClaimIDs)
@@ -404,31 +293,13 @@ extension EnrichmentCoordinator {
         case .applied:
             break
         case .writeFailed:
-            scheduleWriteFailureRetry()
+            // The loop wakes once the backoff passes and re-dispatches any asset still
+            // `needsEnrichment`; persistent failure schedules again, pacing retries instead
+            // of tight-looping the read/generate/fail cycle.
+            let now = ContinuousClock.now
+            schedule.catalogWriteFailed(now: now)
+            armWake(after: now)
         }
-    }
-
-    /// One pending backoff retry at a time. After the delay it re-wakes the loop, which
-    /// re-dispatches any asset still `needsEnrichment`; persistent failure reschedules,
-    /// pacing retries instead of tight-looping the read/generate/fail cycle.
-    private func scheduleWriteFailureRetry() {
-        guard writeRetryTask == nil else {
-            return
-        }
-        let backoff = writeFailureBackoff
-        writeRetryTask = Task { [weak self] in
-            // time: backoff — after a failed catalog write
-            try? await Task.sleep(for: backoff)
-            await self?.fireWriteFailureRetry()
-        }
-    }
-
-    private func fireWriteFailureRetry() {
-        writeRetryTask = nil
-        guard !Task.isCancelled, !isShuttingDown else {
-            return
-        }
-        markDirtyAndSignal()
     }
 
     private func releaseShutdownClaims(_ ids: Set<MediaAssetID>) async {
@@ -480,12 +351,5 @@ extension EnrichmentCoordinator {
         case .writeFailed:
             return ("batchWriteFailed", fields)
         }
-    }
-}
-
-private extension Duration {
-    nonisolated var timeInterval: TimeInterval {
-        let value = components
-        return TimeInterval(value.seconds) + TimeInterval(value.attoseconds) / 1_000_000_000_000_000_000
     }
 }

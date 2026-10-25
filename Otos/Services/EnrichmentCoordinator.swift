@@ -20,8 +20,10 @@ import OSLog
 /// sources before fixed-library fallback work. MTP devices can also seed temporary
 /// staging downloads, ordered still/image items before video, without creating a second
 /// durable queue. The coordinator keeps only the runtime state it cannot derive: the
-/// viewport, ready/enriching claims, independent materialization demands, the
-/// `freshly` hand-off, and the pending-apply buffer.
+/// viewport, ready/enriching claims, the `freshly` hand-off, the pending-apply buffer, and
+/// an `EnrichmentSchedule` — the value that holds materialization demands, the pacing
+/// ledger, readiness rechecks and the catalog-write retry. Every wait that schedule holds
+/// wakes the loop through one owned deadline (`armWake(after:)`).
 ///
 /// A bounded readiness pass checks live materialization status before ready admission.
 /// The enricher repeats the final byte-read gate for provider races; physical transfer
@@ -101,7 +103,7 @@ actor EnrichmentCoordinator {
         let shouldHash: Bool
     }
 
-    struct DownloadWork {
+    nonisolated struct DownloadWork: Equatable, Sendable {
         let id: MediaAssetID
         let url: URL
         let sourceSize: Int64?
@@ -143,7 +145,7 @@ actor EnrichmentCoordinator {
     /// in-window retry attempts: no work payload (unlike `ClaimedWorkRecord`), so
     /// holding one per permanently-failing identity is far cheaper than the
     /// claim-window slot it replaces.
-    struct RetryLedgerEntry: Equatable {
+    nonisolated struct RetryLedgerEntry: Equatable, Sendable {
         let notBefore: ContinuousClock.Instant
         let attemptCount: Int
         let sourceSize: Int64?
@@ -162,12 +164,10 @@ actor EnrichmentCoordinator {
     var viewport: [MediaAssetID] = []
     var freshly: [MediaAssetID] = []
     var readyClaims: [MediaAssetID: ClaimedWorkRecord] = [:]
-    var materializationDemands: [MediaAssetID: DownloadWork] = [:]
-    var materializingIDs: Set<MediaAssetID> = []
+    var schedule: EnrichmentSchedule
     /// Callers of `drainWork(under:)` waiting for a root's work to end, resumed by
     /// `resumeDrainedWaiters()` whenever a piece of work finishes.
     var drainWaiters: [UUID: (rootPath: LibraryRootPath, continuation: CheckedContinuation<Void, Never>)] = [:]
-    var materializationClaimIDs: Set<MediaAssetID> = []
     var pendingApplyClaimIDs: Set<MediaAssetID> = []
     var deviceRootPaths: Set<LibraryRootPath> = []
     /// Device seeds offered but not yet admitted as materialization demands.
@@ -182,14 +182,11 @@ actor EnrichmentCoordinator {
     /// eager-staging intent.
     var pendingDeviceSeeds: [DeviceStagingSeed] = []
     var nextClaimSequence: UInt64 = 0
-    var retryLedger: [MediaAssetID: RetryLedgerEntry] = [:]
     var pendingApply: [EnrichmentResult] = []
     var diagnosedThumbnailLifecycleIDs: Set<MediaAssetID> = []
     var isShuttingDown = false
-    var lastDownloadCandidateEvaluationCount = 0
     var lastEnrichmentAdmissionSnapshot: AdmissionDiagnosticSnapshot?
     var enrichmentAdmissionTransitionCount = 0
-    var readinessRetryNotBefore: [MediaAssetID: ContinuousClock.Instant] = [:]
     /// Resolves a device root to its live session, so a camera row can be enriched from
     /// ranges instead of from a downloaded copy. Nil when no camera is attached, or in
     /// tests that do not exercise the device path.
@@ -200,16 +197,6 @@ actor EnrichmentCoordinator {
     /// failing it, so this is measured rather than assumed. A root absent from this set
     /// stages, which is what every device did before this path existed.
     var rangeCapableRootPaths: Set<LibraryRootPath> = []
-    /// Last emitted scheduler-route facts, and how many identical passes have been
-    /// collapsed since (B1). The route line was unconditional, so a scheduler spinning at
-    /// zero delay emitted hundreds of identical `dispatched=0` lines per second: the
-    /// 2026-08-30 camera session peaked at 2,336 lines/second and the unified log dropped
-    /// ~836 download completions, which produced a false diagnosis of a wedged pipeline.
-    /// Logging on change keeps every transition and costs one line per steady state.
-    var lastSchedulerRoute: SchedulerRouteFacts?
-    var suppressedSchedulerRoutes = 0
-
-    let writeFailureBackoff: Duration
 
     private var supervisor: Task<Void, Never>?
     private var changeConsumer: Task<Void, Never>?
@@ -218,10 +205,10 @@ actor EnrichmentCoordinator {
     /// write itself rather than from a timer: a write measured ~0.4 ms for one row and
     /// ~0.1 ms a row in larger batches (`docs/research/2026-10-23-cadence-audit.md`).
     var applyFlushTask: Task<Void, Never>?
-    var writeRetryTask: Task<Void, Never>?
-    var downloadRetryTask: Task<Void, Never>?
-    var ledgerRetryTask: Task<Void, Never>?
-    var readinessRetryTask: Task<Void, Never>?
+    /// The one sleep toward the schedule's earliest wait, and the instant it wakes at.
+    /// Re-armed only when that instant changes.
+    private var wakeTask: Task<Void, Never>?
+    private var wakeAt: ContinuousClock.Instant?
     private let signalStream: AsyncStream<Void>
     private let signalContinuation: AsyncStream<Void>.Continuation
 
@@ -234,7 +221,7 @@ actor EnrichmentCoordinator {
         readinessChecker: any EnrichmentReadinessChecking = LiveEnrichmentReadinessChecker(),
         enrichConcurrency: Int = EnrichmentAdmissionPolicy.production.enrichConcurrency,
         claimBatchSize: Int = 32,
-        writeFailureBackoff: Duration = .seconds(5),
+        schedule: EnrichmentSchedule = EnrichmentSchedule(retrySchedule: .production),
         admissionPolicy: EnrichmentAdmissionPolicy = .production,
         handoffPolicy: EnrichmentMaterializationHandoffPolicy = .production(),
         claimWindowLimit: Int = 32
@@ -249,7 +236,7 @@ actor EnrichmentCoordinator {
         self.admissionPolicy = policy
         self.enrichConcurrency = enrichConcurrency
         self.claimBatchSize = max(claimBatchSize, enrichConcurrency)
-        self.writeFailureBackoff = writeFailureBackoff
+        self.schedule = schedule
         self.handoffPolicy = handoffPolicy
         self.claimWindowLimit = max(claimWindowLimit, enrichConcurrency)
         self.readinessChecker = readinessChecker
@@ -282,39 +269,24 @@ extension EnrichmentCoordinator {
         let supervisor = supervisor
         let capturedChangeConsumer = changeConsumer
         let capturedApplyFlushTask = applyFlushTask
-        let capturedWriteRetryTask = writeRetryTask
-        let capturedDownloadRetryTask = downloadRetryTask
-        let capturedLedgerRetryTask = ledgerRetryTask
-        let capturedReadinessRetryTask = readinessRetryTask
+        let capturedWakeTask = wakeTask
         supervisor?.cancel()
         capturedChangeConsumer?.cancel()
         changeConsumer = nil
         capturedApplyFlushTask?.cancel()
         applyFlushTask = nil
-        capturedWriteRetryTask?.cancel()
-        writeRetryTask = nil
-        capturedDownloadRetryTask?.cancel()
-        downloadRetryTask = nil
-        capturedLedgerRetryTask?.cancel()
-        ledgerRetryTask = nil
-        capturedReadinessRetryTask?.cancel()
-        readinessRetryTask = nil
+        capturedWakeTask?.cancel()
+        wakeTask = nil
+        wakeAt = nil
         await supervisor?.value
         await capturedChangeConsumer?.value
         await capturedApplyFlushTask?.value
-        await capturedWriteRetryTask?.value
-        await capturedDownloadRetryTask?.value
-        await capturedLedgerRetryTask?.value
-        await capturedReadinessRetryTask?.value
+        await capturedWakeTask?.value
         self.supervisor = nil
         await releaseOutstandingClaimsForShutdown()
         readyClaims.removeAll()
-        materializationDemands.removeAll()
-        materializingIDs.removeAll()
-        materializationClaimIDs.removeAll()
+        schedule = EnrichmentSchedule(retrySchedule: schedule.retrySchedule)
         pendingApplyClaimIDs.removeAll()
-        retryLedger.removeAll()
-        readinessRetryNotBefore.removeAll()
         pendingApply.removeAll()
         pendingDeviceSeeds.removeAll()
         diagnosedThumbnailLifecycleIDs.removeAll()
@@ -402,26 +374,30 @@ extension EnrichmentCoordinator {
             if FileManager.default.fileExists(atPath: seed.id.fileURL.path(percentEncoded: false)) {
                 continue
             }
-            if materializationDemands[seed.id] != nil {
+            if schedule.hasDemand(for: seed.id) {
                 continue
             }
-            guard materializationDemands.count < handoffPolicy.globalOutstandingLimit else {
+            guard schedule.outstandingCount < handoffPolicy.globalOutstandingLimit else {
                 remaining.append(seed)
                 continue
             }
-            materializationDemands[seed.id] = DownloadWork(
-                id: seed.id,
-                url: seed.id.fileURL,
-                sourceSize: seed.sourceSize,
-                captureDate: seed.captureDate,
-                isVideo: seed.isVideo,
-                isDeviceStaging: true
+            // Device staging has no Store enrichment claim.
+            schedule.demand(
+                DownloadWork(
+                    id: seed.id,
+                    url: seed.id.fileURL,
+                    sourceSize: seed.sourceSize,
+                    captureDate: seed.captureDate,
+                    isVideo: seed.isVideo,
+                    isDeviceStaging: true
+                ),
+                ownsStoreClaim: false
             )
             admitted += 1
         }
         pendingDeviceSeeds = remaining
         let queued = pendingDeviceSeeds.count
-        let outstanding = materializationDemands.count
+        let outstanding = schedule.outstandingCount
         OtosLog.metadata.notice(
             "op=enrichment.stageDevice phase=admit offered=\(offered, privacy: .public) admitted=\(admitted, privacy: .public) queued=\(queued, privacy: .public) outstanding=\(outstanding, privacy: .public)"
         )
@@ -433,7 +409,7 @@ extension EnrichmentCoordinator {
     /// finite and the wait ends when the last piece finishes, not after a guessed
     /// interval. The shared materialization
     /// coordinator needs no separate check: every request this coordinator submits is in
-    /// `materializingIDs` from submission until its result comes back, so a root with no
+    /// flight in `schedule` from submission until its result comes back, so a root with no
     /// local work has no enrichment-origin transfer either (interactive previews never
     /// counted). A cancelled caller stops waiting at once.
     func drainWork(under rootPath: LibraryRootPath) async {
@@ -468,11 +444,7 @@ extension EnrichmentCoordinator {
                 dropped += 1
             }
         }
-        for id in materializationDemands.keys where id.libraryRootPath == rootPath && !materializingIDs.contains(id) {
-            materializationDemands[id] = nil
-            materializationClaimIDs.remove(id)
-            dropped += 1
-        }
+        dropped += schedule.dropWaitingDemands(under: rootPath)
         let seedsBefore = pendingDeviceSeeds.count
         pendingDeviceSeeds.removeAll { $0.id.libraryRootPath == rootPath }
         return dropped + seedsBefore - pendingDeviceSeeds.count
@@ -483,7 +455,7 @@ extension EnrichmentCoordinator {
             guard id.libraryRootPath == rootPath, case .enriching = record.state else { return false }
             return true
         }
-        return enriching + materializingIDs.count { $0.libraryRootPath == rootPath }
+        return enriching + schedule.inFlightCount(under: rootPath)
     }
 
     /// Resumes every drain waiter whose root has no work left. Called whenever a piece
@@ -514,8 +486,7 @@ extension EnrichmentCoordinator {
             }
             return false
         }
-        let localMaterialization = materializingIDs.contains { id in id.libraryRootPath == rootPath }
-        return local || localMaterialization
+        return local || schedule.hasInFlightWork(under: rootPath)
     }
 
     func workStateSnapshot() -> WorkStateSnapshot {
@@ -533,8 +504,8 @@ extension EnrichmentCoordinator {
             readyQueued: queued,
             enriching: enriching,
             pendingApply: pendingApply.count,
-            materializationPending: max(materializationDemands.count - materializingIDs.count, 0),
-            materializationInFlight: materializingIDs.count,
+            materializationPending: schedule.waitingCount,
+            materializationInFlight: schedule.inFlightCount,
             deviceSeedsQueued: pendingDeviceSeeds.count
         )
     }
@@ -565,13 +536,18 @@ extension EnrichmentCoordinator {
     /// actor cannot call a mutating `next()` on one of its own stored properties.
     /// Zero-byte claimed assets short-circuit before materialization or the enricher:
     /// they cannot contain media, so a definitive empty stamp is synthesized instead.
+    ///
+    /// Each pass decides what is due against the one instant it started from, and ends by
+    /// arming the wake for the earliest wait still ahead of that instant: anything at or
+    /// behind it was this pass's to act on.
     func runLoop() async {
         await withDiscardingTaskGroup { group in
             for await _ in signalStream {
                 if Task.isCancelled {
                     break
                 }
-                for work in await dequeueEnrichmentWork() {
+                let passStart = ContinuousClock.now
+                for work in await dequeueEnrichmentWork(now: passStart) {
                     if work.sourceSize == 0 {
                         group.addTask {
                             await self.finishEmptySource(work)
@@ -587,7 +563,7 @@ extension EnrichmentCoordinator {
                         await self.finishEnrich(work, outcome)
                     }
                 }
-                for work in await dequeueMaterializationSubmissions() {
+                for work in await dequeueMaterializationSubmissions(now: passStart) {
                     let requester = materializationRequester
                     group.addTask {
                         let start = ContinuousClock.now
@@ -606,7 +582,42 @@ extension EnrichmentCoordinator {
                         )
                     }
                 }
+                schedule.endPass(at: passStart)
+                armWake(after: passStart)
             }
         }
+    }
+
+    /// Points the one wake at the schedule's earliest wait after `now`, or cancels it when
+    /// nothing waits. Unchanged when that instant is the one already armed.
+    func armWake(after now: ContinuousClock.Instant) {
+        let next = schedule.nextWake(after: now)
+        guard next != wakeAt else {
+            return
+        }
+        wakeTask?.cancel()
+        wakeTask = nil
+        wakeAt = nil
+        guard let next, !isShuttingDown else {
+            return
+        }
+        wakeAt = next
+        wakeTask = Task { [weak self] in
+            do {
+                // time: backoff — the earliest retry, recheck or pacing the schedule holds
+                try await ContinuousClock().sleep(until: next)
+            } catch {
+                return
+            }
+            await self?.wakeFired(at: next)
+        }
+    }
+
+    private func wakeFired(at instant: ContinuousClock.Instant) {
+        if wakeAt == instant {
+            wakeAt = nil
+            wakeTask = nil
+        }
+        signal()
     }
 }
