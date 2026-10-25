@@ -163,6 +163,74 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    /// C from the grid opens the panel and the loupe with the crop tool on; a drag saves
+    /// one step when let go, and Escape ends the tool keeping the crop.
+    @Test func theCropToolSavesADragAsOneStepAndEscapeEndsIt() async throws {
+        try await withEditableLibrary(fileCount: 1) { library in
+            let id = library.ids[0]
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            model.selectAll()
+
+            model.toggleCropTool()
+            #expect(model.isEditPanelPresented)
+            #expect(model.viewMode == .loupe)
+            #expect(model.isCropping)
+            try await waitUntil { model.canEdit && model.editCropBase?.id == id }
+
+            let crop = EditCrop(left: 0.1, top: 0.1, width: 0.5, height: 0.5)
+            model.setCrop(crop, dragging: true)
+            #expect(model.submittedEditCommandCount == 0)
+            model.setCrop(crop, dragging: false)
+            try await waitUntil { model.hasSettledEdits }
+            #expect(try await library.store.editRecipe(for: id)?.recipe.crop == crop)
+            #expect(model.undoMenuState.undoTitle == "Undo Crop")
+
+            model.loupeEscape()
+            #expect(!model.isCropping)
+            #expect(model.editCropBase == nil)
+            #expect(model.viewMode == .loupe)
+        }
+    }
+
+    @Test func rotateRightAndUndoTurnTheSavedPhoto() async throws {
+        try await withEditableLibrary(fileCount: 1) { library in
+            let id = library.ids[0]
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            model.toggleEditPanel()
+            model.selectAll()
+            try await waitUntil { model.canEdit }
+
+            model.turnPhoto(clockwise: true)
+            try await waitUntil { model.hasSettledEdits }
+            #expect(try await library.store.editRecipe(for: id)?.recipe.quarterTurns == 1)
+            #expect(model.undoMenuState.undoTitle == "Undo Rotate Right")
+
+            model.undoLastChange()
+            try await waitUntil { model.hasSettledEdits }
+            #expect(try await library.store.editRecipe(for: id)?.recipe.quarterTurns == 0)
+        }
+    }
+
+    @Test func leavingTheLoupeEndsTheCropTool() async throws {
+        try await withEditableLibrary(fileCount: 1) { library in
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            model.selectAll()
+            model.toggleCropTool()
+            try await waitUntil { model.canEdit }
+            #expect(model.isCropping)
+
+            model.setViewMode(.grid)
+
+            #expect(!model.isCropping)
+        }
+    }
+
     /// The panel edits one photo; with two selected its controls have nothing to act on.
     @Test func aMultipleSelectionHasNoEditTarget() async throws {
         try await withEditableLibrary(fileCount: 2) { library in

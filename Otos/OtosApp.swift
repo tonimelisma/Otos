@@ -218,6 +218,31 @@ public struct OtosApp: App {
                 .keyboardShortcut("x", modifiers: [])
                 .disabled(!catalogViewModel.hasMediaChoiceTarget)
                 Divider()
+                // Lightroom desktop's keys: C for the crop tool, ⌘[ and ⌘] for quarter turns.
+                Button(catalogViewModel.isCropping ? "Done Cropping" : "Crop") {
+                    catalogViewModel.toggleCropTool()
+                }
+                .keyboardShortcut("c", modifiers: [])
+                .disabled(!catalogViewModel.isCropping && catalogViewModel.targetIDs(.current).count != 1)
+                Button("Rotate Left") {
+                    catalogViewModel.turnPhoto(clockwise: false)
+                }
+                .keyboardShortcut("[", modifiers: .command)
+                .disabled(!catalogViewModel.canEdit)
+                Button("Rotate Right") {
+                    catalogViewModel.turnPhoto(clockwise: true)
+                }
+                .keyboardShortcut("]", modifiers: .command)
+                .disabled(!catalogViewModel.canEdit)
+                Button("Flip Horizontal") {
+                    catalogViewModel.flipPhoto(horizontally: true)
+                }
+                .disabled(!catalogViewModel.canEdit)
+                Button("Flip Vertical") {
+                    catalogViewModel.flipPhoto(horizontally: false)
+                }
+                .disabled(!catalogViewModel.canEdit)
+                Divider()
                 Button("Move to Trash", role: .destructive) {
                     catalogViewModel.moveTargetedMediaToTrash()
                 }

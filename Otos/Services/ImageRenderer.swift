@@ -55,8 +55,9 @@ final nonisolated class ImageRenderer: Sendable {
         queue = DispatchQueue(label: "net.melisma.Otos.render.\(lane)", qos: lane == "interactive" ? .userInitiated : .utility)
     }
 
-    /// Renders `url` with `recipe` applied so its long edge is at most `longEdge`, or at
-    /// full size when nil.
+    /// Renders `url` with `recipe` applied so the edited photo's long edge is at most
+    /// `longEdge`, or at full size when nil. A cropped photo is developed from a frame
+    /// large enough for its crop to reach that size.
     func render(_ url: URL, longEdge: Int?, recipe: EditRecipe = .neutral) async throws -> Rendered {
         let lane = lane
         return try await withCheckedThrowingContinuation { continuation in
@@ -95,17 +96,42 @@ final nonisolated class ImageRenderer: Sendable {
         if isRAW(url) {
             return try developRAW(url, longEdge: longEdge, recipe: recipe)
         }
-        let decoded = try decodeImage(url, longEdge: longEdge)
+        let decoded = try decodeImage(url, outputLongEdge: longEdge, recipe: recipe)
         guard !recipe.isNeutral else {
             return decoded
         }
-        let adjusted = applying(recipe, toDevelopedRAW: false, CIImage(cgImage: decoded.image))
+        let developed = applying(recipe, toDevelopedRAW: false, CIImage(cgImage: decoded.image))
+        let adjusted = applyingGeometry(recipe, developed)
         return try Rendered(image: bitmap(adjusted), decoder: decoded.decoder, nativePixelSize: decoded.nativePixelSize)
     }
 
-    /// Opens a RAW for development: the newest decoder the file supports, scaled so its
-    /// long edge is at most `longEdge`.
-    static func openRAW(_ url: URL, longEdge: Int?) throws -> (filter: CIRAWFilter, decoder: Decoder) {
+    /// The RAW's oriented full-resolution size: its sensor size, turned when its
+    /// orientation (5–8) rotates it a quarter.
+    static func orientedNativeSize(_ filter: CIRAWFilter) -> CGSize {
+        let native = filter.nativeSize
+        return filter.orientation.rawValue >= 5 ? CGSize(width: native.height, height: native.width) : native
+    }
+
+    /// The scale factor that develops the RAW so the edited photo's long edge is at most
+    /// `outputLongEdge`: a crop keeps a fraction of the frame, so the frame is developed
+    /// that much larger, never beyond full resolution.
+    static func rawScaleFactor(_ filter: CIRAWFilter, outputLongEdge: Int?, recipe: EditRecipe) -> Float {
+        let native = orientedNativeSize(filter)
+        let nativeLongEdge = max(native.width, native.height)
+        guard let outputLongEdge, nativeLongEdge > 0 else {
+            return 1
+        }
+        let fraction = recipe.cropLongEdgeFraction(ofOriginal: native)
+        return Float(min(1, Double(outputLongEdge) / (Double(nativeLongEdge) * fraction)))
+    }
+
+    /// Opens a RAW for development with the newest decoder the file supports, scaled for
+    /// an edited long edge of at most `outputLongEdge`.
+    static func openRAW(
+        _ url: URL,
+        outputLongEdge: Int?,
+        recipe: EditRecipe
+    ) throws -> (filter: CIRAWFilter, decoder: Decoder) {
         guard let filter = CIRAWFilter(imageURL: url) else {
             throw RenderError.unreadable
         }
@@ -119,10 +145,7 @@ final nonisolated class ImageRenderer: Sendable {
         } else {
             decoder = .rawOther
         }
-        let nativeLongEdge = max(filter.nativeSize.width, filter.nativeSize.height)
-        if let longEdge, nativeLongEdge > 0 {
-            filter.scaleFactor = Float(min(1, Double(longEdge) / Double(nativeLongEdge)))
-        }
+        filter.scaleFactor = rawScaleFactor(filter, outputLongEdge: outputLongEdge, recipe: recipe)
         return (filter, decoder)
     }
 
@@ -188,7 +211,7 @@ final nonisolated class ImageRenderer: Sendable {
     /// mired cooler per step of `temperature` (warmer output for a positive value) and
     /// one `CITemperatureAndTint` tint unit per step of `tint` (magenta for positive),
     /// mapped to D65. Measured on a mid gray: ±100 moves it from r/b 0.41/0.67 to 0.56/0.38
-    /// (research 2026-10-25, white balance probes).
+    /// (research 2026-10-25, white balance and geometry probes).
     static func relativeWhiteBalance(temperature: Double, tint: Double, _ image: CIImage) -> CIImage {
         let filter = CIFilter.temperatureAndTint()
         filter.inputImage = image
@@ -199,18 +222,33 @@ final nonisolated class ImageRenderer: Sendable {
 
     private static let d65Mired = 1_000_000 / 6500.0
 
-    private static func developRAW(_ url: URL, longEdge: Int?, recipe: EditRecipe) throws -> Rendered {
-        let (filter, decoder) = try openRAW(url, longEdge: longEdge)
-        let image = try developed(filter, recipe: recipe)
-        // The output is oriented; its aspect says whether the native size is rotated.
-        let isPortrait = image.extent.height > image.extent.width
-        let native = filter.nativeSize
-        let oriented = (native.height > native.width) == isPortrait
-            ? native : CGSize(width: native.height, height: native.width)
-        return try Rendered(image: bitmap(image), decoder: decoder, nativePixelSize: oriented)
+    /// Applies the recipe's geometry (`EditGeometry`) to a developed, oriented image.
+    static func applyingGeometry(_ recipe: EditRecipe, _ image: CIImage) -> CIImage {
+        guard recipe.hasGeometry else {
+            return image
+        }
+        let developed = atOrigin(image)
+        let geometry = EditGeometry(recipe: recipe, developedSize: developed.extent.size)
+        let frame = CGRect(origin: .zero, size: geometry.frameSize)
+        // The edge is clamped before the transform so straightening samples the photo's
+        // own edge pixels at the frame's border instead of transparency.
+        let placed = developed.clampedToExtent().transformed(by: geometry.transform)
+        return atOrigin(placed.cropped(to: geometry.cropRect.integral.intersection(frame)))
     }
 
-    static func decodeImage(_ url: URL, longEdge: Int?) throws -> Rendered {
+    private static func atOrigin(_ image: CIImage) -> CIImage {
+        image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
+    }
+
+    private static func developRAW(_ url: URL, longEdge: Int?, recipe: EditRecipe) throws -> Rendered {
+        let (filter, decoder) = try openRAW(url, outputLongEdge: longEdge, recipe: recipe)
+        let image = try applyingGeometry(recipe, developed(filter, recipe: recipe))
+        return try Rendered(image: bitmap(image), decoder: decoder, nativePixelSize: orientedNativeSize(filter))
+    }
+
+    /// Decodes a still that is not a RAW, oriented, large enough for the recipe's edited
+    /// long edge to reach `outputLongEdge` (the whole original when nil).
+    static func decodeImage(_ url: URL, outputLongEdge: Int?, recipe: EditRecipe) throws -> Rendered {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary)
         else {
             throw RenderError.unreadable
@@ -223,16 +261,18 @@ final nonisolated class ImageRenderer: Sendable {
         guard nativeLongEdge > 0 else {
             throw RenderError.unreadable
         }
+        let native = orientation >= 5 ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
+        let fraction = recipe.cropLongEdgeFraction(ofOriginal: native)
+        let decodeLongEdge = outputLongEdge.map { Int((Double($0) / fraction).rounded(.up)) } ?? nativeLongEdge
         let options = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: min(longEdge ?? nativeLongEdge, nativeLongEdge),
+            kCGImageSourceThumbnailMaxPixelSize: min(decodeLongEdge, nativeLongEdge),
         ] as CFDictionary
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else {
             throw RenderError.renderFailed
         }
-        let native = orientation >= 5 ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
         return Rendered(image: image, decoder: .imageIO, nativePixelSize: native)
     }
 

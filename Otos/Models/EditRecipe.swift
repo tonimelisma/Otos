@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// One photo's current edit (plan 0108 decision 1): the values of every control the
@@ -34,6 +35,20 @@ nonisolated struct EditRecipe: Codable, Equatable, Hashable, Sendable {
     /// −100…100 through `CIColorControls` saturation.
     var saturation: Double = 0
 
+    /// Geometry, applied last and in this order: quarter turns, then flips, both in the
+    /// displayed frame; then straighten; then crop.
+    /// Clockwise quarter turns, 0…3.
+    var quarterTurns: Int = 0
+    /// Mirrors the turned photo left to right.
+    var flipHorizontal = false
+    /// Mirrors the turned photo top to bottom.
+    var flipVertical = false
+    /// Degrees clockwise, −45…45, through `CIStraightenFilter`, which scales the
+    /// rotated photo to fill its frame so no empty corner shows.
+    var straighten: Double = 0
+    /// The kept part of the straightened frame; nil keeps all of it.
+    var crop: EditCrop?
+
     static let neutral = EditRecipe()
 
     var isNeutral: Bool {
@@ -48,7 +63,12 @@ nonisolated struct EditRecipe: Codable, Equatable, Hashable, Sendable {
         temperature: Double? = nil,
         tint: Double? = nil,
         vibrance: Double = 0,
-        saturation: Double = 0
+        saturation: Double = 0,
+        quarterTurns: Int = 0,
+        flipHorizontal: Bool = false,
+        flipVertical: Bool = false,
+        straighten: Double = 0,
+        crop: EditCrop? = nil
     ) {
         self.exposure = exposure
         self.contrast = contrast
@@ -58,6 +78,11 @@ nonisolated struct EditRecipe: Codable, Equatable, Hashable, Sendable {
         self.tint = tint
         self.vibrance = vibrance
         self.saturation = saturation
+        self.quarterTurns = quarterTurns
+        self.flipHorizontal = flipHorizontal
+        self.flipVertical = flipVertical
+        self.straighten = straighten
+        self.crop = crop
     }
 
     init(from decoder: any Decoder) throws {
@@ -70,6 +95,304 @@ nonisolated struct EditRecipe: Codable, Equatable, Hashable, Sendable {
         tint = try container.decodeIfPresent(Double.self, forKey: .tint)
         vibrance = try container.decodeIfPresent(Double.self, forKey: .vibrance) ?? 0
         saturation = try container.decodeIfPresent(Double.self, forKey: .saturation) ?? 0
+        quarterTurns = try container.decodeIfPresent(Int.self, forKey: .quarterTurns) ?? 0
+        flipHorizontal = try container.decodeIfPresent(Bool.self, forKey: .flipHorizontal) ?? false
+        flipVertical = try container.decodeIfPresent(Bool.self, forKey: .flipVertical) ?? false
+        straighten = try container.decodeIfPresent(Double.self, forKey: .straighten) ?? 0
+        crop = try container.decodeIfPresent(EditCrop.self, forKey: .crop)
+    }
+}
+
+/// The kept part of the straightened frame, in fractions of its width and height from
+/// the top-left corner.
+nonisolated struct EditCrop: Codable, Equatable, Hashable, Sendable {
+    var left: Double
+    var top: Double
+    var width: Double
+    var height: Double
+
+    static let whole = EditCrop(left: 0, top: 0, width: 1, height: 1)
+    /// The smallest a crop side may be, as a fraction of the frame.
+    static let minimumSide = 0.02
+
+    /// The same crop kept inside the frame and at least the minimum size.
+    var clamped: EditCrop {
+        let width = min(max(width, Self.minimumSide), 1)
+        let height = min(max(height, Self.minimumSide), 1)
+        return EditCrop(
+            left: min(max(left, 0), 1 - width),
+            top: min(max(top, 0), 1 - height),
+            width: width,
+            height: height
+        )
+    }
+
+    /// A crop that keeps (all but rounding) the whole frame is no crop.
+    var isWhole: Bool {
+        abs(left) < 1e-4 && abs(top) < 1e-4 && abs(width - 1) < 1e-4 && abs(height - 1) < 1e-4
+    }
+
+    var right: Double {
+        left + width
+    }
+
+    var bottom: Double {
+        top + height
+    }
+
+    /// The crop's center, in the same fractions.
+    var center: CGPoint {
+        CGPoint(x: left + width / 2, y: top + height / 2)
+    }
+
+    /// The crop after the frame turns a quarter clockwise.
+    var turnedClockwise: EditCrop {
+        EditCrop(left: 1 - bottom, top: left, width: height, height: width)
+    }
+
+    /// The crop after the frame turns a quarter counterclockwise.
+    var turnedCounterclockwise: EditCrop {
+        EditCrop(left: top, top: 1 - right, width: height, height: width)
+    }
+
+    var mirroredHorizontally: EditCrop {
+        EditCrop(left: 1 - right, top: top, width: width, height: height)
+    }
+
+    var mirroredVertically: EditCrop {
+        EditCrop(left: left, top: 1 - bottom, width: width, height: height)
+    }
+
+    /// Width over height in fractions for a pixel ratio `pixelRatio` (width over height) in
+    /// a frame of `frame` pixels.
+    static func fractionRatio(pixelRatio: Double, frame: CGSize) -> Double {
+        guard frame.width > 0 else { return pixelRatio }
+        return pixelRatio * Double(frame.height / frame.width)
+    }
+
+    /// The crop moved by `delta` (fractions of the frame), kept inside it.
+    func moved(by delta: CGSize) -> EditCrop {
+        EditCrop(left: left + delta.width, top: top + delta.height, width: width, height: height).clamped
+    }
+
+    /// The crop with `handle` dragged by `delta` (fractions of the frame). The opposite
+    /// corner or edge stays put; an edge handle keeps the crop centered across it. With a
+    /// `fractionRatio` (width over height in fractions) the crop keeps that shape, following
+    /// whichever side the drag changed more, and shrinks to fit when it would leave the frame.
+    func resized(_ handle: CropHandle, by delta: CGSize, fractionRatio ratio: Double?) -> EditCrop {
+        let horizontal = Self.dragged(left, right, edge: handle.horizontal, by: delta.width)
+        let vertical = Self.dragged(top, bottom, edge: handle.vertical, by: delta.height)
+        let free = EditCrop(
+            left: horizontal.lower,
+            top: vertical.lower,
+            width: horizontal.upper - horizontal.lower,
+            height: vertical.upper - vertical.lower
+        )
+        guard let ratio, ratio > 0 else {
+            return free
+        }
+        // The anchor is the side that does not move, or the center across an edge handle.
+        let anchorX = Self.anchor(left, right, edge: handle.horizontal)
+        let anchorY = Self.anchor(top, bottom, edge: handle.vertical)
+        var newWidth: Double = switch (handle.horizontal, handle.vertical) {
+        case (0, _): free.height * ratio
+        case (_, 0): free.width
+        default: max(free.width, free.height * ratio)
+        }
+        newWidth = min(
+            newWidth,
+            Self.room(from: anchorX, edge: handle.horizontal),
+            Self.room(from: anchorY, edge: handle.vertical) * ratio
+        )
+        newWidth = max(newWidth, Self.minimumSide * max(1, ratio))
+        let newHeight = newWidth / ratio
+        return EditCrop(
+            left: Self.placed(from: anchorX, edge: handle.horizontal, extent: newWidth),
+            top: Self.placed(from: anchorY, edge: handle.vertical, extent: newHeight),
+            width: newWidth,
+            height: newHeight
+        ).clamped
+    }
+
+    /// The largest crop of `pixelRatio` (width over height, in pixels) inside a frame of
+    /// `frame` pixels, centered on `center` and moved only as far as it must to stay in it.
+    static func largest(pixelRatio: Double, frame: CGSize, around center: CGPoint) -> EditCrop {
+        let ratio = fractionRatio(pixelRatio: pixelRatio, frame: frame)
+        let width = ratio >= 1 ? 1 : ratio
+        let height = ratio >= 1 ? 1 / ratio : 1
+        return EditCrop(left: center.x - width / 2, top: center.y - height / 2, width: width, height: height).clamped
+    }
+
+    /// One axis of a free resize: the dragged side moves, inside the frame and never past
+    /// the other side less the minimum.
+    private static func dragged(
+        _ lower: Double,
+        _ upper: Double,
+        edge: Int,
+        by delta: Double
+    ) -> (lower: Double, upper: Double) {
+        switch edge {
+        case -1: (min(max(lower + delta, 0), upper - minimumSide), upper)
+        case 1: (lower, max(min(upper + delta, 1), lower + minimumSide))
+        default: (lower, upper)
+        }
+    }
+
+    private static func anchor(_ lower: Double, _ upper: Double, edge: Int) -> Double {
+        switch edge {
+        case -1: upper
+        case 1: lower
+        default: (lower + upper) / 2
+        }
+    }
+
+    /// How far a crop anchored at `anchor` may extend on this axis inside the frame.
+    private static func room(from anchor: Double, edge: Int) -> Double {
+        switch edge {
+        case -1: anchor
+        case 1: 1 - anchor
+        default: 2 * min(anchor, 1 - anchor)
+        }
+    }
+
+    /// Where the crop starts on this axis for an extent laid out from its anchor.
+    private static func placed(from anchor: Double, edge: Int, extent: Double) -> Double {
+        switch edge {
+        case -1: anchor - extent
+        case 1: anchor
+        default: anchor - extent / 2
+        }
+    }
+}
+
+nonisolated extension EditRecipe {
+    /// The recipe with no crop: what the crop tool shows the whole frame of.
+    var uncropped: EditRecipe {
+        var recipe = self
+        recipe.crop = nil
+        return recipe
+    }
+
+    var hasGeometry: Bool {
+        quarterTurns != 0 || flipHorizontal || flipVertical || straighten != 0 || crop != nil
+    }
+
+    /// The photo's frame — its oriented original turned by the recipe — before the crop.
+    func frameSize(ofOriginal size: CGSize) -> CGSize {
+        quarterTurns.isMultiple(of: 2) ? size : CGSize(width: size.height, height: size.width)
+    }
+
+    /// The edited photo's size in pixels, for an oriented original of `size`.
+    func outputSize(ofOriginal size: CGSize) -> CGSize {
+        let frame = frameSize(ofOriginal: size)
+        let crop = crop ?? .whole
+        return CGSize(width: (frame.width * crop.width).rounded(), height: (frame.height * crop.height).rounded())
+    }
+
+    /// The fraction of the frame's long edge that the crop's long edge spans, in pixels:
+    /// how much larger than the output the frame must be developed for the output to
+    /// reach a given size.
+    func cropLongEdgeFraction(ofOriginal size: CGSize) -> Double {
+        let frame = frameSize(ofOriginal: size)
+        let output = outputSize(ofOriginal: size)
+        let frameLong = max(frame.width, frame.height)
+        guard frameLong > 0 else { return 1 }
+        return min(1, max(output.width, output.height) / frameLong)
+    }
+
+    /// The recipe after the displayed photo turns a quarter: the crop turns with it, and
+    /// a turn applied over exactly one flip moves the other way, because a mirror reverses
+    /// the sense of a rotation.
+    func turned(clockwise: Bool) -> EditRecipe {
+        var recipe = self
+        let oneFlip = flipHorizontal != flipVertical
+        let step = (clockwise ? 1 : -1) * (oneFlip ? -1 : 1)
+        recipe.quarterTurns = ((quarterTurns + step) % 4 + 4) % 4
+        recipe.crop = crop.map { clockwise ? $0.turnedClockwise : $0.turnedCounterclockwise }
+        return recipe
+    }
+
+    /// The recipe after the displayed photo is mirrored. The crop mirrors with it, and the
+    /// straighten angle reverses, because a mirror reverses the sense of a rotation.
+    func flipped(horizontally: Bool) -> EditRecipe {
+        var recipe = self
+        if horizontally {
+            recipe.flipHorizontal.toggle()
+            recipe.crop = crop?.mirroredHorizontally
+        } else {
+            recipe.flipVertical.toggle()
+            recipe.crop = crop?.mirroredVertically
+        }
+        recipe.straighten = straighten == 0 ? 0 : -straighten
+        return recipe
+    }
+}
+
+/// One of the crop frame's eight handles: which edge it moves on each axis, −1 for the
+/// left or top, 1 for the right or bottom, 0 for neither.
+nonisolated enum CropHandle: CaseIterable, Sendable {
+    case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left
+
+    var horizontal: Int {
+        switch self {
+        case .topLeft, .bottomLeft, .left: -1
+        case .topRight, .bottomRight, .right: 1
+        case .top, .bottom: 0
+        }
+    }
+
+    var vertical: Int {
+        switch self {
+        case .topLeft, .top, .topRight: -1
+        case .bottomLeft, .bottom, .bottomRight: 1
+        case .left, .right: 0
+        }
+    }
+}
+
+/// The crop tool's aspect choices, Lightroom desktop's common set. A ratio is long side
+/// to short side; which way it stands follows the crop, and Rotate Aspect turns it.
+nonisolated enum CropAspect: String, CaseIterable, Identifiable, Sendable {
+    case original
+    case free
+    case square
+    case fourByFive
+    case fiveBySeven
+    case twoByThree
+    case threeByFour
+    case sixteenByNine
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .original: "Original"
+        case .free: "Custom"
+        case .square: "1 × 1"
+        case .fourByFive: "4 × 5"
+        case .fiveBySeven: "5 × 7"
+        case .twoByThree: "2 × 3"
+        case .threeByFour: "4 × 3"
+        case .sixteenByNine: "16 × 9"
+        }
+    }
+
+    /// Long over short side, or nil for a free crop. Original is the frame's own ratio.
+    func longOverShort(frame: CGSize) -> Double? {
+        switch self {
+        case .free: nil
+        case .original:
+            min(frame.width, frame.height) > 0
+                ? Double(max(frame.width, frame.height) / min(frame.width, frame.height)) : nil
+        case .square: 1
+        case .fourByFive: 5.0 / 4
+        case .fiveBySeven: 7.0 / 5
+        case .twoByThree: 3.0 / 2
+        case .threeByFour: 4.0 / 3
+        case .sixteenByNine: 16.0 / 9
+        }
     }
 }
 
@@ -118,6 +441,9 @@ nonisolated struct RenderedEditProducts: Equatable, Sendable {
 
 /// The panel's sections, in Lightroom desktop's order (plan 0108).
 nonisolated enum EditSection: String, CaseIterable, Identifiable, Sendable {
+    /// The crop tool, above the sections as in Lightroom desktop: crop, straighten,
+    /// quarter turns and flips.
+    case crop
     case light
     case color
 
@@ -127,6 +453,7 @@ nonisolated enum EditSection: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
+        case .crop: "Crop"
         case .light: "Light"
         case .color: "Color"
         }
@@ -145,6 +472,12 @@ nonisolated enum EditSection: String, CaseIterable, Identifiable, Sendable {
     func reset(_ recipe: EditRecipe) -> EditRecipe {
         var reset = recipe
         switch self {
+        case .crop:
+            reset.quarterTurns = 0
+            reset.flipHorizontal = false
+            reset.flipVertical = false
+            reset.straighten = 0
+            reset.crop = nil
         case .light:
             reset.exposure = 0
             reset.contrast = 0
@@ -169,6 +502,7 @@ nonisolated enum EditSection: String, CaseIterable, Identifiable, Sendable {
 /// slider moves evenly in mireds (one million over kelvin), the way white balance is
 /// perceived, so the common 3000–8000 K span is not squeezed into a fifth of its width.
 nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
+    case straighten
     case exposure
     case contrast
     case highlights
@@ -187,6 +521,7 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
+        case .straighten: "Straighten"
         case .exposure: "Exposure"
         case .contrast: "Contrast"
         case .highlights: "Highlights"
@@ -200,6 +535,7 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
 
     var section: EditSection {
         switch self {
+        case .straighten: .crop
         case .exposure, .contrast, .highlights, .shadows: .light
         case .temperature, .tint, .vibrance, .saturation: .color
         }
@@ -208,6 +544,7 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
     /// The slider's domain for a photo with `facts`.
     func sliderRange(_ facts: EditPhotoFacts) -> ClosedRange<Double> {
         switch self {
+        case .straighten: -45 ... 45
         case .exposure: -4 ... 4
         case .highlights: -100 ... 0
         case .contrast, .shadows, .vibrance, .saturation: -100 ... 100
@@ -219,6 +556,7 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
     /// Where the slider sits for `recipe`.
     func sliderValue(in recipe: EditRecipe, facts: EditPhotoFacts) -> Double {
         switch self {
+        case .straighten: recipe.straighten
         case .exposure: recipe.exposure
         case .contrast: recipe.contrast
         case .highlights: recipe.highlights
@@ -241,6 +579,7 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
         let range = sliderRange(facts)
         let clamped = min(max(position, range.lowerBound), range.upperBound)
         switch self {
+        case .straighten: recipe.straighten = Self.snapped(clamped, step: 0.1)
         case .exposure: recipe.exposure = Self.snapped(clamped, step: 0.05)
         case .contrast: recipe.contrast = clamped.rounded()
         case .highlights: recipe.highlights = clamped.rounded()
@@ -268,6 +607,8 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .exposure:
             return recipe.exposure == 0 ? "0.00" : String(format: "%+.2f", recipe.exposure)
+        case .straighten:
+            return recipe.straighten == 0 ? "0.0°" : String(format: "%+.1f°", recipe.straighten)
         case .temperature where facts.isRAW:
             let kelvin = recipe.temperature ?? facts.asShotTemperature ?? 0
             return "\(Int(kelvin.rounded())) K"

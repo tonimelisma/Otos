@@ -43,7 +43,7 @@ open takes 20–180 ms per change. Opening it again for every change takes about
   the developed image of either. `CIRAWFilter.contrastAmount` is not used: its header
   documents it as local contrast on edges, from 0 to 1, which cannot express global
   contrast in both directions.
-- **Color section** (research 2026-10-25, white balance probes):
+- **Color section** (research 2026-10-25, white balance and geometry probes):
   - White balance `temperature` and `tint` are optional; nil means as shot. A RAW holds
     absolute kelvin and tint, applied as `CIRAWFilter.neutralTemperature` and
     `neutralTint`. Its temperature slider moves evenly in mireds, 2000–50000 K, and
@@ -57,6 +57,30 @@ open takes 20–180 ms per change. Opening it again for every change takes about
     as ordinary slider values, in one undo step named `White Balance`.
   - Each section's Reset returns only its own controls to neutral, with white balance
     as shot.
+- **Crop section and geometry** (research 2026-10-25, white balance and geometry probes):
+  - The recipe holds clockwise quarter turns, a horizontal and a vertical flip,
+    straighten in degrees clockwise (−45…45), and a crop: a rectangle in fractions of
+    the straightened frame.
+  - They apply last and in that order. Turns and flips act in the displayed frame, so
+    turning a once-flipped photo right is a left turn under the flip, and a flip
+    reverses the straighten angle. The crop turns and mirrors with the photo.
+  - `EditGeometry` expresses all of it as one affine transform plus a crop.
+    - Straighten rotates about the frame's center and scales by
+      `cos|θ| + sin|θ| · max(W/H, H/W)`, the least that keeps the frame covered, so no
+      empty corner ever shows.
+    - `CIStraightenFilter` does the same visibly, but its scale is not exposed. The
+      explicit transform can be inverted, which the white balance picker needs to find
+      the developed pixel under a click on a turned, straightened or cropped photo.
+  - A crop is developed from a frame large enough for the crop itself to reach the
+    requested size: the RAW scale factor or the decode size is divided by the crop's
+    share of the frame's long edge. A cropped preview therefore stays 2560 px, and the
+    loupe's 100% means native pixels of the edited photo (the pane's native size
+    passes through the geometry).
+  - The crop tool is a mode of the loupe. It shows the photo edited with everything but
+    its crop, with the crop drawn over it. Dragging the crop renders nothing, because
+    the frame under it does not change; letting go saves it as one `Crop` undo step.
+  - The aspect choice is tool state, not part of the edit: Original, Custom (free),
+    1 × 1, 4 × 5, 5 × 7, 2 × 3, 4 × 3 and 16 × 9, with Rotate Aspect.
 - **One renderer for live edits.** `LiveEditRenderer` is an actor on its own serial
   queue. It keeps the photo being edited open between renders, along with a
   `CIContext` that caches intermediates. While a control is dragged it renders the

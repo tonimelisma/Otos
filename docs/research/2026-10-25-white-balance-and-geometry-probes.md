@@ -1,4 +1,4 @@
-# White balance probes (2026-10-25)
+# White balance and geometry probes (2026-10-25)
 
 What the Color section (plan 0108, increment 6) rests on. The measurements came from
 three throwaway Swift probes, compiled with `swiftc -O` on macOS 27.0 / Xcode 27.1, run
@@ -55,3 +55,14 @@ moves the source neutral by one mired per step: +100 is 1,000,000 / (153.8 − 1
   bottom-left coordinates. A still's pick solves numerically for the two relative
   values that render the sampled color gray, because `CITemperatureAndTint` has no
   location input.
+
+## `CIStraightenFilter` (crop increment)
+
+A 400×300 probe image, rotated 5°, 20° and 45°:
+- **The extent is kept** (still 400×300), and the image is scaled to fill it: every corner
+  stays opaque (alpha 1.0). A straightened photo therefore never shows empty corners, and
+  a crop is a rectangle of that filled frame.
+- **A positive angle rotates counterclockwise on screen.** A horizontal line through the
+  center, at +10°, sits at y = 175 instead of 150 at x = 350 (CI's y axis points up).
+  Lightroom's positive straighten turns the photo clockwise, so Otos stores clockwise
+  degrees and passes their negation to the filter.
