@@ -60,11 +60,13 @@ extension CatalogWindowViewModel {
         issueLoupeZoom(target == report.fit ? .fit : .magnification(target), anchor: anchor)
     }
 
-    /// Escape in loupe: disarm the white balance picker first, then back to fit, then out
-    /// to the grid.
+    /// Escape in loupe: disarm the white balance picker or end the crop tool first, then
+    /// back to fit, then out to the grid.
     func loupeEscape() {
         if isPickingNeutral {
             toggleNeutralPicker()
+        } else if isCropping {
+            endCropping()
         } else if let report = loupeZoomReport, !report.isFit {
             issueLoupeZoom(.fit, anchor: nil)
         } else {

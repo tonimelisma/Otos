@@ -131,10 +131,23 @@ struct ContentView: View {
                     recipe: viewModel.editDraft,
                     isPickingNeutral: viewModel.isPickingNeutral,
                     canPickNeutral: viewModel.canPickNeutral,
+                    crop: EditPanelCropState(
+                        isCropping: viewModel.isCropping,
+                        canCrop: viewModel.canCrop,
+                        aspect: viewModel.cropAspect,
+                        isLandscape: viewModel.cropAspectIsLandscape
+                    ),
                     setValue: viewModel.setEditValue,
                     setDragging: viewModel.setEditDragging,
                     resetSection: viewModel.resetEditSection,
-                    toggleNeutralPicker: viewModel.toggleNeutralPicker
+                    toggleNeutralPicker: viewModel.toggleNeutralPicker,
+                    cropActions: EditPanelCropActions(
+                        toggleTool: viewModel.toggleCropTool,
+                        setAspect: viewModel.setCropAspect,
+                        rotateAspect: viewModel.rotateCropAspect,
+                        turn: viewModel.turnPhoto(clockwise:),
+                        flip: viewModel.flipPhoto(horizontally:)
+                    )
                 )
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
             }
@@ -386,6 +399,16 @@ struct ContentView: View {
                 onZoomDoubleClick: { viewModel.toggleLoupeZoom(at: $0) },
                 isPickingNeutral: viewModel.isPickingNeutral,
                 onPickNeutral: viewModel.pickNeutral(at:),
+                cropEditor: viewModel.isCropping
+                    ? viewModel.editCropBase.map { base in
+                        CropEditorInput(
+                            image: base.image,
+                            crop: viewModel.editDraft.crop ?? .whole,
+                            fractionRatio: viewModel.cropFractionRatio,
+                            setCrop: viewModel.setCrop
+                        )
+                    }
+                    : nil,
                 onZoomToggle: { viewModel.toggleLoupeZoom() },
                 loupeInfo: viewModel.loupeInfo,
                 onInfoToggle: viewModel.toggleLoupeInfo

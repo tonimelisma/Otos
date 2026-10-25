@@ -60,7 +60,7 @@ struct EditRenderingTests {
         let renderer = LiveEditRenderer()
 
         let facts = try await renderer.open(url)
-        let picked = try await renderer.neutralWhiteBalance(url, at: CGPoint(x: 0.5, y: 0.5))
+        let picked = try await renderer.neutralWhiteBalance(url, at: CGPoint(x: 0.5, y: 0.5), shown: .neutral)
         let corrected = try await renderer.render(
             url, recipe: EditRecipe(temperature: picked.temperature, tint: picked.tint)
         )

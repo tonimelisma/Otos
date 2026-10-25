@@ -12,10 +12,12 @@ struct EditPanelView: View {
     let recipe: EditRecipe
     let isPickingNeutral: Bool
     let canPickNeutral: Bool
+    let crop: EditPanelCropState
     let setValue: @MainActor (Double, EditControl) -> Void
     let setDragging: @MainActor (Bool, EditControl) -> Void
     let resetSection: @MainActor (EditSection) -> Void
     let toggleNeutralPicker: @MainActor () -> Void
+    let cropActions: EditPanelCropActions
 
     var body: some View {
         ScrollView {
@@ -55,6 +57,9 @@ struct EditPanelView: View {
                     .disabled(unavailableHelp != nil || section.isNeutral(in: recipe))
                     .help(unavailableHelp ?? section.resetActionName)
             }
+            if section == .crop {
+                cropTool
+            }
             if section == .color {
                 whiteBalancePicker
             }
@@ -70,7 +75,86 @@ struct EditPanelView: View {
                 .disabled(unavailableHelp != nil)
                 .help(unavailableHelp ?? "")
             }
+            if section == .crop {
+                orientationButtons
+            }
         }
+    }
+
+    /// The crop tool's switch, Done while it is on (Return), and its aspect choice.
+    private var cropTool: some View {
+        HStack(spacing: 8) {
+            Button {
+                cropActions.toggleTool()
+            } label: {
+                Label(crop.isCropping ? "Done" : "Crop", systemImage: "crop")
+            }
+            .controlSize(.small)
+            .keyboardShortcut(crop.isCropping ? .defaultAction : nil)
+            .disabled(unavailableHelp != nil || !(crop.canCrop || crop.isCropping))
+            .help(cropToolHelp)
+            Spacer()
+            Picker("Aspect", selection: Binding(get: { crop.aspect }, set: { cropActions.setAspect($0) })) {
+                ForEach(CropAspect.allCases) { aspect in
+                    Text(aspect.title).tag(aspect)
+                }
+            }
+            .labelsHidden()
+            .controlSize(.small)
+            .fixedSize()
+            .disabled(!crop.isCropping)
+            .help(crop.isCropping ? "Aspect" : "Start cropping to choose an aspect")
+            Button {
+                cropActions.rotateAspect()
+            } label: {
+                Image(systemName: crop.isLandscape ? "rectangle.portrait.rotate" : "rectangle.landscape.rotate")
+            }
+            .controlSize(.small)
+            .disabled(!crop.isCropping || crop.aspect == .free)
+            .help("Rotate Aspect")
+            .accessibilityLabel("Rotate Aspect")
+        }
+    }
+
+    private var cropToolHelp: String {
+        if let unavailableHelp {
+            return unavailableHelp
+        }
+        if crop.isCropping {
+            return "Finish cropping"
+        }
+        return crop.canCrop ? "Crop the photo" : "Open the photo in the loupe to crop it"
+    }
+
+    /// Quarter turns and flips, as icons in Lightroom's order.
+    private var orientationButtons: some View {
+        HStack(spacing: 8) {
+            orientationButton("Rotate Left", systemImage: "rotate.left") { cropActions.turn(false) }
+            orientationButton("Rotate Right", systemImage: "rotate.right") { cropActions.turn(true) }
+            Spacer()
+            orientationButton(
+                "Flip Horizontal",
+                systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right"
+            ) { cropActions.flip(true) }
+            orientationButton(
+                "Flip Vertical",
+                systemImage: "arrow.up.and.down.righttriangle.up.righttriangle.down"
+            ) { cropActions.flip(false) }
+        }
+    }
+
+    private func orientationButton(
+        _ title: String,
+        systemImage: String,
+        action: @escaping @MainActor () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+        }
+        .controlSize(.small)
+        .disabled(unavailableHelp != nil)
+        .help(unavailableHelp ?? title)
+        .accessibilityLabel(title)
     }
 
     /// Lightroom's white balance selector: armed, the next click on the loupe image makes
@@ -131,7 +215,30 @@ private struct EditSliderRow: View {
                 onEditingChanged: { setDragging($0) }
             )
             .labelsHidden()
+            // A value, not a selection: the accent stays for what is selected or acted on
+            // (DES-024), and a fill from the left edge would read as an amount on a slider
+            // whose neutral point is its middle.
+            .tint(Color.secondary)
             .accessibilityValue(formattedValue)
         }
     }
+}
+
+/// The crop tool's state as the panel shows it.
+struct EditPanelCropState {
+    let isCropping: Bool
+    let canCrop: Bool
+    let aspect: CropAspect
+    let isLandscape: Bool
+}
+
+/// The crop tool's intents, as the panel calls them.
+struct EditPanelCropActions {
+    let toggleTool: @MainActor () -> Void
+    let setAspect: @MainActor (CropAspect) -> Void
+    let rotateAspect: @MainActor () -> Void
+    /// Clockwise when true.
+    let turn: @MainActor (Bool) -> Void
+    /// Horizontally when true.
+    let flip: @MainActor (Bool) -> Void
 }

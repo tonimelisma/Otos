@@ -27,8 +27,8 @@ and compare panes follow a drag live; a grid tile updates when the drag ends.
 | String | Level |
 | --- | --- |
 | File name / `No Selection` | L1 (`title3`, semibold, middle-truncated) |
-| Section heading (`Light`) | `.headline` group heading (DES-003) |
-| Control name, control value, `Reset` | L2 (`body`); values `.monospacedDigit()` (DES-005) |
+| Section heading (`Crop`, `Light`, `Color`) | `.headline` group heading (DES-003) |
+| Control name, control value, `Reset`, `Crop` / `Done`, aspect titles | L2 (`body`); values `.monospacedDigit()` (DES-005) |
 
 Three sizes, two weights (DES-004).
 
@@ -40,10 +40,15 @@ and value on one line, label left and value right (DES-017), over a slider at th
 panel width. Spacing is 16 pt padding, 20 pt between the title and the section, 12 pt
 between controls, and 4 pt between a control's line and its slider (DES-050).
 
+A slider's filled track is the neutral secondary color, not the accent. A slider is a value,
+not a selection (DES-024), and most sliders here are neutral at their middle, where a fill
+from the left edge would read as an amount.
+
 Sections, in order, as they are built (plan 0108):
 
 | Section | Controls |
 | --- | --- |
+| Crop (a tool above the sections) | `Crop` / `Done` (Return while on), Aspect menu (Original, Custom, 1 × 1, 4 × 5, 5 × 7, 2 × 3, 4 × 3, 16 × 9), Rotate Aspect; Straighten (−45.0…+45.0°, 0.1° steps, positive clockwise); Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical (icon buttons) |
 | Light | Exposure (−4.00…+4.00 stops, 0.05 steps), Contrast (−100…+100), Highlights (−100…0), Shadows (−100…+100) |
 | Color | White Balance picker; Temperature (a RAW: 2000–50000 K, even in mireds, 50 K steps, shown `5600 K`; another still: −100…+100), Tint (a RAW: −150…+150; another still: −100…+100), Vibrance (−100…+100), Saturation (−100…+100) |
 
@@ -59,13 +64,41 @@ edge: `eyedropper` at rest, `eyedropper.full` while armed, never color alone (DE
 is enabled only in the loupe, with the tooltip `Open the photo in the loupe to pick a neutral
 point` elsewhere.
 
+## Crop tool
+
+`Crop` in the panel, Photo ▸ Crop and C turn it on. If needed they first show the panel
+and switch to the loupe, as Lightroom desktop does. The loupe then shows the whole frame
+(the photo with every edit but its crop), fitted inside a 20 pt inset, with the crop over
+it:
+- outside the crop, a scrim of black at 55%, the same scrim as the tile badges
+  (DES-062);
+- the crop's edge as a white 1 pt line, with a rule-of-thirds grid at 45% white;
+- eight handles, L-shaped at the corners and bars on the edges, white over a dark
+  outline so they read on any photo, each with a 28 pt hit area (DES-051);
+- a frame-resize pointer over each handle, and a grab pointer inside the crop.
+
+Dragging inside moves the crop. A corner handle resizes about the opposite corner, and an
+edge handle about the opposite edge, staying centered across it. Under a constrained
+aspect the crop keeps its shape and shrinks to stay in the frame. Choosing an aspect
+fits the largest crop of that shape around the current crop's center. Rotate Aspect turns
+the shape. The Aspect menu and Rotate Aspect are enabled only while the tool is on.
+
+`Done`, Return, C, Escape, leaving the loupe, another photo, or hiding the panel ends the
+tool. The loupe then shows the cropped photo. Rotate Left (⌘[), Rotate Right (⌘]), Flip
+Horizontal and Flip Vertical (Photo menu, and the panel's buttons) work with the tool on
+or off; Straighten too.
+
 ## Behavior
 
 - Dragging a slider renders the photo live in the loupe or compare pane. Letting go
   saves the change as one undo step, named for the control (`Undo Exposure`).
 - A keyboard or accessibility step on a focused slider saves at once.
 - `Reset` returns every control in its section to neutral as one step
-  (`Undo Reset Light`, `Undo Reset Color`). White balance returns to as shot.
+  (`Undo Reset Crop`, `Undo Reset Light`, `Undo Reset Color`). White balance returns to as
+  shot; Crop's Reset also clears turns, flips and straighten.
+- Letting go of a crop drag saves it (`Undo Crop`); an aspect choice saves its fitted
+  crop (`Undo Crop Aspect`); a turn or flip saves at once (`Undo Rotate Right`,
+  `Undo Flip Horizontal`).
 - With the picker armed, the loupe cursor is a crosshair, and one click makes that point
   neutral (`Undo White Balance`) and disarms the picker. Escape disarms it before
   Escape's other loupe meanings.

@@ -174,6 +174,14 @@ final class CatalogWindowViewModel {
     var editPhotoFacts: EditPhotoFacts?
     /// The white balance picker is armed: the next loupe click picks a neutral point.
     var isPickingNeutral = false
+    /// The crop tool is on: the loupe shows the whole frame with the crop over it.
+    var isCropping = false
+    /// The photo edited with everything but its crop, which the crop tool draws over.
+    var editCropBase: EditLivePreview?
+    /// The crop tool's aspect choice and which way it stands; tool state, not saved.
+    var cropAspect = CropAspect.original
+    var cropAspectIsLandscape = true
+    @ObservationIgnored var isDraggingCrop = false
     @ObservationIgnored var editSavedRecipe = EditRecipe.neutral
     @ObservationIgnored var editDraggingControl: EditControl?
     @ObservationIgnored var editTargetTask: Task<Void, Never>?

@@ -1,7 +1,7 @@
 # Plan 0108: Editing, previews, hand-off and export
 
 Status: aligned with the owner 2026-10-25; increments run in order. Landed: 1 (#499),
-2 (#498), 3 (#500), 4 (#501), 5 (#502).
+2 (#498), 3 (#500), 4 (#501), 5 (#502), 6 (#503).
 
 Research behind it:
 - `docs/research/2026-10-24-editing-foundation.md`
@@ -142,7 +142,7 @@ Crop is a tool above the sections. Only controls macOS provides appear:
 
 | Order | Section | Controls | RAW (`CIRAWFilter`) | Other stills (Core Image) | Increment |
 | --- | --- | --- | --- | --- | --- |
-| tool | Crop | Crop, rotate 90°, flip, straighten | on the developed image | `CICrop`, `CIAffineTransform`, `CIStraightenFilter` | 7 |
+| tool | Crop | Crop, rotate 90°, flip, straighten | on the developed image | one invertible affine transform plus a crop (`EditGeometry`, ADR 0036) | 7 |
 | 1 | Light | Exposure, Contrast, Highlights, Shadows | `exposure`; `CIColorControls`, `CIHighlightShadowAdjust` on the developed image (`contrastAmount` is local edge contrast, 0…1, ADR 0036) | `CIExposureAdjust`, `CIColorControls`, `CIHighlightShadowAdjust` | 5 |
 | 2 | Color | White balance (temperature, tint, neutral picker), Vibrance, Saturation | `neutralTemperature`, `neutralTint`, `neutralLocation`; `CIVibrance`, `CIColorControls` | `CITemperatureAndTint`, `CIVibrance`, `CIColorControls` | 6 |
 | 3 | Effects | Vignette | `CIVignette` | `CIVignette` | 8 |

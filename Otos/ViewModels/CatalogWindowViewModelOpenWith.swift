@@ -35,8 +35,10 @@ extension CatalogWindowViewModel {
         if changed {
             currentTargetFileURLs = targets
             refreshCurrentTargetChoice()
-            refreshEditTarget()
         }
+        // Every writer, not only a target change: leaving the loupe with the same photo
+        // must still end the loupe's edit tools. An unchanged target is a no-op there.
+        refreshEditTarget()
         guard !targets.isEmpty else {
             openWithMenuTask?.cancel()
             openWithMenu = .empty

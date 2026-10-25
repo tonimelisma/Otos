@@ -158,3 +158,34 @@ func meanColor(_ image: CGImage) -> MeanColor {
     let count = Double(width * height * 255)
     return MeanColor(red: Double(totals.0) / count, green: Double(totals.1) / count, blue: Double(totals.2) / count)
 }
+
+/// A 96×64 JPEG whose left half is `left` and right half `right` (sRGB), so a turn,
+/// flip or crop shows where each half went. Red and blue by default.
+func writeSplitJPEG(
+    to url: URL,
+    left: CGColor = CGColor(srgbRed: 0.9, green: 0.1, blue: 0.1, alpha: 1),
+    right: CGColor = CGColor(srgbRed: 0.1, green: 0.1, blue: 0.9, alpha: 1)
+) throws {
+    let context = try #require(CGContext(
+        data: nil,
+        width: 96,
+        height: 64,
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ))
+    context.setFillColor(left)
+    context.fill(CGRect(x: 0, y: 0, width: 48, height: 64))
+    context.setFillColor(right)
+    context.fill(CGRect(x: 48, y: 0, width: 48, height: 64))
+    let image = try #require(context.makeImage())
+    let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, "public.jpeg" as CFString, 1, nil))
+    CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 1] as CFDictionary)
+    try #require(CGImageDestinationFinalize(destination))
+}
+
+/// The mean color of `rect` (top-left origin, pixels) of `image`.
+func meanColor(_ image: CGImage, in rect: CGRect) throws -> MeanColor {
+    try meanColor(#require(image.cropping(to: rect)))
+}

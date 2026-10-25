@@ -37,6 +37,8 @@ struct LoupeView: View {
     var onZoomDoubleClick: (CGPoint) -> Void = { _ in }
     var isPickingNeutral = false
     var onPickNeutral: (CGPoint) -> Void = { _ in }
+    /// While the crop tool is on: the whole frame it draws over, and the crop.
+    var cropEditor: CropEditorInput?
     var onZoomToggle: () -> Void = {}
     /// Info overlay (APP-041); nil when hidden.
     var loupeInfo: LoupeInfoModel?
@@ -45,8 +47,20 @@ struct LoupeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            previewPane
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Group {
+                if let cropEditor {
+                    CropEditorView(
+                        image: cropEditor.image,
+                        crop: cropEditor.crop,
+                        fractionRatio: cropEditor.fractionRatio,
+                        setCrop: cropEditor.setCrop
+                    )
+                    .background(DesignPalette.content(for: colorScheme))
+                } else {
+                    previewPane
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             FilmstripResizeHandle(
                 stripTileEdge: stripTileEdge,
                 setStripTileEdge: setStripTileEdge
@@ -248,4 +262,14 @@ private struct ResizeCursorArea: NSViewRepresentable {
             addCursorRect(bounds, cursor: .resizeUpDown)
         }
     }
+}
+
+/// What the loupe needs to show the crop tool: the uncropped frame, the crop, the shape
+/// it keeps while resized (width over height in fractions of the frame, or nil), and the
+/// intent its moves report to.
+struct CropEditorInput {
+    let image: CGImage
+    let crop: EditCrop
+    let fractionRatio: Double?
+    let setCrop: @MainActor (EditCrop, Bool) -> Void
 }

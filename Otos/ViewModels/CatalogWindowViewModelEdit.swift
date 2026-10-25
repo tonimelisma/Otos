@@ -37,6 +37,9 @@ import OSLog
 nonisolated struct EditTarget: Equatable, Sendable {
     let id: MediaAssetID
     let sourceSize: Int64?
+    /// The original's oriented pixel size, when the catalog knows it: what the edited
+    /// photo's size is derived from as its geometry changes.
+    let originalPixelSize: CGSize?
 }
 
 /// A live render of `recipe` for `id`. `revision` is the save that recipe became, once it
@@ -55,7 +58,9 @@ nonisolated struct EditLivePreview: Equatable {
 nonisolated enum EditRenderRequest: Sendable {
     /// The panel has a new target: open it and report its facts.
     case open(id: MediaAssetID, sourceSize: Int64?)
-    case render(id: MediaAssetID, recipe: EditRecipe, sourceSize: Int64?, sequence: UInt64)
+    /// `cropBase` renders the uncropped photo the crop tool draws its frame over, rather
+    /// than the edited photo the pane shows.
+    case render(id: MediaAssetID, recipe: EditRecipe, sourceSize: Int64?, sequence: UInt64, cropBase: Bool)
     /// Editing moved to another photo or the panel closed: let go of the open photo.
     case close
 }
@@ -76,9 +81,9 @@ nonisolated struct EditCommand: Sendable {
 
 nonisolated enum EditLaneCommand: Sendable {
     case save(EditCommand)
-    /// The white balance picker was clicked at `point`, a fraction of the image from its
-    /// top-left corner.
-    case pickNeutral(id: MediaAssetID, point: CGPoint, sourceSize: Int64?)
+    /// The white balance picker was clicked at `point`, a fraction of the photo as shown
+    /// (edited with `shown`) from its top-left corner.
+    case pickNeutral(id: MediaAssetID, point: CGPoint, shown: EditRecipe, sourceSize: Int64?)
 }
 
 extension CatalogWindowViewModel {
@@ -91,6 +96,7 @@ extension CatalogWindowViewModel {
         if isEditPanelPresented {
             refreshEditTarget()
         } else {
+            endCropping()
             commitPendingEdit()
             editTargetTask?.cancel()
             editTargetTask = nil
@@ -107,7 +113,7 @@ extension CatalogWindowViewModel {
     }
 
     var canPickNeutral: Bool {
-        editPhotoFacts != nil && viewMode == .loupe
+        editPhotoFacts != nil && viewMode == .loupe && !isCropping
     }
 
     /// The loupe was clicked while the picker was armed.
@@ -116,7 +122,12 @@ extension CatalogWindowViewModel {
         isPickingNeutral = false
         commitPendingEdit()
         submittedEditCommandCount += 1
-        editCommandContinuation.yield(.pickNeutral(id: target.id, point: point, sourceSize: target.sourceSize))
+        editCommandContinuation.yield(.pickNeutral(
+            id: target.id,
+            point: point,
+            shown: shownRecipe,
+            sourceSize: target.sourceSize
+        ))
         OtosLog.ui.noticeOperation("edit.neutralPicker", phase: "picked", fields: [
             "id": target.id.relativePath.rawValue,
             "x": String(format: "%.3f", point.x), "y": String(format: "%.3f", point.y),
@@ -127,8 +138,9 @@ extension CatalogWindowViewModel {
     /// writers that refresh Open With). Reads the target's saved recipe once.
     func refreshEditTarget() {
         guard isEditPanelPresented else { return }
-        if isPickingNeutral, viewMode != .loupe {
+        if viewMode != .loupe {
             isPickingNeutral = false
+            endCropping()
         }
         let ids = targetIDs(.current)
         guard ids.count == 1, let id = ids.first else {
@@ -139,6 +151,11 @@ extension CatalogWindowViewModel {
             return
         }
         guard editTarget?.id != id else { return }
+        // Only moving off a resolved photo ends its tools; the crop tool started for a
+        // target still resolving stays on for it.
+        if editTarget != nil {
+            endCropping()
+        }
         commitPendingEdit()
         editTargetTask?.cancel()
         let reader = tileDetailReader
@@ -151,13 +168,16 @@ extension CatalogWindowViewModel {
                 return
             }
             let saved = detail.editRecipe ?? .neutral
-            editTarget = EditTarget(id: id, sourceSize: detail.byteSize)
+            editTarget = EditTarget(id: id, sourceSize: detail.byteSize, originalPixelSize: detail.nativePixelSize)
             editPhotoFacts = nil
             isPickingNeutral = false
             editSavedRecipe = saved
             editDraft = saved
             editLivePreview = nil
             editRenderContinuation.yield(.open(id: id, sourceSize: detail.byteSize))
+            if isCropping {
+                requestLiveEditRender()
+            }
             OtosLog.ui.debugOperation("edit.target", phase: "resolved", fields: [
                 "id": id.relativePath.rawValue, "edited": "\(!saved.isNeutral)",
             ])
@@ -166,6 +186,7 @@ extension CatalogWindowViewModel {
 
     private func clearEditTarget() {
         guard editTarget != nil || editLivePreview != nil else { return }
+        endCropping()
         editTarget = nil
         editPhotoFacts = nil
         isPickingNeutral = false
@@ -234,7 +255,8 @@ extension CatalogWindowViewModel {
             id: live.id,
             image: live.image,
             mediaChoice: matching?.mediaChoice,
-            nativePixelSize: matching?.nativePixelSize,
+            nativePixelSize: editTarget?.originalPixelSize.map { live.recipe.outputSize(ofOriginal: $0) }
+                ?? matching?.nativePixelSize,
             renderedRevision: live.revision ?? matching?.renderedRevision ?? 0
         )
     }
@@ -245,7 +267,7 @@ extension CatalogWindowViewModel {
         editDraggingControl = nil
     }
 
-    private func commitEdit(actionName: String) {
+    func commitEdit(actionName: String) {
         guard let target = editTarget, editDraft != editSavedRecipe else { return }
         editSavedRecipe = editDraft
         enqueueEdit(EditCommand(id: target.id, recipe: editDraft, actionName: actionName, origin: .user))
@@ -259,14 +281,21 @@ extension CatalogWindowViewModel {
         editCommandContinuation.yield(.save(command))
     }
 
-    private func requestLiveEditRender() {
+    /// The recipe the pane shows the photo with: the draft, uncropped while the crop tool
+    /// shows the whole frame.
+    var shownRecipe: EditRecipe {
+        isCropping ? editDraft.uncropped : editDraft
+    }
+
+    func requestLiveEditRender() {
         guard let target = editTarget else { return }
         editRenderRequested &+= 1
         editRenderContinuation.yield(.render(
             id: target.id,
-            recipe: editDraft,
+            recipe: shownRecipe,
             sourceSize: target.sourceSize,
-            sequence: editRenderRequested
+            sequence: editRenderRequested,
+            cropBase: isCropping
         ))
     }
 
@@ -293,12 +322,16 @@ extension CatalogWindowViewModel {
                 case let .open(id, sourceSize):
                     guard let facts = await pipeline.open(id, sourceSize: sourceSize) else { continue }
                     self?.publishEditFacts(id: id, facts: facts)
-                case let .render(id, recipe, sourceSize, sequence):
+                case let .render(id, recipe, sourceSize, sequence, cropBase):
                     guard let live = await pipeline.liveImage(id, recipe: recipe, sourceSize: sourceSize) else {
                         continue
                     }
                     self?.publishEditFacts(id: id, facts: live.facts)
-                    self?.publishLiveEdit(id: id, recipe: recipe, image: live.image, sequence: sequence)
+                    if cropBase {
+                        self?.publishCropBase(id: id, recipe: recipe, image: live.image, sequence: sequence)
+                    } else {
+                        self?.publishLiveEdit(id: id, recipe: recipe, image: live.image, sequence: sequence)
+                    }
                 }
             }
         }
@@ -311,8 +344,10 @@ extension CatalogWindowViewModel {
                 guard !Task.isCancelled else { break }
                 let command: EditCommand
                 switch laneCommand {
-                case let .pickNeutral(id, point, sourceSize):
-                    if let whiteBalance = await pipeline.neutralWhiteBalance(id, at: point, sourceSize: sourceSize) {
+                case let .pickNeutral(id, point, shown, sourceSize):
+                    if let whiteBalance = await pipeline.neutralWhiteBalance(
+                        id, at: point, shown: shown, sourceSize: sourceSize
+                    ) {
                         self?.applyPickedWhiteBalance(id: id, whiteBalance)
                     }
                     continue
@@ -554,13 +589,14 @@ nonisolated struct EditPipeline: Sendable {
     func neutralWhiteBalance(
         _ id: MediaAssetID,
         at point: CGPoint,
+        shown: EditRecipe,
         sourceSize: Int64?
     ) async -> (temperature: Double, tint: Double)? {
         guard await makeLocal(id, sourceSize: sourceSize) else {
             return nil
         }
         do {
-            return try await renderer.neutralWhiteBalance(id.fileURL, at: point)
+            return try await renderer.neutralWhiteBalance(id.fileURL, at: point, shown: shown)
         } catch {
             OtosLog.rendering.errorOperation("render.neutralPick", phase: "failed", fields: [
                 "id": id.relativePath.rawValue, "error": String(describing: error),

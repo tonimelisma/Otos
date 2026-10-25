@@ -30,13 +30,15 @@ nonisolated struct RenderedEditImages: Sendable {
 actor LiveEditRenderer {
     private enum Source {
         case raw(CIRAWFilter)
-        case image(CIImage)
+        /// A decoded still and the long edge it was decoded at.
+        case image(CIImage, decodedLongEdge: Int)
     }
 
     private struct OpenPhoto {
         let url: URL
-        let source: Source
-        let expectedLongEdge: Double
+        var source: Source
+        /// The original's oriented full-resolution size.
+        let nativeSize: CGSize
         let facts: EditPhotoFacts
     }
 
@@ -89,28 +91,36 @@ actor LiveEditRenderer {
         }
     }
 
-    /// The white balance that makes the photo neutral at `point` — a fraction of the
-    /// image's width and height from its top-left corner — as the recipe's temperature
-    /// and tint.
+    /// The white balance that makes the photo neutral at `point` of the photo as it is
+    /// shown — edited with `shown`'s geometry — given as a fraction of its width and height
+    /// from the top-left corner. The point is mapped back through that geometry to the
+    /// developed photo (`EditGeometry`), so a turned, straightened or cropped photo picks
+    /// the pixel under the click.
     ///
     /// A RAW asks its pipeline (`CIRAWFilter.neutralLocation`, which takes a point in the
     /// oriented, scaled output with a bottom-left origin; measured 2026-10-25). Any other
     /// still samples the original's color there and solves for the relative temperature
     /// and tint that make it gray.
-    func neutralWhiteBalance(_ url: URL, at point: CGPoint) throws -> (temperature: Double, tint: Double) {
-        let photo = try openPhoto(url)
+    func neutralWhiteBalance(
+        _ url: URL,
+        at point: CGPoint,
+        shown: EditRecipe
+    ) throws -> (temperature: Double, tint: Double) {
+        let developed = try developedImage(url, recipe: shown)
+        let geometry = EditGeometry(recipe: shown, developedSize: developed.extent.size)
+        let location = geometry.developedPoint(atEditedFraction: point)
+        guard let photo = open else {
+            throw ImageRenderer.RenderError.renderFailed
+        }
         switch photo.source {
         case let .raw(filter):
-            guard let extent = filter.outputImage?.extent else {
-                throw ImageRenderer.RenderError.renderFailed
-            }
             filter.neutralLocation = CGPoint(
-                x: extent.minX + point.x * extent.width,
-                y: extent.minY + (1 - point.y) * extent.height
+                x: developed.extent.minX + location.x,
+                y: developed.extent.minY + location.y
             )
             return (Double(filter.neutralTemperature), Double(filter.neutralTint))
-        case let .image(image):
-            let sample = try sampledColor(image, at: point)
+        case let .image(image, _):
+            let sample = try sampledColor(image, at: location)
             return try relativeWhiteBalanceNeutralizing(sample)
         }
     }
@@ -122,26 +132,47 @@ actor LiveEditRenderer {
     }
 
     private func developed(_ url: URL, recipe: EditRecipe) throws -> CIImage {
-        let photo = try openPhoto(url)
+        try ImageRenderer.applyingGeometry(recipe, developedImage(url, recipe: recipe))
+    }
+
+    /// The open photo developed with `recipe`'s adjustments but not its geometry, at the
+    /// size `recipe`'s crop needs for its edited long edge to reach the preview's.
+    private func developedImage(_ url: URL, recipe: EditRecipe) throws -> CIImage {
+        var photo = try openPhoto(url)
+        let previewLongEdge = ThumbnailStore.previewMaxPixelSize
         switch photo.source {
-        case let .image(image):
-            return ImageRenderer.applying(recipe, toDevelopedRAW: false, image)
+        case let .image(image, decodedLongEdge):
+            let nativeLongEdge = Int(max(photo.nativeSize.width, photo.nativeSize.height))
+            let fraction = recipe.cropLongEdgeFraction(ofOriginal: photo.nativeSize)
+            let needed = min(nativeLongEdge, Int((Double(previewLongEdge) / fraction).rounded(.up)))
+            guard abs(needed - decodedLongEdge) > 1 else {
+                return ImageRenderer.applying(recipe, toDevelopedRAW: false, image)
+            }
+            // A crop changed how much of the frame is kept: decode again at the size it needs.
+            let decoded = try ImageRenderer.decodeImage(url, outputLongEdge: previewLongEdge, recipe: recipe)
+            let redecoded = CIImage(cgImage: decoded.image)
+            photo.source = .image(redecoded, decodedLongEdge: max(decoded.image.width, decoded.image.height))
+            open = photo
+            context.clearCaches()
+            return ImageRenderer.applying(recipe, toDevelopedRAW: false, redecoded)
         case let .raw(filter):
             // The open filter keeps whatever white balance the last render set, so as shot
             // is set back explicitly rather than left to the filter's default.
             var resolved = recipe
             resolved.temperature = recipe.temperature ?? photo.facts.asShotTemperature
             resolved.tint = recipe.tint ?? photo.facts.asShotTint
+            let scale = ImageRenderer.rawScaleFactor(filter, outputLongEdge: previewLongEdge, recipe: recipe)
+            filter.scaleFactor = scale
+            let expectedLongEdge = Double(scale) * Double(max(photo.nativeSize.width, photo.nativeSize.height))
             let image = try ImageRenderer.developed(filter, recipe: resolved)
             // RAW9 can hand back a half-size image on a repeated read; a fresh filter reads
             // correctly once (research 2026-10-24).
-            guard max(image.extent.width, image.extent.height) < photo.expectedLongEdge * 0.75 else {
+            guard max(image.extent.width, image.extent.height) < expectedLongEdge * 0.75 else {
                 return image
             }
-            let (fresh, _) = try ImageRenderer.openRAW(url, longEdge: ThumbnailStore.previewMaxPixelSize)
-            open = OpenPhoto(
-                url: url, source: .raw(fresh), expectedLongEdge: photo.expectedLongEdge, facts: photo.facts
-            )
+            let (fresh, _) = try ImageRenderer.openRAW(url, outputLongEdge: previewLongEdge, recipe: recipe)
+            photo.source = .raw(fresh)
+            open = photo
             return try ImageRenderer.developed(fresh, recipe: resolved)
         }
     }
@@ -154,12 +185,11 @@ actor LiveEditRenderer {
         let longEdge = ThumbnailStore.previewMaxPixelSize
         let photo: OpenPhoto
         if ImageRenderer.isRAW(url) {
-            let (filter, _) = try ImageRenderer.openRAW(url, longEdge: longEdge)
-            let native = max(filter.nativeSize.width, filter.nativeSize.height)
+            let (filter, _) = try ImageRenderer.openRAW(url, outputLongEdge: longEdge, recipe: .neutral)
             photo = OpenPhoto(
                 url: url,
                 source: .raw(filter),
-                expectedLongEdge: min(Double(longEdge), native),
+                nativeSize: ImageRenderer.orientedNativeSize(filter),
                 facts: EditPhotoFacts(
                     isRAW: true,
                     asShotTemperature: Double(filter.neutralTemperature),
@@ -167,11 +197,14 @@ actor LiveEditRenderer {
                 )
             )
         } else {
-            let decoded = try ImageRenderer.decodeImage(url, longEdge: longEdge)
+            let decoded = try ImageRenderer.decodeImage(url, outputLongEdge: longEdge, recipe: .neutral)
             photo = OpenPhoto(
                 url: url,
-                source: .image(CIImage(cgImage: decoded.image)),
-                expectedLongEdge: Double(max(decoded.image.width, decoded.image.height)),
+                source: .image(
+                    CIImage(cgImage: decoded.image),
+                    decodedLongEdge: max(decoded.image.width, decoded.image.height)
+                ),
+                nativeSize: decoded.nativePixelSize,
                 facts: .still
             )
         }
@@ -179,11 +212,11 @@ actor LiveEditRenderer {
         return photo
     }
 
-    /// The mean color of a 5-pixel square around `point` (top-left fractions), as the
-    /// one-pixel image `CIAreaAverage` produces.
+    /// The mean color of a 5-pixel square around `point` (the image's own coordinates,
+    /// y up), as the one-pixel image `CIAreaAverage` produces.
     private func sampledColor(_ image: CIImage, at point: CGPoint) throws -> CIImage {
         let extent = image.extent
-        let center = CGPoint(x: extent.minX + point.x * extent.width, y: extent.minY + (1 - point.y) * extent.height)
+        let center = CGPoint(x: extent.minX + point.x, y: extent.minY + point.y)
         let area = CIFilter.areaAverage()
         area.inputImage = image
         area.extent = CGRect(x: center.x - 2, y: center.y - 2, width: 5, height: 5).intersection(extent)
