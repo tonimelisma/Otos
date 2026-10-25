@@ -75,6 +75,26 @@ reported by others; **[U]** unconfirmed.
   - Background downloads have no free-space floor today; they stop only when the
     provider reports insufficient space (`MaterializationCoordinator.swift:684`) [V].
 
+## Handing a browser a cloud-only original, as Finder does
+
+Finder's copy and drag hand over the file itself. For a cloud-only file the URL goes
+out at once, and whoever reads the bytes triggers the download. Tested after OneDrive's
+File Provider domain was restarted (`fileproviderctl evaluate` reported the files
+uploaded) [M]:
+
+- **Set-up:** three cloud-only Camera Roll JPEGs (0.22–0.33 MB, `compressed,dataless`)
+  went on the pasteboard as one file-URL item each, the shape of Finder's and Otos's
+  ⌘C.
+- **Chrome 156** (its own Paste command, throwaway profile):
+  - all three `File`s arrived with their sizes before any download;
+  - reading them downloaded them in 0.35–0.51 s, and each decoded at 1280×720.
+- **WebKit** (Safari's engine, `paste(_:)`): three other cloud-only JPEGs downloaded on
+  read in 0.64–1.34 s and decoded.
+- **Afterwards:** all six files were local; the reads, not Otos, downloaded them.
+
+So handing over an original's URL works for cloud-only files in both browser engines,
+with no download before the hand-off. The cost is paid by the receiver's read.
+
 ## On-demand rendering, measured
 
 From a downloaded original, one process per run, RAW9 [M]:
