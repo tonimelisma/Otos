@@ -185,6 +185,17 @@ Nothing is evicted by Otos, and nothing full-size is cached. A cloud-only origin
 downloaded only when a full-size render or a first preview needs it; macOS frees it
 again under disk pressure (R1).
 
+**Acceptance (owner, 2026-10-25):** several photos selected in the grid and/or the
+filmstrip, some edited and some not, copied with ⌘C and pasted into a web page arrive
+as one file per photo, in Chrome and in Safari:
+- edited photos and unedited RAWs arrive as their rendered JPEGs;
+- other unedited photos arrive as their originals.
+
+Verified with the browser probe from `2026-10-25-browser-multi-file-paste-and-drop.md`
+against a mixed selection, including cloud-only originals. An unedited HEIC original
+arrives in Chrome as a file Chrome cannot display; the increment states how that case
+is resolved before it lands.
+
 Amends ADR 0012, ADR 0028, APP-012, APP-035, APP-036 and APP-038.
 
 ### 14. Export
