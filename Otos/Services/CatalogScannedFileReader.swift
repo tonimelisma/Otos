@@ -15,6 +15,7 @@ nonisolated enum CatalogScannedFileReader {
         .contentModificationDateKey,
         .fileSizeKey,
         .contentTypeKey,
+        .fileIdentifierKey,
     ]
 
     /// Observed inventory classification for one absolute path. Companions are
@@ -81,7 +82,8 @@ nonisolated enum CatalogScannedFileReader {
                 contentTypeIdentifier: values.contentType?.identifier,
                 byteSize: values.fileSize.map(Int64.init),
                 createdAt: values.creationDate,
-                contentModifiedAt: values.contentModificationDate
+                contentModifiedAt: values.contentModificationDate,
+                fileIdentifier: values.fileIdentifier
             )
         )
     }

@@ -325,6 +325,45 @@ struct CatalogStoreFilesystemEventTests {
         #expect(await recorder.invocations().count == baseline)
     }
 
+    /// ADR 0008 move witness: a rename seen as file events moves the row, with its like, to
+    /// the new path without a full scan — the old path's event finds nothing to delete.
+    @Test func aRenameEventMovesTheRowWithItsOverlay() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let original = root.appending(path: "before.jpg")
+        try writeCatalogStoreFile(original, contents: "jpeg")
+
+        let recorder = FilesystemEventScanInvocationRecorder()
+        let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: recordingLiveScanner(recorder),
+            filesystemWatcher: watcher,
+            scanCadence: .milliseconds(10)
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let scanned = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.count == 1
+        }
+        _ = try await store.setMediaChoice(.liked, for: scanned.testAssets.map(\.id))
+        let baseline = await recorder.invocations().count
+
+        let renamed = root.appending(path: "after.jpg")
+        try FileManager.default.moveItem(at: original, to: renamed)
+        let renameFlags = UInt32(kFSEventStreamEventFlagItemRenamed | kFSEventStreamEventFlagItemIsFile)
+        emit(FilesystemEvent(path: original.path, flags: renameFlags))
+        emit(FilesystemEvent(path: renamed.path, flags: renameFlags))
+
+        let moved = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["after.jpg"]
+        }
+        #expect(moved.testAssets.map(\.mediaChoice) == [.liked])
+        #expect(await recorder.invocations().count == baseline)
+        await store.shutdown()
+    }
+
     @Test func targetedFileRemovalDeletesWithoutFullScan() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

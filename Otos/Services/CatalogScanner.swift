@@ -202,6 +202,7 @@ private nonisolated enum LiveCatalogScanner {
         .contentModificationDateKey,
         .fileSizeKey,
         .contentTypeKey,
+        .fileIdentifierKey,
     ]
 
     static func scan(

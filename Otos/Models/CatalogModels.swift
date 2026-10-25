@@ -847,6 +847,11 @@ nonisolated struct ScannedMediaFile: Hashable {
     let byteSize: Int64?
     let createdAt: Date?
     let contentModifiedAt: Date?
+    /// The file's identifier on its volume (its inode), read with the other filesystem
+    /// facts and never used as identity: it is the move witness's evidence that a file
+    /// at a new path is the one an absent row described (ADR 0008). `nil` where the
+    /// source has no filesystem, such as a camera.
+    let fileIdentifier: UInt64?
 
     init(
         relativePath: MediaRelativePath,
@@ -856,7 +861,8 @@ nonisolated struct ScannedMediaFile: Hashable {
         createdAt: Date?,
         contentModifiedAt: Date?,
         kind: MediaKind? = nil,
-        format: MediaFormatToken? = nil
+        format: MediaFormatToken? = nil,
+        fileIdentifier: UInt64? = nil
     ) {
         let contentType = contentTypeIdentifier.flatMap(UTType.init)
         self.relativePath = relativePath
@@ -867,6 +873,7 @@ nonisolated struct ScannedMediaFile: Hashable {
         self.byteSize = byteSize
         self.createdAt = createdAt
         self.contentModifiedAt = contentModifiedAt
+        self.fileIdentifier = fileIdentifier
     }
 }
 

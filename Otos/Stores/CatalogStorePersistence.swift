@@ -76,6 +76,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.fileIdentifierMigrationIdentifier) { db in
+            for statement in CatalogSchema.fileIdentifierStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -907,6 +912,66 @@ extension CatalogStore {
         return deleted
     }
 
+    /// The row a newly seen path moved from outside Otos, when the move witness says so
+    /// (ADR 0008): no row exists at the new path; exactly one row on the same volume
+    /// records this file's identifier, size and creation time (whole seconds); and that
+    /// row's own path no longer exists on disk. The witness is evidence for this one
+    /// write, never an identity — a path stays the asset. Modification time is left out
+    /// on purpose: OneDrive rewrites it on remote renames and moves (plan 0108, R2). A
+    /// copy has a new identifier, and a file still present at its old path is not moved,
+    /// so neither is paired; anything ambiguous pairs nothing and stays today's purge.
+    static func movedRowWitnessed(
+        for file: ScannedMediaFile,
+        libraryRootPath: LibraryRootPath,
+        libraryRootID: Int64,
+        db: Database
+    ) throws -> (libraryRootID: Int64, rootPath: String, relativePath: String)? {
+        guard let identifier = file.fileIdentifier, let size = file.byteSize, let created = file.createdAt else {
+            return nil
+        }
+        let rowAtPath = try Bool.fetchOne(
+            db,
+            sql: "SELECT 1 FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+            arguments: [libraryRootID, file.relativePath.rawValue]
+        ) ?? false
+        guard !rowAtPath else {
+            return nil
+        }
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+            SELECT a.library_root_id, a.relative_path, r.path AS root_path
+            FROM media_asset a JOIN library_root r ON r.id = a.library_root_id
+            WHERE a.file_identifier = ? AND a.byte_size = ?
+              AND CAST(COALESCE(a.created_at_unix, -1) AS INTEGER) = ?
+            """,
+            arguments: [Int64(bitPattern: identifier), size, Int64(created.timeIntervalSince1970)]
+        )
+        guard !rows.isEmpty, let volume = volumeDevice(of: libraryRootPath.url.path(percentEncoded: false)) else {
+            return nil
+        }
+        let candidates: [(libraryRootID: Int64, rootPath: String, relativePath: String)] = rows.compactMap { row in
+            let rootPath: String = row["root_path"]
+            let relativePath: String = row["relative_path"]
+            guard volumeDevice(of: rootPath) == volume else {
+                return nil
+            }
+            let oldPath = LibraryRootPath(rawValue: rootPath).url
+                .appendingPathComponent(relativePath, isDirectory: false).path(percentEncoded: false)
+            var info = stat()
+            guard lstat(oldPath, &info) != 0, errno == ENOENT else {
+                return nil
+            }
+            return (row["library_root_id"], rootPath, relativePath)
+        }
+        return candidates.count == 1 ? candidates[0] : nil
+    }
+
+    private static func volumeDevice(of path: String) -> dev_t? {
+        var info = stat()
+        return stat(path, &info) == 0 ? info.st_dev : nil
+    }
+
     static func upsertScannedFile(
         _ file: ScannedMediaFile,
         libraryRootPath: LibraryRootPath,
@@ -940,6 +1005,22 @@ extension CatalogStore {
             OtosLog.catalog.notice("\(message, privacy: .public)")
             return true
         }
+        if let moved = try movedRowWitnessed(for: file, libraryRootPath: libraryRootPath, libraryRootID: libraryRootID, db: db) {
+            // The row keeps everything Otos holds for the file and takes the new path;
+            // the upsert below then refreshes its filesystem facts. `asset_metadata` and
+            // every other child row follow through `ON UPDATE CASCADE`.
+            try db.execute(
+                sql: """
+                UPDATE media_asset SET library_root_id = ?, relative_path = ?, relative_path_key = ?
+                WHERE library_root_id = ? AND relative_path = ?
+                """,
+                arguments: [libraryRootID, file.relativePath.rawValue, pathKey, moved.libraryRootID, moved.relativePath]
+            )
+            let message = "op=catalog.scan.reconcile phase=moveWitnessed "
+                + "fromRoot=\(moved.rootPath) from=\(moved.relativePath) "
+                + "rootPath=\(libraryRootPath.rawValue) to=\(file.relativePath.rawValue)"
+            OtosLog.catalog.notice("\(message, privacy: .public)")
+        }
         // The compound key makes a scan idempotent: observing the same relative
         // path refreshes its current filesystem facts instead of creating scan
         // history or a second asset identity.
@@ -957,9 +1038,10 @@ extension CatalogStore {
                 format,
                 byte_size,
                 created_at_unix,
-                content_modified_at_unix
+                content_modified_at_unix,
+                file_identifier
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(library_root_id, relative_path) DO UPDATE SET
                 sort_key = excluded.sort_key,
                 name_sort_key = excluded.name_sort_key,
@@ -969,8 +1051,10 @@ extension CatalogStore {
                 format = excluded.format,
                 byte_size = excluded.byte_size,
                 created_at_unix = excluded.created_at_unix,
-                content_modified_at_unix = excluded.content_modified_at_unix
+                content_modified_at_unix = excluded.content_modified_at_unix,
+                file_identifier = excluded.file_identifier
             WHERE media_asset.sort_key IS NOT excluded.sort_key
+               OR media_asset.file_identifier IS NOT excluded.file_identifier
                OR media_asset.name_sort_key IS NOT excluded.name_sort_key
                OR media_asset.name IS NOT excluded.name
                OR media_asset.content_type_identifier IS NOT excluded.content_type_identifier
@@ -1089,6 +1173,7 @@ private nonisolated func scannedFileUpsertArguments(
         file.byteSize,
         file.createdAt?.timeIntervalSince1970,
         file.contentModifiedAt?.timeIntervalSince1970,
+        file.fileIdentifier.map { Int64(bitPattern: $0) },
     ]
     return StatementArguments(values)
 }

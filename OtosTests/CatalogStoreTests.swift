@@ -426,6 +426,43 @@ struct CatalogStoreTests {
         #expect(reconciled.testAssets.map(\.relativePath.rawValue) == ["b.jpg"])
     }
 
+    /// ADR 0008 move witness: a file renamed into another folder outside Otos keeps its row
+    /// and its like across the launch scan, while a copy whose original is then deleted is
+    /// a new file with a new identifier and keeps nothing.
+    @Test func aFileMovedOutsideOtosKeepsItsOverlayAcrossTheLaunchScan() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(root.appending(path: "moved.jpg"), contents: "moved-bytes")
+        try writeCatalogStoreFile(root.appending(path: "copied.jpg"), contents: "copied-bytes")
+
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        try await firstStore.start(scansSavedLibraries: false)
+        try await firstStore.addLibrary(url: root)
+        let scanned = try await waitForCatalogStoreState(firstStore) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.count == 2
+        }
+        _ = try await firstStore.setMediaChoice(.liked, for: scanned.testAssets.map(\.id))
+        await firstStore.shutdown()
+
+        try FileManager.default.createDirectory(
+            at: root.appending(path: "Sub", directoryHint: .isDirectory), withIntermediateDirectories: true
+        )
+        try FileManager.default.moveItem(at: root.appending(path: "moved.jpg"), to: root.appending(path: "Sub/renamed.jpg"))
+        try FileManager.default.copyItem(at: root.appending(path: "copied.jpg"), to: root.appending(path: "copy.jpg"))
+        try FileManager.default.removeItem(at: root.appending(path: "copied.jpg"))
+
+        let secondStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        try await secondStore.start()
+        let reconciled = try await waitForCatalogStoreState(secondStore) { snapshot in
+            !snapshot.isScanning && Set(snapshot.testAssets.map(\.relativePath.rawValue)) == ["Sub/renamed.jpg", "copy.jpg"]
+        }
+        let choices = Dictionary(uniqueKeysWithValues: reconciled.testAssets.map { ($0.relativePath.rawValue, $0.mediaChoice) })
+        #expect(choices == ["Sub/renamed.jpg": .liked, "copy.jpg": .notRated])
+        await secondStore.shutdown()
+    }
+
     @Test func failedLaunchScanDoesNotDeletePreviouslyCatalogedRows() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

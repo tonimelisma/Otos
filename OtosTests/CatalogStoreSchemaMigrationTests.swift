@@ -113,8 +113,8 @@ struct CaptureWallClockTests {
 
 @Suite(.testDirectory)
 struct CatalogStoreSchemaMigrationTests {
-    /// ARC-043: a fresh catalog is the baseline schema and records only the baseline.
-    @Test func aNewCatalogIsTheBaselineSchema() async throws {
+    /// ARC-043: a fresh catalog is the baseline schema plus the additive migrations after it.
+    @Test func aNewCatalogIsTheBaselineSchemaPlusItsMigrations() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         let store = CatalogStore(location: .databaseFile(databaseURL))
@@ -129,7 +129,9 @@ struct CatalogStoreSchemaMigrationTests {
             )
             return (applied, tables)
         }
-        #expect(applied == [CatalogSchema.baselineMigrationIdentifier])
+        #expect(applied == [
+            CatalogSchema.baselineMigrationIdentifier, CatalogSchema.fileIdentifierMigrationIdentifier,
+        ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
             "active_file_operation", "active_file_operation_companion_staging", "active_source_erase",
@@ -167,6 +169,46 @@ struct CatalogStoreSchemaMigrationTests {
 
     /// A refused catalog cannot say whether a persisted root is registered, so a
     /// namespace lease for that root reports the catalog, never the root, as missing.
+    /// ARC-043: a catalog written at the baseline opens through the additive
+    /// `file_identifier` migration and keeps its rows.
+    @Test func aBaselineCatalogGainsTheFileIdentifierColumnAndKeepsItsRows() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+            for statement in CatalogSchema.baselineStatements {
+                try db.execute(sql: statement)
+            }
+            try db.execute(sql: "CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
+            try db.execute(
+                sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)",
+                arguments: [CatalogSchema.baselineMigrationIdentifier]
+            )
+            try db.execute(sql: "INSERT INTO library_root (path, kind) VALUES ('/Pictures', 'library')")
+            try db.execute(sql: """
+            INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key)
+            VALUES (1, 'a.jpg', 'a.jpg', 'a.jpg', 'a.jpg')
+            """)
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
+
+        let (applied, columns, rows) = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try (
+                String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations"),
+                Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('media_asset')")),
+                Int.fetchOne(db, sql: "SELECT COUNT(*) FROM media_asset") ?? 0
+            )
+        }
+        #expect(applied == [CatalogSchema.baselineMigrationIdentifier, CatalogSchema.fileIdentifierMigrationIdentifier])
+        #expect(columns.contains("file_identifier"))
+        #expect(rows == 1)
+    }
+
     @Test func refusedCatalogDeniesNamespaceLeaseAsCatalogUnavailable() async throws {
         let fixture = try await Self.makeUnknownHistoryFixture(identifier: "v999_future_history")
         let persistedRoot = try await DatabaseQueue(path: fixture.databaseURL.path(percentEncoded: false)).read { db in

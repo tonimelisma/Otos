@@ -57,9 +57,9 @@ Captured owner guidance for verification:
 - Keep pure path identity. A content hash may be retained as a subordinate fact
   about the bytes currently observed at that path, but it never establishes identity
   or preserves overlay across moves. Do not build the data model around durable
-  filesystem identifiers or generated UUIDs. Out-of-app moves are an edge case; a
-  future convenience could detect them by matching thumbnails, but that is not a
-  foundation.
+  filesystem identifiers or generated UUIDs. A move outside Otos keeps its overlay
+  only when ADR 0034's byte-free witness proves it, and the witness never becomes an
+  identity.
 - No generated sidecars. Do not pollute the user's media folders with Otos-authored
   identity or overlay files. Existing user-owned useful companions (`.xmp` / `.srt`)
   may be inventoried and transferred during explicit import/reorganization. The
@@ -110,8 +110,7 @@ This ADR references, but does not own:
 Separate ADRs or specs must own:
 
 - The editing model and any optional on-disk export of edited renders.
-- Any out-of-app move or rename detection convenience, including a thumbnail-match
-  relink, if it is ever built.
+- Out-of-app move and rename detection: ADR 0034 (the move witness).
 - Color management beyond relying on system frameworks.
 
 ## Decision
@@ -156,10 +155,10 @@ subordinate, rebuildable overlay.
    generated UUIDs, and does not write sidecars to track files. A canonical content
    hash is allowed only as subordinate overlay with an explicit current size/mtime
    signature; it never changes identity or moves overlay. An
-   out-of-app move therefore appears as a deletion plus an addition. Recovering
-   overlay across such a move is an optional future convenience that may match
-   newly appeared files to orphaned thumbnails; it is explicitly not part of the
-   identity model and must not drive schema design now. A scan also captures a
+   out-of-app move appears as a deletion plus an addition, except where ADR 0034's
+   witness — the file's identifier, size and creation time, and its old path gone —
+   moves the row to the new path in the same write. The witness is a scan fact, not
+   part of the identity model. A scan also captures a
    process-local namespace-mutation epoch for its root. Import, reorganization,
    and filesystem-event settlement advance that epoch before their Store write
    and retain typed dirty scopes. If the epoch changes while a scan is suspended,
@@ -332,9 +331,9 @@ and never overrides live filesystem truth.
   one materialization policy instead of inventing their own.
 - The catalog never grows a second identity scheme; path identity stays the only
   one, keeping ADR 0002's model intact.
-- Out-of-app moves lose overlay by design. This is acceptable for the real
-  workload and is the price of refusing hashes as identity and refusing sidecars. A future
-  thumbnail-match relink convenience can soften it without changing identity.
+- Out-of-app moves the ADR 0034 witness cannot prove (across volumes, recreated by a
+  provider) lose overlay by design; that is the price of refusing hashes as identity and
+  refusing sidecars.
 - Reconciliation must distinguish proven deletion from temporary absence. The
   current whole-root availability model (ADR 0005) already prevents purging an
   unreachable root; a user-excluded selective-sync subtree inside a reachable root
@@ -380,10 +379,9 @@ new identity columns, no sidecar writers, and no overlay-class split.
 
 ## Reversal Plan
 
-If a real, measured need to preserve overlay across out-of-app moves appears, add a
-move-detection convenience behind the existing catalog owner without changing path
-identity, preferring thumbnail matching over byte hashing so cloud placeholders are
-never force-materialized. If authored overlay later proves too valuable to purge on
+Move detection exists without changing path identity (ADR 0034). If it proves
+insufficient, extend that witness rather than adopting byte hashing, so cloud
+placeholders are never force-materialized. If authored overlay later proves too valuable to purge on
 proven deletion, introduce an orphan-and-relink lifecycle in that feature's spec.
 Sidecars remain out of scope unless the no-pollution product promise itself is
 revisited with the user.

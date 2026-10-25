@@ -13,6 +13,19 @@ import Foundation
 nonisolated enum CatalogSchema {
     static let baselineMigrationIdentifier = "v1_catalog_baseline"
 
+    /// The move witness's scan fact (ADR 0008): each file's identifier on its volume,
+    /// written by every scan upsert. Rows from before the column read `NULL` until their
+    /// next scan, and a `NULL` never witnesses a move.
+    static let fileIdentifierMigrationIdentifier = "v2_media_asset_file_identifier"
+
+    static let fileIdentifierStatements: [String] = [
+        "ALTER TABLE media_asset ADD COLUMN file_identifier INTEGER",
+        """
+        CREATE INDEX idx_media_asset_file_identifier
+        ON media_asset(file_identifier) WHERE file_identifier IS NOT NULL
+        """,
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (
