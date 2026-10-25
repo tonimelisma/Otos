@@ -11,6 +11,8 @@ import Foundation
 nonisolated struct LoupeInfoModel: Equatable, Sendable {
     static let unknown = "Unknown"
 
+    /// The asset these facts describe.
+    let id: MediaAssetID
     let fileName: String
     let captureDate: String
     let dimensions: String
@@ -55,6 +57,7 @@ nonisolated struct LoupeInfoModel: Equatable, Sendable {
             unknown
         }
         return LoupeInfoModel(
+            id: id,
             fileName: fileName,
             captureDate: captureDate,
             dimensions: dimensions,

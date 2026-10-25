@@ -138,6 +138,35 @@ extension AppKitWindowTests {
             _ = harness.controller.requestVisibleDetails(reason: "scroll")
             #expect(!harness.controller.wouldStartVisibleDetailQuery(for: visibleIDs))
         }
+
+        /// APP-015 and ADR 0032 rule 4: a visible-detail query that fails merges nothing,
+        /// so the painted tile keeps its thumbnail, and it leaves the request outstanding,
+        /// so the next scroll flush over the same tiles asks again and merges the rows.
+        @Test(.testDirectory) func failedDetailQueryKeepsThePaintedTileAndAsksAgain() async throws {
+            try await withEditableLibrary(fileCount: 2) { library in
+                let harness = try PaintInvariantHarness(ids: library.ids)
+                harness.controller.detailReader = MediaTileDetailReader(store: library.store)
+                let visible = library.ids[0]
+                harness.paintThumbnail(for: visible, pixelSize: CGSize(width: 64, height: 48))
+                let before = try harness.requirePaintedSize(for: visible)
+                let visibleIDs = harness.controller.visibleAssetIDs()
+                try #require(visibleIDs == library.ids)
+                let hidden = try await HiddenCatalogTable("asset_metadata", in: library.databaseURL)
+
+                #expect(harness.controller.requestVisibleDetails(reason: "scroll") == visibleIDs.count)
+                await harness.controller.detailQueryTask?.value
+                #expect(try harness.requirePaintedSize(for: visible) == before)
+                #expect(harness.controller.tileContents.content(for: visible)?.detail.byteSize == nil)
+                #expect(harness.controller.wouldStartVisibleDetailQuery(for: visibleIDs))
+
+                try await hidden.restore()
+                _ = harness.controller.requestVisibleDetails(reason: "scroll")
+                await harness.controller.detailQueryTask?.value
+                #expect(harness.controller.tileContents.content(for: visible)?.detail.byteSize != nil)
+                #expect(try harness.requirePaintedSize(for: visible) == before)
+                #expect(!harness.controller.wouldStartVisibleDetailQuery(for: visibleIDs))
+            }
+        }
     }
 }
 
@@ -147,16 +176,20 @@ private final class PaintInvariantHarness {
     let ids: [MediaAssetID]
     let window: NSWindow
 
-    init(itemCount: Int) throws {
-        controller = MediaGridViewController()
-        _ = controller.view
-
-        ids = (0 ..< itemCount).map { index in
+    convenience init(itemCount: Int) throws {
+        try self.init(ids: (0 ..< itemCount).map { index in
             MediaAssetID(
                 libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
                 relativePath: MediaRelativePath(rawValue: "asset-\(index).jpg")
             )
-        }
+        })
+    }
+
+    init(ids: [MediaAssetID]) throws {
+        controller = MediaGridViewController()
+        _ = controller.view
+
+        self.ids = ids
         var snapshot = NSDiffableDataSourceSnapshot<MediaGridViewController.Section, MediaAssetID>()
         snapshot.appendSections([.ungrouped])
         snapshot.appendItems(ids, toSection: .ungrouped)

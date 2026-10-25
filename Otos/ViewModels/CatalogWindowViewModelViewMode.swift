@@ -40,9 +40,18 @@ extension CatalogWindowViewModel {
         guard let id else { return }
         let reader = tileDetailReader
         focusedKindTask = Task { [weak self] in
-            let details = await reader.details(for: [id])
+            let detail: MediaTileDetail?
+            do {
+                detail = try await reader.detail(for: id)
+            } catch {
+                // The kind stays unknown, as it has been since focus moved, and the next
+                // focus change reads again. The overlay still follows focus.
+                guard let self, !Task.isCancelled, focusedAssetID == id else { return }
+                refreshLoupeInfo()
+                return
+            }
             guard let self, !Task.isCancelled, focusedAssetID == id else { return }
-            focusedAssetKind = details[id]?.bestKind
+            focusedAssetKind = detail?.bestKind
             refreshLoupeInfo()
             // Opening a video prepares it, exactly as opening an image decodes it: no
             // click stands between the user and a playable asset. Kind is only known
@@ -327,11 +336,22 @@ extension CatalogWindowViewModel {
         // no failed attempt left to infer it from.
         downloadingSlots.insert(slot)
         paneRequestTasks[slot] = Task(priority: .userInitiated) { [weak self] in
-            let details = await detailReader.details(for: [id])
+            let detail: MediaTileDetail?
+            do {
+                detail = try await detailReader.detail(for: id)
+            } catch {
+                guard !Task.isCancelled, let self, expectedAsset(for: slot) == id else {
+                    return
+                }
+                // Without its row a decode would drop the photo's edit and curation, so
+                // nothing is decoded or published. This request has ended, so its spinner
+                // goes; the slot stays empty, which is what `refreshPanePreviews` asks again for.
+                downloadingSlots.remove(slot)
+                return
+            }
             guard !Task.isCancelled else {
                 return
             }
-            let detail = details[id]
             let outcome = await loader.preview(
                 for: PreviewImageLoader.Request(
                     id: id,
@@ -412,7 +432,13 @@ extension CatalogWindowViewModel {
         loupeVideoPrepareTask?.cancel()
         loupeVideoPrepareTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            let detail = await detailReader.details(for: [id])[id]
+            let detail: MediaTileDetail?
+            do {
+                detail = try await detailReader.detail(for: id)
+            } catch {
+                // Nothing is prepared; the next focus change or the play glyph asks again.
+                return
+            }
             guard !Task.isCancelled, detail?.bestKind == .video else { return }
             guard let state = await loader.preparePlayer(id: id, detail: detail) else {
                 OtosLog.ui.notice(

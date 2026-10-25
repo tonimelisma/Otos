@@ -162,7 +162,24 @@ extension CatalogWindowViewModel {
         }
         let store = catalogStore
         loupeInfoTask = Task { [weak self] in
-            let asset = try? await store.mediaAssets(for: [id])[id]
+            let asset: MediaAsset?
+            do {
+                asset = try await store.mediaAssets(for: [id])[id]
+            } catch {
+                guard !Task.isCancelled, let self, focusedAssetID == id, showsLoupeInfo else { return }
+                // A failed read is not an asset without facts: nothing reads `Unknown` for
+                // it. The overlay keeps what it showed for this asset, drops another
+                // asset's, and the next refresh reads again.
+                OtosLog.ui.errorOperation("loupe.info", phase: "readFailed", fields: [
+                    "id": id.relativePath.rawValue,
+                    "error": String(describing: error),
+                ])
+                if loupeInfo?.id != id {
+                    loupeInfo = nil
+                }
+                loupeInfoTask = nil
+                return
+            }
             guard !Task.isCancelled, let self, focusedAssetID == id, showsLoupeInfo else { return }
             let preview = panePreviews[.loupe]
             loupeInfo = LoupeInfoModel.make(
