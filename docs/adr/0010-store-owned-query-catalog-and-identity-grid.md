@@ -111,13 +111,23 @@ loaded off the main actor.
 Enrichment selection moves from a resident map scan to a Store claim query:
 `enrichmentCandidates(prioritizing:limit:)`.
 
-Catalog schema advances are additive GRDB migrations. Destructive schema reset
-(`eraseDatabaseOnSchemaChange` and the former clean-reset erase path) is retired
-because import history and other non-rebuildable overlay must survive app upgrades.
-A database whose applied migration identifiers include ones this app does not know,
-or whose user tables exist without any known migration identifiers, refuses to open:
-no roots load, no scans run, and nothing is written to the catalog file. The window
-surfaces a typed "catalog was written by a newer Otos" / incompatible empty state.
+The catalog schema starts from one baseline migration, `v1_catalog_baseline`, whose
+statements are `CatalogSchema.baselineStatements`. Otos had no users when the
+incremental history it replaces (v3–v23) was retired, so the baseline carries no
+upgrade from those catalogs; the only two that existed were converted once, by hand,
+by copying their rows into baseline catalogs. Keeping that history would have kept
+code whose only job was upgrading catalogs nobody had — one step of it (v16) even
+decided what to delete by asking DiskArbitration what was mounted at the time.
+
+Schema advances after the baseline are additive GRDB migrations registered after it.
+Destructive schema reset (`eraseDatabaseOnSchemaChange` and the former clean-reset
+erase path) stays retired, because import history and other non-rebuildable overlay
+must survive app upgrades. A database whose applied migration identifiers include
+ones this build does not register — written by a newer Otos, or from before the
+baseline; which is not recorded, so it is not said — or whose user tables exist
+without any known migration identifiers, refuses to open: no roots load, no scans
+run, and nothing is written to the catalog file. The window surfaces a typed
+"written by a different version of Otos" / incompatible empty state.
 An explicit user-confirmed Rebuild Catalog operation is reserved for a later
 requirement and is never used as silent migration behavior.
 

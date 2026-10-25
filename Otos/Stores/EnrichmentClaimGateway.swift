@@ -90,18 +90,15 @@ nonisolated enum EnrichmentClaimGateway {
         """
     }
 
-    /// The Swift-side twin of `MediaAsset.needsEnrichment(hashRequired:)`. `hashRequired
-    /// == false` yields the metadata-only predicate verbatim (not `OR FALSE`), so it
-    /// stays byte-identical to the metadata-only partial index's `WHERE` clause —
-    /// required for `INDEXED BY` to accept it (see `createEnrichmentClaimIndexes`).
+    /// The Swift-side twin of `MediaAsset.needsEnrichment(hashRequired:)`, and the `WHERE`
+    /// clause of the claim indexes `CatalogSchema` creates from it. `hashRequired == false`
+    /// yields the metadata-only predicate verbatim (not `OR FALSE`).
     ///
-    /// The `true` branch must also stay token-identical to the broad partial index's
-    /// `WHERE` clause as migration v12 created it. SQLite's `INDEXED BY` partial-index
-    /// implication check is syntactic: re-parenthesizing the same OR-clauses
-    /// (`(A) OR (B)` in place of `A OR B`) is rejected with `no query solution` at
-    /// prepare time even though it is logically equivalent, so a production catalog
-    /// whose broad index was built by the pre-plan v12 migration would fail every
-    /// hash-required claim query. Verified against SQLite 3.54.0.
+    /// The claim queries and the indexes share this one text because SQLite's `INDEXED
+    /// BY` partial-index implication check is syntactic: re-parenthesizing the same
+    /// OR-clauses (`(A) OR (B)` in place of `A OR B`) is rejected with `no query solution`
+    /// at prepare time even though it is logically equivalent. Verified against SQLite
+    /// 3.54.0.
     static func stalenessSQLPredicate(hashRequired: Bool) -> String {
         guard hashRequired else {
             return metadataStalenessSQLPredicate()
