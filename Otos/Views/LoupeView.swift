@@ -35,6 +35,8 @@ struct LoupeView: View {
     var loupeZoomCommand: LoupeZoomCommand?
     var onZoomReport: (LoupeZoomReport) -> Void = { _ in }
     var onZoomDoubleClick: (CGPoint) -> Void = { _ in }
+    var isPickingNeutral = false
+    var onPickNeutral: (CGPoint) -> Void = { _ in }
     var onZoomToggle: () -> Void = {}
     /// Info overlay (APP-041); nil when hidden.
     var loupeInfo: LoupeInfoModel?
@@ -91,7 +93,9 @@ struct LoupeView: View {
                             nativePixelSize: panePreview?.nativePixelSize,
                             command: loupeZoomCommand,
                             onReport: onZoomReport,
-                            onDoubleClick: onZoomDoubleClick
+                            onDoubleClick: onZoomDoubleClick,
+                            isPicking: isPickingNeutral,
+                            onPick: onPickNeutral
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .accessibilityElement()

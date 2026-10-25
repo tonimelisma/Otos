@@ -99,7 +99,7 @@ final nonisolated class ImageRenderer: Sendable {
         guard !recipe.isNeutral else {
             return decoded
         }
-        let adjusted = applying(recipe, includingExposure: true, to: CIImage(cgImage: decoded.image))
+        let adjusted = applying(recipe, toDevelopedRAW: false, CIImage(cgImage: decoded.image))
         return try Rendered(image: bitmap(adjusted), decoder: decoded.decoder, nativePixelSize: decoded.nativePixelSize)
     }
 
@@ -134,26 +134,38 @@ final nonisolated class ImageRenderer: Sendable {
     static func developed(_ filter: CIRAWFilter, recipe: EditRecipe) throws -> CIImage {
         filter.scaleFactor = filter.scaleFactor
         filter.exposure = Float(recipe.exposure)
+        if let temperature = recipe.temperature {
+            filter.neutralTemperature = Float(temperature)
+        }
+        if let tint = recipe.tint {
+            filter.neutralTint = Float(tint)
+        }
         guard let image = filter.outputImage else {
             throw RenderError.renderFailed
         }
-        return applying(recipe, includingExposure: false, to: image)
+        return applying(recipe, toDevelopedRAW: true, image)
     }
 
-    /// Applies the recipe's Light section (ADR 0036) with the Core Image filters macOS
-    /// provides. A neutral value applies no filter.
-    static func applying(_ recipe: EditRecipe, includingExposure: Bool, to image: CIImage) -> CIImage {
+    /// Applies the recipe with the Core Image filters macOS provides (ADR 0036): white
+    /// balance and exposure first, for a still that is not a RAW (a RAW's are applied in
+    /// its pipeline), then contrast, highlights and shadows, vibrance, and saturation.
+    /// A neutral value applies no filter.
+    static func applying(_ recipe: EditRecipe, toDevelopedRAW isRAW: Bool, _ image: CIImage) -> CIImage {
         var output = image
-        if includingExposure, recipe.exposure != 0 {
+        if !isRAW, recipe.temperature != nil || recipe.tint != nil {
+            output = relativeWhiteBalance(temperature: recipe.temperature ?? 0, tint: recipe.tint ?? 0, output)
+        }
+        if !isRAW, recipe.exposure != 0 {
             let exposure = CIFilter.exposureAdjust()
             exposure.inputImage = output
             exposure.ev = Float(recipe.exposure)
             output = exposure.outputImage ?? output
         }
-        if recipe.contrast != 0 {
+        if recipe.contrast != 0 || recipe.saturation != 0 {
             let controls = CIFilter.colorControls()
             controls.inputImage = output
             controls.contrast = Float(1 + recipe.contrast / 200)
+            controls.saturation = Float(1 + recipe.saturation / 100)
             output = controls.outputImage ?? output
         }
         if recipe.highlights != 0 || recipe.shadows != 0 {
@@ -163,8 +175,29 @@ final nonisolated class ImageRenderer: Sendable {
             tones.shadowAmount = Float(recipe.shadows / 100)
             output = tones.outputImage ?? output
         }
+        if recipe.vibrance != 0 {
+            let vibrance = CIFilter.vibrance()
+            vibrance.inputImage = output
+            vibrance.amount = Float(recipe.vibrance / 100)
+            output = vibrance.outputImage ?? output
+        }
         return output
     }
+
+    /// A still's relative white balance: the image is treated as lit by a neutral one
+    /// mired cooler per step of `temperature` (warmer output for a positive value) and
+    /// one `CITemperatureAndTint` tint unit per step of `tint` (magenta for positive),
+    /// mapped to D65. Measured on a mid gray: ±100 moves it from r/b 0.41/0.67 to 0.56/0.38
+    /// (research 2026-10-25, white balance probes).
+    static func relativeWhiteBalance(temperature: Double, tint: Double, _ image: CIImage) -> CIImage {
+        let filter = CIFilter.temperatureAndTint()
+        filter.inputImage = image
+        filter.neutral = CIVector(x: 1_000_000 / (d65Mired - temperature), y: tint)
+        filter.targetNeutral = CIVector(x: 1_000_000 / d65Mired, y: 0)
+        return filter.outputImage ?? image
+    }
+
+    private static let d65Mired = 1_000_000 / 6500.0
 
     private static func developRAW(_ url: URL, longEdge: Int?, recipe: EditRecipe) throws -> Rendered {
         let (filter, decoder) = try openRAW(url, longEdge: longEdge)
@@ -206,7 +239,10 @@ final nonisolated class ImageRenderer: Sendable {
     /// Renders every pixel into an 8-bit Display P3 bitmap. `createCGImage` may return an
     /// image that renders lazily on first draw; the bitmap makes the work happen here, on
     /// the lane, rather than wherever the image is first drawn.
-    static func bitmap(_ image: CIImage, context: CIContext = CIContext(options: [.cacheIntermediates: false])) throws -> CGImage {
+    static func bitmap(
+        _ image: CIImage,
+        context: CIContext = CIContext(options: [.cacheIntermediates: false])
+    ) throws -> CGImage {
         let extent = image.extent.integral
         let width = Int(extent.width), height = Int(extent.height)
         guard width > 0, height > 0, let colorSpace = CGColorSpace(name: CGColorSpace.displayP3) else {

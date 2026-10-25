@@ -20,7 +20,7 @@ struct CatalogWindowViewModelEditTests {
             model.toggleEditPanel()
             model.selectAll()
             model.setViewMode(.loupe)
-            try await waitUntil { model.editTarget?.id == id }
+            try await waitUntil { model.editTarget?.id == id && model.canEdit }
 
             model.setEditDragging(true, control: .exposure)
             model.setEditValue(1, for: .exposure)
@@ -51,7 +51,7 @@ struct CatalogWindowViewModelEditTests {
             defer { model.editRenderTask?.cancel() }
             model.toggleEditPanel()
             model.selectAll()
-            try await waitUntil { model.editTarget?.id == id }
+            try await waitUntil { model.editTarget?.id == id && model.canEdit }
 
             model.setEditDragging(true, control: .contrast)
             model.setEditValue(40, for: .contrast)
@@ -83,7 +83,7 @@ struct CatalogWindowViewModelEditTests {
             defer { model.editRenderTask?.cancel() }
             model.toggleEditPanel()
             model.selectAll()
-            try await waitUntil { model.editTarget?.id == id }
+            try await waitUntil { model.editTarget?.id == id && model.canEdit }
 
             model.setEditValue(-30, for: .highlights)
 
@@ -101,12 +101,12 @@ struct CatalogWindowViewModelEditTests {
             defer { model.editRenderTask?.cancel() }
             model.toggleEditPanel()
             model.selectAll()
-            try await waitUntil { model.editTarget?.id == id }
+            try await waitUntil { model.editTarget?.id == id && model.canEdit }
             model.setEditValue(0.5, for: .exposure)
             model.setEditValue(25, for: .shadows)
             try await waitUntil { model.hasSettledEdits }
 
-            model.resetLight()
+            model.resetEditSection(.light)
             try await waitUntil { model.hasSettledEdits }
             #expect(try await library.store.editRecipe(for: id)?.recipe == .neutral)
             #expect(model.undoMenuState.undoTitle == "Undo Reset Light")
@@ -114,6 +114,52 @@ struct CatalogWindowViewModelEditTests {
             model.undoLastChange()
             try await waitUntil { model.hasSettledEdits }
             #expect(try await library.store.editRecipe(for: id)?.recipe == EditRecipe(exposure: 0.5, shadows: 25))
+        }
+    }
+
+    /// The picker, armed in the loupe, saves the clicked point's white balance as one step.
+    @Test func theWhiteBalancePickerSavesTheClickedPointAsOneStep() async throws {
+        try await withEditableLibrary(fileCount: 1) { library in
+            let id = library.ids[0]
+            try writeSolidJPEG(to: id.fileURL)
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            model.toggleEditPanel()
+            model.selectAll()
+            #expect(!model.canPickNeutral)
+            model.setViewMode(.loupe)
+            try await waitUntil { model.editTarget?.id == id && model.canEdit }
+            #expect(model.canPickNeutral)
+
+            model.toggleNeutralPicker()
+            #expect(model.isPickingNeutral)
+            model.pickNeutral(at: CGPoint(x: 0.5, y: 0.5))
+            #expect(!model.isPickingNeutral)
+            try await waitUntil { model.hasSettledEdits && model.submittedEditCommandCount == 2 }
+
+            let saved = try await library.store.editRecipe(for: id)?.recipe
+            #expect((saved?.temperature ?? 0) < 0)
+            #expect(model.editDraft == saved)
+            #expect(model.undoMenuState.undoTitle == "Undo White Balance")
+        }
+    }
+
+    @Test func escapeDisarmsThePickerBeforeLeavingTheLoupe() async throws {
+        try await withEditableLibrary(fileCount: 1) { library in
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            model.toggleEditPanel()
+            model.selectAll()
+            model.setViewMode(.loupe)
+            try await waitUntil { model.canEdit }
+            model.toggleNeutralPicker()
+
+            model.loupeEscape()
+
+            #expect(!model.isPickingNeutral)
+            #expect(model.viewMode == .loupe)
         }
     }
 

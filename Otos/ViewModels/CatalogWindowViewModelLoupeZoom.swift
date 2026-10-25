@@ -60,9 +60,12 @@ extension CatalogWindowViewModel {
         issueLoupeZoom(target == report.fit ? .fit : .magnification(target), anchor: anchor)
     }
 
-    /// Escape in loupe: back to fit first, then out to the grid.
+    /// Escape in loupe: disarm the white balance picker first, then back to fit, then out
+    /// to the grid.
     func loupeEscape() {
-        if let report = loupeZoomReport, !report.isFit {
+        if isPickingNeutral {
+            toggleNeutralPicker()
+        } else if let report = loupeZoomReport, !report.isFit {
             issueLoupeZoom(.fit, anchor: nil)
         } else {
             exitToGrid()

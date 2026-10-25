@@ -127,10 +127,14 @@ struct ContentView: View {
             )) {
                 EditPanelView(
                     photoName: viewModel.editTarget?.id.fileURL.lastPathComponent,
+                    facts: viewModel.editPhotoFacts,
                     recipe: viewModel.editDraft,
+                    isPickingNeutral: viewModel.isPickingNeutral,
+                    canPickNeutral: viewModel.canPickNeutral,
                     setValue: viewModel.setEditValue,
                     setDragging: viewModel.setEditDragging,
-                    resetLight: viewModel.resetLight
+                    resetSection: viewModel.resetEditSection,
+                    toggleNeutralPicker: viewModel.toggleNeutralPicker
                 )
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
             }
@@ -380,6 +384,8 @@ struct ContentView: View {
                 loupeZoomCommand: viewModel.loupeZoomCommand,
                 onZoomReport: viewModel.reportLoupeZoom,
                 onZoomDoubleClick: { viewModel.toggleLoupeZoom(at: $0) },
+                isPickingNeutral: viewModel.isPickingNeutral,
+                onPickNeutral: viewModel.pickNeutral(at:),
                 onZoomToggle: { viewModel.toggleLoupeZoom() },
                 loupeInfo: viewModel.loupeInfo,
                 onInfoToggle: viewModel.toggleLoupeInfo

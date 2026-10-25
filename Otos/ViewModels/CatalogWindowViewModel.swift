@@ -170,8 +170,12 @@ final class CatalogWindowViewModel {
     /// The newest live render of the draft, shown in place of the pane's stored preview
     /// until that preview carries the saved edit.
     var editLivePreview: EditLivePreview?
+    /// The open target's facts; nil until it has been opened (the controls wait for them).
+    var editPhotoFacts: EditPhotoFacts?
+    /// The white balance picker is armed: the next loupe click picks a neutral point.
+    var isPickingNeutral = false
     @ObservationIgnored var editSavedRecipe = EditRecipe.neutral
-    @ObservationIgnored var editDraggingControl: LightControl?
+    @ObservationIgnored var editDraggingControl: EditControl?
     @ObservationIgnored var editTargetTask: Task<Void, Never>?
     @ObservationIgnored let liveEditRenderer = LiveEditRenderer()
     @ObservationIgnored let editRenderStream: AsyncStream<EditRenderRequest>
@@ -179,8 +183,8 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var editRenderTask: Task<Void, Never>?
     @ObservationIgnored var editRenderRequested: UInt64 = 0
     @ObservationIgnored var editRenderPublished: UInt64 = 0
-    @ObservationIgnored let editCommandStream: AsyncStream<EditCommand>
-    @ObservationIgnored let editCommandContinuation: AsyncStream<EditCommand>.Continuation
+    @ObservationIgnored let editCommandStream: AsyncStream<EditLaneCommand>
+    @ObservationIgnored let editCommandContinuation: AsyncStream<EditLaneCommand>.Continuation
     @ObservationIgnored var editCommandTask: Task<Void, Never>?
     /// Submitted and fully handled edit commands — saved, rendered and applied, or
     /// refused — so a caller can wait for an edit to settle without guessing a duration.
@@ -417,7 +421,7 @@ final class CatalogWindowViewModel {
         let (editRenderStream, editRenderContinuation) = AsyncStream<EditRenderRequest>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )
-        let (editCommandStream, editCommandContinuation) = AsyncStream<EditCommand>.makeStream(
+        let (editCommandStream, editCommandContinuation) = AsyncStream<EditLaneCommand>.makeStream(
             bufferingPolicy: .unbounded
         )
         self.preferencesDomain = preferencesDomain

@@ -24,6 +24,10 @@ struct LoupeZoomView: NSViewRepresentable {
     let command: LoupeZoomCommand?
     var onReport: (LoupeZoomReport) -> Void = { _ in }
     var onDoubleClick: (CGPoint) -> Void = { _ in }
+    /// While true a single click picks a neutral point: `onPick` receives it as a
+    /// fraction of the image from its top-left corner, and the cursor is a crosshair.
+    var isPicking = false
+    var onPick: (CGPoint) -> Void = { _ in }
 
     func makeNSView(context _: Context) -> LoupeZoomScrollView {
         LoupeZoomScrollView(frame: .zero)
@@ -32,6 +36,7 @@ struct LoupeZoomView: NSViewRepresentable {
     func updateNSView(_ view: LoupeZoomScrollView, context _: Context) {
         view.onReport = onReport
         view.onDoubleClick = onDoubleClick
+        view.setPicking(isPicking, onPick: onPick)
         view.setContent(image: image, nativePixelSize: nativePixelSize, assetID: assetID)
         view.apply(command)
     }
@@ -91,6 +96,14 @@ final class LoupeZoomScrollView: NSScrollView {
 
     var fitMagnification: CGFloat {
         LoupeZoomPolicy.fitMagnification(documentSize: document.frame.size, paneSize: bounds.size)
+    }
+
+    func setPicking(_ picking: Bool, onPick: @escaping (CGPoint) -> Void) {
+        document.onPick = onPick
+        if document.isPicking != picking {
+            document.isPicking = picking
+            window?.invalidateCursorRects(for: document)
+        }
     }
 
     func setContent(image: CGImage, nativePixelSize: CGSize?, assetID: MediaAssetID) {
@@ -176,6 +189,8 @@ final class LoupeZoomScrollView: NSScrollView {
 /// which is the native pixel size in points; a double-click reports its point.
 final class LoupeZoomDocumentView: NSView {
     var onDoubleClick: (CGPoint) -> Void = { _ in }
+    var isPicking = false
+    var onPick: (CGPoint) -> Void = { _ in }
     var image: CGImage? {
         didSet {
             if image !== oldValue {
@@ -206,11 +221,23 @@ final class LoupeZoomDocumentView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if isPicking, event.clickCount == 1, bounds.width > 0, bounds.height > 0 {
+            // Flipped, so the point is already measured from the top-left corner.
+            let point = convert(event.locationInWindow, from: nil)
+            onPick(CGPoint(x: point.x / bounds.width, y: point.y / bounds.height))
+            return
+        }
         if event.clickCount == 2 {
             onDoubleClick(convert(event.locationInWindow, from: nil))
             return
         }
         super.mouseDown(with: event)
+    }
+
+    override func resetCursorRects() {
+        if isPicking {
+            addCursorRect(bounds, cursor: .crosshair)
+        }
     }
 }
 

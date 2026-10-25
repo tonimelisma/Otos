@@ -8,16 +8,24 @@ import OSLog
 /// image or RAW (ADR 0036). Its values are `editDraft`; moving a control changes the draft
 /// and asks for a live render, and letting go saves it.
 ///
+/// When the target resolves the photo is opened — downloaded first if it is cloud-only,
+/// as editing needs its bytes — and its facts (`EditPhotoFacts`: RAW or not, a RAW's
+/// as-shot white balance) are published. The controls act only once they are known.
+///
 /// Two lanes, each one consumer:
-/// - **Live render** (`editRenderStream`, newest-wins): renders the draft on
-///   `LiveEditRenderer`, which keeps the photo open between renders. A render is shown
-///   only while its photo is still the target and no newer render has been shown, and a
-///   newer request never cancels one in flight (ADR 0032 rule 3).
-/// - **Save** (`editCommandStream`, ordered, lossless): saves the recipe, registers the
-///   inverse on `windowUndoManager`, then renders the saved recipe's thumbnail and
-///   preview and hands them to the store, which promotes them only while that revision is
-///   still current. A render that fails hands the photo to enrichment instead, which
-///   renders with the saved recipe too, so the grid never keeps an edit's old thumbnail.
+/// - **Live render** (`editRenderStream`, newest-wins): opens the photo and renders the
+///   draft on `LiveEditRenderer`, which keeps the photo open between renders. A render is
+///   shown only while its photo is still the target and no newer render has been shown,
+///   and a newer request never cancels one in flight (ADR 0032 rule 3). Every open or
+///   render that succeeds publishes the photo's facts, so a request that replaced the
+///   open still delivers them.
+/// - **Commands** (`editCommandStream`, ordered, lossless): a save stores the recipe,
+///   registers the inverse on `windowUndoManager`, then renders the saved recipe's
+///   thumbnail and preview and hands them to the store, which promotes them only while
+///   that revision is still current. A render that fails hands the photo to enrichment
+///   instead, which renders with the saved recipe too, so the grid never keeps an edit's
+///   old thumbnail. A neutral pick asks the open photo for the white balance that makes
+///   the clicked point gray and saves it as one step.
 ///
 /// Undo and redo enqueue the same command through the same lane, so they order after any
 /// save still in flight, and file their own inverse synchronously at fire time
@@ -45,6 +53,8 @@ nonisolated struct EditLivePreview: Equatable {
 }
 
 nonisolated enum EditRenderRequest: Sendable {
+    /// The panel has a new target: open it and report its facts.
+    case open(id: MediaAssetID, sourceSize: Int64?)
     case render(id: MediaAssetID, recipe: EditRecipe, sourceSize: Int64?, sequence: UInt64)
     /// Editing moved to another photo or the panel closed: let go of the open photo.
     case close
@@ -59,9 +69,16 @@ nonisolated enum EditCommandOrigin: String, Sendable {
 nonisolated struct EditCommand: Sendable {
     let id: MediaAssetID
     let recipe: EditRecipe
-    /// Undo menu title: the control that changed, or `Reset Light`.
+    /// Undo menu title: the control that changed, `White Balance`, or `Reset Light`.
     let actionName: String
     let origin: EditCommandOrigin
+}
+
+nonisolated enum EditLaneCommand: Sendable {
+    case save(EditCommand)
+    /// The white balance picker was clicked at `point`, a fraction of the image from its
+    /// top-left corner.
+    case pickNeutral(id: MediaAssetID, point: CGPoint, sourceSize: Int64?)
 }
 
 extension CatalogWindowViewModel {
@@ -81,10 +98,38 @@ extension CatalogWindowViewModel {
         }
     }
 
+    /// The Color section's white balance picker: armed, the next click on the loupe image
+    /// sets white balance from that point. Loupe only; Escape or any other move disarms it.
+    func toggleNeutralPicker() {
+        guard canPickNeutral || isPickingNeutral else { return }
+        isPickingNeutral.toggle()
+        OtosLog.ui.noticeOperation("edit.neutralPicker", phase: isPickingNeutral ? "armed" : "disarmed")
+    }
+
+    var canPickNeutral: Bool {
+        editPhotoFacts != nil && viewMode == .loupe
+    }
+
+    /// The loupe was clicked while the picker was armed.
+    func pickNeutral(at point: CGPoint) {
+        guard isPickingNeutral, let target = editTarget, editPhotoFacts != nil else { return }
+        isPickingNeutral = false
+        commitPendingEdit()
+        submittedEditCommandCount += 1
+        editCommandContinuation.yield(.pickNeutral(id: target.id, point: point, sourceSize: target.sourceSize))
+        OtosLog.ui.noticeOperation("edit.neutralPicker", phase: "picked", fields: [
+            "id": target.id.relativePath.rawValue,
+            "x": String(format: "%.3f", point.x), "y": String(format: "%.3f", point.y),
+        ])
+    }
+
     /// Resolves the photo the panel edits whenever the current target changes (the same
     /// writers that refresh Open With). Reads the target's saved recipe once.
     func refreshEditTarget() {
         guard isEditPanelPresented else { return }
+        if isPickingNeutral, viewMode != .loupe {
+            isPickingNeutral = false
+        }
         let ids = targetIDs(.current)
         guard ids.count == 1, let id = ids.first else {
             commitPendingEdit()
@@ -106,13 +151,13 @@ extension CatalogWindowViewModel {
                 return
             }
             let saved = detail.editRecipe ?? .neutral
-            if editTarget != nil {
-                editRenderContinuation.yield(.close)
-            }
             editTarget = EditTarget(id: id, sourceSize: detail.byteSize)
+            editPhotoFacts = nil
+            isPickingNeutral = false
             editSavedRecipe = saved
             editDraft = saved
             editLivePreview = nil
+            editRenderContinuation.yield(.open(id: id, sourceSize: detail.byteSize))
             OtosLog.ui.debugOperation("edit.target", phase: "resolved", fields: [
                 "id": id.relativePath.rawValue, "edited": "\(!saved.isNeutral)",
             ])
@@ -122,6 +167,8 @@ extension CatalogWindowViewModel {
     private func clearEditTarget() {
         guard editTarget != nil || editLivePreview != nil else { return }
         editTarget = nil
+        editPhotoFacts = nil
+        isPickingNeutral = false
         editSavedRecipe = .neutral
         editDraft = .neutral
         editDraggingControl = nil
@@ -133,9 +180,9 @@ extension CatalogWindowViewModel {
 
     /// A control moved. While it is being dragged only the live render follows; a change
     /// that is not a drag (a keyboard step, an accessibility increment) is saved at once.
-    func setEditValue(_ value: Double, for control: LightControl) {
-        guard editTarget != nil else { return }
-        let next = control.applying(value, to: editDraft)
+    func setEditValue(_ value: Double, for control: EditControl) {
+        guard editTarget != nil, let facts = editPhotoFacts else { return }
+        let next = control.applying(value, to: editDraft, facts: facts)
         guard next != editDraft else { return }
         editDraft = next
         requestLiveEditRender()
@@ -145,7 +192,7 @@ extension CatalogWindowViewModel {
     }
 
     /// Slider drag start and end; the end saves the dragged value.
-    func setEditDragging(_ dragging: Bool, control: LightControl) {
+    func setEditDragging(_ dragging: Bool, control: EditControl) {
         if dragging {
             editDraggingControl = control
         } else if editDraggingControl == control {
@@ -154,16 +201,17 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// The Light section's Reset: every Light control back to neutral, as one undo step.
-    func resetLight() {
-        guard editTarget != nil, !editDraft.isNeutral else { return }
-        editDraft = .neutral
+    /// A section's Reset: every control in it back to neutral, as one undo step.
+    func resetEditSection(_ section: EditSection) {
+        guard editTarget != nil, editPhotoFacts != nil, !section.isNeutral(in: editDraft) else { return }
+        editDraft = section.reset(editDraft)
         requestLiveEditRender()
-        commitEdit(actionName: "Reset Light")
+        commitEdit(actionName: section.resetActionName)
     }
 
-    var hasEditTarget: Bool {
-        editTarget != nil
+    /// The controls act: there is one photo to edit and it is open.
+    var canEdit: Bool {
+        editTarget != nil && editPhotoFacts != nil
     }
 
     /// True once every submitted edit command has been saved and rendered, or refused.
@@ -208,7 +256,7 @@ extension CatalogWindowViewModel {
 
     private func enqueueEdit(_ command: EditCommand) {
         submittedEditCommandCount += 1
-        editCommandContinuation.yield(command)
+        editCommandContinuation.yield(.save(command))
     }
 
     private func requestLiveEditRender() {
@@ -242,11 +290,15 @@ extension CatalogWindowViewModel {
                 switch request {
                 case .close:
                     await pipeline.renderer.close()
+                case let .open(id, sourceSize):
+                    guard let facts = await pipeline.open(id, sourceSize: sourceSize) else { continue }
+                    self?.publishEditFacts(id: id, facts: facts)
                 case let .render(id, recipe, sourceSize, sequence):
-                    guard let image = await pipeline.liveImage(id, recipe: recipe, sourceSize: sourceSize) else {
+                    guard let live = await pipeline.liveImage(id, recipe: recipe, sourceSize: sourceSize) else {
                         continue
                     }
-                    self?.publishLiveEdit(id: id, recipe: recipe, image: image, sequence: sequence)
+                    self?.publishEditFacts(id: id, facts: live.facts)
+                    self?.publishLiveEdit(id: id, recipe: recipe, image: live.image, sequence: sequence)
                 }
             }
         }
@@ -254,9 +306,19 @@ extension CatalogWindowViewModel {
 
     private func startEditSaving(_ pipeline: EditPipeline) {
         editCommandTask = Task { [weak self, editCommandStream, pipeline] in
-            for await command in editCommandStream {
+            for await laneCommand in editCommandStream {
                 defer { self?.handledEditCommandCount += 1 }
                 guard !Task.isCancelled else { break }
+                let command: EditCommand
+                switch laneCommand {
+                case let .pickNeutral(id, point, sourceSize):
+                    if let whiteBalance = await pipeline.neutralWhiteBalance(id, at: point, sourceSize: sourceSize) {
+                        self?.applyPickedWhiteBalance(id: id, whiteBalance)
+                    }
+                    continue
+                case let .save(save):
+                    command = save
+                }
                 guard let result = await pipeline.save(command), let saved = result.saved else {
                     continue
                 }
@@ -270,6 +332,33 @@ extension CatalogWindowViewModel {
                 }
             }
         }
+    }
+
+    private func publishEditFacts(id: MediaAssetID, facts: EditPhotoFacts) {
+        guard editTarget?.id == id, editPhotoFacts != facts else { return }
+        editPhotoFacts = facts
+        OtosLog.ui.debugOperation("edit.target", phase: "opened", fields: [
+            "id": id.relativePath.rawValue, "raw": "\(facts.isRAW)",
+            "asShotTemperature": facts.asShotTemperature.map { "\(Int($0.rounded()))" } ?? "none",
+        ])
+    }
+
+    /// The picked white balance becomes the draft's and is saved as one step, unless the
+    /// panel has moved on to another photo meanwhile.
+    private func applyPickedWhiteBalance(id: MediaAssetID, _ whiteBalance: (temperature: Double, tint: Double)) {
+        guard editTarget?.id == id, let facts = editPhotoFacts else { return }
+        var next = editDraft
+        if facts.isRAW {
+            next.temperature = (whiteBalance.temperature / 50).rounded() * 50
+            next.tint = whiteBalance.tint.rounded()
+        } else {
+            next.temperature = whiteBalance.temperature == 0 ? nil : whiteBalance.temperature
+            next.tint = whiteBalance.tint == 0 ? nil : whiteBalance.tint
+        }
+        guard next != editDraft else { return }
+        editDraft = next
+        requestLiveEditRender()
+        commitEdit(actionName: "White Balance")
     }
 
     private func publishLiveEdit(id: MediaAssetID, recipe: EditRecipe, image: CGImage, sequence: UInt64) {
@@ -378,14 +467,37 @@ nonisolated struct EditPipeline: Sendable {
         return result
     }
 
-    /// The draft rendered at preview size, or nil when the original cannot be read.
+    /// Opens the photo — downloading it first when it is cloud-only — and reports its
+    /// facts, or nil when it cannot be read.
     @concurrent
-    func liveImage(_ id: MediaAssetID, recipe: EditRecipe, sourceSize: Int64?) async -> CGImage? {
+    func open(_ id: MediaAssetID, sourceSize: Int64?) async -> EditPhotoFacts? {
         guard await makeLocal(id, sourceSize: sourceSize) else {
             return nil
         }
         do {
-            return try await renderer.render(id.fileURL, recipe: recipe)
+            return try await renderer.open(id.fileURL)
+        } catch {
+            OtosLog.rendering.errorOperation("render.liveEdit", phase: "openFailed", fields: [
+                "id": id.relativePath.rawValue, "error": String(describing: error),
+            ])
+            return nil
+        }
+    }
+
+    /// The draft rendered at preview size with the photo's facts, or nil when the
+    /// original cannot be read.
+    @concurrent
+    func liveImage(
+        _ id: MediaAssetID,
+        recipe: EditRecipe,
+        sourceSize: Int64?
+    ) async -> (image: CGImage, facts: EditPhotoFacts)? {
+        guard await makeLocal(id, sourceSize: sourceSize) else {
+            return nil
+        }
+        do {
+            let image = try await renderer.render(id.fileURL, recipe: recipe)
+            return try await (image, renderer.open(id.fileURL))
         } catch {
             OtosLog.rendering.errorOperation("render.liveEdit", phase: "failed", fields: [
                 "id": id.relativePath.rawValue, "error": String(describing: error),
@@ -432,6 +544,27 @@ nonisolated struct EditPipeline: Sendable {
                 "id": id.relativePath.rawValue, "error": String(describing: error),
             ])
             await handToEnrichment(id)
+            return nil
+        }
+    }
+
+    /// The white balance that makes the photo gray at `point`, or nil when it cannot be
+    /// read.
+    @concurrent
+    func neutralWhiteBalance(
+        _ id: MediaAssetID,
+        at point: CGPoint,
+        sourceSize: Int64?
+    ) async -> (temperature: Double, tint: Double)? {
+        guard await makeLocal(id, sourceSize: sourceSize) else {
+            return nil
+        }
+        do {
+            return try await renderer.neutralWhiteBalance(id.fileURL, at: point)
+        } catch {
+            OtosLog.rendering.errorOperation("render.neutralPick", phase: "failed", fields: [
+                "id": id.relativePath.rawValue, "error": String(describing: error),
+            ])
             return nil
         }
     }

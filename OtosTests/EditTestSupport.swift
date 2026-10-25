@@ -101,3 +101,60 @@ func meanLuminance(_ image: CGImage) -> Double {
     }
     return Double(total) / Double(width * height * 3 * 255)
 }
+
+/// A 64×48 JPEG of one color — a warm-cast gray when the defaults are used — for white
+/// balance tests.
+func writeSolidJPEG(to url: URL, red: CGFloat = 0.62, green: CGFloat = 0.5, blue: CGFloat = 0.38) throws {
+    let context = try #require(CGContext(
+        data: nil,
+        width: 64,
+        height: 48,
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ))
+    context.setFillColor(red: red, green: green, blue: blue, alpha: 1)
+    context.fill(CGRect(x: 0, y: 0, width: 64, height: 48))
+    let image = try #require(context.makeImage())
+    let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, "public.jpeg" as CFString, 1, nil))
+    CGImageDestinationAddImage(destination, image, nil)
+    try #require(CGImageDestinationFinalize(destination))
+}
+
+struct MeanColor {
+    let red: Double
+    let green: Double
+    let blue: Double
+}
+
+/// Mean red, green and blue, 0…1, read back through an 8-bit sRGB context.
+func meanColor(_ image: CGImage) -> MeanColor {
+    let width = image.width
+    let height = image.height
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    let drawn: Bool = pixels.withUnsafeMutableBytes { buffer in
+        guard let context = CGContext(
+            data: buffer.baseAddress,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return false
+        }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return true
+    }
+    guard drawn else { return MeanColor(red: 0, green: 0, blue: 0) }
+    var totals = (0, 0, 0)
+    for index in stride(from: 0, to: pixels.count, by: 4) {
+        totals.0 += Int(pixels[index])
+        totals.1 += Int(pixels[index + 1])
+        totals.2 += Int(pixels[index + 2])
+    }
+    let count = Double(width * height * 255)
+    return MeanColor(red: Double(totals.0) / count, green: Double(totals.1) / count, blue: Double(totals.2) / count)
+}

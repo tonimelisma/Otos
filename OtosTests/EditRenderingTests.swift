@@ -32,6 +32,47 @@ struct EditRenderingTests {
         #expect(toneSpread(contrasty.image) > toneSpread(neutral.image))
     }
 
+    @Test func aStillsWhiteBalanceVibranceAndSaturationMoveItsColor() async throws {
+        let url = try makeTestDirectory().appending(path: "gray.jpg")
+        try writeSolidJPEG(to: url, red: 0.5, green: 0.5, blue: 0.5)
+
+        let warmer = try await ImageRenderer.interactive.render(url, longEdge: nil, recipe: EditRecipe(temperature: 50))
+        let magenta = try await ImageRenderer.interactive.render(url, longEdge: nil, recipe: EditRecipe(tint: 50))
+        let warm = meanColor(warmer.image)
+        let tinted = meanColor(magenta.image)
+        #expect(warm.red > warm.blue + 0.05)
+        #expect(tinted.green < tinted.red - 0.03 && tinted.green < tinted.blue - 0.03)
+
+        let colorURL = try makeTestDirectory().appending(path: "color.jpg")
+        try writeSolidJPEG(to: colorURL, red: 0.7, green: 0.45, blue: 0.3)
+        let neutral = try await meanColor(ImageRenderer.interactive.render(colorURL, longEdge: nil).image)
+        let desaturated = try await meanColor(ImageRenderer.interactive.render(
+            colorURL, longEdge: nil, recipe: EditRecipe(saturation: -100)
+        ).image)
+        #expect(abs(desaturated.red - desaturated.blue) < abs(neutral.red - neutral.blue) / 4)
+    }
+
+    /// The picker on a warm-cast still finds the relative white balance that renders the
+    /// clicked point gray.
+    @Test func pickingANeutralPointOnAStillGraysIt() async throws {
+        let url = try makeTestDirectory().appending(path: "cast.jpg")
+        try writeSolidJPEG(to: url)
+        let renderer = LiveEditRenderer()
+
+        let facts = try await renderer.open(url)
+        let picked = try await renderer.neutralWhiteBalance(url, at: CGPoint(x: 0.5, y: 0.5))
+        let corrected = try await renderer.render(
+            url, recipe: EditRecipe(temperature: picked.temperature, tint: picked.tint)
+        )
+        await renderer.close()
+
+        #expect(facts == .still)
+        #expect(picked.temperature < 0)
+        let color = meanColor(corrected)
+        #expect(abs(color.red - color.green) < 0.02)
+        #expect(abs(color.blue - color.green) < 0.02)
+    }
+
     @Test func theLiveRendererMatchesTheStoredRenderAndStagesBothProducts() async throws {
         let directory = try makeTestDirectory()
         let url = directory.appending(path: "gradient.jpg")
