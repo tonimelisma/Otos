@@ -121,7 +121,7 @@ struct CatalogStoreLifecycleRaceTests {
         await probe.waitForInvocationCount(1)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
 
-        try await store.removeLibrary(path: rootPath)
+        #expect(try await store.removeLibrary(path: rootPath) == .removed)
         try await store.addLibrary(url: root)
         await probe.waitForInvocationCount(2)
 

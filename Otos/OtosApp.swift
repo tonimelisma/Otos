@@ -314,6 +314,8 @@ public struct OtosApp: App {
                 removeLibrary: { catalogViewModel.removeLibrary($0) },
                 moveLibrary: { path, move in catalogViewModel.moveLibrary(path, move) },
                 forgetRemovableSource: { catalogViewModel.forgetRemovableSource($0) },
+                libraryRemovalNotice: catalogViewModel.libraryRemovalNotice,
+                dismissLibraryRemovalNotice: catalogViewModel.dismissLibraryRemovalNotice,
                 importPreferences: catalogViewModel.importPreferences,
                 setImportPreferences: catalogViewModel.setImportPreferences,
                 advanceAfterMediaChoice: catalogViewModel.advanceAfterMediaChoice,

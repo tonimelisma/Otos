@@ -32,13 +32,15 @@ struct CatalogStoreTests {
 
         try await store.addLibrary(url: root)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
-        try await store.removeLibrary(path: rootPath)
+        #expect(try await store.removeLibrary(path: rootPath) == .removed)
         await recorder.waitForEvent(.libraryRemoved(rootPath))
     }
 
-    /// APP-007: a library another owner is changing is not removed. The removal says who
-    /// holds it, and the library stays cataloged and watched until it can be removed.
-    @Test func removingABusyLibraryThrowsWhoHoldsItAndKeepsTheLibrary() async throws {
+    /// APP-007: a library another owner is changing is not removed while it changes. The
+    /// removal says who it waits for, the library stays cataloged and watched meanwhile,
+    /// and the release of that owner's lease removes it — with no window in which another
+    /// owner can start on it first.
+    @Test func removingABusyLibraryWaitsForItsHolderAndRemovesItOnRelease() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -57,18 +59,21 @@ struct CatalogStoreTests {
             return
         }
 
-        await #expect(throws: CatalogStoreError.libraryBusy(.importPublication)) {
-            try await store.removeLibrary(path: rootPath)
-        }
+        #expect(try await store.removeLibrary(path: rootPath) == .waiting(for: .importPublication))
         let kept = try await catalogStoreTestState(store)
         #expect(kept.libraries.map(\.path) == [rootPath])
         #expect(kept.testAssets.count == 1)
         #expect(watcher.roots().contains(rootPath))
 
-        _ = await store.releaseNamespaceMutationLease(lease)
-        try await store.removeLibrary(path: rootPath)
-        #expect(try await catalogStoreTestState(store).libraries.isEmpty)
+        #expect(await store.releaseNamespaceMutationLease(lease))
+        // The release handed the root to the removal: a Move to Trash asking in the same
+        // breath finds it held by the removal, or already gone.
+        let competing = await store.acquireNamespaceMutationLease(for: rootPath, owner: .mediaTrash)
+        #expect(competing == .busy(owner: .libraryRemoval) || competing == .rootNotRegistered)
+        let removed = try await waitForCatalogStoreState(store) { $0.libraries.isEmpty }
+        #expect(removed.testAssets.isEmpty)
         #expect(!watcher.roots().contains(rootPath))
+        #expect(await !store.hasNamespaceMutationLease(for: rootPath))
         await store.shutdown()
     }
 
@@ -220,7 +225,7 @@ struct CatalogStoreTests {
 
         // A move drawn against a list that still showed a removed library moves the
         // library the user pointed at, and one naming a removed library changes nothing.
-        try await store.removeLibrary(path: paths[2])
+        #expect(try await store.removeLibrary(path: paths[2]) == .removed)
         try await store.moveLibrary(paths[1], .before(paths[0]))
         #expect(await store.currentLibraries().map(\.path) == [paths[1], paths[0], paths[3]])
         try await store.moveLibrary(paths[2], .up)
@@ -381,7 +386,7 @@ struct CatalogStoreTests {
             relativePath: MediaRelativePath(rawValue: "a.jpg")
         )
         #expect(try await store.setMediaChoice(.disliked, for: [assetID]).changedCount == 1)
-        try await store.removeLibrary(path: rootPath)
+        #expect(try await store.removeLibrary(path: rootPath) == .removed)
 
         let snapshot = try await catalogStoreTestState(store)
         #expect(snapshot.libraries.isEmpty)

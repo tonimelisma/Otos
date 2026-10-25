@@ -11,6 +11,8 @@ struct SettingsView: View {
     let removeLibrary: (LibraryRoot) -> Void
     let moveLibrary: (LibraryRootPath, LibraryOrderMove) -> Void
     let forgetRemovableSource: (LibraryRoot) -> Void
+    let libraryRemovalNotice: LibraryRemovalNotice?
+    let dismissLibraryRemovalNotice: () -> Void
     let importPreferences: ImportPreferences
     let setImportPreferences: (ImportPreferences) -> Void
     let advanceAfterMediaChoice: Bool
@@ -70,6 +72,45 @@ struct SettingsView: View {
         }
         .frame(width: 660, height: 380)
         .scenePadding()
+        .alert(
+            libraryRemovalNotice.map(LibraryRemovalNoticePresentation.title) ?? "",
+            isPresented: Binding(
+                get: { libraryRemovalNotice != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        dismissLibraryRemovalNotice()
+                    }
+                }
+            ),
+            presenting: libraryRemovalNotice
+        ) { _ in
+            Button("OK") {
+                dismissLibraryRemovalNotice()
+            }
+        } message: { notice in
+            Text(LibraryRemovalNoticePresentation.message(for: notice))
+        }
+    }
+}
+
+/// The alert for a removal that waits for the library to be free (DES-091), in the
+/// user's vocabulary (DES-035): the work it waits for, never lease or owner.
+enum LibraryRemovalNoticePresentation {
+    static func title(for notice: LibraryRemovalNotice) -> String {
+        "\u{201C}\(notice.displayName)\u{201D} Is Busy"
+    }
+
+    static func message(for notice: LibraryRemovalNotice) -> String {
+        switch notice.waitingFor {
+        case .importPublication, .sourceErase:
+            "It will be removed from Otos when its import finishes."
+        case .mediaTrash:
+            "It will be removed from Otos when its items finish moving to the Trash."
+        case .reorganization:
+            "It will be removed from Otos when its reorganization finishes."
+        case .libraryRemoval:
+            "It is already being removed from Otos."
+        }
     }
 }
 
@@ -387,6 +428,8 @@ private struct LibrariesSettingsView: View {
         removeLibrary: { _ in },
         moveLibrary: { _, _ in },
         forgetRemovableSource: { _ in },
+        libraryRemovalNotice: nil,
+        dismissLibraryRemovalNotice: {},
         importPreferences: .default,
         setImportPreferences: { _ in },
         advanceAfterMediaChoice: false,

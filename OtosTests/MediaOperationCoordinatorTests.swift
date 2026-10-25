@@ -901,7 +901,7 @@ struct MediaOperationCoordinatorTests {
 
         // The explicitly chosen library ("Middle") goes away. The session
         // falls back to first-available ("Zebra").
-        try await fixture.store.removeLibrary(path: fixture.libraries[2])
+        #expect(try await fixture.store.removeLibrary(path: fixture.libraries[2]) == .removed)
         _ = try await readyGeneration(
             coordinator,
             source: fixture.source,

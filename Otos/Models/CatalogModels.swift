@@ -877,9 +877,6 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
     case catalogUnavailable
     case unsupportedCatalogSchema(CatalogSchemaCompatibility)
     case importOperationMissing(ActiveFileOperationKey)
-    /// Another owner is changing the root's files: an import, a reorganization, a Move to
-    /// Trash or another removal.
-    case libraryBusy(RootNamespaceMutationOwner)
 
     var errorDescription: String? {
         switch self {
@@ -900,10 +897,26 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
             problem.errorDescription
         case let .importOperationMissing(key):
             "The import journal operation \(key.rawValue) is no longer present."
-        case let .libraryBusy(owner):
-            "The library is busy (\(owner.rawValue))."
         }
     }
+}
+
+/// What asking to remove a library did.
+nonisolated enum LibraryRemovalOutcome: Equatable, Sendable {
+    /// The library and its catalog rows are gone.
+    case removed
+    /// No library is cataloged at that path; nothing changed.
+    case notInCatalog
+    /// Another owner is changing the library's files. It is removed as soon as that owner
+    /// releases it — or, when the owner is a removal already, by that removal.
+    case waiting(for: RootNamespaceMutationOwner)
+}
+
+/// A removal the user asked for that waits for the library to be free: which library,
+/// and the work it waits for. The alert wording is `LibraryRemovalNoticePresentation`'s.
+nonisolated struct LibraryRemovalNotice: Equatable, Sendable {
+    let displayName: String
+    let waitingFor: RootNamespaceMutationOwner
 }
 
 /// Result of the pre-migration catalog schema compatibility check.

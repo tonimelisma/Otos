@@ -258,6 +258,11 @@ everything expensive happens on an actor off the main thread.
   free-space floor, delete-immediately decisions) and reports to `TrashStatusBar`; `CatalogStore` supplies catalog-proven companions and
   reconciles only successful paths. The shared typed namespace-mutation lease excludes
   import publication and reorganization on one root.
+- **Library removal**: Settings ▸ Libraries' Remove and ▸ Removable Media's Forget
+  both reach `CatalogStore.removeLibrary`, which removes a free root under a
+  `.libraryRemoval` lease, or records the request when another owner holds it and
+  reports that owner (the Settings alert, DES-091); the holder's lease release hands the
+  root to a removal lease synchronously and the reconcile loop runs the removal.
 - **Pure policy helpers** carry the testable logic beside effectful actors:
   `CatalogWindowPolicy`, `SidebarSelectionPolicy`, `GridColumnCount`,
   `MediaGridZoomPolicy`, `GridSelection`, `MediaCompanionPairing`.

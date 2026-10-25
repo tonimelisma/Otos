@@ -278,7 +278,7 @@ struct CatalogStoreFilesystemEventTests {
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
         let baseline = await recorder.invocations().count
 
-        try await store.removeLibrary(path: rootPath)
+        #expect(try await store.removeLibrary(path: rootPath) == .removed)
         let handled = await store.handledFilesystemEventCount
         emit(FilesystemEvent(path: root.appending(path: "after-remove.jpg").path, flags: 0))
         try await expectNoRescan(store: store, recorder: recorder, baseline: baseline, handledEvents: handled + 1)
