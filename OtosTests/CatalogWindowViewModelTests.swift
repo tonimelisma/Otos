@@ -163,7 +163,7 @@ struct CatalogWindowViewModelTests {
         }
 
         model.selectSidebar(.library(rootPath))
-        try await store.removeLibrary(path: rootPath)
+        #expect(try await store.removeLibrary(path: rootPath) == .removed)
 
         let state = try await waitForWindowState(model) { state in
             state.libraries.isEmpty && state.resolvedSidebarSelection == .allMedia
@@ -207,6 +207,52 @@ struct CatalogWindowViewModelTests {
             state.libraries.isEmpty
         }
         #expect(removed.mediaGrid.orderedAssetIDs.isEmpty)
+    }
+
+    /// APP-007, DES-091: removing a library an import holds tells the user it will be
+    /// removed when the import finishes, keeps it listed meanwhile, and removes it when
+    /// the import releases it.
+    @MainActor
+    @Test func removingABusyLibraryShowsTheNoticeAndRemovesItWhenFree() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Holiday", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = CatalogStore(location: .inMemory, scanner: CatalogScanner { _, _, _ in .empty })
+        let model = CatalogWindowViewModel(
+            catalogStore: store,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
+            startsStallMonitor: false,
+            startsEnrichment: false,
+            startsSourceMonitoring: false,
+            preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
+            trashFiles: .refusing
+        )
+        model.start()
+        model.addLibrary(url: root)
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+        let added = try await waitForWindowState(model) { $0.libraries.map(\.path) == [rootPath] }
+        guard case let .acquired(lease) = await store.acquireNamespaceMutationLease(
+            for: rootPath,
+            owner: .importPublication
+        ) else {
+            Issue.record("Expected to hold the library's namespace for this test")
+            return
+        }
+
+        model.removeLibrary(added.libraries[0].root)
+        let notice = try await waitForValue { model.libraryRemovalNotice }
+        #expect(notice == LibraryRemovalNotice(displayName: "Holiday", waitingFor: .importPublication))
+        #expect(LibraryRemovalNoticePresentation.title(for: notice) == "\u{201C}Holiday\u{201D} Is Busy")
+        #expect(
+            LibraryRemovalNoticePresentation.message(for: notice)
+                == "It will be removed from Otos when its import finishes."
+        )
+        #expect(model.state.libraries.map(\.path) == [rootPath])
+
+        model.dismissLibraryRemovalNotice()
+        #expect(model.libraryRemovalNotice == nil)
+        #expect(await store.releaseNamespaceMutationLease(lease))
+        _ = try await waitForWindowState(model) { $0.libraries.isEmpty }
     }
 
     @MainActor

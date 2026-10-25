@@ -306,6 +306,14 @@ actor CatalogStore {
     /// root with a journaled component, so nothing touches a half-moved library before
     /// its recovery adopts the lease.
     private var journalHeldReorganizationRoots: Set<LibraryRootPath> = []
+    /// Libraries the user asked to remove while another owner held them. The release of
+    /// that owner's lease hands the root straight to a removal lease, so nothing else
+    /// starts on it in between, and the reconcile loop then removes it. A request lives
+    /// for this process: one whose holder never finishes here — the app quits mid-import
+    /// — leaves the library in place, where the user sees it and can remove it again.
+    private var deferredLibraryRemovals: Set<LibraryRootPath> = []
+    /// Removal leases a release handed over, waiting for the reconcile loop to run them.
+    private var handedOffLibraryRemovals: [LibraryRootPath: RootNamespaceMutationLease] = [:]
 
     /// Long-running-session integrity interval. Launch scans already repair after
     /// process death; this bounds residual FSEvents/provider misses while the app
@@ -1613,13 +1621,7 @@ extension CatalogStore {
     /// pass, import or Move to Trash acts on it first, whoever runs recovery and when.
     private func holdJournaledReorganizationRoots(_ journaledRoots: Set<LibraryRootPath>) {
         for root in journaledRoots.sorted(by: { $0.rawValue < $1.rawValue }) where roots[root] != nil {
-            nextNamespaceMutationLeaseGeneration &+= 1
-            namespaceMutationLeases[root] = RootNamespaceMutationLease(
-                libraryRootPath: root,
-                generation: nextNamespaceMutationLeaseGeneration,
-                owner: .reorganization,
-                markedDirtyByExternalEvents: false
-            )
+            installNamespaceMutationLease(for: root, owner: .reorganization)
             journalHeldReorganizationRoots.insert(root)
             OtosLog.catalog.noticeOperation("reorganization.recover", phase: "held", fields: [
                 "rootPath": root.rawValue,
@@ -1892,32 +1894,37 @@ extension CatalogStore {
         )
     }
 
-    /// Removes a library from the catalog. The removal owns the root's namespace from the
-    /// moment it starts: no import, reorganization or Move to Trash can begin on it, and
-    /// the reconcile loop leaves its dirt alone. It stops watching the root and cancels its
-    /// scan; a batch that scan delivers later is refused, because the scan no longer owns
-    /// the root. If the delete fails the library stays, watched again and rescanned, and
-    /// the error is thrown.
-    func removeLibrary(path: LibraryRootPath) async throws {
+    /// Removes a library from the catalog: now when no other owner holds it, otherwise as
+    /// soon as the import, reorganization or Move to Trash holding it releases it. The
+    /// outcome says which, and names the holder the removal waits for.
+    func removeLibrary(path: LibraryRootPath) async throws -> LibraryRemovalOutcome {
         try await ensureStartedForMutation()
         guard let rootState = roots[path] else {
-            return
+            return .notInCatalog
         }
         if let holder = namespaceMutationLeases[path] {
-            OtosLog.catalog.noticeOperation("catalog.library.remove", phase: "busy", fields: [
+            // A removal that already holds the root will remove it; nothing to record.
+            if holder.owner != .libraryRemoval {
+                deferredLibraryRemovals.insert(path)
+            }
+            OtosLog.catalog.noticeOperation("catalog.library.remove", phase: "deferred", fields: [
                 "rootPath": path.rawValue,
                 "heldBy": holder.owner.rawValue,
             ])
-            throw CatalogStoreError.libraryBusy(holder.owner)
+            return .waiting(for: holder.owner)
         }
-        nextNamespaceMutationLeaseGeneration &+= 1
-        let lease = RootNamespaceMutationLease(
-            libraryRootPath: path,
-            generation: nextNamespaceMutationLeaseGeneration,
-            owner: .libraryRemoval,
-            markedDirtyByExternalEvents: false
-        )
-        namespaceMutationLeases[path] = lease
+        try await removeLibrary(rootState, holding: installNamespaceMutationLease(for: path, owner: .libraryRemoval))
+        return .removed
+    }
+
+    /// The removal owns the root's namespace from the moment it starts: no import,
+    /// reorganization or Move to Trash can begin on it, and the reconcile loop leaves its
+    /// dirt alone. It stops watching the root and cancels its scan; a batch that scan
+    /// delivers later is refused, because the scan no longer owns the root. If the delete
+    /// fails the library stays, watched again and rescanned, and the error is thrown.
+    private func removeLibrary(_ rootState: RootRuntimeState, holding lease: RootNamespaceMutationLease) async throws {
+        let path = rootState.path
+        deferredLibraryRemovals.remove(path)
         let root = rootState.root
         let rootRowID = rootState.rowID
         let state = OtosSignpost.persistence.beginInterval("CatalogRemoveRoot")
@@ -1961,6 +1968,51 @@ extension CatalogStore {
         )
         notifyCatalogChanged(.libraryRemoved(path))
         startNextScanIfNeeded()
+    }
+
+    /// Hands a library the user asked to remove to a removal lease the moment no other
+    /// owner holds it, and rings the reconcile loop that runs the removal. Taking the
+    /// lease here, synchronously with the release that freed the root, is what keeps a
+    /// new import or Move to Trash from starting on it first.
+    @discardableResult
+    private func handOffDeferredLibraryRemoval(_ path: LibraryRootPath) -> Bool {
+        guard deferredLibraryRemovals.contains(path),
+              roots[path] != nil,
+              namespaceMutationLeases[path] == nil
+        else {
+            return false
+        }
+        deferredLibraryRemovals.remove(path)
+        handedOffLibraryRemovals[path] = installNamespaceMutationLease(for: path, owner: .libraryRemoval)
+        OtosLog.catalog.noticeOperation("catalog.library.remove", phase: "handedOff", fields: [
+            "rootPath": path.rawValue,
+        ])
+        requestReconcile()
+        return true
+    }
+
+    /// Runs the removals a release handed over; each already holds its lease. A root that
+    /// moved away from its lease's path since then is no longer under it, so that lease is
+    /// dropped and the request has already followed the root (`moveRootRuntimeState`).
+    private func runHandedOffLibraryRemovals() async {
+        while let path = handedOffLibraryRemovals.keys.min(by: { $0.rawValue < $1.rawValue }),
+              let lease = handedOffLibraryRemovals.removeValue(forKey: path)
+        {
+            guard let rootState = roots[path], ownsNamespaceMutationLease(lease) else {
+                if namespaceMutationLeases[path]?.generation == lease.generation {
+                    namespaceMutationLeases.removeValue(forKey: path)
+                }
+                continue
+            }
+            do {
+                try await removeLibrary(rootState, holding: lease)
+            } catch {
+                OtosLog.catalog.errorOperation("catalog.library.remove", phase: "deferredFailed", fields: [
+                    "rootPath": path.rawValue,
+                    "error": String(describing: error),
+                ])
+            }
+        }
     }
 
     /// A removal that could not delete the root's rows leaves the library as it was: its
@@ -2237,6 +2289,11 @@ extension CatalogStore {
         state.namespaceRevision &+= 1
         state.namespaceMutationEpoch &+= 1
         upsert(state)
+        // A removal the user asked for follows the root to where it now is.
+        if deferredLibraryRemovals.remove(oldPath) != nil {
+            deferredLibraryRemovals.insert(newRoot.path)
+            handOffDeferredLibraryRemoval(newRoot.path)
+        }
     }
 
     /// A root's case sensitivity, read off this actor and before any write: the read is a
@@ -2350,7 +2407,9 @@ extension CatalogStore {
             return
         }
         if identity.isTransient {
-            try await removeLibrary(path: root.path)
+            // A transient identity never comes back, so its source goes: now, or once the
+            // import holding it releases it.
+            _ = try await removeLibrary(path: root.path)
             return
         }
 
@@ -2590,6 +2649,13 @@ extension CatalogStore {
         reconcileLoop = nil
         reconcileCovered = reconcileRequested
         reconcilePassRunning = false
+        deferredLibraryRemovals.removeAll()
+        for (path, lease) in handedOffLibraryRemovals
+            where namespaceMutationLeases[path]?.generation == lease.generation
+        {
+            namespaceMutationLeases.removeValue(forKey: path)
+        }
+        handedOffLibraryRemovals.removeAll()
         currentScanTask?.cancel()
         currentScanTask = nil
         integrityScanTask?.cancel()
@@ -3448,7 +3514,9 @@ private extension CatalogStore {
     /// on first request rather than in `start()` because a Store that only adds and
     /// scans libraries still needs its queued scans advanced. It holds the Store weakly
     /// and ends when the Store does; after `shutdown()` no root is armed and no scan is
-    /// queued, so a request then reconciles nothing.
+    /// queued, so a request then reconciles nothing. Each ring first runs the library
+    /// removals a lease release handed over: like held-back dirt, they are work a lease
+    /// kept from running, and a removed root has no dirt left to reconcile.
     private func requestReconcile() {
         reconcileRequested &+= 1
         if reconcileLoop == nil {
@@ -3457,6 +3525,7 @@ private extension CatalogStore {
             reconcileLoop = Task { [weak self] in
                 for await _ in bell {
                     guard let self else { return }
+                    await runHandedOffLibraryRemovals()
                     await runReconcilePass()
                 }
             }
@@ -4663,6 +4732,22 @@ extension CatalogStore {
             ])
             return .busy(owner: current.owner)
         }
+        let lease = installNamespaceMutationLease(for: rootPath, owner: owner)
+        OtosLog.catalog.notice(
+            """
+            op=namespaceMutation.lease phase=acquire rootPath=\(rootPath.rawValue, privacy: .public) \
+            owner=\(owner.rawValue, privacy: .public) generation=\(lease.generation, privacy: .public)
+            """
+        )
+        return .acquired(lease)
+    }
+
+    /// Installs a new lease on a root the caller has checked no owner holds.
+    @discardableResult
+    private func installNamespaceMutationLease(
+        for rootPath: LibraryRootPath,
+        owner: RootNamespaceMutationOwner
+    ) -> RootNamespaceMutationLease {
         nextNamespaceMutationLeaseGeneration &+= 1
         let lease = RootNamespaceMutationLease(
             libraryRootPath: rootPath,
@@ -4671,13 +4756,7 @@ extension CatalogStore {
             markedDirtyByExternalEvents: false
         )
         namespaceMutationLeases[rootPath] = lease
-        OtosLog.catalog.notice(
-            """
-            op=namespaceMutation.lease phase=acquire rootPath=\(rootPath.rawValue, privacy: .public) \
-            owner=\(owner.rawValue, privacy: .public) generation=\(lease.generation, privacy: .public)
-            """
-        )
-        return .acquired(lease)
+        return lease
     }
 
     func ownsNamespaceMutationLease(_ lease: RootNamespaceMutationLease) -> Bool {
@@ -4738,6 +4817,11 @@ extension CatalogStore {
             owner=\(lease.owner.rawValue, privacy: .public) dirty=\(dirty, privacy: .public)
             """
         )
+        // A library the user asked to remove meanwhile goes now; scanning it first is
+        // work its removal discards.
+        if handOffDeferredLibraryRemoval(lease.libraryRootPath) {
+            return true
+        }
         if dirty || scanLeases.takeRescanAfterCurrentScan(lease.libraryRootPath) {
             enqueueScans([lease.libraryRootPath])
         } else {

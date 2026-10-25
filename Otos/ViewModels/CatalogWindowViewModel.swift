@@ -38,7 +38,7 @@ final class CatalogWindowViewModel {
     enum CatalogMutationIntent {
         case addLibrary(URL)
         case ensureLibrary(URL)
-        case removeLibrary(LibraryRootPath)
+        case removeLibrary(LibraryRoot)
         case moveLibrary(LibraryRootPath, LibraryOrderMove)
         case ejectRemovableSource(LibraryRoot)
         case forgetRemovableSource(LibraryRoot)
@@ -49,11 +49,20 @@ final class CatalogWindowViewModel {
         case acknowledgeIdentityRemaps([Int64])
     }
 
+    /// What a finished mutation tells the user, when it tells them anything.
+    enum CatalogMutationReport: Equatable {
+        case eject(RemovableEjectOutcome)
+        /// The removal waits for the owner holding the library and runs when it releases it.
+        case removalWaiting(LibraryRemovalNotice)
+    }
+
     private(set) var sidebarSelection: SidebarSelection = .allMedia
     private(set) var queryDescriptor: CatalogQueryDescriptor = .default
     private(set) var isFilterPresented = false
     private(set) var ejectingSourceIdentities: Set<DeviceIdentity> = []
     var ejectAlertMessage: String?
+    /// A removal that waits for the library to be free, shown once as an alert in Settings.
+    var libraryRemovalNotice: LibraryRemovalNotice?
     /// Last drawn signature per source, so the apply log records what changed on screen
     /// rather than a timer's sample of it (B4).
     var lastDrawnSignature: [LibraryRootPath: String] = [:]
@@ -691,15 +700,15 @@ extension CatalogWindowViewModel {
                 guard !Task.isCancelled else {
                     break
                 }
-                let ejectOutcome = await Self.performCatalogMutation(
+                let report = await Self.performCatalogMutation(
                     intent,
                     store: store,
                     coordinator: coordinator,
                     previewLoader: previewLoader,
                     importer: self?.mediaOperationCoordinator
                 )
-                if let ejectOutcome {
-                    self?.handleEjectOutcome(ejectOutcome, for: intent)
+                if let report {
+                    self?.handleMutationReport(report, for: intent)
                 }
             }
         }
@@ -952,8 +961,8 @@ extension CatalogWindowViewModel {
 // MARK: - Sidebar selection policy
 
 //
-// Applies `SidebarSelectionPolicy` when projected sources change, plus eject-alert
-// dismissal. Automatic selection still goes through `setQueryDescriptor`.
+// Applies `SidebarSelectionPolicy` when projected sources change, plus eject-alert and
+// removal-notice dismissal. Automatic selection still goes through `setQueryDescriptor`.
 
 extension CatalogWindowViewModel {
     func applyAutomaticSidebarSelection(_ selection: SidebarSelection) {
@@ -966,6 +975,10 @@ extension CatalogWindowViewModel {
 
     func dismissEjectAlert() {
         ejectAlertMessage = nil
+    }
+
+    func dismissLibraryRemovalNotice() {
+        libraryRemovalNotice = nil
     }
 
     func applySidebarSelectionPolicy(previous: CatalogWindowState, next: CatalogWindowState) {
@@ -1019,6 +1032,15 @@ extension CatalogWindowViewModel {
                 removableSources: next.removableSources
             )
         )
+    }
+
+    func handleMutationReport(_ report: CatalogMutationReport, for intent: CatalogMutationIntent) {
+        switch report {
+        case let .eject(outcome):
+            handleEjectOutcome(outcome, for: intent)
+        case let .removalWaiting(notice):
+            libraryRemovalNotice = notice
+        }
     }
 
     func handleEjectOutcome(_ outcome: RemovableEjectOutcome, for intent: CatalogMutationIntent) {

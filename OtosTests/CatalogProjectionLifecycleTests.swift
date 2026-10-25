@@ -73,7 +73,7 @@ struct CatalogProjectionLifecycleTests {
         // Both mutations finish before Projection's next publication tick. The
         // final snapshot contains the same path, so only the typed removal event
         // can preserve the fact that the selected root instance disappeared.
-        try await store.removeLibrary(path: rootPath)
+        #expect(try await store.removeLibrary(path: rootPath) == .removed)
         try await store.addLibrary(url: rootURL)
 
         let readded = try await recorder.waitForLast { state in
@@ -107,7 +107,7 @@ struct CatalogProjectionLifecycleTests {
             state.resolvedSidebarSelection == .library(rootPath)
         }
 
-        try await store.removeLibrary(path: rootPath)
+        #expect(try await store.removeLibrary(path: rootPath) == .removed)
         _ = try await recorder.waitForLast { state in
             state.libraries.isEmpty && state.resolvedSidebarSelection == .allMedia
         }

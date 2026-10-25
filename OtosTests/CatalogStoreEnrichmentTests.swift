@@ -592,7 +592,7 @@ struct CatalogStoreEnrichmentTests {
         ])
         #expect(FileManager.default.fileExists(atPath: thumbnailURL.path(percentEncoded: false)))
 
-        try await store.removeLibrary(path: rootPath)
+        #expect(try await store.removeLibrary(path: rootPath) == .removed)
         #expect(!FileManager.default.fileExists(atPath: thumbnailURL.path(percentEncoded: false)))
         let snapshot = try await catalogStoreTestState(store)
         #expect(snapshot.testAssets.isEmpty)

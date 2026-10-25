@@ -109,7 +109,7 @@ struct OriginalsReadOnlyTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         let beforeRemove = try FilesystemTreeSnapshot.capture(root: root)
         let path = try CatalogPath.normalizedDirectoryPath(for: root)
-        try await store.removeLibrary(path: path)
+        #expect(try await store.removeLibrary(path: path) == .removed)
         try assertUnchanged(beforeRemove, root: root)
     }
 

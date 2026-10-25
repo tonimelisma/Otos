@@ -40,7 +40,7 @@ extension CatalogWindowViewModel {
 
     func removeLibrary(_ library: LibraryRoot) {
         logCatalogIntent("removeLibrary", path: library.path.rawValue)
-        submitCatalogMutation(.removeLibrary(library.path))
+        submitCatalogMutation(.removeLibrary(library))
     }
 
     /// One path for drag, `Move Up`/`Move Down`, and ⌘↑/⌘↓ in Settings →
@@ -84,7 +84,7 @@ extension CatalogWindowViewModel {
         coordinator: EnrichmentCoordinator?,
         previewLoader: (any PreviewLoading)?,
         importer: MediaOperationCoordinator?
-    ) async -> RemovableEjectOutcome? {
+    ) async -> CatalogMutationReport? {
         switch intent {
         case let .addLibrary(url):
             await performAddLibrary(url, store: store)
@@ -92,23 +92,21 @@ extension CatalogWindowViewModel {
         case let .ensureLibrary(url):
             await performEnsureLibrary(url, store: store)
             return nil
-        case let .removeLibrary(path):
-            await performRemoveLibrary(path, store: store)
-            return nil
+        case let .removeLibrary(root):
+            return await performRemoveLibrary(root, operation: "catalog.library.remove", store: store)
         case let .moveLibrary(path, move):
             await performMoveLibrary(path, move, store: store)
             return nil
         case let .ejectRemovableSource(root):
-            return await performEjectRemovableSource(
+            return await .eject(performEjectRemovableSource(
                 root,
                 store: store,
                 coordinator: coordinator,
                 previewLoader: previewLoader,
                 importInProgress: importer?.isImporting(from: root.path) ?? false
-            )
+            ))
         case let .forgetRemovableSource(root):
-            await performForgetRemovableSource(root, store: store)
-            return nil
+            return await performRemoveLibrary(root, operation: "catalog.removable.forget", store: store)
         case let .attachRemovableVolume(attachment):
             await performAttachRemovableVolume(attachment, store: store)
             return nil
@@ -319,19 +317,29 @@ private extension CatalogWindowViewModel {
         }
     }
 
+    /// Removing a library and forgetting a removable source are one removal. One that
+    /// waits for the owner holding the root reports it, so the user is told it will go
+    /// when that work finishes.
     nonisolated static func performRemoveLibrary(
-        _ path: LibraryRootPath,
+        _ root: LibraryRoot,
+        operation: String,
         store: CatalogStore
-    ) async {
+    ) async -> CatalogMutationReport? {
         do {
-            try await store.removeLibrary(path: path)
+            switch try await store.removeLibrary(path: root.path) {
+            case .removed, .notInCatalog:
+                return nil
+            case let .waiting(owner):
+                return .removalWaiting(LibraryRemovalNotice(displayName: root.displayName, waitingFor: owner))
+            }
         } catch {
             await recordMutationError(
                 "Catalog remove library failed",
-                operation: "catalog.library.remove",
-                fields: ["rootPath": path.rawValue],
+                operation: operation,
+                fields: ["rootPath": root.path.rawValue],
                 error: error
             )
+            return nil
         }
     }
 
@@ -366,22 +374,6 @@ private extension CatalogWindowViewModel {
                 "Identity remap acknowledgement failed",
                 operation: "reorganization.remapAcknowledged",
                 fields: ["batches": batchIDs.map(String.init).joined(separator: ",")],
-                error: error
-            )
-        }
-    }
-
-    nonisolated static func performForgetRemovableSource(
-        _ root: LibraryRoot,
-        store: CatalogStore
-    ) async {
-        do {
-            try await store.removeLibrary(path: root.path)
-        } catch {
-            await recordMutationError(
-                "Catalog forget removable source failed",
-                operation: "catalog.removable.forget",
-                fields: ["rootPath": root.path.rawValue],
                 error: error
             )
         }

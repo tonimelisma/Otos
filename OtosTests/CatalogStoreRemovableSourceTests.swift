@@ -76,6 +76,42 @@ struct CatalogStoreRemovableSourceTests {
         #expect(candidates.contains { $0.asset.id == cardID })
     }
 
+    /// APP-007: a removal waiting for the card follows it when it remounts at another
+    /// path. The card at its new mount is held by nothing, so the removal runs there.
+    @Test func aRemovalWaitingForACardFollowsItToItsNewMount() async throws {
+        let fixture = try await makeRemountFixture()
+        let store = fixture.store
+        let identity = DeviceIdentity.volume(uuid: "test-card")
+        try await store.attachRemovableVolume(
+            mountURL: fixture.firstMount,
+            identity: identity,
+            displayName: "Card",
+            isEjectable: true
+        )
+        let firstPath = try CatalogPath.normalizedDirectoryPath(for: fixture.firstMount)
+        _ = try await waitForSelectedRelativePaths(store, rootPath: firstPath, expected: ["card.jpg"])
+        guard case let .acquired(lease) = await store.acquireNamespaceMutationLease(
+            for: firstPath,
+            owner: .sourceErase
+        ) else {
+            Issue.record("Expected to hold the card's namespace for this test")
+            return
+        }
+        #expect(try await store.removeLibrary(path: firstPath) == .waiting(for: .sourceErase))
+
+        try await store.attachRemovableVolume(
+            mountURL: fixture.secondMount,
+            identity: identity,
+            displayName: "Card",
+            isEjectable: true
+        )
+        let removed = try await waitForCatalogStoreState(store) { $0.removableSources.isEmpty }
+        #expect(removed.libraries.map(\.path) == [fixture.fixedRootPath])
+        // The holder at the old mount finishes later; its release finds no root there.
+        #expect(await store.releaseNamespaceMutationLease(lease))
+        #expect(try await catalogStoreTestState(store).removableSources.isEmpty)
+    }
+
     /// Otos's own eject reports its outcome, so a refused one resumes the card at once:
     /// it is still mounted, and its enrichment must not wait on a limit meant for ejects
     /// started elsewhere, which report nothing.
