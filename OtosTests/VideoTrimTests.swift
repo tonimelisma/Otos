@@ -17,7 +17,9 @@ struct VideoTrimTests {
     @Test func thePlayerPlaysTheTrimAndReportsItBack() {
         let player = AVPlayer(playerItem: AVPlayerItem(url: fixture))
         var state = LoupeVideoState(
-            id: MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/x"), relativePath: MediaRelativePath(rawValue: "a.mov")),
+            id: MediaAssetID(
+                libraryRootPath: LibraryRootPath(rawValue: "/x"), relativePath: MediaRelativePath(rawValue: "a.mov")
+            ),
             player: player,
             isPlaying: false
         )

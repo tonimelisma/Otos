@@ -148,7 +148,8 @@ struct CatalogWindowViewModelOpenWithTests {
 
 @MainActor
 private func makeOpenWithModel(workspace: RecordingWorkspace) -> CatalogWindowViewModel {
-    CatalogWindowViewModel(
+    // Open, Open With, Share and Copy are hand-offs, consumed by the hand-off lane.
+    let model = CatalogWindowViewModel(
         catalogStore: CatalogStore(location: .inMemory),
         startsStallMonitor: false,
         startsEnrichment: false,
@@ -157,6 +158,8 @@ private func makeOpenWithModel(workspace: RecordingWorkspace) -> CatalogWindowVi
         workspace: workspace,
         trashFiles: .refusing
     )
+    model.startHandOff(store: model.catalogStore)
+    return model
 }
 
 private func makeIDs(count: Int) -> [MediaAssetID] {

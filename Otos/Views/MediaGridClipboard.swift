@@ -4,10 +4,11 @@ import OSLog
 
 /// Media clipboard guide
 ///
-/// Writes copied assets to a pasteboard as original file URLs (ADR 0012): one `NSURL`
-/// per asset, in the given order, references only — no image or video bytes are read,
-/// so copy is instant and never materializes a dataless cloud original. Finder pastes
-/// the files; Messages and Mail attach them. The pasteboard is a parameter so the
+/// Writes copied files to a pasteboard (ADR 0012): one `NSURL` per file, in the given
+/// order, references only. The files are what the hand-off chose (plan 0108 increment 13):
+/// an original, which is not read, so a dataless cloud original is downloaded by whoever
+/// pastes it, or a full-size file prepared in Application Support. Finder pastes the
+/// files; Messages, Mail and web pages attach them. The pasteboard is a parameter so the
 /// write can be exercised against an isolated `NSPasteboard(name:)` in tests.
 ///
 /// The pasteboard can refuse the write after `clearContents()` has already emptied it,
@@ -16,15 +17,22 @@ import OSLog
 nonisolated enum MediaGridClipboard {
     @discardableResult
     static func write(_ ids: [MediaAssetID], to pasteboard: NSPasteboard) -> Int {
+        write(files: ids.map(\.fileURL), to: pasteboard)
+    }
+
+    /// One `public.file-url` per file, in order: the originals and prepared files a
+    /// hand-off chose (plan 0108 increment 13).
+    @discardableResult
+    static func write(files urls: [URL], to pasteboard: NSPasteboard) -> Int {
         pasteboard.clearContents()
-        guard let first = ids.first else {
+        guard let first = urls.first else {
             return 0
         }
-        let accepted = pasteboard.writeObjects(ids.map { $0.fileURL as NSURL })
-        let written = accepted ? ids.count : 0
+        let accepted = pasteboard.writeObjects(urls.map { $0 as NSURL })
+        let written = accepted ? urls.count : 0
         let fields = [
-            "requested": "\(ids.count)", "written": "\(written)",
-            "changeCount": "\(pasteboard.changeCount)", "first": first.relativePath.rawValue,
+            "requested": "\(urls.count)", "written": "\(written)",
+            "changeCount": "\(pasteboard.changeCount)", "first": first.lastPathComponent,
         ]
         if accepted {
             OtosLog.ui.noticeOperation("ui.copy", phase: "written", fields: fields)

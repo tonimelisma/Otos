@@ -112,6 +112,9 @@ struct ContentView: View {
                 if let trashStatus = TrashStatusPresentation.map(viewModel.trashQueueState) {
                     TrashStatusBar(presentation: trashStatus)
                 }
+                if let handOff = viewModel.handOffProgress {
+                    HandOffStatusBar(progress: handOff, cancel: viewModel.cancelHandOff)
+                }
             }
             // Hosted on its own view so `Do not ask again` applies to this alert only.
             .background { largeTrashDownloadAlertHost }
@@ -245,6 +248,25 @@ struct ContentView: View {
             }
         } message: {
             if let message = viewModel.ejectAlertMessage {
+                Text(message)
+            }
+        }
+        .alert(
+            "Couldn’t Prepare Photos",
+            isPresented: Binding(
+                get: { viewModel.handOffAlertMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.dismissHandOffAlert()
+                    }
+                }
+            )
+        ) {
+            Button("OK") {
+                viewModel.dismissHandOffAlert()
+            }
+        } message: {
+            if let message = viewModel.handOffAlertMessage {
                 Text(message)
             }
         }

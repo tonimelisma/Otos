@@ -217,29 +217,33 @@ struct CatalogWindowViewModelViewModeTests {
 
     /// Copy acts on the same targets as every other Photo command: the Grid selection
     /// in display order, the Loupe focus, and only the active Compare pane.
-    @Test func copyWritesTheCurrentTargetsInEveryMode() {
+    @Test func copyWritesTheCurrentTargetsInEveryMode() async throws {
         let model = makeViewModeModel(loader: FakePreviewLoader())
+        model.startHandOff(store: model.catalogStore)
+        defer { model.handOffTask?.cancel() }
         let ids = makeViewModeIDs(count: 4)
         model.applyState(makeViewModeState(orderedIDs: ids))
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("copy-\(UUID().uuidString)"))
         defer { pasteboard.releaseGlobally() }
-        func copied() -> [URL] {
+        /// Copy is a hand-off: it settles through the hand-off lane (plan 0108 increment 13).
+        func copied() async throws -> [URL] {
             model.copyCurrentTargets(to: pasteboard)
+            try await waitUntil { model.hasSettledHandOffs }
             return (pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
         }
 
         _ = model.applyGridClick(hit: ids[2], modifiers: [], orderedIDs: ids)
         _ = model.applyGridClick(hit: ids[0], modifiers: [.command], orderedIDs: ids)
-        #expect(copied() == [ids[0].fileURL, ids[2].fileURL])
+        #expect(try await copied() == [ids[0].fileURL, ids[2].fileURL])
 
         model.enterCompare()
         #expect(model.activeComparePane == .right)
-        #expect(copied() == [ids[2].fileURL])
+        #expect(try await copied() == [ids[2].fileURL])
         model.activateComparePane(.left)
-        #expect(copied() == [ids[0].fileURL])
+        #expect(try await copied() == [ids[0].fileURL])
 
         model.openLoupe(id: ids[3])
-        #expect(copied() == [ids[3].fileURL])
+        #expect(try await copied() == [ids[3].fileURL])
     }
 
     @Test func pairChangeClearsOnlyChangedSlots() async {

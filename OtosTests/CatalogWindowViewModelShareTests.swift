@@ -63,7 +63,8 @@ struct CatalogWindowViewModelShareTests {
 
 @MainActor
 private func makeShareModel() -> CatalogWindowViewModel {
-    CatalogWindowViewModel(
+    // Open, Open With, Share and Copy are hand-offs, consumed by the hand-off lane.
+    let model = CatalogWindowViewModel(
         catalogStore: CatalogStore(location: .inMemory),
         startsStallMonitor: false,
         startsEnrichment: false,
@@ -71,6 +72,8 @@ private func makeShareModel() -> CatalogWindowViewModel {
         preferencesDomain: .suite(UUID().uuidString),
         trashFiles: .refusing
     )
+    model.startHandOff(store: model.catalogStore)
+    return model
 }
 
 private func makeIDs(count: Int) -> [MediaAssetID] {

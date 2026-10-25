@@ -1,7 +1,12 @@
 # ADR 0028: Grid Drag-Out Representation
 
-- Status: Accepted
+- Status: Accepted; the representation is superseded in part by ADR 0037
 - Date: 2026-09-13
+
+The drag carries one writer per asset as ADR 0037 chooses it: the original's file URL for
+an unedited still that is not a RAW or an untrimmed video, a file prepared earlier in the
+launch, or a file promise that prepares an edited photo or a RAW. The selection and timing
+rules below stand.
 
 ## Context
 

@@ -23,18 +23,6 @@ struct MediaGridDragTests {
         #expect(dragged == [ids[0]])
     }
 
-    @Test func pasteboardWritersAreFileURLsInOrder() {
-        let ids = makeIDs(count: 2)
-
-        let writers = MediaGridDragPolicy.pasteboardWriters(for: ids)
-
-        #expect(writers.map { ($0 as URL).path } == ["/Pictures/asset-0.jpg", "/Pictures/asset-1.jpg"])
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("drag-\(UUID().uuidString)"))
-        pasteboard.clearContents()
-        pasteboard.writeObjects(writers)
-        #expect(pasteboard.types?.contains(.fileURL) == true)
-    }
-
     @Test func plainClickOnSelectedTileWaitsForMouseUp() {
         #expect(MediaGridDragPolicy.decision(hasHit: true, hitIsSelected: true, isPlainClick: true, clickCount: 1)
             == .deferUntilMouseUp)

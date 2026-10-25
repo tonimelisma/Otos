@@ -3002,6 +3002,22 @@ extension CatalogStore {
             nil
         }
     }
+
+    /// Where hand-offs put the full-size files they render (plan 0108 increment 13): beside
+    /// the thumbnails in Application Support, never in a media folder. Its contents last
+    /// until the next launch clears them. An in-memory catalog uses the temporary folder.
+    nonisolated var handOffDirectory: URL {
+        switch location {
+        case let .application(bundleIdentifier):
+            URL.applicationSupportDirectory
+                .appending(path: bundleIdentifier, directoryHint: .isDirectory)
+                .appending(path: "HandOff", directoryHint: .isDirectory)
+        case let .databaseFile(url):
+            url.deletingLastPathComponent().appending(path: "HandOff", directoryHint: .isDirectory)
+        case .inMemory:
+            URL.temporaryDirectory.appending(path: "OtosHandOff", directoryHint: .isDirectory)
+        }
+    }
 }
 
 private extension CatalogStore {

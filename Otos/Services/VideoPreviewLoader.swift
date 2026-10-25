@@ -158,7 +158,8 @@ struct LoupeVideoState: Equatable {
         item.reversePlaybackEndTime = recipe.trimStart.map { CMTime(seconds: $0, preferredTimescale: 600) } ?? .invalid
         item.forwardPlaybackEndTime = recipe.trimEnd.map { CMTime(seconds: $0, preferredTimescale: 600) } ?? .invalid
         if let start = recipe.trimStart {
-            player.seek(to: CMTime(seconds: start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+            let time = CMTime(seconds: start, preferredTimescale: 600)
+            player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
         }
     }
 

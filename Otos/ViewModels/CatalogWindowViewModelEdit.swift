@@ -576,7 +576,7 @@ nonisolated struct EditPipeline: Sendable {
     /// facts, or nil when it cannot be read.
     @concurrent
     func open(_ id: MediaAssetID, sourceSize: Int64?) async -> EditPhotoFacts? {
-        guard await makeLocal(id, sourceSize: sourceSize) else {
+        guard await MaterializationCoordinator.makeLocal(id, sourceSize: sourceSize, via: materialization) else {
             return nil
         }
         do {
@@ -597,7 +597,7 @@ nonisolated struct EditPipeline: Sendable {
         recipe: EditRecipe,
         sourceSize: Int64?
     ) async -> (image: CGImage, facts: EditPhotoFacts)? {
-        guard await makeLocal(id, sourceSize: sourceSize) else {
+        guard await MaterializationCoordinator.makeLocal(id, sourceSize: sourceSize, via: materialization) else {
             return nil
         }
         do {
@@ -629,7 +629,7 @@ nonisolated struct EditPipeline: Sendable {
                 ])
                 return nil
             }
-            guard await makeLocal(id, sourceSize: result.sourceSize) else {
+            guard await MaterializationCoordinator.makeLocal(id, sourceSize: result.sourceSize, via: materialization) else {
                 await handToEnrichment(id)
                 return nil
             }
@@ -662,7 +662,7 @@ nonisolated struct EditPipeline: Sendable {
         shown: EditRecipe,
         sourceSize: Int64?
     ) async -> (temperature: Double, tint: Double)? {
-        guard await makeLocal(id, sourceSize: sourceSize) else {
+        guard await MaterializationCoordinator.makeLocal(id, sourceSize: sourceSize, via: materialization) else {
             return nil
         }
         do {
@@ -683,29 +683,5 @@ nonisolated struct EditPipeline: Sendable {
                 "id": id.relativePath.rawValue, "error": String(describing: error),
             ])
         }
-    }
-
-    /// Makes the original's bytes local before a render reads them (ADR 0008): an
-    /// interactive download when it is dataless, then the check again right before the read.
-    private func makeLocal(_ id: MediaAssetID, sourceSize: Int64?) async -> Bool {
-        let url = id.fileURL
-        if FileMaterialization.status(of: url) == .dataless, let materialization {
-            let result = await materialization.materialize(MaterializationCoordinator.Request(
-                id: id, sourceSize: sourceSize, isVideo: false, priority: .interactive
-            ))
-            guard result.isMaterialized else {
-                OtosLog.mediaIO.noticeOperation("edit.materialize", phase: "notMaterialized", fields: [
-                    "id": id.relativePath.rawValue, "outcome": String(describing: result.outcome),
-                ])
-                return false
-            }
-        }
-        guard FileMaterialization.status(of: url) == .materialized else {
-            OtosLog.mediaIO.noticeOperation("edit.materialize", phase: "unavailable", fields: [
-                "id": id.relativePath.rawValue,
-            ])
-            return false
-        }
-        return true
     }
 }

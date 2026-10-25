@@ -27,7 +27,12 @@ extension CatalogWindowViewModel {
     }
 
     func shareCurrentTargets(origin: ShareOrigin) {
-        let items = currentTargetFileURLs
+        handOff(.share(origin))
+    }
+
+    /// Shows the share picker with the files a hand-off prepared, anchored to the toolbar's
+    /// Share button when it is on screen.
+    func presentSharePicker(_ items: [URL], origin: ShareOrigin) {
         guard !items.isEmpty else { return }
         if let anchor = shareAnchorView, anchor.window != nil {
             sharePickerPresenter.present(items, relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)

@@ -172,6 +172,17 @@ final class CatalogWindowViewModel {
     var editLivePreview: EditLivePreview?
     /// The open target's facts; nil until it has been opened (the controls wait for them).
     var editPhotoFacts: EditPhotoFacts?
+    /// The hand-off being prepared, for the status bar; nil when none is.
+    var handOffProgress: HandOffProgress?
+    var handOffAlertMessage: String?
+    @ObservationIgnored let handOffPreparer: HandOffPreparer
+    @ObservationIgnored let handOffStream: AsyncStream<HandOffRequest>
+    @ObservationIgnored let handOffContinuation: AsyncStream<HandOffRequest>.Continuation
+    @ObservationIgnored var handOffTask: Task<Void, Never>?
+    @ObservationIgnored var handOffRequested: UInt64 = 0
+    @ObservationIgnored var handOffCancelledThrough: UInt64 = 0
+    @ObservationIgnored var submittedHandOffCount = 0
+    @ObservationIgnored var handledHandOffCount = 0
     /// The latest request for the loupe's player to show its trim UI.
     var videoTrimCommand: VideoTrimCommand?
     @ObservationIgnored var videoTrimGeneration: UInt64 = 0
@@ -439,6 +450,8 @@ final class CatalogWindowViewModel {
         let (editCommandStream, editCommandContinuation) = AsyncStream<EditLaneCommand>.makeStream(
             bufferingPolicy: .unbounded
         )
+        // Every hand-off is handed over, in order.
+        let (handOffStream, handOffContinuation) = AsyncStream<HandOffRequest>.makeStream(bufferingPolicy: .unbounded)
         self.preferencesDomain = preferencesDomain
         preferences = preferencesDomain.makeDefaults()
         let storedColumns = preferences.integer(forKey: Self.gridColumnCountDefaultsKey)
@@ -482,6 +495,10 @@ final class CatalogWindowViewModel {
             }
         )
         self.materializationCoordinator = materializationCoordinator
+        handOffPreparer = HandOffPreparer(
+            directory: catalogStore.handOffDirectory,
+            materialization: materializationCoordinator
+        )
         mediaTrashCoordinator = MediaTrashCoordinator(
             store: catalogStore,
             materializationRequester: materializationCoordinator,
@@ -533,6 +550,8 @@ final class CatalogWindowViewModel {
         self.editRenderContinuation = editRenderContinuation
         self.editCommandStream = editCommandStream
         self.editCommandContinuation = editCommandContinuation
+        self.handOffStream = handOffStream
+        self.handOffContinuation = handOffContinuation
         // The restored query is the first one Projection sees (APP-043), so launch never
         // flashes the default collection before the user's own.
         if let place = Self.loadBrowserPlace(from: preferences) {
@@ -557,6 +576,7 @@ final class CatalogWindowViewModel {
         editTargetTask?.cancel()
         editRenderTask?.cancel()
         editCommandTask?.cancel()
+        handOffTask?.cancel()
         mediaTrashTask?.cancel()
         mediaTrashEventTask?.cancel()
         mediaTrashIntentTask?.cancel()
@@ -590,6 +610,7 @@ final class CatalogWindowViewModel {
         mediaChoiceContinuation.finish()
         editRenderContinuation.finish()
         editCommandContinuation.finish()
+        handOffContinuation.finish()
         viewportContinuation.finish()
         // The owners below must be told to stop or their own loops would keep them, and
         // the store, alive past this window: the enrichment supervisor strongly retains
@@ -655,6 +676,7 @@ extension CatalogWindowViewModel {
         startMutationForwarding(store: store, coordinator: enrichmentCoordinator)
         startMediaChoiceForwarding(store: store)
         startEditing(store: store)
+        startHandOff(store: store)
         startStateConsumption(
             projection: projection,
             store: store,
