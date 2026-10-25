@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import GRDB
 
@@ -192,11 +193,14 @@ nonisolated enum CatalogQueryGateway {
             let rows = try Row.fetchAll(
                 db,
                 sql: """
-                SELECT library_root_id, relative_path, byte_size,
-                       enriched_source_size, enriched_source_mtime, thumbnail_path,
-                       duration_seconds, best_kind, media_choice
-                FROM media_asset
-                WHERE library_root_id = ? AND relative_path IN (\(placeholders))
+                SELECT m.library_root_id, m.relative_path, m.byte_size,
+                       m.enriched_source_size, m.enriched_source_mtime, m.thumbnail_path, m.preview_path,
+                       m.duration_seconds, m.best_kind, m.media_choice,
+                       a.pixel_width, a.pixel_height, a.orientation
+                FROM media_asset m
+                LEFT JOIN asset_metadata a
+                  ON a.library_root_id = m.library_root_id AND a.relative_path = m.relative_path
+                WHERE m.library_root_id = ? AND m.relative_path IN (\(placeholders))
                 """,
                 arguments: StatementArguments(argumentValues)
             )
@@ -451,11 +455,24 @@ private nonisolated func storedAsset(from row: Row) -> StoredAsset {
 
 private nonisolated func storedTileDetail(from row: Row) -> StoredTileDetail {
     let bestKindRaw: String? = row["best_kind"]
+    let pixelWidth: Int? = row["pixel_width"]
+    let pixelHeight: Int? = row["pixel_height"]
+    let orientation: Int? = row["orientation"]
+    // EXIF orientations 5–8 rotate the stored dimensions a quarter turn.
+    let nativePixelSize: CGSize? = if let pixelWidth, let pixelHeight, pixelWidth > 0, pixelHeight > 0 {
+        (orientation ?? 1) >= 5
+            ? CGSize(width: pixelHeight, height: pixelWidth)
+            : CGSize(width: pixelWidth, height: pixelHeight)
+    } else {
+        nil
+    }
     return StoredTileDetail(
         libraryRootID: row["library_root_id"],
         relativePath: MediaRelativePath(rawValue: row["relative_path"]),
         byteSize: row["byte_size"],
         thumbnailPath: row["thumbnail_path"],
+        previewPath: row["preview_path"],
+        nativePixelSize: nativePixelSize,
         bestKind: bestKindRaw.flatMap(MediaKind.init(rawValue:)),
         durationSeconds: row["duration_seconds"],
         enrichedSourceSize: row["enriched_source_size"],

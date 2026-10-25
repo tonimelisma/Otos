@@ -36,9 +36,10 @@ This decision supports requirements ENR-001 through ENR-014.
 This ADR owns:
 
 - Thumbnails are files on disk; the catalog stores only the relative path. Size,
-  format, and generator (256 px long edge, JPEG generated from QuickLook with
-  icon fallback rejected — a definitive thumbnail-unavailable stamp when no real
-  imagery can be produced). Generated files are staged until Store validates and
+  format, and generator (256 px long edge, JPEG; for a still, drawn from the
+  rendering that also makes its stored preview, ADR 0035; for a video, or a still the
+  renderer cannot read, generated from QuickLook with icon fallback rejected — a
+  definitive thumbnail-unavailable stamp when no real imagery can be produced). Generated files are staged until Store validates and
   stamps the result. The visible grid may hold a bounded decoded-thumbnail memory
   cache for synchronous repaint, but that cache is rendering state only, never
   catalog truth or durable overlay.
@@ -104,7 +105,10 @@ Adjacent decisions requiring separate ADRs or specs:
    final name only after SQLite source-signature validation passes; stale or
    deleted results discard their staged file and cannot overwrite the previous
    final thumbnail. The final promotion is atomic (replace or move) so a tile
-   never reads a half-written file during a re-enrichment overwrite. QuickLook
+   never reads a half-written file during a re-enrichment overwrite. A still's
+   thumbnail and preview come from one `ImageRenderer` development (ADR 0035), and
+   the preview is staged, promoted, superseded and purged with the thumbnail. For a
+   video, or a still the renderer cannot read, QuickLook
    generates the image from real imagery only (`.thumbnail` /
    `.lowQualityThumbnail`); the generic `.icon` fallback is rejected. A
    generation failure is a definitive thumbnail-unavailable outcome: enrichment

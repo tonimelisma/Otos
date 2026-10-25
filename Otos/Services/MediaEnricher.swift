@@ -7,9 +7,11 @@ import UniformTypeIdentifiers
 
 /// Media enricher guide
 ///
-/// Produces both products for one already-materialized media file: parsed metadata
-/// (the `MediaMetadata` library, byte-reading, synchronous) and a 256 px thumbnail
-/// (QuickLook). It is a small `Sendable` value with one injectable closure, mirroring
+/// Produces the products for one already-materialized media file: parsed metadata
+/// (the `MediaMetadata` library, byte-reading, synchronous), and — for a still — one
+/// `ImageRenderer` development that becomes the stored 2560 px preview and the 256 px
+/// thumbnail drawn from it (ADR 0035); a video, or a still the renderer cannot read,
+/// gets its thumbnail from QuickLook. It is a small `Sendable` value with one injectable closure, mirroring
 /// `CatalogScanner`, so the coordinator and tests can substitute a fake.
 ///
 /// It runs entirely off the main actor in a task-group child of the coordinator's worker
@@ -277,7 +279,7 @@ nonisolated struct MediaEnricher {
         size: UInt64,
         previews: [EmbeddedPreview],
         thumbnailDirectory: URL
-    ) async -> GeneratedThumbnail? {
+    ) async -> StagedDerivedImage? {
         guard !previews.isEmpty else {
             return nil
         }
@@ -344,11 +346,12 @@ nonisolated struct MediaEnricher {
         guard readinessChecker.status(of: url) == .materialized else {
             return .notMaterialized
         }
-        let generatedThumbnail = await Self.generateThumbnail(
-            id: id,
-            url: url,
-            directory: thumbnailDirectory
-        )
+        let rendered = await Self.renderStill(id: id, url: url, directory: thumbnailDirectory)
+        let generatedThumbnail: StagedDerivedImage? = if let rendered {
+            rendered.thumbnail
+        } else {
+            await Self.generateThumbnail(id: id, url: url, directory: thumbnailDirectory)
+        }
         let metadata = Self.map(result)
         return .complete(
             EnrichmentResult(
@@ -360,9 +363,57 @@ nonisolated struct MediaEnricher {
                 sourceSize: sourceSize ?? -1,
                 sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
                 contentHash: contentHash,
-                generatedThumbnail: generatedThumbnail
+                generatedThumbnail: generatedThumbnail,
+                generatedPreview: rendered?.preview
             )
         )
+    }
+
+    /// Renders a still's loupe preview and draws its grid thumbnail from it, both staged
+    /// (ADR 0035): one development of the original serves both, so the grid and the loupe
+    /// show the same rendering — RAW9 for a RAW where Apple supports the camera. Nil for
+    /// a video, or when the renderer cannot read the file; the caller then falls back to
+    /// Quick Look for the thumbnail and the asset has no preview.
+    private static func renderStill(
+        id: MediaAssetID,
+        url: URL,
+        directory: URL
+    ) async -> (thumbnail: StagedDerivedImage, preview: StagedDerivedImage)? {
+        guard UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true else {
+            return nil
+        }
+        let rendered: ImageRenderer.Rendered
+        do {
+            rendered = try await ImageRenderer.background.render(url, longEdge: ThumbnailStore.previewMaxPixelSize)
+        } catch {
+            return nil
+        }
+        var preview: StagedDerivedImage?
+        do {
+            let stagedPreview = try ThumbnailStore.stagePreview(
+                rendered.image,
+                finalRelativeName: ThumbnailStore.previewRelativeName(for: id),
+                in: directory
+            )
+            preview = stagedPreview
+            let thumbnail = try ThumbnailStore.stage(
+                ThumbnailStore.scaled(rendered.image, toLongEdge: ThumbnailStore.maxPixelSize),
+                finalRelativeName: ThumbnailStore.relativeName(for: id),
+                in: directory
+            )
+            return (thumbnail, stagedPreview)
+        } catch {
+            if let preview {
+                ThumbnailStore.discard(preview, in: directory)
+            }
+            OtosLog.thumbnails.errorOperation("thumbnail.render", phase: "stageFailed", fields: [
+                "rootPath": id.libraryRootPath.rawValue,
+                "relativePath": id.relativePath.rawValue,
+                "decoder": rendered.decoder.rawValue,
+                "error": String(describing: error),
+            ])
+            return nil
+        }
     }
 
     /// Generates a 256 px thumbnail and stages it, returning the staged/final names.
@@ -371,7 +422,7 @@ nonisolated struct MediaEnricher {
     /// a definitive "no thumbnail available" outcome; enrichment still stamps metadata
     /// so the asset is not retried until the file changes, and the grid shows a
     /// broken-media placeholder.
-    static func generateThumbnail(id: MediaAssetID, url: URL, directory: URL) async -> GeneratedThumbnail? {
+    static func generateThumbnail(id: MediaAssetID, url: URL, directory: URL) async -> StagedDerivedImage? {
         let generationStart = ContinuousClock.now
         let signpost = OtosSignpost.thumbnails.beginInterval("ThumbnailGenerate")
         defer {

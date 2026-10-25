@@ -90,11 +90,11 @@ nonisolated struct GeoRecord: Codable, Equatable {
     var altitudeMeters: Double?
 }
 
-/// A thumbnail file that has been generated but not yet made catalog-visible.
-/// `MediaEnricher` writes the staged file; `CatalogStore` promotes it to the final
-/// deterministic name only after SQLite proves the enrichment result still matches
-/// the current asset row.
-nonisolated struct GeneratedThumbnail: Equatable {
+/// A derived image file — the 256 px grid thumbnail or the 2560 px loupe preview — that
+/// has been written but not yet made catalog-visible. `MediaEnricher` writes the staged
+/// file; `CatalogStore` promotes it to the final deterministic name only after SQLite
+/// proves the enrichment result still matches the current asset row.
+nonisolated struct StagedDerivedImage: Equatable {
     let finalRelativePath: String
     let stagedRelativePath: String
 }
@@ -105,15 +105,19 @@ nonisolated struct GeneratedThumbnail: Equatable {
 /// The result of enriching one asset, applied to the catalog as part of a batch. The
 /// enricher records the `(sourceSize, sourceMTimeSeconds)` it read at the start of the
 /// work; the store stamps those so a file changed mid-enrichment is detected as stale.
-/// A generated thumbnail may be staged, in which case `thumbnailPath` is the final
-/// path to stamp only after Store promotes the staged file.
+/// A generated thumbnail or preview may be staged, in which case `thumbnailPath` /
+/// `previewPath` is the final path to stamp only after Store promotes the staged file.
 nonisolated struct EnrichmentResult: Equatable {
     let id: MediaAssetID
     let metadata: AssetMetadata
     let enrichedKind: MediaKind?
     let enrichedFormat: MediaFormatToken?
     let thumbnailPath: String?
-    let generatedThumbnail: GeneratedThumbnail?
+    let generatedThumbnail: StagedDerivedImage?
+    /// The stored loupe preview (ADR 0035); nil for videos and for stills no renderer
+    /// could read, which then fall back to decoding the original.
+    let previewPath: String?
+    let generatedPreview: StagedDerivedImage?
     let sourceSize: Int64?
     let sourceMTimeSeconds: Int?
     /// Absent when the enricher skipped hashing (`EnrichWork.shouldHash == false`,
@@ -130,7 +134,9 @@ nonisolated struct EnrichmentResult: Equatable {
         sourceSize: Int64?,
         sourceMTimeSeconds: Int?,
         contentHash: XXH3Digest128?,
-        generatedThumbnail: GeneratedThumbnail? = nil
+        generatedThumbnail: StagedDerivedImage? = nil,
+        previewPath: String? = nil,
+        generatedPreview: StagedDerivedImage? = nil
     ) {
         self.id = id
         self.metadata = metadata
@@ -138,9 +144,18 @@ nonisolated struct EnrichmentResult: Equatable {
         self.enrichedFormat = enrichedFormat
         self.thumbnailPath = generatedThumbnail?.finalRelativePath ?? thumbnailPath
         self.generatedThumbnail = generatedThumbnail
+        self.previewPath = generatedPreview?.finalRelativePath ?? previewPath
+        self.generatedPreview = generatedPreview
         self.sourceSize = sourceSize
         self.sourceMTimeSeconds = sourceMTimeSeconds
         self.contentHash = contentHash
+    }
+}
+
+nonisolated extension EnrichmentResult {
+    /// Every staged file this result carries, for promotion or discard as one set.
+    var stagedImages: [StagedDerivedImage] {
+        [generatedThumbnail, generatedPreview].compactMap(\.self)
     }
 }
 

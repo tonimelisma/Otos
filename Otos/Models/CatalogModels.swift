@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import UniformTypeIdentifiers
 
@@ -677,6 +678,14 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
     let relativePath: MediaRelativePath
     let byteSize: Int64?
     let thumbnailPath: String?
+    /// The stored loupe preview, which the loupe and compare decode instead of the
+    /// original (ADR 0035); nil until enrichment rendered one, and for videos.
+    let previewPath: String?
+    /// The original's oriented pixel size from stored metadata, so the loupe can size its
+    /// 100% document without reading the original's header (which would download a
+    /// cloud-only file); nil until metadata is known.
+    let nativePixelWidth: Int?
+    let nativePixelHeight: Int?
     let bestKind: MediaKind?
     let durationSeconds: Double?
     let enrichedSourceSize: Int64?
@@ -688,6 +697,9 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
         relativePath: MediaRelativePath,
         byteSize: Int64? = nil,
         thumbnailPath: String? = nil,
+        previewPath: String? = nil,
+        nativePixelWidth: Int? = nil,
+        nativePixelHeight: Int? = nil,
         bestKind: MediaKind? = nil,
         durationSeconds: Double? = nil,
         enrichedSourceSize: Int64? = nil,
@@ -698,6 +710,9 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
         self.relativePath = relativePath
         self.byteSize = byteSize
         self.thumbnailPath = thumbnailPath
+        self.previewPath = previewPath
+        self.nativePixelWidth = nativePixelWidth
+        self.nativePixelHeight = nativePixelHeight
         self.bestKind = bestKind
         self.durationSeconds = durationSeconds
         self.enrichedSourceSize = enrichedSourceSize
@@ -707,6 +722,13 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
 
     var id: MediaAssetID {
         MediaAssetID(libraryRootPath: libraryRootPath, relativePath: relativePath)
+    }
+
+    var nativePixelSize: CGSize? {
+        guard let nativePixelWidth, let nativePixelHeight else {
+            return nil
+        }
+        return CGSize(width: nativePixelWidth, height: nativePixelHeight)
     }
 
     /// Enrichment ran and could not produce a real thumbnail (icon fallback is

@@ -68,7 +68,7 @@ placeholder).
 
 | Alternative | Why rejected |
 | --- | --- |
-| Enrichment-side pregenerated large previews on disk | Scale machinery before measurement; doubles overlay disk; violates "measure before optimizing" |
+| Enrichment-side pregenerated large previews on disk | Rejected here before measurement; reversed by ADR 0035 once 92% of the library's RAWs measured cloud-only, so opening a photo meant a download first. The loader now decodes the stored preview for every request short of full resolution |
 | SwiftUI `AsyncImage` / direct `NSImage(contentsOf:)` | No dataless gate, no coalescing, main-thread decode risk |
 | Extend `EnrichmentCoordinator` to also serve loupe | Mixes background whole-library enrichment with user-initiated viewing; different lifetime and cancellation |
 | Decode on MainActor inside the loupe view | Violates MainActor media-I/O rule |

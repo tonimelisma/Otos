@@ -139,29 +139,28 @@ actor CatalogStore {
         var structureChanged = false
         var namingChangedRoots: Set<LibraryRootPath> = []
         var promotionFailed = false
-        var discardedThumbnails: [GeneratedThumbnail] = []
-        var supersededThumbnailPaths: Set<String> = []
+        var discardedImages: [StagedDerivedImage] = []
+        var supersededImagePaths: Set<String> = []
         var waitMs = 0
         var execMs = 0
 
-        mutating func discard(_ thumbnail: GeneratedThumbnail?) {
-            guard let thumbnail else {
-                return
-            }
-            discardedThumbnails.append(thumbnail)
+        mutating func discard(_ images: [StagedDerivedImage]) {
+            discardedImages.append(contentsOf: images)
         }
 
-        mutating func failPromotion(_ thumbnail: GeneratedThumbnail?) {
+        mutating func failPromotion(_ images: [StagedDerivedImage]) {
             promotionFailed = true
-            discard(thumbnail)
+            discard(images)
         }
 
-        mutating func replaceThumbnail(oldPath: String?, newPath: String?) {
+        /// Records a stored derived image (thumbnail or preview) replaced by a new path,
+        /// so its file is deleted once the batch commits.
+        mutating func replaceImage(oldPath: String?, newPath: String?) {
             if let newPath {
-                supersededThumbnailPaths.remove(newPath)
+                supersededImagePaths.remove(newPath)
             }
             if let oldPath, oldPath != newPath {
-                supersededThumbnailPaths.insert(oldPath)
+                supersededImagePaths.insert(oldPath)
             }
         }
     }
@@ -178,6 +177,7 @@ actor CatalogStore {
         let bestFormat: String?
         let captureWallCompact: Int64?
         let thumbnailPath: String?
+        let previewPath: String?
 
         init(row: Row) {
             bestCaptureUnix = row["best_capture_unix"]
@@ -185,6 +185,7 @@ actor CatalogStore {
             bestFormat = row["best_format"]
             captureWallCompact = row["capture_wall_compact"]
             thumbnailPath = row["thumbnail_path"]
+            previewPath = row["preview_path"]
         }
     }
 
@@ -1681,7 +1682,7 @@ extension CatalogStore {
         }
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
         guard results.contains(where: { rootIDsByPathBeforeWrite[$0.id.libraryRootPath] != nil }) else {
-            discardGeneratedThumbnails(results.compactMap(\.generatedThumbnail))
+            discardStagedImages(results.flatMap(\.stagedImages))
             return .applied(count: 0)
         }
         let resultIDs = results.map(\.id)
@@ -1699,14 +1700,14 @@ extension CatalogStore {
             )
         } catch {
             OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
-            discardGeneratedThumbnails(results.compactMap(\.generatedThumbnail))
+            discardStagedImages(results.flatMap(\.stagedImages))
             await recordEnrichmentBatchError(error, count: results.count)
             await releaseEnrichmentClaimsAfterBatch(resultIDs)
             return .writeFailed
         }
         OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
-        discardGeneratedThumbnails(writeOutcome.discardedThumbnails)
-        deleteSupersededThumbnails(writeOutcome.supersededThumbnailPaths)
+        discardStagedImages(writeOutcome.discardedImages)
+        deleteSupersededImages(writeOutcome.supersededImagePaths)
 
         await recordEnrichmentBatchWrite(resultsCount: results.count, writeOutcome: writeOutcome)
         await recordWALDiagnostics(reason: "enrichmentBatch")
@@ -1732,7 +1733,7 @@ extension CatalogStore {
         writeOutcome: EnrichmentBatchWriteOutcome
     ) async {
         OtosLog.metadata.notice(
-            "op=catalog.enrichment.batch phase=finish attempted=\(resultsCount, privacy: .public) count=\(writeOutcome.appliedCount, privacy: .public) namingChanged=\(writeOutcome.namingChangedRoots.count, privacy: .public) rootPaths=\(writeOutcome.namingChangedRoots.map(\.rawValue).sorted().joined(separator: ","), privacy: .public) discardedThumbnails=\(writeOutcome.discardedThumbnails.count, privacy: .public) supersededThumbnails=\(writeOutcome.supersededThumbnailPaths.count, privacy: .public) promotionFailed=\(writeOutcome.promotionFailed, privacy: .public) waitMs=\(writeOutcome.waitMs, privacy: .public) execMs=\(writeOutcome.execMs, privacy: .public) writeMs=\(writeOutcome.waitMs + writeOutcome.execMs, privacy: .public)"
+            "op=catalog.enrichment.batch phase=finish attempted=\(resultsCount, privacy: .public) count=\(writeOutcome.appliedCount, privacy: .public) namingChanged=\(writeOutcome.namingChangedRoots.count, privacy: .public) rootPaths=\(writeOutcome.namingChangedRoots.map(\.rawValue).sorted().joined(separator: ","), privacy: .public) discardedImages=\(writeOutcome.discardedImages.count, privacy: .public) supersededImages=\(writeOutcome.supersededImagePaths.count, privacy: .public) promotionFailed=\(writeOutcome.promotionFailed, privacy: .public) waitMs=\(writeOutcome.waitMs, privacy: .public) execMs=\(writeOutcome.execMs, privacy: .public) writeMs=\(writeOutcome.waitMs + writeOutcome.execMs, privacy: .public)"
         )
     }
 
@@ -1781,28 +1782,31 @@ extension CatalogStore {
         outcome: inout EnrichmentBatchWriteOutcome,
         db: Database
     ) throws {
+        let staged = result.stagedImages
         guard let rootID = rootIDsByPath[result.id.libraryRootPath] else {
-            outcome.discard(result.generatedThumbnail)
+            outcome.discard(staged)
             return
         }
-        guard result.generatedThumbnail == nil || thumbnailDirectory != nil else {
-            outcome.failPromotion(result.generatedThumbnail)
+        guard staged.isEmpty || thumbnailDirectory != nil else {
+            outcome.failPromotion(staged)
             return
         }
         guard try enrichmentResultMatchesCurrentRow(result, libraryRootID: rootID, db: db) else {
-            outcome.discard(result.generatedThumbnail)
+            outcome.discard(staged)
             return
         }
-        if let generatedThumbnail = result.generatedThumbnail, let thumbnailDirectory {
-            do {
-                try ThumbnailStore.promote(generatedThumbnail, in: thumbnailDirectory)
-            } catch {
-                outcome.failPromotion(generatedThumbnail)
-                return
+        if let thumbnailDirectory {
+            for (index, image) in staged.enumerated() {
+                do {
+                    try ThumbnailStore.promote(image, in: thumbnailDirectory)
+                } catch {
+                    outcome.failPromotion(Array(staged[index...]))
+                    return
+                }
             }
         }
         let overlayColumnsSQL = """
-        SELECT best_capture_unix, best_kind, best_format, capture_wall_compact, thumbnail_path
+        SELECT best_capture_unix, best_kind, best_format, capture_wall_compact, thumbnail_path, preview_path
         FROM media_asset
         WHERE library_root_id = ? AND relative_path = ?
         """
@@ -1835,20 +1839,21 @@ extension CatalogStore {
         if oldRow?.captureWallCompact != newRow?.captureWallCompact {
             outcome.namingChangedRoots.insert(result.id.libraryRootPath)
         }
-        outcome.replaceThumbnail(oldPath: oldRow?.thumbnailPath, newPath: result.thumbnailPath)
+        outcome.replaceImage(oldPath: oldRow?.thumbnailPath, newPath: result.thumbnailPath)
+        outcome.replaceImage(oldPath: oldRow?.previewPath, newPath: result.previewPath)
         outcome.appliedCount += 1
     }
 
-    private func discardGeneratedThumbnails(_ thumbnails: [GeneratedThumbnail]) {
+    private func discardStagedImages(_ images: [StagedDerivedImage]) {
         guard let thumbnailDirectory else {
             return
         }
-        for thumbnail in thumbnails {
-            ThumbnailStore.discard(thumbnail, in: thumbnailDirectory)
+        for image in images {
+            ThumbnailStore.discard(image, in: thumbnailDirectory)
         }
     }
 
-    private func deleteSupersededThumbnails(_ paths: Set<String>) {
+    private func deleteSupersededImages(_ paths: Set<String>) {
         guard let thumbnailDirectory else {
             return
         }
@@ -1949,7 +1954,7 @@ extension CatalogStore {
             let dbQueue = try database()
             purgedThumbnails = try await dbQueue.read { db in
                 try Self.fetchExistingAssetRows(libraryRootID: rootRowID, db: db)
-            }.compactMap(\.thumbnailPath)
+            }.flatMap(\.derivedImagePaths)
             try await dbQueue.write { db in
                 try Self.deleteLibraryRoot(rootRowID: rootRowID, db: db)
             }
@@ -3092,6 +3097,9 @@ private extension CatalogStore {
             relativePath: storedDetail.relativePath,
             byteSize: storedDetail.byteSize,
             thumbnailPath: storedDetail.thumbnailPath,
+            previewPath: storedDetail.previewPath,
+            nativePixelWidth: storedDetail.nativePixelSize.map { Int($0.width) },
+            nativePixelHeight: storedDetail.nativePixelSize.map { Int($0.height) },
             bestKind: storedDetail.bestKind,
             durationSeconds: storedDetail.durationSeconds,
             enrichedSourceSize: storedDetail.enrichedSourceSize,
@@ -3464,11 +3472,11 @@ private extension CatalogStore {
         // Capture the thumbnail files of soon-to-be-purged assets before their rows are
         // removed, so overlay is purged with the item (ADR 0008): the catalog rows and
         // thumbnail file all go together on proven deletion.
-        let purgedThumbnails: [String] = missingRows.compactMap(\.thumbnailPath)
+        let purgedThumbnails: [String] = missingRows.flatMap(\.derivedImagePaths)
         let loggedRows = Array(missingRows.prefix(20))
         for row in loggedRows {
             OtosLog.catalog.notice(
-                "op=catalog.scan.reconcile phase=delete rootPath=\(scan.rootPath.rawValue, privacy: .public) relativePath=\(row.relativePath.rawValue, privacy: .public) hadThumbnail=\(row.thumbnailPath != nil, privacy: .public) hadEnrichment=\(row.hadEnrichment, privacy: .public)"
+                "op=catalog.scan.reconcile phase=delete rootPath=\(scan.rootPath.rawValue, privacy: .public) relativePath=\(row.relativePath.rawValue, privacy: .public) derivedImages=\(row.derivedImagePaths.count, privacy: .public) hadEnrichment=\(row.hadEnrichment, privacy: .public)"
             )
         }
         let message = "op=catalog.scan.reconcile phase=deleteSummary "
@@ -4455,8 +4463,10 @@ private extension CatalogStore {
             return .unchanged
         }
 
-        if let thumbnailPath = deletionTarget?.thumbnailPath, let thumbnailDirectory {
-            ThumbnailStore.delete(thumbnailPath, in: thumbnailDirectory)
+        if let thumbnailDirectory {
+            for path in deletionTarget?.derivedImagePaths ?? [] {
+                ThumbnailStore.delete(path, in: thumbnailDirectory)
+            }
         }
         return .changed
     }
@@ -4618,7 +4628,8 @@ extension CatalogStore {
         )
         let dbWriter = try database()
         var reusableOverlay: ReusableEnrichmentOverlay?
-        var stagedThumbnail: GeneratedThumbnail?
+        var stagedThumbnail: StagedDerivedImage?
+        var stagedPreview: StagedDerivedImage?
         var reuseResult = ImportOverlayReuseResult.notReused
         if let sourceRootID = roots[operation.sourceRootPath]?.rowID {
             if operation.sourceKind == .removableVolume {
@@ -4650,20 +4661,41 @@ extension CatalogStore {
                     && sourceOverlay.contentHashSourceMTimeSeconds != nil
                     && sourceOverlay.contentHashSourceSize == sourceOverlay.sourceByteSize
                     && sourceOverlay.contentHashSourceMTimeSeconds == sourceOverlay.sourceMTimeSeconds
-                if sourceFactsCurrent, hashMatches {
+                let destinationID = MediaAssetID(
+                    libraryRootPath: operation.destinationRootPath,
+                    relativePath: operation.destinationRelativePath
+                )
+                if sourceFactsCurrent, hashMatches, sourceOverlay.enrichedKind == .image,
+                   sourceOverlay.previewPath == nil
+                {
+                    reuseResult = ImportOverlayReuseResult(
+                        metadataCloned: false,
+                        thumbnailCopied: false,
+                        miss: .missingPreview
+                    )
+                } else if sourceFactsCurrent, hashMatches {
                     if let sourceThumbnail = sourceOverlay.thumbnailPath {
                         if let thumbnailDirectory {
                             do {
                                 stagedThumbnail = try ThumbnailStore.stageCopy(
                                     sourceRelativeName: sourceThumbnail,
-                                    destinationID: MediaAssetID(
-                                        libraryRootPath: operation.destinationRootPath,
-                                        relativePath: operation.destinationRelativePath
-                                    ),
+                                    destinationRelativeName: ThumbnailStore.relativeName(for: destinationID),
                                     in: thumbnailDirectory
                                 )
+                                if let sourcePreview = sourceOverlay.previewPath {
+                                    stagedPreview = try ThumbnailStore.stageCopy(
+                                        sourceRelativeName: sourcePreview,
+                                        destinationRelativeName: ThumbnailStore.previewRelativeName(for: destinationID),
+                                        in: thumbnailDirectory
+                                    )
+                                }
                                 reusableOverlay = sourceOverlay
                             } catch {
+                                for staged in [stagedThumbnail, stagedPreview].compactMap(\.self) {
+                                    ThumbnailStore.discard(staged, in: thumbnailDirectory)
+                                }
+                                stagedThumbnail = nil
+                                stagedPreview = nil
                                 reuseResult = ImportOverlayReuseResult(
                                     metadataCloned: false,
                                     thumbnailCopied: false,
@@ -4708,19 +4740,28 @@ extension CatalogStore {
         }
         var overlayToWrite = reusableOverlay
         var thumbnailPathToWrite: String?
+        var previewPathToWrite: String?
         try Self.writeWithJournalDurability(dbWriter) { db in
             if let staged = stagedThumbnail, let thumbnailDirectory {
                 do {
                     thumbnailPathToWrite = try ThumbnailStore.promote(staged, in: thumbnailDirectory)
+                    if let stagedPreview {
+                        previewPathToWrite = try ThumbnailStore.promote(stagedPreview, in: thumbnailDirectory)
+                    }
                     reuseResult = ImportOverlayReuseResult(
                         metadataCloned: overlayToWrite != nil,
                         thumbnailCopied: overlayToWrite?.thumbnailPath != nil,
                         miss: nil
                     )
                 } catch {
-                    ThumbnailStore.discard(staged, in: thumbnailDirectory)
+                    for image in [staged, stagedPreview].compactMap(\.self) {
+                        ThumbnailStore.discard(image, in: thumbnailDirectory)
+                    }
                     overlayToWrite = nil
                     stagedThumbnail = nil
+                    stagedPreview = nil
+                    thumbnailPathToWrite = nil
+                    previewPathToWrite = nil
                     reuseResult = ImportOverlayReuseResult(
                         metadataCloned: false,
                         thumbnailCopied: false,
@@ -4738,7 +4779,8 @@ extension CatalogStore {
                 contentModifiedAt: contentModifiedAt,
                 companions: companions,
                 reusableOverlay: overlayToWrite,
-                destinationThumbnailPath: thumbnailPathToWrite
+                destinationThumbnailPath: thumbnailPathToWrite,
+                destinationPreviewPath: previewPathToWrite
             ), db: db)
             try Self.deleteActiveFileOperation(key: operation.operationKey, db: db)
         }

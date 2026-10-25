@@ -7,6 +7,39 @@ import UniformTypeIdentifiers
 
 @Suite(.testDirectory)
 struct ThumbnailStoreTests {
+    /// ADR 0035: the preview is an 8-bit Display P3 HEIC under the asset's `.heic` name, and
+    /// `scaled` never enlarges.
+    @Test func previewStagesAsDisplayP3HEICAndScalingNeverEnlarges() throws {
+        let temp = try makeTestDirectory()
+        let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/Lib"),
+            relativePath: MediaRelativePath(rawValue: "a.jpg")
+        )
+        #expect(ThumbnailStore.previewRelativeName(for: id).hasSuffix(".heic"))
+        let sRGB = try #require(CGColorSpace(name: CGColorSpace.sRGB))
+        let context = try #require(CGContext(
+            data: nil, width: 400, height: 300, bitsPerComponent: 8, bytesPerRow: 0,
+            space: sRGB, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ))
+        context.setFillColor(CGColor(red: 0.2, green: 0.6, blue: 0.9, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
+        let image = try #require(context.makeImage())
+
+        let staged = try ThumbnailStore.stagePreview(
+            image, finalRelativeName: ThumbnailStore.previewRelativeName(for: id), in: directory
+        )
+        let name = try ThumbnailStore.promote(staged, in: directory)
+        let source = try #require(CGImageSourceCreateWithURL(ThumbnailStore.url(for: name, in: directory) as CFURL, nil))
+        #expect(CGImageSourceGetType(source) as String? == UTType.heic.identifier)
+        let properties = try #require(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+        #expect(properties[kCGImagePropertyDepth] as? Int == 8)
+        #expect((properties[kCGImagePropertyProfileName] as? String)?.contains("P3") == true)
+
+        #expect(try ThumbnailStore.scaled(image, toLongEdge: 100).width == 100)
+        #expect(try ThumbnailStore.scaled(image, toLongEdge: 1000).width == 400)
+    }
+
     @Test func relativeNameUsesJPEGExtension() {
         let id = MediaAssetID(
             libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
@@ -76,7 +109,7 @@ struct ThumbnailStoreTests {
         let sourceName = try ThumbnailStore.promote(source, in: directory)
         let copied = try ThumbnailStore.stageCopy(
             sourceRelativeName: sourceName,
-            destinationID: destinationID,
+            destinationRelativeName: ThumbnailStore.relativeName(for: destinationID),
             in: directory
         )
         let destinationName = try ThumbnailStore.promote(copied, in: directory)

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import GRDB
 
@@ -45,6 +46,7 @@ nonisolated struct ReusableEnrichmentOverlay: Equatable, Sendable {
     let contentHashSourceSize: Int64?
     let contentHashSourceMTimeSeconds: Int?
     let thumbnailPath: String?
+    let previewPath: String?
 }
 
 nonisolated struct StoredTileDetail {
@@ -52,6 +54,8 @@ nonisolated struct StoredTileDetail {
     let relativePath: MediaRelativePath
     let byteSize: Int64?
     var thumbnailPath: String?
+    var previewPath: String?
+    var nativePixelSize: CGSize?
     var bestKind: MediaKind?
     var durationSeconds: Double?
     var enrichedSourceSize: Int64?

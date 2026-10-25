@@ -9,6 +9,10 @@ nonisolated enum ImportOverlayReuseMiss: String, Equatable, Sendable {
     case missingOrMismatchedHash
     case removableSourceNotHashed
     case missingThumbnail
+    /// A still whose source row has no stored preview (a camera row, enriched from byte
+    /// ranges): reusing it would stamp a library row that then never gets one, so the
+    /// copy is enriched from its own bytes instead (ADR 0035).
+    case missingPreview
     case thumbnailCopyFailed
     case detachedSource
 }
@@ -25,6 +29,7 @@ nonisolated struct LandedImport {
     let companions: [MediaCompanion]
     let reusableOverlay: ReusableEnrichmentOverlay?
     let destinationThumbnailPath: String?
+    let destinationPreviewPath: String?
 }
 
 extension CatalogStore {
@@ -245,16 +250,7 @@ extension CatalogStore {
             ]
         )
         if let reusableOverlay = landed.reusableOverlay, let contentHash = operation.contentHash {
-            try writeReusableEnrichmentOverlay(
-                reusableOverlay,
-                destinationRootID: destinationRootID,
-                destinationRelativePath: relativePath,
-                destinationByteSize: byteSize,
-                destinationMTimeSeconds: Int(contentModifiedAt.timeIntervalSince1970.rounded(.down)),
-                contentHash: contentHash,
-                thumbnailPath: landed.destinationThumbnailPath,
-                db: db
-            )
+            try writeReusableEnrichmentOverlay(reusableOverlay, for: landed, contentHash: contentHash, db: db)
         }
         for companion in landed.companions {
             try upsertCompanion(companion, libraryRootID: destinationRootID, db: db)
@@ -273,7 +269,7 @@ extension CatalogStore {
                    m.enriched_kind, m.enriched_format, m.duration_seconds,
                    m.enriched_source_size, m.enriched_source_mtime,
                    m.content_hash_xxh3_128, m.content_hash_source_size,
-                   m.content_hash_source_mtime, m.thumbnail_path,
+                   m.content_hash_source_mtime, m.thumbnail_path, m.preview_path,
                    a.metadata_extra_json
             FROM media_asset m
             LEFT JOIN asset_metadata a
@@ -313,7 +309,8 @@ extension CatalogStore {
             contentHash: contentHashData.flatMap(XXH3Digest128.init(data:)),
             contentHashSourceSize: row["content_hash_source_size"],
             contentHashSourceMTimeSeconds: row["content_hash_source_mtime"],
-            thumbnailPath: row["thumbnail_path"]
+            thumbnailPath: row["thumbnail_path"],
+            previewPath: row["preview_path"]
         )
     }
 

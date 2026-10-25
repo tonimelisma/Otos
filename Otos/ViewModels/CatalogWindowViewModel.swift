@@ -454,7 +454,10 @@ final class CatalogWindowViewModel {
         if let previewLoader {
             self.previewLoader = previewLoader
         } else {
-            self.previewLoader = PreviewImageLoader(materializationRequester: materializationCoordinator)
+            self.previewLoader = PreviewImageLoader(
+                derivedImageDirectory: catalogStore.thumbnailDirectory,
+                materializationRequester: materializationCoordinator
+            )
         }
         if let videoLoader {
             self.videoLoader = videoLoader

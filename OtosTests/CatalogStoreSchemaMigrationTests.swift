@@ -131,6 +131,7 @@ struct CatalogStoreSchemaMigrationTests {
         }
         #expect(applied == [
             CatalogSchema.baselineMigrationIdentifier, CatalogSchema.fileIdentifierMigrationIdentifier,
+            CatalogSchema.previewPathMigrationIdentifier,
         ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
@@ -204,9 +205,55 @@ struct CatalogStoreSchemaMigrationTests {
                 Int.fetchOne(db, sql: "SELECT COUNT(*) FROM media_asset") ?? 0
             )
         }
-        #expect(applied == [CatalogSchema.baselineMigrationIdentifier, CatalogSchema.fileIdentifierMigrationIdentifier])
+        #expect(applied == [
+            CatalogSchema.baselineMigrationIdentifier, CatalogSchema.fileIdentifierMigrationIdentifier,
+            CatalogSchema.previewPathMigrationIdentifier,
+        ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
+    }
+
+    /// ADR 0035 backfill: the preview migration clears the enrichment stamps of library
+    /// stills — so they re-enrich and gain a rendered thumbnail and preview — and leaves
+    /// videos and card rows stamped.
+    @Test func thePreviewMigrationReEnrichesLibraryStillsOnly() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+            for statement in CatalogSchema.baselineStatements + CatalogSchema.fileIdentifierStatements {
+                try db.execute(sql: statement)
+            }
+            try db.execute(sql: "CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
+            for identifier in [CatalogSchema.baselineMigrationIdentifier, CatalogSchema.fileIdentifierMigrationIdentifier] {
+                try db.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)", arguments: [identifier])
+            }
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (2, '/Volumes/Card', 'removableVolume')")
+            for (root, path, kind) in [(1, "still.jpg", "image"), (1, "clip.mov", "video"), (2, "card.jpg", "image")] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
+                        name_sort_key, kind, enriched_source_size, enriched_source_mtime)
+                    VALUES (?, ?, ?, ?, ?, ?, 10, 20)
+                    """,
+                    arguments: [root, path, path, path, path, kind]
+                )
+            }
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
+
+        let stamped = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try Set(String.fetchAll(
+                db, sql: "SELECT relative_path FROM media_asset WHERE enriched_source_size IS NOT NULL"
+            ))
+        }
+        #expect(stamped == ["clip.mov", "card.jpg"])
     }
 
     @Test func refusedCatalogDeniesNamespaceLeaseAsCatalogUnavailable() async throws {

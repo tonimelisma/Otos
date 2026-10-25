@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 @testable import OtosKit
 import Synchronization
@@ -109,6 +110,54 @@ struct MediaEnricherTests {
         )
         #expect(!FileManager.default.fileExists(atPath: finalURL.path(percentEncoded: false)))
         #expect(FileManager.default.fileExists(atPath: stagedURL.path(percentEncoded: false)))
+    }
+
+    /// ADR 0035: a still is developed once into a staged 2560 px HEIC preview, and its grid
+    /// thumbnail is drawn from that same rendering — both staged, neither published.
+    @Test func aStillGetsARenderedPreviewAndAThumbnailDrawnFromIt() async throws {
+        let temp = try makeTestDirectory()
+        let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
+        let enricher = MediaEnricher.live(thumbnailDirectory: directory)
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/Lib"),
+            relativePath: MediaRelativePath(rawValue: "a.heic")
+        )
+        let outcome = await enricher.enrich(
+            id, .localFile(fixtureDirectory.appending(path: "ios-heic-offset-date.heic")), 100, 1000, true
+        )
+        guard case let .complete(result) = outcome else {
+            Issue.record("expected .complete, got \(outcome)")
+            return
+        }
+        let preview = try #require(result.generatedPreview)
+        #expect(result.previewPath == ThumbnailStore.previewRelativeName(for: id))
+        let previewImage = try #require(ThumbnailStore.load(preview.stagedRelativePath, in: directory))
+        #expect(max(previewImage.width, previewImage.height) <= ThumbnailStore.previewMaxPixelSize)
+        let thumbnail = try #require(result.generatedThumbnail)
+        let thumbnailImage = try #require(ThumbnailStore.load(thumbnail.stagedRelativePath, in: directory))
+        #expect(max(thumbnailImage.width, thumbnailImage.height) <= ThumbnailStore.maxPixelSize)
+        #expect(!FileManager.default.fileExists(atPath: ThumbnailStore.url(for: preview.finalRelativePath, in: directory)
+                .path(percentEncoded: false)))
+    }
+
+    /// ADR 0035: a video keeps its Quick Look thumbnail and gets no preview.
+    @Test func aVideoGetsNoPreview() async throws {
+        let temp = try makeTestDirectory()
+        let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
+        let enricher = MediaEnricher.live(thumbnailDirectory: directory)
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/Lib"),
+            relativePath: MediaRelativePath(rawValue: "a.mov")
+        )
+        let outcome = await enricher.enrich(
+            id, .localFile(fixtureDirectory.appending(path: "mov-no-embedded-capture-date.mov")), 100, 1000, true
+        )
+        guard case let .complete(result) = outcome else {
+            Issue.record("expected .complete, got \(outcome)")
+            return
+        }
+        #expect(result.generatedPreview == nil)
+        #expect(result.previewPath == nil)
     }
 
     @Test func zeroByteStubIsDefinitiveCompleteWithoutThumbnail() async throws {

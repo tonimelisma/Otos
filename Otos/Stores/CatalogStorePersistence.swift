@@ -81,6 +81,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.previewPathMigrationIdentifier) { db in
+            for statement in CatalogSchema.previewPathStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -247,33 +252,38 @@ extension CatalogStore {
         )
         let rows = try Row.fetchAll(
             db,
-            sql: "SELECT relative_path, thumbnail_path FROM media_asset WHERE library_root_id = ?",
+            sql: "SELECT relative_path, thumbnail_path, preview_path FROM media_asset WHERE library_root_id = ?",
             arguments: [rootRowID]
         )
         var thumbnailMigrations: [ThumbnailPathMigration] = []
         for row in rows {
             let relativePath: String = row["relative_path"]
             let thumbnailPath: String? = row["thumbnail_path"]
+            let previewPath: String? = row["preview_path"]
             let relativePathValue = MediaRelativePath(rawValue: relativePath)
-            let newThumbnailPath = thumbnailPath.map { _ in
-                ThumbnailStore.relativeName(for: MediaAssetID(
-                    libraryRootPath: path,
-                    relativePath: relativePathValue
-                ))
-            }
+            let newID = MediaAssetID(libraryRootPath: path, relativePath: relativePathValue)
+            let newThumbnailPath = thumbnailPath.map { _ in ThumbnailStore.relativeName(for: newID) }
+            let newPreviewPath = previewPath.map { _ in ThumbnailStore.previewRelativeName(for: newID) }
             try db.execute(
                 sql: """
                 UPDATE media_asset
-                SET sort_key = ?, thumbnail_path = ?
+                SET sort_key = ?, thumbnail_path = ?, preview_path = ?
                 WHERE library_root_id = ? AND relative_path = ?
                 """,
                 arguments: [
                     MediaSortKey.make(libraryRootPath: path, relativePath: relativePathValue),
                     newThumbnailPath,
+                    newPreviewPath,
                     rootRowID,
                     relativePath,
                 ]
             )
+            if let previewPath, let newPreviewPath, previewPath != newPreviewPath {
+                thumbnailMigrations.append(ThumbnailPathMigration(
+                    oldRelativeName: previewPath,
+                    newRelativeName: newPreviewPath
+                ))
+            }
             if let thumbnailPath, let newThumbnailPath, thumbnailPath != newThumbnailPath {
                 thumbnailMigrations.append(ThumbnailPathMigration(
                     oldRelativeName: thumbnailPath,
@@ -339,7 +349,8 @@ extension CatalogStore {
     }
 
     struct CatalogedFileDeletionTarget {
-        let thumbnailPath: String?
+        /// The thumbnail and preview files to delete with the row.
+        let derivedImagePaths: [String]
     }
 
     static func catalogedFileDeletionTarget(
@@ -350,7 +361,7 @@ extension CatalogStore {
         guard let row = try Row.fetchOne(
             db,
             sql: """
-            SELECT thumbnail_path
+            SELECT thumbnail_path, preview_path
             FROM media_asset
             WHERE library_root_id = ? AND relative_path = ?
             """,
@@ -358,7 +369,9 @@ extension CatalogStore {
         ) else {
             return nil
         }
-        return CatalogedFileDeletionTarget(thumbnailPath: row["thumbnail_path"])
+        let thumbnailPath: String? = row["thumbnail_path"]
+        let previewPath: String? = row["preview_path"]
+        return CatalogedFileDeletionTarget(derivedImagePaths: [thumbnailPath, previewPath].compactMap(\.self))
     }
 
     static func enrichmentResultMatchesCurrentRow(
@@ -418,6 +431,7 @@ extension CatalogStore {
             sql: """
             UPDATE media_asset SET
                 thumbnail_path = ?,
+                preview_path = ?,
                 ts_original_unix = ?,
                 ts_quicktime_creation_unix = ?,
                 ts_digitized_unix = ?,
@@ -437,6 +451,7 @@ extension CatalogStore {
             """,
             arguments: [
                 result.thumbnailPath,
+                result.previewPath,
                 instants.original?.timeIntervalSince1970,
                 instants.quickTimeCreation?.timeIntervalSince1970,
                 instants.digitized?.timeIntervalSince1970,
@@ -463,22 +478,25 @@ extension CatalogStore {
         )
     }
 
+    /// Writes a reused source overlay onto the row `landed` settled, with the destination's
+    /// own file facts and the derived images copied for it.
     static func writeReusableEnrichmentOverlay(
         _ overlay: ReusableEnrichmentOverlay,
-        destinationRootID: Int64,
-        destinationRelativePath: MediaRelativePath,
-        destinationByteSize: Int64,
-        destinationMTimeSeconds: Int,
+        for landed: LandedImport,
         contentHash: XXH3Digest128,
-        thumbnailPath: String?,
         db: Database
     ) throws {
+        let destinationRootID = landed.destinationRootID
+        let destinationRelativePath = landed.operation.destinationRelativePath
+        let destinationByteSize = landed.byteSize
+        let destinationMTimeSeconds = Int(landed.contentModifiedAt.timeIntervalSince1970.rounded(.down))
         let captureWall = CaptureWallClock.select(from: overlay.metadata.timestamps)
         let instants = BestCaptureInstants.from(overlay.metadata.timestamps)
         try db.execute(
             sql: """
             UPDATE media_asset SET
                 thumbnail_path = ?,
+                preview_path = ?,
                 ts_original_unix = ?,
                 ts_quicktime_creation_unix = ?,
                 ts_digitized_unix = ?,
@@ -496,7 +514,8 @@ extension CatalogStore {
             WHERE library_root_id = ? AND relative_path = ?
             """,
             arguments: [
-                thumbnailPath,
+                landed.destinationThumbnailPath,
+                landed.destinationPreviewPath,
                 instants.original?.timeIntervalSince1970,
                 instants.quickTimeCreation?.timeIntervalSince1970,
                 instants.digitized?.timeIntervalSince1970,
@@ -561,13 +580,13 @@ extension CatalogStore {
         libraryRootID: Int64,
         underSubtree: MediaRelativePath? = nil,
         db: Database
-    ) throws -> [(relativePath: MediaRelativePath, thumbnailPath: String?, hadEnrichment: Bool)] {
+    ) throws -> [(relativePath: MediaRelativePath, derivedImagePaths: [String], hadEnrichment: Bool)] {
         let rows: [Row] = if let underSubtree {
             // Component-safe: `a/b` matches itself and `a/b/...`, never `a/b2`.
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT relative_path, thumbnail_path, enriched_source_size, enriched_source_mtime
+                SELECT relative_path, thumbnail_path, preview_path, enriched_source_size, enriched_source_mtime
                 FROM media_asset
                 WHERE library_root_id = ?
                   AND (relative_path = ? OR relative_path LIKE ? ESCAPE '\\')
@@ -582,7 +601,7 @@ extension CatalogStore {
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT relative_path, thumbnail_path, enriched_source_size, enriched_source_mtime
+                SELECT relative_path, thumbnail_path, preview_path, enriched_source_size, enriched_source_mtime
                 FROM media_asset
                 WHERE library_root_id = ?
                 """,
@@ -591,9 +610,10 @@ extension CatalogStore {
         }
         return rows.map { row in
             let thumbnailPath: String? = row["thumbnail_path"]
+            let previewPath: String? = row["preview_path"]
             return (
                 relativePath: MediaRelativePath(rawValue: row["relative_path"]),
-                thumbnailPath: thumbnailPath,
+                derivedImagePaths: [thumbnailPath, previewPath].compactMap(\.self),
                 hadEnrichment: (row["enriched_source_size"] as Int64?) != nil
                     || (row["enriched_source_mtime"] as Int64?) != nil
             )

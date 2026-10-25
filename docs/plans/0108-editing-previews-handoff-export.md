@@ -94,19 +94,24 @@ into pixels:
 
 - **RAW:** `CIRAWFilter` with the newest decoder the file supports (RAW9, else RAW8),
   recorded per photo.
-- **Other stills:** Core Image from the original.
-- **Products, made whenever the bytes are local** (enrichment pass, import, opening a
-  photo):
+- **Other stills:** Image I/O from the original, orientation applied.
+- **Products, made when the bytes are local:** in the enrichment pass, and copied by
+  import reuse. Opening a photo does not make them; the original it downloads is
+  enriched soon after.
   - the 256 px thumbnail, now rendered instead of taken from Quick Look;
   - a 2560 px HEIC preview.
 
-  Both live in Application Support under the overlay lifecycle. Staleness key: source
-  `(size, mtime)` + recipe revision + decoder version + OS build.
+  Both live in Application Support under the overlay lifecycle and follow the file's
+  `(size, mtime)`; from increment 5 on, an edit re-renders them. Not re-rendered on an
+  OS update, because that would re-download the library (ADR 0035).
 - **Display:**
   - Loupe and compare show the preview: about 0.1 s to decode (cold), cloud or not.
-  - Zooming to 100% renders the visible rectangle from the original (0.2–0.8 s),
-    downloading it if needed.
-- **Backfill:** existing stills re-enter enrichment through the staleness key. Grid
+  - Zooming to full resolution renders the whole original once through the
+    interactive renderer (2.6–3.2 s for a RAW), downloading it if needed. That fits
+    APP-040's one full-resolution document; a tiled visible-area renderer would
+    replace that design and is not needed to meet it.
+- **Backfill:** the v3 migration clears library stills' enrichment stamps, so they
+  re-enter enrichment. Grid
   thumbnails switch from the camera's look to RAW9 as each file is processed; a newer
   thumbnail of the same asset replacing the old one keeps the no-blank rule.
 - **Bounds:** concurrent RAW renders are bounded by memory (160–340 MB each, measured).

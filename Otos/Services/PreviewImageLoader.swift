@@ -63,6 +63,9 @@ actor PreviewImageLoader: PreviewLoading {
 
     private let materializationRequester: any MaterializationRequesting
     private let status: @Sendable (URL) -> FileMaterializationStatus
+    /// Where stored previews live (ADR 0035); nil for an in-memory catalog, which then
+    /// always decodes the original.
+    private let derivedImageDirectory: URL?
     private let maxCacheBytes: Int
     private var cache: [MediaAssetID: CacheEntry] = [:]
     private var cacheOrder: [MediaAssetID] = []
@@ -83,10 +86,12 @@ actor PreviewImageLoader: PreviewLoading {
     init(
         maxCacheBytes: Int = 256 * 1024 * 1024,
         status: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:),
+        derivedImageDirectory: URL? = nil,
         materializationRequester: any MaterializationRequesting
     ) {
         self.maxCacheBytes = maxCacheBytes
         self.status = status
+        self.derivedImageDirectory = derivedImageDirectory
         self.materializationRequester = materializationRequester
     }
 
@@ -150,6 +155,31 @@ actor PreviewImageLoader: PreviewLoading {
             OtosSignpost.mediaIO.endInterval("PreviewDecode", signpost)
         }
 
+        // A still's stored preview serves every request short of full resolution, without
+        // touching the original — cloud-only or not (ADR 0035). The original's size comes
+        // from catalog metadata, because reading its header would download it. A preview
+        // that is missing or unreadable falls through to the original below.
+        if request.targetLongEdge != Self.fullResolution, request.detail?.bestKind != .video,
+           let previewPath = request.detail?.previewPath, let directory = derivedImageDirectory
+        {
+            let stored = await Task.detached(priority: .medium) {
+                ThumbnailStore.load(previewPath, in: directory)
+            }.value
+            if let stored {
+                OtosLog.mediaIO.notice(
+                    """
+                    op=preview.decode phase=ok id=\(request.id.relativePath.rawValue, privacy: .public) \
+                    decodeMs=\(DiagnosticsTiming.milliseconds(since: start), privacy: .public) source=storedPreview \
+                    edge=\(request.targetLongEdge, privacy: .public) decoded=\(max(stored.width, stored.height), privacy: .public)
+                    """
+                )
+                return .image(stored, nativePixelSize: request.detail?.nativePixelSize)
+            }
+            OtosLog.mediaIO.notice(
+                "op=preview.decode phase=storedPreviewUnreadable id=\(request.id.relativePath.rawValue, privacy: .public)"
+            )
+        }
+
         switch status(url) {
         case .dataless:
             OtosLog.mediaIO.notice(
@@ -205,6 +235,9 @@ actor PreviewImageLoader: PreviewLoading {
             if isMovie {
                 return await Self.decodeVideoPoster(url: url, targetLongEdge: target)
             }
+            if ImageRenderer.isRAW(url) {
+                return await Self.developRAW(url: url, targetLongEdge: target)
+            }
             return Self.decodeImage(url: url, targetLongEdge: target)
         }.value
 
@@ -227,6 +260,16 @@ actor PreviewImageLoader: PreviewLoading {
             """
         )
         return .image(image, nativePixelSize: nativePixelSize)
+    }
+
+    /// A RAW without a stored preview is developed by the interactive renderer — never
+    /// shown as the camera's embedded JPEG, so the loupe matches the grid (ADR 0035).
+    private nonisolated static func developRAW(url: URL, targetLongEdge: Int) async -> (CGImage, String, CGSize?)? {
+        let longEdge = targetLongEdge == fullResolution ? nil : targetLongEdge
+        guard let rendered = try? await ImageRenderer.interactive.render(url, longEdge: longEdge) else {
+            return nil
+        }
+        return (rendered.image, "render-\(rendered.decoder.rawValue)", rendered.nativePixelSize)
     }
 
     private nonisolated static func decodeImage(url: URL, targetLongEdge: Int) -> (CGImage, String, CGSize?)? {

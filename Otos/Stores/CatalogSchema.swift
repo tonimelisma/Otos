@@ -26,6 +26,24 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// The stored loupe preview (ADR 0035): its relative path beside the thumbnail's.
+    /// Library stills enriched before previews existed have neither a preview nor a
+    /// rendered thumbnail, so their enrichment stamps are cleared here: the existing
+    /// staleness predicate then claims them again, and re-enrichment renders both from
+    /// the original — downloading it first when it is cloud-only, under the free-space
+    /// floor (ENR-008). Card and camera rows are left alone; they re-enrich when next
+    /// attached and changed, and are forgotten after 90 days unseen.
+    static let previewPathMigrationIdentifier = "v3_media_asset_preview_path"
+
+    static let previewPathStatements: [String] = [
+        "ALTER TABLE media_asset ADD COLUMN preview_path TEXT",
+        """
+        UPDATE media_asset SET enriched_source_size = NULL, enriched_source_mtime = NULL
+        WHERE kind = 'image'
+          AND library_root_id IN (SELECT id FROM library_root WHERE kind = 'library')
+        """,
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (

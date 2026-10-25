@@ -32,6 +32,38 @@ struct CatalogStoreThumbnailLifecycleTests {
         #expect(!current.needsEnrichment(hashRequired: true))
     }
 
+    /// ADR 0035: a result carrying a thumbnail and a preview promotes both, stamps both
+    /// paths, and removing the library deletes both files.
+    @Test func acceptedPreviewPromotesWithTheThumbnailAndIsPurgedWithIt() async throws {
+        let fixture = try await makeThumbnailLifecycleFixture()
+        let thumbnail = try fixture.stageThumbnail(finalName: "thumb.jpg", stagedName: ".thumb.jpg.accepted.tmp")
+        let preview = try fixture.stageThumbnail(finalName: "preview.heic", stagedName: ".preview.heic.accepted.tmp")
+
+        let outcome = await fixture.store.applyEnrichmentBatch([
+            EnrichmentResult(
+                id: fixture.id,
+                metadata: AssetMetadata(),
+                thumbnailPath: nil,
+                sourceSize: 100,
+                sourceMTimeSeconds: 1000,
+                contentHash: .empty,
+                generatedThumbnail: thumbnail,
+                generatedPreview: preview
+            ),
+        ])
+
+        #expect(outcome == .applied(count: 1))
+        #expect(FileManager.default.fileExists(atPath: fixture.finalURL(for: preview).path(percentEncoded: false)))
+        #expect(!FileManager.default.fileExists(atPath: fixture.stagedURL(for: preview).path(percentEncoded: false)))
+        let detail = try #require(try await fixture.store.mediaTileDetails(for: [fixture.id])[fixture.id])
+        #expect(detail.thumbnailPath == "thumb.jpg")
+        #expect(detail.previewPath == "preview.heic")
+
+        _ = try await fixture.store.removeLibrary(path: fixture.id.libraryRootPath)
+        #expect(!FileManager.default.fileExists(atPath: fixture.finalURL(for: thumbnail).path(percentEncoded: false)))
+        #expect(!FileManager.default.fileExists(atPath: fixture.finalURL(for: preview).path(percentEncoded: false)))
+    }
+
     @Test func staleStagedThumbnailIsDiscardedWithoutReplacingFinalThumbnail() async throws {
         let fixture = try await makeThumbnailLifecycleFixture()
         let finalName = ThumbnailStore.relativeName(for: fixture.id)
@@ -103,7 +135,7 @@ struct CatalogStoreThumbnailLifecycleTests {
                 sourceSize: asset.byteSize,
                 sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
                 contentHash: .empty,
-                generatedThumbnail: GeneratedThumbnail(
+                generatedThumbnail: StagedDerivedImage(
                     finalRelativePath: ThumbnailStore.relativeName(for: fixture.id),
                     stagedRelativePath: ".missing-thumbnail.tmp"
                 )
@@ -118,7 +150,7 @@ struct CatalogStoreThumbnailLifecycleTests {
     @Test func promotionFailureDoesNotRollBackEarlierAcceptedRows() async throws {
         let fixture = try await makeThumbnailLifecycleFixture()
         let accepted = try fixture.stageThumbnail(finalName: "accepted.jpg", stagedName: ".accepted.jpg.tmp")
-        let missing = GeneratedThumbnail(
+        let missing = StagedDerivedImage(
             finalRelativePath: "missing.jpg",
             stagedRelativePath: ".missing-thumbnail.tmp"
         )
@@ -171,18 +203,18 @@ private struct ThumbnailLifecycleFixture {
         finalName: String,
         stagedName: String,
         contents: String = "thumb"
-    ) throws -> GeneratedThumbnail {
+    ) throws -> StagedDerivedImage {
         try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)
-        let generated = GeneratedThumbnail(finalRelativePath: finalName, stagedRelativePath: stagedName)
+        let generated = StagedDerivedImage(finalRelativePath: finalName, stagedRelativePath: stagedName)
         try Data(contents.utf8).write(to: stagedURL(for: generated))
         return generated
     }
 
-    func stagedURL(for generated: GeneratedThumbnail) -> URL {
+    func stagedURL(for generated: StagedDerivedImage) -> URL {
         ThumbnailStore.url(for: generated.stagedRelativePath, in: thumbnailDirectory)
     }
 
-    func finalURL(for generated: GeneratedThumbnail) -> URL {
+    func finalURL(for generated: StagedDerivedImage) -> URL {
         ThumbnailStore.url(for: generated.finalRelativePath, in: thumbnailDirectory)
     }
 
@@ -200,7 +232,7 @@ private struct ThumbnailLifecycleFixture {
         )
     }
 
-    func staleResult(generatedThumbnail: GeneratedThumbnail) -> EnrichmentResult {
+    func staleResult(generatedThumbnail: StagedDerivedImage) -> EnrichmentResult {
         EnrichmentResult(
             id: id,
             metadata: AssetMetadata(

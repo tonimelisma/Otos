@@ -154,6 +154,51 @@ struct PreviewImageLoaderTests {
         #expect(native.height == 24)
     }
 
+    /// ADR 0035: a cloud-only still with a stored preview opens from the preview with no
+    /// download, reporting the original's size from metadata; only a full-resolution
+    /// request goes to the original.
+    @Test func aStoredPreviewOpensWithoutDownloadingTheOriginal() async throws {
+        let directory = try makeTestDirectory()
+        let previewName = "stored.heic"
+        try writeTinyJPEG(to: directory.appending(path: previewName))
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/cloud"),
+            relativePath: MediaRelativePath(rawValue: "remote.arw")
+        )
+        let detail = MediaTileDetail(
+            libraryRootPath: id.libraryRootPath,
+            relativePath: id.relativePath,
+            previewPath: previewName,
+            nativePixelWidth: 6192,
+            nativePixelHeight: 4128,
+            bestKind: .image
+        )
+        let materializeCalls = Mutex(0)
+        let loader = PreviewImageLoader(
+            status: { _ in .dataless },
+            derivedImageDirectory: directory,
+            materializationRequester: ClosureMaterializationRequester { _ in
+                materializeCalls.withLock { $0 += 1 }
+                return MaterializationResult(outcome: .timedOut, rerequestCount: 0, elapsedMs: 1)
+            }
+        )
+
+        let fit = await loader.preview(for: PreviewImageLoader.Request(id: id, detail: detail, targetLongEdge: 3024))
+        guard case let .image(_, nativePixelSize) = fit else {
+            Issue.record("Expected the stored preview, got \(String(describing: fit))")
+            return
+        }
+        #expect(nativePixelSize == CGSize(width: 6192, height: 4128))
+        let callsAfterFit = materializeCalls.withLock { $0 }
+        #expect(callsAfterFit == 0)
+
+        _ = await loader.preview(
+            for: PreviewImageLoader.Request(id: id, detail: detail, targetLongEdge: PreviewImageLoader.fullResolution)
+        )
+        let callsAfterFullResolution = materializeCalls.withLock { $0 }
+        #expect(callsAfterFullResolution == 1)
+    }
+
     @Test func datalessReturnsDownloadingWithoutByteRead() async {
         let id = MediaAssetID(
             libraryRootPath: LibraryRootPath(rawValue: "/cloud"),
