@@ -102,7 +102,15 @@ extension MediaGridViewController: NSCollectionViewPrefetching {
         detailReader: MediaTileDetailReader,
         imageContext: PreheatImageContext
     ) async {
-        let details = await detailReader.details(for: ids)
+        let details: [MediaAssetID: MediaTileDetail]
+        do {
+            details = try await detailReader.details(for: ids)
+        } catch {
+            // Nothing is merged or warmed. Finishing the preheat forgets its IDs, so the
+            // next lookahead asks again.
+            await MainActor.run { self.finishPreheat(generation: generation) }
+            return
+        }
         guard !Task.isCancelled else {
             await MainActor.run { self.finishPreheat(generation: generation) }
             return
