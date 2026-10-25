@@ -65,11 +65,7 @@ extension CatalogWindowViewModel {
     }
 
     func setExportSettings(_ settings: ExportSettings) {
-        var settings = settings
-        settings.longEdge = min(
-            max(settings.longEdge, ExportSettings.longEdgeRange.lowerBound), ExportSettings.longEdgeRange.upperBound
-        )
-        settings.quality = min(max(settings.quality, 0), 1)
+        let settings = settings.clamped
         guard settings != exportSettings else { return }
         exportSettings = settings
         ExportSettingsStore.save(settings, defaults: preferences)

@@ -66,6 +66,14 @@ nonisolated struct ExportSettings: Equatable, Sendable {
     var shapesRenderedFile: Bool {
         format != .original
     }
+
+    /// These settings with the long edge and quality brought into range.
+    var clamped: ExportSettings {
+        var settings = self
+        settings.longEdge = min(max(longEdge, Self.longEdgeRange.lowerBound), Self.longEdgeRange.upperBound)
+        settings.quality = min(max(quality, 0), 1)
+        return settings
+    }
 }
 
 /// Typed read and write owner for the export settings, backed by the view model's
@@ -73,19 +81,17 @@ nonisolated struct ExportSettings: Equatable, Sendable {
 nonisolated enum ExportSettingsStore {
     static func load(defaults: any PreferenceStore) -> ExportSettings {
         let fallback = ExportSettings.default
-        let longEdge = defaults.object(forKey: ExportSettings.longEdgeKey) as? Int ?? fallback.longEdge
-        let quality = defaults.object(forKey: ExportSettings.qualityKey) as? Double ?? fallback.quality
         return ExportSettings(
             format: defaults.string(forKey: ExportSettings.formatKey).flatMap(ExportFormat.init(rawValue:))
                 ?? fallback.format,
             limitsSize: defaults.object(forKey: ExportSettings.limitsSizeKey) as? Bool ?? fallback.limitsSize,
-            longEdge: min(max(longEdge, ExportSettings.longEdgeRange.lowerBound), ExportSettings.longEdgeRange.upperBound),
-            quality: min(max(quality, 0), 1),
+            longEdge: defaults.object(forKey: ExportSettings.longEdgeKey) as? Int ?? fallback.longEdge,
+            quality: defaults.object(forKey: ExportSettings.qualityKey) as? Double ?? fallback.quality,
             removesLocation: defaults.object(forKey: ExportSettings.removesLocationKey) as? Bool
                 ?? fallback.removesLocation,
             destination: defaults.string(forKey: ExportSettings.destinationKey)
                 .map { URL(fileURLWithPath: $0, isDirectory: true) }
-        )
+        ).clamped
     }
 
     static func save(_ settings: ExportSettings, defaults: any PreferenceStore) {
