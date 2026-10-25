@@ -45,11 +45,19 @@ Sections, in order, as they are built (plan 0108):
 | Section | Controls |
 | --- | --- |
 | Light | Exposure (−4.00…+4.00 stops, 0.05 steps), Contrast (−100…+100), Highlights (−100…0), Shadows (−100…+100) |
+| Color | White Balance picker; Temperature (a RAW: 2000–50000 K, even in mireds, 50 K steps, shown `5600 K`; another still: −100…+100), Tint (a RAW: −150…+150; another still: −100…+100), Vibrance (−100…+100), Saturation (−100…+100) |
 
 The panel's controls never appear or disappear between states (DES-053). With no photo
 to edit, every control and `Reset` stays in place, disabled, with the tooltip
-`Select one photo to edit` (DES-038). `Reset` is also disabled while the section is
-already neutral. Values show their sign (`+0.50`, `-20`); neutral reads `0.00` / `0`.
+`Select one photo to edit` (DES-038). While the photo is being opened (downloaded if it is
+cloud-only), the tooltip is `Preparing to edit`. `Reset` is also disabled while its section
+is already neutral. Values show their sign (`+0.50`, `-20`); neutral reads `0.00` / `0`. A
+RAW's temperature reads in kelvin; as shot, it reads the camera's value.
+
+The Color section's first row is `White Balance` with the picker button at its trailing
+edge: `eyedropper` at rest, `eyedropper.full` while armed, never color alone (DES-029). It
+is enabled only in the loupe, with the tooltip `Open the photo in the loupe to pick a neutral
+point` elsewhere.
 
 ## Behavior
 
@@ -57,7 +65,10 @@ already neutral. Values show their sign (`+0.50`, `-20`); neutral reads `0.00` /
   saves the change as one undo step, named for the control (`Undo Exposure`).
 - A keyboard or accessibility step on a focused slider saves at once.
 - `Reset` returns every control in its section to neutral as one step
-  (`Undo Reset Light`).
+  (`Undo Reset Light`, `Undo Reset Color`). White balance returns to as shot.
+- With the picker armed, the loupe cursor is a crosshair, and one click makes that point
+  neutral (`Undo White Balance`) and disarms the picker. Escape disarms it before
+  Escape's other loupe meanings.
 - Edit ▸ Undo and Redo move the panel's values with them when they change the photo it
   shows.
 

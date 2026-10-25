@@ -32,12 +32,31 @@ open takes 20–180 ms per change. Opening it again for every change takes about
   the recipe lives in the row, it has the row's lifecycle with no extra mechanism. It
   moves with the row (ADR 0034), import reuse carries it to the library copy, Move to
   Trash's undo puts it back, and it is purged with the row.
+- **Opening the photo.** When the panel's target resolves, the photo is opened,
+  downloaded first at interactive priority if it is cloud-only, as Lightroom desktop does
+  on Edit. Its facts are published: whether it is a RAW and, for a RAW, its as-shot white
+  balance. The controls act only once the facts are known, and are disabled meanwhile
+  with the tooltip `Preparing to edit`.
 - **Light section.** Exposure applies in the RAW pipeline (`CIRAWFilter.exposure`) for
   a RAW and through `CIExposureAdjust` for any other still. Contrast applies through
   `CIColorControls`, and Highlights and Shadows through `CIHighlightShadowAdjust`, on
   the developed image of either. `CIRAWFilter.contrastAmount` is not used: its header
   documents it as local contrast on edges, from 0 to 1, which cannot express global
   contrast in both directions.
+- **Color section** (research 2026-10-25, white balance probes):
+  - White balance `temperature` and `tint` are optional; nil means as shot. A RAW holds
+    absolute kelvin and tint, applied as `CIRAWFilter.neutralTemperature` and
+    `neutralTint`. Its temperature slider moves evenly in mireds, 2000–50000 K, and
+    snaps to 50 K. Any other still holds a relative −100…100 applied through
+    `CITemperatureAndTint`, one mired and one tint unit per step; zero is stored as nil.
+  - Vibrance applies through `CIVibrance`, and Saturation through `CIColorControls`.
+  - The white balance picker, armed in the loupe, makes the clicked point neutral. A RAW
+    asks `CIRAWFilter.neutralLocation`, which takes a point in the oriented, scaled
+    output with a bottom-left origin. Any other still solves numerically for the two
+    relative values that render the sampled color gray. Either way the answer is saved
+    as ordinary slider values, in one undo step named `White Balance`.
+  - Each section's Reset returns only its own controls to neutral, with white balance
+    as shot.
 - **One renderer for live edits.** `LiveEditRenderer` is an actor on its own serial
   queue. It keeps the photo being edited open between renders, along with a
   `CIContext` that caches intermediates. While a control is dragged it renders the

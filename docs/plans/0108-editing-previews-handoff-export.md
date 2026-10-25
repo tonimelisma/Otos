@@ -1,6 +1,7 @@
 # Plan 0108: Editing, previews, hand-off and export
 
-Status: aligned with the owner 2026-10-25; increments run in order.
+Status: aligned with the owner 2026-10-25; increments run in order. Landed: 1 (#499),
+2 (#498), 3 (#500), 4 (#501), 5 (#502).
 
 Research behind it:
 - `docs/research/2026-10-24-editing-foundation.md`

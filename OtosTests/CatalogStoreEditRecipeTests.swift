@@ -169,13 +169,41 @@ struct CatalogStoreEditRecipeTests {
     }
 
     @Test func controlsClampToTheirRangeAndSnapToTheirStep() {
-        #expect(LightControl.exposure.applying(9, to: .neutral).exposure == 4)
-        #expect(LightControl.highlights.applying(30, to: .neutral).highlights == 0)
-        #expect(LightControl.contrast.applying(12.4, to: .neutral).contrast == 12)
-        #expect(abs(LightControl.exposure.applying(0.33, to: .neutral).exposure - 0.35) < 0.0001)
-        #expect(LightControl.exposure.formatted(0) == "0.00")
-        #expect(LightControl.exposure.formatted(0.5) == "+0.50")
-        #expect(LightControl.shadows.formatted(-20) == "-20")
+        let still = EditPhotoFacts.still
+        #expect(EditControl.exposure.applying(9, to: .neutral, facts: still).exposure == 4)
+        #expect(EditControl.highlights.applying(30, to: .neutral, facts: still).highlights == 0)
+        #expect(EditControl.contrast.applying(12.4, to: .neutral, facts: still).contrast == 12)
+        #expect(abs(EditControl.exposure.applying(0.33, to: .neutral, facts: still).exposure - 0.35) < 0.0001)
+        #expect(EditControl.exposure.formatted(.neutral, facts: still) == "0.00")
+        #expect(EditControl.exposure.formatted(EditRecipe(exposure: 0.5), facts: still) == "+0.50")
+        #expect(EditControl.shadows.formatted(EditRecipe(shadows: -20), facts: still) == "-20")
+    }
+
+    /// A still's white balance is relative and zero is as shot; a RAW's is kelvin, its
+    /// slider even in mireds, and as shot until moved.
+    @Test func whiteBalanceIsRelativeForAStillAndKelvinForARAW() {
+        let still = EditPhotoFacts.still
+        #expect(EditControl.temperature.applying(0, to: EditRecipe(temperature: 30), facts: still).temperature == nil)
+        #expect(EditControl.tint.applying(-12, to: .neutral, facts: still).tint == -12)
+        #expect(EditControl.temperature.formatted(.neutral, facts: still) == "0")
+
+        let raw = EditPhotoFacts(isRAW: true, asShotTemperature: 5600, asShotTint: 4)
+        #expect(EditControl.temperature.formatted(.neutral, facts: raw) == "5600 K")
+        #expect(EditControl.tint.sliderValue(in: .neutral, facts: raw) == 4)
+        let middle = EditControl.temperature.applying(0.5, to: .neutral, facts: raw)
+        #expect(middle.temperature == 3850)
+        #expect(middle.tint == nil)
+        #expect(abs(EditControl.position(ofKelvin: 2000)) < 0.0001)
+        #expect(abs(EditControl.position(ofKelvin: 50000) - 1) < 0.0001)
+        #expect(abs(EditControl.kelvin(atPosition: EditControl.position(ofKelvin: 6500)) - 6500) < 0.01)
+    }
+
+    @Test func eachSectionResetsOnlyItsOwnControls() {
+        let edited = EditRecipe(exposure: 1, contrast: 10, temperature: 5000, tint: 3, vibrance: 20, saturation: -5)
+        #expect(EditSection.color.reset(edited) == EditRecipe(exposure: 1, contrast: 10))
+        #expect(EditSection.light.reset(edited) == EditRecipe(temperature: 5000, tint: 3, vibrance: 20, saturation: -5))
+        #expect(EditSection.light.isNeutral(in: EditRecipe(vibrance: 20)))
+        #expect(!EditSection.color.isNeutral(in: EditRecipe(vibrance: 20)))
     }
 }
 
