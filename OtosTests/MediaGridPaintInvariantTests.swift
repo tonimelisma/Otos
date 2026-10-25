@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 @testable import OtosKit
+import QuartzCore
 import Testing
 
 extension AppKitWindowTests {
@@ -107,6 +108,27 @@ extension AppKitWindowTests {
             #expect(harness.controller.lastReconfigurePinCallCount == 1)
         }
 
+        /// APP-015 regression: a light/dark switch redisplays every view in the window,
+        /// and the painted thumbnail must survive it. AppKit updates layers for that
+        /// redisplay when the transaction commits, so each switch is flushed before the
+        /// thumbnail layer is read.
+        @Test func appearanceChangeDoesNotBlankPaintedVisibleTile() throws {
+            let harness = try PaintInvariantHarness(itemCount: 2)
+            let visible = harness.ids[0]
+            harness.window.appearance = NSAppearance(named: .aqua)
+            harness.paintThumbnail(for: visible, pixelSize: CGSize(width: 64, height: 48))
+            harness.commitDisplay()
+            let painted = try harness.requireDisplayedThumbnail(for: visible)
+
+            harness.window.appearance = NSAppearance(named: .darkAqua)
+            harness.commitDisplay()
+            #expect(try harness.requireDisplayedThumbnail(for: visible) === painted)
+
+            harness.window.appearance = NSAppearance(named: .aqua)
+            harness.commitDisplay()
+            #expect(try harness.requireDisplayedThumbnail(for: visible) === painted)
+        }
+
         @Test func repeatedVisibleIDsSkipScrollDetailQuery() throws {
             let harness = try PaintInvariantHarness(itemCount: 4)
             // Four tiles in an 800×600 window are all on screen.
@@ -123,7 +145,7 @@ extension AppKitWindowTests {
 private final class PaintInvariantHarness {
     let controller: MediaGridViewController
     let ids: [MediaAssetID]
-    private let window: NSWindow
+    let window: NSWindow
 
     init(itemCount: Int) throws {
         controller = MediaGridViewController()
@@ -192,6 +214,20 @@ private final class PaintInvariantHarness {
         let item = try #require(controller.collectionView.item(at: indexPath) as? MediaGridItem)
         let tileView = try #require(item.view as? MediaAssetTileView)
         return try #require(tileView.paintedImagePixelSize, "Tile has no decoded thumbnail")
+    }
+
+    /// Runs the window's pending display and commits it, which is where AppKit
+    /// updates view layers after an appearance change.
+    func commitDisplay() {
+        window.displayIfNeeded()
+        CATransaction.flush()
+    }
+
+    func requireDisplayedThumbnail(for id: MediaAssetID) throws -> CGImage {
+        let indexPath = try #require(controller.dataSource.indexPath(for: id))
+        let item = try #require(controller.collectionView.item(at: indexPath) as? MediaGridItem)
+        let tileView = try #require(item.view as? MediaAssetTileView)
+        return try #require(tileView.displayedThumbnail, "Tile layer shows no thumbnail")
     }
 }
 

@@ -9,11 +9,46 @@ private final class FlippedView: NSView {
     }
 }
 
+/// Layer-backed host for the tile's thumbnail. Its layer contents belong to Otos: the
+/// view draws nothing of its own, and `updateLayer` re-asserts `image`, so an AppKit
+/// redisplay — every view in the window redisplays on a light/dark switch — can never
+/// replace the painted thumbnail. An `NSImageView` cannot host it: AppKit owns that
+/// control's layer and repaints it from the control's own `image` on redisplay.
+private final class ThumbnailLayerView: NSView {
+    var image: CGImage? {
+        didSet {
+            if image !== oldValue {
+                layer?.contents = image
+            }
+        }
+    }
+
+    override var wantsUpdateLayer: Bool {
+        true
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.contentsGravity = .resizeAspect
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func updateLayer() {
+        layer?.contents = image
+    }
+}
+
 private final class MediaChoiceButton: NSButton {
     let toggle: MediaChoiceToggle
     /// Last symbol assigned; skip the NSImage lookup when the state is unchanged,
     /// because render runs on every reconfigure pass during scrolling.
     private var appliedSymbol: String?
+    private var isOn = false
 
     init(toggle: MediaChoiceToggle) {
         self.toggle = toggle
@@ -44,7 +79,21 @@ private final class MediaChoiceButton: NSButton {
             appliedSymbol = symbol
         }
         contentTintColor = isOn ? .white : .labelColor
-        layer?.backgroundColor = isOn ? NSColor.controlAccentColor.cgColor : nil
+        self.isOn = isOn
+        applyDiscColor()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyDiscColor()
+    }
+
+    /// A layer takes a `CGColor`, which is resolved once and does not follow appearance,
+    /// so the disc is re-resolved under this view's appearance whenever it changes.
+    private func applyDiscColor() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = isOn ? NSColor.controlAccentColor.cgColor : nil
+        }
     }
 
     @available(*, unavailable)
@@ -55,21 +104,24 @@ private final class MediaChoiceButton: NSButton {
 
 // Media tile view guide
 //
-// Pure renderer for controller-owned `TileContent`. The tile paints `content.image` when
-// present and otherwise shows the placeholder face; it holds no asset-identity paint
-// state and never clears a painted image while an asset stays bound — the no-blank
+// Pure renderer for controller-owned `TileContent`. The tile paints `content.image` into
+// its own `ThumbnailLayerView` when present and otherwise shows the placeholder face; it
+// holds no asset-identity paint state and never clears a painted image while an asset
+// stays bound — the no-blank
 // invariant is structural in `TileContentStore`, not defended here. A nil image means
 // the store has never painted this id (or budget-dropped an unpinned off-screen entry);
 // for a visible pinned id the store guarantees a non-nil image after first paint.
 // `prepareForReuse` only clears the layer for AppKit recycling; the next `render`
 // repaints from the store. Lower-right kind badges (video duration / film icon / RAW)
 // are derived from detail plus paint state on every render — no badge state survives reuse.
+// Layer colors (selection ring, placeholder fill) are `CGColor`s and are re-resolved on
+// every effective-appearance change.
 
 final class MediaAssetTileView: NSView {
     private typealias Layout = MediaAssetTileLayout
 
     private let contentView = FlippedView()
-    private let imageView = NSImageView()
+    private let thumbnailView = ThumbnailLayerView()
     private let kindBadge = FlippedView()
     private let badgeLabel = NSTextField(labelWithString: "")
     private let filmIconView = NSImageView()
@@ -79,7 +131,21 @@ final class MediaAssetTileView: NSView {
     var onMediaChoice: ((MediaChoice) -> Void)?
 
     /// Aspect-fit face size for the currently painted image; nil while placeholder.
-    private(set) var paintedImagePixelSize: CGSize?
+    var paintedImagePixelSize: CGSize? {
+        thumbnailView.image.map { CGSize(width: CGFloat($0.width), height: CGFloat($0.height)) }
+    }
+
+    /// The image the thumbnail layer is showing — the render input itself, so a
+    /// redisplay that replaced it is observable, not just what the tile was told to paint.
+    var displayedThumbnail: CGImage? {
+        guard let contents = thumbnailView.layer?.contents,
+              CFGetTypeID(contents as CFTypeRef) == CGImage.typeID
+        else {
+            return nil
+        }
+        return unsafeDowncast(contents as AnyObject, to: CGImage.self)
+    }
+
     private var renderedBestKind: MediaKind?
     private var renderedDetail: MediaTileDetail?
     private var renderedFormattedDuration: String?
@@ -102,11 +168,7 @@ final class MediaAssetTileView: NSView {
         contentView.layer?.masksToBounds = true
         addSubview(contentView)
 
-        imageView.imageScaling = .scaleProportionallyUpOrDown
-        imageView.imageAlignment = .alignCenter
-        imageView.wantsLayer = true
-        imageView.layer?.contentsGravity = .resizeAspect
-        contentView.addSubview(imageView)
+        contentView.addSubview(thumbnailView)
 
         kindBadge.wantsLayer = true
         kindBadge.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
@@ -151,14 +213,14 @@ final class MediaAssetTileView: NSView {
             choiceButtons.append(button)
         }
 
-        contentView.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        applyAppearanceColors()
 
         // Accessibility: the tile is the unit VoiceOver navigates. A bare NSView
         // subclass is not an element by default — setting only a label leaves
         // VoiceOver nothing to land on.
         setAccessibilityElement(true)
         setAccessibilityRole(.image)
-        imageView.setAccessibilityElement(false)
+        thumbnailView.setAccessibilityElement(false)
         badgeLabel.setAccessibilityElement(false)
         filmIconView.setAccessibilityElement(false)
         placeholderIconView.setAccessibilityElement(false)
@@ -221,8 +283,7 @@ extension MediaAssetTileView {
         if let image = content.image {
             applyImage(image, fade: change == .firstImage || change == .replacedImage)
         } else {
-            imageView.layer?.contents = nil
-            paintedImagePixelSize = nil
+            thumbnailView.image = nil
             updatePlaceholderPresentation()
         }
         configureBadge()
@@ -282,20 +343,18 @@ extension MediaAssetTileView {
 
     private func applyImage(_ image: CGImage, fade: Bool) {
         let effectiveFade = fade && !MediaGridAnimation.prefersReducedMotion
-        if effectiveFade, let layer = imageView.layer {
+        if effectiveFade, let layer = thumbnailView.layer {
             let transition = CATransition()
             transition.type = .fade
             transition.duration = MediaGridAnimation.thumbnailFadeDuration
             layer.add(transition, forKey: "thumbnailFade")
         }
-        imageView.layer?.contents = image
-        paintedImagePixelSize = CGSize(width: CGFloat(image.width), height: CGFloat(image.height))
+        thumbnailView.image = image
         updatePlaceholderPresentation()
     }
 
     private func clearLayerForReuse() {
-        imageView.layer?.contents = nil
-        paintedImagePixelSize = nil
+        thumbnailView.image = nil
         renderedBestKind = nil
         renderedDetail = nil
         renderedFormattedDuration = nil
@@ -338,7 +397,7 @@ extension MediaAssetTileView {
             imagePixelSize: paintedImagePixelSize,
             bounds: bounds
         )
-        imageView.frame = contentView.bounds
+        thumbnailView.frame = contentView.bounds
         updatePlaceholderPresentation()
         layoutKindBadge()
         let choiceButtonSize = Layout.choiceButtonSize
@@ -377,6 +436,22 @@ extension MediaAssetTileView {
         }
         layer.borderWidth = newWidth
         setAccessibilitySelected(selected)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyAppearanceColors()
+    }
+
+    /// A layer takes a `CGColor`, which is resolved once and does not follow appearance,
+    /// so the ring and placeholder fill are re-resolved under this view's appearance.
+    private func applyAppearanceColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            contentView.layer?.borderColor = NSColor.controlAccentColor.cgColor
+            contentView.layer?.backgroundColor = paintedImagePixelSize == nil
+                ? NSColor.secondaryLabelColor.withAlphaComponent(0.12).cgColor
+                : nil
+        }
     }
 
     private func layoutKindBadge() {
@@ -422,9 +497,7 @@ extension MediaAssetTileView {
 
     private func updatePlaceholderPresentation() {
         let isPlaceholder = paintedImagePixelSize == nil
-        contentView.layer?.backgroundColor = isPlaceholder
-            ? NSColor.secondaryLabelColor.withAlphaComponent(0.12).cgColor
-            : nil
+        applyAppearanceColors()
         placeholderIconView.isHidden = !isPlaceholder
         guard isPlaceholder else {
             return
