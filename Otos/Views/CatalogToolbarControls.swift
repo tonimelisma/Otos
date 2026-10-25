@@ -319,6 +319,20 @@ struct CatalogInfoToolbarButton: View {
     }
 }
 
+/// Shows and hides the trailing edit panel; View ▸ Show Edit Panel (E) is its menu-bar
+/// equivalent.
+struct CatalogEditToolbarButton: View {
+    let isShowing: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            Label("Edit", systemImage: "slider.horizontal.3")
+        }
+        .help(isShowing ? "Hide Edit Panel" : "Show Edit Panel")
+    }
+}
+
 /// Invisible AppKit view placed behind a SwiftUI toolbar button so the button's
 /// on-screen frame is known to AppKit code that must present a popover from it.
 struct ToolbarAnchorReader: NSViewRepresentable {

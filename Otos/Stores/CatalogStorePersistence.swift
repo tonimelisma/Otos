@@ -86,6 +86,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.editRecipeMigrationIdentifier) { db in
+            for statement in CatalogSchema.editRecipeStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -392,6 +397,7 @@ extension CatalogStore {
                     (content_modified_at_unix IS NULL AND ? = -1)
                     OR (content_modified_at_unix >= ? AND content_modified_at_unix < ?)
                 )
+                AND edit_revision = ?
             """,
             arguments: [
                 libraryRootID,
@@ -400,6 +406,7 @@ extension CatalogStore {
                 sourceMTimeSeconds,
                 sourceMTimeSeconds,
                 sourceMTimeSeconds + 1,
+                result.editRevision,
             ]
         ) != nil
     }
@@ -432,6 +439,7 @@ extension CatalogStore {
             UPDATE media_asset SET
                 thumbnail_path = ?,
                 preview_path = ?,
+                rendered_revision = ?,
                 ts_original_unix = ?,
                 ts_quicktime_creation_unix = ?,
                 ts_digitized_unix = ?,
@@ -452,6 +460,7 @@ extension CatalogStore {
             arguments: [
                 result.thumbnailPath,
                 result.previewPath,
+                result.editRevision,
                 instants.original?.timeIntervalSince1970,
                 instants.quickTimeCreation?.timeIntervalSince1970,
                 instants.digitized?.timeIntervalSince1970,
@@ -497,6 +506,10 @@ extension CatalogStore {
             UPDATE media_asset SET
                 thumbnail_path = ?,
                 preview_path = ?,
+                rendered_revision = COALESCE(
+                    (SELECT rendered_revision FROM media_asset WHERE library_root_id = ? AND relative_path = ?),
+                    rendered_revision
+                ),
                 ts_original_unix = ?,
                 ts_quicktime_creation_unix = ?,
                 ts_digitized_unix = ?,
@@ -516,6 +529,8 @@ extension CatalogStore {
             arguments: [
                 landed.destinationThumbnailPath,
                 landed.destinationPreviewPath,
+                landed.sourceRootID,
+                landed.operation.sourceRelativePath.rawValue,
                 instants.original?.timeIntervalSince1970,
                 instants.quickTimeCreation?.timeIntervalSince1970,
                 instants.digitized?.timeIntervalSince1970,

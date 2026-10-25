@@ -229,6 +229,16 @@ extension CatalogStore {
                     (SELECT media_choice FROM media_asset
                      WHERE library_root_id = ? AND relative_path = ?),
                     media_choice
+                ),
+                edit_recipe_json = COALESCE(
+                    (SELECT edit_recipe_json FROM media_asset
+                     WHERE library_root_id = ? AND relative_path = ?),
+                    edit_recipe_json
+                ),
+                edit_revision = COALESCE(
+                    (SELECT edit_revision FROM media_asset
+                     WHERE library_root_id = ? AND relative_path = ?),
+                    edit_revision
                 )
             WHERE library_root_id = ? AND relative_path = ?
             """,
@@ -245,12 +255,19 @@ extension CatalogStore {
                 operation.contentHash == nil ? nil : Int(contentModifiedAt.timeIntervalSince1970.rounded(.down)),
                 landed.sourceRootID,
                 operation.sourceRelativePath.rawValue,
+                landed.sourceRootID,
+                operation.sourceRelativePath.rawValue,
+                landed.sourceRootID,
+                operation.sourceRelativePath.rawValue,
                 destinationRootID,
                 relativePath.rawValue,
             ]
         )
         if let reusableOverlay = landed.reusableOverlay, let contentHash = operation.contentHash {
             try writeReusableEnrichmentOverlay(reusableOverlay, for: landed, contentHash: contentHash, db: db)
+            // Reused products were rendered from the source's last rendered edit; an edit
+            // saved after them is enrichment's to render for the copy (ADR 0036).
+            try releaseUnrenderedEdits(db: db, rootID: destinationRootID, relativePath: relativePath)
         }
         for companion in landed.companions {
             try upsertCompanion(companion, libraryRootID: destinationRootID, db: db)

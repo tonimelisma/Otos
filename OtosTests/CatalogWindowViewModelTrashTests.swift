@@ -24,8 +24,8 @@ struct CatalogWindowViewModelTrashTests {
             #expect(try FileManager.default.contentsOfDirectory(atPath: trash.path).count == 2)
             // Undo is registered once the items are hidden, which is not ordered against
             // the queue moving the files; wait for the registration itself.
-            try await waitUntil { model.curationUndoState.canUndo }
-            #expect(model.curationUndoState.undoTitle == "Undo Move to Trash")
+            try await waitUntil { model.undoMenuState.canUndo }
+            #expect(model.undoMenuState.undoTitle == "Undo Move to Trash")
         }
     }
 
@@ -42,19 +42,19 @@ struct CatalogWindowViewModelTrashTests {
             }
             // The queue can move the file before the main actor registers the undo, and
             // undo with nothing registered does nothing; wait for the registration itself.
-            try await waitUntil { model.curationUndoState.canUndo }
+            try await waitUntil { model.undoMenuState.canUndo }
 
-            model.undoCuration()
+            model.undoLastChange()
             try await waitUntil { FileManager.default.fileExists(atPath: path) }
             try await waitUntil {
                 try await fixture.store.mediaAssets(for: fixture.ids).count == 1
             }
-            #expect(model.curationUndoState.redoTitle == "Redo Move to Trash")
+            #expect(model.undoMenuState.redoTitle == "Redo Move to Trash")
             #expect(model.trashAlertMessage == nil)
 
-            model.redoCuration()
+            model.redoLastChange()
             try await waitUntil { !FileManager.default.fileExists(atPath: path) }
-            #expect(model.curationUndoState.undoTitle == "Undo Move to Trash")
+            #expect(model.undoMenuState.undoTitle == "Undo Move to Trash")
         }
     }
 
@@ -140,7 +140,7 @@ struct CatalogWindowViewModelTrashTests {
         let model = makeTrashModel(store: CatalogStore(location: .inMemory), trash: nil)
         model.moveTargetedMediaToTrash()
         #expect(model.mediaTrashTask == nil)
-        #expect(!model.curationUndoState.canUndo)
+        #expect(!model.undoMenuState.canUndo)
     }
 }
 

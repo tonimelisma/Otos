@@ -8,7 +8,7 @@ struct EnrichmentCoordinatorTests {
     @Test func unchangedAdmissionRejectionsEmitOneTransitionAcrossOneHundredWakes() async {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _, _ in .transient }
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient }
         )
         for _ in 0 ..< 100 {
             await coordinator.recordEnrichmentAdmission(
@@ -72,7 +72,7 @@ struct EnrichmentCoordinatorTests {
         let store = CatalogStore(location: .inMemory)
         let coordinator = EnrichmentCoordinator(
             store: store,
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
@@ -214,7 +214,7 @@ struct EnrichmentCoordinatorTests {
             .path(percentEncoded: false)
         let state = FakeMaterialization(dataless: [datalessPath])
         let captureDate = Date(timeIntervalSince1970: 700)
-        let enricher = MediaEnricher { id, access, size, mtime, _ in
+        let enricher = MediaEnricher { id, access, size, mtime, _, _ in
             let url = access.localURL ?? id.fileURL
             if await state.isDataless(url.path(percentEncoded: false)) {
                 return .notMaterialized
@@ -277,7 +277,7 @@ struct EnrichmentCoordinatorTests {
 
         // Fail transiently the first two attempts, then succeed.
         let attempts = AttemptCounter()
-        let enricher = MediaEnricher { id, _, size, mtime, _ in
+        let enricher = MediaEnricher { id, _, size, mtime, _, _ in
             if await attempts.next() < 2 {
                 return .transient
             }
@@ -322,7 +322,7 @@ struct EnrichmentCoordinatorTests {
         // bytes), so the store drops it. Without a re-wake the asset would stay
         // needsEnrichment forever; with it, the coordinator retries with a matching result.
         let attempts = AttemptCounter()
-        let enricher = MediaEnricher { id, _, size, mtime, _ in
+        let enricher = MediaEnricher { id, _, size, mtime, _, _ in
             let attempt = await attempts.next()
             let reportedSize: Int64 = attempt == 0 ? (size ?? 0) + 1000 : (size ?? -1)
             return .complete(
@@ -365,7 +365,7 @@ struct EnrichmentCoordinatorTests {
 
         let enrichCalls = AttemptCounter()
         let materializeCalls = AttemptCounter()
-        let enricher = MediaEnricher { id, _, size, mtime, _ in
+        let enricher = MediaEnricher { id, _, size, mtime, _, _ in
             _ = await enrichCalls.next()
             #expect(id.relativePath.rawValue == "ok.jpg")
             return .complete(EnrichmentResult(
@@ -424,7 +424,7 @@ struct EnrichmentCoordinatorTests {
         )
         let coordinator = EnrichmentCoordinator(
             store: store,
-            enricher: MediaEnricher { _, _, _, _, _ in .notMaterialized },
+            enricher: MediaEnricher { _, _, _, _, _, _ in .notMaterialized },
             materializationRequester: materializer,
             readinessChecker: TestEnrichmentReadinessChecker(result: .dataless),
             claimBatchSize: 32
@@ -481,7 +481,7 @@ struct EnrichmentCoordinatorTests {
         }
         let coordinator = EnrichmentCoordinator(
             store: store,
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             claimBatchSize: 8,
@@ -534,7 +534,7 @@ struct EnrichmentCoordinatorTests {
         let paced = pacedSchedule([(id, 100)])
         let deferring = EnrichmentCoordinator(
             store: store,
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             schedule: paced
@@ -547,7 +547,7 @@ struct EnrichmentCoordinatorTests {
         // The ledger saw a 999-byte source; the row is 100 bytes now.
         let changed = EnrichmentCoordinator(
             store: store,
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             schedule: pacedSchedule([(id, 999)])
@@ -578,7 +578,7 @@ struct EnrichmentCoordinatorTests {
         let blocked = scanned.testAssets.filter { $0.relativePath.rawValue != "fresh.jpg" }
         let coordinator = EnrichmentCoordinator(
             store: store,
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             enrichConcurrency: 2,
@@ -601,7 +601,7 @@ struct EnrichmentCoordinatorTests {
     @Test func stageDeviceQueuesEverySeedPastTheOutstandingLimit() async {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
@@ -636,7 +636,7 @@ struct EnrichmentCoordinatorTests {
     @Test func aRangeCapableDeviceIsNotSeededForDownload() async {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
@@ -669,7 +669,7 @@ struct EnrichmentCoordinatorTests {
     @Test func aDeviceThatCannotServeRangesStillStagesEverything() async {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
@@ -700,7 +700,7 @@ struct EnrichmentCoordinatorTests {
     @Test func aRowWithoutALiveSessionFallsBackToItsLocalFile() async {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
@@ -760,7 +760,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             // `.unknown` is what the filesystem really answers for a camera row: no file
             // exists at the staging path, so `lstat` fails.
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .unknown)
         )
@@ -781,7 +781,7 @@ struct EnrichmentCoordinatorTests {
     @Test func rowsOnADeviceWithoutRangedReadsStillFollowTheFilesystem() async {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .unknown)
         )
@@ -799,7 +799,7 @@ struct EnrichmentCoordinatorTests {
     @Test func stageDeviceSkipsSeedAlreadyMaterializing() async {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
@@ -847,7 +847,7 @@ struct EnrichmentCoordinatorTests {
 
         let coordinator = EnrichmentCoordinator(
             store: store,
-            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materializationRequester: materializer,
             readinessChecker: TestEnrichmentReadinessChecker(result: .dataless)
         )
@@ -908,7 +908,7 @@ struct EnrichmentCoordinatorTests {
         }
 
         let recorder = ShouldHashRecorder()
-        let enricher = MediaEnricher { id, access, size, mtime, shouldHash in
+        let enricher = MediaEnricher { id, access, size, mtime, shouldHash, _ in
             let url = access.localURL ?? id.fileURL
             await recorder.record(name: url.lastPathComponent, shouldHash: shouldHash)
             return .complete(
@@ -1037,7 +1037,7 @@ private actor BlockingEnrichment {
     private var releaseWaiter: CheckedContinuation<Void, Never>?
 
     nonisolated func enricher() -> MediaEnricher {
-        MediaEnricher { _, _, _, _, _ in
+        MediaEnricher { _, _, _, _, _, _ in
             await self.waitUntilReleased()
             return .transient
         }
@@ -1089,7 +1089,7 @@ private actor CountingBlockingEnrichment {
     private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
 
     nonisolated func enricher() -> MediaEnricher {
-        MediaEnricher { id, _, _, _, _ in
+        MediaEnricher { id, _, _, _, _, _ in
             await self.markStarted(id.relativePath.rawValue)
             await self.waitUntilReleased()
             return .transient
@@ -1160,7 +1160,7 @@ private func visibleLifecycleCoordinator(
 }
 
 private func visibleLifecycleEnricher() -> MediaEnricher {
-    MediaEnricher { id, _, size, mtime, _ in
+    MediaEnricher { id, _, size, mtime, _, _ in
         .complete(
             EnrichmentResult(
                 id: id,

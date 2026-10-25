@@ -90,7 +90,7 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "a.jpg")
         )
 
-        let outcome = await enricher.enrich(id, .localFile(url), 100, 1000, true)
+        let outcome = await enricher.enrich(id, .localFile(url), 100, 1000, true, nil)
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete, got \(outcome)")
             return
@@ -123,7 +123,7 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "a.heic")
         )
         let outcome = await enricher.enrich(
-            id, .localFile(fixtureDirectory.appending(path: "ios-heic-offset-date.heic")), 100, 1000, true
+            id, .localFile(fixtureDirectory.appending(path: "ios-heic-offset-date.heic")), 100, 1000, true, nil
         )
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete, got \(outcome)")
@@ -150,7 +150,7 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "a.mov")
         )
         let outcome = await enricher.enrich(
-            id, .localFile(fixtureDirectory.appending(path: "mov-no-embedded-capture-date.mov")), 100, 1000, true
+            id, .localFile(fixtureDirectory.appending(path: "mov-no-embedded-capture-date.mov")), 100, 1000, true, nil
         )
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete, got \(outcome)")
@@ -173,7 +173,7 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "broken.jpg")
         )
 
-        let outcome = await enricher.enrich(id, .localFile(stubURL), 0, 1000, true)
+        let outcome = await enricher.enrich(id, .localFile(stubURL), 0, 1000, true, nil)
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete for zero-byte stub, got \(outcome)")
             return
@@ -196,7 +196,7 @@ struct MediaEnricherTests {
         )
 
         // Unsupported is definitive (stamped, never retried), even with empty metadata.
-        let outcome = await enricher.enrich(id, .localFile(textURL), 9, 1000, true)
+        let outcome = await enricher.enrich(id, .localFile(textURL), 9, 1000, true, nil)
         guard case .complete = outcome else {
             Issue.record("expected .complete for unsupported, got \(outcome)")
             return
@@ -214,7 +214,7 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "gone.jpg")
         )
 
-        let outcome = await enricher.enrich(id, .localFile(missing), 100, 1000, true)
+        let outcome = await enricher.enrich(id, .localFile(missing), 100, 1000, true, nil)
         guard case .notMaterialized = outcome else {
             Issue.record("expected .notMaterialized for a missing file, got \(outcome)")
             return
@@ -237,7 +237,7 @@ struct MediaEnricherTests {
             .localFile(url),
             100,
             1000,
-            true
+            true, nil
         )
         guard case .notMaterialized = outcome else {
             Issue.record("expected notMaterialized, got \(outcome)")
@@ -263,7 +263,7 @@ struct MediaEnricherTests {
             .localFile(url),
             100,
             1000,
-            true
+            true, nil
         )
         guard case .notMaterialized = outcome else {
             Issue.record("expected notMaterialized, got \(outcome)")
@@ -288,7 +288,7 @@ struct MediaEnricherTests {
             .localFile(fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg")),
             100,
             1000,
-            true
+            true, nil
         )
         guard case .complete = outcome else {
             Issue.record("expected complete enrichment, got \(outcome)")
@@ -318,7 +318,7 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "a.jpg")
         )
 
-        let outcome = await enricher.enrich(id, .localFile(url), 100, 1000, false)
+        let outcome = await enricher.enrich(id, .localFile(url), 100, 1000, false, nil)
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete for removable source, got \(outcome)")
             return

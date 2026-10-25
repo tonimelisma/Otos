@@ -173,16 +173,16 @@ public struct OtosApp: App {
             // Undo covers curation choices only; Move to Trash keeps Finder's Put Back
             // (ADR 0022). Titles come from the manager: `Undo Like`, `Redo Dislike`.
             CommandGroup(replacing: .undoRedo) {
-                Button(catalogViewModel.curationUndoState.undoTitle) {
-                    catalogViewModel.undoCuration()
+                Button(catalogViewModel.undoMenuState.undoTitle) {
+                    catalogViewModel.undoLastChange()
                 }
                 .keyboardShortcut("z", modifiers: .command)
-                .disabled(!catalogViewModel.curationUndoState.canUndo)
-                Button(catalogViewModel.curationUndoState.redoTitle) {
-                    catalogViewModel.redoCuration()
+                .disabled(!catalogViewModel.undoMenuState.canUndo)
+                Button(catalogViewModel.undoMenuState.redoTitle) {
+                    catalogViewModel.redoLastChange()
                 }
                 .keyboardShortcut("z", modifiers: [.command, .shift])
-                .disabled(!catalogViewModel.curationUndoState.canRedo)
+                .disabled(!catalogViewModel.undoMenuState.canRedo)
             }
             CommandGroup(replacing: .pasteboard) {
                 Button("Copy") {
@@ -301,6 +301,10 @@ public struct OtosApp: App {
                 }
                 .keyboardShortcut("i", modifiers: [])
                 .disabled(catalogViewModel.viewMode != .loupe)
+                Button(catalogViewModel.isEditPanelPresented ? "Hide Edit Panel" : "Show Edit Panel") {
+                    catalogViewModel.toggleEditPanel()
+                }
+                .keyboardShortcut("e", modifiers: [])
             }
             CommandGroup(replacing: .help) {}
         }

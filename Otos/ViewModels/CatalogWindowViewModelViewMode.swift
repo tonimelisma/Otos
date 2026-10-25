@@ -370,7 +370,8 @@ extension CatalogWindowViewModel {
                         id: id,
                         image: image,
                         mediaChoice: detail?.mediaChoice,
-                        nativePixelSize: nativePixelSize
+                        nativePixelSize: nativePixelSize,
+                        renderedRevision: detail?.renderedRevision ?? 0
                     )
                     if slot == .loupe {
                         self.requestFullResolutionIfNeeded()

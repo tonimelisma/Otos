@@ -59,6 +59,8 @@ actor PreviewImageLoader: PreviewLoading {
         let byteCost: Int
         let longEdge: Int
         let nativePixelSize: CGSize?
+        /// The rendered edit revision the image shows (ADR 0036); a newer one misses.
+        let revision: Int64
     }
 
     private let materializationRequester: any MaterializationRequesting
@@ -75,6 +77,7 @@ actor PreviewImageLoader: PreviewLoading {
     /// otherwise it would be handed a smaller image than it asked for.
     private struct InFlightDecode {
         let longEdge: Int
+        let revision: Int64
         let task: Task<Outcome, Never>
     }
 
@@ -105,11 +108,14 @@ actor PreviewImageLoader: PreviewLoading {
             )
             return .unavailable
         }
-        if let cached = cache[request.id], cached.longEdge >= request.targetLongEdge {
+        let revision = request.detail?.renderedRevision ?? 0
+        if let cached = cache[request.id], cached.longEdge >= request.targetLongEdge, cached.revision == revision {
             touch(request.id)
             return .image(cached.image, nativePixelSize: cached.nativePixelSize)
         }
-        if let existing = inFlight[request.id], existing.longEdge >= request.targetLongEdge {
+        if let existing = inFlight[request.id], existing.longEdge >= request.targetLongEdge,
+           existing.revision == revision
+        {
             return await existing.task.value
         }
         let task = Task(priority: .userInitiated) {
@@ -117,13 +123,16 @@ actor PreviewImageLoader: PreviewLoading {
         }
         // A larger request replaces a smaller decode's entry; the smaller one finishes for
         // its own caller, and each caller removes only the entry it owns.
-        inFlight[request.id] = InFlightDecode(longEdge: request.targetLongEdge, task: task)
+        inFlight[request.id] = InFlightDecode(longEdge: request.targetLongEdge, revision: revision, task: task)
         let outcome = await task.value
-        if inFlight[request.id]?.longEdge == request.targetLongEdge {
+        if inFlight[request.id]?.longEdge == request.targetLongEdge, inFlight[request.id]?.revision == revision {
             inFlight[request.id] = nil
         }
         if case let .image(image, nativePixelSize) = outcome {
-            insert(image, for: request.id, longEdge: request.targetLongEdge, nativePixelSize: nativePixelSize)
+            insert(
+                image, for: request.id, longEdge: request.targetLongEdge,
+                nativePixelSize: nativePixelSize, revision: revision
+            )
         }
         return outcome
     }
@@ -227,6 +236,7 @@ actor PreviewImageLoader: PreviewLoading {
         // that QoS avoids the Thread Performance Checker priority-inversion hang risk
         // that fires when this path runs at .userInitiated.
         let target = request.targetLongEdge
+        let recipe = request.detail?.editRecipe ?? .neutral
         let decoded: (CGImage, String, CGSize?)? = await Task.detached(priority: .medium) { () -> (
             CGImage,
             String,
@@ -235,8 +245,8 @@ actor PreviewImageLoader: PreviewLoading {
             if isMovie {
                 return await Self.decodeVideoPoster(url: url, targetLongEdge: target)
             }
-            if ImageRenderer.isRAW(url) {
-                return await Self.developRAW(url: url, targetLongEdge: target)
+            if ImageRenderer.isRAW(url) || !recipe.isNeutral {
+                return await Self.render(url: url, targetLongEdge: target, recipe: recipe)
             }
             return Self.decodeImage(url: url, targetLongEdge: target)
         }.value
@@ -262,11 +272,16 @@ actor PreviewImageLoader: PreviewLoading {
         return .image(image, nativePixelSize: nativePixelSize)
     }
 
-    /// A RAW without a stored preview is developed by the interactive renderer — never
-    /// shown as the camera's embedded JPEG, so the loupe matches the grid (ADR 0035).
-    private nonisolated static func developRAW(url: URL, targetLongEdge: Int) async -> (CGImage, String, CGSize?)? {
+    /// A RAW, or an edited still, is rendered by the interactive renderer with its saved
+    /// recipe — a RAW never shown as the camera's embedded JPEG, so the loupe matches the
+    /// grid (ADR 0035, ADR 0036).
+    private nonisolated static func render(
+        url: URL,
+        targetLongEdge: Int,
+        recipe: EditRecipe
+    ) async -> (CGImage, String, CGSize?)? {
         let longEdge = targetLongEdge == fullResolution ? nil : targetLongEdge
-        guard let rendered = try? await ImageRenderer.interactive.render(url, longEdge: longEdge) else {
+        guard let rendered = try? await ImageRenderer.interactive.render(url, longEdge: longEdge, recipe: recipe) else {
             return nil
         }
         return (rendered.image, "render-\(rendered.decoder.rawValue)", rendered.nativePixelSize)
@@ -351,9 +366,16 @@ actor PreviewImageLoader: PreviewLoading {
         }
     }
 
-    private func insert(_ image: CGImage, for id: MediaAssetID, longEdge: Int, nativePixelSize: CGSize?) {
-        // A smaller decode that finishes after a larger one must not replace it.
-        if let existing = cache[id], existing.longEdge >= longEdge {
+    private func insert(
+        _ image: CGImage,
+        for id: MediaAssetID,
+        longEdge: Int,
+        nativePixelSize: CGSize?,
+        revision: Int64
+    ) {
+        // A smaller decode that finishes after a larger one must not replace it — unless
+        // it shows a newer edit.
+        if let existing = cache[id], existing.longEdge >= longEdge, existing.revision >= revision {
             touch(id)
             return
         }
@@ -361,7 +383,9 @@ actor PreviewImageLoader: PreviewLoading {
         if let existing = cache[id] {
             cacheBytes -= existing.byteCost
         }
-        cache[id] = CacheEntry(image: image, byteCost: cost, longEdge: longEdge, nativePixelSize: nativePixelSize)
+        cache[id] = CacheEntry(
+            image: image, byteCost: cost, longEdge: longEdge, nativePixelSize: nativePixelSize, revision: revision
+        )
         cacheBytes += cost
         touch(id)
         evictIfNeeded(keeping: [id])

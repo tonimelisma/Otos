@@ -196,6 +196,7 @@ nonisolated enum CatalogQueryGateway {
                 SELECT m.library_root_id, m.relative_path, m.byte_size,
                        m.enriched_source_size, m.enriched_source_mtime, m.thumbnail_path, m.preview_path,
                        m.duration_seconds, m.best_kind, m.media_choice,
+                       m.edit_recipe_json, m.rendered_revision,
                        a.pixel_width, a.pixel_height, a.orientation
                 FROM media_asset m
                 LEFT JOIN asset_metadata a
@@ -204,7 +205,7 @@ nonisolated enum CatalogQueryGateway {
                 """,
                 arguments: StatementArguments(argumentValues)
             )
-            details.append(contentsOf: rows.map(storedTileDetail(from:)))
+            try details.append(contentsOf: rows.map(storedTileDetail(from:)))
         }
         return details
     }
@@ -453,7 +454,9 @@ private nonisolated func storedAsset(from row: Row) -> StoredAsset {
     )
 }
 
-private nonisolated func storedTileDetail(from row: Row) -> StoredTileDetail {
+/// Throws when the row's edit recipe cannot be decoded: an unreadable recipe is a
+/// failed read, never an unedited photo (ADR 0036).
+private nonisolated func storedTileDetail(from row: Row) throws -> StoredTileDetail {
     let bestKindRaw: String? = row["best_kind"]
     let pixelWidth: Int? = row["pixel_width"]
     let pixelHeight: Int? = row["pixel_height"]
@@ -466,13 +469,15 @@ private nonisolated func storedTileDetail(from row: Row) -> StoredTileDetail {
     } else {
         nil
     }
-    return StoredTileDetail(
+    return try StoredTileDetail(
         libraryRootID: row["library_root_id"],
         relativePath: MediaRelativePath(rawValue: row["relative_path"]),
         byteSize: row["byte_size"],
         thumbnailPath: row["thumbnail_path"],
         previewPath: row["preview_path"],
         nativePixelSize: nativePixelSize,
+        editRecipe: CatalogStore.editRecipe(json: row["edit_recipe_json"]),
+        renderedRevision: row["rendered_revision"] ?? 0,
         bestKind: bestKindRaw.flatMap(MediaKind.init(rawValue:)),
         durationSeconds: row["duration_seconds"],
         enrichedSourceSize: row["enriched_source_size"],

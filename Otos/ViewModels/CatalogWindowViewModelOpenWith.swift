@@ -35,6 +35,7 @@ extension CatalogWindowViewModel {
         if changed {
             currentTargetFileURLs = targets
             refreshCurrentTargetChoice()
+            refreshEditTarget()
         }
         guard !targets.isEmpty else {
             openWithMenuTask?.cancel()

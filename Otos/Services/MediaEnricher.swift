@@ -34,7 +34,8 @@ nonisolated struct MediaEnricher {
         _ access: EnrichmentByteAccess,
         _ sourceSize: Int64?,
         _ sourceMTimeSeconds: Int?,
-        _ shouldHash: Bool
+        _ shouldHash: Bool,
+        _ recipe: StoredEditRecipe?
     ) async -> EnrichmentOutcome
 
     /// The production enricher. `thumbnailDirectory` is captured so the per-asset
@@ -49,7 +50,7 @@ nonisolated struct MediaEnricher {
             ContentHasher().hashMaterializedFile(at: url)
         }
     ) -> MediaEnricher {
-        MediaEnricher { id, access, sourceSize, sourceMTimeSeconds, shouldHash in
+        MediaEnricher { id, access, sourceSize, sourceMTimeSeconds, shouldHash, recipe in
             // A camera row has no local file, so the readiness checker — which asks the
             // filesystem — cannot speak for it. It is routed here precisely because its
             // bytes are reachable another way, and answering `.notMaterialized` would send
@@ -78,7 +79,8 @@ nonisolated struct MediaEnricher {
                     sourceSize: sourceSize,
                     sourceMTimeSeconds: sourceMTimeSeconds,
                     thumbnailDirectory: thumbnailDirectory,
-                    readinessChecker: readinessChecker
+                    readinessChecker: readinessChecker,
+                    recipe: recipe
                 )
             }
             let hashStart = ContinuousClock.now
@@ -110,7 +112,8 @@ nonisolated struct MediaEnricher {
                     sourceMTimeSeconds: sourceMTimeSeconds,
                     contentHash: contentHash,
                     thumbnailDirectory: thumbnailDirectory,
-                    readinessChecker: readinessChecker
+                    readinessChecker: readinessChecker,
+                    recipe: recipe
                 )
             case .cancelled:
                 OtosLog.mediaIO.noticeOperation(
@@ -314,7 +317,8 @@ nonisolated struct MediaEnricher {
         sourceSize: Int64?,
         sourceMTimeSeconds: Int?,
         thumbnailDirectory: URL,
-        readinessChecker: any EnrichmentReadinessChecking
+        readinessChecker: any EnrichmentReadinessChecking,
+        recipe: StoredEditRecipe?
     ) async -> EnrichmentOutcome {
         await parseAndComplete(
             id: id,
@@ -323,7 +327,8 @@ nonisolated struct MediaEnricher {
             sourceMTimeSeconds: sourceMTimeSeconds,
             contentHash: nil,
             thumbnailDirectory: thumbnailDirectory,
-            readinessChecker: readinessChecker
+            readinessChecker: readinessChecker,
+            recipe: recipe
         )
     }
 
@@ -337,7 +342,8 @@ nonisolated struct MediaEnricher {
         sourceMTimeSeconds: Int?,
         contentHash: XXH3Digest128?,
         thumbnailDirectory: URL,
-        readinessChecker: any EnrichmentReadinessChecking
+        readinessChecker: any EnrichmentReadinessChecking,
+        recipe: StoredEditRecipe?
     ) async -> EnrichmentOutcome {
         let result = MediaMetadataReader.read(url: url)
         guard !result.outcome.shouldRetry else {
@@ -346,7 +352,9 @@ nonisolated struct MediaEnricher {
         guard readinessChecker.status(of: url) == .materialized else {
             return .notMaterialized
         }
-        let rendered = await Self.renderStill(id: id, url: url, directory: thumbnailDirectory)
+        let rendered = await Self.renderStill(
+            id: id, url: url, recipe: recipe?.recipe ?? .neutral, directory: thumbnailDirectory
+        )
         let generatedThumbnail: StagedDerivedImage? = if let rendered {
             rendered.thumbnail
         } else {
@@ -364,7 +372,8 @@ nonisolated struct MediaEnricher {
                 sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
                 contentHash: contentHash,
                 generatedThumbnail: generatedThumbnail,
-                generatedPreview: rendered?.preview
+                generatedPreview: rendered?.preview,
+                editRevision: recipe?.revision ?? 0
             )
         )
     }
@@ -377,6 +386,7 @@ nonisolated struct MediaEnricher {
     private static func renderStill(
         id: MediaAssetID,
         url: URL,
+        recipe: EditRecipe,
         directory: URL
     ) async -> (thumbnail: StagedDerivedImage, preview: StagedDerivedImage)? {
         guard UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true else {
@@ -384,7 +394,9 @@ nonisolated struct MediaEnricher {
         }
         let rendered: ImageRenderer.Rendered
         do {
-            rendered = try await ImageRenderer.background.render(url, longEdge: ThumbnailStore.previewMaxPixelSize)
+            rendered = try await ImageRenderer.background.render(
+                url, longEdge: ThumbnailStore.previewMaxPixelSize, recipe: recipe
+            )
         } catch {
             return nil
         }

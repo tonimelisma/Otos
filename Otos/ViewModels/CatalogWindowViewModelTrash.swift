@@ -170,22 +170,22 @@ extension CatalogWindowViewModel {
 
     private func registerTrashUndo(batch: MediaTrashBatchID, ids: [MediaAssetID]) {
         // Explicit group: registration happens after a Store await, outside any event.
-        curationUndoManager.beginUndoGrouping()
-        curationUndoManager.registerUndo(withTarget: self) { model in
+        windowUndoManager.beginUndoGrouping()
+        windowUndoManager.registerUndo(withTarget: self) { model in
             model.undoMoveToTrash(batch: batch, ids: ids)
         }
-        curationUndoManager.setActionName(Self.moveToTrashActionName)
-        curationUndoManager.endUndoGrouping()
+        windowUndoManager.setActionName(Self.moveToTrashActionName)
+        windowUndoManager.endUndoGrouping()
         publishUndoState()
     }
 
     /// Runs inside `UndoManager.undo()`: files redo synchronously, then asks the queue
     /// to withdraw or put back the command's items.
     private func undoMoveToTrash(batch: MediaTrashBatchID, ids: [MediaAssetID]) {
-        curationUndoManager.registerUndo(withTarget: self) { model in
+        windowUndoManager.registerUndo(withTarget: self) { model in
             model.redoMoveToTrash(ids: ids)
         }
-        curationUndoManager.setActionName(Self.moveToTrashActionName)
+        windowUndoManager.setActionName(Self.moveToTrashActionName)
         OtosLog.ui.notice("op=trash.undo phase=start count=\(ids.count, privacy: .public)")
         // Command: ordered with a following redo, which re-marks the same items.
         submitTrashIntent(.undo(batch: batch, ids: ids))
@@ -211,10 +211,10 @@ extension CatalogWindowViewModel {
     /// identity, then hides the items again for the queue.
     private func redoMoveToTrash(ids: [MediaAssetID]) {
         let batch = MediaTrashBatchID()
-        curationUndoManager.registerUndo(withTarget: self) { model in
+        windowUndoManager.registerUndo(withTarget: self) { model in
             model.undoMoveToTrash(batch: batch, ids: ids)
         }
-        curationUndoManager.setActionName(Self.moveToTrashActionName)
+        windowUndoManager.setActionName(Self.moveToTrashActionName)
         OtosLog.ui.notice("op=trash.redo phase=start count=\(ids.count, privacy: .public)")
         // Command: ordered after the undo it follows.
         submitTrashIntent(.redo(batch: batch, ids: ids))

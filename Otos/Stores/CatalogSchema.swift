@@ -44,6 +44,18 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// One current edit per photo (ADR 0036): the recipe's JSON, the revision it was saved
+    /// as, and the revision the stored thumbnail and preview were rendered from. Columns
+    /// on the asset row, as `media_choice` is, so every re-key, move and deletion carries
+    /// the edit with the row; Move to Trash and import carry it explicitly.
+    static let editRecipeMigrationIdentifier = "v4_media_asset_edit_recipe"
+
+    static let editRecipeStatements: [String] = [
+        "ALTER TABLE media_asset ADD COLUMN edit_recipe_json TEXT",
+        "ALTER TABLE media_asset ADD COLUMN edit_revision INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE media_asset ADD COLUMN rendered_revision INTEGER NOT NULL DEFAULT 0",
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (

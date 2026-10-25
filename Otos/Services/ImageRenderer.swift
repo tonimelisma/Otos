@@ -1,4 +1,5 @@
 import CoreImage
+import CoreImage.CIFilterBuiltins
 import Foundation
 import ImageIO
 import OSLog
@@ -54,8 +55,9 @@ final nonisolated class ImageRenderer: Sendable {
         queue = DispatchQueue(label: "net.melisma.Otos.render.\(lane)", qos: lane == "interactive" ? .userInitiated : .utility)
     }
 
-    /// Renders `url` so its long edge is at most `longEdge`, or at full size when nil.
-    func render(_ url: URL, longEdge: Int?) async throws -> Rendered {
+    /// Renders `url` with `recipe` applied so its long edge is at most `longEdge`, or at
+    /// full size when nil.
+    func render(_ url: URL, longEdge: Int?, recipe: EditRecipe = .neutral) async throws -> Rendered {
         let lane = lane
         return try await withCheckedThrowingContinuation { continuation in
             queue.async {
@@ -63,7 +65,7 @@ final nonisolated class ImageRenderer: Sendable {
                 let signpost = OtosSignpost.rendering.beginInterval("ImageRender")
                 defer { OtosSignpost.rendering.endInterval("ImageRender", signpost) }
                 do {
-                    let rendered = try Self.renderNow(url, longEdge: longEdge)
+                    let rendered = try Self.renderNow(url, longEdge: longEdge, recipe: recipe)
                     OtosLog.rendering.noticeOperation("render.still", phase: "finish", fields: [
                         "lane": lane,
                         "decoder": rendered.decoder.rawValue,
@@ -89,14 +91,21 @@ final nonisolated class ImageRenderer: Sendable {
         UTType(filenameExtension: url.pathExtension)?.conforms(to: .rawImage) == true
     }
 
-    private static func renderNow(_ url: URL, longEdge: Int?) throws -> Rendered {
+    private static func renderNow(_ url: URL, longEdge: Int?, recipe: EditRecipe) throws -> Rendered {
         if isRAW(url) {
-            return try developRAW(url, longEdge: longEdge)
+            return try developRAW(url, longEdge: longEdge, recipe: recipe)
         }
-        return try decodeImage(url, longEdge: longEdge)
+        let decoded = try decodeImage(url, longEdge: longEdge)
+        guard !recipe.isNeutral else {
+            return decoded
+        }
+        let adjusted = applying(recipe, includingExposure: true, to: CIImage(cgImage: decoded.image))
+        return try Rendered(image: bitmap(adjusted), decoder: decoded.decoder, nativePixelSize: decoded.nativePixelSize)
     }
 
-    private static func developRAW(_ url: URL, longEdge: Int?) throws -> Rendered {
+    /// Opens a RAW for development: the newest decoder the file supports, scaled so its
+    /// long edge is at most `longEdge`.
+    static func openRAW(_ url: URL, longEdge: Int?) throws -> (filter: CIRAWFilter, decoder: Decoder) {
         guard let filter = CIRAWFilter(imageURL: url) else {
             throw RenderError.unreadable
         }
@@ -111,16 +120,55 @@ final nonisolated class ImageRenderer: Sendable {
             decoder = .rawOther
         }
         let nativeLongEdge = max(filter.nativeSize.width, filter.nativeSize.height)
-        var scale = 1.0
         if let longEdge, nativeLongEdge > 0 {
-            scale = min(1, Double(longEdge) / Double(nativeLongEdge))
-            filter.scaleFactor = Float(scale)
+            filter.scaleFactor = Float(min(1, Double(longEdge) / Double(nativeLongEdge)))
         }
-        // Read once per configuration: under RAW9 below a 0.5 scale factor a second read
-        // returns an image at half the requested size (research 2026-10-24).
+        return (filter, decoder)
+    }
+
+    /// The developed image for `recipe`. Exposure is set on the filter, where it acts on
+    /// the RAW data; everything after is applied to the developed image. Setting a
+    /// property before each read matters: under RAW9 below a 0.5 scale factor a second
+    /// read of an unchanged filter returns an image at half the requested size, and any
+    /// property change restores it (research 2026-10-24).
+    static func developed(_ filter: CIRAWFilter, recipe: EditRecipe) throws -> CIImage {
+        filter.scaleFactor = filter.scaleFactor
+        filter.exposure = Float(recipe.exposure)
         guard let image = filter.outputImage else {
             throw RenderError.renderFailed
         }
+        return applying(recipe, includingExposure: false, to: image)
+    }
+
+    /// Applies the recipe's Light section (ADR 0036) with the Core Image filters macOS
+    /// provides. A neutral value applies no filter.
+    static func applying(_ recipe: EditRecipe, includingExposure: Bool, to image: CIImage) -> CIImage {
+        var output = image
+        if includingExposure, recipe.exposure != 0 {
+            let exposure = CIFilter.exposureAdjust()
+            exposure.inputImage = output
+            exposure.ev = Float(recipe.exposure)
+            output = exposure.outputImage ?? output
+        }
+        if recipe.contrast != 0 {
+            let controls = CIFilter.colorControls()
+            controls.inputImage = output
+            controls.contrast = Float(1 + recipe.contrast / 200)
+            output = controls.outputImage ?? output
+        }
+        if recipe.highlights != 0 || recipe.shadows != 0 {
+            let tones = CIFilter.highlightShadowAdjust()
+            tones.inputImage = output
+            tones.highlightAmount = Float(1 + recipe.highlights / 100)
+            tones.shadowAmount = Float(recipe.shadows / 100)
+            output = tones.outputImage ?? output
+        }
+        return output
+    }
+
+    private static func developRAW(_ url: URL, longEdge: Int?, recipe: EditRecipe) throws -> Rendered {
+        let (filter, decoder) = try openRAW(url, longEdge: longEdge)
+        let image = try developed(filter, recipe: recipe)
         // The output is oriented; its aspect says whether the native size is rotated.
         let isPortrait = image.extent.height > image.extent.width
         let native = filter.nativeSize
@@ -129,7 +177,7 @@ final nonisolated class ImageRenderer: Sendable {
         return try Rendered(image: bitmap(image), decoder: decoder, nativePixelSize: oriented)
     }
 
-    private static func decodeImage(_ url: URL, longEdge: Int?) throws -> Rendered {
+    static func decodeImage(_ url: URL, longEdge: Int?) throws -> Rendered {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary)
         else {
             throw RenderError.unreadable
@@ -158,7 +206,7 @@ final nonisolated class ImageRenderer: Sendable {
     /// Renders every pixel into an 8-bit Display P3 bitmap. `createCGImage` may return an
     /// image that renders lazily on first draw; the bitmap makes the work happen here, on
     /// the lane, rather than wherever the image is first drawn.
-    private static func bitmap(_ image: CIImage) throws -> CGImage {
+    static func bitmap(_ image: CIImage, context: CIContext = CIContext(options: [.cacheIntermediates: false])) throws -> CGImage {
         let extent = image.extent.integral
         let width = Int(extent.width), height = Int(extent.height)
         guard width > 0, height > 0, let colorSpace = CGColorSpace(name: CGColorSpace.displayP3) else {
@@ -166,7 +214,6 @@ final nonisolated class ImageRenderer: Sendable {
         }
         let rowBytes = width * 4
         var data = Data(count: rowBytes * height)
-        let context = CIContext(options: [.cacheIntermediates: false])
         data.withUnsafeMutableBytes { buffer in
             context.render(
                 image,

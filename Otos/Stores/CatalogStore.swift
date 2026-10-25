@@ -1054,7 +1054,8 @@ extension CatalogStore {
                       let row = try Row.fetchOne(
                           db,
                           sql: """
-                          SELECT media_choice, import_batch_unix_ms FROM media_asset
+                          SELECT media_choice, import_batch_unix_ms, edit_recipe_json, edit_revision
+                          FROM media_asset
                           WHERE library_root_id = ? AND relative_path = ?
                           """,
                           arguments: [rootID, id.relativePath.rawValue]
@@ -1063,9 +1064,10 @@ extension CatalogStore {
                     continue
                 }
                 let batchMs: Int64? = row["import_batch_unix_ms"]
-                overlays[id] = TrashedOverlay(
+                overlays[id] = try TrashedOverlay(
                     mediaChoice: MediaChoice(rawValue: row["media_choice"]) ?? .default,
-                    importBatch: batchMs.map { ImportBatchID(unixMilliseconds: $0) }
+                    importBatch: batchMs.map { ImportBatchID(unixMilliseconds: $0) },
+                    editRecipe: Self.storedEditRecipe(json: row["edit_recipe_json"], revision: row["edit_revision"])
                 )
             }
             return overlays
@@ -1099,14 +1101,20 @@ extension CatalogStore {
         do {
             isBack = try await database().write { db in
                 if let overlay = trashed.overlay {
+                    // The edit comes back with the photo. Its products are not known to
+                    // carry it, so enrichment renders them again from the recipe (ADR 0036).
+                    let recipeJSON = try overlay.editRecipe.map { try Self.editRecipeJSON($0.recipe) }
                     try db.execute(
                         sql: """
-                        UPDATE media_asset SET media_choice = ?, import_batch_unix_ms = ?
+                        UPDATE media_asset SET media_choice = ?, import_batch_unix_ms = ?,
+                            edit_recipe_json = ?, edit_revision = ?, rendered_revision = 0
                         WHERE library_root_id = ? AND relative_path = ?
                         """,
                         arguments: [
                             overlay.mediaChoice.rawValue,
                             overlay.importBatch?.unixMilliseconds,
+                            recipeJSON,
+                            overlay.editRecipe?.revision ?? 0,
                             rootRowID,
                             primaryPath,
                         ]
@@ -1242,6 +1250,217 @@ extension CatalogStore {
             ]
         )
         return result
+    }
+
+    /// The photo's current recipe, or nil when it was never edited (ADR 0036).
+    func editRecipe(for id: MediaAssetID) async throws -> StoredEditRecipe? {
+        guard let rootID = roots.rowIDSnapshot()[id.libraryRootPath] else {
+            return nil
+        }
+        return try await database().read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT edit_recipe_json, edit_revision FROM media_asset
+                WHERE library_root_id = ? AND relative_path = ?
+                """,
+                arguments: [rootID, id.relativePath.rawValue]
+            ) else {
+                return nil
+            }
+            return try Self.storedEditRecipe(json: row["edit_recipe_json"], revision: row["edit_revision"])
+        }
+    }
+
+    /// Saves `recipe` as the photo's current edit under the next revision and reports the
+    /// recipe it replaced, so a caller can register the exact inverse (APP-039's pattern).
+    /// Saving the recipe already current changes nothing and is reported as unchanged.
+    func setEditRecipe(_ recipe: EditRecipe, for id: MediaAssetID) async throws -> EditRecipeMutationResult {
+        guard let rootID = roots.rowIDSnapshot()[id.libraryRootPath] else {
+            return EditRecipeMutationResult(exists: false, previous: nil, saved: nil)
+        }
+        let json = try Self.editRecipeJSON(recipe)
+        let result = try await database().write { db -> EditRecipeMutationResult in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT edit_recipe_json, edit_revision, byte_size, content_modified_at_unix FROM media_asset
+                WHERE library_root_id = ? AND relative_path = ?
+                """,
+                arguments: [rootID, id.relativePath.rawValue]
+            ) else {
+                return EditRecipeMutationResult(exists: false, previous: nil, saved: nil)
+            }
+            let previous = try Self.storedEditRecipe(json: row["edit_recipe_json"], revision: row["edit_revision"])
+            guard (previous?.recipe ?? .neutral) != recipe else {
+                return EditRecipeMutationResult(exists: true, previous: previous, saved: nil)
+            }
+            let modified: Double? = row["content_modified_at_unix"]
+            let revision = (previous?.revision ?? 0) + 1
+            try db.execute(
+                sql: """
+                UPDATE media_asset SET edit_recipe_json = ?, edit_revision = ?
+                WHERE library_root_id = ? AND relative_path = ?
+                """,
+                arguments: [json, revision, rootID, id.relativePath.rawValue]
+            )
+            return EditRecipeMutationResult(
+                exists: true,
+                previous: previous,
+                saved: StoredEditRecipe(recipe: recipe, revision: revision),
+                sourceSize: row["byte_size"],
+                sourceMTimeSeconds: modified.map { Int($0.rounded(.down)) }
+            )
+        }
+        if result.saved != nil {
+            notifyCatalogChanged(.assetsDetailChanged)
+        }
+        OtosLog.catalog.noticeOperation("catalog.editRecipe", phase: "finish", fields: [
+            "rootPath": id.libraryRootPath.rawValue,
+            "relativePath": id.relativePath.rawValue,
+            "exists": "\(result.exists)",
+            "revision": result.saved.map { "\($0.revision)" } ?? "unchanged",
+        ])
+        return result
+    }
+
+    /// Promotes a thumbnail and preview rendered from recipe `revision` (ADR 0036) — only
+    /// while that revision is still the photo's current edit and the file is the one it
+    /// was rendered from; otherwise the staged files are discarded and a newer save's
+    /// render, or enrichment, supplies them. Returns whether they were applied.
+    func applyRenderedEditProducts(_ products: RenderedEditProducts) async -> Bool {
+        let staged = [products.thumbnail, products.preview]
+        guard let rootID = roots.rowIDSnapshot()[products.id.libraryRootPath], let thumbnailDirectory else {
+            discardStagedImages(staged)
+            return false
+        }
+        let outcome: (applied: Bool, superseded: Set<String>)
+        do {
+            outcome = try await database().write { db in
+                guard let row = try Row.fetchOne(
+                    db,
+                    sql: """
+                    SELECT edit_revision, byte_size, content_modified_at_unix, thumbnail_path, preview_path
+                    FROM media_asset WHERE library_root_id = ? AND relative_path = ?
+                    """,
+                    arguments: [rootID, products.id.relativePath.rawValue]
+                ) else {
+                    return (false, [])
+                }
+                let revision: Int64 = row["edit_revision"]
+                let byteSize: Int64? = row["byte_size"]
+                let modified: Double? = row["content_modified_at_unix"]
+                guard revision == products.revision,
+                      byteSize == products.sourceSize,
+                      modified.map({ Int($0.rounded(.down)) }) == products.sourceMTimeSeconds
+                else {
+                    return (false, [])
+                }
+                for image in staged {
+                    try ThumbnailStore.promote(image, in: thumbnailDirectory)
+                }
+                try db.execute(
+                    sql: """
+                    UPDATE media_asset SET thumbnail_path = ?, preview_path = ?, rendered_revision = ?
+                    WHERE library_root_id = ? AND relative_path = ?
+                    """,
+                    arguments: [
+                        products.thumbnail.finalRelativePath, products.preview.finalRelativePath, products.revision,
+                        rootID, products.id.relativePath.rawValue,
+                    ]
+                )
+                let oldPaths: [String?] = [row["thumbnail_path"], row["preview_path"]]
+                let newPaths = Set(staged.map(\.finalRelativePath))
+                return (true, Set(oldPaths.compactMap(\.self)).subtracting(newPaths))
+            }
+        } catch {
+            OtosLog.catalog.errorOperation("catalog.editProducts", phase: "failed", fields: [
+                "relativePath": products.id.relativePath.rawValue,
+                "error": String(describing: error),
+            ])
+            discardStagedImages(staged)
+            return false
+        }
+        if outcome.applied {
+            deleteSupersededImages(outcome.superseded)
+            notifyCatalogChanged(.assetsDetailChanged)
+        } else {
+            discardStagedImages(staged)
+        }
+        OtosLog.catalog.noticeOperation("catalog.editProducts", phase: outcome.applied ? "applied" : "stale", fields: [
+            "relativePath": products.id.relativePath.rawValue,
+            "revision": "\(products.revision)",
+        ])
+        return outcome.applied
+    }
+
+    /// Hands a photo whose saved edit the edit panel could not render to enrichment, which
+    /// renders thumbnails and previews with the current recipe (ADR 0036). A photo whose
+    /// products already carry its edit is left alone.
+    func handUnrenderedEditToEnrichment(_ id: MediaAssetID) async throws {
+        guard let rootID = roots.rowIDSnapshot()[id.libraryRootPath] else {
+            return
+        }
+        let released = try await database().write { db in
+            try Self.releaseUnrenderedEdits(db: db, rootID: rootID, relativePath: id.relativePath)
+        }
+        OtosLog.catalog.noticeOperation("catalog.editProducts", phase: "handedToEnrichment", fields: [
+            "relativePath": id.relativePath.rawValue,
+            "released": "\(released)",
+        ])
+        if released {
+            notifyCatalogChanged(.assetsDetailChanged)
+        }
+    }
+
+    /// Clears the enrichment stamps of every photo — or the one named — whose saved edit
+    /// is newer than its thumbnail and preview, so enrichment claims it again.
+    @discardableResult
+    nonisolated static func releaseUnrenderedEdits(
+        db: Database,
+        rootID: Int64? = nil,
+        relativePath: MediaRelativePath? = nil
+    ) throws -> Bool {
+        if let rootID, let relativePath {
+            try db.execute(
+                sql: """
+                UPDATE media_asset SET enriched_source_size = NULL, enriched_source_mtime = NULL
+                WHERE library_root_id = ? AND relative_path = ? AND edit_revision <> rendered_revision
+                """,
+                arguments: [rootID, relativePath.rawValue]
+            )
+        } else {
+            try db.execute(sql: """
+            UPDATE media_asset SET enriched_source_size = NULL, enriched_source_mtime = NULL
+            WHERE edit_revision <> rendered_revision
+            """)
+        }
+        return db.changesCount > 0
+    }
+
+    /// The recipe as `edit_recipe_json` stores it: sorted-key JSON, so one recipe always
+    /// encodes to the same text.
+    nonisolated static func editRecipeJSON(_ recipe: EditRecipe) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        guard let json = try String(bytes: encoder.encode(recipe), encoding: .utf8) else {
+            throw EncodingError.invalidValue(recipe, EncodingError.Context(
+                codingPath: [], debugDescription: "The encoded recipe is not UTF-8."
+            ))
+        }
+        return json
+    }
+
+    /// The recipe `edit_recipe_json` holds, or nil when the photo was never edited.
+    nonisolated static func editRecipe(json: String?) throws -> EditRecipe? {
+        guard let json else {
+            return nil
+        }
+        return try JSONDecoder().decode(EditRecipe.self, from: Data(json.utf8))
+    }
+
+    nonisolated static func storedEditRecipe(json: String?, revision: Int64) throws -> StoredEditRecipe? {
+        try editRecipe(json: json).map { StoredEditRecipe(recipe: $0, revision: revision) }
     }
 
     private func recordSlowTileDetailQuery(
@@ -1591,6 +1810,11 @@ extension CatalogStore {
             try Self.fetchCatalog(db)
         }
         try await clearAbandonedEnrichmentClaims(dbQueue)
+        // An edit saved but not yet rendered into its thumbnail and preview when the last
+        // process ended is enrichment's to render (ADR 0036).
+        try await dbQueue.write { db in
+            _ = try Self.releaseUnrenderedEdits(db: db)
+        }
         // Remap batches a previous process settled had a window that no longer exists;
         // no identity this process shows was ever under their old paths (ARC-052).
         try await dbQueue.write { db in
@@ -3100,6 +3324,8 @@ private extension CatalogStore {
             previewPath: storedDetail.previewPath,
             nativePixelWidth: storedDetail.nativePixelSize.map { Int($0.width) },
             nativePixelHeight: storedDetail.nativePixelSize.map { Int($0.height) },
+            editRecipe: storedDetail.editRecipe,
+            renderedRevision: storedDetail.renderedRevision,
             bestKind: storedDetail.bestKind,
             durationSeconds: storedDetail.durationSeconds,
             enrichedSourceSize: storedDetail.enrichedSourceSize,

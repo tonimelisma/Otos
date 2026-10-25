@@ -21,16 +21,26 @@ nonisolated struct PanePreview: Equatable {
     /// zoom document from it so 100 percent means native pixels even while the held
     /// `image` is the fit-size decode (APP-040).
     let nativePixelSize: CGSize?
+    /// The edit revision the decode shows (ADR 0036): the detail's rendered revision when
+    /// it was requested. A live edit render stays on screen until this reaches its save.
+    let renderedRevision: Int64
 
-    init(id: MediaAssetID, image: CGImage, mediaChoice: MediaChoice? = nil, nativePixelSize: CGSize? = nil) {
+    init(
+        id: MediaAssetID,
+        image: CGImage,
+        mediaChoice: MediaChoice? = nil,
+        nativePixelSize: CGSize? = nil,
+        renderedRevision: Int64 = 0
+    ) {
         self.id = id
         self.image = image
         self.mediaChoice = mediaChoice
         self.nativePixelSize = nativePixelSize
+        self.renderedRevision = renderedRevision
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.id == rhs.id && lhs.image === rhs.image && lhs.mediaChoice == rhs.mediaChoice
-            && lhs.nativePixelSize == rhs.nativePixelSize
+            && lhs.nativePixelSize == rhs.nativePixelSize && lhs.renderedRevision == rhs.renderedRevision
     }
 }

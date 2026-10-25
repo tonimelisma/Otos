@@ -9,7 +9,7 @@ import OSLog
 /// fact. Grid, loupe, compare, menu, keyboard, accessibility, context menu and inline
 /// controls all call `submitMediaChoice(_:target:origin:)`.
 ///
-/// Undo (APP-039). A user command's inverse is registered on `curationUndoManager`
+/// Undo (APP-039). A user command's inverse is registered on `windowUndoManager`
 /// when the Store confirms the write and reports the prior choice per asset — the
 /// prior is catalog truth, so it is read where truth lives, never guessed from a tile
 /// cache. Undo and redo enqueue the same command type through the same serial stream
@@ -67,7 +67,7 @@ struct MediaChoiceCommand: Equatable {
 
 /// What Edit ▸ Undo / Redo render. Published by the ViewModel after every registration,
 /// undo and redo, because `UndoManager` itself is not observable.
-nonisolated struct CurationUndoState: Equatable, Sendable {
+nonisolated struct UndoMenuState: Equatable, Sendable {
     var canUndo = false
     var canRedo = false
     var undoTitle = "Undo"
@@ -249,20 +249,23 @@ extension CatalogWindowViewModel {
 
     // MARK: - Undo
 
-    /// Edit ▸ Undo (⌘Z).
-    func undoCuration() {
-        guard curationUndoManager.canUndo else { return }
-        curationUndoManager.undo()
+    /// Edit ▸ Undo (⌘Z): the window's last change, whichever kind — a like, a Move to
+    /// Trash, an edit.
+    func undoLastChange() {
+        guard windowUndoManager.canUndo else { return }
+        let name = windowUndoManager.undoActionName
+        windowUndoManager.undo()
         publishUndoState()
-        OtosLog.ui.notice("op=mediaChoice.undo")
+        OtosLog.ui.noticeOperation("undo", phase: "applied", fields: ["action": name])
     }
 
     /// Edit ▸ Redo (⇧⌘Z).
-    func redoCuration() {
-        guard curationUndoManager.canRedo else { return }
-        curationUndoManager.redo()
+    func redoLastChange() {
+        guard windowUndoManager.canRedo else { return }
+        let name = windowUndoManager.redoActionName
+        windowUndoManager.redo()
         publishUndoState()
-        OtosLog.ui.notice("op=mediaChoice.redo")
+        OtosLog.ui.noticeOperation("redo", phase: "applied", fields: ["action": name])
     }
 
     /// Registers the inverse of a confirmed user choice: restore each asset the write
@@ -274,12 +277,12 @@ extension CatalogWindowViewModel {
         let name = command.actionName
         // Explicit groups: registration happens on a store completion, not inside an
         // AppKit event, so the manager's per-event grouping has nothing to close.
-        curationUndoManager.beginUndoGrouping()
-        curationUndoManager.registerUndo(withTarget: self) { model in
+        windowUndoManager.beginUndoGrouping()
+        windowUndoManager.registerUndo(withTarget: self) { model in
             model.restoreMediaChoices(restored, inverse: inverse, actionName: name)
         }
-        curationUndoManager.setActionName(name)
-        curationUndoManager.endUndoGrouping()
+        windowUndoManager.setActionName(name)
+        windowUndoManager.endUndoGrouping()
         publishUndoState()
     }
 
@@ -291,11 +294,11 @@ extension CatalogWindowViewModel {
         inverse: [MediaAssetID: MediaChoice],
         actionName: String
     ) {
-        let origin: MediaChoiceOrigin = curationUndoManager.isUndoing ? .undo : .redo
-        curationUndoManager.registerUndo(withTarget: self) { model in
+        let origin: MediaChoiceOrigin = windowUndoManager.isUndoing ? .undo : .redo
+        windowUndoManager.registerUndo(withTarget: self) { model in
             model.restoreMediaChoices(inverse, inverse: assignments, actionName: actionName)
         }
-        curationUndoManager.setActionName(actionName)
+        windowUndoManager.setActionName(actionName)
         let ids = state.mediaGrid.orderedAssetIDs.filter { assignments[$0] != nil }
         enqueueMediaChoice(
             assignments: assignments,
@@ -312,14 +315,14 @@ extension CatalogWindowViewModel {
     }
 
     func publishUndoState() {
-        let next = CurationUndoState(
-            canUndo: curationUndoManager.canUndo,
-            canRedo: curationUndoManager.canRedo,
-            undoTitle: curationUndoManager.undoMenuItemTitle,
-            redoTitle: curationUndoManager.redoMenuItemTitle
+        let next = UndoMenuState(
+            canUndo: windowUndoManager.canUndo,
+            canRedo: windowUndoManager.canRedo,
+            undoTitle: windowUndoManager.undoMenuItemTitle,
+            redoTitle: windowUndoManager.redoMenuItemTitle
         )
-        if curationUndoState != next {
-            curationUndoState = next
+        if undoMenuState != next {
+            undoMenuState = next
         }
     }
 
@@ -368,7 +371,9 @@ extension CatalogWindowViewModel {
             panePreviews[slot] = PanePreview(
                 id: preview.id,
                 image: preview.image,
-                mediaChoice: choice
+                mediaChoice: choice,
+                nativePixelSize: preview.nativePixelSize,
+                renderedRevision: preview.renderedRevision
             )
         }
     }
