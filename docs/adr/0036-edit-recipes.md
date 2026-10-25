@@ -81,6 +81,26 @@ open takes 20–180 ms per change. Opening it again for every change takes about
     the frame under it does not change; letting go saves it as one `Crop` undo step.
   - The aspect choice is tool state, not part of the edit: Original, Custom (free),
     1 × 1, 4 × 5, 5 × 7, 2 × 3, 4 × 3 and 16 × 9, with Rotate Aspect.
+- **Effects, Detail and Optics** (probes 2026-10-25, `CIVignetteEffect` and `CIRAWFilter`):
+  - **Vignette.** Amount −100…100, with negative darkening as in Lightroom.
+    `CIVignetteEffect`'s positive intensity darkens: at intensity 1 a mid-gray corner
+    measured 0.007. Midpoint and Feather run 0…100 with a default of 50. It applies to
+    the edited photo after its crop, as an ellipse fitted to the frame: the photo is
+    scaled to a square, vignetted, and scaled back.
+  - **Sharpening and Noise Reduction** apply to every still.
+    - For a RAW they are `CIRAWFilter.sharpnessAmount` and
+      `luminanceNoiseReductionAmount`.
+    - For any other still they are `CISharpenLuminance` and `CINoiseReduction` (its own
+      sharpening off).
+    - Nil means the default: the RAW decoder's own amount (on one Sony ARW under RAW9:
+      sharpness 1.0, luminance noise 0.33), or none for any other still. That default is
+      read when the photo opens and set back explicitly on the open filter, as white
+      balance is.
+  - **Color Noise, Detail and Moiré** are offered only where the decoder supports them,
+    which is RAW8. RAW9 reports them unsupported.
+  - **Optics** is `CIRAWFilter.isLensCorrectionEnabled`, shown only for a RAW with a lens
+    profile, with nil meaning the decoder's default (on).
+  - A section or control a photo cannot use is left out for that photo.
 - **One renderer for live edits.** `LiveEditRenderer` is an actor on its own serial
   queue. It keeps the photo being edited open between renders, along with a
   `CIContext` that caches intermediates. While a control is dragged it renders the

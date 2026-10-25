@@ -51,6 +51,9 @@ Sections, in order, as they are built (plan 0108):
 | Crop (a tool above the sections) | `Crop` / `Done` (Return while on), Aspect menu (Original, Custom, 1 × 1, 4 × 5, 5 × 7, 2 × 3, 4 × 3, 16 × 9), Rotate Aspect; Straighten (−45.0…+45.0°, 0.1° steps, positive clockwise); Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical (icon buttons) |
 | Light | Exposure (−4.00…+4.00 stops, 0.05 steps), Contrast (−100…+100), Highlights (−100…0), Shadows (−100…+100) |
 | Color | White Balance picker; Temperature (a RAW: 2000–50000 K, even in mireds, 50 K steps, shown `5600 K`; another still: −100…+100), Tint (a RAW: −150…+150; another still: −100…+100), Vibrance (−100…+100), Saturation (−100…+100) |
+| Effects | Vignette (−100…+100, negative darkens), Midpoint (0…100), Feather (0…100) |
+| Detail | Sharpening (0…100), Noise Reduction (0…100); for a RAW whose decoder offers them, Color Noise, Detail, Moiré (0…100). A RAW's value starts at its decoder's own amount |
+| Optics | Lens Correction (a checkbox), for a RAW with a lens profile only |
 
 The panel's controls never appear or disappear between states (DES-053). With no photo
 to edit, every control and `Reset` stays in place, disabled, with the tooltip

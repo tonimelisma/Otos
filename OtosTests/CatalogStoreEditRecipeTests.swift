@@ -212,6 +212,35 @@ struct CatalogStoreEditRecipeTests {
         #expect(EditControl.temperature.position(fromEntered: "30", facts: still) == 30)
     }
 
+    /// Plan 0108: a photo is offered the Detail and Optics controls its decoder supports.
+    @Test func sectionsAndControlsFollowWhatThePhotoOffers() {
+        let still = EditPhotoFacts.still
+        #expect(EditSection.detail.isAvailable(still))
+        #expect(!EditSection.optics.isAvailable(still))
+        #expect(EditControl.sharpening.isAvailable(still))
+        #expect(!EditControl.moireReduction.isAvailable(still))
+
+        let raw9 = EditPhotoFacts(
+            isRAW: true, asShotTemperature: 5000, asShotTint: 0,
+            rawDetail: [.sharpening: 100, .noiseReduction: 33], lensCorrectionDefault: true
+        )
+        #expect(EditSection.optics.isAvailable(raw9))
+        #expect(!EditControl.colorNoiseReduction.isAvailable(raw9))
+        #expect(EditControl.noiseReduction.sliderValue(in: .neutral, facts: raw9) == 33)
+        #expect(EditControl.noiseReduction.formatted(.neutral, facts: raw9) == "33")
+        #expect(EditControl.noiseReduction.applying(50, to: .neutral, facts: raw9).noiseReduction == 50)
+
+        let raw8 = EditPhotoFacts(
+            isRAW: true, asShotTemperature: 5000, asShotTint: 0,
+            rawDetail: [.sharpening: 100, .colorNoiseReduction: 50, .detail: 17, .moireReduction: 55]
+        )
+        #expect(EditControl.moireReduction.isAvailable(raw8))
+        #expect(!EditControl.noiseReduction.isAvailable(raw8))
+        #expect(!EditSection.optics.isAvailable(raw8))
+        #expect(EditControl.vignette.formatted(EditRecipe(vignette: -30), facts: still) == "-30")
+        #expect(EditSection.effects.reset(EditRecipe(vignette: -30, vignetteMidpoint: 10)) == .neutral)
+    }
+
     @Test func eachSectionResetsOnlyItsOwnControls() {
         let edited = EditRecipe(exposure: 1, contrast: 10, temperature: 5000, tint: 3, vibrance: 20, saturation: -5)
         #expect(EditSection.color.reset(edited) == EditRecipe(exposure: 1, contrast: 10))

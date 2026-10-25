@@ -148,7 +148,8 @@ struct ContentView: View {
                         turn: viewModel.turnPhoto(clockwise:),
                         flip: viewModel.flipPhoto(horizontally:)
                     ),
-                    setEntering: viewModel.setEnteringEditValue
+                    setEntering: viewModel.setEnteringEditValue,
+                    setLensCorrection: viewModel.setLensCorrection
                 )
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
             }

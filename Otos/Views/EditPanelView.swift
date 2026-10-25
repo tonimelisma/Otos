@@ -24,6 +24,7 @@ struct EditPanelView: View {
     let cropActions: EditPanelCropActions
     /// A value field gained or lost the keyboard.
     let setEntering: @MainActor (Bool) -> Void
+    let setLensCorrection: @MainActor (Bool) -> Void
 
     /// Section IDs the person folded, comma-separated.
     @AppStorage("editPanel.foldedSections") private var foldedSections = ""
@@ -38,7 +39,9 @@ struct EditPanelView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .accessibilityAddTraits(.isHeader)
-                ForEach(EditSection.allCases) { section in
+                // A section the photo has nothing to adjust in is left out (plan 0108): Optics
+                // without a lens profile, the RAW8-only Detail controls on other photos.
+                ForEach(EditSection.allCases.filter { $0.isAvailable(facts ?? .still) }) { section in
                     sectionView(section)
                 }
             }
@@ -120,7 +123,10 @@ struct EditPanelView: View {
             if section == .color {
                 whiteBalancePicker
             }
-            ForEach(section.controls) { control in
+            if section == .optics {
+                lensCorrectionToggle
+            }
+            ForEach(section.controls.filter { $0.isAvailable(facts ?? .still) }) { control in
                 EditSliderRow(
                     title: control.title,
                     formattedValue: facts.map { control.formatted(recipe, facts: $0) } ?? "",
@@ -227,6 +233,21 @@ struct EditPanelView: View {
         .disabled(unavailableHelp != nil)
         .help(unavailableHelp ?? title)
         .accessibilityLabel(title)
+    }
+
+    /// The RAW decoder's lens profile correction, on by default where the photo has one.
+    private var lensCorrectionToggle: some View {
+        Toggle(
+            "Lens Correction",
+            isOn: Binding(
+                get: { recipe.lensCorrection ?? facts?.lensCorrectionDefault ?? false },
+                set: { setLensCorrection($0) }
+            )
+        )
+        .toggleStyle(.checkbox)
+        .font(.body)
+        .disabled(unavailableHelp != nil)
+        .help(unavailableHelp ?? "Correct the lens's distortion and vignetting")
     }
 
     /// Lightroom's white balance selector: armed, the next click on the loupe image makes

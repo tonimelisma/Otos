@@ -104,6 +104,14 @@ extension CatalogWindowViewModel {
         }
     }
 
+    /// The Optics section's Lens Correction checkbox.
+    func setLensCorrection(_ enabled: Bool) {
+        guard canEdit, editDraft.lensCorrection != enabled else { return }
+        editDraft.lensCorrection = enabled
+        requestLiveEditRender()
+        commitEdit(actionName: "Lens Correction")
+    }
+
     /// A value field in the panel gained or lost the keyboard.
     func setEnteringEditValue(_ entering: Bool) {
         if isEnteringEditValue != entering {
