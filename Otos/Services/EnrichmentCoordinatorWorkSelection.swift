@@ -41,7 +41,7 @@ nonisolated struct SchedulerRouteFacts: Equatable, Sendable {
 extension EnrichmentCoordinator {
     private static let maxReadinessRoutingPasses = 4
 
-    func dequeueEnrichmentWork() async -> [EnrichWork] {
+    func dequeueEnrichmentWork(now: ContinuousClock.Instant = .now) async -> [EnrichWork] {
         guard !isShuttingDown else {
             return []
         }
@@ -74,7 +74,8 @@ extension EnrichmentCoordinator {
                 let priorityIDs = prioritizedEnrichmentIDs()
                 let claimed = try await claimSkippingLedgerDeferrals(
                     prioritizing: priorityIDs,
-                    limit: claimLimit
+                    limit: claimLimit,
+                    now: now
                 )
                 totalExamined += claimed.totalExamined
                 totalDeferred += claimed.deferredIDs.count
@@ -84,11 +85,10 @@ extension EnrichmentCoordinator {
                 var releasedIDs: [MediaAssetID] = []
                 for candidate in claimed.ready {
                     let asset = candidate.asset
-                    if let retryAt = readinessRetryNotBefore[asset.id], retryAt > .now {
+                    guard schedule.readinessProbeIsDue(asset.id, now: now) else {
                         releasedIDs.append(asset.id)
                         continue
                     }
-                    readinessRetryNotBefore[asset.id] = nil
 
                     // A row on a device that answers ranged reads is reachable without a
                     // local file, so the filesystem is not the right thing to ask about it.
@@ -114,23 +114,25 @@ extension EnrichmentCoordinator {
                         enqueueReadyCandidate(candidate)
                         readinessCounts["ready", default: 0] += 1
                     case .dataless:
-                        guard materializationDemands.count < handoffPolicy.globalOutstandingLimit else {
+                        guard schedule.outstandingCount < handoffPolicy.globalOutstandingLimit else {
                             releasedIDs.append(asset.id)
                             readinessCounts["materializationBound", default: 0] += 1
                             continue
                         }
-                        materializationDemands[asset.id] = DownloadWork(
-                            id: asset.id,
-                            url: asset.id.fileURL,
-                            sourceSize: asset.byteSize,
-                            captureDate: asset.bestCaptureDate,
-                            isVideo: asset.bestKind == .video,
-                            isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath)
+                        schedule.demand(
+                            DownloadWork(
+                                id: asset.id,
+                                url: asset.id.fileURL,
+                                sourceSize: asset.byteSize,
+                                captureDate: asset.bestCaptureDate,
+                                isVideo: asset.bestKind == .video,
+                                isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath)
+                            ),
+                            ownsStoreClaim: true
                         )
-                        materializationClaimIDs.insert(asset.id)
                         readinessCounts["needsMaterialization", default: 0] += 1
                     case .unknown:
-                        readinessRetryNotBefore[asset.id] = .now.advanced(by: .seconds(1))
+                        schedule.deferReadinessProbe(asset.id, now: now)
                         releasedIDs.append(asset.id)
                         readinessCounts["retryReadiness", default: 0] += 1
                     }
@@ -142,7 +144,7 @@ extension EnrichmentCoordinator {
                 if items.count >= availableSlots || claimed.ready.isEmpty || claimed.totalExamined == 0 {
                     break
                 }
-                if materializationDemands.count >= handoffPolicy.globalOutstandingLimit {
+                if schedule.outstandingCount >= handoffPolicy.globalOutstandingLimit {
                     break
                 }
             }
@@ -152,7 +154,6 @@ extension EnrichmentCoordinator {
                     "op=catalog.enrichment.readiness phase=route probes=\(totalExamined, privacy: .public) ready=\(readinessCounts["ready", default: 0], privacy: .public) needsMaterialization=\(readinessCounts["needsMaterialization", default: 0], privacy: .public) rangedReady=\(readinessCounts["rangedReady", default: 0], privacy: .public) retryReadiness=\(readinessCounts["retryReadiness", default: 0], privacy: .public) materializationBound=\(readinessCounts["materializationBound", default: 0], privacy: .public)"
                 )
             }
-            scheduleReadinessRetrySignal()
             logClaimBatch(
                 claimedCount: totalExamined,
                 dispatchedCount: items.count,
@@ -163,42 +164,6 @@ extension EnrichmentCoordinator {
         } catch {
             await recordCandidateQueryFailure(error)
             return []
-        }
-    }
-
-    /// Wakes the coordinator when the earliest deferred readiness probe comes due.
-    ///
-    /// Past-deadline entries are dropped first, and that prune is the whole point. An
-    /// entry is set when a row reads `.unknown` and cleared when that row is re-examined,
-    /// so an entry whose deadline has passed means the row was never reached — and it
-    /// never will be by waiting, because nothing happens at a deadline that is already
-    /// behind us. Left in the map such an entry makes `min()` a past date, `delay`
-    /// computes to zero, and the loop becomes sleep(0) -> signal -> pass -> schedule ->
-    /// sleep(0) forever.
-    ///
-    /// Device staging guarantees the condition rather than merely allowing it: while a
-    /// camera is staging, `materializationDemands` sits saturated at the outstanding
-    /// limit, so every pass takes the early exit in `makeWork` before reaching most rows.
-    /// This spun the scheduler for the whole of the 2026-08-30 session, produced the log
-    /// flood that lost ~836 download events, and showed up as main-thread stalls in
-    /// `reconfigureVisibleItems`.
-    ///
-    /// A minimum-delay floor would hide this instead of fixing it: the zero delay is a
-    /// symptom of state that should have been removed, not of a cadence that is too fast.
-    /// Scheduling nothing when the map empties is safe because readiness is not the only
-    /// wake source — a completed download admits queued seeds and signals directly.
-    private func scheduleReadinessRetrySignal() {
-        readinessRetryTask?.cancel()
-        let now = ContinuousClock.now
-        readinessRetryNotBefore = readinessRetryNotBefore.filter { $0.value > now }
-        guard let nextRetry = readinessRetryNotBefore.values.min() else {
-            readinessRetryTask = nil
-            return
-        }
-        readinessRetryTask = Task { [weak self] in
-            // time: backoff — the filesystem could not say whether the file is local
-            do { try await ContinuousClock().sleep(until: nextRetry) } catch { return }
-            await self?.signal()
         }
     }
 
@@ -217,7 +182,8 @@ extension EnrichmentCoordinator {
     /// query naturally skips past them and surfaces different rows.
     private func claimSkippingLedgerDeferrals(
         prioritizing priorityIDs: [MediaAssetID],
-        limit: Int
+        limit: Int,
+        now: ContinuousClock.Instant
     ) async throws -> (ready: [ClaimedEnrichmentCandidate], deferredIDs: [MediaAssetID], totalExamined: Int) {
         var ready: [ClaimedEnrichmentCandidate] = []
         var deferredIDs: [MediaAssetID] = []
@@ -228,7 +194,7 @@ extension EnrichmentCoordinator {
                 break
             }
             totalExamined += batch.count
-            let (batchReady, batchDeferred) = partitionByRetryLedger(batch)
+            let (batchReady, batchDeferred) = partitionByRetryLedger(batch, now: now)
             ready.append(contentsOf: batchReady)
             deferredIDs.append(contentsOf: batchDeferred)
             if !batchReady.isEmpty || batch.count < limit {
@@ -238,33 +204,19 @@ extension EnrichmentCoordinator {
         return (ready, deferredIDs, totalExamined)
     }
 
-    /// Consults the pacing ledger a bound-exceeded background retry left behind: a
-    /// candidate Store just claimed is deferred back if its earliest reclaim time
-    /// has not arrived, unless its `(sourceSize)` fragment of the `(size, mtime)`
-    /// source signature (ENR-007) changed since the ledger entry was recorded,
-    /// which resets pacing immediately.
+    /// Splits a claimed batch into the rows the pacing ledger lets through at `now` and
+    /// the rows it defers back to the Store (`EnrichmentSchedule.ledgerAdmits`).
     private func partitionByRetryLedger(
-        _ candidates: [ClaimedEnrichmentCandidate]
+        _ candidates: [ClaimedEnrichmentCandidate],
+        now: ContinuousClock.Instant
     ) -> (ready: [ClaimedEnrichmentCandidate], deferred: [MediaAssetID]) {
-        guard !retryLedger.isEmpty else {
-            return (candidates, [])
-        }
         var ready: [ClaimedEnrichmentCandidate] = []
         var deferred: [MediaAssetID] = []
-        let now = ContinuousClock.now
         for candidate in candidates {
-            let asset = candidate.asset
-            guard let entry = retryLedger[asset.id] else {
-                ready.append(candidate)
-                continue
-            }
-            if entry.sourceSize != asset.byteSize {
-                retryLedger[asset.id] = nil
-                ready.append(candidate)
-            } else if entry.notBefore <= now {
+            if schedule.ledgerAdmits(candidate.asset.id, sourceSize: candidate.asset.byteSize, now: now) {
                 ready.append(candidate)
             } else {
-                deferred.append(asset.id)
+                deferred.append(candidate.asset.id)
             }
         }
         return (ready, deferred)
@@ -283,33 +235,17 @@ extension EnrichmentCoordinator {
         }
     }
 
-    func dequeueMaterializationSubmissions() async -> [DownloadWork] {
+    func dequeueMaterializationSubmissions(now: ContinuousClock.Instant = .now) async -> [DownloadWork] {
         guard !isShuttingDown else {
             return []
         }
-        var available = max(handoffPolicy.globalOutstandingLimit - materializingCount, 0)
-        guard available > 0 else {
-            return []
-        }
-
-        var selected: [DownloadWork] = []
-        var excluded: Set<MediaAssetID> = []
-        lastDownloadCandidateEvaluationCount = 0
-        while available > 0, let work = nextMaterializationWork(excluding: excluded) {
-            lastDownloadCandidateEvaluationCount += 1
-            excluded.insert(work.id)
-            if !work.isDeviceStaging {
-                let rootCount = materializingBackgroundCount(under: work.id.libraryRootPath)
-                guard rootCount < handoffPolicy.backgroundOutstandingPerRoot else {
-                    continue
-                }
-            }
-            guard materializationDemands[work.id] != nil else {
-                continue
-            }
-            materializingIDs.insert(work.id)
-            selected.append(work)
-            available -= 1
+        let selected = schedule.takeSubmissions(
+            globalLimit: handoffPolicy.globalOutstandingLimit,
+            backgroundPerRoot: handoffPolicy.backgroundOutstandingPerRoot,
+            viewport: viewport,
+            now: now
+        )
+        for work in selected {
             await recordVisibleThumbnailLifecycle(
                 phase: "materializationSubmitted",
                 id: work.id,
@@ -335,28 +271,6 @@ extension EnrichmentCoordinator {
         return ids
     }
 
-    func nextMaterializationWork(excluding excluded: Set<MediaAssetID> = []) -> DownloadWork? {
-        let pending = awaitingMaterializationWork
-        for id in viewport where !excluded.contains(id) {
-            if let work = pending[id], work.isReadyForRetry {
-                return work
-            }
-        }
-        let device = pending.values
-            .filter { !excluded.contains($0.id) && $0.isDeviceStaging && $0.isReadyForRetry }
-            .min(by: downloadWorkPrecedes)
-        if let device {
-            return device
-        }
-        return pending.values
-            .filter { !excluded.contains($0.id) && !$0.isDeviceStaging && $0.isReadyForRetry }
-            .min(by: downloadWorkPrecedes)
-    }
-
-    func hasEnrichmentWorkRemaining() -> Bool {
-        !readyClaims.isEmpty || !materializationDemands.isEmpty || !pendingApply.isEmpty
-    }
-
     var enrichingCount: Int {
         readyClaims.values.count {
             if case .enriching = $0.state {
@@ -365,10 +279,6 @@ extension EnrichmentCoordinator {
                 false
             }
         }
-    }
-
-    var materializingCount: Int {
-        materializingIDs.count
     }
 
     var enrichingBytes: Int64 {
@@ -388,32 +298,6 @@ extension EnrichmentCoordinator {
             } else {
                 false
             }
-        }
-    }
-
-    var awaitingMaterializationWork: [MediaAssetID: DownloadWork] {
-        materializationDemands.filter { !materializingIDs.contains($0.key) }
-    }
-
-    private func materializingBackgroundCount(under root: LibraryRootPath) -> Int {
-        materializingIDs.count { id in
-            materializationDemands[id]?.isDeviceStaging == false && id.libraryRootPath == root
-        }
-    }
-
-    private func downloadWorkPrecedes(_ left: DownloadWork, _ right: DownloadWork) -> Bool {
-        if left.isVideo != right.isVideo {
-            return !left.isVideo
-        }
-        switch (left.captureDate, right.captureDate) {
-        case let (leftDate?, rightDate?) where leftDate != rightDate:
-            return leftDate > rightDate
-        case (.some, nil):
-            return true
-        case (nil, .some):
-            return false
-        default:
-            return left.id.relativePath.rawValue < right.id.relativePath.rawValue
         }
     }
 
@@ -584,26 +468,22 @@ extension EnrichmentCoordinator {
     /// is always logged, including the transition to all-zero, so the quiet state is
     /// visible rather than merely inferred from silence.
     private func logClaimBatch(claimedCount: Int, dispatchedCount: Int, limit: Int, deferredCount: Int) {
-        let materializationInFlightCount = materializingIDs.count
         let facts = SchedulerRouteFacts(
             claimed: claimedCount,
             readyQueued: queuedEnrichmentCount,
             enriching: enrichingCount,
-            materializationPending: max(materializationDemands.count - materializationInFlightCount, 0),
-            materializationInFlight: materializationInFlightCount,
+            materializationPending: schedule.waitingCount,
+            materializationInFlight: schedule.inFlightCount,
             pendingApply: pendingApply.count,
             dispatched: dispatchedCount,
             limit: limit,
             deferred: deferredCount
         )
-        guard facts != lastSchedulerRoute else {
-            suppressedSchedulerRoutes += 1
+        guard let suppressed = schedule.routeLine(for: facts) else {
             return
         }
         var fields = facts.logFields
-        fields["suppressedPasses"] = "\(suppressedSchedulerRoutes)"
-        lastSchedulerRoute = facts
-        suppressedSchedulerRoutes = 0
+        fields["suppressedPasses"] = "\(suppressed)"
         OtosLog.metadata.noticeOperation("catalog.enrichment.scheduler", phase: "route", fields: fields)
     }
 
@@ -611,14 +491,5 @@ extension EnrichmentCoordinator {
         OtosLog.metadata.error(
             "op=catalog.enrichment.coordinator phase=queryError error=\(String(describing: error), privacy: .public)"
         )
-    }
-}
-
-private extension EnrichmentCoordinator.DownloadWork {
-    nonisolated var isReadyForRetry: Bool {
-        guard let retryNotBefore else {
-            return true
-        }
-        return retryNotBefore <= .now
     }
 }
