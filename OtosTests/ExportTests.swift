@@ -177,7 +177,7 @@ struct ExportTests {
 
         let reloaded = ExportSettingsStore.load(defaults: domain.makeDefaults())
         #expect(reloaded == model.exportSettings)
-        #expect(reloaded.destination?.path(percentEncoded: false) == "/Exports")
+        #expect(reloaded.destination == URL(fileURLWithPath: "/Exports", isDirectory: true))
     }
 
     // MARK: - Support
