@@ -37,7 +37,8 @@ extension CatalogWindowViewModel {
             refreshCurrentTargetChoice()
         }
         // Every writer, not only a target change: leaving the loupe with the same photo
-        // must still end the loupe's edit tools. An unchanged target is a no-op there.
+        // must still end the loupe's edit tools. A target already resolved or being read
+        // is left alone there.
         refreshEditTarget()
         guard !targets.isEmpty else {
             openWithMenuTask?.cancel()

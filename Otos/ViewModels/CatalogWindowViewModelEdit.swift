@@ -150,7 +150,9 @@ extension CatalogWindowViewModel {
             clearEditTarget()
             return
         }
-        guard editTarget?.id != id else { return }
+        // Already the target, or already being read: every target writer calls this, and
+        // one gesture fires several, so a read in flight for the same photo is kept.
+        guard editTarget?.id != id, !(editTargetTask != nil && editTargetRequestedID == id) else { return }
         // Only moving off a resolved photo ends its tools; the crop tool started for a
         // target still resolving stays on for it.
         if editTarget != nil {
@@ -159,6 +161,7 @@ extension CatalogWindowViewModel {
         commitPendingEdit()
         editTargetTask?.cancel()
         let reader = tileDetailReader
+        editTargetRequestedID = id
         editTargetTask = Task { [weak self] in
             let detail: MediaTileDetail?
             do {

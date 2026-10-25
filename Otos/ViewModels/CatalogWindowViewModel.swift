@@ -185,6 +185,8 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var editSavedRecipe = EditRecipe.neutral
     @ObservationIgnored var editDraggingControl: EditControl?
     @ObservationIgnored var editTargetTask: Task<Void, Never>?
+    /// The photo `editTargetTask` is reading, while it runs.
+    @ObservationIgnored var editTargetRequestedID: MediaAssetID?
     @ObservationIgnored let liveEditRenderer = LiveEditRenderer()
     @ObservationIgnored let editRenderStream: AsyncStream<EditRenderRequest>
     @ObservationIgnored let editRenderContinuation: AsyncStream<EditRenderRequest>.Continuation
