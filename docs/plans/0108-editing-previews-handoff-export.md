@@ -24,7 +24,7 @@ Research behind it:
    an edit.
 7. The edited version is what leaves Otos on copy, paste, Share and drag. Several
    selected photos copy and paste as several, including into a browser. Hand-off
-   behaves like Finder: the full-size file, handed over at once.
+   behaves like Finder: the full-size file.
 8. Export is allowed, including several photos at once and into a library folder.
 9. No checksum identity (option B rejected).
 10. A card or camera not seen for 90 days is forgotten automatically.
