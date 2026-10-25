@@ -573,7 +573,8 @@ nonisolated enum MaterializationOutcome: Equatable {
     /// identically to `timedOut` by retry pacing, but attributed separately so a
     /// future short-circuit can be measured.
     case providerUnavailable
-    /// A device staging download was deferred because local free space is below the safety floor.
+    /// A background or device download was not started because it would take the volume
+    /// below the free-space floor (`FreeSpaceFloor`, ADR 0027).
     case insufficientLocalSpace
     /// The awaiting task was cancelled before completion.
     case cancelled

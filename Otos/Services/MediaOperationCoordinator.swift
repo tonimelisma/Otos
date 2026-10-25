@@ -98,7 +98,7 @@ actor MediaOperationCoordinator {
         preferencesDomain: PreferencesDomain,
         planBuilder: any ImportPlanBuilding = LiveImportPlanBuilder(),
         unreadableRetryDelays: [Duration] = [.seconds(1), .seconds(4), .seconds(16), .seconds(60)],
-        volumeCapacity: @escaping @Sendable (URL) -> Int64? = MediaImportExecutor.importantUsageCapacity,
+        volumeCapacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:),
         makeExecutor: (@Sendable (LibraryRootPath) -> any ImportExecuting)? = nil,
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,

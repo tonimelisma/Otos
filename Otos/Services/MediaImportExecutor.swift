@@ -227,7 +227,7 @@ actor MediaImportExecutor {
     /// Reads the destination volume's available capacity for the per-entry
     /// floor check (ADR 0027). Injected for the same reason as
     /// `VolumeTransfer`: the floor is otherwise untestable. The production
-    /// reader is `importantUsageCapacity(at:)`.
+    /// reader is `FreeSpaceFloor.availableBytes(onVolumeOf:)`.
     private let volumeCapacity: @Sendable (URL) -> Int64?
     private let transfer: VolumeTransfer
 
@@ -235,7 +235,7 @@ actor MediaImportExecutor {
         store: CatalogStore,
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,
-        volumeCapacity: @escaping @Sendable (URL) -> Int64? = MediaImportExecutor.importantUsageCapacity,
+        volumeCapacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:),
         transfer: @escaping VolumeTransfer = CopyfileTransfer.copy
     ) {
         self.store = store
@@ -243,17 +243,6 @@ actor MediaImportExecutor {
         self.materializationRequester = materializationRequester
         self.volumeCapacity = volumeCapacity
         self.transfer = transfer
-    }
-
-    /// CacheDelete's figure for important usage: it counts purgeable space and
-    /// can lag the truth in either direction (research 2026-09-09, finding 4),
-    /// which the floor check tolerates in the conservative direction only —
-    /// a stale-low figure stops a little early and the remainder is offered
-    /// again; a stale-high one is caught by `ENOSPC` one entry later. `nil`
-    /// when the volume does not answer, which admits the entry.
-    nonisolated static func importantUsageCapacity(at url: URL) -> Int64? {
-        (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
-            .volumeAvailableCapacityForImportantUsage
     }
 
     func cancel() {
@@ -501,7 +490,7 @@ actor MediaImportExecutor {
                         "unknownSizeCount": "\(unknownCount)",
                     ])
                 }
-                guard capacity - inFlightBytes - entryBytes >= FreeSpaceFloor.bytes else {
+                guard FreeSpaceFloor.admits(entryBytes, committed: inFlightBytes, available: capacity) else {
                     spaceStop = SpaceStop(bytesFree: capacity)
                     OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "diskFloor", fields: [
                         "run": context.runID,

@@ -237,10 +237,7 @@ actor MediaTrashCoordinator {
         materializationRequester: (any MaterializationRequesting)?,
         files: FileOperations,
         status: @escaping StatusReader = { FileMaterialization.status(of: $0) },
-        capacity: @escaping CapacityReader = { url in
-            (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
-                .volumeAvailableCapacityForImportantUsage
-        },
+        capacity: @escaping CapacityReader = FreeSpaceFloor.availableBytes(onVolumeOf:),
         retryPolicy: RetryPolicy = .production,
         reads: StoreReads? = nil,
         willHandleItem: (@Sendable (MediaAssetID) async -> Void)? = nil
@@ -532,13 +529,7 @@ actor MediaTrashCoordinator {
     }
 
     private func fitsAboveFloor(_ bytes: Int64, root: LibraryRootPath) -> Bool {
-        guard let available = capacity(root.url) else {
-            // Unknown capacity is not evidence of room, but neither is it evidence of
-            // none; ENOSPC from the provider is the backstop and stays transient.
-            return true
-        }
-        let committed = downloadBytes.values.reduce(0, +)
-        return available - committed - bytes >= FreeSpaceFloor.bytes
+        FreeSpaceFloor.admits(bytes, committed: downloadBytes.values.reduce(0, +), available: capacity(root.url))
     }
 
     private func startDownload(_ item: MediaTrashItem, members: [MediaTrashMember], bytes: Int64) {

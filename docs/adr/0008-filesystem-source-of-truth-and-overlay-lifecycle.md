@@ -90,7 +90,7 @@ This ADR owns:
 - The cloud materialization policy: a detector gate prevents accidental blocking
   materialization, while deliberate, non-blocking background materialization is
   permitted for enrichment — up to eagerly materializing the whole media library —
-  knowing the downloaded bytes cannot be reclaimed by Otos. The enrichment owner that
+  knowing Otos does not free the downloaded bytes itself. The enrichment owner that
   exercises this permission, and where it stores the derived products, are owned by
   ADR 0009.
 
@@ -184,12 +184,17 @@ subordinate, rebuildable overlay.
    (`startDownloadingUbiquitousItem`, proof-of-concept verified to fire for the
    third-party OneDrive provider) and await `SF_DATALESS` clearing off-thread, instead
    of blocking a worker on a read-fault. This reverses the earlier "defer materialization
-   to explicit user action" rule. Otos cannot reclaim the bytes it downloads — a consumer
-   app cannot evict another provider's files (the proof of concept got
-   `NSFileProviderErrorProviderNotFound`) — so local disk growth is a real, unreclaimable
-   cost. Eagerly materializing the whole media library to enrich it is nonetheless a
-   permitted, deliberate product choice that accepts that growth as the price of complete
-   coverage; that enrichment choice, how it prioritizes the viewport, and where the
+   to explicit user action" rule. Otos does not free the bytes it downloads. macOS does:
+   a File Provider root's default content policy allows eviction under disk pressure,
+   and the system evicts uploaded, idle, unmodified items up to its purge goal — none
+   while the provider is down or uploads are pending (research `docs/research/2026-10-25-library-storage-and-previews.md`). The
+   `NSFileProviderManager` eviction call fails for a consumer app
+   (`NSFileProviderErrorProviderNotFound`); `FileManager.evictUbiquitousItem(at:)`
+   evicted OneDrive files in one probe (`trash-dataless-placeholders.md`) but is
+   documented for iCloud only, so Otos does not rely on it. Background and device
+   downloads never take the volume below the free-space floor (ADR 0027). Eagerly
+   materializing the whole media library to enrich it is a permitted, deliberate
+   product choice; that enrichment choice, how it prioritizes the viewport, and where the
    derived products are stored are owned by ADR 0009. A provider that definitively
    refuses a byte read with `ETIMEDOUT` (errno 60/110 or "timed out" text) twice
    consecutively on one file is a distinct transient fact `providerUnavailable`:
@@ -336,8 +341,9 @@ and never overrides live filesystem truth.
 - Persisted thumbnails are durable backed-up overlay, not an evictable cache,
   because regenerating them depends on expensive cloud materialization.
 - Background enrichment may silently materialize dataless originals, which grows
-  local disk use that Otos cannot reclaim (a consumer app has no eviction path).
-  ADR 0009 deliberately spends that cost for complete enrichment coverage, up to
+  local disk use until macOS evicts uploaded, idle files under pressure; Otos itself
+  frees nothing and keeps the free-space floor. ADR 0009 deliberately spends that
+  cost for complete enrichment coverage, up to
   eager full-library materialization by the enrichment owner; the scanner itself
   still materializes nothing.
 - Path equality follows the volume that owns a root: `FilesystemNameKey` applies
