@@ -86,8 +86,16 @@ Adjacent decisions requiring separate ADRs or specs:
    root, and leaves catalog rows plus overlay intact. A failed eject resumes the
    source instead of detaching it. A confirmed unmount/disappearance marks the
    source unavailable, releases enrichment claims, stops filesystem watching, and
-   preserves rows plus overlay. Explicit Forget removes the source row and its
-   overlay. Transient camera identities are removed on detach because they have no
+   preserves rows plus overlay, and stamps `last_seen_at` with the detach time — a
+   source is last seen when it leaves as well as when it arrives. Explicit Forget
+   removes the source row and its overlay. **Retention:** at launch, before any
+   source re-attaches, a source that is not attached and whose `last_seen_at` is more
+   than 90 days old (`RemovableSourceRetention.unseenPeriod`) is forgotten through the
+   same removal as Forget, likes on never-imported photos included (owner decision
+   2026-10-25, plan 0108). A source with no stamp is kept. A source still attached
+   when Otos quits keeps its arrival stamp, so retention can count from up to one
+   session early. The period is a product rule, not a stand-in for a fact (ADR 0033):
+   no report can say an absent device will never return. Transient camera identities are removed on detach because they have no
    durable source identity to preserve. Every removable report comes from
    DiskArbitration alone — disk appeared, volume path changed, unmount requested,
    disk disappeared — on one serial queue into one ordered stream with one consumer,

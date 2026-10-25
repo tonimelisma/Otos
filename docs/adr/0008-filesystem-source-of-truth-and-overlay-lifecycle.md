@@ -82,7 +82,8 @@ This ADR owns:
   Existing useful companions may be inventoried/transferred only under explicit
   import or reorganization. Catalog export is the portability answer.
 - The single overlay lifecycle: overlay is held while its item exists inside a
-  tracked library root, purged in full only on proven deletion or explicit
+  tracked library root, purged in full only on proven deletion, removable-source
+  retention (a card or camera unseen for 90 days, ADR 0013), or explicit
   library-root removal, and never purged on temporary absence.
 - The definition of proven deletion versus temporary absence.
 - Pure filesystem-path asset identity; hashes, durable identifiers, generated UUIDs,

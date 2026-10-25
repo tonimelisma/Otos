@@ -224,6 +224,10 @@ actor CatalogStore {
     /// 100 ms and over a minute flushing every file, since each flush is a write
     /// transaction and a change notification (`docs/research/2026-10-23-cadence-audit.md`).
     private let scanCadence: Duration
+    /// Wall-clock time for persisted facts only: a removable source's last-seen date and
+    /// the retention cutoff measured against it (ADR 0033: `Date` is for persisted and
+    /// displayed timestamps). Injected so retention is testable without waiting 90 days.
+    private let wallClock: @Sendable () -> Date
     private let initialLoadDidRead: (@Sendable () async -> Void)?
     private let importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)?
     private var dbWriter: (any DatabaseWriter)?
@@ -327,6 +331,7 @@ actor CatalogStore {
         scanner: CatalogScanner = .live,
         filesystemWatcher: CatalogFilesystemWatcher = .live(),
         scanCadence: Duration = .seconds(1),
+        wallClock: @escaping @Sendable () -> Date = { Date() },
         initialLoadDidRead: (@Sendable () async -> Void)? = nil,
         importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)? = nil
     ) {
@@ -334,6 +339,7 @@ actor CatalogStore {
         self.scanner = scanner
         self.filesystemWatcher = filesystemWatcher
         self.scanCadence = scanCadence
+        self.wallClock = wallClock
         self.initialLoadDidRead = initialLoadDidRead
         self.importJournalFailure = importJournalFailure
     }
@@ -1521,6 +1527,7 @@ extension CatalogStore {
 
     func start(scansSavedLibraries: Bool = true) async throws {
         try await loadIfNeeded()
+        await forgetRemovableSourcesUnseenForRetentionPeriod()
         if scansSavedLibraries {
             requestLoadedRootScansIfNeeded()
         }
@@ -2125,7 +2132,7 @@ extension CatalogStore {
     }
 
     private func attachRemovableRoot(_ attachment: RemovableRootAttachment) async throws {
-        let lastSeenAt = Date()
+        let lastSeenAt = wallClock()
         let dbQueue = try database()
         if let existingRoot = rootForDeviceIdentity(attachment.identity),
            let rootRowID = roots[existingRoot.path]?.rowID
@@ -2398,6 +2405,72 @@ extension CatalogStore {
         return path
     }
 
+    /// A source is last seen when it leaves, not only when it arrives: a card left in for
+    /// weeks was seen all that time. Attach stamps the arrival; this stamps the departure.
+    /// A source still attached when Otos quits keeps its arrival stamp, so retention can
+    /// count from up to one session early — it would take a session 90 days long with
+    /// the source attached throughout for that to forget a source too soon.
+    private func recordLastSeen(of root: LibraryRoot, rootRowID: Int64) async {
+        let lastSeenAt = wallClock()
+        do {
+            try await database().write { db in
+                try Self.updateLibraryRootLastSeen(rootRowID: rootRowID, lastSeenAt: lastSeenAt, db: db)
+            }
+        } catch {
+            OtosLog.catalog.errorOperation("catalog.removable.lastSeen", phase: "failed", fields: [
+                "rootPath": root.path.rawValue,
+                "error": String(describing: error),
+            ])
+            return
+        }
+        guard var state = roots[root.path], state.rowID == rootRowID else {
+            return
+        }
+        state.root = LibraryRoot(
+            path: state.root.path,
+            kind: state.root.kind,
+            deviceIdentity: state.root.deviceIdentity,
+            displayName: state.root.displayNameOverride,
+            lastSeenAt: lastSeenAt
+        )
+        upsert(state)
+    }
+
+    /// Forgets every card and camera Otos has not seen for
+    /// `RemovableSourceRetention.unseenPeriod`, exactly as Settings' Forget does: the
+    /// source, its rows, its likes and its thumbnails (owner decision 2026-10-25, plan
+    /// 0108; ADR 0013). It runs at launch, before any source re-attaches, so a source
+    /// present now is judged by its stamp from an earlier session. A source with no
+    /// last-seen stamp is kept: nothing says how long it has been away. Each removal
+    /// re-reads the catalog, so a source that attaches meanwhile is not removed.
+    func forgetRemovableSourcesUnseenForRetentionPeriod() async {
+        let cutoff = wallClock().addingTimeInterval(-RemovableSourceRetention.unseenPeriod)
+        let expired = roots.values.filter { state in
+            state.root.kind != .library
+                && state.availability != .available
+                && (state.root.lastSeenAt.map { $0 < cutoff } ?? false)
+        }.map(\.root)
+        for root in expired.sorted(by: { $0.path.rawValue < $1.path.rawValue }) {
+            guard roots[root.path]?.availability != .available else {
+                continue
+            }
+            do {
+                let outcome = try await removeLibrary(path: root.path)
+                OtosLog.catalog.noticeOperation("catalog.removable.retention", phase: "forgotten", fields: [
+                    "rootPath": root.path.rawValue,
+                    "kind": root.kind.rawValue,
+                    "lastSeenAt": root.lastSeenAt.map { "\(Int64($0.timeIntervalSince1970))" } ?? "none",
+                    "outcome": String(describing: outcome),
+                ])
+            } catch {
+                OtosLog.catalog.errorOperation("catalog.removable.retention", phase: "failed", fields: [
+                    "rootPath": root.path.rawValue,
+                    "error": String(describing: error),
+                ])
+            }
+        }
+    }
+
     func detachRemovableSource(identity: DeviceIdentity, reason: RemovableSourceDetachReason) async throws {
         try await ensureStartedForMutation()
         guard let root = rootForDeviceIdentity(identity),
@@ -2422,6 +2495,7 @@ extension CatalogStore {
             upsert(state)
         }
         await releaseEnrichmentClaimsForRoot(rootRowID)
+        await recordLastSeen(of: root, rootRowID: rootRowID)
         forgetUnreadableSources(under: root.path)
         setAvailability(.unavailable, for: root.path)
         // Detach keeps the staged bytes: they are already off the camera, and

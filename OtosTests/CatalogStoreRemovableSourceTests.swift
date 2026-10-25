@@ -1,9 +1,92 @@
 import Foundation
 @testable import OtosKit
+import Synchronization
 import Testing
 
 @Suite(.testDirectory)
 struct CatalogStoreRemovableSourceTests {
+    /// ADR 0013 / owner decision 2026-10-25: at launch a card or camera unseen for 90 days is
+    /// forgotten, and detaching it records when it was last seen — 89 days after the detach
+    /// keeps it although 94 have passed since it was attached.
+    @Test func aSourceUnseenForNinetyDaysIsForgottenAtLaunch() async throws {
+        let temp = try makeTestDirectory()
+        let database = temp.appending(path: "catalog.sqlite")
+        let day: TimeInterval = 24 * 60 * 60
+        let attachedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let now = Mutex(attachedAt)
+        let first = CatalogStore(location: .databaseFile(database), wallClock: { now.withLock { $0 } })
+        try await first.start(scansSavedLibraries: false)
+        let rootPath = try await first.attachDeviceMTP(
+            stagingRootURL: temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory),
+            identity: .camera(id: "serial"),
+            displayName: "Camera"
+        )
+        now.withLock { $0 = attachedAt.addingTimeInterval(5 * day) }
+        try await first.detachRemovableSource(identity: .camera(id: "serial"), reason: .disconnected)
+        await first.shutdown()
+
+        let kept = CatalogStore(
+            location: .databaseFile(database),
+            wallClock: { attachedAt.addingTimeInterval(94 * day) }
+        )
+        try await kept.start(scansSavedLibraries: false)
+        #expect(try await catalogStoreTestState(kept).removableSources.map(\.path) == [rootPath])
+        await kept.shutdown()
+
+        let expired = CatalogStore(
+            location: .databaseFile(database),
+            wallClock: { attachedAt.addingTimeInterval(96 * day) }
+        )
+        try await expired.start(scansSavedLibraries: false)
+        #expect(try await catalogStoreTestState(expired).removableSources.isEmpty)
+        await expired.shutdown()
+    }
+
+    /// APP-018: a camera that returns without some of the files it had last time loses their
+    /// rows once its new catalog is complete; the files it still has keep theirs.
+    @Test func aCameraReturningWithoutSomeFilesLosesTheirRows() async throws {
+        let temp = try makeTestDirectory()
+        let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        func file(_ name: String) -> ScannedMediaFile {
+            ScannedMediaFile(
+                relativePath: MediaRelativePath(rawValue: "DCIM/\(name)"),
+                name: name,
+                contentTypeIdentifier: "public.jpeg",
+                byteSize: 42,
+                createdAt: Date(timeIntervalSince1970: 1000),
+                contentModifiedAt: Date(timeIntervalSince1970: 1000)
+            )
+        }
+        let kept = file("IMG_0001.JPG"), deleted = file("IMG_0002.JPG")
+
+        let rootPath = try await store.attachDeviceMTP(
+            stagingRootURL: stagingRoot, identity: .camera(id: "serial"), displayName: "Camera"
+        )
+        let firstScan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        try await store.recordDeviceCatalogBatch([kept, deleted], scan: firstScan)
+        try await store.completeDeviceCatalogEnumeration(
+            scan: firstScan, observedPaths: [kept.relativePath, deleted.relativePath]
+        )
+        #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 2)
+        try await store.detachRemovableSource(identity: .camera(id: "serial"), reason: .disconnected)
+
+        _ = try await store.attachDeviceMTP(
+            stagingRootURL: stagingRoot, identity: .camera(id: "serial"), displayName: "Camera"
+        )
+        let secondScan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        try await store.recordDeviceCatalogBatch([kept], scan: secondScan)
+        try await store.completeDeviceCatalogEnumeration(scan: secondScan, observedPaths: [kept.relativePath])
+
+        let selected = try await waitForSelectedRelativePaths(
+            store, rootPath: rootPath, expected: [kept.relativePath.rawValue]
+        )
+        #expect(selected == [kept.relativePath.rawValue])
+        #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 1)
+        await store.shutdown()
+    }
+
     @Test func quiesceKeepsRemovableSourceAvailableForSidebar() async throws {
         let fixture = try await makeRemountFixture()
         let store = fixture.store
