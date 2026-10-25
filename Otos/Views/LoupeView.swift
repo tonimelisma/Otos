@@ -39,10 +39,10 @@ struct LoupeView: View {
     var onPickNeutral: (CGPoint) -> Void = { _ in }
     /// While the crop tool is on: the whole frame it draws over, and the crop.
     var cropEditor: CropEditorInput?
-    var onZoomToggle: () -> Void = {}
+    var videoTrimCommand: VideoTrimCommand?
+    var onVideoTrimmed: @MainActor (MediaAssetID) -> Void = { _ in }
     /// Info overlay (APP-041); nil when hidden.
     var loupeInfo: LoupeInfoModel?
-    var onInfoToggle: () -> Void = {}
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -53,7 +53,8 @@ struct LoupeView: View {
                         image: cropEditor.image,
                         crop: cropEditor.crop,
                         fractionRatio: cropEditor.fractionRatio,
-                        setCrop: cropEditor.setCrop
+                        setCrop: cropEditor.setCrop,
+                        escape: onEscape
                     )
                     .background(DesignPalette.content(for: colorScheme))
                 } else {
@@ -93,10 +94,10 @@ struct LoupeView: View {
                     // Sized to the picture: AVKit paints its letterbox black, so the
                     // pane leaves it none and the backdrop stays `content` (DES-022).
                     if let displaySize = state.displaySize {
-                        LoupeVideoPlayerView(state: state)
+                        LoupeVideoPlayerView(state: state, trimCommand: videoTrimCommand, onTrimmed: onVideoTrimmed)
                             .aspectRatio(displaySize, contentMode: .fit)
                     } else {
-                        LoupeVideoPlayerView(state: state)
+                        LoupeVideoPlayerView(state: state, trimCommand: videoTrimCommand, onTrimmed: onVideoTrimmed)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 case let .full(image):
@@ -199,8 +200,6 @@ struct LoupeView: View {
             onMediaChoiceKey: onMediaChoiceKey,
             onMediaChoice: onMediaChoice,
             contextMenu: contextMenu,
-            onZoomToggleKey: onZoomToggle,
-            onInfoToggleKey: onInfoToggle,
             focusTargetID: focusedAssetID
         )
     }

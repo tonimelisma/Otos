@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The crop tool's canvas (ADR 0036, `docs/design/edit-panel.md`): the whole frame of the
@@ -5,14 +6,24 @@ import SwiftUI
 /// rule-of-thirds grid inside, and eight handles. Passive: it holds only the drag in
 /// progress, and reports every move and the release to the view model, which owns the
 /// crop. The math is `EditCrop.moved(by:)` and `resized(_:by:fractionRatio:)`.
+///
+/// Keyboard (Keyboards; `hig-validation.md` F-13): while the canvas is shown, an AppKit key
+/// view (`CropKeyCatcher`) holds first responder, taken from the filmstrip the way the
+/// filmstrip takes it, and handed back when the tool ends. SwiftUI focus cannot take first
+/// responder from an AppKit view. The arrow keys move the crop one pixel of the frame, ten
+/// with Shift, and a key held down is saved as one step when it is released. Escape is the
+/// loupe's Escape. Shift during a handle drag keeps the crop's shape as it was when the
+/// drag began.
 struct CropEditorView: View {
     let image: CGImage
     let crop: EditCrop
     /// Width over height in fractions of the frame while the aspect is constrained.
     let fractionRatio: Double?
     let setCrop: @MainActor (EditCrop, Bool) -> Void
+    let escape: @MainActor () -> Void
 
     @State private var dragStart: EditCrop?
+    @State private var shiftHeld = false
 
     private static let inset: CGFloat = 20
     private static let handleLength: CGFloat = 16
@@ -35,6 +46,10 @@ struct CropEditorView: View {
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+        }
+        .background(CropKeyCatcher(nudge: nudge, release: { setCrop(crop, false) }, escape: escape))
+        .onModifierKeysChanged(mask: .shift) { _, keys in
+            shiftHeld = keys.contains(.shift)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Crop")
@@ -140,8 +155,21 @@ struct CropEditorView: View {
             )
     }
 
+    /// A handle drag: the aspect's shape when one is set, otherwise the crop's own shape
+    /// at the start of the drag while Shift is held, otherwise free.
     private func resized(_ start: EditCrop, _ handle: CropHandle, _ translation: CGSize, _ frame: CGRect) -> EditCrop {
-        start.resized(handle, by: fraction(translation, of: frame), fractionRatio: fractionRatio)
+        let ratio = fractionRatio ?? (shiftHeld && start.height > 0 ? start.width / start.height : nil)
+        return start.resized(handle, by: fraction(translation, of: frame), fractionRatio: ratio)
+    }
+
+    /// An arrow key moves the crop by `pixels` of the frame in `direction` while it is down
+    /// or repeating; its release saves it.
+    private func nudge(_ direction: CGVector, _ pixels: CGFloat) {
+        let delta = CGSize(
+            width: direction.dx * pixels / CGFloat(max(image.width, 1)),
+            height: direction.dy * pixels / CGFloat(max(image.height, 1))
+        )
+        setCrop(crop.moved(by: delta), true)
     }
 
     private func fraction(_ translation: CGSize, of frame: CGRect) -> CGSize {
@@ -190,5 +218,105 @@ private extension CropHandle {
         case .bottomLeft: .bottomLeading
         case .left: .leading
         }
+    }
+}
+
+/// The crop canvas's keyboard: an AppKit view that takes first responder when it joins the
+/// window and gives it back to whatever held it when it leaves. Arrow keys nudge (Shift for
+/// ten pixels), their release saves, and Escape is the loupe's. A bare letter goes to the
+/// menu bar, so C (Done Cropping) and the other single-letter commands still work; anything
+/// else goes up the responder chain, where Return reaches the Done button.
+struct CropKeyCatcher: NSViewRepresentable {
+    let nudge: @MainActor (CGVector, CGFloat) -> Void
+    let release: @MainActor () -> Void
+    let escape: @MainActor () -> Void
+
+    func makeNSView(context _: Context) -> CropKeyView {
+        let view = CropKeyView()
+        update(view)
+        return view
+    }
+
+    func updateNSView(_ view: CropKeyView, context _: Context) {
+        update(view)
+    }
+
+    private func update(_ view: CropKeyView) {
+        view.nudge = nudge
+        view.release = release
+        view.escape = escape
+    }
+}
+
+final class CropKeyView: NSView {
+    var nudge: @MainActor (CGVector, CGFloat) -> Void = { _, _ in }
+    var release: @MainActor () -> Void = {}
+    var escape: @MainActor () -> Void = {}
+    private weak var previousResponder: NSResponder?
+
+    override var acceptsFirstResponder: Bool {
+        true
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window else { return }
+        // A text field's first responder is the window's shared field editor, which leaves
+        // the view tree with the focus; the field it edits is what gets the keyboard back.
+        if let editor = window.firstResponder as? NSTextView, editor.isFieldEditor {
+            previousResponder = editor.delegate as? NSResponder
+        } else {
+            previousResponder = window.firstResponder
+        }
+        window.makeFirstResponder(self)
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil, let window, window.firstResponder === self {
+            // Hand the keyboard back, so the filmstrip's arrows work again after cropping.
+            if let previous = previousResponder as? NSView, previous.window === window {
+                window.makeFirstResponder(previous)
+            } else {
+                window.makeFirstResponder(nil)
+            }
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let pixels: CGFloat = modifiers.contains(.shift) ? 10 : 1
+        switch event.keyCode {
+        case 123: nudge(CGVector(dx: -1, dy: 0), pixels)
+        case 124: nudge(CGVector(dx: 1, dy: 0), pixels)
+        case 125: nudge(CGVector(dx: 0, dy: 1), pixels)
+        case 126: nudge(CGVector(dx: 0, dy: -1), pixels)
+        case 53: escape()
+        default:
+            let chars = event.charactersIgnoringModifiers ?? ""
+            if modifiers.isEmpty, chars.count == 1, chars.unicodeScalars.allSatisfy(CharacterSet.letters.contains),
+               NSApp?.mainMenu?.performKeyEquivalent(with: event) == true
+            {
+                return
+            }
+            super.keyDown(with: event)
+        }
+    }
+
+    override func keyUp(with event: NSEvent) {
+        if (123 ... 126).contains(event.keyCode) {
+            release()
+        } else {
+            super.keyUp(with: event)
+        }
+    }
+
+    /// A visible focus ring around the canvas while it holds the keyboard (DES-081).
+    override var focusRingMaskBounds: NSRect {
+        bounds
+    }
+
+    override func drawFocusRingMask() {
+        bounds.fill()
     }
 }

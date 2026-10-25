@@ -57,7 +57,8 @@ design rules for user-facing surfaces; per-screen specs live beside it in
   folders, and it generates no sidecar files for identity or authored overlay. The
   user's files change only through explicit, user-initiated file operations:
   import (copies media and its existing `.xmp` / `.srt` companions into a library),
-  library reorganization (moves them within it), Move to Trash, and card Erase
+  library reorganization (moves them within it), export (writes new files into a
+  folder the user chooses, never overwriting one), Move to Trash, and card Erase
   (removable volumes and cameras only; library roots are read-only to it). The
   default is that nothing on disk changes.
 - Overlay has one lifecycle. Every overlay Otos holds for an item is kept as long

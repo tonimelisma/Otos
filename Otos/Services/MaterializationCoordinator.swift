@@ -947,3 +947,36 @@ nonisolated struct ClosureMaterializationRequester: MaterializationRequesting {
         await operation(request.id.fileURL)
     }
 }
+
+extension MaterializationCoordinator {
+    /// Makes a still or video original's bytes local before a render, an export or a
+    /// hand-off reads them (ADR 0008): an interactive download when it is dataless, then
+    /// the check again right before the read. False, logged, when it cannot be made local.
+    @concurrent
+    nonisolated static func makeLocal(
+        _ id: MediaAssetID,
+        sourceSize: Int64?,
+        isVideo: Bool = false,
+        via materialization: MaterializationCoordinator?
+    ) async -> Bool {
+        let url = id.fileURL
+        if FileMaterialization.status(of: url) == .dataless, let materialization {
+            let result = await materialization.materialize(Request(
+                id: id, sourceSize: sourceSize, isVideo: isVideo, priority: .interactive
+            ))
+            guard result.isMaterialized else {
+                OtosLog.mediaIO.noticeOperation("original.makeLocal", phase: "notMaterialized", fields: [
+                    "id": id.relativePath.rawValue, "outcome": String(describing: result.outcome),
+                ])
+                return false
+            }
+        }
+        guard FileMaterialization.status(of: url) == .materialized else {
+            OtosLog.mediaIO.noticeOperation("original.makeLocal", phase: "unavailable", fields: [
+                "id": id.relativePath.rawValue,
+            ])
+            return false
+        }
+        return true
+    }
+}

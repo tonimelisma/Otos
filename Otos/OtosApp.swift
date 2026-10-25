@@ -163,6 +163,11 @@ public struct OtosApp: App {
                     catalogViewModel.shareCurrentTargets(origin: .menu)
                 }
                 .disabled(catalogViewModel.currentTargetFileURLs.isEmpty)
+                Button("Export…") {
+                    catalogViewModel.beginExport()
+                }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(!catalogViewModel.canExport)
                 Divider()
                 Button("Reveal in Finder") {
                     catalogViewModel.revealCurrentTargetsInFinder()
@@ -184,15 +189,37 @@ public struct OtosApp: App {
                 .keyboardShortcut("z", modifiers: [.command, .shift])
                 .disabled(!catalogViewModel.undoMenuState.canRedo)
             }
+            // While text holds the keyboard (an edit value, the export sheet), Cut, Copy,
+            // Paste and Select All act on it through the responder chain, as in any text
+            // field (Keyboards: respect standard shortcuts); otherwise Copy and Select All
+            // act on photos.
             CommandGroup(replacing: .pasteboard) {
+                Button("Cut") {
+                    NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
+                }
+                .keyboardShortcut("x", modifiers: .command)
+                .disabled(!catalogViewModel.textHoldsKeyboard)
                 Button("Copy") {
-                    catalogViewModel.copyCurrentTargets()
+                    if catalogViewModel.textHoldsKeyboard {
+                        NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+                    } else {
+                        catalogViewModel.copyCurrentTargets()
+                    }
                 }
                 .keyboardShortcut("c", modifiers: .command)
-                .disabled(!catalogViewModel.hasMediaChoiceTarget)
+                .disabled(!catalogViewModel.textHoldsKeyboard && !catalogViewModel.hasMediaChoiceTarget)
+                Button("Paste") {
+                    NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+                }
+                .keyboardShortcut("v", modifiers: .command)
+                .disabled(!catalogViewModel.textHoldsKeyboard)
                 Divider()
                 Button("Select All") {
-                    catalogViewModel.selectAll()
+                    if catalogViewModel.textHoldsKeyboard {
+                        NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+                    } else {
+                        catalogViewModel.selectAll()
+                    }
                 }
                 .keyboardShortcut("a", modifiers: .command)
                 Button("Deselect All") {
@@ -242,6 +269,12 @@ public struct OtosApp: App {
                     catalogViewModel.flipPhoto(horizontally: false)
                 }
                 .disabled(!catalogViewModel.canEdit)
+                // QuickTime's key; Otos styles no text, so ⌘T's Show Fonts has no use here.
+                Button("Trim Video…") {
+                    catalogViewModel.trimVideo()
+                }
+                .keyboardShortcut("t", modifiers: .command)
+                .disabled(!catalogViewModel.canTrimVideo)
                 Divider()
                 Button("Move to Trash", role: .destructive) {
                     catalogViewModel.moveTargetedMediaToTrash()
@@ -326,7 +359,7 @@ public struct OtosApp: App {
                 }
                 .keyboardShortcut("i", modifiers: [])
                 .disabled(catalogViewModel.viewMode != .loupe)
-                Button(catalogViewModel.isEditPanelPresented ? "Hide Edit Panel" : "Show Edit Panel") {
+                Button(catalogViewModel.isEditPanelPresented ? "Hide Edit" : "Show Edit") {
                     catalogViewModel.toggleEditPanel()
                 }
                 .keyboardShortcut("e", modifiers: [])

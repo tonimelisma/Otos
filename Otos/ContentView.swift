@@ -112,11 +112,27 @@ struct ContentView: View {
                 if let trashStatus = TrashStatusPresentation.map(viewModel.trashQueueState) {
                     TrashStatusBar(presentation: trashStatus)
                 }
+                if let handOff = viewModel.handOffProgress {
+                    ProgressStatusBar(
+                        title: handOff.title,
+                        completed: handOff.completed,
+                        total: handOff.total,
+                        cancel: viewModel.cancelHandOff
+                    )
+                }
+                if let export = viewModel.exportProgress {
+                    ProgressStatusBar(
+                        title: export.title,
+                        completed: export.completed,
+                        total: export.total,
+                        cancel: viewModel.cancelExport
+                    )
+                }
             }
             // Hosted on its own view so `Do not ask again` applies to this alert only.
             .background { largeTrashDownloadAlertHost }
             // The trailing inspector column collapses and expands like the sidebar; the
-            // toolbar button and View ▸ Show Edit Panel drive the same intent.
+            // toolbar button and View ▸ Show Edit drive the same intent.
             .inspector(isPresented: Binding(
                 get: { viewModel.isEditPanelPresented },
                 set: { presented in
@@ -147,7 +163,9 @@ struct ContentView: View {
                         rotateAspect: viewModel.rotateCropAspect,
                         turn: viewModel.turnPhoto(clockwise:),
                         flip: viewModel.flipPhoto(horizontally:)
-                    )
+                    ),
+                    setEntering: viewModel.setEnteringEditValue,
+                    setLensCorrection: viewModel.setLensCorrection
                 )
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
             }
@@ -243,6 +261,68 @@ struct ContentView: View {
             }
         } message: {
             if let message = viewModel.ejectAlertMessage {
+                Text(message)
+            }
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { viewModel.exportSheet != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.cancelExportSheet()
+                    }
+                }
+            )
+        ) {
+            ExportSheetView(
+                title: viewModel.exportSheet?.title ?? "",
+                settings: viewModel.exportSettings,
+                setSettings: viewModel.setExportSettings,
+                setDestination: viewModel.setExportDestination,
+                export: viewModel.confirmExport,
+                cancel: viewModel.cancelExportSheet
+            )
+        }
+        .alert(
+            viewModel.exportReport?.title ?? "",
+            isPresented: Binding(
+                get: { viewModel.exportReport != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.dismissExportReport()
+                    }
+                }
+            )
+        ) {
+            if viewModel.exportReport?.exported.isEmpty == false {
+                Button("Show in Finder") {
+                    viewModel.revealExportedFiles()
+                }
+            }
+            Button("OK", role: .cancel) {
+                viewModel.dismissExportReport()
+            }
+        } message: {
+            if let report = viewModel.exportReport {
+                Text(report.message)
+            }
+        }
+        .alert(
+            "Couldn’t Prepare Photos",
+            isPresented: Binding(
+                get: { viewModel.handOffAlertMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.dismissHandOffAlert()
+                    }
+                }
+            )
+        ) {
+            Button("OK") {
+                viewModel.dismissHandOffAlert()
+            }
+        } message: {
+            if let message = viewModel.handOffAlertMessage {
                 Text(message)
             }
         }
@@ -409,9 +489,9 @@ struct ContentView: View {
                         )
                     }
                     : nil,
-                onZoomToggle: { viewModel.toggleLoupeZoom() },
-                loupeInfo: viewModel.loupeInfo,
-                onInfoToggle: viewModel.toggleLoupeInfo
+                videoTrimCommand: viewModel.videoTrimCommand,
+                onVideoTrimmed: viewModel.finishTrim(id:),
+                loupeInfo: viewModel.loupeInfo
             )
             .navigationTitle(viewModel.state.title)
         case .compare:

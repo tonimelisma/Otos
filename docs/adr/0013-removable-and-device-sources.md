@@ -92,7 +92,7 @@ Adjacent decisions requiring separate ADRs or specs:
    source re-attaches, a source that is not attached and whose `last_seen_at` is more
    than 90 days old (`RemovableSourceRetention.unseenPeriod`) is forgotten through the
    same removal as Forget, likes on never-imported photos included (owner decision
-   2026-10-25, plan 0108). A source with no stamp is kept. A source still attached
+   2026-10-25). A source with no stamp is kept. A source still attached
    when Otos quits keeps its arrival stamp, so retention can count from up to one
    session early. The period is a product rule, not a stand-in for a fact (ADR 0033):
    no report can say an absent device will never return. Transient camera identities are removed on detach because they have no

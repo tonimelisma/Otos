@@ -13,10 +13,10 @@ single photo to edit.
 A SwiftUI `.inspector` on the content pane: a full-height trailing column that
 collapses and expands the way the sidebar does, with a draggable width (240–360 pt,
 280 by default). Three ways to show or hide it, all calling one intent:
-- the toolbar's Edit button (`slider.horizontal.3`, tooltip `Show Edit Panel` /
-  `Hide Edit Panel`);
-- View ▸ Show Edit Panel / Hide Edit Panel;
-- E, Lightroom desktop's key for the Edit panel.
+- the toolbar's Edit button (`slider.horizontal.3`, tooltip `Show Edit` / `Hide Edit`);
+- View ▸ Show Edit / Hide Edit, named for the panel without the word "panel", as Panels
+  asks;
+- E, Lightroom desktop's key for Edit (DES-093).
 
 It is shown in every view mode. It edits the current target (the grid's selection, the
 loupe's photo, compare's active pane) when that is exactly one image or RAW. The loupe
@@ -28,7 +28,7 @@ and compare panes follow a drag live; a grid tile updates when the drag ends.
 | --- | --- |
 | File name / `No Selection` | L1 (`title3`, semibold, middle-truncated) |
 | Section heading (`Crop`, `Light`, `Color`) | `.headline` group heading (DES-003) |
-| Control name, control value, `Reset`, `Crop` / `Done`, aspect titles | L2 (`body`); values `.monospacedDigit()` (DES-005) |
+| Control name, control value field, `Reset`, `Crop` / `Done`, `Aspect` and its titles | L2 (`body`); values `.monospacedDigit()` (DES-005) |
 
 Three sizes, two weights (DES-004).
 
@@ -44,13 +44,16 @@ A slider's filled track is the neutral secondary color, not the accent. A slider
 not a selection (DES-024), and most sliders here are neutral at their middle, where a fill
 from the left edge would read as an amount.
 
-Sections, in order, as they are built (plan 0108):
+Sections, in order (Lightroom desktop's order, ADR 0036):
 
 | Section | Controls |
 | --- | --- |
 | Crop (a tool above the sections) | `Crop` / `Done` (Return while on), Aspect menu (Original, Custom, 1 × 1, 4 × 5, 5 × 7, 2 × 3, 4 × 3, 16 × 9), Rotate Aspect; Straighten (−45.0…+45.0°, 0.1° steps, positive clockwise); Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical (icon buttons) |
 | Light | Exposure (−4.00…+4.00 stops, 0.05 steps), Contrast (−100…+100), Highlights (−100…0), Shadows (−100…+100) |
 | Color | White Balance picker; Temperature (a RAW: 2000–50000 K, even in mireds, 50 K steps, shown `5600 K`; another still: −100…+100), Tint (a RAW: −150…+150; another still: −100…+100), Vibrance (−100…+100), Saturation (−100…+100) |
+| Effects | Vignette (−100…+100, negative darkens), Midpoint (0…100), Feather (0…100) |
+| Detail | Sharpening (0…100), Noise Reduction (0…100); for a RAW whose decoder offers them, Color Noise, Detail, Moiré (0…100). A RAW's value starts at its decoder's own amount |
+| Optics | Lens Correction (a checkbox), for a RAW with a lens profile only |
 
 The panel's controls never appear or disappear between states (DES-053). With no photo
 to edit, every control and `Reset` stays in place, disabled, with the tooltip
@@ -63,6 +66,23 @@ The Color section's first row is `White Balance` with the picker button at its t
 edge: `eyedropper` at rest, `eyedropper.full` while armed, never color alone (DES-029). It
 is enabled only in the loupe, with the tooltip `Open the photo in the loupe to pick a neutral
 point` elsewhere.
+
+## Sections fold
+
+Each section heading is a disclosure triangle with the section's name: pointing in from
+the leading edge while folded, down while open (Disclosure controls). Sections start open.
+Which ones a person folds is remembered across launches. A folded section keeps its Reset
+in the heading. The crop tool's section stays open while the tool is on. Folding fades the
+section's controls in or out (0.25 s, 0.15 s under Reduce Motion; DES-070, DES-075).
+
+## Values can be typed
+
+Each control's value is a field that reads like the value. Clicking or tabbing into it
+lets the exact number be typed, with a sign, a degree mark or a kelvin unit as shown.
+Return or leaving the field saves it as one step, named for the control. An out-of-range
+number clamps, text that is not a number is put back, and Escape puts back the shown value.
+While a field is being edited, Edit ▸ Cut, Copy, Paste and Select All act on its text
+(DES-093).
 
 ## Crop tool
 
@@ -77,9 +97,18 @@ it:
   outline so they read on any photo, each with a 28 pt hit area (DES-051);
 - a frame-resize pointer over each handle, and a grab pointer inside the crop.
 
+The Aspect menu sits on its own row after an `Aspect` label, so its options read without
+opening it (Pop-up buttons).
+
 Dragging inside moves the crop. A corner handle resizes about the opposite corner, and an
 edge handle about the opposite edge, staying centered across it. Under a constrained
-aspect the crop keeps its shape and shrinks to stay in the frame. Choosing an aspect
+aspect the crop keeps its shape and shrinks to stay in the frame. With Custom, Shift
+during a handle drag keeps the shape the crop had when the drag began (Keyboards).
+
+While the tool is on, the canvas holds the keyboard, with a focus ring (DES-081). The
+arrow keys move the crop one pixel of the frame, ten with Shift, and a held key saves as
+one step on release. Escape ends the tool. When it ends, the keyboard goes back to where
+it was, usually the filmstrip. Choosing an aspect
 fits the largest crop of that shape around the current crop's center. Rotate Aspect turns
 the shape. The Aspect menu and Rotate Aspect are enabled only while the tool is on.
 

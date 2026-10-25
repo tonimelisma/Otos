@@ -3,12 +3,12 @@ import Foundation
 
 /// Grid drag-out guide
 ///
-/// Dragging tiles out of the grid or filmstrip puts the originals' file URLs on the
-/// drag pasteboard — one `public.fileURL` per asset in display order, references only
-/// (ADR 0028, the same representation ⌘C writes under ADR 0012). Finder copies the
-/// files, Mail and Messages attach them; Otos reads no bytes and requests no
-/// materialization. A dataless cloud original is downloaded by the receiver, which is
-/// the receiver's act on a file the user handed it.
+/// Dragging tiles out of the grid or filmstrip hands each asset over as ⌘C does (ADR 0028,
+/// ADR 0012, ADR 0037): one writer per asset in display order, chosen by
+/// `CatalogWindowViewModel.dragWriter(for:)`. That is the original's `public.fileURL` for
+/// an unedited still or video (no bytes read, so a dataless cloud original is downloaded
+/// by the receiver), a file already prepared this launch, or a file promise that prepares
+/// an edited photo or a RAW when the receiver asks.
 ///
 /// Because `MediaGridCollectionView` owns `mouseDown` and never calls `super`, AppKit's
 /// own drag initiation never runs; the view detects the drag itself and the controller
@@ -52,11 +52,6 @@ nonisolated enum MediaGridDragPolicy {
     ) -> [MediaAssetID] {
         guard selection.contains(hit) else { return [hit] }
         return orderedIDs.filter { selection.contains($0) }
-    }
-
-    /// One file URL per asset, in the given order. The same objects ⌘C writes.
-    static func pasteboardWriters(for ids: [MediaAssetID]) -> [NSURL] {
-        ids.map { $0.fileURL as NSURL }
     }
 }
 

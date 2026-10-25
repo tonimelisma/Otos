@@ -5,7 +5,7 @@
 
 ## Context
 
-Owner decisions (plan 0108): each photo has one current edit, stored in the catalog,
+Owner decisions (2026-10-25): each photo has one current edit, stored in the catalog,
 with no sidecars. Originals are never modified; an edit is a recipe rendered from the
 original. Grid, loupe and thumbnails always show the edited photo. The edit panel is a
 trailing inspector that collapses the way the sidebar does.
@@ -81,6 +81,39 @@ open takes 20–180 ms per change. Opening it again for every change takes about
     the frame under it does not change; letting go saves it as one `Crop` undo step.
   - The aspect choice is tool state, not part of the edit: Original, Custom (free),
     1 × 1, 4 × 5, 5 × 7, 2 × 3, 4 × 3 and 16 × 9, with Rotate Aspect.
+- **Effects, Detail and Optics** (probes 2026-10-25, `CIVignetteEffect` and `CIRAWFilter`):
+  - **Vignette.** Amount −100…100, with negative darkening as in Lightroom.
+    `CIVignetteEffect`'s positive intensity darkens: at intensity 1 a mid-gray corner
+    measured 0.007. Midpoint and Feather run 0…100 with a default of 50. It applies to
+    the edited photo after its crop, as an ellipse fitted to the frame: the photo is
+    scaled to a square, vignetted, and scaled back.
+  - **Sharpening and Noise Reduction** apply to every still.
+    - For a RAW they are `CIRAWFilter.sharpnessAmount` and
+      `luminanceNoiseReductionAmount`.
+    - For any other still they are `CISharpenLuminance` and `CINoiseReduction` (its own
+      sharpening off).
+    - Nil means the default: the RAW decoder's own amount (on one Sony ARW under RAW9:
+      sharpness 1.0, luminance noise 0.33), or none for any other still. That default is
+      read when the photo opens and set back explicitly on the open filter, as white
+      balance is.
+  - **Color Noise, Detail and Moiré** are offered only where the decoder supports them,
+    which is RAW8. RAW9 reports them unsupported.
+  - **Optics** is `CIRAWFilter.isLensCorrectionEnabled`, shown only for a RAW with a lens
+    profile, with nil meaning the decoder's default (on).
+  - A section or control a photo cannot use is left out for that photo.
+- **Video trim.**
+  - A video's recipe holds `trimStart` and `trimEnd` in seconds; nil is the video's own
+    start or end.
+  - Photo ▸ Trim Video… (⌘T, QuickTime's key; Otos styles no text, so the standard Show
+    Fonts has no use) shows `AVPlayerView`'s own trim UI on the loupe video.
+  - On Trim, the range it leaves on the player item's `reversePlaybackEndTime` and
+    `forwardPlaybackEndTime` is saved as one `Trim` step. This is where AVKit's trimming
+    reports it (WWDC 2013, "Moving to AVKit"); the header leaves it unstated. A prepared
+    video plays only its trimmed range, and undo and redo move the player's range with
+    the recipe.
+  - A video's thumbnail and poster do not carry its trim. Saving a video's recipe
+    therefore marks its products current in the same transaction, so nothing renders,
+    and no launch reconciliation downloads it again.
 - **One renderer for live edits.** `LiveEditRenderer` is an actor on its own serial
   queue. It keeps the photo being edited open between renders, along with a
   `CIContext` that caches intermediates. While a control is dragged it renders the
@@ -126,4 +159,4 @@ open takes 20–180 ms per change. Opening it again for every change takes about
   frame. The live render is shown from memory, and only the save is written.
 - **A fresh `CIRAWFilter` per render.** About a second per change instead of tens of
   milliseconds.
-- **Sidecar XMP.** This is decision 1 of plan 0108, and AGENTS.md forbids it.
+- **Sidecar XMP.** The owner ruled it out (2026-10-25), and AGENTS.md forbids it.

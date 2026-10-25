@@ -4,6 +4,11 @@ ROOT_DIR="${GUARD_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 ALLOWLIST=(
   # Explicit import/reorganization transfers are user initiated.
   "Otos/Services/MediaImportExecutor.swift" "Otos/Services/ReorganizationExecutor.swift"
+  # User-commanded export: new files into the folder the person chose, written in the
+  # system scratch folder and published without overwriting (ADR 0038).
+  "Otos/Services/MediaExporter.swift"
+  # Hand-off files live in Application Support's HandOff folder (ADR 0037).
+  "Otos/Services/HandOffPreparer.swift"
   # These writers target Otos-owned thumbnails, staging, device imports, or provider materialization.
   "Otos/Services/ThumbnailStore.swift" "Otos/Services/DeviceStagingRegistry.swift"
   # Owns the device-staging cache layout, so every path it deletes it also constructs.

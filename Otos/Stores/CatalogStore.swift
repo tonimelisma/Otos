@@ -1284,7 +1284,7 @@ extension CatalogStore {
             guard let row = try Row.fetchOne(
                 db,
                 sql: """
-                SELECT edit_recipe_json, edit_revision, byte_size, content_modified_at_unix FROM media_asset
+                SELECT edit_recipe_json, edit_revision, byte_size, content_modified_at_unix, best_kind FROM media_asset
                 WHERE library_root_id = ? AND relative_path = ?
                 """,
                 arguments: [rootID, id.relativePath.rawValue]
@@ -1296,20 +1296,25 @@ extension CatalogStore {
                 return EditRecipeMutationResult(exists: true, previous: previous, saved: nil)
             }
             let modified: Double? = row["content_modified_at_unix"]
+            let isVideo = (row["best_kind"] as String?) == MediaKind.video.rawValue
             let revision = (previous?.revision ?? 0) + 1
+            // A video's products do not carry its edit, so they are current as soon as it is
+            // saved; otherwise enrichment would download the video again to re-render them.
             try db.execute(
                 sql: """
-                UPDATE media_asset SET edit_recipe_json = ?, edit_revision = ?
+                UPDATE media_asset SET edit_recipe_json = ?, edit_revision = ?,
+                    rendered_revision = CASE WHEN ? THEN ? ELSE rendered_revision END
                 WHERE library_root_id = ? AND relative_path = ?
                 """,
-                arguments: [json, revision, rootID, id.relativePath.rawValue]
+                arguments: [json, revision, isVideo, revision, rootID, id.relativePath.rawValue]
             )
             return EditRecipeMutationResult(
                 exists: true,
                 previous: previous,
                 saved: StoredEditRecipe(recipe: recipe, revision: revision),
                 sourceSize: row["byte_size"],
-                sourceMTimeSeconds: modified.map { Int($0.rounded(.down)) }
+                sourceMTimeSeconds: modified.map { Int($0.rounded(.down)) },
+                isVideo: isVideo
             )
         }
         if result.saved != nil {
@@ -2667,8 +2672,8 @@ extension CatalogStore {
 
     /// Forgets every card and camera Otos has not seen for
     /// `RemovableSourceRetention.unseenPeriod`, exactly as Settings' Forget does: the
-    /// source, its rows, its likes and its thumbnails (owner decision 2026-10-25, plan
-    /// 0108; ADR 0013). It runs at launch, before any source re-attaches, so a source
+    /// source, its rows, its likes and its thumbnails (owner decision 2026-10-25,
+    /// ADR 0013). It runs at launch, before any source re-attaches, so a source
     /// present now is judged by its stamp from an earlier session. A source with no
     /// last-seen stamp is kept: nothing says how long it has been away. Each removal
     /// re-reads the catalog, so a source that attaches meanwhile is not removed.
@@ -2995,6 +3000,22 @@ extension CatalogStore {
             url.deletingLastPathComponent().appending(path: "Thumbnails", directoryHint: .isDirectory)
         case .inMemory:
             nil
+        }
+    }
+
+    /// Where hand-offs put the full-size files they render (ADR 0037): beside
+    /// the thumbnails in Application Support, never in a media folder. Its contents last
+    /// until the next launch clears them. An in-memory catalog uses the temporary folder.
+    nonisolated var handOffDirectory: URL {
+        switch location {
+        case let .application(bundleIdentifier):
+            URL.applicationSupportDirectory
+                .appending(path: bundleIdentifier, directoryHint: .isDirectory)
+                .appending(path: "HandOff", directoryHint: .isDirectory)
+        case let .databaseFile(url):
+            url.deletingLastPathComponent().appending(path: "HandOff", directoryHint: .isDirectory)
+        case .inMemory:
+            URL.temporaryDirectory.appending(path: "OtosHandOff", directoryHint: .isDirectory)
         }
     }
 }

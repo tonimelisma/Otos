@@ -6,6 +6,10 @@ import SwiftUI
 ///
 /// The controls stay in place and disabled while there is no single photo to edit or it
 /// is still being opened (DES-053); their tooltip says which (DES-038).
+///
+/// Each section folds under its heading's disclosure triangle (`hig-validation.md` F-16).
+/// Which sections are folded is the person's own arrangement of the panel, kept across
+/// launches in `@AppStorage`; the crop tool's section is shown while the tool is on.
 struct EditPanelView: View {
     let photoName: String?
     let facts: EditPhotoFacts?
@@ -18,6 +22,13 @@ struct EditPanelView: View {
     let resetSection: @MainActor (EditSection) -> Void
     let toggleNeutralPicker: @MainActor () -> Void
     let cropActions: EditPanelCropActions
+    /// A value field gained or lost the keyboard.
+    let setEntering: @MainActor (Bool) -> Void
+    let setLensCorrection: @MainActor (Bool) -> Void
+
+    /// Section IDs the person folded, comma-separated.
+    @AppStorage("editPanel.foldedSections") private var foldedSections = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollView {
@@ -28,7 +39,9 @@ struct EditPanelView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .accessibilityAddTraits(.isHeader)
-                ForEach(EditSection.allCases) { section in
+                // A section the photo has nothing to adjust in is left out (ADR 0036): Optics
+                // without a lens profile, the RAW8-only Detail controls on other photos.
+                ForEach(EditSection.allCases.filter { $0.isAvailable(facts ?? .still) }) { section in
                     sectionView(section)
                 }
             }
@@ -45,32 +58,90 @@ struct EditPanelView: View {
         return facts == nil ? "Preparing to edit" : nil
     }
 
+    private func isOpen(_ section: EditSection) -> Bool {
+        (section == .crop && crop.isCropping) || !foldedSections.split(separator: ",").contains(Substring(section.id))
+    }
+
+    private func toggleFold(_ section: EditSection) {
+        var folded = Set(foldedSections.split(separator: ",").map(String.init))
+        if folded.contains(section.id) {
+            folded.remove(section.id)
+        } else {
+            folded.insert(section.id)
+        }
+        // DES-070 for content appearing; DES-075 under Reduce Motion. The content fades
+        // in place either way, so nothing translates.
+        withAnimation(.easeOut(duration: reduceMotion ? 0.15 : 0.25)) {
+            foldedSections = folded.sorted().joined(separator: ",")
+        }
+    }
+
     private func sectionView(_ section: EditSection) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let open = isOpen(section)
+        return VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(section.title)
-                    .font(.headline)
-                    .accessibilityAddTraits(.isHeader)
+                // A disclosure triangle: pointing in from the leading edge while folded,
+                // down while open (Disclosure controls).
+                Button {
+                    toggleFold(section)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .rotationEffect(.degrees(open ? 90 : 0))
+                            .foregroundStyle(.secondary)
+                        Text(section.title)
+                            .font(.headline)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(section == .crop && crop.isCropping)
+                .accessibilityLabel(section.title)
+                .accessibilityValue(open ? "expanded" : "collapsed")
+                .accessibilityAddTraits(.isHeader)
+                .help(open ? "Hide \(section.title)" : "Show \(section.title)")
                 Spacer()
                 Button("Reset") { resetSection(section) }
                     .controlSize(.small)
                     .disabled(unavailableHelp != nil || section.isNeutral(in: recipe))
                     .help(unavailableHelp ?? section.resetActionName)
             }
+            if open {
+                sectionControls(section)
+                    .transition(.opacity)
+            }
+        }
+    }
+
+    private func sectionControls(_ section: EditSection) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
             if section == .crop {
                 cropTool
+                aspectRow
             }
             if section == .color {
                 whiteBalancePicker
             }
-            ForEach(section.controls) { control in
+            if section == .optics {
+                lensCorrectionToggle
+            }
+            ForEach(section.controls.filter { $0.isAvailable(facts ?? .still) }) { control in
                 EditSliderRow(
                     title: control.title,
                     formattedValue: facts.map { control.formatted(recipe, facts: $0) } ?? "",
                     value: control.sliderValue(in: recipe, facts: facts ?? .still),
                     range: control.sliderRange(facts ?? .still),
                     setValue: { setValue($0, control) },
-                    setDragging: { setDragging($0, control) }
+                    setDragging: { setDragging($0, control) },
+                    setEntering: setEntering,
+                    enter: { text in
+                        guard let facts, let position = control.position(fromEntered: text, facts: facts) else {
+                            return false
+                        }
+                        setValue(position, control)
+                        return true
+                    }
                 )
                 .disabled(unavailableHelp != nil)
                 .help(unavailableHelp ?? "")
@@ -81,18 +152,25 @@ struct EditPanelView: View {
         }
     }
 
-    /// The crop tool's switch, Done while it is on (Return), and its aspect choice.
+    /// The crop tool's switch: Done while it is on, which Return answers.
     private var cropTool: some View {
+        Button {
+            cropActions.toggleTool()
+        } label: {
+            Label(crop.isCropping ? "Done" : "Crop", systemImage: "crop")
+        }
+        .controlSize(.small)
+        .keyboardShortcut(crop.isCropping ? .defaultAction : nil)
+        .disabled(unavailableHelp != nil || !(crop.canCrop || crop.isCropping))
+        .help(cropToolHelp)
+    }
+
+    /// The aspect choice, introduced by its label so its options read without opening it
+    /// (Pop-up buttons; `hig-validation.md` F-14), and Rotate Aspect.
+    private var aspectRow: some View {
         HStack(spacing: 8) {
-            Button {
-                cropActions.toggleTool()
-            } label: {
-                Label(crop.isCropping ? "Done" : "Crop", systemImage: "crop")
-            }
-            .controlSize(.small)
-            .keyboardShortcut(crop.isCropping ? .defaultAction : nil)
-            .disabled(unavailableHelp != nil || !(crop.canCrop || crop.isCropping))
-            .help(cropToolHelp)
+            Text("Aspect")
+                .font(.body)
             Spacer()
             Picker("Aspect", selection: Binding(get: { crop.aspect }, set: { cropActions.setAspect($0) })) {
                 ForEach(CropAspect.allCases) { aspect in
@@ -157,6 +235,21 @@ struct EditPanelView: View {
         .accessibilityLabel(title)
     }
 
+    /// The RAW decoder's lens profile correction, on by default where the photo has one.
+    private var lensCorrectionToggle: some View {
+        Toggle(
+            "Lens Correction",
+            isOn: Binding(
+                get: { recipe.lensCorrection ?? facts?.lensCorrectionDefault ?? false },
+                set: { setLensCorrection($0) }
+            )
+        )
+        .toggleStyle(.checkbox)
+        .font(.body)
+        .disabled(unavailableHelp != nil)
+        .help(unavailableHelp ?? "Correct the lens's distortion and vignetting")
+    }
+
     /// Lightroom's white balance selector: armed, the next click on the loupe image makes
     /// that point neutral. The filled glyph, not color alone, shows it armed (DES-029).
     private var whiteBalancePicker: some View {
@@ -190,6 +283,11 @@ struct EditPanelView: View {
 
 /// One control: its name and value on a line, the slider under them — the label-left,
 /// value-right relationship of DES-017 with the slider at full panel width.
+///
+/// The value is a field (`hig-validation.md` F-15): it reads like the value, and clicking
+/// or tabbing into it lets the exact number be typed. Return or leaving the field enters it
+/// through `enter`, which saves it as one step; text that is not a number is put back,
+/// and Escape puts back the shown value.
 private struct EditSliderRow: View {
     let title: String
     let formattedValue: String
@@ -197,17 +295,46 @@ private struct EditSliderRow: View {
     let range: ClosedRange<Double>
     let setValue: @MainActor (Double) -> Void
     let setDragging: @MainActor (Bool) -> Void
+    let setEntering: @MainActor (Bool) -> Void
+    /// Enters typed text; false when it is not a value.
+    let enter: @MainActor (String) -> Bool
+
+    @State private var entry = ""
+    @FocusState private var isEntering: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(title)
+                    .accessibilityHidden(true)
                 Spacer()
-                Text(formattedValue)
+                // Shows the value whenever it is not being typed, so it is never stale.
+                TextField(title, text: Binding(get: { isEntering ? entry : formattedValue }, set: { entry = $0 }))
+                    .labelsHidden()
+                    .textFieldStyle(.plain)
+                    .multilineTextAlignment(.trailing)
                     .monospacedDigit()
+                    .frame(width: 72)
+                    .focused($isEntering)
+                    .onSubmit {
+                        commitEntry()
+                        isEntering = false
+                    }
+                    .onExitCommand {
+                        entry = formattedValue
+                        isEntering = false
+                    }
+                    .onChange(of: isEntering) { _, entering in
+                        setEntering(entering)
+                        if entering {
+                            entry = formattedValue
+                        } else {
+                            commitEntry()
+                        }
+                    }
+                    .accessibilityLabel("\(title) value")
             }
             .font(.body)
-            .accessibilityHidden(true)
             Slider(
                 value: Binding(get: { value }, set: { setValue($0) }),
                 in: range,
@@ -220,6 +347,13 @@ private struct EditSliderRow: View {
             // whose neutral point is its middle.
             .tint(Color.secondary)
             .accessibilityValue(formattedValue)
+        }
+    }
+
+    private func commitEntry() {
+        guard entry != formattedValue else { return }
+        if !enter(entry) {
+            entry = formattedValue
         }
     }
 }

@@ -32,8 +32,6 @@ final class MediaGridCollectionView: NSCollectionView {
     var onMediaChoiceKey: ((MediaChoice) -> Void)?
     /// Strip only: Z toggles loupe zoom, I toggles the info overlay — fallbacks for the
     /// View-menu items that own those keys (APP-040/041).
-    var onZoomToggleKey: (() -> Void)?
-    var onInfoToggleKey: (() -> Void)?
     /// When true, ←/→ are forwarded to `onArrowKey` instead of native collection nav.
     var forwardsArrowKeys = false
     /// The item under the cursor, or `nil` when the pointer is outside the grid.
@@ -219,6 +217,14 @@ final class MediaGridCollectionView: NSCollectionView {
             onMediaChoiceKey?(choice)
             return
         }
+        // Any other bare letter goes to the menu bar first. The single-letter commands
+        // (E, C, I, Z) are menu items; NSCollectionView's own keyDown would swallow the
+        // letter as type-select, so they would never fire while the grid has focus.
+        if modifiers.isEmpty, chars.count == 1, chars.unicodeScalars.allSatisfy(CharacterSet.letters.contains),
+           NSApp?.mainMenu?.performKeyEquivalent(with: event) == true
+        {
+            return
+        }
         if chars == "\r" || chars == "\n" {
             onReturnKey?()
             return
@@ -226,16 +232,6 @@ final class MediaGridCollectionView: NSCollectionView {
         if event.keyCode == 53 { // Escape
             onEscapeKey?()
             return
-        }
-        if forwardsArrowKeys, modifiers.isEmpty {
-            if chars == "z" {
-                onZoomToggleKey?()
-                return
-            }
-            if chars == "i" {
-                onInfoToggleKey?()
-                return
-            }
         }
         if forwardsArrowKeys {
             switch event.keyCode {

@@ -5,7 +5,7 @@
 
 ## Context
 
-Owner decisions (plan 0108) require an unedited RAW to show Apple's RAW9 defaults, and
+Owner decisions (2026-10-25) require an unedited RAW to show Apple's RAW9 defaults, and
 every surface — grid, loupe, compare — to show the edited photo. Until now the grid
 showed Quick Look's 256 px thumbnail, which for an ARW is the camera's embedded JPEG
 (measured: mean difference 2.25 against the embedded JPEG, 17.9 against a RAW9

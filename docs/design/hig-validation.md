@@ -116,7 +116,7 @@ DES-027A — the consequence is stated on the surface that triggers it.
 
 ## Edit panel audit (2026-10-25)
 
-The edit panel (DES-092, `edit-panel.md`) as built through plan 0108 increment 7, read
+The edit panel (DES-092, `edit-panel.md`) as built on 2026-10-25 with the Crop tool, read
 against the HIG pages that govern it: Split views, Toolbars, Panels, Sliders, Pop-up
 buttons, Disclosure controls, Keyboards, The menu bar, Undo and redo, and Color
 (developer.apple.com/design/human-interface-guidelines, read 2026-10-25). Lightroom
@@ -161,16 +161,15 @@ sliders on one surface, most of them neutral at their midpoint, where an accent 
 from the leading edge reads as an amount and turns the panel into a column of
 highlights competing with the photograph (DES-024).
 
-### F-11 — The menu command names the panel "panel" (proposed)
+### F-11 — The menu command names the panel "panel" (applied)
 
 Panels: "In menus, use the panel's title without including the term panel: for example,
 'Show Fonts,' 'Show Colors,' and 'Show Inspector.'" Otos says View ▸ Show Edit Panel /
 Hide Edit Panel. Lightroom desktop names the same command **Edit** (E).
 
-**Proposed:** title the panel `Edit` and the commands `Show Edit` / `Hide Edit`, with the
-toolbar tooltip to match.
+**Applied:** View ▸ Show Edit / Hide Edit, with the toolbar tooltip to match (DES-092).
 
-### F-12 — Single-letter shortcuts are an unrecorded deviation (proposed)
+### F-12 — Single-letter shortcuts are an unrecorded deviation (applied)
 
 Keyboards: "A keyboard shortcut is a combination of a primary key and one or more
 modifier keys"; single keys are described as games' key bindings. The standard
@@ -179,12 +178,12 @@ binds bare letters, following Lightroom: E (edit panel), C (crop), I (info), Z (
 size), P / U / X (curation). They work only because no text field holds focus there.
 They conflict with no standard shortcut, but nothing records the choice.
 
-**Proposed:** record it as a design rule marked **[deviation]**: Lightroom's
+**Applied as DES-093**, marked **[deviation]**: Lightroom's
 single-letter commands, each a menu item, active only while no text field has focus.
 Keep E rather than adopt ⌥⌘I; a menu item carries one key equivalent, and E is what
 the product's users already know.
 
-### F-13 — A free crop has no Shift-to-constrain, and the crop cannot be nudged (proposed)
+### F-13 — A free crop has no Shift-to-constrain, and the crop cannot be nudged (applied)
 
 Keyboards: "pressing Shift while drag-resizing constrains resizing to the item's aspect
 ratio", and "holding an arrow key moves the selected item by the smallest app-defined
@@ -192,19 +191,20 @@ unit". With the aspect set to Custom, a handle drag ignores Shift. The crop canv
 no keyboard focus, so arrow keys do nothing, and the only keyboard path to a crop is an
 aspect choice, which centers it (DES-080).
 
-**Proposed:** Shift during a handle drag keeps the crop's shape at the drag's start. The
-crop canvas becomes focusable while the tool is on; arrow keys move the crop by one
-pixel of the frame, Shift-arrow by ten, and each move is saved like a released drag.
+**Applied:** Shift during a handle drag keeps the crop's shape at the drag's start. While
+the tool is on, an AppKit key view holds first responder (SwiftUI focus could not take it
+from the filmstrip) and returns it when the tool ends. The arrow keys move the crop one
+pixel of the frame, Shift-arrow ten, and a held key saves as one step on release.
 
-### F-14 — The Aspect pop-up has no introductory label (proposed)
+### F-14 — The Aspect pop-up has no introductory label (applied)
 
 Pop-up buttons: "Give people a way to predict a pop-up button's options without opening
 it. For example, you can use an introductory label". The Aspect menu shows only its
 current value (`Original`), and its accessibility label is not visible.
 
-**Proposed:** an `Aspect` label before it, at L2, on the row it already occupies.
+**Applied:** an `Aspect` label at L2, on a row of its own.
 
-### F-15 — Wide-range sliders have no exact entry (proposed)
+### F-15 — Wide-range sliders have no exact entry (applied)
 
 Sliders: "Consider supplementing a slider with a corresponding text field and stepper.
 Especially when a slider represents a wide range of values, people may appreciate
@@ -213,21 +213,37 @@ Temperature spans 2000–50000 K, and Straighten ±45° in 0.1° steps. Each val
 text. Lightroom lets the value be typed. Panels' advice to prefer sliders over typing
 still holds: the slider stays the main control.
 
-**Proposed:** the value on each control's line becomes an editable numeric field, still
+**Applied:** the value on each control's line is an editable numeric field, still
 `.monospacedDigit()` at L2. Return or leaving the field saves the value as one step, an
 out-of-range entry clamps, and Escape restores it.
 
-### F-16 — Sections cannot be collapsed (proposed)
+### F-16 — Sections cannot be collapsed (applied)
 
 Disclosure controls: "Use a disclosure control to hide details until they're relevant."
 Apple's own inspectors and Lightroom fold their sections. With Crop, Light and Color the
 panel just fits a 896 pt window (measured in the dev build); Effects, Detail and Optics
 (increments 8–10) will make it scroll.
 
-**Proposed:** each section heading becomes a disclosure triangle ("points inward from the
+**Applied:** each section heading is a disclosure triangle ("points inward from the
 leading edge when its content is hidden"), all sections open by default, and each
 section's open or closed state remembered across launches. DES-053 concerns a state
 changing under the user, not a section the user folds, so it is not affected.
+
+### F-19 — Two keyboard defects found while applying F-11–F-16 (applied)
+
+Found in the dev build, not by reading:
+- **E and C never fired from the grid or filmstrip.** The collection view handled P/U/X,
+  Z and I itself and passed every other letter to `NSCollectionView`, which consumed it
+  as type-select, so a bare menu key equivalent never reached the menu. Now an unhandled
+  bare letter is offered to the menu bar first, and the collection view's own Z and I
+  forwarders are gone, leaving one path per command.
+- **⌘A, ⌘C, ⌘X and ⌘V could not edit a value field's text.** The app replaces the
+  pasteboard commands: Select All selected photos, Copy copied photos, and Cut and
+  Paste did not exist. Now, while a value field is being edited, all four act on its
+  text through the responder chain (DES-093).
+
+Also measured: a bare letter typed into a focused value field goes into the field. It does
+not fire its menu command.
 
 ### F-17 — The RAW temperature slider is nonlinear with no scale marks (proposed, low)
 

@@ -2,8 +2,11 @@
 
 ## Status
 
-Accepted. Implemented as APP-012: Copy writes one `public.fileURL` per selected
-asset in display order and reads no media bytes. Extended 2026-09-13 to Open /
+Accepted; superseded in part by ADR 0037. Copy still writes one `public.fileURL` per
+photo in display order, but the file is the one ADR 0037's hand-off chooses: the original,
+unread, for an unedited still that is not a RAW or an untrimmed video, and a prepared
+full-size file for an edited photo or a RAW. The rest of this record describes the
+original decision for originals. Extended 2026-09-13 to Open /
 Open With (APP-035) and Share (APP-036), which hand the same file URLs to another
 process under the same rule.
 

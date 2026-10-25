@@ -135,7 +135,8 @@ struct CatalogWindowViewModelMediaItemMenuTests {
 
 @MainActor
 private func makeMenuModel(workspace: MenuRecordingWorkspace) -> CatalogWindowViewModel {
-    CatalogWindowViewModel(
+    // Open, Open With, Share and Copy are hand-offs, consumed by the hand-off lane.
+    let model = CatalogWindowViewModel(
         catalogStore: CatalogStore(location: .inMemory),
         startsStallMonitor: false,
         startsEnrichment: false,
@@ -144,6 +145,8 @@ private func makeMenuModel(workspace: MenuRecordingWorkspace) -> CatalogWindowVi
         workspace: workspace,
         trashFiles: .refusing
     )
+    model.startHandOff(store: model.catalogStore)
+    return model
 }
 
 private func makeIDs(count: Int) -> [MediaAssetID] {

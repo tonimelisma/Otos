@@ -159,7 +159,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var fullResolutionSkipLoggedID: MediaAssetID?
     /// Loupe info overlay (APP-041): session-only toggle and the facts it shows.
     var showsLoupeInfo = false
-    /// The trailing edit panel (View ▸ Show Edit Panel, E). Edit state below is
+    /// The trailing edit panel (View ▸ Show Edit, E). Edit state below is
     /// resolved only while it is shown (ADR 0036).
     var isEditPanelPresented = false
     /// The one still photo the panel edits; nil disables its controls.
@@ -172,6 +172,37 @@ final class CatalogWindowViewModel {
     var editLivePreview: EditLivePreview?
     /// The open target's facts; nil until it has been opened (the controls wait for them).
     var editPhotoFacts: EditPhotoFacts?
+    /// The hand-off being prepared, for the status bar; nil when none is.
+    var handOffProgress: HandOffProgress?
+    var handOffAlertMessage: String?
+    @ObservationIgnored let handOffPreparer: HandOffPreparer
+    @ObservationIgnored let handOffStream: AsyncStream<HandOffRequest>
+    @ObservationIgnored let handOffContinuation: AsyncStream<HandOffRequest>.Continuation
+    @ObservationIgnored var handOffTask: Task<Void, Never>?
+    @ObservationIgnored var handOffRequested: UInt64 = 0
+    @ObservationIgnored var handOffCancelledThrough: UInt64 = 0
+    @ObservationIgnored var submittedHandOffCount = 0
+    @ObservationIgnored var handledHandOffCount = 0
+    /// File ▸ Export…'s remembered choices; set in `init` from the injected `preferences`.
+    var exportSettings: ExportSettings
+    /// The export sheet, while it is shown.
+    var exportSheet: ExportSheet?
+    /// The export being written, for the status bar; nil when none is.
+    var exportProgress: ExportProgress?
+    /// An export that did not do everything asked, for its alert.
+    var exportReport: ExportReport?
+    @ObservationIgnored let exportStream: AsyncStream<ExportRequest>
+    @ObservationIgnored let exportContinuation: AsyncStream<ExportRequest>.Continuation
+    @ObservationIgnored var exportTask: Task<Void, Never>?
+    @ObservationIgnored var exportRequested: UInt64 = 0
+    @ObservationIgnored var exportCancelledThrough: UInt64 = 0
+    @ObservationIgnored var submittedExportCount = 0
+    @ObservationIgnored var handledExportCount = 0
+    /// The latest request for the loupe's player to show its trim UI.
+    var videoTrimCommand: VideoTrimCommand?
+    @ObservationIgnored var videoTrimGeneration: UInt64 = 0
+    /// An edit value field holds the keyboard: the Edit menu's text commands act on it.
+    var isEnteringEditValue = false
     /// The white balance picker is armed: the next loupe click picks a neutral point.
     var isPickingNeutral = false
     /// The crop tool is on: the loupe shows the whole frame with the crop over it.
@@ -434,6 +465,9 @@ final class CatalogWindowViewModel {
         let (editCommandStream, editCommandContinuation) = AsyncStream<EditLaneCommand>.makeStream(
             bufferingPolicy: .unbounded
         )
+        // Every hand-off is handed over, in order.
+        let (handOffStream, handOffContinuation) = AsyncStream<HandOffRequest>.makeStream(bufferingPolicy: .unbounded)
+        let (exportStream, exportContinuation) = AsyncStream<ExportRequest>.makeStream(bufferingPolicy: .unbounded)
         self.preferencesDomain = preferencesDomain
         preferences = preferencesDomain.makeDefaults()
         let storedColumns = preferences.integer(forKey: Self.gridColumnCountDefaultsKey)
@@ -448,6 +482,7 @@ final class CatalogWindowViewModel {
             (storedDismissedIdentities ?? "").split(separator: "\n").map { DeviceIdentity(rawValue: String($0)) }
         )
         importPreferences = ImportPreferencesStore.load(defaults: preferences)
+        exportSettings = ExportSettingsStore.load(defaults: preferences)
         self.catalogStore = catalogStore
         self.catalogProjection = catalogProjection
         mediaTileDetailReader = MediaTileDetailReader(store: catalogStore)
@@ -477,6 +512,10 @@ final class CatalogWindowViewModel {
             }
         )
         self.materializationCoordinator = materializationCoordinator
+        handOffPreparer = HandOffPreparer(
+            directory: catalogStore.handOffDirectory,
+            materialization: materializationCoordinator
+        )
         mediaTrashCoordinator = MediaTrashCoordinator(
             store: catalogStore,
             materializationRequester: materializationCoordinator,
@@ -528,6 +567,10 @@ final class CatalogWindowViewModel {
         self.editRenderContinuation = editRenderContinuation
         self.editCommandStream = editCommandStream
         self.editCommandContinuation = editCommandContinuation
+        self.handOffStream = handOffStream
+        self.handOffContinuation = handOffContinuation
+        self.exportStream = exportStream
+        self.exportContinuation = exportContinuation
         // The restored query is the first one Projection sees (APP-043), so launch never
         // flashes the default collection before the user's own.
         if let place = Self.loadBrowserPlace(from: preferences) {
@@ -552,6 +595,8 @@ final class CatalogWindowViewModel {
         editTargetTask?.cancel()
         editRenderTask?.cancel()
         editCommandTask?.cancel()
+        handOffTask?.cancel()
+        exportTask?.cancel()
         mediaTrashTask?.cancel()
         mediaTrashEventTask?.cancel()
         mediaTrashIntentTask?.cancel()
@@ -585,6 +630,8 @@ final class CatalogWindowViewModel {
         mediaChoiceContinuation.finish()
         editRenderContinuation.finish()
         editCommandContinuation.finish()
+        handOffContinuation.finish()
+        exportContinuation.finish()
         viewportContinuation.finish()
         // The owners below must be told to stop or their own loops would keep them, and
         // the store, alive past this window: the enrichment supervisor strongly retains
@@ -650,6 +697,8 @@ extension CatalogWindowViewModel {
         startMutationForwarding(store: store, coordinator: enrichmentCoordinator)
         startMediaChoiceForwarding(store: store)
         startEditing(store: store)
+        startHandOff(store: store)
+        startExport()
         startStateConsumption(
             projection: projection,
             store: store,

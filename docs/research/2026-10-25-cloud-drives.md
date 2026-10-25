@@ -115,3 +115,24 @@ Capture One users report OneDrive downloading every image [E,
   4. Evict and re-download, then re-run `stat`.
 - The OneDrive domain must start first. While it reports "unable to startup" and
   "disconnected", remote changes are most likely not arriving on this Mac [U].
+
+## Measured: remote changes on OneDrive (experiment R2, 2026-10-25)
+
+FSEvents on this Mac while the owner changed a test file on OneDrive's side. Round 1
+started with the file downloaded; round 2 with it cloud-only:
+
+| Remote change | Local event | Inode | Size | Birth time | mtime |
+| --- | --- | --- | --- | --- | --- |
+| Rename file | `renamed` pair | kept | kept | kept | **changed, +480 s**, 5 s after the rename (to the rename time) |
+| Move file to another folder | `renamed` pair | kept | kept | kept | kept |
+| Rename folder | `renamed` pair (dir) | kept | — | kept | changed (directory) |
+| Evict (agent, `evictUbiquitousItem`) | — | kept | kept | kept | kept |
+| Round 2: rename the cloud-only file | OneDrive **downloaded it**, then a `renamed` pair | kept | kept | kept | kept |
+| Round 2: move it | `renamed` pair | kept | kept | kept | **changed, +183 s** |
+
+- **For the move witness (ADR 0034):** it must be inode + size + birth time,
+  not mtime, because remote renames and moves rewrite mtime unpredictably.
+- A remote rename of a cloud-only file downloaded it (n=1).
+- **For enrichment:** a remotely renamed file's `(size, mtime)` signature changes, so
+  it re-queues for enrichment. When the file is cloud-only, that means downloading it
+  again. ADR 0034 says how a re-keyed row keeps its enrichment stamp.

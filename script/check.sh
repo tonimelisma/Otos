@@ -130,29 +130,44 @@ last_cpu_change_at="$(date +%s)"
 cpu_at_mark=0
 last_cpu=""
 
-# Total CPU seconds consumed by this run's xcodebuild and test host.
+# Total CPU seconds consumed by this run's whole process tree: xcodebuild, the build
+# service and every compiler and linker it starts, and the test host. The build's
+# CPU is spent in short-lived `swift-frontend` children of `SWBBuildService`, two
+# levels below xcodebuild, and `ps -o time=` never includes a process's children.
+# Counting xcodebuild and the test host alone therefore read 3 CPU-s across a
+# 10-minute build under load and killed it as deadlocked. `ps` also forgets a
+# process once it exits, so each process's highest reading is kept in a ledger for
+# the run, and the total is the sum over every process this run has seen: it only
+# grows, and a compiler that lived between two samples still counts for what the
+# sample before its exit saw.
 # macOS `ps -o time=` prints [[dd-]hh:]mm:ss.cc — a *fractional* field. Bash
 # arithmetic is integer-only, so summing it in the shell failed on every sample
 # ("10.09: syntax error"), left this returning a constant, and turned the liveness
 # check into a 420 s kill timer that would fire on a healthy run: the precise
 # failure mode measuring CPU exists to avoid. The whole sum stays in awk.
+CPU_LEDGER="$(mktemp)"
 consumed_cpu() {
   local pids
-  pids="$(own_pids_matching "Xcode/Agents/xctest|/xcodebuild " | tr '\n' ' ')"
-  if [[ -z "${pids// /}" ]]; then
-    echo 0
-    return
-  fi
-  # shellcheck disable=SC2086
+  pids="$(descendants $$ | tr '\n' ',')"
+  pids="${pids%,}"
   # The day field is days, not another sexagesimal digit: splitting on [:-] alone
   # would score `2-03:04:05` as 2*60 rather than 2*86400.
-  ps -o time= -p ${pids// /,} 2>/dev/null \
-    | awk '{ t = $0; gsub(/ /, "", t); d = 0
-             if (index(t, "-")) { split(t, p, "-"); d = p[1]; t = p[2] }
-             n = split(t, q, ":"); s = 0
-             for (i = 1; i <= n; i++) s = s * 60 + q[i]
-             total += d * 86400 + s }
-           END { printf "%d\n", total }'
+  { [[ -n "$pids" ]] && ps -o pid=,time= -p "$pids" 2>/dev/null; } \
+    | awk -v ledger="$CPU_LEDGER" '
+        function seconds(t,   d, p, q, n, i, s) {
+          d = 0
+          if (index(t, "-")) { split(t, p, "-"); d = p[1]; t = p[2] }
+          n = split(t, q, ":"); s = 0
+          for (i = 1; i <= n; i++) s = s * 60 + q[i]
+          return d * 86400 + s
+        }
+        BEGIN { while ((getline line < ledger) > 0) { split(line, f, " "); seen[f[1]] = f[2] } close(ledger) }
+        { v = seconds($2); if (v > seen[$1]) seen[$1] = v }
+        END {
+          printf "" > ledger
+          for (p in seen) { total += seen[p]; print p, seen[p] > ledger }
+          printf "%d\n", total
+        }'
 }
 
 # The parked tests, by name, with the await each one is parked in. `sample` shows
@@ -260,7 +275,7 @@ while kill -0 "$verify_pid" 2>/dev/null; do
     echo "check: DEADLOCKED — consumed under ${MIN_CPU_SECONDS_PER_MINUTE} CPU-s/min for ${STALL_SECONDS}s while still running. Killed so this reports instead of hanging." >&2
     cleanup_children
     cat "$VERIFY_LOG" 2>/dev/null
-    rm -f "$VERIFY_LOG"
+    rm -f "$VERIFY_LOG" "$CPU_LEDGER"
     exit 1
   fi
 done
@@ -268,7 +283,7 @@ done
 wait "$verify_pid"
 verify_status=$?
 cat "$VERIFY_LOG"
-rm -f "$VERIFY_LOG"
+rm -f "$VERIFY_LOG" "$CPU_LEDGER"
 
 if [[ "$verify_status" == "0" ]]; then
   echo "check: PASSED — evidence is valid only for the tree as it stands right now"

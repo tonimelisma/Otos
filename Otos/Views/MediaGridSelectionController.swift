@@ -171,7 +171,7 @@ extension MediaGridViewController {
         )
         let originFrame = collectionView.layoutAttributesForItem(at: hit)?.frame ?? .zero
         let items: [NSDraggingItem] = ids.map { id in
-            let item = NSDraggingItem(pasteboardWriter: id.fileURL as NSURL)
+            let item = NSDraggingItem(pasteboardWriter: selectionHandlers.dragWriter(id))
             if let indexPath = dataSource.indexPath(for: id),
                let tile = collectionView.item(at: indexPath)?.view
             {

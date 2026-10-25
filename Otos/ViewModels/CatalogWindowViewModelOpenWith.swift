@@ -84,31 +84,19 @@ extension CatalogWindowViewModel {
 
     /// ⌘E. Every target opens in its own default app; one launch-services call per app.
     func openTargetsInDefaultApplication() {
-        let targets = currentTargetFileURLs
-        let model = openWithMenu
-        guard !targets.isEmpty, model.canOpen else { return }
-        let groups = model.targetsByDefaultApplication(order: targets)
-        if model.targetsWithoutDefault > 0 {
-            OtosLog.ui.notice(
-                "op=ui.open.noDefaultApplication count=\(model.targetsWithoutDefault, privacy: .public)"
-            )
-        }
-        for group in groups {
-            open(group.targets, with: group.application, origin: "default")
-        }
+        guard !currentTargetFileURLs.isEmpty, openWithMenu.canOpen else { return }
+        handOff(.openDefault)
     }
 
     /// Open With ▸ item. The whole target list goes to that app in one call.
     func openTargets(with application: OpenWithApplication) {
-        let targets = currentTargetFileURLs
-        guard !targets.isEmpty else { return }
-        open(targets, with: application.url, origin: "openWith")
+        guard !currentTargetFileURLs.isEmpty else { return }
+        handOff(.openWith(application.url))
     }
 
     /// Open With ▸ Other…: an application chooser rooted at /Applications.
     func openTargetsWithChosenApplication() {
-        let targets = currentTargetFileURLs
-        guard !targets.isEmpty else { return }
+        guard !currentTargetFileURLs.isEmpty else { return }
         let panel = NSOpenPanel()
         panel.title = "Choose Application"
         panel.prompt = "Open"
@@ -118,7 +106,7 @@ extension CatalogWindowViewModel {
         panel.canChooseDirectories = false
         panel.begin { [weak self] response in
             guard response == .OK, let applicationURL = panel.url, let self else { return }
-            open(targets, with: applicationURL, origin: "other")
+            handOff(.openWith(applicationURL))
         }
     }
 
@@ -126,7 +114,7 @@ extension CatalogWindowViewModel {
     /// workspace wrapper is not main-actor isolated). Hand-offs run in submission order:
     /// each waits for the one before it, so `openTask` is the newest and awaiting it
     /// awaits them all.
-    private func open(_ targets: [URL], with applicationURL: URL, origin: String) {
+    func open(_ targets: [URL], with applicationURL: URL, origin: String) {
         let workspace = workspace
         let appID = Bundle(url: applicationURL)?.bundleIdentifier ?? applicationURL.lastPathComponent
         openTask = Task { [previous = openTask] in

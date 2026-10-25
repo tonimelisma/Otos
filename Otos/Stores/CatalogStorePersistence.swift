@@ -952,7 +952,7 @@ extension CatalogStore {
     /// records this file's identifier, size and creation time (whole seconds); and that
     /// row's own path no longer exists on disk. The witness is evidence for this one
     /// write, never an identity — a path stays the asset. Modification time is left out
-    /// on purpose: OneDrive rewrites it on remote renames and moves (plan 0108, R2). A
+    /// on purpose: OneDrive rewrites it on remote renames and moves (research `2026-10-25-cloud-drives.md`, R2). A
     /// copy has a new identifier, and a file still present at its old path is not moved,
     /// so neither is paired; anything ambiguous pairs nothing and stays today's purge.
     static func movedRowWitnessed(

@@ -65,6 +65,12 @@ nonisolated enum EditRenderRequest: Sendable {
     case close
 }
 
+/// A request for the loupe's player to begin trimming `id`, applied once per generation.
+nonisolated struct VideoTrimCommand: Equatable, Sendable {
+    let id: MediaAssetID
+    let generation: UInt64
+}
+
 nonisolated enum EditCommandOrigin: String, Sendable {
     case user
     case undo
@@ -89,7 +95,7 @@ nonisolated enum EditLaneCommand: Sendable {
 extension CatalogWindowViewModel {
     // MARK: - Panel
 
-    /// View ▸ Show / Hide Edit Panel (E) and the toolbar button.
+    /// View ▸ Show Edit / Hide Edit (E) and the toolbar button.
     func toggleEditPanel() {
         isEditPanelPresented.toggle()
         OtosLog.ui.noticeOperation("edit.panel", phase: isEditPanelPresented ? "shown" : "hidden")
@@ -102,6 +108,57 @@ extension CatalogWindowViewModel {
             editTargetTask = nil
             clearEditTarget()
         }
+    }
+
+    /// Photo ▸ Trim Video… (⌘T): asks the loupe's player to show `AVPlayerView`'s trim UI.
+    func trimVideo() {
+        guard canTrimVideo, let id = loupeVideoState?.id else { return }
+        videoTrimGeneration &+= 1
+        videoTrimCommand = VideoTrimCommand(id: id, generation: videoTrimGeneration)
+        OtosLog.ui.noticeOperation("edit.trim", phase: "requested", fields: ["id": id.relativePath.rawValue])
+    }
+
+    var canTrimVideo: Bool {
+        viewMode == .loupe && loupeVideoState != nil && loupeVideoState?.id == focusedAssetID
+    }
+
+    /// The trim UI closed with Trim: the range it left on the player is saved as one step.
+    /// Cancel restores nothing to save, so it never reaches here.
+    func finishTrim(id: MediaAssetID) {
+        guard let state = loupeVideoState, state.id == id else { return }
+        let trim = state.currentTrim
+        var recipe = state.recipe
+        recipe.trimStart = trim.start
+        recipe.trimEnd = trim.end
+        guard recipe != state.recipe else { return }
+        enqueueEdit(EditCommand(id: id, recipe: recipe, actionName: "Trim", origin: .user))
+        OtosLog.ui.noticeOperation("edit.trim", phase: "submitted", fields: [
+            "id": id.relativePath.rawValue,
+            "start": trim.start.map { String(format: "%.2f", $0) } ?? "none",
+            "end": trim.end.map { String(format: "%.2f", $0) } ?? "none",
+        ])
+    }
+
+    /// The Optics section's Lens Correction checkbox.
+    func setLensCorrection(_ enabled: Bool) {
+        guard canEdit, editDraft.lensCorrection != enabled else { return }
+        editDraft.lensCorrection = enabled
+        requestLiveEditRender()
+        commitEdit(actionName: "Lens Correction")
+    }
+
+    /// A value field in the panel gained or lost the keyboard.
+    func setEnteringEditValue(_ entering: Bool) {
+        if isEnteringEditValue != entering {
+            isEnteringEditValue = entering
+        }
+    }
+
+    /// Text owns the keyboard: an edit value is being typed, or a sheet with fields is up.
+    /// Edit ▸ Cut, Copy, Paste and Select All then act on text through the responder
+    /// chain, never on photos behind the sheet.
+    var textHoldsKeyboard: Bool {
+        isEnteringEditValue || exportSheet != nil
     }
 
     /// The Color section's white balance picker: armed, the next click on the loupe image
@@ -372,6 +429,9 @@ extension CatalogWindowViewModel {
                     continue
                 }
                 self?.applySavedEdit(command, saved: saved, previous: result.previous?.recipe ?? .neutral)
+                // A video's trim changes nothing the catalog renders (the store marked its
+                // products current).
+                guard !result.isVideo else { continue }
                 guard let products = await pipeline.products(command.id, saved: saved, result: result) else {
                     continue
                 }
@@ -427,6 +487,9 @@ extension CatalogWindowViewModel {
                 editSavedRecipe = saved.recipe
                 editDraft = saved.recipe
             }
+        }
+        if loupeVideoState?.id == command.id {
+            loupeVideoState?.applyTrim(saved.recipe)
         }
         if var live = editLivePreview, live.id == command.id, live.recipe == saved.recipe {
             live.revision = saved.revision
@@ -520,7 +583,7 @@ nonisolated struct EditPipeline: Sendable {
     /// facts, or nil when it cannot be read.
     @concurrent
     func open(_ id: MediaAssetID, sourceSize: Int64?) async -> EditPhotoFacts? {
-        guard await makeLocal(id, sourceSize: sourceSize) else {
+        guard await MaterializationCoordinator.makeLocal(id, sourceSize: sourceSize, via: materialization) else {
             return nil
         }
         do {
@@ -541,7 +604,7 @@ nonisolated struct EditPipeline: Sendable {
         recipe: EditRecipe,
         sourceSize: Int64?
     ) async -> (image: CGImage, facts: EditPhotoFacts)? {
-        guard await makeLocal(id, sourceSize: sourceSize) else {
+        guard await MaterializationCoordinator.makeLocal(id, sourceSize: sourceSize, via: materialization) else {
             return nil
         }
         do {
@@ -573,7 +636,7 @@ nonisolated struct EditPipeline: Sendable {
                 ])
                 return nil
             }
-            guard await makeLocal(id, sourceSize: result.sourceSize) else {
+            guard await MaterializationCoordinator.makeLocal(id, sourceSize: result.sourceSize, via: materialization) else {
                 await handToEnrichment(id)
                 return nil
             }
@@ -606,7 +669,7 @@ nonisolated struct EditPipeline: Sendable {
         shown: EditRecipe,
         sourceSize: Int64?
     ) async -> (temperature: Double, tint: Double)? {
-        guard await makeLocal(id, sourceSize: sourceSize) else {
+        guard await MaterializationCoordinator.makeLocal(id, sourceSize: sourceSize, via: materialization) else {
             return nil
         }
         do {
@@ -627,29 +690,5 @@ nonisolated struct EditPipeline: Sendable {
                 "id": id.relativePath.rawValue, "error": String(describing: error),
             ])
         }
-    }
-
-    /// Makes the original's bytes local before a render reads them (ADR 0008): an
-    /// interactive download when it is dataless, then the check again right before the read.
-    private func makeLocal(_ id: MediaAssetID, sourceSize: Int64?) async -> Bool {
-        let url = id.fileURL
-        if FileMaterialization.status(of: url) == .dataless, let materialization {
-            let result = await materialization.materialize(MaterializationCoordinator.Request(
-                id: id, sourceSize: sourceSize, isVideo: false, priority: .interactive
-            ))
-            guard result.isMaterialized else {
-                OtosLog.mediaIO.noticeOperation("edit.materialize", phase: "notMaterialized", fields: [
-                    "id": id.relativePath.rawValue, "outcome": String(describing: result.outcome),
-                ])
-                return false
-            }
-        }
-        guard FileMaterialization.status(of: url) == .materialized else {
-            OtosLog.mediaIO.noticeOperation("edit.materialize", phase: "unavailable", fields: [
-                "id": id.relativePath.rawValue,
-            ])
-            return false
-        }
-        return true
     }
 }

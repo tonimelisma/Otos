@@ -132,7 +132,7 @@ actor LiveEditRenderer {
     }
 
     private func developed(_ url: URL, recipe: EditRecipe) throws -> CIImage {
-        try ImageRenderer.applyingGeometry(recipe, developedImage(url, recipe: recipe))
+        try ImageRenderer.applyingEffects(recipe, ImageRenderer.applyingGeometry(recipe, developedImage(url, recipe: recipe)))
     }
 
     /// The open photo developed with `recipe`'s adjustments but not its geometry, at the
@@ -161,6 +161,12 @@ actor LiveEditRenderer {
             var resolved = recipe
             resolved.temperature = recipe.temperature ?? photo.facts.asShotTemperature
             resolved.tint = recipe.tint ?? photo.facts.asShotTint
+            resolved.sharpening = recipe.sharpening ?? photo.facts.rawDetail[.sharpening]
+            resolved.noiseReduction = recipe.noiseReduction ?? photo.facts.rawDetail[.noiseReduction]
+            resolved.colorNoiseReduction = recipe.colorNoiseReduction ?? photo.facts.rawDetail[.colorNoiseReduction]
+            resolved.detail = recipe.detail ?? photo.facts.rawDetail[.detail]
+            resolved.moireReduction = recipe.moireReduction ?? photo.facts.rawDetail[.moireReduction]
+            resolved.lensCorrection = recipe.lensCorrection ?? photo.facts.lensCorrectionDefault
             let scale = ImageRenderer.rawScaleFactor(filter, outputLongEdge: previewLongEdge, recipe: recipe)
             filter.scaleFactor = scale
             let expectedLongEdge = Double(scale) * Double(max(photo.nativeSize.width, photo.nativeSize.height))
@@ -190,11 +196,7 @@ actor LiveEditRenderer {
                 url: url,
                 source: .raw(filter),
                 nativeSize: ImageRenderer.orientedNativeSize(filter),
-                facts: EditPhotoFacts(
-                    isRAW: true,
-                    asShotTemperature: Double(filter.neutralTemperature),
-                    asShotTint: Double(filter.neutralTint)
-                )
+                facts: Self.rawFacts(filter)
             )
         } else {
             let decoded = try ImageRenderer.decodeImage(url, outputLongEdge: longEdge, recipe: .neutral)
@@ -210,6 +212,34 @@ actor LiveEditRenderer {
         }
         open = photo
         return photo
+    }
+
+    /// What a just-opened RAW's filter says before any recipe touches it: its as-shot white
+    /// balance, the Detail amounts its decoder supports, and its lens correction default.
+    private static func rawFacts(_ filter: CIRAWFilter) -> EditPhotoFacts {
+        var detail: [EditControl: Double] = [:]
+        if filter.isSharpnessSupported {
+            detail[.sharpening] = Double(filter.sharpnessAmount) * 100
+        }
+        if filter.isLuminanceNoiseReductionSupported {
+            detail[.noiseReduction] = Double(filter.luminanceNoiseReductionAmount) * 100
+        }
+        if filter.isColorNoiseReductionSupported {
+            detail[.colorNoiseReduction] = Double(filter.colorNoiseReductionAmount) * 100
+        }
+        if filter.isDetailSupported {
+            detail[.detail] = Double(filter.detailAmount) / 3 * 100
+        }
+        if filter.isMoireReductionSupported {
+            detail[.moireReduction] = Double(filter.moireReductionAmount) * 100
+        }
+        return EditPhotoFacts(
+            isRAW: true,
+            asShotTemperature: Double(filter.neutralTemperature),
+            asShotTint: Double(filter.neutralTint),
+            rawDetail: detail,
+            lensCorrectionDefault: filter.isLensCorrectionSupported ? filter.isLensCorrectionEnabled : nil
+        )
     }
 
     /// The mean color of a 5-pixel square around `point` (the image's own coordinates,

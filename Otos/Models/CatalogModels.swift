@@ -273,7 +273,7 @@ nonisolated struct DeviceIdentity: Hashable, Comparable, Sendable, CustomStringC
 /// and no SQLite rowid: the path is the product identity, while storage keys stay
 /// private to persistence.
 /// How long a card or camera may go unseen before Otos forgets it (owner decision
-/// 2026-10-25, plan 0108; ADR 0013). A product rule, not a stand-in for a fact: no
+/// 2026-10-25, ADR 0013). A product rule, not a stand-in for a fact: no
 /// report can say that an absent device will never return.
 nonisolated enum RemovableSourceRetention {
     static let unseenPeriod: TimeInterval = 90 * 24 * 60 * 60

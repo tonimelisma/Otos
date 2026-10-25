@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-/// One photo's current edit (plan 0108 decision 1): the values of every control the
+/// One photo's current edit (ADR 0036): the values of every control the
 /// edit panel offers, applied on top of the original when it is rendered. The original
 /// is never changed (decision 2). A value at its neutral point changes nothing, and a
 /// recipe whose every value is neutral renders exactly as the unedited photo.
@@ -35,6 +35,30 @@ nonisolated struct EditRecipe: Codable, Equatable, Hashable, Sendable {
     /// −100…100 through `CIColorControls` saturation.
     var saturation: Double = 0
 
+    // Effects: a vignette on the edited photo, after its crop.
+    /// −100…100 through `CIVignetteEffect`; negative darkens the corners, as in Lightroom.
+    var vignette: Double = 0
+    /// 0…100: how far from the center the vignette begins.
+    var vignetteMidpoint: Double = 50
+    /// 0…100: how gradually it falls off.
+    var vignetteFeather: Double = 50
+
+    /// Detail. Nil is the default: a RAW decoder's own amount, none for any other still.
+    /// 0…100: `CIRAWFilter.sharpnessAmount` (×1/100), else `CISharpenLuminance`.
+    var sharpening: Double?
+    /// 0…100: `CIRAWFilter.luminanceNoiseReductionAmount` (×1/100), else `CINoiseReduction`.
+    var noiseReduction: Double?
+    /// 0…100, RAWs whose decoder supports it: `colorNoiseReductionAmount`.
+    var colorNoiseReduction: Double?
+    /// 0…100, RAWs whose decoder supports it: `detailAmount` (0…3).
+    var detail: Double?
+    /// 0…100, RAWs whose decoder supports it: `moireReductionAmount`.
+    var moireReduction: Double?
+
+    /// Optics.
+    /// `CIRAWFilter.isLensCorrectionEnabled`; nil is the decoder's default.
+    var lensCorrection: Bool?
+
     /// Geometry, applied last and in this order: quarter turns, then flips, both in the
     /// displayed frame; then straighten; then crop.
     /// Clockwise quarter turns, 0…3.
@@ -48,6 +72,12 @@ nonisolated struct EditRecipe: Codable, Equatable, Hashable, Sendable {
     var straighten: Double = 0
     /// The kept part of the straightened frame; nil keeps all of it.
     var crop: EditCrop?
+
+    /// Video.
+    /// Seconds from the start of a video where its trimmed range begins; nil is its start.
+    var trimStart: Double?
+    /// Seconds from the start of a video where its trimmed range ends; nil is its end.
+    var trimEnd: Double?
 
     static let neutral = EditRecipe()
 
@@ -64,11 +94,22 @@ nonisolated struct EditRecipe: Codable, Equatable, Hashable, Sendable {
         tint: Double? = nil,
         vibrance: Double = 0,
         saturation: Double = 0,
+        vignette: Double = 0,
+        vignetteMidpoint: Double = 50,
+        vignetteFeather: Double = 50,
+        sharpening: Double? = nil,
+        noiseReduction: Double? = nil,
+        colorNoiseReduction: Double? = nil,
+        detail: Double? = nil,
+        moireReduction: Double? = nil,
+        lensCorrection: Bool? = nil,
         quarterTurns: Int = 0,
         flipHorizontal: Bool = false,
         flipVertical: Bool = false,
         straighten: Double = 0,
-        crop: EditCrop? = nil
+        crop: EditCrop? = nil,
+        trimStart: Double? = nil,
+        trimEnd: Double? = nil
     ) {
         self.exposure = exposure
         self.contrast = contrast
@@ -78,11 +119,22 @@ nonisolated struct EditRecipe: Codable, Equatable, Hashable, Sendable {
         self.tint = tint
         self.vibrance = vibrance
         self.saturation = saturation
+        self.vignette = vignette
+        self.vignetteMidpoint = vignetteMidpoint
+        self.vignetteFeather = vignetteFeather
+        self.sharpening = sharpening
+        self.noiseReduction = noiseReduction
+        self.colorNoiseReduction = colorNoiseReduction
+        self.detail = detail
+        self.moireReduction = moireReduction
+        self.lensCorrection = lensCorrection
         self.quarterTurns = quarterTurns
         self.flipHorizontal = flipHorizontal
         self.flipVertical = flipVertical
         self.straighten = straighten
         self.crop = crop
+        self.trimStart = trimStart
+        self.trimEnd = trimEnd
     }
 
     init(from decoder: any Decoder) throws {
@@ -95,11 +147,22 @@ nonisolated struct EditRecipe: Codable, Equatable, Hashable, Sendable {
         tint = try container.decodeIfPresent(Double.self, forKey: .tint)
         vibrance = try container.decodeIfPresent(Double.self, forKey: .vibrance) ?? 0
         saturation = try container.decodeIfPresent(Double.self, forKey: .saturation) ?? 0
+        vignette = try container.decodeIfPresent(Double.self, forKey: .vignette) ?? 0
+        vignetteMidpoint = try container.decodeIfPresent(Double.self, forKey: .vignetteMidpoint) ?? 50
+        vignetteFeather = try container.decodeIfPresent(Double.self, forKey: .vignetteFeather) ?? 50
+        sharpening = try container.decodeIfPresent(Double.self, forKey: .sharpening)
+        noiseReduction = try container.decodeIfPresent(Double.self, forKey: .noiseReduction)
+        colorNoiseReduction = try container.decodeIfPresent(Double.self, forKey: .colorNoiseReduction)
+        detail = try container.decodeIfPresent(Double.self, forKey: .detail)
+        moireReduction = try container.decodeIfPresent(Double.self, forKey: .moireReduction)
+        lensCorrection = try container.decodeIfPresent(Bool.self, forKey: .lensCorrection)
         quarterTurns = try container.decodeIfPresent(Int.self, forKey: .quarterTurns) ?? 0
         flipHorizontal = try container.decodeIfPresent(Bool.self, forKey: .flipHorizontal) ?? false
         flipVertical = try container.decodeIfPresent(Bool.self, forKey: .flipVertical) ?? false
         straighten = try container.decodeIfPresent(Double.self, forKey: .straighten) ?? 0
         crop = try container.decodeIfPresent(EditCrop.self, forKey: .crop)
+        trimStart = try container.decodeIfPresent(Double.self, forKey: .trimStart)
+        trimEnd = try container.decodeIfPresent(Double.self, forKey: .trimEnd)
     }
 }
 
@@ -403,8 +466,37 @@ nonisolated struct EditPhotoFacts: Equatable, Sendable {
     let isRAW: Bool
     let asShotTemperature: Double?
     let asShotTint: Double?
+    /// For a RAW, the Detail controls its decoder supports, each with the decoder's own
+    /// amount in slider units (0…100): what a nil recipe value stands for.
+    var rawDetail: [EditControl: Double] = [:]
+    /// For a RAW with a lens profile, whether its decoder corrects the lens by default; nil
+    /// when the photo cannot be corrected.
+    var lensCorrectionDefault: Bool?
 
     static let still = EditPhotoFacts(isRAW: false, asShotTemperature: nil, asShotTint: nil)
+}
+
+/// A photo or video with its saved edit, as a hand-off (ADR 0037) or an export (ADR 0038)
+/// writes it: everything either needs to choose and produce the file.
+nonisolated struct EditedMediaItem: Equatable, Sendable {
+    let id: MediaAssetID
+    let isVideo: Bool
+    /// The saved edit; neutral when it was never edited.
+    let recipe: EditRecipe
+    let sourceSize: Int64?
+}
+
+extension EditedMediaItem {
+    /// The item as its catalog row describes it. A target with no row (gone since it was
+    /// chosen) is its path as it is, unedited, which is what Finder would hand over.
+    nonisolated init(id: MediaAssetID, detail: MediaTileDetail?) {
+        self.init(
+            id: id,
+            isVideo: detail?.bestKind == .video,
+            recipe: detail?.editRecipe ?? .neutral,
+            sourceSize: detail?.byteSize
+        )
+    }
 }
 
 /// A recipe as the catalog holds it: the values and the revision they were saved as.
@@ -426,6 +518,9 @@ nonisolated struct EditRecipeMutationResult: Equatable, Sendable {
     let saved: StoredEditRecipe?
     var sourceSize: Int64?
     var sourceMTimeSeconds: Int?
+    /// The asset is a video: its thumbnail and poster do not depend on its edit (a trim), so
+    /// the save already marked them current and nothing is rendered for it.
+    var isVideo = false
 }
 
 /// A thumbnail and preview rendered from one saved recipe, staged for the store to
@@ -439,13 +534,16 @@ nonisolated struct RenderedEditProducts: Equatable, Sendable {
     let preview: StagedDerivedImage
 }
 
-/// The panel's sections, in Lightroom desktop's order (plan 0108).
+/// The panel's sections, in Lightroom desktop's order (ADR 0036).
 nonisolated enum EditSection: String, CaseIterable, Identifiable, Sendable {
     /// The crop tool, above the sections as in Lightroom desktop: crop, straighten,
     /// quarter turns and flips.
     case crop
     case light
     case color
+    case effects
+    case detail
+    case optics
 
     var id: String {
         rawValue
@@ -456,6 +554,9 @@ nonisolated enum EditSection: String, CaseIterable, Identifiable, Sendable {
         case .crop: "Crop"
         case .light: "Light"
         case .color: "Color"
+        case .effects: "Effects"
+        case .detail: "Detail"
+        case .optics: "Optics"
         }
     }
 
@@ -466,6 +567,15 @@ nonisolated enum EditSection: String, CaseIterable, Identifiable, Sendable {
     /// Undo title of the section's Reset.
     var resetActionName: String {
         "Reset \(title)"
+    }
+
+    /// Whether this photo has anything to adjust here: Optics only for a RAW with a lens
+    /// profile, Detail for any still whose decoder offers a Detail control.
+    func isAvailable(_ facts: EditPhotoFacts) -> Bool {
+        switch self {
+        case .optics: facts.lensCorrectionDefault != nil
+        default: controls.isEmpty || controls.contains { $0.isAvailable(facts) }
+        }
     }
 
     /// `recipe` with every control of this section at neutral (white balance as shot).
@@ -488,6 +598,18 @@ nonisolated enum EditSection: String, CaseIterable, Identifiable, Sendable {
             reset.tint = nil
             reset.vibrance = 0
             reset.saturation = 0
+        case .effects:
+            reset.vignette = 0
+            reset.vignetteMidpoint = 50
+            reset.vignetteFeather = 50
+        case .detail:
+            reset.sharpening = nil
+            reset.noiseReduction = nil
+            reset.colorNoiseReduction = nil
+            reset.detail = nil
+            reset.moireReduction = nil
+        case .optics:
+            reset.lensCorrection = nil
         }
         return reset
     }
@@ -511,6 +633,14 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
     case tint
     case vibrance
     case saturation
+    case vignette
+    case vignetteMidpoint
+    case vignetteFeather
+    case sharpening
+    case noiseReduction
+    case colorNoiseReduction
+    case detail
+    case moireReduction
 
     static let rawTemperatureRange: ClosedRange<Double> = 2000 ... 50000
     static let rawTintRange: ClosedRange<Double> = -150 ... 150
@@ -530,6 +660,14 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
         case .tint: "Tint"
         case .vibrance: "Vibrance"
         case .saturation: "Saturation"
+        case .vignette: "Vignette"
+        case .vignetteMidpoint: "Midpoint"
+        case .vignetteFeather: "Feather"
+        case .sharpening: "Sharpening"
+        case .noiseReduction: "Noise Reduction"
+        case .colorNoiseReduction: "Color Noise"
+        case .detail: "Detail"
+        case .moireReduction: "Moiré"
         }
     }
 
@@ -538,6 +676,21 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
         case .straighten: .crop
         case .exposure, .contrast, .highlights, .shadows: .light
         case .temperature, .tint, .vibrance, .saturation: .color
+        case .vignette, .vignetteMidpoint, .vignetteFeather: .effects
+        case .sharpening, .noiseReduction, .colorNoiseReduction, .detail, .moireReduction: .detail
+        }
+    }
+
+    /// Whether the photo offers this control. A RAW offers the Detail controls its
+    /// decoder supports; any other still offers Sharpening and Noise Reduction.
+    func isAvailable(_ facts: EditPhotoFacts) -> Bool {
+        switch self {
+        case .sharpening, .noiseReduction:
+            !facts.isRAW || facts.rawDetail[self] != nil
+        case .colorNoiseReduction, .detail, .moireReduction:
+            facts.isRAW && facts.rawDetail[self] != nil
+        default:
+            true
         }
     }
 
@@ -547,7 +700,9 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
         case .straighten: -45 ... 45
         case .exposure: -4 ... 4
         case .highlights: -100 ... 0
-        case .contrast, .shadows, .vibrance, .saturation: -100 ... 100
+        case .contrast, .shadows, .vibrance, .saturation, .vignette: -100 ... 100
+        case .vignetteMidpoint, .vignetteFeather, .sharpening, .noiseReduction,
+             .colorNoiseReduction, .detail, .moireReduction: 0 ... 100
         case .temperature: facts.isRAW ? 0 ... 1 : -100 ... 100
         case .tint: facts.isRAW ? Self.rawTintRange : -100 ... 100
         }
@@ -563,6 +718,14 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
         case .shadows: recipe.shadows
         case .vibrance: recipe.vibrance
         case .saturation: recipe.saturation
+        case .vignette: recipe.vignette
+        case .vignetteMidpoint: recipe.vignetteMidpoint
+        case .vignetteFeather: recipe.vignetteFeather
+        case .sharpening: recipe.sharpening ?? facts.rawDetail[self] ?? 0
+        case .noiseReduction: recipe.noiseReduction ?? facts.rawDetail[self] ?? 0
+        case .colorNoiseReduction: recipe.colorNoiseReduction ?? facts.rawDetail[self] ?? 0
+        case .detail: recipe.detail ?? facts.rawDetail[self] ?? 0
+        case .moireReduction: recipe.moireReduction ?? facts.rawDetail[self] ?? 0
         case .temperature:
             facts.isRAW
                 ? Self.position(ofKelvin: recipe.temperature ?? facts.asShotTemperature ?? 5500)
@@ -586,6 +749,14 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
         case .shadows: recipe.shadows = clamped.rounded()
         case .vibrance: recipe.vibrance = clamped.rounded()
         case .saturation: recipe.saturation = clamped.rounded()
+        case .vignette: recipe.vignette = clamped.rounded()
+        case .vignetteMidpoint: recipe.vignetteMidpoint = clamped.rounded()
+        case .vignetteFeather: recipe.vignetteFeather = clamped.rounded()
+        case .sharpening: recipe.sharpening = clamped.rounded()
+        case .noiseReduction: recipe.noiseReduction = clamped.rounded()
+        case .colorNoiseReduction: recipe.colorNoiseReduction = clamped.rounded()
+        case .detail: recipe.detail = clamped.rounded()
+        case .moireReduction: recipe.moireReduction = clamped.rounded()
         case .temperature:
             if facts.isRAW {
                 recipe.temperature = Self.snapped(Self.kelvin(atPosition: clamped), step: 50)
@@ -612,10 +783,34 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
         case .temperature where facts.isRAW:
             let kelvin = recipe.temperature ?? facts.asShotTemperature ?? 0
             return "\(Int(kelvin.rounded())) K"
+        case .vignetteMidpoint, .vignetteFeather, .sharpening, .noiseReduction,
+             .colorNoiseReduction, .detail, .moireReduction:
+            // Amounts with no direction carry no sign.
+            return "\(Int(sliderValue(in: recipe, facts: facts).rounded()))"
         default:
             let rounded = Int(sliderValue(in: recipe, facts: facts).rounded())
             return rounded == 0 ? "0" : String(format: "%+d", rounded)
         }
+    }
+
+    /// The slider position for a value typed into the control's field (F-15 in
+    /// `hig-validation.md`), or nil when the text is not a number. The text is what the
+    /// panel shows, so a sign, a degree mark and a kelvin unit are accepted. A RAW's
+    /// temperature is typed in kelvin. The result is not clamped: `applying` clamps it.
+    func position(fromEntered text: String, facts: EditPhotoFacts) -> Double? {
+        let trimmed = text
+            .replacingOccurrences(of: "°", with: "")
+            .replacingOccurrences(of: "K", with: "")
+            .replacingOccurrences(of: "k", with: "")
+            .replacingOccurrences(of: "\u{2212}", with: "-")
+            .trimmingCharacters(in: .whitespaces)
+        guard let number = Double(trimmed), number.isFinite else {
+            return nil
+        }
+        if self == .temperature, facts.isRAW {
+            return Self.position(ofKelvin: number)
+        }
+        return number
     }
 
     /// Slider position 0…1 of `kelvin`: 0 is 2000 K, 1 is 50000 K, linear in mireds.

@@ -151,12 +151,6 @@ extension CatalogWindowViewModel {
     /// Edit ▸ Copy, ⌘C and the context menu's Copy: writes the current targets' file
     /// URLs in display order — the Grid selection, the Loupe focus, or the active
     /// Compare pane, the same targets every other Photo command acts on.
-    func copyCurrentTargets(to pasteboard: NSPasteboard = .general) {
-        let ids = targetIDs(.current)
-        guard !ids.isEmpty else { return }
-        MediaGridClipboard.write(ids, to: pasteboard)
-    }
-
     /// Reveals the current targets in Finder — the Grid selection, the Loupe focus, or
     /// the active Compare pane, the same targets Open, Share and Copy act on. Reads no
     /// bytes and never materializes a dataless original.
@@ -180,6 +174,9 @@ struct MediaGridSelectionHandlers {
         _ orderedIDs: [MediaAssetID]
     ) -> GridSelection = { _, _, _ in .empty }
     var reconcileNative: (Set<MediaAssetID>) -> GridSelection = { _ in .empty }
+    /// The drag pasteboard writer for a dragged item: what the selection hands to another
+    /// app (the hand-off's choice, `CatalogWindowViewModel.dragWriter(for:)`).
+    var dragWriter: (MediaAssetID) -> NSPasteboardWriting = { $0.fileURL as NSURL }
 
     /// Wires the ViewModel's selection intents into the bridge.
     @MainActor
@@ -195,6 +192,9 @@ struct MediaGridSelectionHandlers {
             },
             reconcileNative: { live in
                 viewModel.reconcileNativeSelection(live)
+            },
+            dragWriter: { id in
+                viewModel.dragWriter(for: id)
             }
         )
     }

@@ -73,6 +73,42 @@ struct EditRenderingTests {
         #expect(abs(color.blue - color.green) < 0.02)
     }
 
+    /// Effects: a negative vignette darkens the corners and a positive one lightens them,
+    /// leaving the center alone.
+    @Test func theVignetteDarkensOrLightensTheCornersOnly() async throws {
+        let url = try makeTestDirectory().appending(path: "gray.jpg")
+        try writeSolidJPEG(to: url, red: 0.5, green: 0.5, blue: 0.5)
+
+        let darker = try await ImageRenderer.interactive.render(url, longEdge: nil, recipe: EditRecipe(vignette: -80))
+        let lighter = try await ImageRenderer.interactive.render(url, longEdge: nil, recipe: EditRecipe(vignette: 80))
+        let center = CGRect(x: 30, y: 22, width: 4, height: 4)
+        let corner = CGRect(x: 0, y: 0, width: 3, height: 3)
+
+        #expect(try meanColor(darker.image, in: corner).green < 0.35)
+        #expect(try meanColor(lighter.image, in: corner).green > 0.6)
+        #expect(try abs(meanColor(darker.image, in: center).green - 0.5) < 0.04)
+    }
+
+    /// Detail on a still: sharpening raises the contrast across an edge.
+    @Test func sharpeningRaisesContrastAcrossAnEdge() async throws {
+        let url = try makeTestDirectory().appending(path: "split.jpg")
+        try writeSplitJPEG(
+            to: url,
+            left: CGColor(srgbRed: 0.35, green: 0.35, blue: 0.35, alpha: 1),
+            right: CGColor(srgbRed: 0.65, green: 0.65, blue: 0.65, alpha: 1)
+        )
+
+        let plain = try await ImageRenderer.interactive.render(url, longEdge: nil)
+        let sharpened = try await ImageRenderer.interactive.render(url, longEdge: nil, recipe: EditRecipe(sharpening: 100))
+        func edgeContrast(_ image: CGImage) throws -> Double {
+            let leftOfEdge = try meanColor(image, in: CGRect(x: 46, y: 20, width: 1, height: 24)).green
+            let rightOfEdge = try meanColor(image, in: CGRect(x: 49, y: 20, width: 1, height: 24)).green
+            return rightOfEdge - leftOfEdge
+        }
+
+        #expect(try edgeContrast(sharpened.image) > edgeContrast(plain.image) + 0.02)
+    }
+
     @Test func theLiveRendererMatchesTheStoredRenderAndStagesBothProducts() async throws {
         let directory = try makeTestDirectory()
         let url = directory.appending(path: "gradient.jpg")

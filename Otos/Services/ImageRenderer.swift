@@ -101,7 +101,7 @@ final nonisolated class ImageRenderer: Sendable {
             return decoded
         }
         let developed = applying(recipe, toDevelopedRAW: false, CIImage(cgImage: decoded.image))
-        let adjusted = applyingGeometry(recipe, developed)
+        let adjusted = applyingEffects(recipe, applyingGeometry(recipe, developed))
         return try Rendered(image: bitmap(adjusted), decoder: decoded.decoder, nativePixelSize: decoded.nativePixelSize)
     }
 
@@ -163,6 +163,26 @@ final nonisolated class ImageRenderer: Sendable {
         if let tint = recipe.tint {
             filter.neutralTint = Float(tint)
         }
+        // Detail and Optics act in the RAW pipeline when the decoder supports them; nil
+        // leaves the decoder's own amount.
+        if let sharpening = recipe.sharpening, filter.isSharpnessSupported {
+            filter.sharpnessAmount = Float(sharpening / 100)
+        }
+        if let noise = recipe.noiseReduction, filter.isLuminanceNoiseReductionSupported {
+            filter.luminanceNoiseReductionAmount = Float(noise / 100)
+        }
+        if let color = recipe.colorNoiseReduction, filter.isColorNoiseReductionSupported {
+            filter.colorNoiseReductionAmount = Float(color / 100)
+        }
+        if let detail = recipe.detail, filter.isDetailSupported {
+            filter.detailAmount = Float(detail / 100 * 3)
+        }
+        if let moire = recipe.moireReduction, filter.isMoireReductionSupported {
+            filter.moireReductionAmount = Float(moire / 100)
+        }
+        if let lens = recipe.lensCorrection, filter.isLensCorrectionSupported {
+            filter.isLensCorrectionEnabled = lens
+        }
         guard let image = filter.outputImage else {
             throw RenderError.renderFailed
         }
@@ -183,6 +203,20 @@ final nonisolated class ImageRenderer: Sendable {
             exposure.inputImage = output
             exposure.ev = Float(recipe.exposure)
             output = exposure.outputImage ?? output
+        }
+        if !isRAW, let noise = recipe.noiseReduction, noise > 0 {
+            // Noise reduction alone: its own sharpening is left to the Sharpening control.
+            let reduction = CIFilter.noiseReduction()
+            reduction.inputImage = output
+            reduction.noiseLevel = Float(noise / 100 * 0.1)
+            reduction.sharpness = 0
+            output = reduction.outputImage ?? output
+        }
+        if !isRAW, let sharpening = recipe.sharpening, sharpening > 0 {
+            let sharpen = CIFilter.sharpenLuminance()
+            sharpen.inputImage = output
+            sharpen.sharpness = Float(sharpening / 100)
+            output = sharpen.outputImage ?? output
         }
         if recipe.contrast != 0 || recipe.saturation != 0 {
             let controls = CIFilter.colorControls()
@@ -236,13 +270,40 @@ final nonisolated class ImageRenderer: Sendable {
         return atOrigin(placed.cropped(to: geometry.cropRect.integral.intersection(frame)))
     }
 
+    /// Applies the recipe's Effects to the edited, cropped photo: a vignette that follows
+    /// the photo's shape. The photo is scaled to a square, `CIVignetteEffect` (a circle) is
+    /// applied about its center, and it is scaled back, so the vignette is an ellipse fitted
+    /// to the frame, as Lightroom's post-crop vignette is.
+    static func applyingEffects(_ recipe: EditRecipe, _ image: CIImage) -> CIImage {
+        guard recipe.vignette != 0, image.extent.width > 0, image.extent.height > 0 else {
+            return image
+        }
+        let photo = atOrigin(image)
+        let size = photo.extent.size
+        let squeeze = size.height / size.width
+        let square = photo.transformed(by: CGAffineTransform(scaleX: squeeze, y: 1))
+        let side = size.height
+        let vignette = CIFilter.vignetteEffect()
+        vignette.inputImage = square
+        vignette.center = CGPoint(x: side / 2, y: side / 2)
+        // Midpoint 0…100 moves the start from a quarter to the whole of the half-diagonal.
+        vignette.radius = Float(side / 2 * 2.0.squareRoot() * (0.25 + 0.75 * recipe.vignetteMidpoint / 100))
+        vignette.falloff = Float(0.05 + 0.95 * recipe.vignetteFeather / 100)
+        // Negative darkens the corners in Lightroom; positive intensity darkens in Core Image.
+        vignette.intensity = Float(-recipe.vignette / 100)
+        let applied = vignette.outputImage ?? square
+        return applied
+            .transformed(by: CGAffineTransform(scaleX: 1 / squeeze, y: 1))
+            .cropped(to: CGRect(origin: .zero, size: size))
+    }
+
     private static func atOrigin(_ image: CIImage) -> CIImage {
         image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
     }
 
     private static func developRAW(_ url: URL, longEdge: Int?, recipe: EditRecipe) throws -> Rendered {
         let (filter, decoder) = try openRAW(url, outputLongEdge: longEdge, recipe: recipe)
-        let image = try applyingGeometry(recipe, developed(filter, recipe: recipe))
+        let image = try applyingEffects(recipe, applyingGeometry(recipe, developed(filter, recipe: recipe)))
         return try Rendered(image: bitmap(image), decoder: decoder, nativePixelSize: orientedNativeSize(filter))
     }
 
