@@ -36,7 +36,7 @@ actor LiveImportExecutor: ImportExecuting {
         store: CatalogStore,
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,
-        volumeCapacity: @escaping @Sendable (URL) -> Int64? = MediaImportExecutor.importantUsageCapacity
+        volumeCapacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:)
     ) {
         self.store = store
         self.cameraImport = cameraImport

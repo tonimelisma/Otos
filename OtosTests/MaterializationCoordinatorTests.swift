@@ -4,6 +4,38 @@ import Synchronization
 import Testing
 
 struct MaterializationCoordinatorTests {
+    /// ENR-008 / ADR 0027: background and device downloads start only while the volume
+    /// keeps the free-space floor after them; the photo on screen and a user command do
+    /// not wait for it, and a volume that reports no capacity admits.
+    @Test func backgroundAndDeviceDownloadsKeepTheFreeSpaceFloor() async {
+        let started = Mutex<[String]>([])
+        let available = Mutex<Int64?>(FreeSpaceFloor.bytes + 1000)
+        let coordinator = MaterializationCoordinator(
+            store: CatalogStore(location: .inMemory),
+            executor: { request in
+                started.withLock { $0.append(request.id.relativePath.rawValue) }
+                return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 0)
+            },
+            capacity: { _ in available.withLock { $0 } }
+        )
+        let held = await [
+            coordinator.materialize(request("big-background.jpg", priority: .background, sourceSize: 2000)),
+            coordinator.materialize(request("big-device.jpg", priority: .device, sourceSize: 2000)),
+        ]
+        #expect(held.map(\.outcome) == [.insufficientLocalSpace, .insufficientLocalSpace])
+        let admitted = await [
+            coordinator.materialize(request("small-background.jpg", priority: .background, sourceSize: 500)),
+            coordinator.materialize(request("big-interactive.jpg", priority: .interactive, sourceSize: 2000)),
+            coordinator.materialize(request("big-command.jpg", priority: .command, sourceSize: 2000)),
+        ]
+        #expect(admitted.map(\.isMaterialized) == [true, true, true])
+        available.withLock { $0 = nil }
+        #expect(await coordinator.materialize(request("unknown.jpg", priority: .background, sourceSize: 2000)).isMaterialized)
+        let startedNames = started.withLock { $0 }
+        #expect(startedNames == ["small-background.jpg", "big-interactive.jpg", "big-command.jpg", "unknown.jpg"])
+        await coordinator.shutdown()
+    }
+
     @Test func sameIDRequestsShareOnePhysicalTransfer() async throws {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
@@ -421,14 +453,15 @@ struct MaterializationCoordinatorTests {
     private func request(
         _ name: String,
         root: String = "/library",
-        priority: MaterializationCoordinator.Priority
+        priority: MaterializationCoordinator.Priority,
+        sourceSize: Int64 = 1
     ) -> MaterializationCoordinator.Request {
         MaterializationCoordinator.Request(
             id: MediaAssetID(
                 libraryRootPath: LibraryRootPath(rawValue: root),
                 relativePath: MediaRelativePath(rawValue: name)
             ),
-            sourceSize: 1,
+            sourceSize: sourceSize,
             isVideo: false,
             priority: priority
         )

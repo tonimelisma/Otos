@@ -113,7 +113,9 @@ and let instrumentation prove a real bottleneck before optimizing it.
   materialize a file: check the `FileMaterialization` detector (`SF_DATALESS`)
   immediately before any byte read. Deliberate non-blocking background
   materialization for enrichment is permitted (up to eagerly materializing the
-  whole library); its unreclaimable local-disk cost is deliberately accepted. The
+  whole library). Otos does not free what it downloads; macOS evicts uploaded, idle
+  provider files under disk pressure, and background and device downloads never take
+  the volume below the 5 GB free-space floor (`FreeSpaceFloor`, ADR 0027). The
   scanner reads only filesystem facts and materializes nothing; byte-reading
   consumers submit deliberate transfers to the shared `MaterializationCoordinator`.
   `EnrichmentCoordinator` is the background enrichment owner. See ADR 0008 and

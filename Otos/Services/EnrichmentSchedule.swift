@@ -12,9 +12,10 @@ nonisolated struct EnrichmentRetrySchedule: Equatable, Sendable {
     /// How long a row whose readiness the filesystem could not report waits before it is
     /// probed again.
     var readinessRecheck: Duration
-    /// Device staging held back by local disk space retries this often, without limit: it
-    /// is a waiting condition, not a failure.
-    var deviceSpaceRecheck: Duration
+    /// A download held back by the free-space floor is offered again this often, without
+    /// limit: it is a waiting condition, not a failure. time: poll — macOS reports no
+    /// free-space change at an app-defined threshold (research 2026-09-09, finding 3).
+    var spaceRecheck: Duration
     /// Device staging failure backoff, multiplied by the attempt number.
     var deviceFailureBackoff: Duration
     /// Device staging attempts before the item is given up as unobtainable.
@@ -26,7 +27,7 @@ nonisolated struct EnrichmentRetrySchedule: Equatable, Sendable {
         backgroundDownloadDelays: [.seconds(15), .seconds(60), .seconds(300), .seconds(900)],
         ledgerPacing: .seconds(900),
         readinessRecheck: .seconds(1),
-        deviceSpaceRecheck: .seconds(60),
+        spaceRecheck: .seconds(60),
         deviceFailureBackoff: .seconds(5),
         deviceAttemptLimit: 3,
         writeFailureBackoff: .seconds(5)
@@ -192,6 +193,19 @@ nonisolated struct EnrichmentSchedule: Sendable {
             materializations[work.id] = nil
             return Settlement(disposition: .cancelled, releasesStoreClaim: record.ownsStoreClaim)
         }
+        if outcome == .insufficientLocalSpace, !work.isDeviceStaging {
+            // A cloud download held by the free-space floor spends no attempt and gives
+            // its claim back, so enrichment of files already local is not stuck behind a
+            // full disk; the ledger offers the row again after the recheck.
+            materializations[work.id] = nil
+            let entry = RetryLedgerEntry(
+                notBefore: now.advanced(by: retrySchedule.spaceRecheck),
+                attemptCount: retryLedger[work.id]?.attemptCount ?? 0,
+                sourceSize: work.sourceSize
+            )
+            retryLedger[work.id] = entry
+            return Settlement(disposition: .paced(entry), releasesStoreClaim: record.ownsStoreClaim)
+        }
         if let retry = retry(after: work, outcome: outcome, now: now) {
             materializations[work.id] = Materialization(
                 work: retry,
@@ -233,7 +247,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
         let delay: Duration
         if work.isDeviceStaging {
             if outcome == .insufficientLocalSpace {
-                delay = retrySchedule.deviceSpaceRecheck
+                delay = retrySchedule.spaceRecheck
             } else {
                 guard attemptCount < retrySchedule.deviceAttemptLimit else {
                     return nil

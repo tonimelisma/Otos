@@ -26,7 +26,8 @@ Verified facts feeding the decision: `MediaEligibility` already restricts the
 catalog to `.image`/`.movie` files, so non-media is never a materialization
 target; `FileMaterialization.status(of:)` is ~7 µs/file (measured);
 Store-owned indexed enrichment-candidate queries keep scheduling out of UI
-publication; a consumer app cannot reclaim another provider's downloaded bytes.
+publication; Otos does not free downloaded bytes itself, and macOS evicts uploaded,
+idle provider files under disk pressure (ADR 0008).
 
 This decision supports requirements ENR-001 through ENR-014.
 
@@ -62,7 +63,8 @@ This ADR owns:
   because the tile surface needs it for every visible video; other metadata
   dimensions and details remain cold.
 - Otos eagerly materializes the whole media library to enrich it (the enrichment
-  application of ADR 0008's permission), accepting the unreclaimable disk growth.
+  application of ADR 0008's permission), accepting the disk growth macOS has not yet
+  evicted, and never below the free-space floor (ADR 0027).
 - The enrichment ownership split: `EnrichmentCoordinator` owns a bounded claim
   state machine and eight local enrichment workers; `MaterializationCoordinator`
   owns the one bounded physical-transfer scheduler shared by preview, device, and
@@ -177,9 +179,14 @@ Adjacent decisions requiring separate ADRs or specs:
    epsilon in equality. There is no stored `is_stale` flag.
 
 7. **Eager full-library materialization.** Otos submits every dataless media file
-   for background materialization after local enrichment drains, accepting the
-   unreclaimable local disk growth. The catalog is already media-only, so non-media
-   is never downloaded.
+   for background materialization after local enrichment drains, accepting the local
+   disk growth macOS has not yet evicted. A download that would take the volume below
+   the free-space floor is not started: `MaterializationCoordinator` reads capacity
+   off the actor for background- and device-priority work, returns
+   `insufficientLocalSpace`, and the schedule gives a cloud row's claim back and offers
+   it again after `spaceRecheck` (60 s, `time: poll` — macOS reports no free-space
+   change at an app-defined threshold). Interactive and command work does not wait for
+   the floor. The catalog is already media-only, so non-media is never downloaded.
 
 8. **Separate enrichment and materialization owners.** `EnrichmentCoordinator`
    owns cursorless catalog claims, a bounded 32-identity ready-enrichment window,
@@ -500,8 +507,9 @@ query itself is measured too costly at a real large library.
   succeeds.
 - Re-enrichment is self-healing: a fact change makes the stamp mismatch, so the
   asset re-queues with no cancellation logic.
-- Local disk grows as the library materializes and that growth is unreclaimable;
-  this is an accepted, deliberate cost of complete coverage, not a leak.
+- Local disk grows as the library materializes until macOS evicts uploaded, idle
+  files, and never below the free-space floor; this is an accepted, deliberate cost of
+  complete coverage, not a leak.
 - A future metadata-driven feature (sort, filter, inspector) must use the scalar
   columns/detail JSON on demand or propose its own measured index/resident structure
   in a new spec; it cannot assume metadata is resident in the grid path.

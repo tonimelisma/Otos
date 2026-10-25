@@ -213,13 +213,35 @@ nonisolated enum ImportStopReason: Equatable, Sendable {
     case diskFloor(bytesFree: Int64?)
 }
 
-/// The free space Otos never takes a volume below (ADR 0027): the import
-/// executor admits an entry only while the destination keeps this much after
-/// it and every entry in flight lands, and device staging does not start a
-/// download below it. One constant with one home — the promise is the same
-/// wherever Otos writes.
+/// The free space Otos never takes a volume below (ADR 0027), and the one way every
+/// writer asks about it: import admits an entry, Move to Trash starts a download, and
+/// `MaterializationCoordinator` starts a background or device download only while the
+/// volume keeps this much after that write and every write already in flight lands.
+/// One constant and one check with one home — the promise is the same wherever Otos
+/// writes.
 nonisolated enum FreeSpaceFloor {
     static let bytes: Int64 = 5 * 1024 * 1024 * 1024
+
+    /// CacheDelete's figure for important usage on `url`'s volume: it counts purgeable
+    /// space and can lag the truth in either direction (research 2026-09-09, finding 4),
+    /// which the floor tolerates in the conservative direction only — a stale-low figure
+    /// stops a little early and the work is offered again; a stale-high one is caught by
+    /// the write's own `ENOSPC`. `nil` when the volume does not answer.
+    static func availableBytes(onVolumeOf url: URL) -> Int64? {
+        (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+            .volumeAvailableCapacityForImportantUsage
+    }
+
+    /// Whether writing `bytes` more, with `committed` bytes already on their way, keeps
+    /// a volume reporting `available` at or above the floor. An unknown capacity admits:
+    /// it is not evidence of room, but neither is it evidence of none, and the write's
+    /// `ENOSPC` is the backstop.
+    static func admits(_ bytes: Int64, committed: Int64 = 0, available: Int64?) -> Bool {
+        guard let available else {
+            return true
+        }
+        return available - committed - bytes >= Self.bytes
+    }
 }
 
 /// Causes of an import failure a user can act on (DES-035/DES-039 forbid
