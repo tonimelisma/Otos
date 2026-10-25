@@ -462,6 +462,8 @@ struct CatalogStoreEnrichmentTests {
 
         let sourceWall = try await store.captureWall(for: sourceID)
         #expect(sourceWall != nil)
+        // ADR 0036: the source's edit is overlay, so the library copy carries it.
+        _ = try await store.setEditRecipe(EditRecipe(exposure: 1), for: sourceID)
 
         let batch = ImportBatchID()
         let operation = ActiveFileOperation(
@@ -504,6 +506,10 @@ struct CatalogStoreEnrichmentTests {
         // The naming column, rebuilt from the same records — the two agree because
         // there is only one thing left for them to disagree about.
         #expect(try await store.captureWall(for: destinationID) == sourceWall)
+        #expect(
+            try await store.editRecipe(for: destinationID)
+                == StoredEditRecipe(recipe: EditRecipe(exposure: 1), revision: 1)
+        )
     }
 
     @Test func provenDeletionPurgesThumbnailFile() async throws {

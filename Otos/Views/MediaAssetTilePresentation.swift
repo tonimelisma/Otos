@@ -286,7 +286,9 @@ nonisolated enum MediaAssetTilePresentation {
         let thumbnail = detail.thumbnailPath ?? ""
         let size = detail.enrichedSourceSize ?? -1
         let stamp = detail.enrichedSourceMTimeSeconds ?? -1
-        return "\(thumbnail)#\(size)#\(stamp)"
+        // A saved edit re-renders the thumbnail under the same name; its revision is
+        // what tells a tile the image changed (ADR 0036).
+        return "\(thumbnail)#\(size)#\(stamp)#\(detail.renderedRevision)"
     }
 
     static func decodedThumbnailImage(detail: MediaTileDetail, thumbnailDirectory: URL?) -> CGImage? {

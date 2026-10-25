@@ -121,15 +121,16 @@ into pixels:
 
 ### 5. Edit foundation and the Light section
 
-- The recipe table (one current recipe per asset, overlay lifecycle) and the edit
-  panel: a trailing inspector that collapses like the sidebar (decision 13).
+- The recipe (one current recipe per asset, overlay lifecycle), stored as columns on
+  the asset row rather than a table (ADR 0036), and the edit panel: a trailing
+  inspector that collapses like the sidebar (decision 13).
 - Undo, redo and reset.
 - The **Light** section: Exposure, Contrast, Highlights, Shadows.
 - **While dragging,** the photo renders live from the original (20–180 ms per change).
 - **On commit,** Otos re-renders the thumbnail and the preview. Editing needs the
   original locally anyway, so the commit costs no extra download.
-- **Docs:** a new ADR for edit storage; the sidebar design spec
-  (`docs/design/edit-sidebar.md`) reviewed against the design system; APP and DES rows.
+- **Docs:** a new ADR for edit storage; the panel design spec
+  (`docs/design/edit-panel.md`) reviewed against the design system; APP and DES rows.
 
 ### 6–11. Sidebar sections
 
@@ -141,7 +142,7 @@ Crop is a tool above the sections. Only controls macOS provides appear:
 | Order | Section | Controls | RAW (`CIRAWFilter`) | Other stills (Core Image) | Increment |
 | --- | --- | --- | --- | --- | --- |
 | tool | Crop | Crop, rotate 90°, flip, straighten | on the developed image | `CICrop`, `CIAffineTransform`, `CIStraightenFilter` | 7 |
-| 1 | Light | Exposure, Contrast, Highlights, Shadows | `exposure`, `contrastAmount`, `CIHighlightShadowAdjust` | `CIExposureAdjust`, `CIColorControls`, `CIHighlightShadowAdjust` | 5 |
+| 1 | Light | Exposure, Contrast, Highlights, Shadows | `exposure`; `CIColorControls`, `CIHighlightShadowAdjust` on the developed image (`contrastAmount` is local edge contrast, 0…1, ADR 0036) | `CIExposureAdjust`, `CIColorControls`, `CIHighlightShadowAdjust` | 5 |
 | 2 | Color | White balance (temperature, tint, neutral picker), Vibrance, Saturation | `neutralTemperature`, `neutralTint`, `neutralLocation`; `CIVibrance`, `CIColorControls` | `CITemperatureAndTint`, `CIVibrance`, `CIColorControls` | 6 |
 | 3 | Effects | Vignette | `CIVignette` | `CIVignette` | 8 |
 | 4 | Detail | Sharpening, Noise reduction; RAW8 photos also get colour noise, detail and moiré | `sharpnessAmount`, `luminanceNoiseReductionAmount` (+ RAW8 controls) | `CISharpenLuminance`, `CINoiseReduction` | 9 |

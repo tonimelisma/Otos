@@ -555,10 +555,25 @@ extension EnrichmentCoordinator {
                         continue
                     }
                     let enricher = enricher
+                    let store = store
                     let access = await byteAccess(for: work)
                     group.addTask {
+                        // The photo's edit is rendered into its thumbnail and preview, and
+                        // the result names the revision it applied (ADR 0036). A recipe that
+                        // cannot be read is not guessed at: the work is retried.
+                        let recipe: StoredEditRecipe?
+                        do {
+                            recipe = try await store.editRecipe(for: work.id)
+                        } catch {
+                            OtosLog.metadata.errorOperation("enrichment.editRecipe", phase: "readFailed", fields: [
+                                "relativePath": work.id.relativePath.rawValue,
+                                "error": String(describing: error),
+                            ])
+                            await self.finishEnrich(work, .transient)
+                            return
+                        }
                         let outcome = await enricher.enrich(
-                            work.id, access, work.sourceSize, work.sourceMTimeSeconds, work.shouldHash
+                            work.id, access, work.sourceSize, work.sourceMTimeSeconds, work.shouldHash, recipe
                         )
                         await self.finishEnrich(work, outcome)
                     }

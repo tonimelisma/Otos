@@ -159,13 +159,40 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var fullResolutionSkipLoggedID: MediaAssetID?
     /// Loupe info overlay (APP-041): session-only toggle and the facts it shows.
     var showsLoupeInfo = false
+    /// The trailing edit panel (View ▸ Show Edit Panel, E). Edit state below is
+    /// resolved only while it is shown (ADR 0036).
+    var isEditPanelPresented = false
+    /// The one still photo the panel edits; nil disables its controls.
+    var editTarget: EditTarget?
+    /// The panel's values for `editTarget`: the saved recipe plus any change still being
+    /// dragged.
+    var editDraft = EditRecipe.neutral
+    /// The newest live render of the draft, shown in place of the pane's stored preview
+    /// until that preview carries the saved edit.
+    var editLivePreview: EditLivePreview?
+    @ObservationIgnored var editSavedRecipe = EditRecipe.neutral
+    @ObservationIgnored var editDraggingControl: LightControl?
+    @ObservationIgnored var editTargetTask: Task<Void, Never>?
+    @ObservationIgnored let liveEditRenderer = LiveEditRenderer()
+    @ObservationIgnored let editRenderStream: AsyncStream<EditRenderRequest>
+    @ObservationIgnored let editRenderContinuation: AsyncStream<EditRenderRequest>.Continuation
+    @ObservationIgnored var editRenderTask: Task<Void, Never>?
+    @ObservationIgnored var editRenderRequested: UInt64 = 0
+    @ObservationIgnored var editRenderPublished: UInt64 = 0
+    @ObservationIgnored let editCommandStream: AsyncStream<EditCommand>
+    @ObservationIgnored let editCommandContinuation: AsyncStream<EditCommand>.Continuation
+    @ObservationIgnored var editCommandTask: Task<Void, Never>?
+    /// Submitted and fully handled edit commands — saved, rendered and applied, or
+    /// refused — so a caller can wait for an edit to settle without guessing a duration.
+    @ObservationIgnored var submittedEditCommandCount = 0
+    @ObservationIgnored var handledEditCommandCount = 0
     var loupeInfo: LoupeInfoModel?
     @ObservationIgnored var loupeInfoTask: Task<Void, Never>?
-    /// Undo stack for curation choices (APP-039). One window, one manager, owned here
-    /// so Edit ▸ Undo renders `curationUndoState` rather than searching a responder
-    /// chain that ends in an AppKit collection view.
-    @ObservationIgnored let curationUndoManager = UndoManager()
-    var curationUndoState = CurationUndoState()
+    /// The window's undo stack: likes (APP-039), Move to Trash (ADR 0022) and edits (ADR
+    /// 0036). One window, one manager, owned here so Edit ▸ Undo renders `undoMenuState`
+    /// rather than searching a responder chain that ends in an AppKit collection view.
+    @ObservationIgnored let windowUndoManager = UndoManager()
+    var undoMenuState = UndoMenuState()
     /// App icons for `openWithMenu.applications`, resolved once per model change.
     @ObservationIgnored var openWithApplicationIcons: [URL: NSImage] = [:]
     /// When enabled, a successful choice advances to the next surviving item in display
@@ -365,7 +392,7 @@ final class CatalogWindowViewModel {
         self.workspace = workspace
         // Curation undo entries are registered from store completions, outside any
         // AppKit event; groups are opened and closed explicitly (APP-039).
-        curationUndoManager.groupsByEvent = false
+        windowUndoManager.groupsByEvent = false
         let (queryStream, queryContinuation) = AsyncStream<CatalogQueryRequest>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )
@@ -385,6 +412,13 @@ final class CatalogWindowViewModel {
         )
         let (viewportStream, viewportContinuation) = AsyncStream<[MediaAssetID]>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
+        )
+        // A live render is newest-wins; a save is a command that must survive in order.
+        let (editRenderStream, editRenderContinuation) = AsyncStream<EditRenderRequest>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        let (editCommandStream, editCommandContinuation) = AsyncStream<EditCommand>.makeStream(
+            bufferingPolicy: .unbounded
         )
         self.preferencesDomain = preferencesDomain
         preferences = preferencesDomain.makeDefaults()
@@ -476,6 +510,10 @@ final class CatalogWindowViewModel {
         self.mediaChoiceContinuation = mediaChoiceContinuation
         self.viewportStream = viewportStream
         self.viewportContinuation = viewportContinuation
+        self.editRenderStream = editRenderStream
+        self.editRenderContinuation = editRenderContinuation
+        self.editCommandStream = editCommandStream
+        self.editCommandContinuation = editCommandContinuation
         // The restored query is the first one Projection sees (APP-043), so launch never
         // flashes the default collection before the user's own.
         if let place = Self.loadBrowserPlace(from: preferences) {
@@ -497,6 +535,9 @@ final class CatalogWindowViewModel {
         queryForwardingTask?.cancel()
         mutationForwardingTask?.cancel()
         mediaChoiceForwardingTask?.cancel()
+        editTargetTask?.cancel()
+        editRenderTask?.cancel()
+        editCommandTask?.cancel()
         mediaTrashTask?.cancel()
         mediaTrashEventTask?.cancel()
         mediaTrashIntentTask?.cancel()
@@ -528,6 +569,8 @@ final class CatalogWindowViewModel {
         importIntentContinuation.finish()
         mediaTrashIntentContinuation.finish()
         mediaChoiceContinuation.finish()
+        editRenderContinuation.finish()
+        editCommandContinuation.finish()
         viewportContinuation.finish()
         // The owners below must be told to stop or their own loops would keep them, and
         // the store, alive past this window: the enrichment supervisor strongly retains
@@ -592,6 +635,7 @@ extension CatalogWindowViewModel {
         startQueryForwarding(projection: projection)
         startMutationForwarding(store: store, coordinator: enrichmentCoordinator)
         startMediaChoiceForwarding(store: store)
+        startEditing(store: store)
         startStateConsumption(
             projection: projection,
             store: store,

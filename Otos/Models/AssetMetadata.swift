@@ -118,6 +118,9 @@ nonisolated struct EnrichmentResult: Equatable {
     /// could read, which then fall back to decoding the original.
     let previewPath: String?
     let generatedPreview: StagedDerivedImage?
+    /// The edit recipe revision the products were rendered with (0: unedited). The store
+    /// applies the result only while that revision is still current (ADR 0036).
+    let editRevision: Int64
     let sourceSize: Int64?
     let sourceMTimeSeconds: Int?
     /// Absent when the enricher skipped hashing (`EnrichWork.shouldHash == false`,
@@ -136,7 +139,8 @@ nonisolated struct EnrichmentResult: Equatable {
         contentHash: XXH3Digest128?,
         generatedThumbnail: StagedDerivedImage? = nil,
         previewPath: String? = nil,
-        generatedPreview: StagedDerivedImage? = nil
+        generatedPreview: StagedDerivedImage? = nil,
+        editRevision: Int64 = 0
     ) {
         self.id = id
         self.metadata = metadata
@@ -146,6 +150,7 @@ nonisolated struct EnrichmentResult: Equatable {
         self.generatedThumbnail = generatedThumbnail
         self.previewPath = generatedPreview?.finalRelativePath ?? previewPath
         self.generatedPreview = generatedPreview
+        self.editRevision = editRevision
         self.sourceSize = sourceSize
         self.sourceMTimeSeconds = sourceMTimeSeconds
         self.contentHash = contentHash

@@ -1,0 +1,86 @@
+# ADR 0036: A photo's edit is a recipe in its catalog row
+
+- Status: Accepted
+- Last updated: 2026-10-25
+
+## Context
+
+Owner decisions (plan 0108): each photo has one current edit, stored in the catalog,
+with no sidecars. Originals are never modified; an edit is a recipe rendered from the
+original. Grid, loupe and thumbnails always show the edited photo. The edit panel is a
+trailing inspector that collapses the way the sidebar does.
+
+ADR 0035 already renders every still once into a 2560 px preview and a 256 px
+thumbnail. An edit has to reach both, and has to follow the overlay lifecycle of
+ADR 0008: kept while the photo exists, carried through a move, an import and Move to
+Trash's undo, and purged with the row.
+
+Measured (research 2026-10-24): developing a RAW from a `CIRAWFilter` that is already
+open takes 20–180 ms per change. Opening it again for every change takes about a second.
+
+## Decision
+
+- **Storage: three columns on `media_asset`.** The additive migration
+  `v4_media_asset_edit_recipe` adds them:
+  - `edit_recipe_json`: the recipe as sorted-key JSON, NULL when the photo was never
+    edited;
+  - `edit_revision`: incremented by every save that changes the recipe;
+  - `rendered_revision`: the revision the thumbnail and preview were rendered from.
+
+  A recipe is the values of every control the panel offers. A control a stored recipe
+  does not mention decodes as neutral, so adding a control needs no migration. Because
+  the recipe lives in the row, it has the row's lifecycle with no extra mechanism. It
+  moves with the row (ADR 0034), import reuse carries it to the library copy, Move to
+  Trash's undo puts it back, and it is purged with the row.
+- **Light section.** Exposure applies in the RAW pipeline (`CIRAWFilter.exposure`) for
+  a RAW and through `CIExposureAdjust` for any other still. Contrast applies through
+  `CIColorControls`, and Highlights and Shadows through `CIHighlightShadowAdjust`, on
+  the developed image of either. `CIRAWFilter.contrastAmount` is not used: its header
+  documents it as local contrast on edges, from 0 to 1, which cannot express global
+  contrast in both directions.
+- **One renderer for live edits.** `LiveEditRenderer` is an actor on its own serial
+  queue. It keeps the photo being edited open between renders, along with a
+  `CIContext` that caches intermediates. While a control is dragged it renders the
+  draft at preview size. When a drag ends, a keyboard step is taken or Reset is
+  pressed, the view model saves the recipe, and the same renderer renders the saved
+  recipe's preview and thumbnail.
+- **Products are promoted only for the current save.** `applyRenderedEditProducts`
+  promotes the staged files only while the row's `edit_revision` is still the one they
+  were rendered from. It also requires the row's size and mtime to still match those
+  recorded when the recipe was saved. A superseded or mismatched render is discarded.
+  Enrichment's results carry the edit revision they rendered, and are refused under
+  the same rule.
+- **Enrichment is the fallback renderer.** Enrichment renders every still with its
+  current recipe. When the edit panel cannot render a save (the download fails or the
+  original is unreadable), and at every launch, the enrichment stamps of photos whose
+  `rendered_revision` lags their `edit_revision` are cleared, so enrichment claims them
+  again.
+- **The pane never steps back.** A live render stays on screen until the pane's stored
+  preview carries the save (`PanePreview.renderedRevision`). The grid tile's image key
+  includes `rendered_revision`, so the edited thumbnail replaces the painted one
+  (APP-015).
+- **Undo.** Each save registers its exact inverse on the window's one undo manager,
+  named for the control (`Undo Exposure`, `Undo Reset Light`). Undo and redo travel
+  the same ordered save lane as the user's own saves.
+
+## Consequences
+
+- Editing needs the original's bytes locally. A cloud-only photo downloads at
+  interactive priority on its first live render, and the commit costs no extra download.
+- A save rewrites the photo's thumbnail and preview files (about 0.4 MB) in place of
+  the old ones. Edits add no storage beyond the recipe text.
+- The edit lives only in the catalog. If the catalog is lost, the edit is lost; the
+  original never changed (decision 2).
+
+## Rejected
+
+- **A separate recipe table.** It would be one row per photo with the photo's own
+  lifecycle, so it would duplicate the keying, move, import and purge mechanics that
+  the asset row already has.
+- **Edit history (a stack of recipes per photo).** The owner decided on one current
+  edit. Undo covers the session.
+- **Rendering the products on every slider change.** That would write two files per
+  frame. The live render is shown from memory, and only the save is written.
+- **A fresh `CIRAWFilter` per render.** About a second per change instead of tens of
+  milliseconds.
+- **Sidecar XMP.** This is decision 1 of plan 0108, and AGENTS.md forbids it.

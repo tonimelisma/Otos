@@ -141,7 +141,7 @@ private func fixedOneFileScanner(_ name: String) -> CatalogScanner {
 }
 
 private func completeEnricher(captureDate: Date, thumbnailPath: String = "t.jpg") -> MediaEnricher {
-    MediaEnricher { id, _, size, mtime, _ in
+    MediaEnricher { id, _, size, mtime, _, _ in
         .complete(
             EnrichmentResult(
                 id: id,

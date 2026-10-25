@@ -323,6 +323,17 @@ struct MediaAssetTilePresentationTests {
         )
     }
 
+    /// ADR 0036: a saved edit's render keeps the thumbnail's file name, so the key carries
+    /// the rendered revision and a tile repaints with the edit.
+    @Test func imageContentKeyDistinguishesTheRenderedEdit() {
+        let unedited = makeDetail(thumbnailPath: "t.jpg", enrichedMTime: 10, enrichedSize: 1)
+        let edited = makeDetail(thumbnailPath: "t.jpg", enrichedMTime: 10, enrichedSize: 1, renderedRevision: 1)
+        #expect(
+            MediaAssetTilePresentation.imageContentKey(unedited)
+                != MediaAssetTilePresentation.imageContentKey(edited)
+        )
+    }
+
     @Test func imageContentKeyIgnoresDurationBadgeChanges() {
         let base = makeDetail(thumbnailPath: "t.jpg", enrichedMTime: 10, enrichedSize: 1)
         let newDuration = makeDetail(
@@ -491,12 +502,14 @@ private func makeDetail(
     enrichedMTime: Int? = nil,
     enrichedSize: Int64? = nil,
     durationSeconds: Double? = nil,
-    mediaChoice: MediaChoice = .default
+    mediaChoice: MediaChoice = .default,
+    renderedRevision: Int64 = 0
 ) -> MediaTileDetail {
     MediaTileDetail(
         libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
         relativePath: MediaRelativePath(rawValue: path),
         thumbnailPath: thumbnailPath,
+        renderedRevision: renderedRevision,
         bestKind: kind,
         durationSeconds: durationSeconds,
         enrichedSourceSize: enrichedSize,

@@ -56,6 +56,8 @@ nonisolated struct StoredTileDetail {
     var thumbnailPath: String?
     var previewPath: String?
     var nativePixelSize: CGSize?
+    var editRecipe: EditRecipe?
+    var renderedRevision: Int64 = 0
     var bestKind: MediaKind?
     var durationSeconds: Double?
     var enrichedSourceSize: Int64?

@@ -64,6 +64,8 @@ nonisolated struct MediaTrashPathResult: Equatable, Sendable {
 nonisolated struct TrashedOverlay: Equatable, Sendable {
     let mediaChoice: MediaChoice
     let importBatch: ImportBatchID?
+    /// The photo's edit, put back with it (ADR 0036); nil when it was never edited.
+    var editRecipe: StoredEditRecipe?
 }
 
 /// Where one member of a trashed item went, as `trashItem` reported it.

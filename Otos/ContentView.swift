@@ -115,6 +115,25 @@ struct ContentView: View {
             }
             // Hosted on its own view so `Do not ask again` applies to this alert only.
             .background { largeTrashDownloadAlertHost }
+            // The trailing inspector column collapses and expands like the sidebar; the
+            // toolbar button and View ▸ Show Edit Panel drive the same intent.
+            .inspector(isPresented: Binding(
+                get: { viewModel.isEditPanelPresented },
+                set: { presented in
+                    if presented != viewModel.isEditPanelPresented {
+                        viewModel.toggleEditPanel()
+                    }
+                }
+            )) {
+                EditPanelView(
+                    photoName: viewModel.editTarget?.id.fileURL.lastPathComponent,
+                    recipe: viewModel.editDraft,
+                    setValue: viewModel.setEditValue,
+                    setDragging: viewModel.setEditDragging,
+                    resetLight: viewModel.resetLight
+                )
+                .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
+            }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -169,6 +188,12 @@ struct ContentView: View {
                     isEnabled: !viewModel.currentTargetFileURLs.isEmpty,
                     onAnchor: viewModel.setShareAnchor,
                     share: { viewModel.shareCurrentTargets(origin: .toolbar) }
+                )
+            }
+            ToolbarItem(placement: .primaryAction) {
+                CatalogEditToolbarButton(
+                    isShowing: viewModel.isEditPanelPresented,
+                    toggle: viewModel.toggleEditPanel
                 )
             }
             ToolbarItem(placement: .primaryAction) {
@@ -323,7 +348,7 @@ struct ContentView: View {
                 tileContentStore: viewModel.tileContentStore,
                 focusedAssetID: viewModel.focusedAssetID,
                 focusedAssetKind: viewModel.focusedAssetKind,
-                panePreview: viewModel.panePreviews[.loupe],
+                panePreview: viewModel.displayedPanePreview(.loupe),
                 loupeVideoState: viewModel.loupeVideoState,
                 isDownloading: viewModel.downloadingSlots.contains(.loupe),
                 stripTileEdge: viewModel.stripTileEdge,
@@ -366,8 +391,8 @@ struct ContentView: View {
                 tileContentStore: viewModel.tileContentStore,
                 leftID: viewModel.comparePair.left,
                 rightID: viewModel.comparePair.right,
-                leftPreview: viewModel.panePreviews[.compareLeft],
-                rightPreview: viewModel.panePreviews[.compareRight],
+                leftPreview: viewModel.displayedPanePreview(.compareLeft),
+                rightPreview: viewModel.displayedPanePreview(.compareRight),
                 leftIsDownloading: viewModel.downloadingSlots.contains(.compareLeft),
                 rightIsDownloading: viewModel.downloadingSlots.contains(.compareRight),
                 focusTargetID: viewModel.compareStripFocusTargetID,

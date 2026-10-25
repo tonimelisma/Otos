@@ -18,24 +18,24 @@ struct CatalogWindowViewModelUndoTests {
             model.startMediaChoiceForwarding(store: library.store)
             defer { model.mediaChoiceForwardingTask?.cancel() }
             model.selectAll()
-            #expect(!model.curationUndoState.canUndo)
+            #expect(!model.undoMenuState.canUndo)
 
             model.submitMediaChoice(.liked, origin: .keyboard)
             try await expectSettledChoices([.liked, .liked], model, library)
-            #expect(model.curationUndoState.canUndo)
-            #expect(model.curationUndoState.undoTitle == "Undo Like")
-            #expect(!model.curationUndoState.canRedo)
+            #expect(model.undoMenuState.canUndo)
+            #expect(model.undoMenuState.undoTitle == "Undo Like")
+            #expect(!model.undoMenuState.canRedo)
 
-            model.undoCuration()
+            model.undoLastChange()
             try await expectSettledChoices([.notRated, .notRated], model, library)
-            #expect(!model.curationUndoState.canUndo)
-            #expect(model.curationUndoState.canRedo)
-            #expect(model.curationUndoState.redoTitle == "Redo Like")
+            #expect(!model.undoMenuState.canUndo)
+            #expect(model.undoMenuState.canRedo)
+            #expect(model.undoMenuState.redoTitle == "Redo Like")
 
-            model.redoCuration()
+            model.redoLastChange()
             try await expectSettledChoices([.liked, .liked], model, library)
-            #expect(model.curationUndoState.canUndo)
-            #expect(!model.curationUndoState.canRedo)
+            #expect(model.undoMenuState.canUndo)
+            #expect(!model.undoMenuState.canRedo)
         }
     }
 
@@ -58,9 +58,9 @@ struct CatalogWindowViewModelUndoTests {
             model.selectAll()
             model.submitMediaChoice(.notRated, origin: .menu)
             try await expectSettledChoices([.notRated, .notRated, .notRated], model, library)
-            #expect(model.curationUndoState.undoTitle == "Undo Mark as Not Rated")
+            #expect(model.undoMenuState.undoTitle == "Undo Mark as Not Rated")
 
-            model.undoCuration()
+            model.undoLastChange()
             try await expectSettledChoices([.liked, .disliked, .notRated], model, library)
         }
     }
@@ -76,7 +76,7 @@ struct CatalogWindowViewModelUndoTests {
             model.submitMediaChoice(.notRated, origin: .keyboard)
             try await expectSettledChoices([.notRated], model, library)
 
-            #expect(!model.curationUndoState.canUndo)
+            #expect(!model.undoMenuState.canUndo)
         }
     }
 
@@ -93,9 +93,9 @@ struct CatalogWindowViewModelUndoTests {
             model.submitMediaChoice(.liked, origin: .keyboard)
             try await expectSettledChoices([.liked, .notRated, .notRated], model, library)
             #expect(model.gridSelection.selection == [ids[1]])
-            #expect(model.curationUndoState.canUndo)
+            #expect(model.undoMenuState.canUndo)
 
-            model.undoCuration()
+            model.undoLastChange()
             try await expectSettledChoices([.notRated, .notRated, .notRated], model, library)
             #expect(model.gridSelection.selection == [ids[1]])
         }

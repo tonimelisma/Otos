@@ -686,6 +686,11 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
     /// cloud-only file); nil until metadata is known.
     let nativePixelWidth: Int?
     let nativePixelHeight: Int?
+    /// The photo's saved edit (ADR 0036); nil when never edited.
+    let editRecipe: EditRecipe?
+    /// The edit revision the stored thumbnail and preview were rendered from. It changes
+    /// with every rendered edit, so it keys every cached image of them.
+    let renderedRevision: Int64
     let bestKind: MediaKind?
     let durationSeconds: Double?
     let enrichedSourceSize: Int64?
@@ -700,6 +705,8 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
         previewPath: String? = nil,
         nativePixelWidth: Int? = nil,
         nativePixelHeight: Int? = nil,
+        editRecipe: EditRecipe? = nil,
+        renderedRevision: Int64 = 0,
         bestKind: MediaKind? = nil,
         durationSeconds: Double? = nil,
         enrichedSourceSize: Int64? = nil,
@@ -713,6 +720,8 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
         self.previewPath = previewPath
         self.nativePixelWidth = nativePixelWidth
         self.nativePixelHeight = nativePixelHeight
+        self.editRecipe = editRecipe
+        self.renderedRevision = renderedRevision
         self.bestKind = bestKind
         self.durationSeconds = durationSeconds
         self.enrichedSourceSize = enrichedSourceSize
