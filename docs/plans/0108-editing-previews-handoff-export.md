@@ -118,15 +118,9 @@ into pixels:
 - Undo, redo and reset.
 - The **Light** section: Exposure, Contrast, Highlights, Shadows.
 - **While dragging,** the photo renders live from the original (20–180 ms per change).
-- **On commit,** Otos re-renders three things:
-  - the thumbnail;
-  - the preview;
-  - a **full-size JPEG of the edited photo**, the file that hand-off gives out (13).
-    It is kept while the photo has an edit, as Photos keeps renders for edited photos
-    only: about 4.8 MB per edited RAW.
-
-  Editing needs the original locally anyway, so the commit costs no extra download.
-- **Docs:** a new ADR for edit storage and the edited render; the sidebar design spec
+- **On commit,** Otos re-renders the thumbnail and the preview. Editing needs the
+  original locally anyway, so the commit costs no extra download.
+- **Docs:** a new ADR for edit storage; the sidebar design spec
   (`docs/design/edit-sidebar.md`) reviewed against the design system; APP and DES rows.
 
 ### 6–11. Sidebar sections
@@ -155,25 +149,38 @@ A section with no supported control for a photo is not shown for it.
 
 ### 13. Hand-off: copy, drag, Share, Open With
 
-Finder parity: the full-size file, handed over at once, one file URL per photo (ADR
-0012's shape). Which file depends on the photo:
+Finder parity: the full-size file, one file URL per photo (ADR 0012's shape). Which
+file depends on the photo:
 
 | Photo | Handed over | Cloud-only original |
 | --- | --- | --- |
-| Edited (any type) | The stored full-size JPEG from increment 5 | Not needed; the render is local |
+| Edited (any type) | A full-size JPEG rendered from the original with its recipe when the hand-off starts (~2.2 s per RAW) | Downloaded first through the interactive priority |
 | Unedited JPEG, HEIC, video | The original, as today | The receiver's read downloads it, as with Finder (measured) |
 | Unedited RAW | A full-size JPEG rendered with RAW9 defaults when the hand-off starts (~2.2 s each) | Downloaded first through the interactive priority |
 
-Rendered hand-off files of unedited RAWs go to one Otos-owned folder in Application
-Support, named after their originals and cleared at the next launch.
+Edited photos and unedited RAWs take one path: render at hand-off into one Otos-owned
+folder in Application Support, named after their originals. Nothing full-size is kept
+beyond that; the folder is cleared at the next launch, when no reader of it can remain.
 
-- **Copy, Share and Open With** show progress while unedited RAWs render, then hand
-  over the files.
-- **Drag** cannot wait. An unedited RAW goes out as a file promise: Finder, Mail,
-  Messages and Safari wait for the render.
-  - Chrome never fulfils promises, so an unedited RAW dragged into Chrome arrives only
-    if its render already exists.
+- **Copy, Share and Open With** show progress while photos render, then hand over the
+  files.
+- **Drag** cannot wait. A photo that needs rendering goes out as a file promise:
+  Finder, Mail, Messages and Safari wait for the render.
+  - Chrome never fulfils promises, so such a photo dragged into Chrome arrives only if
+    its render already exists from an earlier hand-off.
   - ⌘C then paste into Chrome works in every case.
+
+## What Otos stores per photo
+
+| Product | Size | When made | Kept |
+| --- | --- | --- | --- |
+| Thumbnail, 256 px | ~20 KB | Enrichment, import, after each edit | For the photo's life (overlay lifecycle) |
+| Preview, 2560 px HEIC | ~0.4 MB (≈6 GB library-wide) | Same | For the photo's life |
+| Full-size render | ~4.8 MB per RAW | Only for a hand-off, export or 100% view (visible area only) | Hand-off files until the next launch; nothing else |
+
+Nothing is evicted by Otos, and nothing full-size is cached. A cloud-only original is
+downloaded only when a full-size render or a first preview needs it; macOS frees it
+again under disk pressure (R1).
 
 Amends ADR 0012, ADR 0028, APP-012, APP-035, APP-036 and APP-038.
 
@@ -198,13 +205,14 @@ Amends ADR 0012, ADR 0028, APP-012, APP-035, APP-036 and APP-038.
 | | What | Who | Status |
 | --- | --- | --- | --- |
 | R1 | What makes OneDrive files cloud-only again | agent | done: macOS, under disk pressure, uploaded idle files only, up to the purge goal; ordering unknown |
-| R2 | Remote rename and move on OneDrive: does the local file keep its inode? | agent + owner (A2) | downloaded file: done (below); cloud-only file: waiting for the owner's second rename |
+| R2 | Remote rename and move on OneDrive: does the local file keep its inode? | agent + owner (A2) | done (below) |
 | R3 | Hand-off of cloud-only originals into browsers | agent | done for paste in Chrome and WebKit; live drop into Safari.app and Chrome optional |
 | R4 | In-app: warm preview decode, enrichment throughput with RAW9 renders, memory | agent, during increment 4 | at build time |
 
-## R2 result: remote changes on OneDrive (downloaded file)
+## R2 result: remote changes on OneDrive
 
-FSEvents on this Mac while the owner changed the test file on OneDrive's side:
+FSEvents on this Mac while the owner changed a test file on OneDrive's side. Round 1
+started with the file downloaded; round 2 with it cloud-only:
 
 | Remote change | Local event | Inode | Size | Birth time | mtime |
 | --- | --- | --- | --- | --- | --- |
@@ -212,19 +220,16 @@ FSEvents on this Mac while the owner changed the test file on OneDrive's side:
 | Move file to another folder | `renamed` pair | kept | kept | kept | kept |
 | Rename folder | `renamed` pair (dir) | kept | — | kept | changed (directory) |
 | Evict (agent, `evictUbiquitousItem`) | — | kept | kept | kept | kept |
+| Round 2: rename the cloud-only file | OneDrive **downloaded it**, then a `renamed` pair | kept | kept | kept | kept |
+| Round 2: move it | `renamed` pair | kept | kept | kept | **changed, +183 s** |
 
 - **For option C (increment 3):** the move witness must be inode + size + birth time,
-  not mtime, because a remote rename rewrites mtime.
+  not mtime, because remote renames and moves rewrite mtime unpredictably.
+- A remote rename of a cloud-only file downloaded it (n=1).
 - **For enrichment:** a remotely renamed file's `(size, mtime)` signature changes, so
   it re-queues for enrichment. When the file is cloud-only, that means downloading it
   again. Increment 3 decides how a re-keyed row keeps its enrichment stamp.
 
 ## Owner actions
 
-- **A2, second round (cloud-only file).** On `onedrive.com` or the phone app, in
-  `Otos rename test`:
-  1. Rename `B/otos-probe-renamed.jpg` (now cloud-only on this Mac) to
-     `otos-probe-cloud.jpg`.
-  2. Move it into `A-renamed`.
-
-  The agent watches this Mac and removes the test folder afterwards.
+None outstanding. The test folder was removed after R2.
