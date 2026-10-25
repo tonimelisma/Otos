@@ -64,6 +64,9 @@ opt_in_rules:
 disabled_rules:
   - trailing_comma
 
+# A rule's `included` and `excluded` match the file's absolute path, so the app's
+# `Otos/` also matches the checkout folder itself (`…/Otos/OtosTests/…`). A rule for
+# app code says so by excluding `OtosTests/` as well.
 custom_rules:
   structured_log_via_helper:
     name: "Structured op= log must use an Operation helper"
@@ -81,6 +84,7 @@ custom_rules:
   error_becomes_value:
     name: "A failed operation must not become a value"
     included: 'Otos/.*\.swift'
+    excluded: 'OtosTests/'
     regex: 'try\?[^\n]*\?\?\s*(\[\]|\[:\]|0\b|""|false\b|\.empty\b)'
     message: "An error is not a fact (ADR 0032, rule 4): `try? … ?? []/0/\"\"/false/.empty` turns a failure into a value someone reads as true. Handle the error (log it, publish nothing, report it), or keep the result Optional so unknown stays unknown."
     severity: error
@@ -117,6 +121,7 @@ custom_rules:
   relative_path_through_url:
     name: "Relative path through URL"
     included: 'Otos/.*\.swift'
+    excluded: 'OtosTests/'
     regex: 'URL\(fileURLWithPath:\s*[A-Za-z_.]*[Rr]elative[A-Za-z_]*\.rawValue'
     message: "A root-relative path handed to URL(fileURLWithPath:) resolves against the process's working directory, so its folder comes back absolute. Use MediaRelativePath's folder, fileName, stem and fileExtension."
     severity: error
@@ -133,12 +138,14 @@ custom_rules:
   statement_try_optional:
     name: "An error is handled, not discarded"
     included: 'Otos/.*\.swift'
+    excluded: 'OtosTests/'
     regex: '^[ \t]*try\?[ \t](?![^\n]*\bsleep\()'
     message: "A statement `try?` throws the error away. Handle it: treat the outcome you expect (a missing file is gone already) and log the rest with its op. Only a sleep's cancellation needs no handling."
     severity: error
   file_url_without_directory_hint:
     name: "A file URL says whether it is a directory"
     included: 'Otos/.*\.swift'
+    excluded: 'OtosTests/'
     regex: 'URL\(fileURLWithPath:(?![^\n]*\b(isDirectory|relativeTo)\b)'
     excluded_match_kinds: [comment, doccomment]
     message: "URL(fileURLWithPath:) without isDirectory: stats the disk, and its answer becomes a trailing slash in the path: a file that became a directory then names a different path. Pass isDirectory:, or work on the text (CatalogPath.relativePath(rootPath:absolutePath:), MediaRelativePath's components)."
