@@ -30,6 +30,26 @@ struct EnrichmentScheduleTests {
         schedule.takeSubmissions(globalLimit: 16, backgroundPerRoot: 16, viewport: [], now: now).map(\.id)
     }
 
+    /// ENR-008: a cloud download held by the free-space floor spends no attempt and gives its
+    /// claim back, and the ledger offers the row again after the space recheck, without limit.
+    @Test func cloudDownloadHeldByTheFloorReleasesItsClaimAndRechecks() throws {
+        var schedule = EnrichmentSchedule(retrySchedule: .production)
+        let row = id("a.jpg")
+        schedule.demand(work(row), ownsStoreClaim: true)
+        #expect(submitAll(&schedule, at: start) == [row])
+        let pending = try #require(schedule.materializations[row]?.work)
+        let finished = schedule.finish(pending, outcome: .insufficientLocalSpace, now: start)
+        let settlement = try #require(finished)
+        let entry = EnrichmentCoordinator.RetryLedgerEntry(
+            notBefore: start.advanced(by: EnrichmentRetrySchedule.production.spaceRecheck),
+            attemptCount: 0,
+            sourceSize: 100
+        )
+        #expect(settlement == EnrichmentSchedule.Settlement(disposition: .paced(entry), releasesStoreClaim: true))
+        #expect(schedule.materializations[row] == nil)
+        #expect(schedule.retryLedger[row] == entry)
+    }
+
     /// ENR-009: background materialization retries in-window on the shipped schedule, and
     /// the failure after the last delay releases the claim and hands the row to the ledger.
     @Test func backgroundRetriesFollowTheScheduleThenPaceThroughTheLedger() throws {

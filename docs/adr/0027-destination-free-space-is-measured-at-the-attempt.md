@@ -25,9 +25,13 @@ per-entry `EntryFailure.outOfSpace` and stops the run the same way — from a ca
 (`CameraByteFailure`) from the same two error shapes. It is the backstop, not a
 second outcome.
 
-Free space is never a property of a plan, never gates a control, and is never
-observed on a timer. `FreeSpaceFloor.bytes` (5 GB) is one constant with one home,
-used by the import executor and by device staging.
+Free space is never a property of a plan, never gates a control, and an import never
+observes it on a timer. `FreeSpaceFloor` is one constant and one check
+(`FreeSpaceFloor.admits`) with one home, used by the import executor, by Move to
+Trash's downloads, and by `MaterializationCoordinator` for every background and device
+download. A held download is offered again after the enrichment schedule's 60 s space
+recheck (`time: poll`), because macOS reports no free-space change at an app-defined
+threshold.
 
 ## Context
 

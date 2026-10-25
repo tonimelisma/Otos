@@ -37,16 +37,6 @@ final class DeviceStagingRegistry {
         if FileManager.default.fileExists(atPath: path) {
             return MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
         }
-        guard hasEnoughFreeSpace(for: route.session.stagingRootURL) else {
-            OtosLog.fileAccess.error(
-                "Device staging paused for low free space identity=\(route.session.identity, privacy: .public)"
-            )
-            return MaterializationResult(
-                outcome: .insufficientLocalSpace,
-                rerequestCount: 0,
-                elapsedMs: DiagnosticsTiming.milliseconds(since: start)
-            )
-        }
         do {
             try await download(route: route, destinationURL: url)
             return MaterializationResult(
@@ -146,17 +136,6 @@ final class DeviceStagingRegistry {
         } else {
             try FileManager.default.moveItem(at: tempURL, to: destinationURL)
         }
-    }
-
-    private func hasEnoughFreeSpace(for url: URL) -> Bool {
-        let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-        guard let available = values?.volumeAvailableCapacityForImportantUsage else {
-            return true
-        }
-        // The same promise the import executor keeps (ADR 0027), from the
-        // same constant. The file's own size is not known at this seam, so
-        // a stage may finish just below the floor; it never starts below it.
-        return available >= FreeSpaceFloor.bytes
     }
 
     /// A Sendable resolver from a device root to its live session.
