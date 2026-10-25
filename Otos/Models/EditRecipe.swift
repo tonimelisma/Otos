@@ -73,6 +73,12 @@ nonisolated struct EditRecipe: Codable, Equatable, Hashable, Sendable {
     /// The kept part of the straightened frame; nil keeps all of it.
     var crop: EditCrop?
 
+    /// Video.
+    /// Seconds from the start of a video where its trimmed range begins; nil is its start.
+    var trimStart: Double?
+    /// Seconds from the start of a video where its trimmed range ends; nil is its end.
+    var trimEnd: Double?
+
     static let neutral = EditRecipe()
 
     var isNeutral: Bool {
@@ -101,7 +107,9 @@ nonisolated struct EditRecipe: Codable, Equatable, Hashable, Sendable {
         flipHorizontal: Bool = false,
         flipVertical: Bool = false,
         straighten: Double = 0,
-        crop: EditCrop? = nil
+        crop: EditCrop? = nil,
+        trimStart: Double? = nil,
+        trimEnd: Double? = nil
     ) {
         self.exposure = exposure
         self.contrast = contrast
@@ -125,6 +133,8 @@ nonisolated struct EditRecipe: Codable, Equatable, Hashable, Sendable {
         self.flipVertical = flipVertical
         self.straighten = straighten
         self.crop = crop
+        self.trimStart = trimStart
+        self.trimEnd = trimEnd
     }
 
     init(from decoder: any Decoder) throws {
@@ -151,6 +161,8 @@ nonisolated struct EditRecipe: Codable, Equatable, Hashable, Sendable {
         flipVertical = try container.decodeIfPresent(Bool.self, forKey: .flipVertical) ?? false
         straighten = try container.decodeIfPresent(Double.self, forKey: .straighten) ?? 0
         crop = try container.decodeIfPresent(EditCrop.self, forKey: .crop)
+        trimStart = try container.decodeIfPresent(Double.self, forKey: .trimStart)
+        trimEnd = try container.decodeIfPresent(Double.self, forKey: .trimEnd)
     }
 }
 
@@ -483,6 +495,9 @@ nonisolated struct EditRecipeMutationResult: Equatable, Sendable {
     let saved: StoredEditRecipe?
     var sourceSize: Int64?
     var sourceMTimeSeconds: Int?
+    /// The asset is a video: its thumbnail and poster do not depend on its edit (a trim), so
+    /// the save already marked them current and nothing is rendered for it.
+    var isVideo = false
 }
 
 /// A thumbnail and preview rendered from one saved recipe, staged for the store to

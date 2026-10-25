@@ -263,6 +263,12 @@ public struct OtosApp: App {
                     catalogViewModel.flipPhoto(horizontally: false)
                 }
                 .disabled(!catalogViewModel.canEdit)
+                // QuickTime's key; Otos styles no text, so ⌘T's Show Fonts has no use here.
+                Button("Trim Video…") {
+                    catalogViewModel.trimVideo()
+                }
+                .keyboardShortcut("t", modifiers: .command)
+                .disabled(!catalogViewModel.canTrimVideo)
                 Divider()
                 Button("Move to Trash", role: .destructive) {
                     catalogViewModel.moveTargetedMediaToTrash()

@@ -411,6 +411,8 @@ struct ContentView: View {
                         )
                     }
                     : nil,
+                videoTrimCommand: viewModel.videoTrimCommand,
+                onVideoTrimmed: viewModel.finishTrim(id:),
                 loupeInfo: viewModel.loupeInfo
             )
             .navigationTitle(viewModel.state.title)

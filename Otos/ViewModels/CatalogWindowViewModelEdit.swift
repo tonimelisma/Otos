@@ -65,6 +65,12 @@ nonisolated enum EditRenderRequest: Sendable {
     case close
 }
 
+/// A request for the loupe's player to begin trimming `id`, applied once per generation.
+nonisolated struct VideoTrimCommand: Equatable, Sendable {
+    let id: MediaAssetID
+    let generation: UInt64
+}
+
 nonisolated enum EditCommandOrigin: String, Sendable {
     case user
     case undo
@@ -102,6 +108,35 @@ extension CatalogWindowViewModel {
             editTargetTask = nil
             clearEditTarget()
         }
+    }
+
+    /// Photo ▸ Trim Video… (⌘T): asks the loupe's player to show `AVPlayerView`'s trim UI.
+    func trimVideo() {
+        guard canTrimVideo, let id = loupeVideoState?.id else { return }
+        videoTrimGeneration &+= 1
+        videoTrimCommand = VideoTrimCommand(id: id, generation: videoTrimGeneration)
+        OtosLog.ui.noticeOperation("edit.trim", phase: "requested", fields: ["id": id.relativePath.rawValue])
+    }
+
+    var canTrimVideo: Bool {
+        viewMode == .loupe && loupeVideoState != nil && loupeVideoState?.id == focusedAssetID
+    }
+
+    /// The trim UI closed with Trim: the range it left on the player is saved as one step.
+    /// Cancel restores nothing to save, so it never reaches here.
+    func finishTrim(id: MediaAssetID) {
+        guard let state = loupeVideoState, state.id == id else { return }
+        let trim = state.currentTrim
+        var recipe = state.recipe
+        recipe.trimStart = trim.start
+        recipe.trimEnd = trim.end
+        guard recipe != state.recipe else { return }
+        enqueueEdit(EditCommand(id: id, recipe: recipe, actionName: "Trim", origin: .user))
+        OtosLog.ui.noticeOperation("edit.trim", phase: "submitted", fields: [
+            "id": id.relativePath.rawValue,
+            "start": trim.start.map { String(format: "%.2f", $0) } ?? "none",
+            "end": trim.end.map { String(format: "%.2f", $0) } ?? "none",
+        ])
     }
 
     /// The Optics section's Lens Correction checkbox.
@@ -387,6 +422,9 @@ extension CatalogWindowViewModel {
                     continue
                 }
                 self?.applySavedEdit(command, saved: saved, previous: result.previous?.recipe ?? .neutral)
+                // A video's trim changes nothing the catalog renders (the store marked its
+                // products current).
+                guard !result.isVideo else { continue }
                 guard let products = await pipeline.products(command.id, saved: saved, result: result) else {
                     continue
                 }
@@ -442,6 +480,9 @@ extension CatalogWindowViewModel {
                 editSavedRecipe = saved.recipe
                 editDraft = saved.recipe
             }
+        }
+        if loupeVideoState?.id == command.id {
+            loupeVideoState?.applyTrim(saved.recipe)
         }
         if var live = editLivePreview, live.id == command.id, live.recipe == saved.recipe {
             live.revision = saved.revision

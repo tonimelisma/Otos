@@ -172,6 +172,9 @@ final class CatalogWindowViewModel {
     var editLivePreview: EditLivePreview?
     /// The open target's facts; nil until it has been opened (the controls wait for them).
     var editPhotoFacts: EditPhotoFacts?
+    /// The latest request for the loupe's player to show its trim UI.
+    var videoTrimCommand: VideoTrimCommand?
+    @ObservationIgnored var videoTrimGeneration: UInt64 = 0
     /// An edit value field holds the keyboard: the Edit menu's text commands act on it.
     var isEnteringEditValue = false
     /// The white balance picker is armed: the next loupe click picks a neutral point.

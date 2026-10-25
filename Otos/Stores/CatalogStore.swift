@@ -1284,7 +1284,7 @@ extension CatalogStore {
             guard let row = try Row.fetchOne(
                 db,
                 sql: """
-                SELECT edit_recipe_json, edit_revision, byte_size, content_modified_at_unix FROM media_asset
+                SELECT edit_recipe_json, edit_revision, byte_size, content_modified_at_unix, best_kind FROM media_asset
                 WHERE library_root_id = ? AND relative_path = ?
                 """,
                 arguments: [rootID, id.relativePath.rawValue]
@@ -1296,20 +1296,25 @@ extension CatalogStore {
                 return EditRecipeMutationResult(exists: true, previous: previous, saved: nil)
             }
             let modified: Double? = row["content_modified_at_unix"]
+            let isVideo = (row["best_kind"] as String?) == MediaKind.video.rawValue
             let revision = (previous?.revision ?? 0) + 1
+            // A video's products do not carry its edit, so they are current as soon as it is
+            // saved; otherwise enrichment would download the video again to re-render them.
             try db.execute(
                 sql: """
-                UPDATE media_asset SET edit_recipe_json = ?, edit_revision = ?
+                UPDATE media_asset SET edit_recipe_json = ?, edit_revision = ?,
+                    rendered_revision = CASE WHEN ? THEN ? ELSE rendered_revision END
                 WHERE library_root_id = ? AND relative_path = ?
                 """,
-                arguments: [json, revision, rootID, id.relativePath.rawValue]
+                arguments: [json, revision, isVideo, revision, rootID, id.relativePath.rawValue]
             )
             return EditRecipeMutationResult(
                 exists: true,
                 previous: previous,
                 saved: StoredEditRecipe(recipe: recipe, revision: revision),
                 sourceSize: row["byte_size"],
-                sourceMTimeSeconds: modified.map { Int($0.rounded(.down)) }
+                sourceMTimeSeconds: modified.map { Int($0.rounded(.down)) },
+                isVideo: isVideo
             )
         }
         if result.saved != nil {

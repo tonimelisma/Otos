@@ -85,7 +85,8 @@ final class VideoPreviewLoader {
         player.automaticallyWaitsToMinimizeStalling = true
         player.actionAtItemEnd = .pause
 
-        let state = LoupeVideoState(id: id, player: player, isPlaying: false, displaySize: displaySize)
+        var state = LoupeVideoState(id: id, player: player, isPlaying: false, displaySize: displaySize)
+        state.applyTrim(detail?.editRecipe ?? .neutral)
         OtosLog.mediaIO.notice(
             """
             op=video.decode phase=ok id=\(id.relativePath.rawValue, privacy: .public) \
@@ -130,6 +131,8 @@ struct LoupeVideoState: Equatable {
     /// The video's displayed size, so the pane sizes the player to the picture and
     /// leaves no letterbox for AVKit to paint black (DES-022). Nil when unknown.
     nonisolated let displaySize: CGSize?
+    /// The video's saved edit, whose trim the player plays (ADR 0036).
+    private(set) var recipe = EditRecipe.neutral
 
     init(id: MediaAssetID, player: AVPlayer, isPlaying: Bool, displaySize: CGSize? = nil) {
         self.id = id
@@ -146,7 +149,32 @@ struct LoupeVideoState: Equatable {
         return size
     }
 
+    /// Plays only the recipe's trimmed range: `AVPlayerItem`'s reverse and forward playback
+    /// end times are where `AVPlayerView`'s trim UI reads and writes it, so the player and the
+    /// trim UI show the same range. An untrimmed recipe clears them.
+    mutating func applyTrim(_ recipe: EditRecipe) {
+        self.recipe = recipe
+        guard let item = player.currentItem else { return }
+        item.reversePlaybackEndTime = recipe.trimStart.map { CMTime(seconds: $0, preferredTimescale: 600) } ?? .invalid
+        item.forwardPlaybackEndTime = recipe.trimEnd.map { CMTime(seconds: $0, preferredTimescale: 600) } ?? .invalid
+        if let start = recipe.trimStart {
+            player.seek(to: CMTime(seconds: start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+    }
+
+    /// The trimmed range the player's item holds now, as the trim UI left it: nil at an end
+    /// the trim did not move.
+    var currentTrim: (start: Double?, end: Double?) {
+        guard let item = player.currentItem else { return (nil, nil) }
+        let duration = item.duration
+        let start = item.reversePlaybackEndTime
+        let end = item.forwardPlaybackEndTime
+        let startSeconds = start.isValid && start.seconds > 0 ? start.seconds : nil
+        let endSeconds = end.isValid && (!duration.isNumeric || end < duration) ? end.seconds : nil
+        return (startSeconds, endSeconds)
+    }
+
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.id == rhs.id && lhs.player === rhs.player && lhs.isPlaying == rhs.isPlaying
+        lhs.id == rhs.id && lhs.player === rhs.player && lhs.isPlaying == rhs.isPlaying && lhs.recipe == rhs.recipe
     }
 }

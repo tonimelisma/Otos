@@ -39,6 +39,8 @@ struct LoupeView: View {
     var onPickNeutral: (CGPoint) -> Void = { _ in }
     /// While the crop tool is on: the whole frame it draws over, and the crop.
     var cropEditor: CropEditorInput?
+    var videoTrimCommand: VideoTrimCommand?
+    var onVideoTrimmed: @MainActor (MediaAssetID) -> Void = { _ in }
     /// Info overlay (APP-041); nil when hidden.
     var loupeInfo: LoupeInfoModel?
     @Environment(\.colorScheme) private var colorScheme
@@ -92,10 +94,10 @@ struct LoupeView: View {
                     // Sized to the picture: AVKit paints its letterbox black, so the
                     // pane leaves it none and the backdrop stays `content` (DES-022).
                     if let displaySize = state.displaySize {
-                        LoupeVideoPlayerView(state: state)
+                        LoupeVideoPlayerView(state: state, trimCommand: videoTrimCommand, onTrimmed: onVideoTrimmed)
                             .aspectRatio(displaySize, contentMode: .fit)
                     } else {
-                        LoupeVideoPlayerView(state: state)
+                        LoupeVideoPlayerView(state: state, trimCommand: videoTrimCommand, onTrimmed: onVideoTrimmed)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 case let .full(image):

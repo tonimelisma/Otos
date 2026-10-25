@@ -101,6 +101,19 @@ open takes 20–180 ms per change. Opening it again for every change takes about
   - **Optics** is `CIRAWFilter.isLensCorrectionEnabled`, shown only for a RAW with a lens
     profile, with nil meaning the decoder's default (on).
   - A section or control a photo cannot use is left out for that photo.
+- **Video trim.**
+  - A video's recipe holds `trimStart` and `trimEnd` in seconds; nil is the video's own
+    start or end.
+  - Photo ▸ Trim Video… (⌘T, QuickTime's key; Otos styles no text, so the standard Show
+    Fonts has no use) shows `AVPlayerView`'s own trim UI on the loupe video.
+  - On Trim, the range it leaves on the player item's `reversePlaybackEndTime` and
+    `forwardPlaybackEndTime` is saved as one `Trim` step. This is where AVKit's trimming
+    reports it (WWDC 2013, "Moving to AVKit"); the header leaves it unstated. A prepared
+    video plays only its trimmed range, and undo and redo move the player's range with
+    the recipe.
+  - A video's thumbnail and poster do not carry its trim. Saving a video's recipe
+    therefore marks its products current in the same transaction, so nothing renders,
+    and no launch reconciliation downloads it again.
 - **One renderer for live edits.** `LiveEditRenderer` is an actor on its own serial
   queue. It keeps the photo being edited open between renders, along with a
   `CIContext` that caches intermediates. While a control is dragged it renders the
