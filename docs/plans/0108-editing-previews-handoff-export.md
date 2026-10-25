@@ -1,6 +1,6 @@
 # Plan 0108: Editing, previews, hand-off and export
 
-Status: draft for owner alignment, 2026-10-25. Nothing here is built.
+Status: aligned with the owner 2026-10-25; increments run in order.
 
 Research behind it:
 - `docs/research/2026-10-24-editing-foundation.md`
@@ -30,6 +30,9 @@ Research behind it:
 10. A card or camera not seen for 90 days is forgotten automatically.
 11. Background downloads stop at the 5 GB free-space floor.
 12. An unedited RAW hands over a rendered full-size JPEG, not the ARW.
+13. The edit panel collapses the way the sidebar does, in the idiomatic macOS form: a
+    trailing inspector (SwiftUI `.inspector`), shown and hidden from a toolbar button
+    and the View menu's inspector command.
 
 ## Facts the plan rests on
 
@@ -113,8 +116,8 @@ into pixels:
 
 ### 5. Edit foundation and the Light section
 
-- The recipe table (one current recipe per asset, overlay lifecycle) and the right
-  sidebar's frame.
+- The recipe table (one current recipe per asset, overlay lifecycle) and the edit
+  panel: a trailing inspector that collapses like the sidebar (decision 13).
 - Undo, redo and reset.
 - The **Light** section: Exposure, Contrast, Highlights, Shadows.
 - **While dragging,** the photo renders live from the original (20–180 ms per change).
