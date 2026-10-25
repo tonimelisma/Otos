@@ -29,6 +29,7 @@ Research behind it:
 9. No checksum identity (option B rejected).
 10. A card or camera not seen for 90 days is forgotten automatically.
 11. Background downloads stop at the 5 GB free-space floor.
+12. An unedited RAW hands over a rendered full-size JPEG, not the ARW.
 
 ## Facts the plan rests on
 
@@ -161,7 +162,18 @@ Finder parity: the full-size file, handed over at once, one file URL per photo (
 | --- | --- | --- |
 | Edited (any type) | The stored full-size JPEG from increment 5 | Not needed; the render is local |
 | Unedited JPEG, HEIC, video | The original, as today | The receiver's read downloads it, as with Finder (measured) |
-| Unedited RAW | Per Q6 | — |
+| Unedited RAW | A full-size JPEG rendered with RAW9 defaults when the hand-off starts (~2.2 s each) | Downloaded first through the interactive priority |
+
+Rendered hand-off files of unedited RAWs go to one Otos-owned folder in Application
+Support, named after their originals and cleared at the next launch.
+
+- **Copy, Share and Open With** show progress while unedited RAWs render, then hand
+  over the files.
+- **Drag** cannot wait. An unedited RAW goes out as a file promise: Finder, Mail,
+  Messages and Safari wait for the render.
+  - Chrome never fulfils promises, so an unedited RAW dragged into Chrome arrives only
+    if its render already exists.
+  - ⌘C then paste into Chrome works in every case.
 
 Amends ADR 0012, ADR 0028, APP-012, APP-035, APP-036 and APP-038.
 
@@ -186,23 +198,33 @@ Amends ADR 0012, ADR 0028, APP-012, APP-035, APP-036 and APP-038.
 | | What | Who | Status |
 | --- | --- | --- | --- |
 | R1 | What makes OneDrive files cloud-only again | agent | done: macOS, under disk pressure, uploaded idle files only, up to the purge goal; ordering unknown |
-| R2 | Remote rename and move on OneDrive: does the local file keep its inode? | agent + owner (A2) | test file uploaded and watched; waiting for the owner's rename and move |
+| R2 | Remote rename and move on OneDrive: does the local file keep its inode? | agent + owner (A2) | downloaded file: done (below); cloud-only file: waiting for the owner's second rename |
 | R3 | Hand-off of cloud-only originals into browsers | agent | done for paste in Chrome and WebKit; live drop into Safari.app and Chrome optional |
 | R4 | In-app: warm preview decode, enrichment throughput with RAW9 renders, memory | agent, during increment 4 | at build time |
 
-## Open questions for the owner
+## R2 result: remote changes on OneDrive (downloaded file)
 
-- **Q6.** An unedited RAW, copied or dragged out:
-  - (a) **the ARW itself**, exactly as Finder does: instant, even when cloud-only, but
-    no web page can show it; or
-  - (b) **a full-size JPEG render:** about 2.2 s per photo plus the download of a
-    cloud-only original, so a drag of a cloud-only RAW cannot complete straight away.
+FSEvents on this Mac while the owner changed the test file on OneDrive's side:
+
+| Remote change | Local event | Inode | Size | Birth time | mtime |
+| --- | --- | --- | --- | --- | --- |
+| Rename file | `renamed` pair | kept | kept | kept | **changed, +480 s**, 5 s after the rename (to the rename time) |
+| Move file to another folder | `renamed` pair | kept | kept | kept | kept |
+| Rename folder | `renamed` pair (dir) | kept | — | kept | changed (directory) |
+| Evict (agent, `evictUbiquitousItem`) | — | kept | kept | kept | kept |
+
+- **For option C (increment 3):** the move witness must be inode + size + birth time,
+  not mtime, because a remote rename rewrites mtime.
+- **For enrichment:** a remotely renamed file's `(size, mtime)` signature changes, so
+  it re-queues for enrichment. When the file is cloud-only, that means downloading it
+  again. Increment 3 decides how a re-keyed row keeps its enrichment stamp.
 
 ## Owner actions
 
-- **A2.** On `onedrive.com` or the phone app, in `Otos rename test`:
-  1. Rename `A/otos-probe.jpg` to `otos-probe-renamed.jpg`.
-  2. Move it into folder `B`.
-  3. Rename folder `A` to `A-renamed`.
+- **A2, second round (cloud-only file).** On `onedrive.com` or the phone app, in
+  `Otos rename test`:
+  1. Rename `B/otos-probe-renamed.jpg` (now cloud-only on this Mac) to
+     `otos-probe-cloud.jpg`.
+  2. Move it into `A-renamed`.
 
   The agent watches this Mac and removes the test folder afterwards.
