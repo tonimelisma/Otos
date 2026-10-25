@@ -4,7 +4,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// Plan 0108 increment 13: a hand-off is one full-size file per photo — the original for an
+/// ADR 0037: a hand-off is one full-size file per photo — the original for an
 /// unedited still or video, a rendered JPEG for an edited photo or a RAW, the trimmed range
 /// of a trimmed video.
 @Suite(.testDirectory)
@@ -13,7 +13,7 @@ struct HandOffTests {
     @Test func eachPhotoIsHandedOverInTheFormItsEditCalls() {
         func form(_ name: String, video: Bool = false, _ recipe: EditRecipe = .neutral) -> HandOffForm {
             let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/P"), relativePath: MediaRelativePath(rawValue: name))
-            return HandOffItem(id: id, isVideo: video, recipe: recipe, sourceSize: nil).form
+            return EditedMediaItem(id: id, isVideo: video, recipe: recipe, sourceSize: nil).handOffForm
         }
         #expect(form("a.jpg") == .original)
         #expect(form("a.jpg", EditRecipe(exposure: 1)) == .renderedStill)
@@ -77,7 +77,7 @@ struct HandOffTests {
             relativePath: MediaRelativePath(rawValue: "photo.jpg")
         )
         let preparer = HandOffPreparer(directory: directory.appending(path: "HandOff"), materialization: nil)
-        let item = HandOffItem(id: id, isVideo: false, recipe: EditRecipe(exposure: 0.5), sourceSize: nil)
+        let item = EditedMediaItem(id: id, isVideo: false, recipe: EditRecipe(exposure: 0.5), sourceSize: nil)
 
         #expect(preparer.readyURL(for: item) == nil)
         let first = try await preparer.prepare(item)
@@ -110,7 +110,9 @@ struct HandOffTests {
             .appending(path: "Fixtures/Media/mov-no-embedded-capture-date.mov")
         let output = directory.appending(path: "trimmed.mov")
 
-        try await HandOffPreparer.exportTrimmed(fixture, recipe: EditRecipe(trimStart: 0.2, trimEnd: 0.6), to: output)
+        try await MediaFileWriter.writeVideo(
+            fixture, recipe: EditRecipe(trimStart: 0.2, trimEnd: 0.6), removingLocation: false, to: output
+        )
 
         let duration = try await AVURLAsset(url: output).load(.duration)
         #expect(abs(duration.seconds - 0.4) < 0.15)

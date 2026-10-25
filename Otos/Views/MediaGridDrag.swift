@@ -4,7 +4,7 @@ import Foundation
 /// Grid drag-out guide
 ///
 /// Dragging tiles out of the grid or filmstrip hands each asset over as ⌘C does (ADR 0028,
-/// ADR 0012, plan 0108 increment 13): one writer per asset in display order, chosen by
+/// ADR 0012, ADR 0037): one writer per asset in display order, chosen by
 /// `CatalogWindowViewModel.dragWriter(for:)`. That is the original's `public.fileURL` for
 /// an unedited still or video (no bytes read, so a dataless cloud original is downloaded
 /// by the receiver), a file already prepared this launch, or a file promise that prepares

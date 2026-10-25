@@ -212,7 +212,7 @@ struct CatalogStoreEditRecipeTests {
         #expect(EditControl.temperature.position(fromEntered: "30", facts: still) == 30)
     }
 
-    /// Plan 0108: a photo is offered the Detail and Optics controls its decoder supports.
+    /// ADR 0036: a photo is offered the Detail and Optics controls its decoder supports.
     @Test func sectionsAndControlsFollowWhatThePhotoOffers() {
         let still = EditPhotoFacts.still
         #expect(EditSection.detail.isAvailable(still))

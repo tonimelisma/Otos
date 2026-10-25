@@ -39,7 +39,7 @@ struct EditPanelView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .accessibilityAddTraits(.isHeader)
-                // A section the photo has nothing to adjust in is left out (plan 0108): Optics
+                // A section the photo has nothing to adjust in is left out (ADR 0036): Optics
                 // without a lens profile, the RAW8-only Detail controls on other photos.
                 ForEach(EditSection.allCases.filter { $0.isAvailable(facts ?? .still) }) { section in
                     sectionView(section)

@@ -225,7 +225,7 @@ struct CatalogWindowViewModelViewModeTests {
         model.applyState(makeViewModeState(orderedIDs: ids))
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("copy-\(UUID().uuidString)"))
         defer { pasteboard.releaseGlobally() }
-        /// Copy is a hand-off: it settles through the hand-off lane (plan 0108 increment 13).
+        /// Copy is a hand-off: it settles through the hand-off lane (ADR 0037).
         func copied() async throws -> [URL] {
             model.copyCurrentTargets(to: pasteboard)
             try await waitUntil { model.hasSettledHandOffs }

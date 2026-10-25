@@ -5,7 +5,7 @@ import OSLog
 /// Hand-off intents guide
 ///
 /// Copy (⌘C), Share and Open / Open With hand the current targets to another app as one
-/// full-size file per photo (plan 0108 increment 13; `HandOffPreparer`). An edited photo
+/// full-size file per photo (ADR 0037; `HandOffPreparer`). An edited photo
 /// or a RAW needs a file rendered first, so every hand-off travels one ordered lane with
 /// one consumer (`handOffStream`, lossless). The consumer:
 /// 1. reads the targets' details;
@@ -51,6 +51,11 @@ nonisolated struct HandOffProgress: Equatable, Sendable {
     let completed: Int
     let total: Int
     let generation: UInt64
+
+    /// The status bar's line: "Preparing 3 photos to copy".
+    var title: String {
+        "Preparing \(total == 1 ? "1 photo" : "\(total) photos") to \(verb)"
+    }
 }
 
 extension CatalogWindowViewModel {
@@ -105,8 +110,8 @@ extension CatalogWindowViewModel {
                     self?.failHandOff(request, failed: request.ids.count)
                     continue
                 }
-                let items = request.ids.map { Self.handOffItem($0, detail: details[$0]) }
-                let pending = items.filter { $0.form != .original && preparer.readyURL(for: $0) == nil }.count
+                let items = request.ids.map { EditedMediaItem(id: $0, detail: details[$0]) }
+                let pending = items.filter { $0.handOffForm != .original && preparer.readyURL(for: $0) == nil }.count
                 self?.beginHandOffProgress(request, total: pending)
                 var urls: [URL] = []
                 var failed = 0
@@ -116,7 +121,7 @@ extension CatalogWindowViewModel {
                         cancelled = true
                         break
                     }
-                    let needed = item.form != .original && preparer.readyURL(for: item) == nil
+                    let needed = item.handOffForm != .original && preparer.readyURL(for: item) == nil
                     do {
                         try await urls.append(preparer.prepare(item))
                     } catch {
@@ -139,17 +144,6 @@ extension CatalogWindowViewModel {
                 }
             }
         }
-    }
-
-    /// What a photo hands over follows from its catalog row; a target with no row (gone
-    /// since it was chosen) hands over its path as it is, which is what Finder would.
-    nonisolated static func handOffItem(_ id: MediaAssetID, detail: MediaTileDetail?) -> HandOffItem {
-        HandOffItem(
-            id: id,
-            isVideo: detail?.bestKind == .video,
-            recipe: detail?.editRecipe ?? .neutral,
-            sourceSize: detail?.byteSize
-        )
     }
 
     private func beginHandOffProgress(_ request: HandOffRequest, total: Int) {
@@ -216,7 +210,7 @@ extension CatalogWindowViewModel {
         ])
     }
 
-    /// The drag pasteboard writer for one photo (ADR 0028, plan 0108 increment 13): the
+    /// The drag pasteboard writer for one photo (ADR 0028, ADR 0037): the
     /// original's URL when it is handed over as itself, the file this launch already
     /// prepared when there is one, and otherwise a file promise that prepares it when the
     /// receiver asks. Synchronous, from the details the grid holds; a photo whose details it
@@ -224,7 +218,7 @@ extension CatalogWindowViewModel {
     func dragWriter(for id: MediaAssetID) -> NSPasteboardWriting {
         let preparer = handOffPreparer
         if let detail = tileContentStore.content(for: id)?.detail {
-            let item = Self.handOffItem(id, detail: detail)
+            let item = EditedMediaItem(id: id, detail: detail)
             if let ready = preparer.readyURL(for: item) {
                 return ready as NSURL
             }

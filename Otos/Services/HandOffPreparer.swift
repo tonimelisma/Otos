@@ -1,5 +1,4 @@
 import AppKit
-import AVFoundation
 import CoreGraphics
 import CryptoKit
 import Foundation
@@ -11,7 +10,7 @@ import UniformTypeIdentifiers
 /// Hand-off guide
 ///
 /// What Otos hands to another app when a photo is copied, dragged, shared or opened with
-/// another app (plan 0108 increment 13). It behaves like Finder: one full-size file per
+/// another app (ADR 0037). It behaves like Finder: one full-size file per
 /// photo. Which file depends on the photo (`HandOffForm`):
 /// - **An unedited still that is not a RAW, or an untrimmed video:** the original itself.
 ///   Nothing is read; a cloud-only original is downloaded by the app that reads it, as
@@ -30,14 +29,9 @@ import UniformTypeIdentifiers
 /// An actor so preparations of one photo never overlap. Rendering happens on
 /// `ImageRenderer`'s interactive lane, and encoding runs in `@concurrent` functions, so the
 /// actor itself does no blocking work.
-nonisolated struct HandOffItem: Equatable, Sendable {
-    let id: MediaAssetID
-    let isVideo: Bool
-    /// The photo's saved edit; neutral when it was never edited.
-    let recipe: EditRecipe
-    let sourceSize: Int64?
-
-    var form: HandOffForm {
+extension EditedMediaItem {
+    /// What a hand-off gives another app for this item.
+    nonisolated var handOffForm: HandOffForm {
         if isVideo {
             return recipe.trimStart != nil || recipe.trimEnd != nil ? .trimmedVideo : .original
         }
@@ -54,8 +48,6 @@ nonisolated enum HandOffForm: Equatable, Sendable {
 actor HandOffPreparer {
     enum PrepareError: Error {
         case originalUnavailable
-        case encodeFailed
-        case exportFailed
     }
 
     let directory: URL
@@ -69,8 +61,8 @@ actor HandOffPreparer {
 
     /// The file to hand over for `item`: the original, or one prepared now or earlier in
     /// this launch.
-    func prepare(_ item: HandOffItem) async throws -> URL {
-        guard item.form != .original else {
+    func prepare(_ item: EditedMediaItem) async throws -> URL {
+        guard item.handOffForm != .original else {
             return item.id.fileURL
         }
         try await clearOnce()
@@ -91,14 +83,16 @@ actor HandOffPreparer {
         let staging = target.deletingLastPathComponent()
             .appending(path: ".\(UUID().uuidString).\(target.pathExtension)")
         do {
-            switch item.form {
+            switch item.handOffForm {
             case .renderedStill:
                 let rendered = try await ImageRenderer.interactive.render(
                     item.id.fileURL, longEdge: nil, recipe: item.recipe
                 )
-                try await Self.writeJPEG(rendered.image, metadataOf: item.id.fileURL, to: staging)
+                try await MediaFileWriter.writeImage(
+                    rendered.image, as: .jpeg, quality: 0.92, metadataOf: item.id.fileURL, removingLocation: false, to: staging
+                )
             case .trimmedVideo:
-                try await Self.exportTrimmed(item.id.fileURL, recipe: item.recipe, to: staging)
+                try await MediaFileWriter.writeVideo(item.id.fileURL, recipe: item.recipe, removingLocation: false, to: staging)
             case .original:
                 break
             }
@@ -120,7 +114,7 @@ actor HandOffPreparer {
         }
         OtosLog.mediaIO.noticeOperation("handOff.prepare", phase: "finish", fields: [
             "id": item.id.relativePath.rawValue,
-            "form": item.form == .trimmedVideo ? "trimmedVideo" : "renderedStill",
+            "form": item.handOffForm == .trimmedVideo ? "trimmedVideo" : "renderedStill",
             "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
         return target
@@ -128,8 +122,8 @@ actor HandOffPreparer {
 
     /// The file already prepared for `item` this launch, or nil. Read without waiting, so a
     /// drag can hand a ready file to a receiver that cannot wait for one.
-    nonisolated func readyURL(for item: HandOffItem) -> URL? {
-        guard item.form != .original else {
+    nonisolated func readyURL(for item: EditedMediaItem) -> URL? {
+        guard item.handOffForm != .original else {
             return item.id.fileURL
         }
         guard let url = try? Self.preparedURL(for: item, in: directory),
@@ -142,11 +136,11 @@ actor HandOffPreparer {
 
     /// `<directory>/<digest of path and recipe>/<original name>.jpg` (or `.mov`): one file
     /// per photo and recipe, named as the original so the receiver sees a familiar name.
-    nonisolated static func preparedURL(for item: HandOffItem, in directory: URL) throws -> URL {
+    nonisolated static func preparedURL(for item: EditedMediaItem, in directory: URL) throws -> URL {
         let key = try item.id.fileURL.path(percentEncoded: false) + "\n" + CatalogStore.editRecipeJSON(item.recipe)
         let digest = SHA256.hash(data: Data(key.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
         let stem = item.id.fileURL.deletingPathExtension().lastPathComponent
-        let fileExtension = item.form == .trimmedVideo ? "mov" : "jpg"
+        let fileExtension = item.handOffForm == .trimmedVideo ? "mov" : "jpg"
         return directory
             .appending(path: digest, directoryHint: .isDirectory)
             .appending(path: "\(stem).\(fileExtension)")
@@ -167,73 +161,20 @@ actor HandOffPreparer {
             try manager.removeItem(at: entry)
         }
     }
-
-    /// A full-size JPEG with the original's Exif, GPS, TIFF and IPTC metadata. The pixels
-    /// are already upright and may be cropped, so the orientation and pixel-size fields are
-    /// reset rather than copied.
-    @concurrent
-    static func writeJPEG(_ image: CGImage, metadataOf original: URL, to url: URL) async throws {
-        var properties: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.92]
-        if let source = CGImageSourceCreateWithURL(original as CFURL, nil),
-           let originalProperties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
-        {
-            for key in [
-                kCGImagePropertyExifDictionary,
-                kCGImagePropertyGPSDictionary,
-                kCGImagePropertyTIFFDictionary,
-                kCGImagePropertyIPTCDictionary,
-            ] {
-                properties[key] = originalProperties[key]
-            }
-        }
-        properties[kCGImagePropertyOrientation] = 1
-        if var tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
-            tiff[kCGImagePropertyTIFFOrientation] = 1
-            properties[kCGImagePropertyTIFFDictionary] = tiff
-        }
-        if var exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any] {
-            exif.removeValue(forKey: kCGImagePropertyExifPixelXDimension)
-            exif.removeValue(forKey: kCGImagePropertyExifPixelYDimension)
-            properties[kCGImagePropertyExifDictionary] = exif
-        }
-        let type = UTType.jpeg.identifier as CFString
-        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, type, 1, nil)
-        else {
-            throw PrepareError.encodeFailed
-        }
-        CGImageDestinationAddImage(destination, image, properties as CFDictionary)
-        guard CGImageDestinationFinalize(destination) else {
-            throw PrepareError.encodeFailed
-        }
-    }
-
-    /// The recipe's trimmed range of a video, copied without re-encoding.
-    @concurrent
-    static func exportTrimmed(_ original: URL, recipe: EditRecipe, to url: URL) async throws {
-        let asset = AVURLAsset(url: original)
-        let duration = try await asset.load(.duration)
-        let start = recipe.trimStart.map { CMTime(seconds: $0, preferredTimescale: 600) } ?? .zero
-        let end = recipe.trimEnd.map { CMTime(seconds: $0, preferredTimescale: 600) } ?? duration
-        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
-            throw PrepareError.exportFailed
-        }
-        session.timeRange = CMTimeRange(start: start, end: end)
-        try await session.export(to: url, as: .mov)
-    }
 }
 
 /// A dragged photo that must be prepared before it can be handed over: a file promise
-/// (ADR 0028, plan 0108 increment 13). Finder, Mail, Messages and Safari wait for it. Chrome
+/// (ADR 0028, ADR 0037). Finder, Mail, Messages and Safari wait for it. Chrome
 /// never fulfils promises, so it receives such a photo only when its file was already
 /// prepared earlier this launch, in which case the drag carries that file's URL instead
 /// (`CatalogWindowViewModel.dragWriter(for:)`).
 ///
 /// The receiver asks on `queue`, a dedicated serial queue: preparing is async, so the
 /// callback waits for it there, never on a cooperative-pool thread. A photo whose details
-/// the grid did not hold is read first, then handed over as `HandOffItem.form` says,
+/// the grid did not hold is read first, then handed over as `EditedMediaItem.handOffForm` says,
 /// original included.
 final nonisolated class HandOffPromise: NSFilePromiseProvider, NSFilePromiseProviderDelegate {
-    private let item: HandOffItem?
+    private let item: EditedMediaItem?
     private let id: MediaAssetID
     private let preparer: HandOffPreparer
     private let reader: MediaTileDetailReader?
@@ -245,7 +186,7 @@ final nonisolated class HandOffPromise: NSFilePromiseProvider, NSFilePromiseProv
         return queue
     }()
 
-    init(item: HandOffItem?, id: MediaAssetID? = nil, preparer: HandOffPreparer, reader: MediaTileDetailReader?) {
+    init(item: EditedMediaItem?, id: MediaAssetID? = nil, preparer: HandOffPreparer, reader: MediaTileDetailReader?) {
         self.item = item
         self.id = item?.id ?? id ?? MediaAssetID(
             libraryRootPath: LibraryRootPath(rawValue: "/"),
@@ -258,8 +199,8 @@ final nonisolated class HandOffPromise: NSFilePromiseProvider, NSFilePromiseProv
         delegate = self
     }
 
-    private static func fileType(for item: HandOffItem?, id: MediaAssetID) -> UTType {
-        switch item?.form {
+    private static func fileType(for item: EditedMediaItem?, id: MediaAssetID) -> UTType {
+        switch item?.handOffForm {
         case .renderedStill: .jpeg
         case .trimmedVideo: .quickTimeMovie
         default: UTType(filenameExtension: id.fileURL.pathExtension) ?? .data
@@ -268,7 +209,7 @@ final nonisolated class HandOffPromise: NSFilePromiseProvider, NSFilePromiseProv
 
     func filePromiseProvider(_: NSFilePromiseProvider, fileNameForType _: String) -> String {
         let stem = id.fileURL.deletingPathExtension().lastPathComponent
-        return switch item?.form {
+        return switch item?.handOffForm {
         case .renderedStill: "\(stem).jpg"
         case .trimmedVideo: "\(stem).mov"
         default: id.fileURL.lastPathComponent
@@ -294,12 +235,12 @@ final nonisolated class HandOffPromise: NSFilePromiseProvider, NSFilePromiseProv
         // async preparation; the queue thread waits, the preparation runs elsewhere.
         Task.detached(priority: .userInitiated) {
             do {
-                let resolved: HandOffItem
+                let resolved: EditedMediaItem
                 if let item {
                     resolved = item
                 } else {
                     let detail = try await reader?.detail(for: id)
-                    resolved = CatalogWindowViewModel.handOffItem(id, detail: detail)
+                    resolved = EditedMediaItem(id: id, detail: detail)
                 }
                 let prepared = try await preparer.prepare(resolved)
                 try FileManager.default.copyItem(at: prepared, to: url)

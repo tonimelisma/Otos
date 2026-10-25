@@ -44,7 +44,7 @@ A slider's filled track is the neutral secondary color, not the accent. A slider
 not a selection (DES-024), and most sliders here are neutral at their middle, where a fill
 from the left edge would read as an amount.
 
-Sections, in order, as they are built (plan 0108):
+Sections, in order (Lightroom desktop's order, ADR 0036):
 
 | Section | Controls |
 | --- | --- |

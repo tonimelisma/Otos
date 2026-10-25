@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-/// One photo's current edit (plan 0108 decision 1): the values of every control the
+/// One photo's current edit (ADR 0036): the values of every control the
 /// edit panel offers, applied on top of the original when it is rendered. The original
 /// is never changed (decision 2). A value at its neutral point changes nothing, and a
 /// recipe whose every value is neutral renders exactly as the unedited photo.
@@ -476,6 +476,29 @@ nonisolated struct EditPhotoFacts: Equatable, Sendable {
     static let still = EditPhotoFacts(isRAW: false, asShotTemperature: nil, asShotTint: nil)
 }
 
+/// A photo or video with its saved edit, as a hand-off (ADR 0037) or an export (ADR 0038)
+/// writes it: everything either needs to choose and produce the file.
+nonisolated struct EditedMediaItem: Equatable, Sendable {
+    let id: MediaAssetID
+    let isVideo: Bool
+    /// The saved edit; neutral when it was never edited.
+    let recipe: EditRecipe
+    let sourceSize: Int64?
+}
+
+extension EditedMediaItem {
+    /// The item as its catalog row describes it. A target with no row (gone since it was
+    /// chosen) is its path as it is, unedited, which is what Finder would hand over.
+    nonisolated init(id: MediaAssetID, detail: MediaTileDetail?) {
+        self.init(
+            id: id,
+            isVideo: detail?.bestKind == .video,
+            recipe: detail?.editRecipe ?? .neutral,
+            sourceSize: detail?.byteSize
+        )
+    }
+}
+
 /// A recipe as the catalog holds it: the values and the revision they were saved as.
 /// Every save increments the revision, so a render can say which recipe it applied and
 /// a result rendered from an older recipe is refused (ADR 0036).
@@ -511,7 +534,7 @@ nonisolated struct RenderedEditProducts: Equatable, Sendable {
     let preview: StagedDerivedImage
 }
 
-/// The panel's sections, in Lightroom desktop's order (plan 0108).
+/// The panel's sections, in Lightroom desktop's order (ADR 0036).
 nonisolated enum EditSection: String, CaseIterable, Identifiable, Sendable {
     /// The crop tool, above the sections as in Lightroom desktop: crop, straighten,
     /// quarter turns and flips.

@@ -154,6 +154,13 @@ extension CatalogWindowViewModel {
         }
     }
 
+    /// Text owns the keyboard: an edit value is being typed, or a sheet with fields is up.
+    /// Edit ▸ Cut, Copy, Paste and Select All then act on text through the responder
+    /// chain, never on photos behind the sheet.
+    var textHoldsKeyboard: Bool {
+        isEnteringEditValue || exportSheet != nil
+    }
+
     /// The Color section's white balance picker: armed, the next click on the loupe image
     /// sets white balance from that point. Loupe only; Escape or any other move disarms it.
     func toggleNeutralPicker() {

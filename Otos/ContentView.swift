@@ -113,7 +113,20 @@ struct ContentView: View {
                     TrashStatusBar(presentation: trashStatus)
                 }
                 if let handOff = viewModel.handOffProgress {
-                    HandOffStatusBar(progress: handOff, cancel: viewModel.cancelHandOff)
+                    ProgressStatusBar(
+                        title: handOff.title,
+                        completed: handOff.completed,
+                        total: handOff.total,
+                        cancel: viewModel.cancelHandOff
+                    )
+                }
+                if let export = viewModel.exportProgress {
+                    ProgressStatusBar(
+                        title: export.title,
+                        completed: export.completed,
+                        total: export.total,
+                        cancel: viewModel.cancelExport
+                    )
                 }
             }
             // Hosted on its own view so `Do not ask again` applies to this alert only.
@@ -249,6 +262,49 @@ struct ContentView: View {
         } message: {
             if let message = viewModel.ejectAlertMessage {
                 Text(message)
+            }
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { viewModel.exportSheet != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.cancelExportSheet()
+                    }
+                }
+            )
+        ) {
+            ExportSheetView(
+                title: viewModel.exportSheet?.title ?? "",
+                settings: viewModel.exportSettings,
+                setSettings: viewModel.setExportSettings,
+                setDestination: viewModel.setExportDestination,
+                export: viewModel.confirmExport,
+                cancel: viewModel.cancelExportSheet
+            )
+        }
+        .alert(
+            viewModel.exportReport?.title ?? "",
+            isPresented: Binding(
+                get: { viewModel.exportReport != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.dismissExportReport()
+                    }
+                }
+            )
+        ) {
+            if viewModel.exportReport?.exported.isEmpty == false {
+                Button("Show in Finder") {
+                    viewModel.revealExportedFiles()
+                }
+            }
+            Button("OK", role: .cancel) {
+                viewModel.dismissExportReport()
+            }
+        } message: {
+            if let report = viewModel.exportReport {
+                Text(report.message)
             }
         }
         .alert(

@@ -5,7 +5,7 @@
 
 ## Context
 
-Owner decisions (plan 0108): each photo has one current edit, stored in the catalog,
+Owner decisions (2026-10-25): each photo has one current edit, stored in the catalog,
 with no sidecars. Originals are never modified; an edit is a recipe rendered from the
 original. Grid, loupe and thumbnails always show the edited photo. The edit panel is a
 trailing inspector that collapses the way the sidebar does.
@@ -159,4 +159,4 @@ open takes 20–180 ms per change. Opening it again for every change takes about
   frame. The live render is shown from memory, and only the save is written.
 - **A fresh `CIRAWFilter` per render.** About a second per change instead of tens of
   milliseconds.
-- **Sidecar XMP.** This is decision 1 of plan 0108, and AGENTS.md forbids it.
+- **Sidecar XMP.** The owner ruled it out (2026-10-25), and AGENTS.md forbids it.

@@ -5,7 +5,7 @@ import OSLog
 /// Media clipboard guide
 ///
 /// Writes copied files to a pasteboard (ADR 0012): one `NSURL` per file, in the given
-/// order, references only. The files are what the hand-off chose (plan 0108 increment 13):
+/// order, references only. The files are what the hand-off chose (ADR 0037):
 /// an original, which is not read, so a dataless cloud original is downloaded by whoever
 /// pastes it, or a full-size file prepared in Application Support. Finder pastes the
 /// files; Messages, Mail and web pages attach them. The pasteboard is a parameter so the
@@ -21,7 +21,7 @@ nonisolated enum MediaGridClipboard {
     }
 
     /// One `public.file-url` per file, in order: the originals and prepared files a
-    /// hand-off chose (plan 0108 increment 13).
+    /// hand-off chose (ADR 0037).
     @discardableResult
     static func write(files urls: [URL], to pasteboard: NSPasteboard) -> Int {
         pasteboard.clearContents()

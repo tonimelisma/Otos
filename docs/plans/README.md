@@ -3,6 +3,20 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
+Plan 0108 (editing, previews, hand-off and export) is complete across fourteen
+increments and was removed at closure. It opened 2026-10-24 when the owner chose to edit
+photos inside Otos: one current edit per photo in the catalog, no sidecars, originals
+never modified, controls only from what macOS provides. Its decisions live in ADR 0008
+and ENR-008 (macOS evicts uploaded, idle downloads; background downloads keep the 5 GB
+floor), ADR 0013 and ARC-033 (removable sources forgotten after 90 days unseen), ADR 0034
+(the move witness that re-attaches overlay after a rename or move outside Otos), ADR 0035
+(RAW9 renders and stored HEIC previews), ADR 0036 and APP-046–APP-050 (edit recipes, the
+edit panel's Crop, Light, Color, Effects, Detail and Optics, and video trim; DES-092,
+DES-093, `docs/design/edit-panel.md`), ADR 0037 and APP-051 (hand-off as one full-size file
+per photo, the owner's mixed-selection paste into a browser), and ADR 0038 and APP-052
+(export; DES-094, DES-095). Its research is listed in those ADRs; experiment R2 (OneDrive
+remote renames and moves) is in `docs/research/2026-10-25-cloud-drives.md`.
+
 Plan 0106 (time is never a stand-in for a fact that can be known) is complete across
 seven increments and was removed at closure. It opened 2026-10-05, after test waits with
 wall-clock deadlines were shown to fail on load and to hide tests that asserted nothing.

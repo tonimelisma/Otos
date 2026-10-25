@@ -8,15 +8,15 @@
 Asset identity is the filesystem path (ADR 0008). A file renamed or moved outside Otos
 — in Finder, or on another device and synced down — showed up as one deletion plus one
 addition, and the deletion purged everything Otos held for the file: its like or
-dislike today, its edit recipe once editing exists (plan 0108). The per-file event path
+dislike today, its edit recipe (ADR 0036). The per-file event path
 made it worse: a renamed-away path is an `.upsert` event that finds nothing, so the old
 row lingered as a stale duplicate until the next full scan purged it.
 
 Checksum identity was rejected (`docs/research/2026-10-24-asset-identity-and-out-of-app-moves.md`):
 hashing a moved file downloads it when it is cloud-only, other apps rewrite metadata
 in place, and duplicates are ambiguous. The research also measured that a file's
-identifier on its volume (its inode) survives a Finder rename or move, and plan 0108's
-experiment R2 showed OneDrive applying remote renames and moves as in-place renames:
+identifier on its volume (its inode) survives a Finder rename or move, and experiment R2
+(`2026-10-25-cloud-drives.md`) showed OneDrive applying remote renames and moves as in-place renames:
 same inode, same size, same birth time, cloud-only or not, while the modification time
 changed on one rename and one move.
 

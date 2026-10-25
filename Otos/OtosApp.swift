@@ -163,6 +163,11 @@ public struct OtosApp: App {
                     catalogViewModel.shareCurrentTargets(origin: .menu)
                 }
                 .disabled(catalogViewModel.currentTargetFileURLs.isEmpty)
+                Button("Export…") {
+                    catalogViewModel.beginExport()
+                }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(!catalogViewModel.canExport)
                 Divider()
                 Button("Reveal in Finder") {
                     catalogViewModel.revealCurrentTargetsInFinder()
@@ -184,32 +189,33 @@ public struct OtosApp: App {
                 .keyboardShortcut("z", modifiers: [.command, .shift])
                 .disabled(!catalogViewModel.undoMenuState.canRedo)
             }
-            // While an edit value is being typed, Cut, Copy, Paste and Select All act on its
-            // text through the responder chain, as in any text field (Keyboards: respect
-            // standard shortcuts); otherwise Copy and Select All act on photos.
+            // While text holds the keyboard (an edit value, the export sheet), Cut, Copy,
+            // Paste and Select All act on it through the responder chain, as in any text
+            // field (Keyboards: respect standard shortcuts); otherwise Copy and Select All
+            // act on photos.
             CommandGroup(replacing: .pasteboard) {
                 Button("Cut") {
                     NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
                 }
                 .keyboardShortcut("x", modifiers: .command)
-                .disabled(!catalogViewModel.isEnteringEditValue)
+                .disabled(!catalogViewModel.textHoldsKeyboard)
                 Button("Copy") {
-                    if catalogViewModel.isEnteringEditValue {
+                    if catalogViewModel.textHoldsKeyboard {
                         NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
                     } else {
                         catalogViewModel.copyCurrentTargets()
                     }
                 }
                 .keyboardShortcut("c", modifiers: .command)
-                .disabled(!catalogViewModel.isEnteringEditValue && !catalogViewModel.hasMediaChoiceTarget)
+                .disabled(!catalogViewModel.textHoldsKeyboard && !catalogViewModel.hasMediaChoiceTarget)
                 Button("Paste") {
                     NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
                 }
                 .keyboardShortcut("v", modifiers: .command)
-                .disabled(!catalogViewModel.isEnteringEditValue)
+                .disabled(!catalogViewModel.textHoldsKeyboard)
                 Divider()
                 Button("Select All") {
-                    if catalogViewModel.isEnteringEditValue {
+                    if catalogViewModel.textHoldsKeyboard {
                         NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
                     } else {
                         catalogViewModel.selectAll()

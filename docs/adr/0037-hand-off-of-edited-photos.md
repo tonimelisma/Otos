@@ -11,7 +11,7 @@ originals as they are. Since ADR 0036, a photo can carry an edit. Since ADR 0035
 shown developed with RAW9. Handing over the original would hand over a photo Otos does not
 show, or an ARW that browsers and most apps cannot display.
 
-Owner decisions (plan 0108, increment 13):
+Owner decisions (2026-10-25):
 - Hand-off behaves like Finder: one full-size file per photo.
 - An unedited RAW hands over a rendered JPEG, not the ARW.
 - The acceptance case is a mixed selection of edited and unedited photos, copied and
@@ -33,6 +33,9 @@ Measured (`2026-10-25-browser-multi-file-paste-and-drop.md`):
     recipe, which carries the original's Exif, GPS, TIFF and IPTC metadata with
     orientation and pixel size reset;
   - a trimmed video: its range, exported by passthrough.
+
+  The files are written by `MediaFileWriter`, which export (ADR 0038) also uses, so a
+  photo handed off and a photo exported as full-size JPEG are the same file.
 - **Where prepared files live.** One folder in Application Support (`HandOff`), never a
   media folder. A file's path is fixed by the photo and its recipe, so a photo handed off
   twice in one launch reuses its file. The folder is cleared once per launch, before the
@@ -78,6 +81,6 @@ Measured (`2026-10-25-browser-multi-file-paste-and-drop.md`):
 - **Pixel data on the pasteboard** (TIFF/PNG): ADR 0012's reasons still hold. It is huge,
   it has no video form, and it pastes one image, not one file per photo.
 - **Keep prepared files for the photo's life:** about 4.8 MB per RAW, a library-sized
-  cache nothing displays (plan 0108's storage table).
+  cache nothing displays (`2026-10-25-library-storage-and-previews.md`).
 - **File promises for Copy:** pasted files must exist when pasted, and browsers do not
   read promises.

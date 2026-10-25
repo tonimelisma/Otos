@@ -2672,8 +2672,8 @@ extension CatalogStore {
 
     /// Forgets every card and camera Otos has not seen for
     /// `RemovableSourceRetention.unseenPeriod`, exactly as Settings' Forget does: the
-    /// source, its rows, its likes and its thumbnails (owner decision 2026-10-25, plan
-    /// 0108; ADR 0013). It runs at launch, before any source re-attaches, so a source
+    /// source, its rows, its likes and its thumbnails (owner decision 2026-10-25,
+    /// ADR 0013). It runs at launch, before any source re-attaches, so a source
     /// present now is judged by its stamp from an earlier session. A source with no
     /// last-seen stamp is kept: nothing says how long it has been away. Each removal
     /// re-reads the catalog, so a source that attaches meanwhile is not removed.
@@ -3003,7 +3003,7 @@ extension CatalogStore {
         }
     }
 
-    /// Where hand-offs put the full-size files they render (plan 0108 increment 13): beside
+    /// Where hand-offs put the full-size files they render (ADR 0037): beside
     /// the thumbnails in Application Support, never in a media folder. Its contents last
     /// until the next launch clears them. An in-memory catalog uses the temporary folder.
     nonisolated var handOffDirectory: URL {

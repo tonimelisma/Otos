@@ -116,7 +116,7 @@ DES-027A — the consequence is stated on the surface that triggers it.
 
 ## Edit panel audit (2026-10-25)
 
-The edit panel (DES-092, `edit-panel.md`) as built through plan 0108 increment 7, read
+The edit panel (DES-092, `edit-panel.md`) as built on 2026-10-25 with the Crop tool, read
 against the HIG pages that govern it: Split views, Toolbars, Panels, Sliders, Pop-up
 buttons, Disclosure controls, Keyboards, The menu bar, Undo and redo, and Color
 (developer.apple.com/design/human-interface-guidelines, read 2026-10-25). Lightroom

@@ -183,6 +183,21 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var handOffCancelledThrough: UInt64 = 0
     @ObservationIgnored var submittedHandOffCount = 0
     @ObservationIgnored var handledHandOffCount = 0
+    /// File ▸ Export…'s remembered choices; set in `init` from the injected `preferences`.
+    var exportSettings: ExportSettings
+    /// The export sheet, while it is shown.
+    var exportSheet: ExportSheet?
+    /// The export being written, for the status bar; nil when none is.
+    var exportProgress: ExportProgress?
+    /// An export that did not do everything asked, for its alert.
+    var exportReport: ExportReport?
+    @ObservationIgnored let exportStream: AsyncStream<ExportRequest>
+    @ObservationIgnored let exportContinuation: AsyncStream<ExportRequest>.Continuation
+    @ObservationIgnored var exportTask: Task<Void, Never>?
+    @ObservationIgnored var exportRequested: UInt64 = 0
+    @ObservationIgnored var exportCancelledThrough: UInt64 = 0
+    @ObservationIgnored var submittedExportCount = 0
+    @ObservationIgnored var handledExportCount = 0
     /// The latest request for the loupe's player to show its trim UI.
     var videoTrimCommand: VideoTrimCommand?
     @ObservationIgnored var videoTrimGeneration: UInt64 = 0
@@ -452,6 +467,7 @@ final class CatalogWindowViewModel {
         )
         // Every hand-off is handed over, in order.
         let (handOffStream, handOffContinuation) = AsyncStream<HandOffRequest>.makeStream(bufferingPolicy: .unbounded)
+        let (exportStream, exportContinuation) = AsyncStream<ExportRequest>.makeStream(bufferingPolicy: .unbounded)
         self.preferencesDomain = preferencesDomain
         preferences = preferencesDomain.makeDefaults()
         let storedColumns = preferences.integer(forKey: Self.gridColumnCountDefaultsKey)
@@ -466,6 +482,7 @@ final class CatalogWindowViewModel {
             (storedDismissedIdentities ?? "").split(separator: "\n").map { DeviceIdentity(rawValue: String($0)) }
         )
         importPreferences = ImportPreferencesStore.load(defaults: preferences)
+        exportSettings = ExportSettingsStore.load(defaults: preferences)
         self.catalogStore = catalogStore
         self.catalogProjection = catalogProjection
         mediaTileDetailReader = MediaTileDetailReader(store: catalogStore)
@@ -552,6 +569,8 @@ final class CatalogWindowViewModel {
         self.editCommandContinuation = editCommandContinuation
         self.handOffStream = handOffStream
         self.handOffContinuation = handOffContinuation
+        self.exportStream = exportStream
+        self.exportContinuation = exportContinuation
         // The restored query is the first one Projection sees (APP-043), so launch never
         // flashes the default collection before the user's own.
         if let place = Self.loadBrowserPlace(from: preferences) {
@@ -577,6 +596,7 @@ final class CatalogWindowViewModel {
         editRenderTask?.cancel()
         editCommandTask?.cancel()
         handOffTask?.cancel()
+        exportTask?.cancel()
         mediaTrashTask?.cancel()
         mediaTrashEventTask?.cancel()
         mediaTrashIntentTask?.cancel()
@@ -611,6 +631,7 @@ final class CatalogWindowViewModel {
         editRenderContinuation.finish()
         editCommandContinuation.finish()
         handOffContinuation.finish()
+        exportContinuation.finish()
         viewportContinuation.finish()
         // The owners below must be told to stop or their own loops would keep them, and
         // the store, alive past this window: the enrichment supervisor strongly retains
@@ -677,6 +698,7 @@ extension CatalogWindowViewModel {
         startMediaChoiceForwarding(store: store)
         startEditing(store: store)
         startHandOff(store: store)
+        startExport()
         startStateConsumption(
             projection: projection,
             store: store,
