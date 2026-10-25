@@ -85,6 +85,10 @@ extension CatalogWindowViewModel {
 
     /// Reads the current targets' choices once per target change (and once after a
     /// confirmed write) and publishes the one value they share, or nil.
+    ///
+    /// A failed read publishes no choice: the value on display belongs to the previous
+    /// targets, or to the state before the write that asked again, so it is retracted to
+    /// nil (unknown) and the next target change or confirmed write reads again.
     func refreshCurrentTargetChoice() {
         currentTargetChoiceTask?.cancel()
         let ids = targetIDs(.current)
@@ -97,10 +101,15 @@ extension CatalogWindowViewModel {
         }
         let reader = tileDetailReader
         currentTargetChoiceTask = Task { [weak self] in
-            let details = await reader.details(for: ids)
+            let shared: MediaChoice?
+            do {
+                let details = try await reader.details(for: ids)
+                let choices = Set(ids.compactMap { details[$0]?.mediaChoice })
+                shared = choices.count == 1 && details.count == ids.count ? choices.first : nil
+            } catch {
+                shared = nil
+            }
             guard !Task.isCancelled, let self, targetIDs(.current) == ids else { return }
-            let choices = Set(ids.compactMap { details[$0]?.mediaChoice })
-            let shared = choices.count == 1 && details.count == ids.count ? choices.first : nil
             if currentTargetChoice != shared {
                 currentTargetChoice = shared
             }

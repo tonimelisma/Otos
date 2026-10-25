@@ -169,7 +169,7 @@ final class MediaGridViewController: NSViewController {
     /// Hoisted to ViewModel ownership so grid, strip, and panes share one decoded-image owner.
     var tileContents: TileContentStore = .init()
     /// Last applied reorganization remap epoch from SwiftUI (ARC-051).
-    private var detailQueryTask: Task<Void, Never>?
+    private(set) var detailQueryTask: Task<Void, Never>?
     private var detailQueryGeneration = 0
     /// In-flight decode keys `"id|imageKey"` owned by the controller, not the tile.
     private var inFlightDecodes = Set<String>()
@@ -885,7 +885,22 @@ extension MediaGridViewController {
             )
         }
         detailQueryTask = Task { [weak self, detailReader, visibleIDs] in
-            let details = await detailReader.details(for: visibleIDs)
+            let details: [MediaAssetID: MediaTileDetail]
+            do {
+                details = try await detailReader.details(for: visibleIDs)
+            } catch {
+                if let signpost {
+                    OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
+                }
+                // Nothing is merged, so every painted tile keeps its thumbnail (APP-015).
+                // Forgetting the queried IDs leaves the request outstanding: the next
+                // scroll flush asks again even when the same tiles are still visible.
+                guard let self, detailQueryGeneration == generation else {
+                    return
+                }
+                lastDetailQueryIDs = []
+                return
+            }
             if Task.isCancelled {
                 if let signpost {
                     OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)

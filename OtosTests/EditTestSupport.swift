@@ -11,6 +11,7 @@ struct EditableLibrary {
     let root: URL
     let ids: [MediaAssetID]
     let thumbnailDirectory: URL
+    let databaseURL: URL
 }
 
 func withEditableLibrary(
@@ -38,12 +39,39 @@ func withEditableLibrary(
         try await store.addLibrary(url: root)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try #require(Set(scanned.testAssets.map(\.id)) == Set(ids))
-        try await body(EditableLibrary(store: store, root: root, ids: ids, thumbnailDirectory: thumbnailDirectory))
+        try await body(EditableLibrary(
+            store: store, root: root, ids: ids, thumbnailDirectory: thumbnailDirectory, databaseURL: databaseURL
+        ))
     } catch {
         await store.shutdown()
         throw error
     }
     await store.shutdown()
+}
+
+/// A view model over `store` whose grid holds `ids`, with its edit lanes started.
+@MainActor
+func makeEditModel(store: CatalogStore, ids: [MediaAssetID]) -> CatalogWindowViewModel {
+    let model = CatalogWindowViewModel(
+        catalogStore: store,
+        startsStallMonitor: false,
+        startsEnrichment: false,
+        startsSourceMonitoring: false,
+        preferencesDomain: .suite(UUID().uuidString),
+        trashFiles: .refusing
+    )
+    model.applyState(CatalogWindowState(
+        title: "Edit",
+        libraries: [],
+        removableSources: [],
+        mediaGrid: CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids),
+        filterOptions: .empty,
+        resolvedSidebarSelection: .allMedia,
+        mediaEmptyState: .noMedia,
+        deviceConnectionBanner: nil
+    ))
+    model.startEditing(store: store)
+    return model
 }
 
 /// A 96×64 left-to-right gray gradient, so exposure and contrast visibly move its pixels.

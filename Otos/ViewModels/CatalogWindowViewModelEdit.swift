@@ -160,7 +160,18 @@ extension CatalogWindowViewModel {
         editTargetTask?.cancel()
         let reader = tileDetailReader
         editTargetTask = Task { [weak self] in
-            let detail = await reader.details(for: [id])[id]
+            let detail: MediaTileDetail?
+            do {
+                detail = try await reader.detail(for: id)
+            } catch {
+                guard !Task.isCancelled, let self, targetIDs(.current) == [id] else { return }
+                // Without the saved recipe the panel cannot edit this photo, and the photo
+                // it showed is no longer the target, so the panel closes its target rather
+                // than edit either. `editTarget` is not `id`, so the next refresh reads again.
+                editTargetTask = nil
+                clearEditTarget()
+                return
+            }
             guard !Task.isCancelled, let self, targetIDs(.current) == [id] else { return }
             editTargetTask = nil
             guard let detail, detail.bestKind == .image || detail.bestKind == .raw else {

@@ -266,27 +266,3 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 }
-
-@MainActor
-private func makeEditModel(store: CatalogStore, ids: [MediaAssetID]) -> CatalogWindowViewModel {
-    let model = CatalogWindowViewModel(
-        catalogStore: store,
-        startsStallMonitor: false,
-        startsEnrichment: false,
-        startsSourceMonitoring: false,
-        preferencesDomain: .suite(UUID().uuidString),
-        trashFiles: .refusing
-    )
-    model.applyState(CatalogWindowState(
-        title: "Edit",
-        libraries: [],
-        removableSources: [],
-        mediaGrid: CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids),
-        filterOptions: .empty,
-        resolvedSidebarSelection: .allMedia,
-        mediaEmptyState: .noMedia,
-        deviceConnectionBanner: nil
-    ))
-    model.startEditing(store: store)
-    return model
-}

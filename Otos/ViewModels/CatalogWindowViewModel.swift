@@ -135,8 +135,8 @@ final class CatalogWindowViewModel {
     /// re-resolving the selection on every body evaluation.
     var currentTargetFileURLs: [URL] = []
     /// The one curation choice every current target holds, for the toolbar control;
-    /// nil when targets differ, exceed `currentTargetChoiceLimit`, or are none.
-    /// Written only by `refreshCurrentTargetChoice()`.
+    /// nil when targets differ, exceed `currentTargetChoiceLimit`, are none, or their
+    /// choices could not be read. Written only by `refreshCurrentTargetChoice()`.
     var currentTargetChoice: MediaChoice?
     @ObservationIgnored var currentTargetChoiceTask: Task<Void, Never>?
     /// What File ▸ Open / Open With render for the current targets. Written only by

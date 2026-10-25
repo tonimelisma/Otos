@@ -103,8 +103,14 @@ struct PaneThumbnailView: View {
             // this MainActor `.task`, decoding a full JPEG on the main thread on every
             // loupe entry and every arrow key.
             guard let detailReader, let thumbnailDirectory else { return }
-            let details = await detailReader.details(for: [id])
-            guard let detail = details[id] else { return }
+            let detail: MediaTileDetail?
+            do {
+                detail = try await detailReader.detail(for: id)
+            } catch {
+                // Nothing is decoded; the spinner stays until this pane asks again.
+                return
+            }
+            guard let detail else { return }
             let directory = thumbnailDirectory
             let decoded = await Task.detached(priority: .userInitiated) {
                 MediaAssetTilePresentation.loadImage(detail: detail, thumbnailDirectory: directory)
