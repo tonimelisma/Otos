@@ -66,7 +66,8 @@ after atomic replace ino=356576435 mtime=1792908410 birth=1792908410
   `rename(2)` (inode kept) or as delete-and-recreate, and whether a renamed dataless file
   stays dataless. Otos's earlier provider research never observed a rename event
   (`2026-07-11-onedrive-materialization-fsevents.md`). A probe is needed before relying
-  on it.
+  on it; `2026-10-25-cloud-drives.md` gathers what File Provider documents and the
+  experiment that settles it.
 - A move between volumes is a copy then a delete, and always changes the inode.
 
 ## Options

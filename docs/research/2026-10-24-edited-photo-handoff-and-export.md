@@ -60,8 +60,9 @@ item) wherever both exist.
 | Safari (WebKit) | Reads the full path array [V, [PlatformPasteboardMac.mm](https://raw.githubusercontent.com/WebKit/WebKit/main/Source/WebCore/platform/mac/PlatformPasteboardMac.mm)] | Accepted [V, [WebKit 165204](https://bugs.webkit.org/show_bug.cgi?id=165204)] |
 | Slack desktop | Chromium, so Chrome's paste path [I] | As Chrome [I] |
 
-Not tested here against running apps: the browser rows come from source, not a paste
-into a live Chrome or Safari. A web page reads a pasted `File` from its path whenever
+The browser rows were then run against Chrome 156 and WebKit (Safari 27): all files
+arrive on paste and drop, and Chrome cannot display HEIC
+(`2026-10-25-browser-multi-file-paste-and-drop.md`). A web page reads a pasted `File` from its path whenever
 it chooses (for example at upload time), and nothing tells Otos when it is done [I].
 
 ## Options for producing the edited file

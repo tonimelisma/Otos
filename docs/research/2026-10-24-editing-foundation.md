@@ -70,7 +70,8 @@ holds 5,937 ARW files; every RAW in it is from the ILCE-6700 [M, catalog query].
 - **RAW9 is opt-in.** A new filter defaults to decoder 8; supported versions were
   7, 8, 9 [M]. 69 of 939 supported camera models support RAW9
   (`CIRAWFilter.supportedCameraModels(with: .version9)`) [M]. A camera without RAW9
-  needs a decision when it appears.
+  decodes with RAW8 through the same filter
+  (`2026-10-25-raw-decoders-thumbnails-and-full-size-renders.md`).
 - **`downloadResources(timeout:completionHandler:)`** (new in 27) returned in 8–89 ms
   with resources already present [M].
 - **Embedded preview:** 1616×1080 on both files [M].
@@ -123,7 +124,8 @@ read `outputImage` once per configured state.
 
 - **Grid thumbnails** are 256 px JPEGs from `QLThumbnailGenerator`
   (`Otos/Services/MediaEnricher.swift:381`, `ThumbnailStore.maxPixelSize = 256`) [V];
-  for an ARW that is the camera's rendering, not RAW9's.
+  for an ARW Quick Look builds it from the camera's embedded JPEG, not from RAW data
+  [M, `2026-10-25-raw-decoders-thumbnails-and-full-size-renders.md`].
 - **Loupe** uses the embedded preview whenever it is at least `min(target, 1024)` px
   (`Otos/Services/PreviewImageLoader.swift:250`) [V]. For these ARWs it shows the
   1616×1080 camera preview scaled to the window [I, from the measured preview size].
@@ -159,7 +161,7 @@ Options:
 | --- | --- | --- | --- |
 | a | Nothing; render on demand | 1–3.2 s from a local original [M]; a dataless original downloads first (~50 s for one RAW, measured 2026-07-09, `docs/product/roadmap.md`) | 0 |
 | b | **256 px thumbnail + one display-size render** per rendered photo | Immediate, also offline | ~2.5–12 GB at 3096 px, ~4–22 GB at 5120 px [I, scaled from two files] |
-| c | Full-size render | Immediate | Larger still; no consumer needs it: display never exceeds screen size, and 100% zoom, export and hand-off render from the original |
+| c | Full-size render | Immediate | 1.0–5.2 MB per photo, ~6–31 GB more [M, follow-up research]; no consumer needs it: display never exceeds screen size, and 100% zoom (0.2–0.8 s for the visible area), export and hand-off render from the original |
 | d | In-memory caches only | Lost on relaunch | 0 |
 
 **Finding:** keep the 256 px thumbnail (option b's first half is required in every
