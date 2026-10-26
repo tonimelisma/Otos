@@ -100,7 +100,7 @@ extension CatalogWindowViewModel {
 
     /// The frame's size in pixels — the original turned by the draft — when known.
     var cropFrameSize: CGSize? {
-        editTarget?.originalPixelSize.map { editDraft.frameSize(ofOriginal: $0) }
+        editOriginalPixelSize.map { editDraft.frameSize(ofOriginal: $0) }
     }
 
     /// Photo ▸ Rotate Left (⌘[) and Rotate Right (⌘]), and the panel's buttons.

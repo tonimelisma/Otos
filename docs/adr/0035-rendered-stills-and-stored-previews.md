@@ -42,7 +42,9 @@ and is never shown at full size except when zoomed to 100%.
   purged with the row, moved when a root's path changes, and copied by import reuse.
 - **The loupe opens from the preview.** Every request short of full resolution decodes
   the stored preview without touching the original, cloud-only or not. The original's
-  oriented size comes from the catalog's stored metadata, joined into `MediaTileDetail`.
+  long edge comes from the catalog's stored metadata, joined into `MediaTileDetail`, and
+  sets the loupe's 100 percent; the picture's shape is always the decode's, because the
+  catalog can record a HEIF turned by its `irot` property at its stored, unrotated size.
   Zooming to full resolution renders the original: a RAW through the interactive
   renderer, downloading it first if needed; any other still through Image I/O, as
   before. A RAW with no preview yet is developed on demand, never shown as its embedded

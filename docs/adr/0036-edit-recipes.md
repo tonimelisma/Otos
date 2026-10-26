@@ -64,6 +64,10 @@ open takes 20–180 ms per change. Opening it again for every change takes about
   - They apply last and in that order. Turns and flips act in the displayed frame, so
     turning a once-flipped photo right is a left turn under the flip, and a flip
     reverses the straighten angle. The crop turns and mirrors with the photo.
+  - The frame these act on is the original's upright size as the decoder that opens the
+    photo reports it (`OpenedEditPhoto`), never the catalog row's: the catalog can record
+    a HEIF turned by its `irot` property at its stored, unrotated size, and a crop built
+    on that has the wrong shape.
   - `EditGeometry` expresses all of it as one affine transform plus a crop.
     - Straighten rotates about the frame's center and scales by
       `cos|θ| + sin|θ| · max(W/H, H/W)`, the least that keeps the frame covered, so no

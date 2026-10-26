@@ -37,9 +37,6 @@ import OSLog
 nonisolated struct EditTarget: Equatable, Sendable {
     let id: MediaAssetID
     let sourceSize: Int64?
-    /// The original's oriented pixel size, when the catalog knows it: what the edited
-    /// photo's size is derived from as its geometry changes.
-    let originalPixelSize: CGSize?
 }
 
 /// A live render of `recipe` for `id`. `revision` is the save that recipe became, once it
@@ -239,8 +236,9 @@ extension CatalogWindowViewModel {
                 return
             }
             let saved = detail.editRecipe ?? .neutral
-            editTarget = EditTarget(id: id, sourceSize: detail.byteSize, originalPixelSize: detail.nativePixelSize)
+            editTarget = EditTarget(id: id, sourceSize: detail.byteSize)
             editPhotoFacts = nil
+            editOriginalPixelSize = nil
             isPickingNeutral = false
             editSavedRecipe = saved
             editDraft = saved
@@ -260,6 +258,7 @@ extension CatalogWindowViewModel {
         endCropping()
         editTarget = nil
         editPhotoFacts = nil
+        editOriginalPixelSize = nil
         isPickingNeutral = false
         editSavedRecipe = .neutral
         editDraft = .neutral
@@ -326,7 +325,7 @@ extension CatalogWindowViewModel {
             id: live.id,
             image: live.image,
             mediaChoice: matching?.mediaChoice,
-            nativePixelSize: editTarget?.originalPixelSize.map { live.recipe.outputSize(ofOriginal: $0) }
+            nativePixelSize: editOriginalPixelSize.map { live.recipe.outputSize(ofOriginal: $0) }
                 ?? matching?.nativePixelSize,
             renderedRevision: live.revision ?? matching?.renderedRevision ?? 0
         )
@@ -391,13 +390,13 @@ extension CatalogWindowViewModel {
                 case .close:
                     await pipeline.renderer.close()
                 case let .open(id, sourceSize):
-                    guard let facts = await pipeline.open(id, sourceSize: sourceSize) else { continue }
-                    self?.publishEditFacts(id: id, facts: facts)
+                    guard let opened = await pipeline.open(id, sourceSize: sourceSize) else { continue }
+                    self?.publishOpenedPhoto(id: id, opened)
                 case let .render(id, recipe, sourceSize, sequence, cropBase):
                     guard let live = await pipeline.liveImage(id, recipe: recipe, sourceSize: sourceSize) else {
                         continue
                     }
-                    self?.publishEditFacts(id: id, facts: live.facts)
+                    self?.publishOpenedPhoto(id: id, live.opened)
                     if cropBase {
                         self?.publishCropBase(id: id, recipe: recipe, image: live.image, sequence: sequence)
                     } else {
@@ -443,12 +442,16 @@ extension CatalogWindowViewModel {
         }
     }
 
-    private func publishEditFacts(id: MediaAssetID, facts: EditPhotoFacts) {
-        guard editTarget?.id == id, editPhotoFacts != facts else { return }
-        editPhotoFacts = facts
+    private func publishOpenedPhoto(id: MediaAssetID, _ opened: OpenedEditPhoto) {
+        guard editTarget?.id == id,
+              editPhotoFacts != opened.facts || editOriginalPixelSize != opened.pixelSize
+        else { return }
+        editPhotoFacts = opened.facts
+        editOriginalPixelSize = opened.pixelSize
         OtosLog.ui.debugOperation("edit.target", phase: "opened", fields: [
-            "id": id.relativePath.rawValue, "raw": "\(facts.isRAW)",
-            "asShotTemperature": facts.asShotTemperature.map { "\(Int($0.rounded()))" } ?? "none",
+            "id": id.relativePath.rawValue, "raw": "\(opened.facts.isRAW)",
+            "width": "\(Int(opened.pixelSize.width))", "height": "\(Int(opened.pixelSize.height))",
+            "asShotTemperature": opened.facts.asShotTemperature.map { "\(Int($0.rounded()))" } ?? "none",
         ])
     }
 
@@ -580,9 +583,9 @@ nonisolated struct EditPipeline: Sendable {
     }
 
     /// Opens the photo — downloading it first when it is cloud-only — and reports its
-    /// facts, or nil when it cannot be read.
+    /// facts and upright size, or nil when it cannot be read.
     @concurrent
-    func open(_ id: MediaAssetID, sourceSize: Int64?) async -> EditPhotoFacts? {
+    func open(_ id: MediaAssetID, sourceSize: Int64?) async -> OpenedEditPhoto? {
         guard await MaterializationCoordinator.makeLocal(id, sourceSize: sourceSize, via: materialization) else {
             return nil
         }
@@ -596,14 +599,14 @@ nonisolated struct EditPipeline: Sendable {
         }
     }
 
-    /// The draft rendered at preview size with the photo's facts, or nil when the
-    /// original cannot be read.
+    /// The draft rendered at preview size with what opening the photo reported, or nil
+    /// when the original cannot be read.
     @concurrent
     func liveImage(
         _ id: MediaAssetID,
         recipe: EditRecipe,
         sourceSize: Int64?
-    ) async -> (image: CGImage, facts: EditPhotoFacts)? {
+    ) async -> (image: CGImage, opened: OpenedEditPhoto)? {
         guard await MaterializationCoordinator.makeLocal(id, sourceSize: sourceSize, via: materialization) else {
             return nil
         }

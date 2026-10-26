@@ -6,9 +6,27 @@ import Testing
 /// Loupe zoom geometry (APP-040) as pure numbers: fit, ceiling, toggle, step, and when
 /// a sharper decode is needed.
 struct LoupeZoomPolicyTests {
+    /// A HEIF rotated by `irot` records its stored landscape size while the decoder shows
+    /// it upright: the document follows the upright decode, at the original's resolution,
+    /// so the picture is never stretched.
+    @Test func theDocumentTakesTheDecodesShape() {
+        let upright = LoupeZoomPolicy.documentSize(
+            imagePixelSize: CGSize(width: 1707, height: 2560), nativeLongEdge: 6192, backingScale: 2
+        )
+        #expect(abs(upright.width / upright.height - 1707.0 / 2560.0) < 0.0001)
+        #expect(upright.height == 3096)
+        let decodeOnly = LoupeZoomPolicy.documentSize(
+            imagePixelSize: CGSize(width: 800, height: 600), nativeLongEdge: nil, backingScale: 2
+        )
+        #expect(decodeOnly == CGSize(width: 400, height: 300))
+    }
+
     @Test func fitAndCeiling() {
-        // 6000 × 4000 px on a 2× display is a 3000 × 2000 pt document.
-        let document = LoupeZoomPolicy.documentSize(nativePixelSize: CGSize(width: 6000, height: 4000), backingScale: 2)
+        // A 1500 × 1000 decode of a 6000 × 4000 px original on a 2× display is a
+        // 3000 × 2000 pt document.
+        let document = LoupeZoomPolicy.documentSize(
+            imagePixelSize: CGSize(width: 1500, height: 1000), nativeLongEdge: 6000, backingScale: 2
+        )
         #expect(document == CGSize(width: 3000, height: 2000))
 
         let fit = LoupeZoomPolicy.fitMagnification(documentSize: document, paneSize: CGSize(width: 1500, height: 1500))

@@ -172,6 +172,10 @@ final class CatalogWindowViewModel {
     var editLivePreview: EditLivePreview?
     /// The open target's facts; nil until it has been opened (the controls wait for them).
     var editPhotoFacts: EditPhotoFacts?
+    /// The open target's upright full-resolution size, from the decode its edits render
+    /// from; nil until it has been opened. Crop geometry and the edited photo's size come
+    /// from this, never from the catalog row.
+    var editOriginalPixelSize: CGSize?
     /// The hand-off being prepared, for the status bar; nil when none is.
     var handOffProgress: HandOffProgress?
     var handOffAlertMessage: String?

@@ -59,14 +59,14 @@ struct EditRenderingTests {
         try writeSolidJPEG(to: url)
         let renderer = LiveEditRenderer()
 
-        let facts = try await renderer.open(url)
+        let opened = try await renderer.open(url)
         let picked = try await renderer.neutralWhiteBalance(url, at: CGPoint(x: 0.5, y: 0.5), shown: .neutral)
         let corrected = try await renderer.render(
             url, recipe: EditRecipe(temperature: picked.temperature, tint: picked.tint)
         )
         await renderer.close()
 
-        #expect(facts == .still)
+        #expect(opened.facts == .still)
         #expect(picked.temperature < 0)
         let color = meanColor(corrected)
         #expect(abs(color.red - color.green) < 0.02)

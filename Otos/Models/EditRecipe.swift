@@ -476,6 +476,16 @@ nonisolated struct EditPhotoFacts: Equatable, Sendable {
     static let still = EditPhotoFacts(isRAW: false, asShotTemperature: nil, asShotTint: nil)
 }
 
+/// What opening a photo for editing reports, all from the one decode its edits render
+/// from: the decoder's facts, and the original's upright full-resolution size. The size is
+/// the decoder's, never the catalog's: a HEIF rotated by its `irot` property can be
+/// cataloged with its stored, unrotated size, and geometry built on that crops the wrong
+/// shape.
+nonisolated struct OpenedEditPhoto: Equatable, Sendable {
+    let facts: EditPhotoFacts
+    let pixelSize: CGSize
+}
+
 /// A photo or video with its saved edit, as a hand-off (ADR 0037) or an export (ADR 0038)
 /// writes it: everything either needs to choose and produce the file.
 nonisolated struct EditedMediaItem: Equatable, Sendable {
