@@ -171,7 +171,8 @@ struct CatalogStoreEditRecipeTests {
     @Test func controlsClampToTheirRangeAndSnapToTheirStep() {
         let still = EditPhotoFacts.still
         #expect(EditControl.exposure.applying(9, to: .neutral, facts: still).exposure == 4)
-        #expect(EditControl.highlights.applying(30, to: .neutral, facts: still).highlights == 0)
+        #expect(EditControl.highlights.applying(30, to: .neutral, facts: still).highlights == 30)
+        #expect(EditControl.highlights.applying(130, to: .neutral, facts: still).highlights == 100)
         #expect(EditControl.contrast.applying(12.4, to: .neutral, facts: still).contrast == 12)
         #expect(abs(EditControl.exposure.applying(0.33, to: .neutral, facts: still).exposure - 0.35) < 0.0001)
         #expect(EditControl.exposure.formatted(.neutral, facts: still) == "0.00")

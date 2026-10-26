@@ -225,12 +225,26 @@ final nonisolated class ImageRenderer: Sendable {
             controls.saturation = Float(1 + recipe.saturation / 100)
             output = controls.outputImage ?? output
         }
-        if recipe.highlights != 0 || recipe.shadows != 0 {
+        // Highlights down and Shadows use Core Image's local tone filter. It cannot raise
+        // highlights (an amount above 1 changes nothing, measured), so Highlights up lifts
+        // the upper tones with a curve that keeps white at white, as Lightroom's does.
+        if recipe.highlights < 0 || recipe.shadows != 0 {
             let tones = CIFilter.highlightShadowAdjust()
             tones.inputImage = output
-            tones.highlightAmount = Float(1 + recipe.highlights / 100)
+            tones.highlightAmount = Float(1 + min(recipe.highlights, 0) / 100)
             tones.shadowAmount = Float(recipe.shadows / 100)
             output = tones.outputImage ?? output
+        }
+        if recipe.highlights > 0 {
+            let lift = recipe.highlights / 100
+            let curve = CIFilter.toneCurve()
+            curve.inputImage = output
+            curve.point0 = CGPoint(x: 0, y: 0)
+            curve.point1 = CGPoint(x: 0.25, y: 0.25)
+            curve.point2 = CGPoint(x: 0.5, y: 0.5 + 0.04 * lift)
+            curve.point3 = CGPoint(x: 0.75, y: 0.75 + 0.14 * lift)
+            curve.point4 = CGPoint(x: 1, y: 1)
+            output = curve.outputImage ?? output
         }
         if recipe.vibrance != 0 {
             let vibrance = CIFilter.vibrance()

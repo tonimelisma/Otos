@@ -245,14 +245,15 @@ Found in the dev build, not by reading:
 Also measured: a bare letter typed into a focused value field goes into the field. It does
 not fire its menu command.
 
-### F-17 — The RAW temperature slider is nonlinear with no scale marks (proposed, low)
+### F-17 — The RAW temperature slider is nonlinear with no scale marks (applied)
 
 Sliders (macOS): "When the values of the slider are nonlinear… periodic labels provide
 context", and a tooltip can show the value under the thumb. The kelvin slider is even in
 mireds, so equal distances are unequal kelvin, and nothing on the track says so.
 
-**Proposed:** none until the editable value of F-15 exists, which shows the exact kelvin;
-reconsider tick marks after that.
+**Applied:** labels at 2500, 4000 and 10000 K under the track, centered on the knob's
+position for each, spaced about evenly along it (21, 52 and 83 percent of the travel).
+5500 K was dropped: it falls within 40 pt of 10000 K at the panel's width (APP-047).
 
 ### F-18 — An undone edit to a photo off screen is not shown (proposed, low)
 
@@ -317,9 +318,10 @@ Internal vocabulary in the interface (DES-035, DES-039). **Applied:** "Destinati
   "No Selection" where Compare says "No Photo".
 - **Menu names:** View ▸ "Toggle Actual Size" breaks the Show/Hide naming; Preview says
   "Actual Size".
-- **Edit panel:** every section header carries a filled Reset pill, even when disabled,
-  and six of them compete with the section titles. Highlights rests at the far right
-  (−100…0) while every other tonal slider rests at its centre.
+- **Edit panel (applied):** every section header carried a filled Reset pill, even when
+  disabled, and six of them competed with the section titles; Reset is now a quiet
+  borderless text button. Highlights rested at the far right (−100…0) while every other
+  tonal slider rests at its centre; it now runs −100…100 (APP-046).
 - **Info:** an overlay on the photo, while Edit is a column, and both show the file name.
   Lightroom keeps Info and Edit in one right-hand column.
 

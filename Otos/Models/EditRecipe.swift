@@ -709,8 +709,7 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .straighten: -45 ... 45
         case .exposure: -4 ... 4
-        case .highlights: -100 ... 0
-        case .contrast, .shadows, .vibrance, .saturation, .vignette: -100 ... 100
+        case .contrast, .highlights, .shadows, .vibrance, .saturation, .vignette: -100 ... 100
         case .vignetteMidpoint, .vignetteFeather, .sharpening, .noiseReduction,
              .colorNoiseReduction, .detail, .moireReduction: 0 ... 100
         case .temperature: facts.isRAW ? 0 ... 1 : -100 ... 100
@@ -743,6 +742,54 @@ nonisolated enum EditControl: String, CaseIterable, Identifiable, Sendable {
         case .tint:
             recipe.tint ?? (facts.isRAW ? facts.asShotTint ?? 0 : 0)
         }
+    }
+
+    /// `recipe` with this one control back at its neutral value: double-clicking its name
+    /// in the panel (Lightroom's idiom). A Detail amount or a white balance returns to the
+    /// photo's own (`nil`), as its section's Reset does.
+    func reset(_ recipe: EditRecipe) -> EditRecipe {
+        var reset = recipe
+        let neutral = EditRecipe.neutral
+        switch self {
+        case .straighten: reset.straighten = neutral.straighten
+        case .exposure: reset.exposure = neutral.exposure
+        case .contrast: reset.contrast = neutral.contrast
+        case .highlights: reset.highlights = neutral.highlights
+        case .shadows: reset.shadows = neutral.shadows
+        case .temperature: reset.temperature = neutral.temperature
+        case .tint: reset.tint = neutral.tint
+        case .vibrance: reset.vibrance = neutral.vibrance
+        case .saturation: reset.saturation = neutral.saturation
+        case .vignette: reset.vignette = neutral.vignette
+        case .vignetteMidpoint: reset.vignetteMidpoint = neutral.vignetteMidpoint
+        case .vignetteFeather: reset.vignetteFeather = neutral.vignetteFeather
+        case .sharpening: reset.sharpening = neutral.sharpening
+        case .noiseReduction: reset.noiseReduction = neutral.noiseReduction
+        case .colorNoiseReduction: reset.colorNoiseReduction = neutral.colorNoiseReduction
+        case .detail: reset.detail = neutral.detail
+        case .moireReduction: reset.moireReduction = neutral.moireReduction
+        }
+        return reset
+    }
+
+    /// How far one press of Increase or Decrease Adjustment (= and −) moves the slider:
+    /// a twentieth of a stop, a degree, fifty kelvin near daylight, or five units.
+    func keyboardStep(_ facts: EditPhotoFacts) -> Double {
+        switch self {
+        case .exposure: 0.05
+        case .straighten: 1
+        case .temperature where facts.isRAW: 0.005
+        default: 5
+        }
+    }
+
+    /// Periodic labels for a slider whose scale is not linear (Sliders, macOS): a RAW's
+    /// temperature, even in mireds, marked at 2500, 4000 and 10000 K — spaced about evenly
+    /// along the track (21, 52 and 83 percent), where 5500 K would crowd 10000 K. Positions
+    /// are fractions of the slider's travel.
+    func scaleLabels(_ facts: EditPhotoFacts) -> [(position: Double, text: String)] {
+        guard self == .temperature, facts.isRAW else { return [] }
+        return [2500.0, 4000, 10000].map { (Self.position(ofKelvin: $0), "\(Int($0))") }
     }
 
     /// `recipe` with this control moved to slider `position`, snapped to the control's

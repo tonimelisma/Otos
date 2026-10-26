@@ -217,12 +217,11 @@ final class MediaGridCollectionView: NSCollectionView {
             onMediaChoiceKey?(choice)
             return
         }
-        // Any other bare letter goes to the menu bar first. The single-letter commands
-        // (E, C, I, Z) are menu items; NSCollectionView's own keyDown would swallow the
-        // letter as type-select, so they would never fire while the grid has focus.
-        if modifiers.isEmpty, chars.count == 1, chars.unicodeScalars.allSatisfy(CharacterSet.letters.contains),
-           NSApp?.mainMenu?.performKeyEquivalent(with: event) == true
-        {
+        // Any other bare menu key goes to the menu bar first. The single-key commands
+        // (E, C, I, Z, \ and the rest) are menu items; NSCollectionView's own keyDown
+        // would swallow a letter as type-select, so they would never fire while the grid
+        // has focus.
+        if BareMenuKey.performMenuCommand(event) {
             return
         }
         if chars == "\r" || chars == "\n" {

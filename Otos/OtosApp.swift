@@ -172,10 +172,11 @@ public struct OtosApp: App {
                 .keyboardShortcut("e", modifiers: [.command, .shift])
                 .disabled(!catalogViewModel.canExport)
                 Divider()
+                // Lightroom Classic's keys: ⌘R shows in Finder, ⌘⇧R resets the edit.
                 Button("Reveal in Finder") {
                     catalogViewModel.revealCurrentTargetsInFinder()
                 }
-                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .keyboardShortcut("r", modifiers: .command)
                 .disabled(catalogViewModel.currentTargetFileURLs.isEmpty)
             }
             // Undo covers curation choices only; Move to Trash keeps Finder's Put Back
@@ -278,6 +279,39 @@ public struct OtosApp: App {
                 }
                 .keyboardShortcut("t", modifiers: .command)
                 .disabled(!catalogViewModel.canTrimVideo)
+                Button("Revert to Original") {
+                    catalogViewModel.revertToOriginal()
+                }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .disabled(!catalogViewModel.canRevertToOriginal)
+                Divider()
+                // Lightroom Classic's Develop keys: W for the white balance selector, , and
+                // . to step through the adjustments, = and - to move the chosen one.
+                Button("Pick White Balance") {
+                    catalogViewModel.toggleNeutralPicker()
+                }
+                .keyboardShortcut("w", modifiers: [])
+                .disabled(!catalogViewModel.canPickNeutral && !catalogViewModel.isPickingNeutral)
+                Button("Select Previous Adjustment") {
+                    catalogViewModel.selectAdjacentEditControl(forward: false)
+                }
+                .keyboardShortcut(",", modifiers: [])
+                .disabled(!catalogViewModel.canEdit)
+                Button("Select Next Adjustment") {
+                    catalogViewModel.selectAdjacentEditControl(forward: true)
+                }
+                .keyboardShortcut(".", modifiers: [])
+                .disabled(!catalogViewModel.canEdit)
+                Button("Increase Adjustment") {
+                    catalogViewModel.nudgeSelectedEditControl(up: true)
+                }
+                .keyboardShortcut("=", modifiers: [])
+                .disabled(!catalogViewModel.canNudgeEditControl)
+                Button("Decrease Adjustment") {
+                    catalogViewModel.nudgeSelectedEditControl(up: false)
+                }
+                .keyboardShortcut("-", modifiers: [])
+                .disabled(!catalogViewModel.canNudgeEditControl)
                 Divider()
                 Button("Move to Trash", role: .destructive) {
                     catalogViewModel.moveTargetedMediaToTrash()
@@ -358,6 +392,12 @@ public struct OtosApp: App {
                     catalogViewModel.toggleEditPanel()
                 }
                 .keyboardShortcut("e", modifiers: [])
+                // Lightroom's before/after key.
+                Button(catalogViewModel.isShowingOriginal ? "Show Edited" : "Show Original") {
+                    catalogViewModel.toggleShowOriginal()
+                }
+                .keyboardShortcut("\\", modifiers: [])
+                .disabled(!catalogViewModel.canShowOriginal && !catalogViewModel.isShowingOriginal)
             }
             CommandGroup(replacing: .help) {}
         }

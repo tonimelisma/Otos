@@ -123,6 +123,9 @@ final class MediaAssetTileView: NSView {
     private let contentView = FlippedView()
     private let thumbnailView = ThumbnailLayerView()
     private let kindBadge = FlippedView()
+    /// Lower-left mirror of the kind badge: the edited mark (DES-099).
+    private let editBadge = FlippedView()
+    private let editIconView = NSImageView()
     private let badgeLabel = NSTextField(labelWithString: "")
     private let filmIconView = NSImageView()
     private let placeholderIconView = NSImageView()
@@ -183,6 +186,19 @@ final class MediaAssetTileView: NSView {
         badgeLabel.usesSingleLineMode = true
         badgeLabel.lineBreakMode = .byClipping
         kindBadge.addSubview(badgeLabel)
+
+        editBadge.wantsLayer = true
+        editBadge.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        editBadge.layer?.cornerRadius = Layout.badgeCornerRadius
+        editBadge.layer?.maskedCorners = [.layerMaxXMaxYCorner]
+        editBadge.layer?.masksToBounds = true
+        editBadge.isHidden = true
+        editIconView.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: nil)
+        editIconView.imageScaling = .scaleProportionallyDown
+        editIconView.contentTintColor = .white
+        editIconView.setAccessibilityElement(false)
+        editBadge.addSubview(editIconView)
+        contentView.addSubview(editBadge)
 
         filmIconView.image = MediaAssetTilePresentation.placeholderIcon(for: .video)
         filmIconView.imageScaling = .scaleProportionallyDown
@@ -400,6 +416,7 @@ extension MediaAssetTileView {
         thumbnailView.frame = contentView.bounds
         updatePlaceholderPresentation()
         layoutKindBadge()
+        layoutEditBadge()
         let choiceButtonSize = Layout.choiceButtonSize
         let choiceSpacing = Layout.choiceButtonSpacing
         choiceControl.frame = MediaAssetTilePresentation.choiceGroupRect(
@@ -452,6 +469,29 @@ extension MediaAssetTileView {
                 ? NSColor.secondaryLabelColor.withAlphaComponent(0.12).cgColor
                 : nil
         }
+    }
+
+    /// The edited mark sits in the lower-left corner, the kind badge's mirror, on a painted
+    /// face large enough to carry badges at all; a placeholder carries none.
+    private func layoutEditBadge() {
+        let contentBounds = contentView.bounds
+        guard let detail = renderedDetail,
+              paintedImagePixelSize != nil,
+              MediaAssetTilePresentation.isEdited(detail),
+              MediaAssetTilePresentation.showsKindBadge(contentRect: contentBounds)
+        else {
+            editBadge.isHidden = true
+            return
+        }
+        let side = Layout.badgeHeight
+        editBadge.isHidden = false
+        editBadge.frame = NSRect(x: 0, y: contentBounds.height - side, width: Layout.badgeMinWidth, height: side)
+        editIconView.frame = NSRect(
+            x: (Layout.badgeMinWidth - Layout.filmIconSize) / 2,
+            y: (side - Layout.filmIconSize) / 2,
+            width: Layout.filmIconSize,
+            height: Layout.filmIconSize
+        )
     }
 
     private func layoutKindBadge() {

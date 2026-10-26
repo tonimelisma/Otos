@@ -36,7 +36,9 @@ extension CatalogWindowViewModel {
         isPickingNeutral = false
         isCropping = true
         cropAspect = .original
-        cropAspectIsLandscape = currentCropIsLandscape
+        // The photo may still be opening, so its frame is unknown here; the aspect follows
+        // the crop's shape once it is known rather than guessing one now.
+        cropAspectLandscapeChoice = nil
         requestLiveEditRender()
         OtosLog.ui.noticeOperation("edit.crop", phase: "started")
     }
@@ -79,8 +81,14 @@ extension CatalogWindowViewModel {
     /// Rotate Aspect: the constrained ratio turns between landscape and portrait.
     func rotateCropAspect() {
         guard isCropping, canEdit, cropAspect != .free else { return }
-        cropAspectIsLandscape.toggle()
+        cropAspectLandscapeChoice = !cropAspectIsLandscape
         refitCropToAspect(actionName: "Crop Aspect")
+    }
+
+    /// Whether the constrained aspect stands landscape: Rotate Aspect's choice, else the
+    /// shape of the crop as it is (the whole frame when uncropped).
+    var cropAspectIsLandscape: Bool {
+        cropAspectLandscapeChoice ?? currentCropIsLandscape
     }
 
     /// The pixel ratio (width over height) the crop keeps while resized, or nil when free.
@@ -107,9 +115,10 @@ extension CatalogWindowViewModel {
     func turnPhoto(clockwise: Bool) {
         guard canEdit else { return }
         editDraft = editDraft.turned(clockwise: clockwise)
-        if isCropping {
-            // The frame turned; the constraint turns with it so it still fits.
-            cropAspectIsLandscape.toggle()
+        if isCropping, let choice = cropAspectLandscapeChoice {
+            // The frame turned; a chosen constraint turns with it so it still fits. One that
+            // follows the crop follows the turned crop by itself.
+            cropAspectLandscapeChoice = !choice
         }
         requestLiveEditRender()
         commitEdit(actionName: clockwise ? "Rotate Right" : "Rotate Left")

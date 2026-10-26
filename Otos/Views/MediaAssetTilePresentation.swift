@@ -181,8 +181,9 @@ nonisolated enum MediaAssetTilePresentation {
                 }
             }
         }
+        let editedSuffix = isEdited(detail) ? ", edited" : ""
         let emptySuffix = detail.byteSize == 0 ? ", empty file" : ""
-        return "\(base)\(emptySuffix), \(detail.mediaChoice.accessibilityValue)"
+        return "\(base)\(editedSuffix)\(emptySuffix), \(detail.mediaChoice.accessibilityValue)"
     }
 
     static func accessibilityValue(detail: MediaTileDetail) -> String {
@@ -281,6 +282,11 @@ nonisolated enum MediaAssetTilePresentation {
     }
 
     /// Size gate for any lower-right badge content (duration, film icon, RAW).
+    /// A photo or video with a saved edit carries the edited mark (DES-099).
+    static func isEdited(_ detail: MediaTileDetail) -> Bool {
+        detail.editRecipe.map { !$0.isNeutral } ?? false
+    }
+
     static func showsKindBadge(contentRect: CGRect) -> Bool {
         contentRect.width >= 56 && contentRect.height >= 56
     }

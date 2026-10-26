@@ -32,6 +32,25 @@ struct EditRenderingTests {
         #expect(toneSpread(contrasty.image) > toneSpread(neutral.image))
     }
 
+    /// Highlights runs −100…+100 like Lightroom's: down darkens the bright end, up lifts
+    /// it, and neither moves the dark end much.
+    @Test func highlightsLowerOrLiftTheBrightTonesOnly() async throws {
+        let url = try makeTestDirectory().appending(path: "gradient.jpg")
+        try writeGradientJPEG(to: url)
+
+        let neutral = try await ImageRenderer.interactive.render(url, longEdge: nil).image
+        let lifted = try await ImageRenderer.interactive.render(url, longEdge: nil, recipe: EditRecipe(highlights: 100)).image
+        let lowered = try await ImageRenderer.interactive.render(url, longEdge: nil, recipe: EditRecipe(highlights: -100)).image
+
+        let bright = CGRect(x: 66, y: 0, width: 14, height: 64)
+        let dark = CGRect(x: 0, y: 0, width: 14, height: 64)
+        let base = try meanColor(neutral, in: bright).green
+        #expect(try meanColor(lifted, in: bright).green > base + 0.03)
+        #expect(try meanColor(lowered, in: bright).green < base - 0.03)
+        let darkBase = try meanColor(neutral, in: dark).green
+        #expect(try abs(meanColor(lifted, in: dark).green - darkBase) < 0.02)
+    }
+
     @Test func aStillsWhiteBalanceVibranceAndSaturationMoveItsColor() async throws {
         let url = try makeTestDirectory().appending(path: "gray.jpg")
         try writeSolidJPEG(to: url, red: 0.5, green: 0.5, blue: 0.5)

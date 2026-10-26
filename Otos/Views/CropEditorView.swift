@@ -223,9 +223,10 @@ private extension CropHandle {
 
 /// The crop canvas's keyboard: an AppKit view that takes first responder when it joins the
 /// window and gives it back to whatever held it when it leaves. Arrow keys nudge (Shift for
-/// ten pixels), their release saves, and Escape is the loupe's. A bare letter goes to the
-/// menu bar, so C (Done Cropping) and the other single-letter commands still work; anything
-/// else goes up the responder chain, where Return reaches the Done button.
+/// ten pixels), their release saves, and Escape is the loupe's. A bare menu key
+/// (`BareMenuKey`) goes to the menu bar, so C (Done Cropping) and the other single-key
+/// commands still work; anything else goes up the responder chain, where Return reaches the
+/// Done button.
 struct CropKeyCatcher: NSViewRepresentable {
     let nudge: @MainActor (CGVector, CGFloat) -> Void
     let release: @MainActor () -> Void
@@ -293,10 +294,7 @@ final class CropKeyView: NSView {
         case 126: nudge(CGVector(dx: 0, dy: -1), pixels)
         case 53: escape()
         default:
-            let chars = event.charactersIgnoringModifiers ?? ""
-            if modifiers.isEmpty, chars.count == 1, chars.unicodeScalars.allSatisfy(CharacterSet.letters.contains),
-               NSApp?.mainMenu?.performKeyEquivalent(with: event) == true
-            {
+            if BareMenuKey.performMenuCommand(event) {
                 return
             }
             super.keyDown(with: event)

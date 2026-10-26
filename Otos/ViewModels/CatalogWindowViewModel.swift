@@ -209,13 +209,25 @@ final class CatalogWindowViewModel {
     var isEnteringEditValue = false
     /// The white balance picker is armed: the next loupe click picks a neutral point.
     var isPickingNeutral = false
+    /// View ▸ Show Original (\\): the loupe shows the photo without its edit until it is
+    /// turned off, the photo changes, or an edit is made.
+    var isShowingOriginal = false
+    /// The open photo rendered without its edit, for Show Original.
+    var editOriginalPreview: EditLivePreview?
+    /// The adjustment the keyboard acts on: chosen with , and . (Select Previous and Next
+    /// Adjustment) and moved with = and − (Increase and Decrease Adjustment).
+    var selectedEditControl: EditControl?
+    /// The histogram of the photo the panel edits, as last rendered (DES-100).
+    var editHistogram: EditHistogram?
     /// The crop tool is on: the loupe shows the whole frame with the crop over it.
     var isCropping = false
     /// The photo edited with everything but its crop, which the crop tool draws over.
     var editCropBase: EditLivePreview?
     /// The crop tool's aspect choice and which way it stands; tool state, not saved.
     var cropAspect = CropAspect.original
-    var cropAspectIsLandscape = true
+    /// Which way the constrained aspect stands, once Rotate Aspect has said so; nil follows
+    /// the crop's own shape (`cropAspectIsLandscape`), decided only once the frame is known.
+    var cropAspectLandscapeChoice: Bool?
     @ObservationIgnored var isDraggingCrop = false
     @ObservationIgnored var editSavedRecipe = EditRecipe.neutral
     @ObservationIgnored var editDraggingControl: EditControl?
@@ -228,6 +240,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var editRenderTask: Task<Void, Never>?
     @ObservationIgnored var editRenderRequested: UInt64 = 0
     @ObservationIgnored var editRenderPublished: UInt64 = 0
+    @ObservationIgnored var editHistogramPublished: UInt64 = 0
     @ObservationIgnored let editCommandStream: AsyncStream<EditLaneCommand>
     @ObservationIgnored let editCommandContinuation: AsyncStream<EditLaneCommand>.Continuation
     @ObservationIgnored var editCommandTask: Task<Void, Never>?
