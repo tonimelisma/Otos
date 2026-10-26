@@ -570,9 +570,9 @@ column is a *projection* of it, derived where it is written:
 
 - `CaptureWallClock.select(from:)` → `capture_wall_compact` / `capture_wall_precision`,
   the naming fact (ENR-012). Selects local-authority records only.
-- `BestCaptureInstants.from(_:)` → `ts_original_unix`, `ts_quicktime_creation_unix`,
-  `ts_digitized_unix`, `ts_gps_unix`, which the `best_capture_unix` generated
-  column coalesces for ordering (ENR-003).
+- `CaptureInstant.select(from:)` → `capture_instant_unix`, the library's capture
+  instant (`CaptureTimestamps.instantPrecedence`), which the `best_capture_unix`
+  generated column falls back from to the file's dates for ordering (ENR-003).
 
 `EnrichmentResult` previously carried a second copy of those four instants as
 `EnrichmentTimestampFacts`, and `ReusableEnrichmentOverlay` carried them again

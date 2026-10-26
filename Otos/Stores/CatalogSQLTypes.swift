@@ -33,9 +33,9 @@ nonisolated struct StoredAsset {
 /// Store-owned, one-settlement snapshot of rebuildable enrichment. It is never
 /// persisted as a second record and contains no source history, claims, or identity.
 nonisolated struct ReusableEnrichmentOverlay: Equatable, Sendable {
-    /// The one stored timestamp truth. The four `ts_*_unix` values the destination
-    /// row needs are projected from it at the write (`BestCaptureInstants`), rather
-    /// than carried again alongside it.
+    /// The one stored timestamp truth. The capture instant the destination row sorts by
+    /// is projected from it at the write (`CaptureInstant`), rather than carried again
+    /// alongside it.
     let metadata: AssetMetadata
     let enrichedKind: MediaKind?
     let enrichedFormat: MediaFormatToken?

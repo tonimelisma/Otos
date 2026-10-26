@@ -74,16 +74,14 @@ the same request generation because it resolves that intent; stale A -> B -> A
 publications cannot roll controls back through descriptor equality.
 
 SQLite stores scan facts (`kind`, `format`, and `name_sort_key`) and enrichment
-facts (`ts_original_unix`, `ts_quicktime_creation_unix`, `ts_digitized_unix`,
-`ts_gps_unix`, `enriched_kind`, and `enriched_format`). The current best values
-are STORED generated columns:
+facts (`capture_instant_unix` — the library's capture instant, chosen by
+`CaptureTimestamps.instantPrecedence` from the stored timestamp records — plus
+`enriched_kind` and `enriched_format`). The current best values are generated
+columns (`best_capture_unix` virtual, the other two stored):
 
 ```sql
 best_capture_unix AS COALESCE(
-    ts_original_unix,
-    ts_quicktime_creation_unix,
-    ts_digitized_unix,
-    ts_gps_unix,
+    capture_instant_unix,
     created_at_unix,
     content_modified_at_unix
 )

@@ -96,7 +96,7 @@ struct MediaEnricherTests {
             Issue.record("expected .complete, got \(outcome)")
             return
         }
-        #expect(BestCaptureInstants.from(result.metadata.timestamps).original != nil)
+        #expect(CaptureInstant.select(from: result.metadata.timestamps) != nil)
         #expect(!result.metadata.timestamps.isEmpty)
         #expect(result.metadata.family != nil)
         #expect(result.sourceSize == 100)

@@ -30,36 +30,23 @@ nonisolated extension CaptureTimestampRecord {
     }
 }
 
-/// The four timestamp roles the `best_capture_unix` generated column coalesces,
-/// projected out of the stored records.
+/// The absolute moment of capture the catalog sorts by (`capture_instant_unix`, which
+/// `best_capture_unix` falls back from to the file's dates): the library's choice
+/// (`CaptureTimestamps.instantPrecedence` — the camera clock's roles, then GPS) applied to
+/// the stored records, the first role in that order whose record has a UTC instant.
 ///
-/// This is a *derivation*, not a second stored fact: the four instants are read from
-/// `metadata.timestamps`, the one stored copy, so no constructed value can carry a
-/// pair that disagrees.
-///
-/// `metadata.timestamps` is the stored truth. `ts_*_unix` and
-/// `capture_wall_compact` (see `CaptureWallClock`) are both projections of it,
-/// derived where they are written.
-nonisolated struct BestCaptureInstants: Equatable, Sendable {
-    let original: Date?
-    let quickTimeCreation: Date?
-    let digitized: Date?
-    let gps: Date?
-
-    static let none = BestCaptureInstants(original: nil, quickTimeCreation: nil, digitized: nil, gps: nil)
-
-    /// Roles whose *absolute* instant participates in best-date ordering. A role
-    /// without a usable UTC instant projects to nil here while its local
-    /// components stay preserved in the record for `CaptureWallClock`.
-    static func from(_ records: [CaptureTimestampRecord]) -> Self {
-        func instant(_ role: CaptureTimestamps.Role) -> Date? {
-            records.first { $0.role == role.rawValue }?.instant
+/// This is a *derivation*, not a second stored fact: it is read from
+/// `metadata.timestamps`, the one stored copy. A role without a usable instant (a
+/// floating Exif time) is passed over here while its local components stay in the record
+/// for `CaptureWallClock`.
+nonisolated enum CaptureInstant {
+    static func select(from records: [CaptureTimestampRecord]) -> Date? {
+        let byRole = Dictionary(grouping: records, by: \.role)
+        for role in CaptureTimestamps.instantPrecedence {
+            if let instant = byRole[role.rawValue]?.lazy.compactMap(\.instant).first {
+                return instant
+            }
         }
-        return BestCaptureInstants(
-            original: instant(.original),
-            quickTimeCreation: instant(.quickTimeCreation),
-            digitized: instant(.digitized),
-            gps: instant(.gps)
-        )
+        return nil
     }
 }
