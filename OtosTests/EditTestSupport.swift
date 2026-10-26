@@ -93,6 +93,34 @@ func writeRotatedHEIC(to url: URL) throws {
     try #require(CGImageDestinationFinalize(destination))
 }
 
+/// The rotated HEIC with its Exif Orientation entry renamed to tag 0, so only the HEIF
+/// `irot` property records the rotation, as Sony cameras write it. MediaMetadata 0.6.0
+/// read such a file as unrotated; ImageIO and 0.6.1 read orientation 6.
+func writeIrotOnlyHEIC(to url: URL) throws {
+    try writeRotatedHEIC(to: url)
+    var data = try Data(contentsOf: url)
+    let littleEndian = data.range(of: Data([0x49, 0x49, 0x2A, 0x00]))
+    let bigEndian = data.range(of: Data([0x4D, 0x4D, 0x00, 0x2A]))
+    let header = try #require(littleEndian ?? bigEndian).lowerBound
+    let isLittle = littleEndian != nil
+    func read(_ offset: Int, _ count: Int) -> Int {
+        let bytes = data[offset ..< offset + count]
+        return (isLittle ? bytes.reversed() : Array(bytes)).reduce(0) { $0 << 8 | Int($1) }
+    }
+    let ifd = header + read(header + 4, 4)
+    var renamed = false
+    for index in 0 ..< read(ifd, 2) {
+        let entry = ifd + 2 + 12 * index
+        if read(entry, 2) == 0x0112 {
+            data[entry] = 0
+            data[entry + 1] = 0
+            renamed = true
+        }
+    }
+    try #require(renamed)
+    try data.write(to: url)
+}
+
 func gradientImage(width: Int, height: Int) -> CGImage? {
     guard let context = CGContext(
         data: nil,

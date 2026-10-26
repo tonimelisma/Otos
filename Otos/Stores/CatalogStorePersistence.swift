@@ -91,6 +91,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.heifOrientationMigrationIdentifier) { db in
+            for statement in CatalogSchema.heifOrientationStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
