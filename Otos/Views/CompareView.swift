@@ -32,6 +32,8 @@ struct CompareView: View {
     var leftMediaChoice: MediaChoice?
     var rightMediaChoice: MediaChoice?
     var onPaneMediaChoice: (PanePosition, MediaChoice) -> Void = { _, _ in }
+    /// The pane the Photo commands, the toolbar and the edit panel act on.
+    var activePane: PanePosition = .right
     var onPaneActivated: (PanePosition) -> Void = { _ in }
     /// Context menu for the active pane's asset (pane) and the clicked tile (strip).
     /// A pane context click activates that pane first, so the menu describes it.
@@ -120,6 +122,26 @@ struct CompareView: View {
                         ContentUnavailableView("No Photo", systemImage: "photo")
                             .foregroundStyle(.secondary)
                     }
+                    // The active pane's picture carries the grid's selection outline
+                    // (DES-061, DES-096), on the media rather than the letterbox, the way
+                    // the hover controls are placed (DES-066).
+                    if position == activePane, id != nil {
+                        GeometryReader { proxy in
+                            let face = MediaAssetTilePresentation.contentRect(
+                                imagePixelSize: display.mediaPixelSize,
+                                bounds: CGRect(origin: .zero, size: proxy.size)
+                            )
+                            Rectangle()
+                                .strokeBorder(
+                                    Color.accentColor,
+                                    lineWidth: MediaAssetTilePresentation.selectionBorderWidth
+                                )
+                                .frame(width: face.width, height: face.height)
+                                .offset(x: face.minX, y: face.minY)
+                        }
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                    }
                     // Centered like the loupe pane (DES-086) — one pane idiom for waiting.
                     if isDownloading {
                         ProgressView()
@@ -129,6 +151,7 @@ struct CompareView: View {
                     }
                 }
                 .contentShape(Rectangle())
+                .accessibilityAddTraits(position == activePane ? .isSelected : [])
                 .onTapGesture {
                     onPaneActivated(position)
                 }

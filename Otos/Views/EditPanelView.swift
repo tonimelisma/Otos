@@ -129,7 +129,7 @@ struct EditPanelView: View {
             ForEach(section.controls.filter { $0.isAvailable(facts ?? .still) }) { control in
                 EditSliderRow(
                     title: control.title,
-                    formattedValue: facts.map { control.formatted(recipe, facts: $0) } ?? "",
+                    formattedValue: facts.map { control.formatted(recipe, facts: $0) } ?? EditSliderRow.noValue,
                     value: control.sliderValue(in: recipe, facts: facts ?? .still),
                     range: control.sliderRange(facts ?? .still),
                     setValue: { setValue($0, control) },
@@ -289,6 +289,10 @@ struct EditPanelView: View {
 /// through `enter`, which saves it as one step; text that is not a number is put back,
 /// and Escape puts back the shown value.
 private struct EditSliderRow: View {
+    /// What the value field shows while no photo is open: nothing to state, and never the
+    /// control's name, which a field shows as its placeholder when its text is empty.
+    static let noValue = "—"
+
     let title: String
     let formattedValue: String
     let value: Double
@@ -309,7 +313,7 @@ private struct EditSliderRow: View {
                     .accessibilityHidden(true)
                 Spacer()
                 // Shows the value whenever it is not being typed, so it is never stale.
-                TextField(title, text: Binding(get: { isEntering ? entry : formattedValue }, set: { entry = $0 }))
+                TextField("", text: Binding(get: { isEntering ? entry : formattedValue }, set: { entry = $0 }))
                     .labelsHidden()
                     .textFieldStyle(.plain)
                     .multilineTextAlignment(.trailing)

@@ -20,12 +20,13 @@ struct CatalogWindowViewModelLoupeZoomTests {
         #expect(model.loupeZoomCommand == nil)
 
         model.openLoupe(id: ids[0])
-        #expect(!model.canZoom)
+        #expect(!model.canZoomIn && !model.canZoomOut)
         model.zoomIn()
         #expect(model.loupeZoomCommand == nil)
 
         model.reportLoupeZoom(LoupeZoomReport(magnification: 0.5, fit: 0.5))
-        #expect(model.canZoom)
+        #expect(model.canZoomIn)
+        #expect(!model.canZoomOut)
         model.zoomIn()
         #expect(model.loupeZoomCommand?.target == .magnification(0.625))
         #expect(model.gridColumnCount == columns - 1)
@@ -115,7 +116,7 @@ struct CatalogWindowViewModelLoupeZoomTests {
         #expect(model.focusedAssetID == ids[1])
         #expect(model.loupeZoomReport == nil)
         #expect(model.loupeZoomCommand == nil)
-        #expect(!model.canZoom)
+        #expect(!model.canZoomIn && !model.canZoomOut)
     }
 
     @Test func infoOverlayFollowsFocusAndToggle() async throws {

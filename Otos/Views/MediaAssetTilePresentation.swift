@@ -228,6 +228,10 @@ nonisolated enum MediaAssetTilePresentation {
     @MainActor
     private static var placeholderIconCache: [String: NSImage?] = [:]
 
+    /// The selection outline's width, on a grid tile and on Compare's active pane alike
+    /// (DES-061): one mark for "this is what the commands act on".
+    static let selectionBorderWidth: CGFloat = 3
+
     static func contentRect(imagePixelSize: CGSize?, bounds: CGRect) -> CGRect {
         guard bounds.width > 0, bounds.height > 0 else {
             return bounds
