@@ -431,6 +431,7 @@ final class CatalogWindowViewModel {
         catalogStore: CatalogStore,
         catalogProjection: CatalogProjection = CatalogProjection(),
         enrichmentCoordinator: EnrichmentCoordinator? = nil,
+        metadataRefresher: MetadataRefresher? = nil,
         stallMonitor: MainRunLoopStallMonitor = MainRunLoopStallMonitor(),
         startsStallMonitor: Bool = true,
         startsEnrichment: Bool = true,
@@ -541,7 +542,12 @@ final class CatalogWindowViewModel {
                 )
                 : nil
         )
-        metadataRefresher = startsEnrichment ? MetadataRefresher(store: catalogStore) : nil
+        // The live refresher reads real files, so it pairs with the live enrichment
+        // pipeline: a caller that injects its own coordinator controls enrichment and gets
+        // only the refresher it injects.
+        self.metadataRefresher = metadataRefresher ?? (
+            startsEnrichment && enrichmentCoordinator == nil ? MetadataRefresher(store: catalogStore) : nil
+        )
         self.stallMonitor = stallMonitor
         self.startsStallMonitor = startsStallMonitor
         self.startsEnrichment = startsEnrichment
