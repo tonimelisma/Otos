@@ -3,35 +3,51 @@ import MediaMetadata
 @testable import OtosKit
 import Testing
 
-/// ENR-003: the catalog sorts by the library's capture instant — the first role in
-/// `CaptureTimestamps.instantPrecedence` whose stored record has a UTC instant.
+/// ENR-003: the catalog sorts by the library's capture instant, asked of the stored
+/// records — the first role in `CaptureTimestamps.instantPrecedence` whose time has a UTC
+/// instant. A record that is not a capture time is left out.
 struct CaptureInstantTests {
-    private func record(_ role: CaptureTimestamps.Role, _ seconds: TimeInterval?) -> CaptureTimestampRecord {
-        CaptureTimestampRecord(role: role.rawValue, instant: seconds.map { Date(timeIntervalSince1970: $0) })
+    private func instant(_ records: [CaptureTimestampRecord]) -> Date? {
+        CaptureTimestamps(records: records).captureInstant?.time.instant
+    }
+
+    private func at(_ seconds: TimeInterval) -> Date {
+        Date(timeIntervalSince1970: seconds)
     }
 
     @Test func theCameraClockComesBeforeTheContainerAndGPS() {
         // A floating original pins no instant; the digitized time is the next camera
         // clock, ahead of QuickTime's creation date and the GPS fix.
-        let records = [
-            record(.gps, 400),
-            record(.quickTimeCreation, 300),
-            record(.digitized, 200),
-            record(.original, nil),
+        let records: [CaptureTimestampRecord] = [
+            .absolute(.gps, instant: at(400)),
+            .absolute(.quickTimeCreation, instant: at(300)),
+            .absolute(.digitized, instant: at(200)),
+            .floating(.original),
         ]
-        #expect(CaptureInstant.select(from: records) == Date(timeIntervalSince1970: 200))
+        #expect(instant(records) == at(200))
     }
 
     @Test func quickTimeContentCreateCountsAndGPSIsLast() {
-        #expect(
-            CaptureInstant.select(from: [record(.gps, 400), record(.quickTimeContentCreate, 250)])
-                == Date(timeIntervalSince1970: 250)
-        )
-        #expect(CaptureInstant.select(from: [record(.gps, 400)]) == Date(timeIntervalSince1970: 400))
+        #expect(instant([.absolute(.gps, instant: at(400)), .absolute(.quickTimeContentCreate, instant: at(250))]) == at(250))
+        #expect(instant([.absolute(.gps, instant: at(400))]) == at(400))
     }
 
     @Test func noInstantIsNoCaptureInstant() {
-        #expect(CaptureInstant.select(from: [record(.original, nil)]) == nil)
-        #expect(CaptureInstant.select(from: []) == nil)
+        #expect(instant([.floating(.original)]) == nil)
+        #expect(instant([]) == nil)
+    }
+
+    /// A stored record that is not a capture time — an unknown precision, missing or
+    /// out-of-range components, a role this build does not know — is left out, so the next
+    /// role answers.
+    @Test func aRecordThatIsNotACaptureTimeIsLeftOut() {
+        var unknownPrecision = CaptureTimestampRecord.absolute(.original, instant: at(100))
+        unknownPrecision.precision = "sometime"
+        var badMonth = CaptureTimestampRecord.absolute(.digitized, instant: at(150))
+        badMonth.month = 13
+        var unknownRole = CaptureTimestampRecord.absolute(.original, instant: at(50))
+        unknownRole.role = "laterRole"
+        let fallback = CaptureTimestampRecord.absolute(.gps, instant: at(400))
+        #expect(instant([unknownPrecision, badMonth, unknownRole, fallback]) == at(400))
     }
 }

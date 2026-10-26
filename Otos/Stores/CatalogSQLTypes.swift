@@ -34,7 +34,7 @@ nonisolated struct StoredAsset {
 /// persisted as a second record and contains no source history, claims, or identity.
 nonisolated struct ReusableEnrichmentOverlay: Equatable, Sendable {
     /// The one stored timestamp truth. The capture instant the destination row sorts by
-    /// is projected from it at the write (`CaptureInstant`), rather than carried again
+    /// is projected from it at the write (`AssetMetadata.captureInstant`), rather than carried again
     /// alongside it.
     let metadata: AssetMetadata
     let enrichedKind: MediaKind?

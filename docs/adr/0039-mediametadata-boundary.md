@@ -33,7 +33,8 @@ MediaMetadata 0.7.0 adds what a consumer needs to stop re-deriving:
 - `format.fileType` and `isCameraRaw` read from the bytes, and `MediaFileType(fileExtension:)`
   with `displayName` for a file nothing has read (0.7.1);
 - `CaptureTimestamps.Role.isAudioOnly` (0.7.1);
-- PNG, WebP and GIF as families of their own, read from their headers (0.8.0).
+- PNG, WebP and GIF as families of their own, read from their headers (0.8.0);
+- `CaptureTimestamps(entries:)`, the inverse of `entries` (0.8.1).
 
 ## Decision
 
@@ -69,12 +70,15 @@ what those facts mean. That covers:
 
   Otos's role set is the library's `CaptureTimestamps.Role`, less the audio-only roles
   (`Role.isAudioOnly`, MED-004). The upright size is `PixelGeometry`'s.
-- **The sort order follows `instantPrecedence`.** `capture_instant_unix` is the first
-  role in that order whose stored record has a UTC instant (`CaptureInstant`), and
+- **Selections are the library's, asked of the stored records.** The persisted records
+  are put back into the library's value (`CaptureTimestamps(records:)`, through
+  `CaptureTimestamps(entries:)`, 0.8.1) and Otos asks it, restating no precedence. A
+  record whose precision or wall-clock components are not a valid capture time is left
+  out (`CaptureTime(record:)`).
+- **The sort order is `captureInstant`.** `capture_instant_unix` is its instant, and
   `best_capture_unix` falls back from it to the file's dates. Migration v8 replaced the
   four `ts_*_unix` columns Otos had coalesced in its own order.
-- **The wall clock follows `wallClockPrecedence`.** It is selected from Otos's persisted
-  records in that order. So an AVI's RIFF recording date (ICRD/IDIT), when no earlier
+- **The wall clock is `captureWallClock`** (`wallClockPrecedence`). So an AVI's RIFF recording date (ICRD/IDIT), when no earlier
   role is local, now names the file instead of the mtime-less-duration fallback:
   - an embedded fact is better than a derived one;
   - files already imported keep their names;

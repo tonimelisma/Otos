@@ -153,7 +153,7 @@ nonisolated enum CatalogSchema {
             try db.execute(
                 sql: "UPDATE media_asset SET capture_instant_unix = ? WHERE library_root_id = ? AND relative_path = ?",
                 arguments: [
-                    CaptureInstant.select(from: metadata.timestamps)?.timeIntervalSince1970,
+                    metadata.captureInstant?.timeIntervalSince1970,
                     row["library_root_id"] as Int64,
                     row["relative_path"] as String,
                 ]

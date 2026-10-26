@@ -512,7 +512,7 @@ extension CatalogStore {
                 AND relative_path = ?
             """,
             arguments: [
-                CaptureInstant.select(from: metadata.timestamps)?.timeIntervalSince1970,
+                metadata.captureInstant?.timeIntervalSince1970,
                 enrichedKind?.rawValue,
                 enrichedFormat?.rawValue,
                 metadata.durationSeconds,
