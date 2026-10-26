@@ -43,6 +43,28 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    /// The pane's progress indicator marks a pane waiting for its photo (DES-086): loading
+    /// raises it, and refreshing the photo the pane already shows — an edit's new preview —
+    /// does not.
+    @Test func refreshingThePhotoTheLoupeShowsRaisesNoIndicator() async throws {
+        try await withEditableLibrary(fileCount: 1) { library in
+            let id = library.ids[0]
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            model.selectAll()
+            model.setViewMode(.loupe)
+            #expect(model.downloadingSlots.contains(.loupe))
+            try await waitUntil { model.panePreviews[.loupe]?.id == id }
+            #expect(!model.downloadingSlots.contains(.loupe))
+
+            model.requestPanePreview(id, slot: .loupe)
+
+            #expect(!model.downloadingSlots.contains(.loupe))
+            #expect(model.displayedPanePreview(.loupe)?.id == id)
+        }
+    }
+
     @Test func undoAndRedoStepThroughSavesAndBringThePanelAlong() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]

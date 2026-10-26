@@ -29,7 +29,10 @@ and is never shown at full size except when zoomed to 100%.
   any other still with Image I/O, orientation applied. Output is an 8-bit Display P3
   bitmap, produced on one of two serial lanes: background for enrichment, interactive
   for the loupe. At most two RAW developments, 160–340 MB each, are in memory at once,
-  and enrichment never queues in front of the photo on screen.
+  and enrichment never queues in front of the photo on screen. A RAW's oriented native
+  size is read once, when its filter is made (`OpenedRAW`), and every scale factor and
+  reported size comes from that value: under RAW9 the filter's `nativeSize` changes once
+  a scale factor is set (research 2026-10-26-live-edit-latency).
 - **Two stored products per still,** made from one rendering during enrichment, while
   the original's bytes are local:
   - a 2560 px preview, 8-bit Display P3 HEIC, in `media_asset.preview_path`;

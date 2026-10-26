@@ -138,7 +138,7 @@ extension CatalogWindowViewModel {
         fullResolutionRequestedIDs.insert(id)
         let name = id.relativePath.rawValue
         OtosLog.ui.notice(
-            "op=loupe.fullRes id=\(name, privacy: .public) decoded=\(decodedLongEdge, privacy: .public) native=\(nativeLongEdge, privacy: .public)"
+            "op=loupe.fullRes id=\(name, privacy: .public) decoded=\(decodedLongEdge, privacy: .public) native=\(nativeLongEdge, privacy: .public) magnification=\(Double(report.magnification), privacy: .public) fit=\(Double(report.fit), privacy: .public)"
         )
         requestPanePreview(id, slot: .loupe, targetLongEdge: PreviewImageLoader.fullResolution)
     }

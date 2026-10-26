@@ -144,7 +144,9 @@ struct EditRenderingTests {
             libraryRootPath: LibraryRootPath(rawValue: directory.path),
             relativePath: MediaRelativePath(rawValue: "gradient.jpg")
         )
-        let products = try await renderer.renderProducts(url, recipe: recipe, id: id, directory: directory)
+        let products = try await RenderedEditImages.staging(
+            renderer.render(url, recipe: recipe), id: id, directory: directory
+        )
         await renderer.close()
 
         #expect(live.width == 96 && live.height == 64)

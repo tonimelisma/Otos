@@ -17,14 +17,34 @@ import OSLog
 /// Its state — the open photo and the context — is not `Sendable` and never leaves it.
 ///
 /// Renders are at the stored preview's size, so the image shown while dragging is the
-/// one the photo's preview will be once the edit is saved, and `renderProducts` stages
-/// exactly that for the store. The caller has already made the original local.
+/// one the photo's preview will be once the edit is saved, and `RenderedEditImages`
+/// stages exactly that for the store. The caller has already made the original local.
 /// A saved recipe's render: the image the pane shows, and the preview and thumbnail
 /// staged from it for the store to promote.
 nonisolated struct RenderedEditImages: Sendable {
     let image: CGImage
     let preview: StagedDerivedImage
     let thumbnail: StagedDerivedImage
+
+    /// Encodes and writes the preview and thumbnail of `image`. Encoding is not rendering:
+    /// it runs on the caller's executor, never on the renderer's queue, so a save's
+    /// encode does not hold up the next live render.
+    static func staging(_ image: CGImage, id: MediaAssetID, directory: URL) throws -> RenderedEditImages {
+        let preview = try ThumbnailStore.stagePreview(
+            image, finalRelativeName: ThumbnailStore.previewRelativeName(for: id), in: directory
+        )
+        do {
+            let thumbnail = try ThumbnailStore.stage(
+                ThumbnailStore.scaled(image, toLongEdge: ThumbnailStore.maxPixelSize),
+                finalRelativeName: ThumbnailStore.relativeName(for: id),
+                in: directory
+            )
+            return RenderedEditImages(image: image, preview: preview, thumbnail: thumbnail)
+        } catch {
+            ThumbnailStore.discard(preview, in: directory)
+            throw error
+        }
+    }
 }
 
 actor LiveEditRenderer {
@@ -61,36 +81,14 @@ actor LiveEditRenderer {
     func render(_ url: URL, recipe: EditRecipe) throws -> CGImage {
         let start = ContinuousClock.now
         let image = try ImageRenderer.bitmap(developed(url, recipe: recipe), context: context)
+        // The size is logged because the scale factor decides it, and a wrong one costs a
+        // fresh development (research 2026-10-26-live-edit-latency).
         OtosLog.rendering.debugOperation("render.liveEdit", phase: "finish", fields: [
             "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+            "width": "\(image.width)", "height": "\(image.height)",
             "path": url.path(percentEncoded: false),
         ])
         return image
-    }
-
-    /// The saved recipe's preview and thumbnail, staged for the store to promote, and the
-    /// image they were made from for the pane to show meanwhile.
-    func renderProducts(
-        _ url: URL,
-        recipe: EditRecipe,
-        id: MediaAssetID,
-        directory: URL
-    ) throws -> RenderedEditImages {
-        let image = try render(url, recipe: recipe)
-        let preview = try ThumbnailStore.stagePreview(
-            image, finalRelativeName: ThumbnailStore.previewRelativeName(for: id), in: directory
-        )
-        do {
-            let thumbnail = try ThumbnailStore.stage(
-                ThumbnailStore.scaled(image, toLongEdge: ThumbnailStore.maxPixelSize),
-                finalRelativeName: ThumbnailStore.relativeName(for: id),
-                in: directory
-            )
-            return RenderedEditImages(image: image, preview: preview, thumbnail: thumbnail)
-        } catch {
-            ThumbnailStore.discard(preview, in: directory)
-            throw error
-        }
     }
 
     /// The white balance that makes the photo neutral at `point` of the photo as it is
@@ -169,7 +167,9 @@ actor LiveEditRenderer {
             resolved.detail = recipe.detail ?? photo.facts.rawDetail[.detail]
             resolved.moireReduction = recipe.moireReduction ?? photo.facts.rawDetail[.moireReduction]
             resolved.lensCorrection = recipe.lensCorrection ?? photo.facts.lensCorrectionDefault
-            let scale = ImageRenderer.rawScaleFactor(filter, outputLongEdge: previewLongEdge, recipe: recipe)
+            let scale = ImageRenderer.rawScaleFactor(
+                nativeSize: photo.nativeSize, outputLongEdge: previewLongEdge, recipe: recipe
+            )
             filter.scaleFactor = scale
             let expectedLongEdge = Double(scale) * Double(max(photo.nativeSize.width, photo.nativeSize.height))
             let image = try ImageRenderer.developed(filter, recipe: resolved)
@@ -178,7 +178,7 @@ actor LiveEditRenderer {
             guard max(image.extent.width, image.extent.height) < expectedLongEdge * 0.75 else {
                 return image
             }
-            let (fresh, _) = try ImageRenderer.openRAW(url, outputLongEdge: previewLongEdge, recipe: recipe)
+            let fresh = try ImageRenderer.openRAW(url, outputLongEdge: previewLongEdge, recipe: recipe).filter
             photo.source = .raw(fresh)
             open = photo
             return try ImageRenderer.developed(fresh, recipe: resolved)
@@ -193,12 +193,12 @@ actor LiveEditRenderer {
         let longEdge = ThumbnailStore.previewMaxPixelSize
         let photo: OpenPhoto
         if ImageRenderer.isRAW(url) {
-            let (filter, _) = try ImageRenderer.openRAW(url, outputLongEdge: longEdge, recipe: .neutral)
+            let opened = try ImageRenderer.openRAW(url, outputLongEdge: longEdge, recipe: .neutral)
             photo = OpenPhoto(
                 url: url,
-                source: .raw(filter),
-                nativeSize: ImageRenderer.orientedNativeSize(filter),
-                facts: Self.rawFacts(filter)
+                source: .raw(opened.filter),
+                nativeSize: opened.nativeSize,
+                facts: Self.rawFacts(opened.filter)
             )
         } else {
             let decoded = try ImageRenderer.decodeImage(url, outputLongEdge: longEdge, recipe: .neutral)
