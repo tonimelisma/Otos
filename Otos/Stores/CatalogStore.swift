@@ -2130,9 +2130,13 @@ extension CatalogStore {
     }
 
     /// Writes re-read metadata records (ADR 0039). Each one lands only while its row still
-    /// has the file signature it was read at and a record from an older revision: a file
-    /// that changed meanwhile, or a row enrichment re-stamped, keeps what it has. Only the
-    /// metadata and the columns derived from it change; thumbnails and previews do not.
+    /// has the file signature it was read at and its stored record is still older than the
+    /// current reading of the stored record's own family — the test that made it a
+    /// candidate. Revisions are numbered per family, so the stored record is never compared
+    /// with the new one's: a re-read can change family (0.7.1's `unknown` 1 is 0.8.0's
+    /// `png` 0). A file that changed meanwhile, or a row enrichment re-stamped at its
+    /// family's current revision, keeps what it has. Only the metadata and the columns
+    /// derived from it change; thumbnails and previews do not.
     func applyMetadataRefresh(_ refreshes: [MetadataRefresh]) async throws -> Int {
         guard !refreshes.isEmpty else { return 0 }
         let rootIDsByPath = roots.rowIDSnapshot()
@@ -2149,12 +2153,9 @@ extension CatalogStore {
                     WHERE a.library_root_id = ? AND a.relative_path = ?
                         AND a.byte_size IS ? AND a.enriched_source_size IS ? AND a.enriched_source_mtime IS ?
                         AND NOT (\(EnrichmentClaimGateway.metadataStalenessSQLPredicate()))
-                        AND COALESCE(m.extraction_revision, 0) < ?
+                        AND COALESCE(m.extraction_revision, 0) < \(Self.currentExtractionRevisionSQL)
                     """,
-                    arguments: arguments + [
-                        refresh.sourceSize, refresh.sourceSize, refresh.sourceMTimeSeconds,
-                        refresh.metadata.extractionRevision,
-                    ]
+                    arguments: arguments + [refresh.sourceSize, refresh.sourceSize, refresh.sourceMTimeSeconds]
                 ) != nil else { continue }
                 let overlaySQL = """
                 SELECT best_capture_unix, best_kind, best_format, capture_wall_compact, thumbnail_path, preview_path

@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import MediaMetadata
 @testable import OtosKit
 import Testing
 
@@ -151,6 +152,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.heifOrientationMigrationIdentifier,
             CatalogSchema.extractionRevisionMigrationIdentifier,
             CatalogSchema.familyRevisionMigrationIdentifier,
+            CatalogSchema.captureInstantMigrationIdentifier,
         ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
@@ -230,9 +232,93 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.heifOrientationMigrationIdentifier,
             CatalogSchema.extractionRevisionMigrationIdentifier,
             CatalogSchema.familyRevisionMigrationIdentifier,
+            CatalogSchema.captureInstantMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
+    }
+
+    /// v8 (ENR-003): the four `ts_*_unix` columns become the library's capture instant. A
+    /// row with stored records takes the first role in `instantPrecedence` with an instant
+    /// (digitized here, which the old order ranked behind QuickTime's creation date); a row
+    /// whose records cannot be decoded, or that has none, keeps the old columns' value in
+    /// the library's order. `best_capture_unix` still falls back to the file's dates.
+    @Test func theCaptureInstantMigrationOrdersByTheLibrarysInstant() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let records = try CatalogStore.encodeMetadataExtraJSON(AssetMetadata(timestamps: [
+            CaptureTimestampRecord(role: CaptureTimestamps.Role.digitized.rawValue, instant: Date(timeIntervalSince1970: 200)),
+            CaptureTimestampRecord(role: CaptureTimestamps.Role.quickTimeCreation.rawValue, instant: Date(timeIntervalSince1970: 300)),
+        ]))
+        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+            for statement in CatalogSchema.baselineStatements {
+                try db.execute(sql: statement)
+            }
+            try db.execute(sql: "CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
+            try db.execute(
+                sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)",
+                arguments: [CatalogSchema.baselineMigrationIdentifier]
+            )
+            try db.execute(sql: "INSERT INTO library_root (path, kind) VALUES ('/Pictures', 'library')")
+            struct OldRow {
+                let path: String
+                var original: Double?
+                var quickTime: Double?
+                var digitized: Double?
+                var gps: Double?
+            }
+            let rows = [
+                OldRow(path: "recorded.mov", quickTime: 300, digitized: 200),
+                OldRow(path: "undecodable.jpg", original: 100),
+                OldRow(path: "unread.jpg", gps: 500),
+                OldRow(path: "undated.jpg"),
+            ]
+            for row in rows {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (
+                        library_root_id, relative_path, relative_path_key, sort_key, name_sort_key, created_at_unix,
+                        ts_original_unix, ts_quicktime_creation_unix, ts_digitized_unix, ts_gps_unix
+                    ) VALUES (1, ?, ?, ?, ?, 50, ?, ?, ?, ?)
+                    """,
+                    arguments: [row.path, row.path, row.path, row.path, row.original, row.quickTime, row.digitized, row.gps]
+                )
+            }
+            try db.execute(
+                sql: "INSERT INTO asset_metadata (library_root_id, relative_path, metadata_extra_json) VALUES (1, ?, ?)",
+                arguments: ["recorded.mov", records]
+            )
+            try db.execute(
+                sql: "INSERT INTO asset_metadata (library_root_id, relative_path, metadata_extra_json) VALUES (1, ?, ?)",
+                arguments: ["undecodable.jpg", "not json"]
+            )
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
+
+        let (best, columns, indexes) = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try (
+                Dictionary(uniqueKeysWithValues: Row.fetchAll(
+                    db, sql: "SELECT relative_path, best_capture_unix FROM media_asset"
+                ).map { ($0["relative_path"] as String, $0["best_capture_unix"] as Double?) }),
+                Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_xinfo('media_asset')")),
+                Set(String.fetchAll(
+                    db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_media_asset_best_capture_%'"
+                ))
+            )
+        }
+        #expect(best["recorded.mov"] == 200)
+        #expect(best["undecodable.jpg"] == 100)
+        #expect(best["unread.jpg"] == 500)
+        #expect(best["undated.jpg"] == 50)
+        #expect(columns.contains("capture_instant_unix"))
+        #expect(columns.isDisjoint(with: ["ts_original_unix", "ts_quicktime_creation_unix", "ts_digitized_unix", "ts_gps_unix"]))
+        #expect(indexes.count == 4)
     }
 
     /// ADR 0035 backfill: the preview migration clears the enrichment stamps of library

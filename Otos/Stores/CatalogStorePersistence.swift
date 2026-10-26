@@ -104,6 +104,9 @@ extension CatalogStore {
         migrator.registerMigration(CatalogSchema.familyRevisionMigrationIdentifier) { db in
             try CatalogSchema.migrateToFamilyRevisionsAndFileTypeNames(db)
         }
+        migrator.registerMigration(CatalogSchema.captureInstantMigrationIdentifier) { db in
+            try CatalogSchema.migrateToCaptureInstant(db)
+        }
         return migrator
     }
 
@@ -496,14 +499,10 @@ extension CatalogStore {
                 )
                 : nil
         )
-        let instants = BestCaptureInstants.from(metadata.timestamps)
         try db.execute(
             sql: """
             UPDATE media_asset SET
-                ts_original_unix = ?,
-                ts_quicktime_creation_unix = ?,
-                ts_digitized_unix = ?,
-                ts_gps_unix = ?,
+                capture_instant_unix = ?,
                 enriched_kind = ?,
                 enriched_format = ?,
                 duration_seconds = ?,
@@ -513,10 +512,7 @@ extension CatalogStore {
                 AND relative_path = ?
             """,
             arguments: [
-                instants.original?.timeIntervalSince1970,
-                instants.quickTimeCreation?.timeIntervalSince1970,
-                instants.digitized?.timeIntervalSince1970,
-                instants.gps?.timeIntervalSince1970,
+                CaptureInstant.select(from: metadata.timestamps)?.timeIntervalSince1970,
                 enrichedKind?.rawValue,
                 enrichedFormat?.rawValue,
                 metadata.durationSeconds,

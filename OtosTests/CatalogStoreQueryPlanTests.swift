@@ -324,7 +324,7 @@ private func insertDescriptorFixtureRow(_ fixture: DescriptorFixture, rootID: In
             format,
             byte_size,
             content_modified_at_unix,
-            ts_original_unix,
+            capture_instant_unix,
             enriched_kind,
             enriched_format
         )

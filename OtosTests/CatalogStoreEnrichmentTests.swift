@@ -335,8 +335,8 @@ struct CatalogStoreEnrichmentTests {
     /// `structureChanged` must compare the STORED generated columns
     /// before vs after the write, not a Swift-side prediction of what the write will
     /// produce. Fixture: the asset scans with `created_at_unix = 500`; a first
-    /// enrichment sets `ts_original_unix = 700`, so `best_capture_unix` becomes 700. A
-    /// second enrichment result with every timestamp fact nil clears `ts_original_unix`
+    /// enrichment sets `capture_instant_unix = 700`, so `best_capture_unix` becomes 700. A
+    /// second enrichment result with every timestamp fact nil clears `capture_instant_unix`
     /// back to NULL (plain-assignment write, not COALESCE-preserved — see
     /// `writeEnrichmentOverlay`), so SQLite's generated column falls back to
     /// `created_at_unix = 500` — an effective order change that must be reported as
@@ -365,7 +365,7 @@ struct CatalogStoreEnrichmentTests {
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
 
-        // First enrichment: ts_original = 700 (T1), moving best_capture off created_at (500, T0).
+        // First enrichment: capture instant = 700 (T1), moving best_capture off created_at (500, T0).
         await store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: id,
@@ -391,7 +391,7 @@ struct CatalogStoreEnrichmentTests {
         }
         defer { changeTask.cancel() }
 
-        // Second enrichment: every timestamp fact nil. Clears ts_original_unix, so
+        // Second enrichment: every timestamp fact nil. Clears capture_instant_unix, so
         // best_capture_unix moves T1 (700) -> T0 (500, created_at_unix) — structural.
         await store.applyEnrichmentBatch([
             EnrichmentResult(

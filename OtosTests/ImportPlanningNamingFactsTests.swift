@@ -68,7 +68,7 @@ struct ImportPlanningNamingFactsTests {
                 id: MediaAssetID(libraryRootPath: cardPath, relativePath: relative),
                 // `metadata.timestamps` is the one stored timestamp truth; both
                 // `capture_wall_compact` (via `CaptureWallClock`) and the
-                // `ts_*_unix` ordering columns (via `BestCaptureInstants`) are
+                // `capture_instant_unix` ordering column (via `CaptureInstant`) are
                 // derived from it where they are written.
                 metadata: AssetMetadata(timestamps: [
                     CaptureTimestampRecord(
