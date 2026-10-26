@@ -56,6 +56,28 @@ nonisolated enum CatalogSchema {
         "ALTER TABLE media_asset ADD COLUMN rendered_revision INTEGER NOT NULL DEFAULT 0",
     ]
 
+    /// HEIF orientation from its transform properties (MediaMetadata 0.6.1). Earlier
+    /// versions read orientation only from Exif, and a HEIF that records its rotation in an
+    /// `irot` or `imir` property instead (Sony cameras, for one) was cataloged with no
+    /// orientation, so its upright size read as its stored, unrotated one. Every library
+    /// HEIF row with no orientation has its enrichment stamps cleared: the staleness
+    /// predicate claims it again and re-enrichment reads its metadata anew, downloading a
+    /// cloud-only original first under the free-space floor (ENR-008). An upright HEIF with
+    /// no orientation tag is read again too; nothing short of its bytes tells them apart.
+    /// Card and camera rows are left alone, as for v3.
+    static let heifOrientationMigrationIdentifier = "v5_heif_orientation_reread"
+
+    static let heifOrientationStatements: [String] = [
+        """
+        UPDATE media_asset SET enriched_source_size = NULL, enriched_source_mtime = NULL
+        WHERE library_root_id IN (SELECT id FROM library_root WHERE kind = 'library')
+          AND (library_root_id, relative_path) IN (
+            SELECT library_root_id, relative_path FROM asset_metadata
+            WHERE family = 'heif' AND orientation IS NULL
+          )
+        """,
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (

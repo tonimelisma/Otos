@@ -132,6 +132,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(applied == [
             CatalogSchema.baselineMigrationIdentifier, CatalogSchema.fileIdentifierMigrationIdentifier,
             CatalogSchema.previewPathMigrationIdentifier, CatalogSchema.editRecipeMigrationIdentifier,
+            CatalogSchema.heifOrientationMigrationIdentifier,
         ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
@@ -208,6 +209,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(applied == [
             CatalogSchema.baselineMigrationIdentifier, CatalogSchema.fileIdentifierMigrationIdentifier,
             CatalogSchema.previewPathMigrationIdentifier, CatalogSchema.editRecipeMigrationIdentifier,
+            CatalogSchema.heifOrientationMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -254,6 +256,69 @@ struct CatalogStoreSchemaMigrationTests {
             ))
         }
         #expect(stamped == ["clip.mov", "card.jpg"])
+    }
+
+    /// A HEIF rotated by its `irot` property was cataloged with no orientation before
+    /// MediaMetadata 0.6.1. The migration clears the enrichment stamps of library HEIF
+    /// rows with no orientation, so they re-enrich and read it anew, and leaves HEIFs
+    /// that have one, other formats and card rows stamped.
+    @Test func theHeifOrientationMigrationReReadsLibraryHeifsWithoutOrientationOnly() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let earlier = [
+            CatalogSchema.baselineMigrationIdentifier, CatalogSchema.fileIdentifierMigrationIdentifier,
+            CatalogSchema.previewPathMigrationIdentifier, CatalogSchema.editRecipeMigrationIdentifier,
+        ]
+        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+            let statements = CatalogSchema.baselineStatements + CatalogSchema.fileIdentifierStatements
+                + CatalogSchema.previewPathStatements + CatalogSchema.editRecipeStatements
+            for statement in statements {
+                try db.execute(sql: statement)
+            }
+            try db.execute(sql: "CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
+            for identifier in earlier {
+                try db.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)", arguments: [identifier])
+            }
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (2, '/Volumes/Card', 'removableVolume')")
+            let rows: [(Int, String, String, Int?)] = [
+                (1, "turned.heif", "heif", nil),
+                (1, "tagged.heic", "heif", 6),
+                (1, "plain.jpg", "jpeg", nil),
+                (2, "card.heif", "heif", nil),
+            ]
+            for (root, path, family, orientation) in rows {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
+                        name_sort_key, kind, enriched_source_size, enriched_source_mtime)
+                    VALUES (?, ?, ?, ?, ?, 'image', 10, 20)
+                    """,
+                    arguments: [root, path, path, path, path]
+                )
+                try db.execute(
+                    sql: """
+                    INSERT INTO asset_metadata (library_root_id, relative_path, family, orientation)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    arguments: [root, path, family, orientation]
+                )
+            }
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
+
+        let stamped = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try Set(String.fetchAll(
+                db, sql: "SELECT relative_path FROM media_asset WHERE enriched_source_size IS NOT NULL"
+            ))
+        }
+        #expect(stamped == ["tagged.heic", "plain.jpg", "card.heif"])
     }
 
     @Test func refusedCatalogDeniesNamespaceLeaseAsCatalogUnavailable() async throws {

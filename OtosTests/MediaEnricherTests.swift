@@ -140,6 +140,27 @@ struct MediaEnricherTests {
                 .path(percentEncoded: false)))
     }
 
+    /// A HEIF that records its rotation only in its `irot` property (as Sony cameras write
+    /// it) is cataloged with that orientation, so its upright size is right.
+    @Test func aHeifTurnedByItsIrotPropertyIsReadWithItsOrientation() async throws {
+        let temp = try makeTestDirectory()
+        let file = temp.appending(path: "turned.heic")
+        try writeIrotOnlyHEIC(to: file)
+        let enricher = MediaEnricher.live(thumbnailDirectory: temp.appending(path: "Thumbnails", directoryHint: .isDirectory))
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/Lib"),
+            relativePath: MediaRelativePath(rawValue: "turned.heic")
+        )
+        let outcome = await enricher.enrich(id, .localFile(file), 100, 1000, true, nil)
+        guard case let .complete(result) = outcome else {
+            Issue.record("expected .complete, got \(outcome)")
+            return
+        }
+        #expect(result.metadata.orientation == 6)
+        #expect(result.metadata.pixelWidth == 96)
+        #expect(result.metadata.pixelHeight == 64)
+    }
+
     /// ADR 0035: a video keeps its Quick Look thumbnail and gets no preview.
     @Test func aVideoGetsNoPreview() async throws {
         let temp = try makeTestDirectory()
