@@ -27,6 +27,9 @@ and compare panes follow a drag live; a grid tile updates when the drag ends.
 | String | Level |
 | --- | --- |
 | File name / `No Selection` | L1 (`title3`, semibold, middle-truncated) |
+| Histogram | a picture, no text (DES-100) |
+| `Revert to Original`, the Show Original toggle's tooltip | L2 (`body`, small control) |
+| A RAW temperature's scale labels (`2500`, `4000`, `10000`) | L3 (`footnote`, secondary) |
 | Section heading (`Crop`, `Light`, `Color`) | `.headline` group heading (DES-003) |
 | Control name, control value field, `Reset`, `Crop` / `Done`, `Aspect` and its titles | L2 (`body`); values `.monospacedDigit()` (DES-005) |
 
@@ -34,8 +37,12 @@ Three sizes, two weights (DES-004).
 
 ## Zones and height
 
-One zone per section, in Lightroom desktop's order. Each section is a heading row
-(title on the left, `Reset` on the right) over its controls. Each control is its name
+A header zone, then one zone per section in Lightroom desktop's order. The header is the
+file name, the histogram (64 pt, DES-100) and a row with the Show Original toggle
+(`square.split.2x1`, drawn pressed while on, DES-097's idiom) on the left and `Revert to
+Original` on the right, 8 pt apart. Each section is a heading row (title on the left, a
+quiet borderless `Reset` in secondary text on the right, so six headings do not read as
+six push buttons) over its controls. Each control is its name
 and value on one line, label left and value right (DES-017), over a slider at the full
 panel width. Spacing is 16 pt padding, 20 pt between the title and the section, 12 pt
 between controls, and 4 pt between a control's line and its slider (DES-050).
@@ -49,7 +56,7 @@ Sections, in order (Lightroom desktop's order, ADR 0036):
 | Section | Controls |
 | --- | --- |
 | Crop (a tool above the sections) | `Crop` / `Done` (Return while on), Aspect menu (Original, Custom, 1 × 1, 4 × 5, 5 × 7, 2 × 3, 4 × 3, 16 × 9), Rotate Aspect; Straighten (−45.0…+45.0°, 0.1° steps, positive clockwise); Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical (icon buttons) |
-| Light | Exposure (−4.00…+4.00 stops, 0.05 steps), Contrast (−100…+100), Highlights (−100…0), Shadows (−100…+100) |
+| Light | Exposure (−4.00…+4.00 stops, 0.05 steps), Contrast (−100…+100), Highlights (−100…+100), Shadows (−100…+100) |
 | Color | White Balance picker; Temperature (a RAW: 2000–50000 K, even in mireds, 50 K steps, shown `5600 K`; another still: −100…+100), Tint (a RAW: −150…+150; another still: −100…+100), Vibrance (−100…+100), Saturation (−100…+100) |
 | Effects | Vignette (−100…+100, negative darkens), Midpoint (0…100), Feather (0…100) |
 | Detail | Sharpening (0…100), Noise Reduction (0…100); for a RAW whose decoder offers them, Color Noise, Detail, Moiré (0…100). A RAW's value starts at its decoder's own amount |
@@ -116,6 +123,35 @@ the shape. The Aspect menu and Rotate Aspect are enabled only while the tool is 
 tool. The loupe then shows the cropped photo. Rotate Left (⌘[), Rotate Right (⌘]), Flip
 Horizontal and Flip Vertical (Photo menu, and the panel's buttons) work with the tool on
 or off; Straighten too.
+
+## Show Original and Revert to Original
+
+Show Original (View ▸ Show Original / Show Edited, \\, the header toggle) shows the loupe's
+photo without its edit until it is turned off, the edit changes, another photo is chosen
+or the loupe is left. It is enabled only in the loupe, on an edited photo, with the crop
+tool off; elsewhere its tooltip says `Open an edited photo in the loupe to show its
+original`. The loupe marks it (DES-098).
+
+Revert to Original (Photo ▸ Revert to Original, ⌘⇧R, the header button) removes the whole
+edit — adjustments, crop, turns and flips — as one step (`Undo Revert to Original`), as
+Photos does; on a trimmed video in the loupe it removes the trim. ⌘⇧R is Lightroom
+Classic's Reset key, so Reveal in Finder takes Lightroom's ⌘R.
+
+## The selected adjustment
+
+Lightroom Classic's Develop keys move one control at a time: `,` and `.` (Photo ▸ Select
+Previous / Next Adjustment) choose a control in panel order, wrapping, and `=` and `-`
+(Increase / Decrease Adjustment) move it by its keyboard step (0.05 stop for Exposure, 1°
+for Straighten, about 50 K for a RAW's temperature, 5 otherwise), each press one undo step
+named for the control. The control last dragged becomes the selected one. The selected
+control's row carries a light accent tint with its name in semibold, so it reads without
+color (DES-024, DES-029), and scrolls into view. Double-clicking a control's name resets
+that control alone (`Undo Reset Shadows`), as in Lightroom; VoiceOver offers the same as
+the slider's `Reset` action.
+
+A RAW's temperature slider, even in mireds, carries periodic labels under its track at
+2500, 4000 and 10000 K, centered where the knob sits at those values (Sliders:
+label a non-linear scale; `hig-validation.md` F-17).
 
 ## Behavior
 

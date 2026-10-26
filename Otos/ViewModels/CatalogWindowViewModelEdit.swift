@@ -18,7 +18,9 @@ import OSLog
 ///   shown only while its photo is still the target and no newer render has been shown,
 ///   and a newer request never cancels one in flight (ADR 0032 rule 3). Every open or
 ///   render that succeeds publishes the photo's facts, so a request that replaced the
-///   open still delivers them.
+///   open still delivers them. Every render of the edit, and the saved edit's render an
+///   open makes, also counts the histogram the panel shows (`editHistogram`, DES-100), under its own
+///   sequence so an open's count never replaces a newer render's.
 /// - **Commands** (`editCommandStream`, ordered, lossless): a save stores the recipe,
 ///   registers the inverse on `windowUndoManager`, then renders the saved recipe's
 ///   thumbnail and preview and hands them to the store, which promotes them only while
@@ -53,13 +55,20 @@ nonisolated struct EditLivePreview: Equatable {
 }
 
 nonisolated enum EditRenderRequest: Sendable {
-    /// The panel has a new target: open it and report its facts.
-    case open(id: MediaAssetID, sourceSize: Int64?)
-    /// `cropBase` renders the uncropped photo the crop tool draws its frame over, rather
-    /// than the edited photo the pane shows.
-    case render(id: MediaAssetID, recipe: EditRecipe, sourceSize: Int64?, sequence: UInt64, cropBase: Bool)
+    /// The panel has a new target: open it, report its facts, and count the histogram of
+    /// `recipe` — its saved edit — rendered.
+    case open(id: MediaAssetID, sourceSize: Int64?, recipe: EditRecipe, sequence: UInt64)
+    case render(id: MediaAssetID, recipe: EditRecipe, sourceSize: Int64?, sequence: UInt64, purpose: EditRenderPurpose)
     /// Editing moved to another photo or the panel closed: let go of the open photo.
     case close
+}
+
+/// What a live render is for: the edited photo the pane shows, the uncropped photo the crop
+/// tool draws its frame over, or the photo without its edit for Show Original.
+nonisolated enum EditRenderPurpose: Sendable {
+    case edited
+    case cropBase
+    case original
 }
 
 /// A request for the loupe's player to begin trimming `id`, applied once per generation.
@@ -195,6 +204,7 @@ extension CatalogWindowViewModel {
         if viewMode != .loupe {
             isPickingNeutral = false
             endCropping()
+            endShowingOriginal()
         }
         let ids = targetIDs(.current)
         guard ids.count == 1, let id = ids.first else {
@@ -240,10 +250,15 @@ extension CatalogWindowViewModel {
             editPhotoFacts = nil
             editOriginalPixelSize = nil
             isPickingNeutral = false
+            endShowingOriginal()
             editSavedRecipe = saved
             editDraft = saved
             editLivePreview = nil
-            editRenderContinuation.yield(.open(id: id, sourceSize: detail.byteSize))
+            editHistogram = nil
+            editRenderRequested &+= 1
+            editRenderContinuation.yield(.open(
+                id: id, sourceSize: detail.byteSize, recipe: saved, sequence: editRenderRequested
+            ))
             if isCropping {
                 requestLiveEditRender()
             }
@@ -260,10 +275,13 @@ extension CatalogWindowViewModel {
         editPhotoFacts = nil
         editOriginalPixelSize = nil
         isPickingNeutral = false
+        endShowingOriginal()
+        selectedEditControl = nil
         editSavedRecipe = .neutral
         editDraft = .neutral
         editDraggingControl = nil
         editLivePreview = nil
+        editHistogram = nil
         editRenderContinuation.yield(.close)
     }
 
@@ -286,6 +304,8 @@ extension CatalogWindowViewModel {
     func setEditDragging(_ dragging: Bool, control: EditControl) {
         if dragging {
             editDraggingControl = control
+            // The control last touched is the one = and - move.
+            selectedEditControl = control
         } else if editDraggingControl == control {
             editDraggingControl = nil
             commitEdit(actionName: control.title)
@@ -314,6 +334,15 @@ extension CatalogWindowViewModel {
     /// yet carry the edit being made, otherwise the pane preview.
     func displayedPanePreview(_ slot: PaneSlot) -> PanePreview? {
         let pane = panePreviews[slot]
+        if slot == .loupe, isShowingOriginal, let original = editOriginalPreview, expectedAsset(for: slot) == original.id {
+            return PanePreview(
+                id: original.id,
+                image: original.image,
+                mediaChoice: pane?.id == original.id ? pane?.mediaChoice : nil,
+                nativePixelSize: editOriginalPixelSize,
+                renderedRevision: 0
+            )
+        }
         guard let live = editLivePreview, expectedAsset(for: slot) == live.id else {
             return pane
         }
@@ -346,7 +375,7 @@ extension CatalogWindowViewModel {
         ])
     }
 
-    private func enqueueEdit(_ command: EditCommand) {
+    func enqueueEdit(_ command: EditCommand) {
         submittedEditCommandCount += 1
         editCommandContinuation.yield(.save(command))
     }
@@ -357,15 +386,31 @@ extension CatalogWindowViewModel {
         isCropping ? editDraft.uncropped : editDraft
     }
 
+    /// Renders the draft for the pane. Any change to the edit shows the edited photo, so it
+    /// also ends Show Original.
     func requestLiveEditRender() {
         guard let target = editTarget else { return }
+        endShowingOriginal()
         editRenderRequested &+= 1
         editRenderContinuation.yield(.render(
             id: target.id,
             recipe: shownRecipe,
             sourceSize: target.sourceSize,
             sequence: editRenderRequested,
-            cropBase: isCropping
+            purpose: isCropping ? .cropBase : .edited
+        ))
+    }
+
+    /// Renders the open photo without its edit, for Show Original.
+    func requestOriginalRender() {
+        guard let target = editTarget else { return }
+        editRenderRequested &+= 1
+        editRenderContinuation.yield(.render(
+            id: target.id,
+            recipe: .neutral,
+            sourceSize: target.sourceSize,
+            sequence: editRenderRequested,
+            purpose: .original
         ))
     }
 
@@ -389,18 +434,32 @@ extension CatalogWindowViewModel {
                 switch request {
                 case .close:
                     await pipeline.renderer.close()
-                case let .open(id, sourceSize):
+                case let .open(id, sourceSize, recipe, sequence):
                     guard let opened = await pipeline.open(id, sourceSize: sourceSize) else { continue }
                     self?.publishOpenedPhoto(id: id, opened)
-                case let .render(id, recipe, sourceSize, sequence, cropBase):
+                    guard let live = await pipeline.liveImage(id, recipe: recipe, sourceSize: sourceSize) else {
+                        continue
+                    }
+                    let histogram = await EditHistogram.count(live.image)
+                    self?.publishHistogram(id: id, histogram, sequence: sequence)
+                case let .render(id, recipe, sourceSize, sequence, purpose):
                     guard let live = await pipeline.liveImage(id, recipe: recipe, sourceSize: sourceSize) else {
                         continue
                     }
                     self?.publishOpenedPhoto(id: id, live.opened)
-                    if cropBase {
-                        self?.publishCropBase(id: id, recipe: recipe, image: live.image, sequence: sequence)
-                    } else {
+                    // The histogram describes the edit; Show Original's render is a glance
+                    // at what the edit replaced.
+                    if purpose != .original {
+                        let histogram = await EditHistogram.count(live.image)
+                        self?.publishHistogram(id: id, histogram, sequence: sequence)
+                    }
+                    switch purpose {
+                    case .edited:
                         self?.publishLiveEdit(id: id, recipe: recipe, image: live.image, sequence: sequence)
+                    case .cropBase:
+                        self?.publishCropBase(id: id, recipe: recipe, image: live.image, sequence: sequence)
+                    case .original:
+                        self?.publishOriginal(id: id, image: live.image, sequence: sequence)
                     }
                 }
             }
@@ -471,6 +530,20 @@ extension CatalogWindowViewModel {
         editDraft = next
         requestLiveEditRender()
         commitEdit(actionName: "White Balance")
+    }
+
+    /// The histogram of the newest render of the edit for the photo the panel edits. A count that
+    /// failed publishes nothing and the previous one stays.
+    private func publishHistogram(id: MediaAssetID, _ histogram: EditHistogram?, sequence: UInt64) {
+        guard let histogram, editTarget?.id == id, sequence > editHistogramPublished else { return }
+        editHistogramPublished = sequence
+        editHistogram = histogram
+    }
+
+    private func publishOriginal(id: MediaAssetID, image: CGImage, sequence: UInt64) {
+        guard isShowingOriginal, editTarget?.id == id, sequence > editRenderPublished else { return }
+        editRenderPublished = sequence
+        editOriginalPreview = EditLivePreview(id: id, image: image, recipe: .neutral, revision: nil)
     }
 
     private func publishLiveEdit(id: MediaAssetID, recipe: EditRecipe, image: CGImage, sequence: UInt64) {

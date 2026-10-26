@@ -145,6 +145,13 @@ struct ContentView: View {
                     photoName: viewModel.editTarget?.id.fileURL.lastPathComponent,
                     facts: viewModel.editPhotoFacts,
                     recipe: viewModel.editDraft,
+                    histogram: viewModel.editHistogram,
+                    original: EditPanelOriginalState(
+                        isShowingOriginal: viewModel.isShowingOriginal,
+                        canShowOriginal: viewModel.canShowOriginal,
+                        canRevert: viewModel.canRevertToOriginal
+                    ),
+                    selectedControl: viewModel.selectedEditControl,
                     isPickingNeutral: viewModel.isPickingNeutral,
                     canPickNeutral: viewModel.canPickNeutral,
                     crop: EditPanelCropState(
@@ -165,7 +172,12 @@ struct ContentView: View {
                         flip: viewModel.flipPhoto(horizontally:)
                     ),
                     setEntering: viewModel.setEnteringEditValue,
-                    setLensCorrection: viewModel.setLensCorrection
+                    setLensCorrection: viewModel.setLensCorrection,
+                    resetControl: viewModel.resetEditControl,
+                    originalActions: EditPanelOriginalActions(
+                        toggleShowOriginal: viewModel.toggleShowOriginal,
+                        revert: viewModel.revertToOriginal
+                    )
                 )
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
             }
@@ -495,7 +507,8 @@ struct ContentView: View {
                     : nil,
                 videoTrimCommand: viewModel.videoTrimCommand,
                 onVideoTrimmed: viewModel.finishTrim(id:),
-                loupeInfo: viewModel.loupeInfo
+                loupeInfo: viewModel.loupeInfo,
+                showsOriginal: viewModel.loupeShowsOriginal
             )
             .navigationTitle(viewModel.state.title)
         case .compare:

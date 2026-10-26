@@ -39,8 +39,12 @@ open takes 20–180 ms per change. Opening it again for every change takes about
   with the tooltip `Preparing to edit`.
 - **Light section.** Exposure applies in the RAW pipeline (`CIRAWFilter.exposure`) for
   a RAW and through `CIExposureAdjust` for any other still. Contrast applies through
-  `CIColorControls`, and Highlights and Shadows through `CIHighlightShadowAdjust`, on
-  the developed image of either. `CIRAWFilter.contrastAmount` is not used: its header
+  `CIColorControls`, and Shadows and negative Highlights through
+  `CIHighlightShadowAdjust`, on the developed image of either. Highlights runs −100…100
+  with neutral at its middle like every other tonal control: `CIHighlightShadowAdjust`
+  only lowers highlights (an amount above 1 changes nothing, measured 2026-10-25), so a
+  positive value lifts the upper tones through a `CIToneCurve` that leaves black, the
+  shadows and white fixed. `CIRAWFilter.contrastAmount` is not used: its header
   documents it as local contrast on edges, from 0 to 1, which cannot express global
   contrast in both directions.
 - **Color section** (research 2026-10-25, white balance and geometry probes):
@@ -142,6 +146,22 @@ open takes 20–180 ms per change. Opening it again for every change takes about
 - **Undo.** Each save registers its exact inverse on the window's one undo manager,
   named for the control (`Undo Exposure`, `Undo Reset Light`). Undo and redo travel
   the same ordered save lane as the user's own saves.
+
+- **Show Original and Revert to Original.** Show Original renders the open photo with the
+  neutral recipe on the live lane, as a render of its own purpose, and shows it in the
+  loupe until the edit changes or the photo or mode does; it never saves. Revert to
+  Original saves the neutral recipe as one undo step through the same lane as every
+  edit, so it is undone like any other; for a video it clears the trim. Both are one
+  intent each behind a menu item, a key and a panel control.
+- **The keyboard's selected adjustment.** Lightroom Classic's `,` `.` `=` `-` choose and
+  step one control; each step is the same `setEditValue` a slider's keyboard step calls,
+  so it saves at once as one step. The selection is panel state on the view model, not
+  part of the recipe.
+- **The histogram.** It describes the edit as the live lane last rendered it for the
+  target: the saved edit's render when the photo opens, then each live render of the
+  draft. Show Original's render is a glance at what the edit replaced and is not counted. It is counted
+  off the main actor (`EditHistogram.count`, `@concurrent`) on a 256 px reduction and
+  published under its own sequence, so an open's count never replaces a newer render's.
 
 ## Consequences
 

@@ -158,6 +158,13 @@ struct MediaAssetTilePresentationTests {
             detail: liked,
             badgeContent: .none
         ) == "liked.jpg, image, liked")
+        let edited = makeDetail(path: "e.jpg", kind: .image, thumbnailPath: "t.jpg", editRecipe: EditRecipe(exposure: 1))
+        #expect(MediaAssetTilePresentation.isEdited(edited))
+        #expect(MediaAssetTilePresentation.accessibilityLabel(
+            detail: edited,
+            badgeContent: .none
+        ) == "e.jpg, image, edited, not rated")
+        #expect(!MediaAssetTilePresentation.isEdited(makeDetail(path: "n.jpg", kind: .image, editRecipe: .neutral)))
     }
 
     @Test func thumbnailUnavailableIsDerivedFromStampWithoutPath() {
@@ -503,12 +510,14 @@ private func makeDetail(
     enrichedSize: Int64? = nil,
     durationSeconds: Double? = nil,
     mediaChoice: MediaChoice = .default,
-    renderedRevision: Int64 = 0
+    renderedRevision: Int64 = 0,
+    editRecipe: EditRecipe? = nil
 ) -> MediaTileDetail {
     MediaTileDetail(
         libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
         relativePath: MediaRelativePath(rawValue: path),
         thumbnailPath: thumbnailPath,
+        editRecipe: editRecipe,
         renderedRevision: renderedRevision,
         bestKind: kind,
         durationSeconds: durationSeconds,

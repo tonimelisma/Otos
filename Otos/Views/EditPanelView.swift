@@ -10,10 +10,17 @@ import SwiftUI
 /// Each section folds under its heading's disclosure triangle (`hig-validation.md` F-16).
 /// Which sections are folded is the person's own arrangement of the panel, kept across
 /// launches in `@AppStorage`; the crop tool's section is shown while the tool is on.
+///
+/// Under the photo's name sit the histogram (DES-100) and the edit as a whole: Show
+/// Original and Revert to Original. The adjustment the keyboard moves (, . = -) is marked
+/// and scrolled into view; double-clicking a control's name resets it.
 struct EditPanelView: View {
     let photoName: String?
     let facts: EditPhotoFacts?
     let recipe: EditRecipe
+    let histogram: EditHistogram?
+    let original: EditPanelOriginalState
+    let selectedControl: EditControl?
     let isPickingNeutral: Bool
     let canPickNeutral: Bool
     let crop: EditPanelCropState
@@ -25,29 +32,74 @@ struct EditPanelView: View {
     /// A value field gained or lost the keyboard.
     let setEntering: @MainActor (Bool) -> Void
     let setLensCorrection: @MainActor (Bool) -> Void
+    let resetControl: @MainActor (EditControl) -> Void
+    let originalActions: EditPanelOriginalActions
 
     /// Section IDs the person folded, comma-separated.
     @AppStorage("editPanel.foldedSections") private var foldedSections = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text(photoName ?? "No Selection")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .accessibilityAddTraits(.isHeader)
-                // A section the photo has nothing to adjust in is left out (ADR 0036): Optics
-                // without a lens profile, the RAW8-only Detail controls on other photos.
-                ForEach(EditSection.allCases.filter { $0.isAvailable(facts ?? .still) }) { section in
-                    sectionView(section)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(photoName ?? "No Selection")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .accessibilityAddTraits(.isHeader)
+                        EditHistogramView(histogram: histogram)
+                        originalRow
+                    }
+                    // A section the photo has nothing to adjust in is left out (ADR 0036): Optics
+                    // without a lens profile, the RAW8-only Detail controls on other photos.
+                    ForEach(EditSection.allCases.filter { $0.isAvailable(facts ?? .still) }) { section in
+                        sectionView(section)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .onChange(of: selectedControl) { _, control in
+                if let control {
+                    proxy.scrollTo(control.id)
                 }
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// The edit as a whole: Show Original, a toggle drawn pressed while the loupe shows the
+    /// unedited photo (DES-097's idiom), and Revert to Original.
+    private var originalRow: some View {
+        HStack(spacing: 8) {
+            Toggle(
+                isOn: Binding(get: { original.isShowingOriginal }, set: { _ in originalActions.toggleShowOriginal() })
+            ) {
+                Image(systemName: "square.split.2x1")
+            }
+            .toggleStyle(.button)
+            .controlSize(.small)
+            .disabled(unavailableHelp != nil || !(original.canShowOriginal || original.isShowingOriginal))
+            .help(showOriginalHelp)
+            .accessibilityLabel("Show Original")
+            Spacer()
+            Button("Revert to Original", action: originalActions.revert)
+                .controlSize(.small)
+                .disabled(unavailableHelp != nil || !original.canRevert)
+                .help(unavailableHelp ?? "Remove every edit from this photo")
+        }
+    }
+
+    private var showOriginalHelp: String {
+        if let unavailableHelp {
+            return unavailableHelp
+        }
+        if original.isShowingOriginal {
+            return "Show Edited"
+        }
+        return original.canShowOriginal ? "Show Original" : "Open an edited photo in the loupe to show its original"
     }
 
     /// Why the controls are disabled, or nil when they act.
@@ -102,8 +154,12 @@ struct EditPanelView: View {
                 .accessibilityAddTraits(.isHeader)
                 .help(open ? "Hide \(section.title)" : "Show \(section.title)")
                 Spacer()
+                // Quiet beside the heading: a text button, so a column of section headings
+                // does not read as a column of push buttons.
                 Button("Reset") { resetSection(section) }
+                    .buttonStyle(.borderless)
                     .controlSize(.small)
+                    .foregroundStyle(.secondary)
                     .disabled(unavailableHelp != nil || section.isNeutral(in: recipe))
                     .help(unavailableHelp ?? section.resetActionName)
             }
@@ -132,6 +188,9 @@ struct EditPanelView: View {
                     formattedValue: facts.map { control.formatted(recipe, facts: $0) } ?? EditSliderRow.noValue,
                     value: control.sliderValue(in: recipe, facts: facts ?? .still),
                     range: control.sliderRange(facts ?? .still),
+                    scaleLabels: control.scaleLabels(facts ?? .still),
+                    isSelected: selectedControl == control,
+                    reset: { resetControl(control) },
                     setValue: { setValue($0, control) },
                     setDragging: { setDragging($0, control) },
                     setEntering: setEntering,
@@ -145,6 +204,7 @@ struct EditPanelView: View {
                 )
                 .disabled(unavailableHelp != nil)
                 .help(unavailableHelp ?? "")
+                .id(control.id)
             }
             if section == .crop {
                 orientationButtons
@@ -293,10 +353,20 @@ private struct EditSliderRow: View {
     /// control's name, which a field shows as its placeholder when its text is empty.
     static let noValue = "—"
 
+    /// The slider's track starts and ends this far inside its frame, where the knob's
+    /// center can reach (measured in the panel 2026-10-25: a 3364 K knob centered where
+    /// this inset places it).
+    static let trackInset: CGFloat = 10
+
     let title: String
     let formattedValue: String
     let value: Double
     let range: ClosedRange<Double>
+    /// Labels under a slider whose scale is not linear, at fractions of its travel.
+    let scaleLabels: [(position: Double, text: String)]
+    /// The adjustment the keyboard moves (Select Next Adjustment).
+    let isSelected: Bool
+    let reset: @MainActor () -> Void
     let setValue: @MainActor (Double) -> Void
     let setDragging: @MainActor (Bool) -> Void
     let setEntering: @MainActor (Bool) -> Void
@@ -309,7 +379,10 @@ private struct EditSliderRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
+                // Lightroom's gesture: double-clicking a control's name resets it.
                 Text(title)
+                    .fontWeight(isSelected ? .semibold : nil)
+                    .onTapGesture(count: 2, perform: reset)
                     .accessibilityHidden(true)
                 Spacer()
                 // Shows the value whenever it is not being typed, so it is never stale.
@@ -351,7 +424,40 @@ private struct EditSliderRow: View {
             // whose neutral point is its middle.
             .tint(Color.secondary)
             .accessibilityValue(formattedValue)
+            .accessibilityAction(named: "Reset", reset)
+            if !scaleLabels.isEmpty {
+                scale
+            }
         }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        // The selected adjustment is marked like a selected row (DES-024): the accent, as a
+        // tint behind it, with its name in semibold so it reads without color (DES-029).
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+        )
+        .padding(.horizontal, -6)
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    /// Periodic labels under the slider (Sliders: label a non-linear scale), centered on
+    /// the knob position each names.
+    private var scale: some View {
+        GeometryReader { geometry in
+            let travel = geometry.size.width - 2 * Self.trackInset
+            ForEach(scaleLabels, id: \.text) { label in
+                Text(label.text)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .fixedSize()
+                    .position(x: Self.trackInset + travel * label.position, y: geometry.size.height / 2)
+            }
+        }
+        .frame(height: 12)
+        .accessibilityHidden(true)
     }
 
     private func commitEntry() {
@@ -360,6 +466,18 @@ private struct EditSliderRow: View {
             entry = formattedValue
         }
     }
+}
+
+/// Show Original and Revert to Original as the panel shows them.
+struct EditPanelOriginalState {
+    let isShowingOriginal: Bool
+    let canShowOriginal: Bool
+    let canRevert: Bool
+}
+
+struct EditPanelOriginalActions {
+    let toggleShowOriginal: @MainActor () -> Void
+    let revert: @MainActor () -> Void
 }
 
 /// The crop tool's state as the panel shows it.
