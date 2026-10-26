@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import MediaMetadata
 @testable import OtosKit
 import Synchronization
 import Testing
@@ -157,6 +158,35 @@ struct MediaEnricherTests {
             return
         }
         #expect(result.metadata.orientation == 6)
+    }
+
+    /// ADR 0039: Otos stores what the library reports, as it reports it — geometry from
+    /// `result.geometry`, the codec by its stable identifier, and the extraction revision
+    /// the record was read with.
+    @Test func aRecordIsTheLibrarysResultAsReported() {
+        let video = fixtureDirectory.appending(path: "mov-no-embedded-capture-date.mov")
+        let result = MediaMetadataReader.read(url: video)
+        let mapped = MediaEnricher.map(result)
+        #expect(mapped.extractionRevision == MediaMetadataReader.extractionRevision)
+        #expect(mapped.videoCodec == result.video?.codec?.identifier)
+        #expect(mapped.orientation == result.geometry?.orientation?.rawValue)
+        #expect(mapped.pixelWidth == result.geometry?.pixelWidth)
+        #expect(mapped.pixelHeight == result.geometry?.pixelHeight)
+        #expect(mapped.pixelWidth != nil)
+    }
+
+    /// The kind of a file whose type the platform does not know comes from the library's
+    /// `format.kind`, never from a guess at what its container family usually holds.
+    @Test func anUnknownTypeTakesTheLibrarysKind() {
+        func kind(_ kind: MediaFormat.Kind) -> MediaKind? {
+            MediaEnricher.normalizedKind(MediaFormat(
+                family: .isoBMFF, kind: kind, fileExtension: "unknownext", detectedByMagic: true, brand: nil
+            ))
+        }
+        #expect(kind(.image) == .image)
+        #expect(kind(.video) == .video)
+        #expect(kind(.audio) == nil)
+        #expect(kind(.unknown) == nil)
     }
 
     /// ADR 0035: a video keeps its Quick Look thumbnail and gets no preview.

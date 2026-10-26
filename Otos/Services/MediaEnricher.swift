@@ -477,94 +477,50 @@ nonisolated struct MediaEnricher {
         }
     }
 
+    /// The catalog kind for what was read. RAW is a platform type fact (`UTType.rawImage`),
+    /// which the library does not report, so the file's type decides first; otherwise the
+    /// library's own `format.kind` does, never a guess from the container family.
     static func normalizedKind(_ format: MediaFormat) -> MediaKind? {
-        let kind = UTType(filenameExtension: format.fileExtension)
-            .flatMap(MediaKind.classify)
-        if let kind {
+        if let kind = UTType(filenameExtension: format.fileExtension).flatMap(MediaKind.classify) {
             return kind
         }
-        switch format.family {
-        case .jpeg, .heif, .tiff:
-            return .image
-        case .isoBMFF, .riffAVI:
-            return .video
-        case .id3, .riffWAV, .unknown:
-            return nil
+        switch format.kind {
+        case .image: return .image
+        case .video: return .video
+        case .audio, .unknown: return nil
         }
     }
 
-    /// Maps the full library result into Otos's owned metadata record — every field.
+    /// Maps the full library result into Otos's owned metadata record — every field, as the
+    /// library reports it (ADR 0039): Otos re-derives nothing the library already says.
     static func map(_ result: MediaMetadataResult) -> AssetMetadata {
         AssetMetadata(
             family: result.format.family.rawValue,
             fileExtension: result.format.fileExtension,
             brand: result.format.brand,
-            timestamps: mapTimestamps(result.timestamps),
-            locations: mapLocations(result.locations),
+            timestamps: result.timestamps.entries
+                .filter { CaptureTimestamps.Role.cataloged.contains($0.role) }
+                .map { CaptureTimestampRecord(role: $0.role, time: $0.time) },
+            locations: result.locations.entries.map {
+                GeoRecord(
+                    source: $0.source.rawValue,
+                    latitude: $0.location.latitude,
+                    longitude: $0.location.longitude,
+                    altitudeMeters: $0.location.altitudeMeters
+                )
+            },
             cameraMake: result.camera?.make,
             cameraModel: result.camera?.model,
             lensModel: result.camera?.lensModel,
             serialNumber: result.camera?.serialNumber,
-            orientation: result.camera?.orientation?.rawValue,
-            pixelWidth: result.camera?.pixelWidth,
-            pixelHeight: result.camera?.pixelHeight,
+            orientation: result.geometry?.orientation?.rawValue,
+            pixelWidth: result.geometry?.pixelWidth,
+            pixelHeight: result.geometry?.pixelHeight,
             durationSeconds: result.video?.durationSeconds,
             frameRate: result.video?.frameRate,
-            videoCodec: result.video?.codec.map { String(describing: $0) }
+            videoCodec: result.video?.codec?.identifier,
+            extractionRevision: MediaMetadataReader.extractionRevision
         )
-    }
-
-    private static func mapTimestamps(_ timestamps: CaptureTimestamps) -> [CaptureTimestampRecord] {
-        var records: [CaptureTimestampRecord] = []
-        func add(_ time: CaptureTime?, _ role: CaptureTimestampRole) {
-            guard let time else { return }
-            records.append(
-                CaptureTimestampRecord(
-                    role: role.rawValue,
-                    instant: time.instant,
-                    utcOffsetSeconds: time.utcOffsetSeconds,
-                    precision: time.precision.rawValue,
-                    year: time.year,
-                    month: time.month,
-                    day: time.day,
-                    hour: time.hour,
-                    minute: time.minute,
-                    second: time.second
-                )
-            )
-        }
-        add(timestamps.original, .original)
-        add(timestamps.digitized, .digitized)
-        add(timestamps.tiffDateTime, .tiffDateTime)
-        add(timestamps.gps, .gps)
-        add(timestamps.quickTimeCreation, .quickTimeCreation)
-        add(timestamps.quickTimeLocation, .quickTimeLocation)
-        add(timestamps.quickTimeContentCreate, .quickTimeContentCreate)
-        add(timestamps.containerCreation, .containerCreation)
-        // MED-004: Otos is image/video only. ID3 (MP3) and WAVE/BWF are audio-only
-        // containers Otos never catalogs, so their timestamp roles are not persisted.
-        // RIFF is kept: it also carries AVI, which is a cataloged video format.
-        add(timestamps.riffRecording, .riffRecording)
-        return records
-    }
-
-    private static func mapLocations(_ locations: CaptureLocations) -> [GeoRecord] {
-        var records: [GeoRecord] = []
-        func add(_ location: GeoLocation?, _ source: String) {
-            guard let location else { return }
-            records.append(
-                GeoRecord(
-                    source: source,
-                    latitude: location.latitude,
-                    longitude: location.longitude,
-                    altitudeMeters: location.altitudeMeters
-                )
-            )
-        }
-        add(locations.exifGPS, "exifGPS")
-        add(locations.quickTime, "quickTime")
-        add(locations.sonyNRTM, "sonyNRTM")
-        return records
     }
 }
 

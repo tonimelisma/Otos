@@ -182,12 +182,10 @@ Adjacent decisions requiring separate ADRs or specs:
    every rescan. Stamps are stored as integer seconds to avoid floating-point
    epsilon in equality. There is no stored `is_stale` flag.
 
-   A metadata reader fix that changes what existing rows should hold is backfilled
-   by an additive migration that clears the stamps of exactly the rows the fix can
-   change, so the same predicate claims them again (`v5_heif_orientation_reread`: library
-   HEIF rows with no orientation, which MediaMetadata before 0.6.1 could not read from
-   `irot`/`imir`). There is no stored reader version: re-reading every row on each
-   library release would download the whole cloud library to fix what a few rows hold.
+   A metadata reader fix is not a staleness signal: making a lower
+   `MediaMetadataReader.extractionRevision` stale here would download every cloud-only
+   row. `MetadataRefresher` re-reads such rows from local bytes instead (ADR 0039). The
+   one earlier hand-written backfill, `v5_heif_orientation_reread`, predates the revision.
 
 7. **Eager full-library materialization.** Otos submits every dataless media file
    for background materialization after local enrichment drains, accepting the local

@@ -96,6 +96,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.extractionRevisionMigrationIdentifier) { db in
+            for statement in CatalogSchema.extractionRevisionStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -421,44 +426,17 @@ extension CatalogStore {
     /// the row's existing digest — if any was recorded before the source's
     /// root kind or facts changed — must survive, not be clobbered to NULL.
     static func writeEnrichmentOverlay(_ result: EnrichmentResult, libraryRootID: Int64, db: Database) throws {
-        // Both date projections derive from the one stored truth, here at the write.
-        //
-        // A video with no local-authority embedded timestamp falls back to its
-        // filesystem mtime — which for video is when recording *stopped*, so the name
-        // is wrong by the clip's own length. Where the duration is known, derive the
-        // capture instant instead and store it as the wall, marked with its own
-        // precision so it stays self-identifying. Deriving here rather than at naming
-        // time keeps `capture_wall_compact` the single stored truth.
-        let embeddedWall = CaptureWallClock.select(from: result.metadata.timestamps)
-        let captureWall = embeddedWall ?? (
-            result.enrichedKind == .video
-                ? CaptureWallClock.derivedFromDuration(
-                    modifiedAt: result.sourceMTimeSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) },
-                    durationSeconds: result.metadata.durationSeconds
-                )
-                : nil
-        )
-        let instants = BestCaptureInstants.from(result.metadata.timestamps)
         try db.execute(
             sql: """
             UPDATE media_asset SET
                 thumbnail_path = ?,
                 preview_path = ?,
                 rendered_revision = ?,
-                ts_original_unix = ?,
-                ts_quicktime_creation_unix = ?,
-                ts_digitized_unix = ?,
-                ts_gps_unix = ?,
-                enriched_kind = ?,
-                enriched_format = ?,
-                duration_seconds = ?,
                 enriched_source_size = ?,
                 enriched_source_mtime = ?,
                 content_hash_xxh3_128 = COALESCE(?, content_hash_xxh3_128),
                 content_hash_source_size = COALESCE(?, content_hash_source_size),
-                content_hash_source_mtime = COALESCE(?, content_hash_source_mtime),
-                capture_wall_compact = ?,
-                capture_wall_precision = ?
+                content_hash_source_mtime = COALESCE(?, content_hash_source_mtime)
             WHERE library_root_id = ?
                 AND relative_path = ?
             """,
@@ -466,30 +444,86 @@ extension CatalogStore {
                 result.thumbnailPath,
                 result.previewPath,
                 result.editRevision,
-                instants.original?.timeIntervalSince1970,
-                instants.quickTimeCreation?.timeIntervalSince1970,
-                instants.digitized?.timeIntervalSince1970,
-                instants.gps?.timeIntervalSince1970,
-                result.enrichedKind?.rawValue,
-                result.enrichedFormat?.rawValue,
-                result.metadata.durationSeconds,
                 result.sourceSize,
                 result.sourceMTimeSeconds,
                 result.contentHash?.data,
                 result.contentHash != nil ? result.sourceSize : nil,
                 result.contentHash != nil ? result.sourceMTimeSeconds : nil,
-                captureWall?.compact,
-                captureWall?.precision,
                 libraryRootID,
                 result.id.relativePath.rawValue,
             ]
         )
-        try upsertAssetMetadata(
+        try writeMetadataProjection(
             result.metadata,
+            enrichedKind: result.enrichedKind,
+            enrichedFormat: result.enrichedFormat,
+            sourceMTimeSeconds: result.sourceMTimeSeconds,
             libraryRootID: libraryRootID,
             relativePath: result.id.relativePath,
             db: db
         )
+    }
+
+    /// Writes a metadata record and every column derived from it: the stored record, the
+    /// `ts_*` instants, the kind and format, the duration and the capture wall. Enrichment
+    /// and a metadata refresh (ADR 0039) both write through here, so a re-read row derives
+    /// exactly what a fresh enrichment would.
+    ///
+    /// Both date projections derive from the one stored truth, here at the write. A video
+    /// with no local-authority embedded timestamp falls back to its filesystem mtime —
+    /// which for video is when recording *stopped*, so the name is wrong by the clip's own
+    /// length. Where the duration is known, derive the capture instant instead and store it
+    /// as the wall, marked with its own precision so it stays self-identifying. Deriving
+    /// here rather than at naming time keeps `capture_wall_compact` the single stored truth.
+    static func writeMetadataProjection(
+        _ metadata: AssetMetadata,
+        enrichedKind: MediaKind?,
+        enrichedFormat: MediaFormatToken?,
+        sourceMTimeSeconds: Int?,
+        libraryRootID: Int64,
+        relativePath: MediaRelativePath,
+        db: Database
+    ) throws {
+        let embeddedWall = CaptureWallClock.select(from: metadata.timestamps)
+        let captureWall = embeddedWall ?? (
+            enrichedKind == .video
+                ? CaptureWallClock.derivedFromDuration(
+                    modifiedAt: sourceMTimeSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                    durationSeconds: metadata.durationSeconds
+                )
+                : nil
+        )
+        let instants = BestCaptureInstants.from(metadata.timestamps)
+        try db.execute(
+            sql: """
+            UPDATE media_asset SET
+                ts_original_unix = ?,
+                ts_quicktime_creation_unix = ?,
+                ts_digitized_unix = ?,
+                ts_gps_unix = ?,
+                enriched_kind = ?,
+                enriched_format = ?,
+                duration_seconds = ?,
+                capture_wall_compact = ?,
+                capture_wall_precision = ?
+            WHERE library_root_id = ?
+                AND relative_path = ?
+            """,
+            arguments: [
+                instants.original?.timeIntervalSince1970,
+                instants.quickTimeCreation?.timeIntervalSince1970,
+                instants.digitized?.timeIntervalSince1970,
+                instants.gps?.timeIntervalSince1970,
+                enrichedKind?.rawValue,
+                enrichedFormat?.rawValue,
+                metadata.durationSeconds,
+                captureWall?.compact,
+                captureWall?.precision,
+                libraryRootID,
+                relativePath.rawValue,
+            ]
+        )
+        try upsertAssetMetadata(metadata, libraryRootID: libraryRootID, relativePath: relativePath, db: db)
     }
 
     /// Writes a reused source overlay onto the row `landed` settled, with the destination's
@@ -504,8 +538,6 @@ extension CatalogStore {
         let destinationRelativePath = landed.operation.destinationRelativePath
         let destinationByteSize = landed.byteSize
         let destinationMTimeSeconds = Int(landed.contentModifiedAt.timeIntervalSince1970.rounded(.down))
-        let captureWall = CaptureWallClock.select(from: overlay.metadata.timestamps)
-        let instants = BestCaptureInstants.from(overlay.metadata.timestamps)
         try db.execute(
             sql: """
             UPDATE media_asset SET
@@ -515,20 +547,11 @@ extension CatalogStore {
                     (SELECT rendered_revision FROM media_asset WHERE library_root_id = ? AND relative_path = ?),
                     rendered_revision
                 ),
-                ts_original_unix = ?,
-                ts_quicktime_creation_unix = ?,
-                ts_digitized_unix = ?,
-                ts_gps_unix = ?,
-                enriched_kind = ?,
-                enriched_format = ?,
-                duration_seconds = ?,
                 enriched_source_size = ?,
                 enriched_source_mtime = ?,
                 content_hash_xxh3_128 = ?,
                 content_hash_source_size = ?,
-                content_hash_source_mtime = ?,
-                capture_wall_compact = ?,
-                capture_wall_precision = ?
+                content_hash_source_mtime = ?
             WHERE library_root_id = ? AND relative_path = ?
             """,
             arguments: [
@@ -536,26 +559,22 @@ extension CatalogStore {
                 landed.destinationPreviewPath,
                 landed.sourceRootID,
                 landed.operation.sourceRelativePath.rawValue,
-                instants.original?.timeIntervalSince1970,
-                instants.quickTimeCreation?.timeIntervalSince1970,
-                instants.digitized?.timeIntervalSince1970,
-                instants.gps?.timeIntervalSince1970,
-                overlay.enrichedKind?.rawValue,
-                overlay.enrichedFormat?.rawValue,
-                overlay.durationSeconds,
                 destinationByteSize,
                 destinationMTimeSeconds,
                 contentHash.data,
                 destinationByteSize,
                 destinationMTimeSeconds,
-                captureWall?.compact,
-                captureWall?.precision,
                 destinationRootID,
                 destinationRelativePath.rawValue,
             ]
         )
-        try upsertAssetMetadata(
+        // The source's record, derived for the destination exactly as enrichment of the
+        // destination file would derive it.
+        try writeMetadataProjection(
             overlay.metadata,
+            enrichedKind: overlay.enrichedKind,
+            enrichedFormat: overlay.enrichedFormat,
+            sourceMTimeSeconds: destinationMTimeSeconds,
             libraryRootID: destinationRootID,
             relativePath: destinationRelativePath,
             db: db
@@ -1157,9 +1176,10 @@ private nonisolated func upsertAssetMetadataSQL() -> String {
         primary_latitude,
         primary_longitude,
         primary_altitude_meters,
-        metadata_extra_json
+        metadata_extra_json,
+        extraction_revision
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(library_root_id, relative_path) DO UPDATE SET
         family = excluded.family,
         file_extension = excluded.file_extension,
@@ -1177,7 +1197,8 @@ private nonisolated func upsertAssetMetadataSQL() -> String {
         primary_latitude = excluded.primary_latitude,
         primary_longitude = excluded.primary_longitude,
         primary_altitude_meters = excluded.primary_altitude_meters,
-        metadata_extra_json = excluded.metadata_extra_json
+        metadata_extra_json = excluded.metadata_extra_json,
+        extraction_revision = excluded.extraction_revision
     """
 }
 
@@ -1244,6 +1265,7 @@ private nonisolated func assetMetadataStatementArguments(
         primaryLocation?.longitude,
         primaryLocation?.altitudeMeters,
         CatalogStore.encodeMetadataExtraJSON(metadata),
+        metadata.extractionRevision,
     ]
     return StatementArguments(values)
 }

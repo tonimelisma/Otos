@@ -124,6 +124,34 @@ and let instrumentation prove a real bottleneck before optimizing it.
   `EnrichmentCoordinator` is the background enrichment owner. See ADR 0008 and
   `docs/adr/0009-enrichment-storage-and-staleness.md`.
 
+## MediaMetadata Is Ours
+
+[MediaMetadata](https://github.com/tonimelisma/MediaMetadata) is Otos's own byte-parsing
+library, with the same owner. Treat it as code Otos can change in any way it needs, not as
+a third-party constraint (ADR 0039).
+
+- **The library owns** every fact read from a file's bytes and every rule about what that
+  fact means:
+  - format family and kind;
+  - orientation and display geometry;
+  - timestamp roles, and which one names or orders a file;
+  - location sources;
+  - codec identity;
+  - `extractionRevision`.
+- **Otos owns:**
+  - persistence;
+  - when to pay for bytes (never downloading for a parser fix);
+  - the catalog's own projections;
+  - product policy such as no audio;
+  - the platform decode facts it renders with.
+- **Never build into Otos something that belongs in the library.** That means no
+  re-derived parsing rule, no parallel copy of a library enum, and no per-fix migration.
+  When Otos needs a fact the library lacks, the change goes into the library, is released,
+  and Otos takes it by version bump. Write the request for the library when it is not
+  being changed in the same session.
+- **Store what the library reports, as reported,** with the `extractionRevision` it was
+  read with. `MetadataRefresher` re-reads older records from local bytes only.
+
 ## Architecture Standards
 
 - Keep SwiftUI views small, composition-focused, and **passive**: they render
