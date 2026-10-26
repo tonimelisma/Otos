@@ -284,27 +284,33 @@ struct CatalogStoreSchemaMigrationTests {
             }
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (2, '/Volumes/Card', 'removableVolume')")
-            let rows: [(Int, String, String, Int?)] = [
-                (1, "turned.heif", "heif", nil),
-                (1, "tagged.heic", "heif", 6),
-                (1, "plain.jpg", "jpeg", nil),
-                (2, "card.heif", "heif", nil),
+            struct Row {
+                let root: Int
+                let path: String
+                let family: String
+                let orientation: Int?
+            }
+            let rows = [
+                Row(root: 1, path: "turned.heif", family: "heif", orientation: nil),
+                Row(root: 1, path: "tagged.heic", family: "heif", orientation: 6),
+                Row(root: 1, path: "plain.jpg", family: "jpeg", orientation: nil),
+                Row(root: 2, path: "card.heif", family: "heif", orientation: nil),
             ]
-            for (root, path, family, orientation) in rows {
+            for row in rows {
                 try db.execute(
                     sql: """
                     INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
                         name_sort_key, kind, enriched_source_size, enriched_source_mtime)
                     VALUES (?, ?, ?, ?, ?, 'image', 10, 20)
                     """,
-                    arguments: [root, path, path, path, path]
+                    arguments: [row.root, row.path, row.path, row.path, row.path]
                 )
                 try db.execute(
                     sql: """
                     INSERT INTO asset_metadata (library_root_id, relative_path, family, orientation)
                     VALUES (?, ?, ?, ?)
                     """,
-                    arguments: [root, path, family, orientation]
+                    arguments: [row.root, row.path, row.family, row.orientation]
                 )
             }
         }
