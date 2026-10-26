@@ -28,8 +28,11 @@ MediaMetadata 0.7.0 adds what a consumer needs to stop re-deriving:
 - typed timestamp `Role`s and location `Source`s with stable raw values;
 - `CaptureTimestamps.wallClockPrecedence`;
 - `VideoCodec.identifier`;
-- `MediaMetadataReader.extractionRevision`, which rises whenever the same bytes can read
-  differently.
+- `MediaMetadataReader.extractionRevision(for:)`, one number per format family that rises
+  when the same bytes of that family can read differently (0.7.1);
+- `format.fileType` and `isCameraRaw` read from the bytes, and `MediaFileType(fileExtension:)`
+  with `displayName` for a file nothing has read (0.7.1);
+- `CaptureTimestamps.Role.isAudioOnly` (0.7.1).
 
 ## Decision
 
@@ -59,22 +62,29 @@ what those facts mean. That covers:
   - `geometry` into orientation and stored size;
   - `codec.identifier`;
   - `timestamps.entries` and `locations.entries` under the library's raw values;
-  - `extractionRevision` into `asset_metadata.extraction_revision`.
+  - its family's `extractionRevision(for:)` into `asset_metadata.extraction_revision`;
+  - the file type's name (`format.fileType`, else the extension's `MediaFileType`) as
+    the format token, so `HEIC`, `HEIF` and `HIF` are one token, `HEIF`.
 
   Otos's role set is the library's `CaptureTimestamps.Role`, less the audio-only roles
-  (MED-004). The upright size is `PixelGeometry`'s.
+  (`Role.isAudioOnly`, MED-004). The upright size is `PixelGeometry`'s.
 - **The wall clock follows `wallClockPrecedence`.** It is selected from Otos's persisted
   records in that order. So an AVI's RIFF recording date (ICRD/IDIT), when no earlier
   role is local, now names the file instead of the mtime-less-duration fallback:
   - an embedded fact is better than a derived one;
   - files already imported keep their names;
   - a card re-imported after this change would name such an AVI by its recording date.
-- **Kind:** the platform's type decides first (it alone knows RAW); otherwise the library's
-  `format.kind`.
+- **Kind** is the library's: the type the bytes settled (camera RAW included), else the
+  kind the bytes showed, else the type the extension names. The platform's type is kept
+  only where Otos asks the platform a platform question: which files the scanner catalogs,
+  and whether ImageIO or Core Image can render one.
 - **A parser fix reaches the catalog through the revision, from local bytes only.**
   - `MetadataRefresher` runs once per launch with enrichment.
-  - It re-reads library rows whose stored revision is lower or unknown and whose
-    enrichment is otherwise current.
+  - It re-reads library rows whose stored revision is lower than their family's current
+    one (an absent revision counts as 0, as the library defines it) and whose enrichment is
+    otherwise current. A family the library has not changed is never re-read.
+  - Migration v7 cleared the single-number revisions v6 stored before per-family revisions
+    existed, and renamed stored format tokens to the library's names.
   - It reads only originals already on this Mac, checking materialization immediately
     before each read, and writes only metadata and the columns derived from it (through
     the same `writeMetadataProjection` enrichment uses), only while the row's file
@@ -96,8 +106,8 @@ what those facts mean. That covers:
 
   For 0.7.0 that stale record is Info's W × H for portrait videos and a few EXIF-less
   HEIFs; nothing displayed is shaped by it (APP-040, APP-048).
-- Every library release that raises the revision re-reads every *local* row once. Rows are
-  cheap to re-read locally; the library re-reading is bounded by what is on disk.
+- A library release that raises a family's revision re-reads that family's *local* rows
+  once, which is cheap; nothing is downloaded for it.
 - `best_capture_unix` still coalesces original → quickTimeCreation → digitized → gps,
   while the library's `instantPrecedence` puts digitized before quickTimeCreation.
   Adopting the library's order changes a STORED generated column (a table rebuild) and can

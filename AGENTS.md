@@ -149,8 +149,9 @@ a third-party constraint (ADR 0039).
   When Otos needs a fact the library lacks, the change goes into the library, is released,
   and Otos takes it by version bump. Write the request for the library when it is not
   being changed in the same session.
-- **Store what the library reports, as reported,** with the `extractionRevision` it was
-  read with. `MetadataRefresher` re-reads older records from local bytes only.
+- **Store what the library reports, as reported,** with its family's
+  `extractionRevision(for:)` at the read. `MetadataRefresher` re-reads older records from
+  local bytes only.
 
 ## Architecture Standards
 

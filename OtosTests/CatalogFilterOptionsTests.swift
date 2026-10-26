@@ -12,39 +12,27 @@ struct CatalogFilterOptionsTests {
         #expect(options.formats(for: .image).isEmpty)
     }
 
-    @Test func heicHeifAndHifRemainExactFactsButShareOneFileTypeChoice() {
-        let heic = MediaFormatToken(rawValue: "HEIC")
-        let heif = MediaFormatToken(rawValue: "HEIF")
-        let hif = MediaFormatToken(rawValue: "HIF")
+    /// File types carry MediaMetadata's names (ADR 0039): every spelling of one type is one
+    /// token, so it is one filter row, and a token restored from an older build is renamed.
+    @Test func fileTypesTakeTheLibrarysNames() {
+        #expect(["heic", "HEIF", "hif"].map { MediaFormatToken.normalize(extension: $0)?.rawValue } == ["HEIF", "HEIF", "HEIF"])
+        #expect(["jpg", "JPE", "jpeg"].map { MediaFormatToken.normalize(extension: $0)?.rawValue } == ["JPEG", "JPEG", "JPEG"])
+        #expect(MediaFormatToken.normalize(extension: "tif")?.rawValue == "TIFF")
+        #expect(MediaFormatToken.normalize(extension: "arw")?.rawValue == "ARW")
+        #expect(MediaFormatToken.normalize(extension: "xyz")?.rawValue == "XYZ")
         let options = CatalogFilterOptions(formatsByKind: [
-            .image: [heic, heif, hif, MediaFormatToken(rawValue: "JPEG")],
+            .image: [MediaFormatToken(rawValue: "JPEG"), MediaFormatToken(rawValue: "HEIF")],
         ])
-
-        #expect(options.formats(for: .image) == [heic, heif, hif, MediaFormatToken(rawValue: "JPEG")])
-        #expect(options.fileTypes(for: .image) == [
-            MediaFileTypeOption(format: heic),
-            MediaFileTypeOption(format: MediaFormatToken(rawValue: "JPEG")),
-        ])
-        #expect(options.fileTypes(for: .image).first?.label == "HEIF")
-        #expect(Set(options.fileTypes(for: .image).first?.formats ?? []) == [heic, heif, hif])
+        #expect(options.formats(for: .image) == [MediaFormatToken(rawValue: "HEIF"), MediaFormatToken(rawValue: "JPEG")])
     }
 
     @Test func selectingAWholeKindReplacesItsChildFileTypes() {
         let options = filterOptions()
-        let jpeg = MediaFileTypeOption(format: MediaFormatToken(rawValue: "JPEG"))
-        let formatOnly = MediaFilter.all.settingFileType(
-            jpeg,
-            kind: .image,
-            included: true,
-            options: options
-        )
+        let jpeg = MediaFormatToken(rawValue: "JPEG")
+        let formatOnly = MediaFilter.all.settingFileType(jpeg, kind: .image, included: true, options: options)
 
         #expect(formatOnly.kinds.isEmpty)
-        #expect(formatOnly.formats == [
-            MediaFormatToken(rawValue: "JPE"),
-            MediaFormatToken(rawValue: "JPEG"),
-            MediaFormatToken(rawValue: "JPG"),
-        ])
+        #expect(formatOnly.formats == [jpeg])
 
         let allImages = formatOnly.settingKind(.image, included: true, options: options)
         #expect(allImages.kinds == [.image])
@@ -53,22 +41,17 @@ struct CatalogFilterOptionsTests {
 
     @Test func removingOneFileTypeFromAWholeKindProducesTheExpectedMixedSubset() {
         let options = filterOptions()
-        let jpeg = MediaFileTypeOption(format: MediaFormatToken(rawValue: "JPEG"))
         let allImages = MediaFilter(kinds: [.image])
 
         let withoutJPEG = allImages.settingFileType(
-            jpeg,
+            MediaFormatToken(rawValue: "JPEG"),
             kind: .image,
             included: false,
             options: options
         )
 
         #expect(withoutJPEG.kinds.isEmpty)
-        #expect(withoutJPEG.formats == [
-            MediaFormatToken(rawValue: "HEIC"),
-            MediaFormatToken(rawValue: "HEIF"),
-            MediaFormatToken(rawValue: "HIF"),
-        ])
+        #expect(withoutJPEG.formats == [MediaFormatToken(rawValue: "ARW"), MediaFormatToken(rawValue: "HEIF")])
     }
 
     @Test func selectingEveryAvailableKindCanonicalizesToAllItems() {
@@ -83,7 +66,7 @@ struct CatalogFilterOptionsTests {
     private func filterOptions() -> CatalogFilterOptions {
         CatalogFilterOptions(formatsByKind: [
             .image: [
-                MediaFormatToken(rawValue: "HEIC"),
+                MediaFormatToken(rawValue: "ARW"),
                 MediaFormatToken(rawValue: "HEIF"),
                 MediaFormatToken(rawValue: "JPEG"),
             ],

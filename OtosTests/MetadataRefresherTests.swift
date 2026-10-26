@@ -10,7 +10,9 @@ import Testing
 @MainActor
 struct MetadataRefresherTests {
     @Test func aStaleRecordIsReReadWhenItsOriginalIsLocalAndLeftWhenItIsNot() async throws {
-        try await withEditableLibrary(fileCount: 2) { library in
+        // HEIF: its family's reading has changed since revisions began, so a record with no
+        // revision is stale (a JPEG's has not: it is current at 0).
+        try await withEditableLibrary(fileCount: 2, fileExtension: "heic", write: writeRotatedHEIC) { library in
             let state = try await catalogStoreTestState(library.store)
             let stale = try state.testAssets.map { asset in
                 try EnrichmentResult(
@@ -31,20 +33,21 @@ struct MetadataRefresherTests {
 
             #expect(summary == MetadataRefreshSummary(read: 1, written: 1, skipped: 1, failed: false))
             let rows = try await revisions(library.databaseURL)
-            #expect(rows[local.relativePath.rawValue]?.revision == MediaMetadataReader.extractionRevision)
-            #expect(rows[local.relativePath.rawValue]?.family == "jpeg")
+            #expect(rows[local.relativePath.rawValue]?.revision == MediaMetadataReader.extractionRevision(for: .heif))
+            #expect(rows[local.relativePath.rawValue]?.family == "heif")
             #expect(rows[cloudOnly.relativePath.rawValue]?.revision == nil)
 
             let again = await MetadataRefresher(store: library.store, isLocal: { _ in true }).refresh()
             #expect(again.written == 1)
             #expect(try await revisions(library.databaseURL)[cloudOnly.relativePath.rawValue]?.revision
-                == MediaMetadataReader.extractionRevision)
+                == MediaMetadataReader.extractionRevision(for: .heif))
         }
     }
 
-    /// Only library rows with a current enrichment and an older or unknown revision are
-    /// candidates: a card row, a row already current, and a row whose file changed (which
-    /// enrichment re-reads anyway) are not.
+    /// Only library rows with a current enrichment and a record older than its family's
+    /// current reading are candidates: a card row, a row already current, a row whose file
+    /// changed (which enrichment re-reads anyway), and a family the library has not changed
+    /// (JPEG, current at 0 with no revision) are not.
     @Test func candidatesAreLibraryRowsWithCurrentEnrichmentAndAnOlderRecord() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -59,15 +62,17 @@ struct MetadataRefresherTests {
                 let root: Int
                 let path: String
                 let enrichedMTime: Int
+                let family: String
                 let revision: Int?
             }
-            let current = MediaMetadataReader.extractionRevision
+            let current = MediaMetadataReader.extractionRevision(for: .heif)
             for row in [
-                Fixture(root: 1, path: "unknown.jpg", enrichedMTime: 100, revision: nil),
-                Fixture(root: 1, path: "older.jpg", enrichedMTime: 100, revision: current - 1),
-                Fixture(root: 1, path: "current.jpg", enrichedMTime: 100, revision: current),
-                Fixture(root: 1, path: "changed.jpg", enrichedMTime: 99, revision: nil),
-                Fixture(root: 2, path: "card.jpg", enrichedMTime: 100, revision: nil),
+                Fixture(root: 1, path: "unknown.heic", enrichedMTime: 100, family: "heif", revision: nil),
+                Fixture(root: 1, path: "older.heic", enrichedMTime: 100, family: "heif", revision: current - 1),
+                Fixture(root: 1, path: "current.heic", enrichedMTime: 100, family: "heif", revision: current),
+                Fixture(root: 1, path: "changed.heic", enrichedMTime: 99, family: "heif", revision: nil),
+                Fixture(root: 1, path: "unchanged.jpg", enrichedMTime: 100, family: "jpeg", revision: nil),
+                Fixture(root: 2, path: "card.heic", enrichedMTime: 100, family: "heif", revision: nil),
             ] {
                 try db.execute(
                     sql: """
@@ -78,19 +83,17 @@ struct MetadataRefresherTests {
                     arguments: [row.root, row.path, row.path, row.path, row.path, row.enrichedMTime]
                 )
                 try db.execute(
-                    sql: "INSERT INTO asset_metadata (library_root_id, relative_path, family, extraction_revision) VALUES (?, ?, 'jpeg', ?)",
-                    arguments: [row.root, row.path, row.revision]
+                    sql: "INSERT INTO asset_metadata (library_root_id, relative_path, family, extraction_revision) VALUES (?, ?, ?, ?)",
+                    arguments: [row.root, row.path, row.family, row.revision]
                 )
             }
         }
         let store = CatalogStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
-        let candidates = try await store.metadataRefreshCandidates(
-            belowRevision: MediaMetadataReader.extractionRevision, after: nil, limit: 10
-        )
+        let candidates = try await store.metadataRefreshCandidates(after: nil, limit: 10)
         await store.shutdown()
 
-        #expect(candidates.map(\.id.relativePath.rawValue) == ["older.jpg", "unknown.jpg"])
+        #expect(candidates.map(\.id.relativePath.rawValue) == ["older.heic", "unknown.heic"])
     }
 
     private func revisions(_ databaseURL: URL) async throws -> [String: (revision: Int?, family: String?)] {

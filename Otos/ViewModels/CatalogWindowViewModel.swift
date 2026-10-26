@@ -1063,7 +1063,7 @@ extension CatalogWindowViewModel {
         ))
     }
 
-    func setMediaFileType(_ fileType: MediaFileTypeOption, kind: MediaKind, included: Bool) {
+    func setMediaFileType(_ fileType: MediaFormatToken, kind: MediaKind, included: Bool) {
         setMediaFilter(queryDescriptor.filter.settingFileType(
             fileType,
             kind: kind,

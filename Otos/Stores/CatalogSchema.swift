@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 
 /// The catalog's schema, as the one baseline migration creates it.
 ///
@@ -87,6 +88,30 @@ nonisolated enum CatalogSchema {
     static let extractionRevisionStatements: [String] = [
         "ALTER TABLE asset_metadata ADD COLUMN extraction_revision INTEGER",
     ]
+
+    /// MediaMetadata 0.7.1 (ADR 0039):
+    /// - Revisions are per format family. The numbers v6 stored were one global
+    ///   revision, so they no longer mean anything and become `NULL`, which the library
+    ///   defines as 0 (read before revisions). A family the library has not changed since
+    ///   then is current at 0, so only the families it fixed are re-read, from local bytes
+    ///   (`MetadataRefresher`).
+    /// - Format tokens take the library's file-type names (`HEIC` and `HIF` become `HEIF`,
+    ///   `JPG` and `JPE` become `JPEG`, `TIF` becomes `TIFF`).
+    static let familyRevisionMigrationIdentifier = "v7_family_revisions_and_file_type_names"
+
+    static func migrateToFamilyRevisionsAndFileTypeNames(_ db: Database) throws {
+        try db.execute(sql: "UPDATE asset_metadata SET extraction_revision = NULL")
+        for column in ["format", "enriched_format"] {
+            let tokens = try String.fetchAll(db, sql: "SELECT DISTINCT \(column) FROM media_asset WHERE \(column) IS NOT NULL")
+            for token in tokens {
+                guard let named = MediaFormatToken.normalize(extension: token)?.rawValue, named != token else { continue }
+                try db.execute(
+                    sql: "UPDATE media_asset SET \(column) = ? WHERE \(column) = ?",
+                    arguments: [named, token]
+                )
+            }
+        }
+    }
 
     static let baselineStatements: [String] = [
         """
