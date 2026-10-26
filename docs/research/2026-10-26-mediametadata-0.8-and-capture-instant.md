@@ -49,4 +49,3 @@ skipped them). Measured on the installed catalog (2026-10-26): 62,206 records ov
 assets — 0 repeated roles, 6 roles all known, every record with a precision and in-range
 components. The selections therefore return exactly what the catalog stores, and no
 migration is needed.
-
