@@ -64,3 +64,28 @@ A plan written alongside the library proposed how Otos should adopt 0.7.0. Item 
 - **Check that portrait videos come out portrait in the grid:** not affected; tiles size
   from their thumbnail image, not the catalog.
 - **Leave `best_capture_unix`, the camera reader and preview decoding alone:** agreed.
+
+## 0.7.1
+
+0.7.1 answers the requests this review raised:
+- per-family revisions;
+- "may re-read", not "must";
+- camera RAW and file type from the bytes;
+- `Role.isAudioOnly`;
+- file-type names by extension.
+
+0.7.1 read every local library file (2,666 at the time) and its answer was compared with
+Otos's stored kind:
+
+| Library | Files | Agrees with Otos |
+| --- | --- | --- |
+| heif, `image` | 1,842 | yes |
+| arw, camera RAW | 374 | yes |
+| jpeg | 305 | yes |
+| png: unknown from the bytes, `png` by extension | 83 | yes, through the extension |
+| mp4, mov | 61 | yes |
+| avif | 1 | yes |
+
+Otos therefore takes kind from the library (bytes, then extension) with no change for
+any local file. PNG is not identified from its bytes yet, which is a request back to the
+library.

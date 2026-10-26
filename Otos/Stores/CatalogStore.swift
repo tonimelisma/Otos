@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import MediaMetadata
 import OSLog
 import Synchronization
 
@@ -2075,12 +2076,12 @@ extension CatalogStore {
 
     // MARK: - Metadata refresh (ADR 0039)
 
-    /// Library rows whose metadata record an older MediaMetadata extraction revision
-    /// produced (or one from before revisions were stored), in path order after `cursor`.
-    /// Only rows whose enrichment is current: a row that is stale anyway is re-read by
-    /// enrichment, which stamps the revision itself. Card and camera rows are never listed.
+    /// Library rows whose metadata record an older reading of its format family produced
+    /// (`MediaMetadataReader.extractionRevision(for:)`; a record with none counts as 0, as
+    /// the library defines it), in path order after `cursor`. Only rows whose enrichment is
+    /// current: a row that is stale anyway is re-read by enrichment, which stamps the
+    /// revision itself. Card and camera rows are never listed.
     func metadataRefreshCandidates(
-        belowRevision revision: Int,
         after cursor: MediaAssetID?,
         limit: Int
     ) async throws -> [MetadataRefreshCandidate] {
@@ -2097,13 +2098,13 @@ extension CatalogStore {
                 JOIN asset_metadata m USING (library_root_id, relative_path)
                 JOIN library_root r ON r.id = a.library_root_id
                 WHERE r.kind = 'library'
-                    AND (m.extraction_revision IS NULL OR m.extraction_revision < ?)
+                    AND COALESCE(m.extraction_revision, 0) < \(Self.currentExtractionRevisionSQL)
                     AND NOT (\(EnrichmentClaimGateway.metadataStalenessSQLPredicate()))
                     AND (a.library_root_id, a.relative_path) > (?, ?)
                 ORDER BY a.library_root_id, a.relative_path
                 LIMIT ?
                 """,
-                arguments: [revision, cursorRootID, cursorPath, limit]
+                arguments: [cursorRootID, cursorPath, limit]
             ).compactMap { row -> MetadataRefreshCandidate? in
                 let rootID: Int64 = row["library_root_id"]
                 guard let rootPath = rootsByID[rootID] else { return nil }
@@ -2117,6 +2118,15 @@ extension CatalogStore {
                 )
             }
         }
+    }
+
+    /// The library's current revision for `asset_metadata.family`, as SQL: one `WHEN` per
+    /// family the library names, and its `unknown` revision for anything else.
+    nonisolated static var currentExtractionRevisionSQL: String {
+        let cases = MediaFormat.Family.allCases.map {
+            "WHEN '\($0.rawValue)' THEN \(MediaMetadataReader.extractionRevision(for: $0))"
+        }
+        return "(CASE m.family \(cases.joined(separator: " ")) ELSE \(MediaMetadataReader.extractionRevision(for: .unknown)) END)"
     }
 
     /// Writes re-read metadata records (ADR 0039). Each one lands only while its row still
@@ -2139,7 +2149,7 @@ extension CatalogStore {
                     WHERE a.library_root_id = ? AND a.relative_path = ?
                         AND a.byte_size IS ? AND a.enriched_source_size IS ? AND a.enriched_source_mtime IS ?
                         AND NOT (\(EnrichmentClaimGateway.metadataStalenessSQLPredicate()))
-                        AND (m.extraction_revision IS NULL OR m.extraction_revision < ?)
+                        AND COALESCE(m.extraction_revision, 0) < ?
                     """,
                     arguments: arguments + [
                         refresh.sourceSize, refresh.sourceSize, refresh.sourceMTimeSeconds,

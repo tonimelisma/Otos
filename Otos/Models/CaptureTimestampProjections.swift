@@ -9,7 +9,7 @@ import MediaMetadata
 /// decode a role this build does not know rather than failing — but no code spells a role
 /// as a literal.
 nonisolated extension CaptureTimestamps.Role {
-    static let cataloged: [CaptureTimestamps.Role] = allCases.filter { $0 != .id3Recording && $0 != .waveOrigination }
+    static let cataloged: [CaptureTimestamps.Role] = allCases.filter { !$0.isAudioOnly }
 }
 
 nonisolated extension CaptureTimestampRecord {

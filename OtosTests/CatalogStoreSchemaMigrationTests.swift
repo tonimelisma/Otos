@@ -150,6 +150,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.previewPathMigrationIdentifier, CatalogSchema.editRecipeMigrationIdentifier,
             CatalogSchema.heifOrientationMigrationIdentifier,
             CatalogSchema.extractionRevisionMigrationIdentifier,
+            CatalogSchema.familyRevisionMigrationIdentifier,
         ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
@@ -228,6 +229,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.previewPathMigrationIdentifier, CatalogSchema.editRecipeMigrationIdentifier,
             CatalogSchema.heifOrientationMigrationIdentifier,
             CatalogSchema.extractionRevisionMigrationIdentifier,
+            CatalogSchema.familyRevisionMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -343,6 +345,66 @@ struct CatalogStoreSchemaMigrationTests {
             ))
         }
         #expect(stamped == ["tagged.heic", "plain.jpg", "card.heif"])
+    }
+
+    /// ADR 0039: v7 renames stored format tokens to MediaMetadata's file-type names and
+    /// clears the single-number revisions v6 stored, which per-family revisions replace.
+    @Test func v7RenamesFileTypesAndClearsSingleNumberRevisions() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let earlier = [
+            CatalogSchema.baselineMigrationIdentifier, CatalogSchema.fileIdentifierMigrationIdentifier,
+            CatalogSchema.previewPathMigrationIdentifier, CatalogSchema.editRecipeMigrationIdentifier,
+            CatalogSchema.heifOrientationMigrationIdentifier, CatalogSchema.extractionRevisionMigrationIdentifier,
+        ]
+        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+            let statements = CatalogSchema.baselineStatements + CatalogSchema.fileIdentifierStatements
+                + CatalogSchema.previewPathStatements + CatalogSchema.editRecipeStatements
+                + CatalogSchema.heifOrientationStatements + CatalogSchema.extractionRevisionStatements
+            for statement in statements {
+                try db.execute(sql: statement)
+            }
+            try db.execute(sql: "CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
+            for identifier in earlier {
+                try db.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)", arguments: [identifier])
+            }
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            for (path, format, enriched) in [("a.heic", "HEIC", "HEIC"), ("b.jpg", "JPG", "JPEG"), ("c.arw", "ARW", nil)] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
+                        name_sort_key, kind, format, enriched_format)
+                    VALUES (1, ?, ?, ?, ?, 'image', ?, ?)
+                    """,
+                    arguments: [path, path, path, path, format, enriched]
+                )
+                try db.execute(
+                    sql: "INSERT INTO asset_metadata (library_root_id, relative_path, family, extraction_revision) VALUES (1, ?, 'heif', 1)",
+                    arguments: [path]
+                )
+            }
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
+
+        let rows = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try Row.fetchAll(db, sql: """
+            SELECT a.relative_path, a.format, a.best_format, m.extraction_revision
+            FROM media_asset a JOIN asset_metadata m USING (library_root_id, relative_path)
+            ORDER BY a.relative_path
+            """).map { row -> String in
+                let format: String? = row["format"]
+                let best: String? = row["best_format"]
+                let revision: Int? = row["extraction_revision"]
+                return "\(format ?? "-") \(best ?? "-") \(revision.map(String.init) ?? "nil")"
+            }
+        }
+        #expect(rows == ["HEIF HEIF nil", "JPEG JPEG nil", "ARW ARW nil"])
     }
 
     @Test func refusedCatalogDeniesNamespaceLeaseAsCatalogUnavailable() async throws {

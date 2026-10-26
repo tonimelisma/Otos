@@ -167,7 +167,7 @@ struct MediaEnricherTests {
         let video = fixtureDirectory.appending(path: "mov-no-embedded-capture-date.mov")
         let result = MediaMetadataReader.read(url: video)
         let mapped = MediaEnricher.map(result)
-        #expect(mapped.extractionRevision == MediaMetadataReader.extractionRevision)
+        #expect(mapped.extractionRevision == MediaMetadataReader.extractionRevision(for: result.format.family))
         #expect(mapped.videoCodec == result.video?.codec?.identifier)
         #expect(mapped.orientation == result.geometry?.orientation?.rawValue)
         #expect(mapped.pixelWidth == result.geometry?.pixelWidth)
@@ -175,18 +175,22 @@ struct MediaEnricherTests {
         #expect(mapped.pixelWidth != nil)
     }
 
-    /// The kind of a file whose type the platform does not know comes from the library's
-    /// `format.kind`, never from a guess at what its container family usually holds.
-    @Test func anUnknownTypeTakesTheLibrarysKind() {
-        func kind(_ kind: MediaFormat.Kind) -> MediaKind? {
+    /// Kind is MediaMetadata's (ADR 0039): the type the bytes settled, camera RAW included;
+    /// else the kind the bytes showed; else the type the extension names.
+    @Test func kindIsTheLibrarysFromBytesThenExtension() {
+        func kind(_ family: MediaFormat.Family, _ kind: MediaFormat.Kind?, _ ext: String, _ type: MediaFileType?) -> MediaKind? {
             MediaEnricher.normalizedKind(MediaFormat(
-                family: .isoBMFF, kind: kind, fileExtension: "unknownext", detectedByMagic: true, brand: nil
+                family: family, kind: kind, fileExtension: ext, detectedByMagic: true, fileType: type
             ))
         }
-        #expect(kind(.image) == .image)
-        #expect(kind(.video) == .video)
-        #expect(kind(.audio) == nil)
-        #expect(kind(.unknown) == nil)
+        #expect(kind(.tiff, .image, "arw", .arw) == .raw)
+        #expect(kind(.tiff, .image, "arw", .tiff) == .image)
+        #expect(kind(.isoBMFF, .image, "cr3", .cr3) == .raw)
+        #expect(kind(.isoBMFF, .video, "unknownext", nil) == .video)
+        #expect(kind(.unknown, .unknown, "png", nil) == .image)
+        #expect(kind(.unknown, .unknown, "raf", nil) == .raw)
+        #expect(kind(.unknown, .unknown, "mp3", nil) == nil)
+        #expect(kind(.unknown, .unknown, "unknownext", nil) == nil)
     }
 
     /// ADR 0035: a video keeps its Quick Look thumbnail and gets no preview.

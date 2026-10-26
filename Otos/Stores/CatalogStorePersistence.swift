@@ -101,6 +101,9 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.familyRevisionMigrationIdentifier) { db in
+            try CatalogSchema.migrateToFamilyRevisionsAndFileTypeNames(db)
+        }
         return migrator
     }
 

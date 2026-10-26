@@ -231,7 +231,7 @@ nonisolated struct MediaEnricher {
                 id: id,
                 metadata: Self.map(result),
                 enrichedKind: Self.normalizedKind(result.format),
-                enrichedFormat: MediaFormatToken.normalize(extension: result.format.fileExtension),
+                enrichedFormat: MediaFormatToken.normalize(result.format),
                 // Keeps the camera's provisional thumbnail when this pass produced no
                 // better one. `EnrichmentResult` resolves `generatedThumbnail?.finalRelative-
                 // Path ?? thumbnailPath`, so passing nil for both *clears* the column — and
@@ -366,7 +366,7 @@ nonisolated struct MediaEnricher {
                 id: id,
                 metadata: metadata,
                 enrichedKind: Self.normalizedKind(result.format),
-                enrichedFormat: MediaFormatToken.normalize(extension: result.format.fileExtension),
+                enrichedFormat: MediaFormatToken.normalize(result.format),
                 thumbnailPath: nil,
                 sourceSize: sourceSize ?? -1,
                 sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
@@ -477,18 +477,27 @@ nonisolated struct MediaEnricher {
         }
     }
 
-    /// The catalog kind for what was read. RAW is a platform type fact (`UTType.rawImage`),
-    /// which the library does not report, so the file's type decides first; otherwise the
-    /// library's own `format.kind` does, never a guess from the container family.
+    /// The catalog kind for what was read, as MediaMetadata decides it (ADR 0039): the type
+    /// the bytes settled, camera RAW included; else the kind the bytes showed; else the type
+    /// the extension names. Audio and the unrecognisable are not catalog kinds.
     static func normalizedKind(_ format: MediaFormat) -> MediaKind? {
-        if let kind = UTType(filenameExtension: format.fileExtension).flatMap(MediaKind.classify) {
-            return kind
+        func kind(_ type: MediaFileType) -> MediaKind? {
+            type.isCameraRaw ? .raw : kind(type.kind)
         }
-        switch format.kind {
-        case .image: return .image
-        case .video: return .video
-        case .audio, .unknown: return nil
+        func kind(_ kind: MediaFormat.Kind) -> MediaKind? {
+            switch kind {
+            case .image: .image
+            case .video: .video
+            case .audio, .unknown: nil
+            }
         }
+        if let type = format.fileType {
+            return kind(type)
+        }
+        if format.kind != .unknown {
+            return kind(format.kind)
+        }
+        return MediaFileType(fileExtension: format.fileExtension).flatMap(kind)
     }
 
     /// Maps the full library result into Otos's owned metadata record — every field, as the
@@ -519,7 +528,7 @@ nonisolated struct MediaEnricher {
             durationSeconds: result.video?.durationSeconds,
             frameRate: result.video?.frameRate,
             videoCodec: result.video?.codec?.identifier,
-            extractionRevision: MediaMetadataReader.extractionRevision
+            extractionRevision: MediaMetadataReader.extractionRevision(for: result.format.family)
         )
     }
 }

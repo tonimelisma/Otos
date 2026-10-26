@@ -1,4 +1,5 @@
 import Foundation
+import MediaMetadata
 import UniformTypeIdentifiers
 
 // Query model guide
@@ -59,70 +60,27 @@ nonisolated struct MediaFormatToken: Hashable, Codable, RawRepresentable, Compar
             ?? normalize(extension: contentType.tags[.filenameExtension]?.first)
     }
 
+    /// The file-type name for an extension, as MediaMetadata names it (ADR 0039): `JPEG`
+    /// for jpg/jpe, `HEIF` for heic/heif/hif, `TIFF` for tif. An extension the library does
+    /// not know keeps its own name, upper-cased.
     static func normalize(extension rawExtension: String?) -> MediaFormatToken? {
         guard let rawExtension else { return nil }
         let trimmed = rawExtension.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let uppercased = trimmed.uppercased()
-        switch uppercased {
-        case "JPG", "JPE":
-            return MediaFormatToken(rawValue: "JPEG")
-        case "TIF":
-            return MediaFormatToken(rawValue: "TIFF")
-        default:
-            return MediaFormatToken(rawValue: uppercased)
-        }
+        return MediaFileType(fileExtension: trimmed).map(MediaFormatToken.init)
+            ?? MediaFormatToken(rawValue: trimmed.uppercased())
+    }
+
+    /// The file-type name for a read file: the type its bytes settled, else its extension's.
+    static func normalize(_ format: MediaFormat) -> MediaFormatToken? {
+        format.fileType.map(MediaFormatToken.init) ?? normalize(extension: format.fileExtension)
     }
 }
 
-/// A user-facing file-type choice can cover multiple exact catalog format facts.
-/// HEIC is a specific HEIF-family type, but separating HEIC and HEIF in the filter
-/// does not serve a useful browser task. The catalog keeps both exact tokens; this
-/// value groups only the query/control surface so future metadata consumers lose
-/// no information.
-nonisolated struct MediaFileTypeOption: Hashable, Comparable {
-    let label: String
-    let formats: [MediaFormatToken]
-
-    private static let heifFormats = [
-        MediaFormatToken(rawValue: "HEIC"),
-        MediaFormatToken(rawValue: "HEIF"),
-        MediaFormatToken(rawValue: "HIF"),
-    ]
-
-    private static let jpegFormats = [
-        MediaFormatToken(rawValue: "JPEG"),
-        MediaFormatToken(rawValue: "JPG"),
-        MediaFormatToken(rawValue: "JPE"),
-    ]
-
-    private static let tiffFormats = [
-        MediaFormatToken(rawValue: "TIFF"),
-        MediaFormatToken(rawValue: "TIF"),
-    ]
-
-    init(format: MediaFormatToken) {
-        if Self.heifFormats.contains(format) {
-            label = "HEIF"
-            formats = Self.heifFormats
-        } else if Self.jpegFormats.contains(format) {
-            label = "JPEG"
-            formats = Self.jpegFormats
-        } else if Self.tiffFormats.contains(format) {
-            label = "TIFF"
-            formats = Self.tiffFormats
-        } else {
-            label = format.rawValue
-            formats = [format]
-        }
-    }
-
-    static func grouped(_ formats: [MediaFormatToken]) -> [MediaFileTypeOption] {
-        Set(formats.map(MediaFileTypeOption.init(format:))).sorted()
-    }
-
-    static func < (left: MediaFileTypeOption, right: MediaFileTypeOption) -> Bool {
-        left.label.localizedStandardCompare(right.label) == .orderedAscending
+extension MediaFormatToken {
+    /// MediaMetadata's name for a file type: `JPEG`, `HEIF`, `ARW`.
+    nonisolated init(_ fileType: MediaFileType) {
+        self.init(rawValue: fileType.displayName)
     }
 }
 
@@ -180,7 +138,7 @@ nonisolated struct MediaFilter: Hashable {
     }
 
     func settingFileType(
-        _ fileType: MediaFileTypeOption,
+        _ format: MediaFormatToken,
         kind: MediaKind,
         included: Bool,
         options: CatalogFilterOptions
@@ -192,9 +150,9 @@ nonisolated struct MediaFilter: Hashable {
             : updated.formats.intersection(formatsInKind)
 
         if included {
-            selectedFormats.formUnion(fileType.formats)
+            selectedFormats.insert(format)
         } else {
-            selectedFormats.subtract(fileType.formats)
+            selectedFormats.remove(format)
         }
 
         updated.kinds.remove(kind)
@@ -324,16 +282,14 @@ nonisolated struct CatalogFilterOptions: Equatable {
         MediaKind.displayOrder.filter { formatsByKind.keys.contains($0) }
     }
 
+    /// The file types present for `kind`, in name order. Every token is one file type
+    /// (MediaMetadata's name), so a type is one filter row.
     func formats(for kind: MediaKind) -> [MediaFormatToken] {
-        formatsByKind[kind] ?? []
-    }
-
-    func fileTypes(for kind: MediaKind) -> [MediaFileTypeOption] {
-        MediaFileTypeOption.grouped(formats(for: kind))
+        (formatsByKind[kind] ?? []).sorted()
     }
 
     func availableFormatTokens(for kind: MediaKind) -> Set<MediaFormatToken> {
-        Set(fileTypes(for: kind).flatMap(\.formats))
+        Set(formatsByKind[kind] ?? [])
     }
 }
 

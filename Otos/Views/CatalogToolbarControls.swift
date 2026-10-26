@@ -12,7 +12,7 @@ struct CatalogFilterControl: View {
     let options: CatalogFilterOptions
     @Binding var isPresented: Bool
     let setKind: (MediaKind, Bool) -> Void
-    let setFileType: (MediaFileTypeOption, MediaKind, Bool) -> Void
+    let setFileType: (MediaFormatToken, MediaKind, Bool) -> Void
     let setChoice: (MediaChoice, Bool) -> Void
     let clearFilters: () -> Void
 
@@ -43,7 +43,7 @@ struct CatalogFilterPopoverContent: View {
     let descriptor: CatalogQueryDescriptor
     let options: CatalogFilterOptions
     let setKind: (MediaKind, Bool) -> Void
-    let setFileType: (MediaFileTypeOption, MediaKind, Bool) -> Void
+    let setFileType: (MediaFormatToken, MediaKind, Bool) -> Void
     let setChoice: (MediaChoice, Bool) -> Void
     let clearFilters: () -> Void
 
@@ -72,10 +72,10 @@ struct CatalogFilterPopoverContent: View {
                     Toggle(kind.label, sources: kindToggleSources(kind), isOn: \.isOn)
                         .fontWeight(.semibold)
                         .accessibilityLabel(kind.label)
-                    ForEach(options.fileTypes(for: kind), id: \.self) { fileType in
-                        Toggle(fileType.label, isOn: fileTypeBinding(fileType, kind: kind))
+                    ForEach(options.formats(for: kind), id: \.self) { fileType in
+                        Toggle(fileType.rawValue, isOn: fileTypeBinding(fileType, kind: kind))
                             .padding(.leading, 20)
-                            .accessibilityLabel(fileType.label)
+                            .accessibilityLabel(fileType.rawValue)
                     }
                 }
                 .toggleStyle(.checkbox)
@@ -97,7 +97,7 @@ struct CatalogFilterPopoverContent: View {
     /// parent still produces one effective descriptor change; repeated setter
     /// calls from SwiftUI become normalized no-ops.
     private func kindToggleSources(_ kind: MediaKind) -> [MenuToggleSource] {
-        let fileTypes = options.fileTypes(for: kind)
+        let fileTypes = options.formats(for: kind)
         if fileTypes.isEmpty {
             return [MenuToggleSource(isOn: kindBinding(kind))]
         }
@@ -116,16 +116,16 @@ struct CatalogFilterPopoverContent: View {
         )
     }
 
-    private func fileTypeBinding(_ fileType: MediaFileTypeOption, kind: MediaKind) -> Binding<Bool> {
+    private func fileTypeBinding(_ fileType: MediaFormatToken, kind: MediaKind) -> Binding<Bool> {
         Binding(
             get: { isFileTypeIncluded(fileType, kind: kind) },
             set: { setFileType(fileType, kind, $0) }
         )
     }
 
-    private func isFileTypeIncluded(_ fileType: MediaFileTypeOption, kind: MediaKind) -> Bool {
+    private func isFileTypeIncluded(_ fileType: MediaFormatToken, kind: MediaKind) -> Bool {
         descriptor.filter.kinds.contains(kind)
-            || Set(fileType.formats).isSubset(of: descriptor.filter.formats)
+            || descriptor.filter.formats.contains(fileType)
     }
 }
 

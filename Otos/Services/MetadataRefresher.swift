@@ -4,10 +4,11 @@ import OSLog
 
 /// Metadata refresh guide
 ///
-/// MediaMetadata raises `MediaMetadataReader.extractionRevision` whenever the same bytes
-/// can read differently (ADR 0039). Every metadata record carries the revision it was read
-/// with; this owner re-reads library rows whose record an older revision produced, so a
-/// parser fix reaches the catalog without a hand-written migration per fix.
+/// MediaMetadata raises `MediaMetadataReader.extractionRevision(for:)` for a format family
+/// whenever the same bytes of that family can read differently (ADR 0039). Every metadata
+/// record carries its family's revision at the read; this owner re-reads library rows whose
+/// record an older reading produced, so a parser fix reaches the catalog without a
+/// hand-written migration per fix, and only for the families it touched.
 ///
 /// It pays only for bytes already on this Mac. A row whose original is cloud-only is
 /// skipped, never downloaded: re-reading a whole cloud library for a parser fix would move
@@ -60,15 +61,14 @@ actor MetadataRefresher {
         isLocal: @escaping @Sendable (URL) -> Bool,
         pageSize: Int
     ) async -> MetadataRefreshSummary {
-        let revision = MediaMetadataReader.extractionRevision
         let start = ContinuousClock.now
         var summary = MetadataRefreshSummary()
         var cursor: MediaAssetID?
-        OtosLog.metadata.noticeOperation("metadata.refresh", phase: "start", fields: ["revision": "\(revision)"])
+        OtosLog.metadata.noticeOperation("metadata.refresh", phase: "start", fields: [:])
         while !Task.isCancelled {
             let page: [MetadataRefreshCandidate]
             do {
-                page = try await store.metadataRefreshCandidates(belowRevision: revision, after: cursor, limit: pageSize)
+                page = try await store.metadataRefreshCandidates(after: cursor, limit: pageSize)
             } catch {
                 summary.failed = true
                 OtosLog.metadata.errorOperation("metadata.refresh", phase: "candidatesFailed", fields: [
@@ -98,7 +98,6 @@ actor MetadataRefresher {
             }
         }
         OtosLog.metadata.noticeOperation("metadata.refresh", phase: Task.isCancelled ? "cancelled" : "finish", fields: [
-            "revision": "\(revision)",
             "read": "\(summary.read)",
             "written": "\(summary.written)",
             "skipped": "\(summary.skipped)",
@@ -124,7 +123,7 @@ actor MetadataRefresher {
             id: candidate.id,
             metadata: MediaEnricher.map(result),
             enrichedKind: MediaEnricher.normalizedKind(result.format),
-            enrichedFormat: MediaFormatToken.normalize(extension: result.format.fileExtension),
+            enrichedFormat: MediaFormatToken.normalize(result.format),
             sourceSize: candidate.sourceSize,
             sourceMTimeSeconds: candidate.sourceMTimeSeconds
         )

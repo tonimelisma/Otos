@@ -95,7 +95,9 @@ private nonisolated extension BrowserPlace {
         }
         let filter = MediaFilter(
             kinds: Set(kinds),
-            formats: Set(record.formats.map(MediaFormatToken.init(rawValue:))),
+            // Restored through the library's naming, so a filter saved as `HEIC` by an older
+            // build selects the `HEIF` the catalog now stores (ADR 0039).
+            formats: Set(record.formats.compactMap { MediaFormatToken.normalize(extension: $0) }),
             choices: Set(choices)
         )
         self.init(
