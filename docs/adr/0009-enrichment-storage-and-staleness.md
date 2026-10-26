@@ -569,8 +569,9 @@ path for pre-user enrichment schema changes.
 column is a *projection* of it, derived where it is written:
 
 - `CaptureWallClock.select(from:)` → `capture_wall_compact` / `capture_wall_precision`,
-  the naming fact (ENR-012). Selects local-authority records only.
-- `CaptureInstant.select(from:)` → `capture_instant_unix`, the library's capture
+  the naming fact (ENR-012): the library's `captureWallClock`, which takes local-authority
+  times only.
+- `CaptureTimestamps(records:).captureInstant` → `capture_instant_unix`, the library's capture
   instant (`CaptureTimestamps.instantPrecedence`), which the `best_capture_unix`
   generated column falls back from to the file's dates for ordering (ENR-003).
 

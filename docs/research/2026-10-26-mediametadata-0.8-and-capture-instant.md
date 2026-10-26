@@ -34,3 +34,19 @@ digitized, GPS) and never saw content-create. Migration v8 keeps one
 dates. SQLite measured on 3.54.0: a stored generated column can be dropped once its
 indexes are, its source columns then dropped, and a virtual generated column added and
 indexed; a stored one cannot be added.
+
+## MediaMetadata 0.8.1: selections asked of stored records
+
+Otos walked `instantPrecedence` and `wallClockPrecedence` itself over its stored records,
+because the library's `captureInstant` and `captureWallClock` exist only on a
+`CaptureTimestamps` value. 0.8.1 (tonimelisma/MediaMetadata#20) adds
+`CaptureTimestamps(entries:)`, the inverse of `entries`; Otos rebuilds the value from its
+records (`CaptureTimestamps(records:)`) and asks it.
+
+The two can differ only for an asset whose records repeat a role, name a role this build
+does not know, or are not valid capture times (Otos leaves those out, as its own loop
+skipped them). Measured on the installed catalog (2026-10-26): 62,206 records over 17,876
+assets — 0 repeated roles, 6 roles all known, every record with a precision and in-range
+components. The selections therefore return exactly what the catalog stores, and no
+migration is needed.
+

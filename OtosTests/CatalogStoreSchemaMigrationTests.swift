@@ -86,6 +86,20 @@ struct CaptureWallClockTests {
         #expect(wall?.compact == 20_241_225_153_045)
     }
 
+    /// A local record whose components are not a real wall clock is left out, so the next
+    /// role in `wallClockPrecedence` names the file.
+    @Test func anInvalidLocalRecordFallsToTheNextRole() {
+        let invalid = CaptureTimestampRecord(
+            role: "original", instant: nil, utcOffsetSeconds: nil, precision: "localFloating",
+            year: 2026, month: 2, day: 30, hour: 25, minute: 0, second: 0
+        )
+        let digitized = CaptureTimestampRecord(
+            role: "digitized", instant: nil, utcOffsetSeconds: nil, precision: "localFloating",
+            year: 2026, month: 1, day: 2, hour: 3, minute: 4, second: 5
+        )
+        #expect(CaptureWallClock.select(from: [invalid, digitized])?.compact == 20_260_102_030_405)
+    }
+
     @Test func rejectsAbsoluteOnlyCandidates() {
         let records = [
             CaptureTimestampRecord(
@@ -250,8 +264,8 @@ struct CatalogStoreSchemaMigrationTests {
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
         let records = try CatalogStore.encodeMetadataExtraJSON(AssetMetadata(timestamps: [
-            CaptureTimestampRecord(role: CaptureTimestamps.Role.digitized.rawValue, instant: Date(timeIntervalSince1970: 200)),
-            CaptureTimestampRecord(role: CaptureTimestamps.Role.quickTimeCreation.rawValue, instant: Date(timeIntervalSince1970: 300)),
+            .absolute(.digitized, instant: Date(timeIntervalSince1970: 200)),
+            .absolute(.quickTimeCreation, instant: Date(timeIntervalSince1970: 300)),
         ]))
         try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             for statement in CatalogSchema.baselineStatements {

@@ -58,10 +58,42 @@ func orderedAssetIDs(for assets: [MediaAsset]) -> [MediaAssetID] {
 // MARK: - Capture timestamp fixtures
 
 extension CaptureTimestampRecord {
-    /// A record carrying only an absolute instant: feeds `capture_instant_unix` ordering,
-    /// supplies no naming fact (`CaptureWallClock` needs local components).
+    /// A UTC-anchored record, as the library reports an absolute time: its UTC wall
+    /// components at offset 0. It feeds `capture_instant_unix` ordering and supplies no
+    /// naming fact (`captureWallClock` takes local-authority times only).
     static func absolute(_ role: CaptureTimestamps.Role = .original, instant: Date) -> CaptureTimestampRecord {
-        CaptureTimestampRecord(role: role.rawValue, instant: instant)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: instant)
+        return CaptureTimestampRecord(
+            role: role.rawValue,
+            instant: instant,
+            utcOffsetSeconds: 0,
+            precision: CaptureTime.Precision.absolute.rawValue,
+            year: parts.year,
+            month: parts.month,
+            day: parts.day,
+            hour: parts.hour,
+            minute: parts.minute,
+            second: parts.second
+        )
+    }
+
+    /// A floating local record: wall-clock components with no offset and no instant, as
+    /// an Exif time without `OffsetTimeOriginal` reads.
+    static func floating(_ role: CaptureTimestamps.Role = .original) -> CaptureTimestampRecord {
+        CaptureTimestampRecord(
+            role: role.rawValue,
+            instant: nil,
+            utcOffsetSeconds: nil,
+            precision: CaptureTime.Precision.localFloating.rawValue,
+            year: 2026,
+            month: 4,
+            day: 25,
+            hour: 14,
+            minute: 51,
+            second: 34
+        )
     }
 }
 

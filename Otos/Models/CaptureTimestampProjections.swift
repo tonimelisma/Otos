@@ -30,23 +30,66 @@ nonisolated extension CaptureTimestampRecord {
     }
 }
 
-/// The absolute moment of capture the catalog sorts by (`capture_instant_unix`, which
-/// `best_capture_unix` falls back from to the file's dates): the library's choice
-/// (`CaptureTimestamps.instantPrecedence` — the camera clock's roles, then GPS) applied to
-/// the stored records, the first role in that order whose record has a UTC instant.
-///
-/// This is a *derivation*, not a second stored fact: it is read from
-/// `metadata.timestamps`, the one stored copy. A role without a usable instant (a
-/// floating Exif time) is passed over here while its local components stay in the record
-/// for `CaptureWallClock`.
-nonisolated enum CaptureInstant {
-    static func select(from records: [CaptureTimestampRecord]) -> Date? {
-        let byRole = Dictionary(grouping: records, by: \.role)
-        for role in CaptureTimestamps.instantPrecedence {
-            if let instant = byRole[role.rawValue]?.lazy.compactMap(\.instant).first {
-                return instant
-            }
+nonisolated extension CaptureTime {
+    /// The library's value for a stored record, or nil when the record is not a capture
+    /// time this build can read: a precision it does not know, or wall-clock components
+    /// missing or out of range. Such a record is left out of every selection rather than
+    /// chosen and then failing.
+    init?(record: CaptureTimestampRecord) {
+        guard let precisionName = record.precision,
+              let precision = Precision(rawValue: precisionName),
+              let year = record.year,
+              let month = record.month,
+              let day = record.day,
+              let hour = record.hour,
+              let minute = record.minute,
+              let second = record.second,
+              (1 ... 12).contains(month),
+              (1 ... 31).contains(day),
+              (0 ... 23).contains(hour),
+              (0 ... 59).contains(minute),
+              (0 ... 60).contains(second)
+        else {
+            return nil
         }
-        return nil
+        self.init(
+            year: year,
+            month: month,
+            day: day,
+            hour: hour,
+            minute: minute,
+            second: second,
+            utcOffsetSeconds: record.utcOffsetSeconds,
+            instant: record.instant,
+            precision: precision
+        )
+    }
+}
+
+/// The stored timestamps put back into the library's own value (ADR 0039), so its
+/// selections answer the catalog's questions: `captureInstant` orders a file
+/// (`capture_instant_unix`, which `best_capture_unix` falls back from to the file's
+/// dates) and `captureWallClock` names it (`CaptureWallClock`). Otos restates neither
+/// precedence.
+///
+/// `metadata.timestamps` is the one stored copy; both are derived from it where they are
+/// written. A record of a role this build does not know, or one that is not a capture time
+/// (`CaptureTime(record:)`), is left out.
+nonisolated extension CaptureTimestamps {
+    init(records: [CaptureTimestampRecord]) {
+        self.init(entries: records.compactMap { record in
+            guard let role = Role(rawValue: record.role), let time = CaptureTime(record: record) else {
+                return nil
+            }
+            return (role, time)
+        })
+    }
+}
+
+nonisolated extension AssetMetadata {
+    /// The instant the catalog sorts this file by (`capture_instant_unix`): the library's
+    /// `captureInstant`, asked of the stored records.
+    var captureInstant: Date? {
+        CaptureTimestamps(records: timestamps).captureInstant?.time.instant
     }
 }

@@ -7,13 +7,11 @@ import MediaMetadata
 /// and where the item was captured — never a UTC-anchored timestamp without a
 /// recoverable capture zone, and never a fabricated planning/copy time.
 ///
-/// Selection prefers local-authority candidates (`localFloating` /
-/// `localWithOffset`) in the library's own wall-clock order,
-/// `CaptureTimestamps.wallClockPrecedence` (ADR 0039): original → digitized →
-/// quickTimeCreation → quickTimeContentCreate → riffRecording, with the audio-only roles
-/// after it never stored (MED-004). Absolute candidates (container creation, GPS, bare-Z)
-/// are excluded. It selects from the persisted records rather than a live read, so a
-/// reused overlay and a re-read row name the same way. The compact integer is
+/// The wall clock is the library's own selection, `CaptureTimestamps.captureWallClock`
+/// (ADR 0039): the first local-authority time (`localFloating` / `localWithOffset`) in
+/// `wallClockPrecedence`, never an absolute one (container creation, GPS, bare-Z). It is
+/// asked of the persisted records rather than a live read, so a reused overlay and a
+/// re-read row name the same way. The compact integer is
 /// `YYYYMMDDHHMMSS` so naming can format components verbatim without zone math.
 nonisolated enum CaptureWallClock {
     struct Selection: Equatable, Sendable {
@@ -84,57 +82,23 @@ nonisolated enum CaptureWallClock {
         let second: Int
     }
 
-    /// Selects the embedded local wall clock from persisted timestamp records.
+    /// The embedded local wall clock from persisted timestamp records: the library's
+    /// `captureWallClock` (ADR 0039) as a compact integer and its precision.
     static func select(from records: [CaptureTimestampRecord]) -> Selection? {
-        let byRole = Dictionary(grouping: records, by: \.role)
-        for role in CaptureTimestamps.wallClockPrecedence {
-            guard let candidates = byRole[role.rawValue] else {
-                continue
-            }
-            if let local = candidates.first(where: isLocalAuthority),
-               let selection = selection(from: local)
-            {
-                return selection
-            }
-        }
-        return nil
-    }
-
-    static func isLocalAuthority(_ record: CaptureTimestampRecord) -> Bool {
-        switch record.precision {
-        case "localFloating", "localWithOffset":
-            true
-        default:
-            false
-        }
-    }
-
-    static func selection(from record: CaptureTimestampRecord) -> Selection? {
-        guard let year = record.year,
-              let month = record.month,
-              let day = record.day,
-              let hour = record.hour,
-              let minute = record.minute,
-              let second = record.second,
-              let precision = record.precision,
-              isLocalAuthority(record),
-              (1 ... 12).contains(month),
-              (1 ... 31).contains(day),
-              (0 ... 23).contains(hour),
-              (0 ... 59).contains(minute),
-              (0 ... 60).contains(second)
+        guard let time = CaptureTimestamps(records: records).captureWallClock?.time,
+              let local = time.captureLocalComponents
         else {
             return nil
         }
         // YYYYMMDDHHMMSS — e.g. 20260101120000
         let compact =
-            Int64(year) * 10_000_000_000
-                + Int64(month) * 100_000_000
-                + Int64(day) * 1_000_000
-                + Int64(hour) * 10000
-                + Int64(minute) * 100
-                + Int64(second)
-        return Selection(compact: compact, precision: precision)
+            Int64(local.year) * 10_000_000_000
+                + Int64(local.month) * 100_000_000
+                + Int64(local.day) * 1_000_000
+                + Int64(local.hour) * 10000
+                + Int64(local.minute) * 100
+                + Int64(local.second)
+        return Selection(compact: compact, precision: time.precision.rawValue)
     }
 
     static func components(fromCompact compact: Int64) -> Components? {
