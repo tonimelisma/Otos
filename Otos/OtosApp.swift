@@ -378,18 +378,19 @@ public struct OtosApp: App {
                 }
                 .keyboardShortcut("-", modifiers: .command)
                 .disabled(!catalogViewModel.canZoomOut)
-                Button("Toggle Actual Size") {
+                // Z toggles between fit and actual size, as in Lightroom; the item names the
+                // act it does now, as Preview's Actual Size and Zoom to Fit do.
+                Button(catalogViewModel.loupeZoomReport?.isFit == false ? "Zoom to Fit" : "Actual Size") {
                     catalogViewModel.toggleLoupeZoom()
                 }
                 .keyboardShortcut("z", modifiers: [])
                 .disabled(catalogViewModel.viewMode != .loupe || catalogViewModel.loupeZoomReport == nil)
-                Button(catalogViewModel.showsLoupeInfo ? "Hide Info" : "Show Info") {
-                    catalogViewModel.toggleLoupeInfo()
+                Button(catalogViewModel.showsInfo ? "Hide Info" : "Show Info") {
+                    catalogViewModel.toggleInspector(.info)
                 }
                 .keyboardShortcut("i", modifiers: [])
-                .disabled(catalogViewModel.viewMode != .loupe)
                 Button(catalogViewModel.isEditPanelPresented ? "Hide Edit" : "Show Edit") {
-                    catalogViewModel.toggleEditPanel()
+                    catalogViewModel.toggleInspector(.edit)
                 }
                 .keyboardShortcut("e", modifiers: [])
                 // Lightroom's before/after key.

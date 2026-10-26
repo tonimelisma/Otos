@@ -17,7 +17,7 @@ struct CatalogWindowViewModelEditTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             model.selectAll()
             model.setViewMode(.loupe)
             try await waitUntil { model.editTarget?.id == id && model.canEdit }
@@ -65,13 +65,36 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    /// An undo shows what it changes (F-18): undoing an edit to a photo the user has moved
+    /// away from selects that photo again, and the panel follows it.
+    @Test func undoingAnEditToAnotherPhotoRevealsIt() async throws {
+        try await withEditableLibrary(fileCount: 2) { library in
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            model.toggleInspector(.edit)
+            model.selectAssets([library.ids[0]])
+            try await waitUntil { model.editTarget?.id == library.ids[0] && model.canEdit }
+            model.setEditValue(0.5, for: .exposure)
+            try await waitUntil { model.hasSettledEdits }
+
+            model.selectAssets([library.ids[1]])
+            try await waitUntil { model.editTarget?.id == library.ids[1] }
+            model.undoLastChange()
+
+            #expect(model.targetIDs(.current) == [library.ids[0]])
+            try await waitUntil { model.hasSettledEdits && model.editTarget?.id == library.ids[0] }
+            #expect(try await library.store.editRecipe(for: library.ids[0])?.recipe == .neutral)
+        }
+    }
+
     @Test func undoAndRedoStepThroughSavesAndBringThePanelAlong() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.editTarget?.id == id && model.canEdit }
 
@@ -103,7 +126,7 @@ struct CatalogWindowViewModelEditTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.editTarget?.id == id && model.canEdit }
 
@@ -121,7 +144,7 @@ struct CatalogWindowViewModelEditTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.editTarget?.id == id && model.canEdit }
             model.setEditValue(0.5, for: .exposure)
@@ -147,7 +170,7 @@ struct CatalogWindowViewModelEditTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             model.selectAll()
             #expect(!model.canPickNeutral)
             model.setViewMode(.loupe)
@@ -172,7 +195,7 @@ struct CatalogWindowViewModelEditTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             model.selectAll()
             model.setViewMode(.loupe)
             try await waitUntil { model.canEdit }
@@ -224,7 +247,7 @@ struct CatalogWindowViewModelEditTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             model.selectAll()
             model.setViewMode(.loupe)
             try await waitUntil { model.editTarget?.id == library.ids[0] && model.canEdit }
@@ -264,7 +287,7 @@ struct CatalogWindowViewModelEditTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.canEdit }
 
@@ -301,7 +324,7 @@ struct CatalogWindowViewModelEditTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             _ = model.applyGridClick(hit: library.ids[0], modifiers: [], orderedIDs: library.ids)
             try await waitUntil { model.editTarget?.id == library.ids[0] }
 
@@ -318,11 +341,11 @@ struct CatalogWindowViewModelEditTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.editTarget != nil }
 
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
 
             #expect(!model.isEditPanelPresented)
             #expect(model.editTarget == nil)

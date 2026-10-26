@@ -15,9 +15,60 @@ import SwiftUI
 /// the model. The model decides; the view renders.
 struct ContentView: View {
     @Bindable var viewModel: CatalogWindowViewModel
+    /// The pane the inspector last showed: view-local, so a collapsing column keeps it.
+    @State private var lastInspectorPane: InspectorPane = .edit
 
     /// The large-download question (Plan 0104): the suppression checkbox writes the same
     /// preference as Settings ▸ General.
+    /// The inspector's pane: Info or Edit. While the column collapses its last pane stays,
+    /// so the content does not switch under the animation.
+    @ViewBuilder
+    private var inspectorContent: some View {
+        switch viewModel.inspectorPane ?? lastInspectorPane {
+        case .info:
+            InfoPaneView(info: viewModel.photoInfo)
+        case .edit:
+            EditPanelView(
+                photoName: viewModel.editTarget?.id.fileURL.lastPathComponent,
+                facts: viewModel.editPhotoFacts,
+                recipe: viewModel.editDraft,
+                histogram: viewModel.editHistogram,
+                original: EditPanelOriginalState(
+                    isShowingOriginal: viewModel.isShowingOriginal,
+                    canShowOriginal: viewModel.canShowOriginal,
+                    canRevert: viewModel.canRevertToOriginal
+                ),
+                selectedControl: viewModel.selectedEditControl,
+                isPickingNeutral: viewModel.isPickingNeutral,
+                canPickNeutral: viewModel.canPickNeutral,
+                crop: EditPanelCropState(
+                    isCropping: viewModel.isCropping,
+                    canCrop: viewModel.canCrop,
+                    aspect: viewModel.cropAspect,
+                    isLandscape: viewModel.cropAspectIsLandscape
+                ),
+                setValue: viewModel.setEditValue,
+                setDragging: viewModel.setEditDragging,
+                resetSection: viewModel.resetEditSection,
+                toggleNeutralPicker: viewModel.toggleNeutralPicker,
+                cropActions: EditPanelCropActions(
+                    toggleTool: viewModel.toggleCropTool,
+                    setAspect: viewModel.setCropAspect,
+                    rotateAspect: viewModel.rotateCropAspect,
+                    turn: viewModel.turnPhoto(clockwise:),
+                    flip: viewModel.flipPhoto(horizontally:)
+                ),
+                setEntering: viewModel.setEnteringEditValue,
+                setLensCorrection: viewModel.setLensCorrection,
+                resetControl: viewModel.resetEditControl,
+                originalActions: EditPanelOriginalActions(
+                    toggleShowOriginal: viewModel.toggleShowOriginal,
+                    revert: viewModel.revertToOriginal
+                )
+            )
+        }
+    }
+
     private var largeTrashDownloadAlertHost: some View {
         Color.clear
             .alert(
@@ -72,6 +123,10 @@ struct ContentView: View {
                     )
                 } else {
                     detailContent
+                        // An active filter names itself under the title, so a scope that
+                        // looks short is never mistaken for the whole of it (DES-029:
+                        // never the filter glyph's color alone).
+                        .navigationSubtitle(viewModel.queryDescriptor.filter.isActive ? "Filtered" : "")
                 }
                 if let presentation = viewModel.selectedImportPresentation {
                     ImportPlanFooter(
@@ -131,55 +186,24 @@ struct ContentView: View {
             }
             // Hosted on its own view so `Do not ask again` applies to this alert only.
             .background { largeTrashDownloadAlertHost }
-            // The trailing inspector column collapses and expands like the sidebar; the
-            // toolbar button and View ▸ Show Edit drive the same intent.
+            // The trailing inspector column collapses and expands like the sidebar. It holds
+            // one pane at a time, Info or Edit; the toolbar toggles and View ▸ Show Info /
+            // Show Edit drive the same intents.
             .inspector(isPresented: Binding(
-                get: { viewModel.isEditPanelPresented },
+                get: { viewModel.inspectorPane != nil },
                 set: { presented in
-                    if presented != viewModel.isEditPanelPresented {
-                        viewModel.toggleEditPanel()
+                    if !presented {
+                        viewModel.setInspectorPane(nil)
                     }
                 }
             )) {
-                EditPanelView(
-                    photoName: viewModel.editTarget?.id.fileURL.lastPathComponent,
-                    facts: viewModel.editPhotoFacts,
-                    recipe: viewModel.editDraft,
-                    histogram: viewModel.editHistogram,
-                    original: EditPanelOriginalState(
-                        isShowingOriginal: viewModel.isShowingOriginal,
-                        canShowOriginal: viewModel.canShowOriginal,
-                        canRevert: viewModel.canRevertToOriginal
-                    ),
-                    selectedControl: viewModel.selectedEditControl,
-                    isPickingNeutral: viewModel.isPickingNeutral,
-                    canPickNeutral: viewModel.canPickNeutral,
-                    crop: EditPanelCropState(
-                        isCropping: viewModel.isCropping,
-                        canCrop: viewModel.canCrop,
-                        aspect: viewModel.cropAspect,
-                        isLandscape: viewModel.cropAspectIsLandscape
-                    ),
-                    setValue: viewModel.setEditValue,
-                    setDragging: viewModel.setEditDragging,
-                    resetSection: viewModel.resetEditSection,
-                    toggleNeutralPicker: viewModel.toggleNeutralPicker,
-                    cropActions: EditPanelCropActions(
-                        toggleTool: viewModel.toggleCropTool,
-                        setAspect: viewModel.setCropAspect,
-                        rotateAspect: viewModel.rotateCropAspect,
-                        turn: viewModel.turnPhoto(clockwise:),
-                        flip: viewModel.flipPhoto(horizontally:)
-                    ),
-                    setEntering: viewModel.setEnteringEditValue,
-                    setLensCorrection: viewModel.setLensCorrection,
-                    resetControl: viewModel.resetEditControl,
-                    originalActions: EditPanelOriginalActions(
-                        toggleShowOriginal: viewModel.toggleShowOriginal,
-                        revert: viewModel.revertToOriginal
-                    )
-                )
-                .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
+                inspectorContent
+                    .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
+            }
+            .onChange(of: viewModel.inspectorPane) { _, pane in
+                if let pane {
+                    lastInspectorPane = pane
+                }
             }
         }
         .toolbar {
@@ -227,9 +251,8 @@ struct ContentView: View {
                 CatalogSurfaceToolbarToggle(
                     title: "Info",
                     systemImage: "info.circle",
-                    isShowing: viewModel.showsLoupeInfo,
-                    isEnabled: viewModel.viewMode == .loupe,
-                    toggle: viewModel.toggleLoupeInfo
+                    isShowing: viewModel.showsInfo,
+                    toggle: { viewModel.toggleInspector(.info) }
                 )
             }
             ToolbarItem(placement: .primaryAction) {
@@ -244,7 +267,7 @@ struct ContentView: View {
                     title: "Edit",
                     systemImage: "slider.horizontal.3",
                     isShowing: viewModel.isEditPanelPresented,
-                    toggle: viewModel.toggleEditPanel
+                    toggle: { viewModel.toggleInspector(.edit) }
                 )
             }
             ToolbarItem(placement: .primaryAction) {
@@ -507,7 +530,6 @@ struct ContentView: View {
                     : nil,
                 videoTrimCommand: viewModel.videoTrimCommand,
                 onVideoTrimmed: viewModel.finishTrim(id:),
-                loupeInfo: viewModel.loupeInfo,
                 showsOriginal: viewModel.loupeShowsOriginal
             )
             .navigationTitle(viewModel.state.title)

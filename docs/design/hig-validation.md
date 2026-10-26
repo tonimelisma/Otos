@@ -255,14 +255,15 @@ mireds, so equal distances are unequal kelvin, and nothing on the track says so.
 position for each, spaced about evenly along it (21, 52 and 83 percent of the travel).
 5500 K was dropped: it falls within 40 pt of 10000 K at the panel's width (APP-047).
 
-### F-18 — An undone edit to a photo off screen is not shown (proposed, low)
+### F-18 — An undone edit to a photo off screen is not shown (applied)
 
 Undo and redo: "Show the results of an undo or redo… if the action people want to undo
 affects content… that's no longer visible." Undoing an edit after moving to another
 photo changes a thumbnail somewhere in the grid without revealing it.
 
-**Proposed:** none yet; it applies equally to curation (APP-039), so it belongs to one
-decision for the whole undo stack, not to the edit panel alone.
+**Applied:** one decision for the stack: a curation or edit undo or redo whose items are
+not the current targets selects them, so the loupe moves to the photo and the grid
+scrolls to it (APP-039).
 
 ## Toolbar and app-wide consistency audit (2026-10-25)
 
@@ -304,26 +305,25 @@ View ▸ Show Sidebar / Hide Sidebar (⌃⌘S) is there (APP-002).
 Internal vocabulary in the interface (DES-035, DES-039). **Applied:** "Destination",
 "Subfolders" and "File names".
 
-### F-26 — Consistency findings not yet taken up (proposed)
+### F-26 — Consistency findings (applied)
 
-- **Curation in the toolbar:** Like / Not Rated / Dislike sit as three separate buttons,
-  while the view modes and zoom are joined segments.
-- **An active filter:** it shows only as a tinted Filter glyph, and the title still reads
-  "All Media" (DES-029: never colour alone).
-- **Settings:**
-  - Four tabs use three layouts: grouped forms, a list without column headers, and a
-    table with headers.
-  - All sit in a fixed 660 × 380 window, so General is mostly empty.
-- **Vocabulary:** Settings says "Volume" where the import flow says "card"; Loupe says
-  "No Selection" where Compare says "No Photo".
-- **Menu names:** View ▸ "Toggle Actual Size" breaks the Show/Hide naming; Preview says
-  "Actual Size".
-- **Edit panel (applied):** every section header carried a filled Reset pill, even when
-  disabled, and six of them competed with the section titles; Reset is now a quiet
-  borderless text button. Highlights rested at the far right (−100…0) while every other
-  tonal slider rests at its centre; it now runs −100…100 (APP-046).
-- **Info:** an overlay on the photo, while Edit is a column, and both show the file name.
-  Lightroom keeps Info and Edit in one right-hand column.
+- **Curation in the toolbar:** Like / Not Rated / Dislike sat as three separate buttons
+  while the view modes and zoom were joined. **Applied:** one fused segmented control,
+  the current choice drawn selected (DES-101).
+- **An active filter:** it showed only as a tinted Filter glyph, and the title still read
+  "All Media" (DES-029). **Applied:** the window subtitle reads `Filtered` and the glyph
+  turns filled (`line.3.horizontal.decrease.circle.fill`) as well as accented.
+- **Settings:** four tabs used three layouts in one fixed 660 × 380 window. **Applied:**
+  grouped forms for preferences, headed tables with actions beneath for Libraries and
+  Removable Media, each tab sized to itself (DES-102).
+- **Vocabulary:** Settings said "Volume" where the import flow says "card", and Compare
+  said "No Photo" where Loupe says "No Selection". **Applied:** "Card" and "No Selection".
+- **Menu names:** View ▸ "Toggle Actual Size" named no act. **Applied:** the item reads
+  `Actual Size` at fit and `Zoom to Fit` otherwise, as Preview's two items do; Z is
+  unchanged.
+- **Edit panel (applied in #514):** quiet section Reset; Highlights −100…+100.
+- **Info:** an overlay on the photo while Edit was a column, both showing the file name.
+  **Applied:** Info is a pane of the same inspector column (DES-088, APP-041).
 
 ## Re-test procedure
 

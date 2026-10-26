@@ -3,22 +3,22 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// The loupe info overlay's facts (APP-041): known values are formatted, unknown ones
-/// say so instead of vanishing.
-struct LoupeInfoModelTests {
+/// The Info pane's facts (APP-041): known values are formatted, unknown ones say so
+/// instead of vanishing.
+struct PhotoInfoTests {
     @Test func unknownFactsReadUnknown() {
         let id = MediaAssetID(
             libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
             relativePath: MediaRelativePath(rawValue: "Trip/IMG_0001.ARW")
         )
 
-        let model = LoupeInfoModel.make(id: id, asset: nil, kind: nil, nativePixelSize: nil)
+        let model = PhotoInfo.make(id: id, asset: nil, kind: nil, nativePixelSize: nil)
 
         #expect(model.fileName == "IMG_0001.ARW")
-        #expect(model.captureDate == LoupeInfoModel.unknown)
-        #expect(model.dimensions == LoupeInfoModel.unknown)
+        #expect(model.captureDate == PhotoInfo.unknown)
+        #expect(model.dimensions == PhotoInfo.unknown)
         #expect(model.kind == "ARW")
-        #expect(model.fileSize == LoupeInfoModel.unknown)
+        #expect(model.fileSize == PhotoInfo.unknown)
     }
 
     @Test func knownFactsAreFormatted() {
@@ -36,7 +36,7 @@ struct LoupeInfoModelTests {
             contentModifiedAt: nil
         )
 
-        let model = LoupeInfoModel.make(
+        let model = PhotoInfo.make(
             id: id,
             asset: asset,
             kind: .video,
@@ -47,6 +47,6 @@ struct LoupeInfoModelTests {
         #expect(model.dimensions == "3840 × 2160")
         #expect(model.kind == "Video · MOV")
         #expect(model.fileSize == "52 MB")
-        #expect(model.captureDate == LoupeInfoModel.unknown)
+        #expect(model.captureDate == PhotoInfo.unknown)
     }
 }

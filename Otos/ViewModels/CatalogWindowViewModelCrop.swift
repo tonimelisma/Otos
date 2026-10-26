@@ -26,9 +26,7 @@ extension CatalogWindowViewModel {
             endCropping()
             return
         }
-        if !isEditPanelPresented {
-            toggleEditPanel()
-        }
+        setInspectorPane(.edit)
         if viewMode != .loupe {
             setViewMode(.loupe)
         }

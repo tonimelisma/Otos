@@ -309,6 +309,7 @@ extension CatalogWindowViewModel {
         }
         windowUndoManager.setActionName(actionName)
         let ids = state.mediaGrid.orderedAssetIDs.filter { assignments[$0] != nil }
+        revealUndoneChange(ids)
         enqueueMediaChoice(
             assignments: assignments,
             ids: ids,
@@ -321,6 +322,18 @@ extension CatalogWindowViewModel {
         OtosLog.ui.notice(
             "op=mediaChoice.restore count=\(assignments.count, privacy: .public) origin=\(origin.rawValue, privacy: .public)"
         )
+    }
+
+    /// Undo and redo show what they change (Undo and redo, HIG; `hig-validation.md` F-18):
+    /// when the items a restore touches are not the current targets, they become the
+    /// selection — the loupe moves to the first, the grid scrolls to it — so a change to a
+    /// photo out of view is never made unseen. Items outside the shown scope stay unrevealed.
+    func revealUndoneChange(_ ids: [MediaAssetID]) {
+        let changed = Set(ids)
+        let shown = state.mediaGrid.orderedAssetIDs.filter(changed.contains)
+        guard !shown.isEmpty, Set(targetIDs(.current)) != Set(shown) else { return }
+        selectAssets(shown)
+        OtosLog.ui.noticeOperation("undo.reveal", phase: "selected", fields: ["count": "\(shown.count)"])
     }
 
     func publishUndoState() {
