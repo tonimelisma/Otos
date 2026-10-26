@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import GRDB
+import MediaMetadata
 
 /// Catalog query gateway guide
 ///
@@ -461,11 +462,18 @@ private nonisolated func storedTileDetail(from row: Row) throws -> StoredTileDet
     let pixelWidth: Int? = row["pixel_width"]
     let pixelHeight: Int? = row["pixel_height"]
     let orientation: Int? = row["orientation"]
-    // EXIF orientations 5–8 rotate the stored dimensions a quarter turn.
-    let nativePixelSize: CGSize? = if let pixelWidth, let pixelHeight, pixelWidth > 0, pixelHeight > 0 {
-        (orientation ?? 1) >= 5
-            ? CGSize(width: pixelHeight, height: pixelWidth)
-            : CGSize(width: pixelWidth, height: pixelHeight)
+    // The upright size is the library's answer for the stored size and orientation
+    // (ADR 0039): `PixelGeometry` turns a quarter-turned orientation's dimensions itself.
+    let geometry = PixelGeometry(
+        pixelWidth: pixelWidth,
+        pixelHeight: pixelHeight,
+        orientation: orientation.flatMap(MediaMetadata.Orientation.init(rawValue:))
+    )
+    let nativePixelSize: CGSize? = if let width = geometry.displayPixelWidth,
+                                      let height = geometry.displayPixelHeight,
+                                      width > 0, height > 0
+    {
+        CGSize(width: width, height: height)
     } else {
         nil
     }

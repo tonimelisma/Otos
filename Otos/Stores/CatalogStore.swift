@@ -2073,6 +2073,126 @@ extension CatalogStore {
         outcome.appliedCount += 1
     }
 
+    // MARK: - Metadata refresh (ADR 0039)
+
+    /// Library rows whose metadata record an older MediaMetadata extraction revision
+    /// produced (or one from before revisions were stored), in path order after `cursor`.
+    /// Only rows whose enrichment is current: a row that is stale anyway is re-read by
+    /// enrichment, which stamps the revision itself. Card and camera rows are never listed.
+    func metadataRefreshCandidates(
+        belowRevision revision: Int,
+        after cursor: MediaAssetID?,
+        limit: Int
+    ) async throws -> [MetadataRefreshCandidate] {
+        let rootsByID = Dictionary(uniqueKeysWithValues: roots.rowIDSnapshot().map { ($0.value, $0.key) })
+        let dbWriter = try database()
+        let cursorRootID = cursor.flatMap { roots.rowIDSnapshot()[$0.libraryRootPath] } ?? -1
+        let cursorPath = cursor?.relativePath.rawValue ?? ""
+        return try await dbWriter.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT a.library_root_id, a.relative_path, a.byte_size, a.enriched_source_mtime
+                FROM media_asset a
+                JOIN asset_metadata m USING (library_root_id, relative_path)
+                JOIN library_root r ON r.id = a.library_root_id
+                WHERE r.kind = 'library'
+                    AND (m.extraction_revision IS NULL OR m.extraction_revision < ?)
+                    AND NOT (\(EnrichmentClaimGateway.metadataStalenessSQLPredicate()))
+                    AND (a.library_root_id, a.relative_path) > (?, ?)
+                ORDER BY a.library_root_id, a.relative_path
+                LIMIT ?
+                """,
+                arguments: [revision, cursorRootID, cursorPath, limit]
+            ).compactMap { row -> MetadataRefreshCandidate? in
+                let rootID: Int64 = row["library_root_id"]
+                guard let rootPath = rootsByID[rootID] else { return nil }
+                return MetadataRefreshCandidate(
+                    id: MediaAssetID(
+                        libraryRootPath: rootPath,
+                        relativePath: MediaRelativePath(rawValue: row["relative_path"])
+                    ),
+                    sourceSize: row["byte_size"],
+                    sourceMTimeSeconds: row["enriched_source_mtime"]
+                )
+            }
+        }
+    }
+
+    /// Writes re-read metadata records (ADR 0039). Each one lands only while its row still
+    /// has the file signature it was read at and a record from an older revision: a file
+    /// that changed meanwhile, or a row enrichment re-stamped, keeps what it has. Only the
+    /// metadata and the columns derived from it change; thumbnails and previews do not.
+    func applyMetadataRefresh(_ refreshes: [MetadataRefresh]) async throws -> Int {
+        guard !refreshes.isEmpty else { return 0 }
+        let rootIDsByPath = roots.rowIDSnapshot()
+        let dbWriter = try database()
+        let timed = try await timedWrite(dbWriter) { db in
+            var outcome = EnrichmentBatchWriteOutcome()
+            for refresh in refreshes {
+                guard let rootID = rootIDsByPath[refresh.id.libraryRootPath] else { continue }
+                let arguments: StatementArguments = [rootID, refresh.id.relativePath.rawValue]
+                guard try Row.fetchOne(
+                    db,
+                    sql: """
+                    SELECT 1 FROM media_asset a JOIN asset_metadata m USING (library_root_id, relative_path)
+                    WHERE a.library_root_id = ? AND a.relative_path = ?
+                        AND a.byte_size IS ? AND a.enriched_source_size IS ? AND a.enriched_source_mtime IS ?
+                        AND NOT (\(EnrichmentClaimGateway.metadataStalenessSQLPredicate()))
+                        AND (m.extraction_revision IS NULL OR m.extraction_revision < ?)
+                    """,
+                    arguments: arguments + [
+                        refresh.sourceSize, refresh.sourceSize, refresh.sourceMTimeSeconds,
+                        refresh.metadata.extractionRevision,
+                    ]
+                ) != nil else { continue }
+                let overlaySQL = """
+                SELECT best_capture_unix, best_kind, best_format, capture_wall_compact, thumbnail_path, preview_path
+                FROM media_asset WHERE library_root_id = ? AND relative_path = ?
+                """
+                let oldRow = try Row.fetchOne(db, sql: overlaySQL, arguments: arguments)
+                    .map(EnrichmentOverlayBeforeWrite.init(row:))
+                try Self.writeMetadataProjection(
+                    refresh.metadata,
+                    enrichedKind: refresh.enrichedKind,
+                    enrichedFormat: refresh.enrichedFormat,
+                    sourceMTimeSeconds: refresh.sourceMTimeSeconds,
+                    libraryRootID: rootID,
+                    relativePath: refresh.id.relativePath,
+                    db: db
+                )
+                let newRow = try Row.fetchOne(db, sql: overlaySQL, arguments: arguments)
+                    .map(EnrichmentOverlayBeforeWrite.init(row:))
+                if let oldRow, let newRow,
+                   oldRow.bestCaptureUnix != newRow.bestCaptureUnix
+                   || oldRow.bestKind != newRow.bestKind
+                   || oldRow.bestFormat != newRow.bestFormat
+                {
+                    outcome.structureChanged = true
+                }
+                if oldRow?.captureWallCompact != newRow?.captureWallCompact {
+                    outcome.namingChangedRoots.insert(refresh.id.libraryRootPath)
+                }
+                outcome.appliedCount += 1
+            }
+            return outcome
+        }
+        let outcome = timed.value
+        OtosLog.metadata.noticeOperation("metadata.refresh.write", phase: "finish", fields: [
+            "attempted": "\(refreshes.count)",
+            "applied": "\(outcome.appliedCount)",
+            "structureChanged": "\(outcome.structureChanged)",
+            "writeMs": "\(timed.waitMs + timed.execMs)",
+        ])
+        if outcome.appliedCount > 0 {
+            for rootPath in outcome.namingChangedRoots {
+                _ = bumpNamingRevision(for: rootPath, reason: "metadataRefresh")
+            }
+            notifyCatalogChanged(outcome.structureChanged ? .catalogChanged : .assetsDetailChanged)
+        }
+        return outcome.appliedCount
+    }
+
     private func discardStagedImages(_ images: [StagedDerivedImage]) {
         guard let thumbnailDirectory else {
             return

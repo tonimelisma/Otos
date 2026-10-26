@@ -29,6 +29,10 @@ nonisolated struct AssetMetadata: Codable, Equatable {
     var durationSeconds: Double?
     var frameRate: Double?
     var videoCodec: String?
+    /// `MediaMetadataReader.extractionRevision` of the reader that produced this record;
+    /// nil for a record read before revisions were stored. A lower revision is a record
+    /// the current reader may read differently (ADR 0039).
+    var extractionRevision: Int?
 
     init(
         family: String? = nil,
@@ -45,7 +49,8 @@ nonisolated struct AssetMetadata: Codable, Equatable {
         pixelHeight: Int? = nil,
         durationSeconds: Double? = nil,
         frameRate: Double? = nil,
-        videoCodec: String? = nil
+        videoCodec: String? = nil,
+        extractionRevision: Int? = nil
     ) {
         self.family = family
         self.fileExtension = fileExtension
@@ -62,7 +67,28 @@ nonisolated struct AssetMetadata: Codable, Equatable {
         self.durationSeconds = durationSeconds
         self.frameRate = frameRate
         self.videoCodec = videoCodec
+        self.extractionRevision = extractionRevision
     }
+}
+
+/// A library row whose metadata record an older MediaMetadata extraction revision produced,
+/// with the file signature its enrichment is current for (ADR 0039).
+nonisolated struct MetadataRefreshCandidate: Equatable, Sendable {
+    let id: MediaAssetID
+    let sourceSize: Int64?
+    let sourceMTimeSeconds: Int?
+}
+
+/// A metadata record re-read from a row's local bytes by the current reader, to replace the
+/// one an older revision produced. It carries the signature it was read at, so the store
+/// writes it only if the file has not changed since.
+nonisolated struct MetadataRefresh: Equatable, Sendable {
+    let id: MediaAssetID
+    let metadata: AssetMetadata
+    let enrichedKind: MediaKind?
+    let enrichedFormat: MediaFormatToken?
+    let sourceSize: Int64?
+    let sourceMTimeSeconds: Int?
 }
 
 /// One capture-time candidate preserved in the metadata detail JSON, by role (EXIF

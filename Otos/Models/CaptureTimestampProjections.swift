@@ -1,21 +1,33 @@
 import Foundation
+import MediaMetadata
 
-/// The capture-timestamp roles Otos persists in `metadata_extra_json`.
+/// The capture-timestamp roles Otos persists in `metadata_extra_json`: the library's own
+/// roles (`CaptureTimestamps.Role`, whose raw values are its field names and are stable to
+/// store), less the audio-only ones Otos never catalogs (MED-004).
 ///
-/// `CaptureTimestampRecord.role` stays a `String` on purpose — the persisted JSON
-/// must decode a role this build does not know about rather than failing — but no
-/// code spells a role as a literal. Producer (`MediaEnricher.mapTimestamps`) and
-/// both projections below agree by construction.
-nonisolated enum CaptureTimestampRole: String, CaseIterable, Sendable {
-    case original
-    case digitized
-    case tiffDateTime
-    case gps
-    case quickTimeCreation
-    case quickTimeLocation
-    case quickTimeContentCreate
-    case containerCreation
-    case riffRecording
+/// `CaptureTimestampRecord.role` stays a `String` on purpose — the persisted JSON must
+/// decode a role this build does not know rather than failing — but no code spells a role
+/// as a literal.
+nonisolated extension CaptureTimestamps.Role {
+    static let cataloged: [CaptureTimestamps.Role] = allCases.filter { $0 != .id3Recording && $0 != .waveOrigination }
+}
+
+nonisolated extension CaptureTimestampRecord {
+    /// The record of one library timestamp, under its role.
+    init(role: CaptureTimestamps.Role, time: CaptureTime) {
+        self.init(
+            role: role.rawValue,
+            instant: time.instant,
+            utcOffsetSeconds: time.utcOffsetSeconds,
+            precision: time.precision.rawValue,
+            year: time.year,
+            month: time.month,
+            day: time.day,
+            hour: time.hour,
+            minute: time.minute,
+            second: time.second
+        )
+    }
 }
 
 /// The four timestamp roles the `best_capture_unix` generated column coalesces,
@@ -40,7 +52,7 @@ nonisolated struct BestCaptureInstants: Equatable, Sendable {
     /// without a usable UTC instant projects to nil here while its local
     /// components stay preserved in the record for `CaptureWallClock`.
     static func from(_ records: [CaptureTimestampRecord]) -> Self {
-        func instant(_ role: CaptureTimestampRole) -> Date? {
+        func instant(_ role: CaptureTimestamps.Role) -> Date? {
             records.first { $0.role == role.rawValue }?.instant
         }
         return BestCaptureInstants(

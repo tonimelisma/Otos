@@ -1,4 +1,5 @@
 import Foundation
+import MediaMetadata
 @testable import OtosKit
 
 struct CatalogStoreTestState: Equatable {
@@ -59,7 +60,7 @@ func orderedAssetIDs(for assets: [MediaAsset]) -> [MediaAssetID] {
 extension CaptureTimestampRecord {
     /// A record carrying only an absolute instant: feeds `ts_*_unix` ordering,
     /// supplies no naming fact (`CaptureWallClock` needs local components).
-    static func absolute(_ role: CaptureTimestampRole = .original, instant: Date) -> CaptureTimestampRecord {
+    static func absolute(_ role: CaptureTimestamps.Role = .original, instant: Date) -> CaptureTimestampRecord {
         CaptureTimestampRecord(role: role.rawValue, instant: instant)
     }
 }
@@ -77,7 +78,7 @@ extension AssetMetadata {
     /// thing rather than two halves that were free to disagree.
     /// A nil instant yields no record at all, which is what "this role has no
     /// usable absolute timestamp" always meant.
-    static func absoluteCapture(role: CaptureTimestampRole = .original, instant: Date?) -> AssetMetadata {
+    static func absoluteCapture(role: CaptureTimestamps.Role = .original, instant: Date?) -> AssetMetadata {
         guard let instant else { return AssetMetadata() }
         return AssetMetadata(timestamps: [.absolute(role, instant: instant)])
     }
@@ -86,7 +87,7 @@ extension AssetMetadata {
     /// wall-clock components. This feeds best-date ordering and the naming fact,
     /// which is what a photo with an embedded local `DateTimeOriginal` produces.
     static func localCapture(
-        role: CaptureTimestampRole = .original,
+        role: CaptureTimestamps.Role = .original,
         instant: Date,
         timeZone: TimeZone = TimeZone(secondsFromGMT: 0) ?? .current
     ) -> AssetMetadata {

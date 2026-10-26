@@ -8,19 +8,14 @@ import MediaMetadata
 /// recoverable capture zone, and never a fabricated planning/copy time.
 ///
 /// Selection prefers local-authority candidates (`localFloating` /
-/// `localWithOffset`) in role order original → digitized → quickTimeCreation →
-/// quickTimeContentCreate. Absolute candidates (container creation, GPS, bare-Z)
-/// are excluded. The compact integer is `YYYYMMDDHHMMSS` so naming can format
-/// components verbatim without zone math.
+/// `localWithOffset`) in the library's own wall-clock order,
+/// `CaptureTimestamps.wallClockPrecedence` (ADR 0039): original → digitized →
+/// quickTimeCreation → quickTimeContentCreate → riffRecording, with the audio-only roles
+/// after it never stored (MED-004). Absolute candidates (container creation, GPS, bare-Z)
+/// are excluded. It selects from the persisted records rather than a live read, so a
+/// reused overlay and a re-read row name the same way. The compact integer is
+/// `YYYYMMDDHHMMSS` so naming can format components verbatim without zone math.
 nonisolated enum CaptureWallClock {
-    /// Role precedence for naming (ENR-012).
-    static let namingRolePrecedence: [CaptureTimestampRole] = [
-        .original,
-        .digitized,
-        .quickTimeCreation,
-        .quickTimeContentCreate,
-    ]
-
     struct Selection: Equatable, Sendable {
         let compact: Int64
         let precision: String
@@ -92,7 +87,7 @@ nonisolated enum CaptureWallClock {
     /// Selects the embedded local wall clock from persisted timestamp records.
     static func select(from records: [CaptureTimestampRecord]) -> Selection? {
         let byRole = Dictionary(grouping: records, by: \.role)
-        for role in namingRolePrecedence {
+        for role in CaptureTimestamps.wallClockPrecedence {
             guard let candidates = byRole[role.rawValue] else {
                 continue
             }
@@ -101,32 +96,6 @@ nonisolated enum CaptureWallClock {
             {
                 return selection
             }
-        }
-        return nil
-    }
-
-    /// Selects from live MediaMetadata timestamps using `captureLocalComponents`
-    /// so absolute UTC wall clocks are structurally unusable for naming.
-    static func select(from timestamps: CaptureTimestamps) -> Selection? {
-        let ordered: [(CaptureTimestampRole, CaptureTime?)] = [
-            (.original, timestamps.original),
-            (.digitized, timestamps.digitized),
-            (.quickTimeCreation, timestamps.quickTimeCreation),
-            (.quickTimeContentCreate, timestamps.quickTimeContentCreate),
-        ]
-        for (role, time) in ordered {
-            guard let time, let local = time.captureLocalComponents else {
-                continue
-            }
-            _ = role
-            let compact =
-                Int64(local.year) * 10_000_000_000
-                    + Int64(local.month) * 100_000_000
-                    + Int64(local.day) * 1_000_000
-                    + Int64(local.hour) * 10000
-                    + Int64(local.minute) * 100
-                    + Int64(local.second)
-            return Selection(compact: compact, precision: time.precision.rawValue)
         }
         return nil
     }

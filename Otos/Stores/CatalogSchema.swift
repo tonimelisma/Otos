@@ -78,6 +78,16 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// The MediaMetadata extraction revision each metadata record was read with (ADR 0039).
+    /// Records from before the column read `NULL`: unknown, so older than any revision.
+    /// `MetadataRefresher` re-reads a library row whose revision is lower than the
+    /// reader's when its original is already local, and nothing is downloaded for it.
+    static let extractionRevisionMigrationIdentifier = "v6_asset_metadata_extraction_revision"
+
+    static let extractionRevisionStatements: [String] = [
+        "ALTER TABLE asset_metadata ADD COLUMN extraction_revision INTEGER",
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (

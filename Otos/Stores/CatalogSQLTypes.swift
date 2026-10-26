@@ -39,7 +39,6 @@ nonisolated struct ReusableEnrichmentOverlay: Equatable, Sendable {
     let metadata: AssetMetadata
     let enrichedKind: MediaKind?
     let enrichedFormat: MediaFormatToken?
-    let durationSeconds: Double?
     let sourceByteSize: Int64?
     let sourceMTimeSeconds: Int?
     let contentHash: XXH3Digest128?

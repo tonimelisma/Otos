@@ -286,6 +286,9 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let catalogStore: CatalogStore
     @ObservationIgnored private let catalogProjection: CatalogProjection
     @ObservationIgnored let enrichmentCoordinator: EnrichmentCoordinator?
+    /// Re-reads metadata an older MediaMetadata revision produced, from local bytes only
+    /// (ADR 0039); runs once per launch with enrichment.
+    @ObservationIgnored let metadataRefresher: MetadataRefresher?
     @ObservationIgnored let materializationCoordinator: MaterializationCoordinator?
     @ObservationIgnored let deviceStagingRegistry: DeviceStagingRegistry
     @ObservationIgnored private let mediaTileDetailReader: MediaTileDetailReader
@@ -538,6 +541,7 @@ final class CatalogWindowViewModel {
                 )
                 : nil
         )
+        metadataRefresher = startsEnrichment ? MetadataRefresher(store: catalogStore) : nil
         self.stallMonitor = stallMonitor
         self.startsStallMonitor = startsStallMonitor
         self.startsEnrichment = startsEnrichment
@@ -647,11 +651,13 @@ final class CatalogWindowViewModel {
         let mediaTrash = mediaTrashCoordinator
         let enrichment = enrichmentCoordinator
         let materialization = materializationCoordinator
+        let refresher = metadataRefresher
         // swiftlint:disable:next unowned_view_model_task
         Task {
             await withDiscardingTaskGroup { group in
                 group.addTask { await mediaOps?.shutdown() }
                 group.addTask { await mediaTrash.shutdown() }
+                group.addTask { await refresher?.shutdown() }
                 group.addTask {
                     await enrichment?.shutdown()
                     await materialization?.shutdown()
@@ -781,7 +787,7 @@ extension CatalogWindowViewModel {
         // so a coordinator started too early could stay idle until some unrelated change.
         // `store.start()` is idempotent and shared, so this awaits the same load
         // `startCatalog` runs.
-        enrichmentStartTask = Task { [coordinator, materializationCoordinator, store = catalogStore] in
+        enrichmentStartTask = Task { [coordinator, materializationCoordinator, metadataRefresher, store = catalogStore] in
             do {
                 try await store.start()
             } catch {
@@ -790,6 +796,7 @@ extension CatalogWindowViewModel {
             }
             await materializationCoordinator?.start()
             await coordinator.start()
+            await metadataRefresher?.refresh()
         }
     }
 

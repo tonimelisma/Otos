@@ -37,6 +37,22 @@ struct CaptureWallClockTests {
         #expect(wall?.precision == "localFloating")
     }
 
+    /// ADR 0039: the wall clock follows the library's `wallClockPrecedence`, so an AVI's
+    /// RIFF recording date (ICRD/IDIT) names it when no earlier role is local, rather than
+    /// the mtime-less-duration fallback. A later role never outranks an earlier one.
+    @Test func aRiffRecordingDateNamesTheFileWhenNoEarlierRoleIsLocal() {
+        let riff = CaptureTimestampRecord(
+            role: "riffRecording", instant: nil, utcOffsetSeconds: nil, precision: "localFloating",
+            year: 2010, month: 6, day: 5, hour: 14, minute: 3, second: 9
+        )
+        #expect(CaptureWallClock.select(from: [riff])?.compact == 20_100_605_140_309)
+        let original = CaptureTimestampRecord(
+            role: "original", instant: nil, utcOffsetSeconds: nil, precision: "localFloating",
+            year: 2011, month: 1, day: 2, hour: 3, minute: 4, second: 5
+        )
+        #expect(CaptureWallClock.select(from: [riff, original])?.compact == 20_110_102_030_405)
+    }
+
     @Test func prefersOriginalOverDigitizedWhenBothLocal() {
         let records = [
             CaptureTimestampRecord(
@@ -133,6 +149,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.baselineMigrationIdentifier, CatalogSchema.fileIdentifierMigrationIdentifier,
             CatalogSchema.previewPathMigrationIdentifier, CatalogSchema.editRecipeMigrationIdentifier,
             CatalogSchema.heifOrientationMigrationIdentifier,
+            CatalogSchema.extractionRevisionMigrationIdentifier,
         ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
@@ -210,6 +227,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.baselineMigrationIdentifier, CatalogSchema.fileIdentifierMigrationIdentifier,
             CatalogSchema.previewPathMigrationIdentifier, CatalogSchema.editRecipeMigrationIdentifier,
             CatalogSchema.heifOrientationMigrationIdentifier,
+            CatalogSchema.extractionRevisionMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)

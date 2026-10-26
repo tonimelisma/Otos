@@ -283,7 +283,7 @@ extension CatalogStore {
             db,
             sql: """
             SELECT m.byte_size, m.content_modified_at_unix,
-                   m.enriched_kind, m.enriched_format, m.duration_seconds,
+                   m.enriched_kind, m.enriched_format,
                    m.enriched_source_size, m.enriched_source_mtime,
                    m.content_hash_xxh3_128, m.content_hash_source_size,
                    m.content_hash_source_mtime, m.thumbnail_path, m.preview_path,
@@ -320,7 +320,6 @@ extension CatalogStore {
             metadata: metadata,
             enrichedKind: enrichedKindRaw.flatMap(MediaKind.init(rawValue:)),
             enrichedFormat: enrichedFormatRaw.map(MediaFormatToken.init(rawValue:)),
-            durationSeconds: row["duration_seconds"],
             sourceByteSize: row["byte_size"],
             sourceMTimeSeconds: modified.map { Int($0.rounded(.down)) } ?? -1,
             contentHash: contentHashData.flatMap(XXH3Digest128.init(data:)),
