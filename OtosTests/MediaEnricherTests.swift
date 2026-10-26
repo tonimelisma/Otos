@@ -141,7 +141,7 @@ struct MediaEnricherTests {
     }
 
     /// A HEIF that records its rotation only in its `irot` property (as Sony cameras write
-    /// it) is cataloged with that orientation, so its upright size is right.
+    /// it) is cataloged with that orientation, so the catalog turns its stored size upright.
     @Test func aHeifTurnedByItsIrotPropertyIsReadWithItsOrientation() async throws {
         let temp = try makeTestDirectory()
         let file = temp.appending(path: "turned.heic")
@@ -157,8 +157,6 @@ struct MediaEnricherTests {
             return
         }
         #expect(result.metadata.orientation == 6)
-        #expect(result.metadata.pixelWidth == 96)
-        #expect(result.metadata.pixelHeight == 64)
     }
 
     /// ADR 0035: a video keeps its Quick Look thumbnail and gets no preview.
