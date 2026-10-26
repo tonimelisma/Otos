@@ -58,7 +58,7 @@ func orderedAssetIDs(for assets: [MediaAsset]) -> [MediaAssetID] {
 // MARK: - Capture timestamp fixtures
 
 extension CaptureTimestampRecord {
-    /// A record carrying only an absolute instant: feeds `ts_*_unix` ordering,
+    /// A record carrying only an absolute instant: feeds `capture_instant_unix` ordering,
     /// supplies no naming fact (`CaptureWallClock` needs local components).
     static func absolute(_ role: CaptureTimestamps.Role = .original, instant: Date) -> CaptureTimestampRecord {
         CaptureTimestampRecord(role: role.rawValue, instant: instant)
@@ -69,7 +69,7 @@ extension AssetMetadata {
     /// Metadata whose only capture record carries an **absolute instant** and no
     /// local wall-clock components.
     ///
-    /// It therefore feeds `ts_original_unix` — and so `best_capture_unix` ordering —
+    /// It therefore feeds `capture_instant_unix` — and so `best_capture_unix` ordering —
     /// without supplying a naming fact, because `CaptureWallClock` selects only
     /// local-authority records with full components. That is exactly what a bare
     /// `timestampFacts.original` used to produce when paired with an empty

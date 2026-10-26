@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import OSLog
 
 /// The catalog's schema, as the one baseline migration creates it.
 ///
@@ -110,6 +111,79 @@ nonisolated enum CatalogSchema {
                     arguments: [named, token]
                 )
             }
+        }
+    }
+
+    /// MediaMetadata 0.8.0 (ADR 0039): the catalog sorts by the library's capture instant.
+    /// The four `ts_*_unix` columns, which `best_capture_unix` coalesced in Otos's own
+    /// order (original, QuickTime creation, digitized, GPS), become one
+    /// `capture_instant_unix` chosen by `CaptureTimestamps.instantPrecedence` (original,
+    /// digitized, QuickTime creation and content-create, GPS). `best_capture_unix` falls
+    /// back from it to the file's creation and modification dates, as before, and becomes
+    /// a virtual column: SQLite cannot add a stored one, and the indexes over it hold the
+    /// value either way.
+    ///
+    /// The instant is filled first from the old columns in the library's order, then from
+    /// each row's stored timestamp records, which also hold the roles the old columns
+    /// never did. A record that cannot be decoded keeps the first value and is logged:
+    /// the catalog still opens, and the row is as well ordered as before.
+    static let captureInstantMigrationIdentifier = "v8_media_asset_capture_instant"
+
+    static func migrateToCaptureInstant(_ db: Database) throws {
+        try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN capture_instant_unix DOUBLE")
+        try db.execute(sql: """
+        UPDATE media_asset SET capture_instant_unix = COALESCE(
+            ts_original_unix, ts_digitized_unix, ts_quicktime_creation_unix, ts_gps_unix
+        )
+        """)
+        let rows = try Row.fetchAll(db, sql: """
+        SELECT library_root_id, relative_path, metadata_extra_json FROM asset_metadata
+        WHERE metadata_extra_json IS NOT NULL
+        """)
+        var undecodable = 0
+        for row in rows {
+            let json: String = row["metadata_extra_json"]
+            let metadata: AssetMetadata
+            do {
+                metadata = try CatalogStore.decodeMetadataExtraJSON(json)
+            } catch {
+                undecodable += 1
+                continue
+            }
+            try db.execute(
+                sql: "UPDATE media_asset SET capture_instant_unix = ? WHERE library_root_id = ? AND relative_path = ?",
+                arguments: [
+                    CaptureInstant.select(from: metadata.timestamps)?.timeIntervalSince1970,
+                    row["library_root_id"] as Int64,
+                    row["relative_path"] as String,
+                ]
+            )
+        }
+        if undecodable > 0 {
+            OtosLog.persistence.errorOperation("catalog.migration.captureInstant", phase: "undecodable", fields: [
+                "count": "\(undecodable)",
+            ])
+        }
+        // Every index over the date column — the sort orders and enrichment's priority —
+        // goes while the column is rebuilt and comes back from its own definition.
+        let indexes = try Row.fetchAll(db, sql: """
+        SELECT name, sql FROM sqlite_master
+        WHERE type = 'index' AND tbl_name = 'media_asset' AND sql LIKE '%best_capture_unix%'
+        """)
+        for index in indexes {
+            try db.execute(sql: "DROP INDEX \(index["name"] as String)")
+        }
+        try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN best_capture_unix")
+        for column in ["ts_original_unix", "ts_quicktime_creation_unix", "ts_digitized_unix", "ts_gps_unix"] {
+            try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN \(column)")
+        }
+        try db.execute(sql: """
+        ALTER TABLE media_asset ADD COLUMN best_capture_unix DOUBLE GENERATED ALWAYS AS (
+            COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)
+        ) VIRTUAL
+        """)
+        for index in indexes {
+            try db.execute(sql: index["sql"] as String)
         }
     }
 

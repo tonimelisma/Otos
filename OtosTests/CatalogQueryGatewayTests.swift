@@ -151,10 +151,10 @@ struct CatalogQueryGatewayTests {
             try insertScopeRoot(id: 1, path: "/Library", db: db)
             try insertScopeAsset(rootID: 1, path: "dated.jpg", kind: "image", format: "JPEG", batchMs: nil, db: db)
             try insertScopeAsset(rootID: 1, path: "undated.jpg", kind: "image", format: "JPEG", batchMs: nil, db: db)
-            // best_capture_unix is a GENERATED column (COALESCE over the ts_*/created_at/
-            // content_modified_at columns) — write one of its sources, not the column itself.
+            // best_capture_unix is a GENERATED column (COALESCE over capture_instant_unix/
+            // created_at/content_modified_at) — write one of its sources, not the column itself.
             try db.execute(
-                sql: "UPDATE media_asset SET ts_original_unix = ? WHERE relative_path = ?",
+                sql: "UPDATE media_asset SET capture_instant_unix = ? WHERE relative_path = ?",
                 arguments: [1_700_000_000.0, "dated.jpg"]
             )
         }

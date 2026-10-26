@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import ImageIO
 import MediaMetadata
 @testable import OtosKit
 import Testing
@@ -41,6 +42,38 @@ struct MetadataRefresherTests {
             #expect(again.written == 1)
             #expect(try await revisions(library.databaseURL)[cloudOnly.relativePath.rawValue]?.revision
                 == MediaMetadataReader.extractionRevision(for: .heif))
+        }
+    }
+
+    /// MediaMetadata 0.8.0 reads PNG as a family of its own. A PNG that 0.7.1 cataloged
+    /// as `unknown` at revision 1 is older than `unknown`'s revision 2, so it is re-read
+    /// from local bytes and becomes a `png` record at that family's revision.
+    @Test func aPNGCatalogedAsUnknownIsReReadAsPNG() async throws {
+        try await withEditableLibrary(fileCount: 1, fileExtension: "png", write: { url in
+            let image = try #require(gradientImage(width: 96, height: 64))
+            let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil))
+            CGImageDestinationAddImage(destination, image, nil)
+            try #require(CGImageDestinationFinalize(destination))
+        }) { library in
+            let state = try await catalogStoreTestState(library.store)
+            let asset = try #require(state.testAssets.first)
+            _ = try await library.store.applyEnrichmentBatch([
+                EnrichmentResult(
+                    id: asset.id,
+                    metadata: AssetMetadata(family: "unknown", extractionRevision: 1),
+                    thumbnailPath: nil,
+                    sourceSize: asset.byteSize,
+                    sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
+                    contentHash: .empty
+                ),
+            ])
+
+            let summary = await MetadataRefresher(store: library.store, isLocal: { _ in true }).refresh()
+
+            #expect(summary == MetadataRefreshSummary(read: 1, written: 1, skipped: 0, failed: false))
+            let row = try await revisions(library.databaseURL)[asset.id.relativePath.rawValue]
+            #expect(row?.family == MediaFormat.Family.png.rawValue)
+            #expect(row?.revision == MediaMetadataReader.extractionRevision(for: .png))
         }
     }
 

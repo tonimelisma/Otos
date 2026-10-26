@@ -32,7 +32,8 @@ MediaMetadata 0.7.0 adds what a consumer needs to stop re-deriving:
   when the same bytes of that family can read differently (0.7.1);
 - `format.fileType` and `isCameraRaw` read from the bytes, and `MediaFileType(fileExtension:)`
   with `displayName` for a file nothing has read (0.7.1);
-- `CaptureTimestamps.Role.isAudioOnly` (0.7.1).
+- `CaptureTimestamps.Role.isAudioOnly` (0.7.1);
+- PNG, WebP and GIF as families of their own, read from their headers (0.8.0).
 
 ## Decision
 
@@ -68,6 +69,10 @@ what those facts mean. That covers:
 
   Otos's role set is the library's `CaptureTimestamps.Role`, less the audio-only roles
   (`Role.isAudioOnly`, MED-004). The upright size is `PixelGeometry`'s.
+- **The sort order follows `instantPrecedence`.** `capture_instant_unix` is the first
+  role in that order whose stored record has a UTC instant (`CaptureInstant`), and
+  `best_capture_unix` falls back from it to the file's dates. Migration v8 replaced the
+  four `ts_*_unix` columns Otos had coalesced in its own order.
 - **The wall clock follows `wallClockPrecedence`.** It is selected from Otos's persisted
   records in that order. So an AVI's RIFF recording date (ICRD/IDIT), when no earlier
   role is local, now names the file instead of the mtime-less-duration fallback:
@@ -88,7 +93,10 @@ what those facts mean. That covers:
   - It reads only originals already on this Mac, checking materialization immediately
     before each read, and writes only metadata and the columns derived from it (through
     the same `writeMetadataProjection` enrichment uses), only while the row's file
-    signature is unchanged.
+    signature is unchanged and its stored record is still older than its own family's
+    current reading. The new record's revision is never compared with the stored one:
+    revisions are per family, and a re-read can change family (0.7.1's `unknown` 1 is
+    0.8.0's `png` 0).
   - A cloud-only row is skipped and offered again next launch. Card and camera rows are
     never refreshed.
   - No per-fix migration is written again.
