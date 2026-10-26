@@ -105,18 +105,25 @@ final nonisolated class ImageRenderer: Sendable {
         return try Rendered(image: bitmap(adjusted), decoder: decoded.decoder, nativePixelSize: decoded.nativePixelSize)
     }
 
-    /// The RAW's oriented full-resolution size: its sensor size, turned when its
-    /// orientation (5–8) rotates it a quarter.
-    static func orientedNativeSize(_ filter: CIRAWFilter) -> CGSize {
-        let native = filter.nativeSize
-        return filter.orientation.rawValue >= 5 ? CGSize(width: native.height, height: native.width) : native
+    /// A RAW opened for development, with its oriented full-resolution size: its sensor
+    /// size, turned when its orientation (5–8) rotates it a quarter.
+    ///
+    /// The size is read once, when the filter is made, and never from the filter again:
+    /// under RAW9 `CIRAWFilter.nativeSize` changes once a scale factor is set — a
+    /// 6192 × 4128 ARW then reads 3302 × 1844, and 3096 × 2064 after a render (research
+    /// 2026-10-26). A scale factor computed from those developed the photo at up to twice
+    /// the size asked for, and every change of scale between two renders is a fresh
+    /// development of seconds.
+    struct OpenedRAW {
+        let filter: CIRAWFilter
+        let decoder: Decoder
+        let nativeSize: CGSize
     }
 
-    /// The scale factor that develops the RAW so the edited photo's long edge is at most
-    /// `outputLongEdge`: a crop keeps a fraction of the frame, so the frame is developed
-    /// that much larger, never beyond full resolution.
-    static func rawScaleFactor(_ filter: CIRAWFilter, outputLongEdge: Int?, recipe: EditRecipe) -> Float {
-        let native = orientedNativeSize(filter)
+    /// The scale factor that develops a RAW of `nativeSize` so the edited photo's long edge
+    /// is at most `outputLongEdge`: a crop keeps a fraction of the frame, so the frame is
+    /// developed that much larger, never beyond full resolution.
+    static func rawScaleFactor(nativeSize native: CGSize, outputLongEdge: Int?, recipe: EditRecipe) -> Float {
         let nativeLongEdge = max(native.width, native.height)
         guard let outputLongEdge, nativeLongEdge > 0 else {
             return 1
@@ -131,10 +138,12 @@ final nonisolated class ImageRenderer: Sendable {
         _ url: URL,
         outputLongEdge: Int?,
         recipe: EditRecipe
-    ) throws -> (filter: CIRAWFilter, decoder: Decoder) {
+    ) throws -> OpenedRAW {
         guard let filter = CIRAWFilter(imageURL: url) else {
             throw RenderError.unreadable
         }
+        let sensor = filter.nativeSize
+        let nativeSize = filter.orientation.rawValue >= 5 ? CGSize(width: sensor.height, height: sensor.width) : sensor
         let decoder: Decoder
         if filter.supportedDecoderVersions.contains(.version9) {
             filter.decoderVersion = .version9
@@ -145,8 +154,8 @@ final nonisolated class ImageRenderer: Sendable {
         } else {
             decoder = .rawOther
         }
-        filter.scaleFactor = rawScaleFactor(filter, outputLongEdge: outputLongEdge, recipe: recipe)
-        return (filter, decoder)
+        filter.scaleFactor = rawScaleFactor(nativeSize: nativeSize, outputLongEdge: outputLongEdge, recipe: recipe)
+        return OpenedRAW(filter: filter, decoder: decoder, nativeSize: nativeSize)
     }
 
     /// The developed image for `recipe`. Exposure is set on the filter, where it acts on
@@ -316,9 +325,9 @@ final nonisolated class ImageRenderer: Sendable {
     }
 
     private static func developRAW(_ url: URL, longEdge: Int?, recipe: EditRecipe) throws -> Rendered {
-        let (filter, decoder) = try openRAW(url, outputLongEdge: longEdge, recipe: recipe)
-        let image = try applyingEffects(recipe, applyingGeometry(recipe, developed(filter, recipe: recipe)))
-        return try Rendered(image: bitmap(image), decoder: decoder, nativePixelSize: orientedNativeSize(filter))
+        let opened = try openRAW(url, outputLongEdge: longEdge, recipe: recipe)
+        let image = try applyingEffects(recipe, applyingGeometry(recipe, developed(opened.filter, recipe: recipe)))
+        return try Rendered(image: bitmap(image), decoder: opened.decoder, nativePixelSize: opened.nativeSize)
     }
 
     /// Decodes a still that is not a RAW, oriented, large enough for the recipe's edited

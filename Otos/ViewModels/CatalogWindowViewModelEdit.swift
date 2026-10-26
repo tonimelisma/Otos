@@ -58,7 +58,14 @@ nonisolated enum EditRenderRequest: Sendable {
     /// The panel has a new target: open it, report its facts, and count the histogram of
     /// `recipe` — its saved edit — rendered.
     case open(id: MediaAssetID, sourceSize: Int64?, recipe: EditRecipe, sequence: UInt64)
-    case render(id: MediaAssetID, recipe: EditRecipe, sourceSize: Int64?, sequence: UInt64, purpose: EditRenderPurpose)
+    case render(
+        id: MediaAssetID,
+        recipe: EditRecipe,
+        sourceSize: Int64?,
+        sequence: UInt64,
+        purpose: EditRenderPurpose,
+        requestedAt: ContinuousClock.Instant
+    )
     /// Editing moved to another photo or the panel closed: let go of the open photo.
     case close
 }
@@ -397,7 +404,8 @@ extension CatalogWindowViewModel {
             recipe: shownRecipe,
             sourceSize: target.sourceSize,
             sequence: editRenderRequested,
-            purpose: isCropping ? .cropBase : .edited
+            purpose: isCropping ? .cropBase : .edited,
+            requestedAt: .now
         ))
     }
 
@@ -410,7 +418,8 @@ extension CatalogWindowViewModel {
             recipe: .neutral,
             sourceSize: target.sourceSize,
             sequence: editRenderRequested,
-            purpose: .original
+            purpose: .original,
+            requestedAt: .now
         ))
     }
 
@@ -442,10 +451,19 @@ extension CatalogWindowViewModel {
                     }
                     let histogram = await EditHistogram.count(live.image)
                     self?.publishHistogram(id: id, histogram, sequence: sequence)
-                case let .render(id, recipe, sourceSize, sequence, purpose):
+                case let .render(id, recipe, sourceSize, sequence, purpose, requestedAt):
+                    let startedAt = ContinuousClock.now
                     guard let live = await pipeline.liveImage(id, recipe: recipe, sourceSize: sourceSize) else {
                         continue
                     }
+                    // How long the pane waited for this render: queued behind the lane,
+                    // then rendering (including making the original local).
+                    OtosLog.rendering.debugOperation("edit.liveRender", phase: "rendered", fields: [
+                        "sequence": "\(sequence)",
+                        "purpose": "\(purpose)",
+                        "waitMs": "\(DiagnosticsTiming.milliseconds(startedAt - requestedAt))",
+                        "renderMs": "\(DiagnosticsTiming.milliseconds(since: startedAt))",
+                    ])
                     self?.publishOpenedPhoto(id: id, live.opened)
                     // The histogram describes the edit; Show Original's render is a glance
                     // at what the edit replaced.
@@ -716,9 +734,8 @@ nonisolated struct EditPipeline: Sendable {
                 await handToEnrichment(id)
                 return nil
             }
-            let rendered = try await renderer.renderProducts(
-                id.fileURL, recipe: saved.recipe, id: id, directory: directory
-            )
+            let image = try await renderer.render(id.fileURL, recipe: saved.recipe)
+            let rendered = try RenderedEditImages.staging(image, id: id, directory: directory)
             return (rendered.image, RenderedEditProducts(
                 id: id,
                 revision: saved.revision,

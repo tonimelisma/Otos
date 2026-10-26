@@ -129,6 +129,19 @@ struct EditGeometryTests {
         #expect(max(rendered.image.width, rendered.image.height) == 64)
     }
 
+    /// A RAW's scale factor is a function of the native size read when it was opened: the
+    /// edited long edge reaches the size asked for, a crop is developed larger, and nothing
+    /// is developed beyond full resolution.
+    @Test func aRAWsScaleFactorComesFromItsOpenedNativeSize() {
+        let native = CGSize(width: 6192, height: 4128)
+        #expect(ImageRenderer.rawScaleFactor(nativeSize: native, outputLongEdge: 2560, recipe: .neutral) == Float(2560.0 / 6192))
+        // Half the width of a 6192 × 4128 frame is 3096 × 4128: its long edge is 4128.
+        let halfCrop = EditRecipe(crop: EditCrop(left: 0, top: 0, width: 0.5, height: 1))
+        #expect(ImageRenderer.rawScaleFactor(nativeSize: native, outputLongEdge: 2560, recipe: halfCrop) == Float(2560.0 / 4128))
+        #expect(ImageRenderer.rawScaleFactor(nativeSize: native, outputLongEdge: 8000, recipe: .neutral) == 1)
+        #expect(ImageRenderer.rawScaleFactor(nativeSize: native, outputLongEdge: nil, recipe: .neutral) == 1)
+    }
+
     /// The picker samples the pixel under the click on the photo as shown: with the photo
     /// flipped, a click on its left half samples the original's right half.
     @Test func thePickerSamplesThePixelUnderTheClickThroughTheGeometry() async throws {
