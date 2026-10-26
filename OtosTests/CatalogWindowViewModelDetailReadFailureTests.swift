@@ -102,7 +102,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             model.openLoupe(id: library.ids[0])
             try await waitUntil { model.editTarget?.id == library.ids[0] }
             let hidden = try await HiddenCatalogTable("asset_metadata", in: library.databaseURL)
@@ -146,19 +146,19 @@ struct CatalogWindowViewModelDetailReadFailureTests {
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
             model.openLoupe(id: library.ids[0])
-            model.toggleLoupeInfo()
-            try await waitUntil { model.loupeInfo?.id == library.ids[0] }
+            model.toggleInspector(.info)
+            try await waitUntil { model.photoInfo?.id == library.ids[0] }
             let hidden = try await HiddenCatalogTable("media_asset", in: library.databaseURL)
 
             model.focusNext()
             await model.focusedKindTask?.value
-            await model.loupeInfoTask?.value
-            #expect(model.loupeInfo == nil)
+            await model.photoInfoTask?.value
+            #expect(model.photoInfo == nil)
 
             try await hidden.restore()
-            model.refreshLoupeInfo()
-            try await waitUntil { model.loupeInfo?.id == library.ids[1] }
-            #expect(model.loupeInfo?.fileSize != LoupeInfoModel.unknown)
+            model.refreshPhotoInfo()
+            try await waitUntil { model.photoInfo?.id == library.ids[1] }
+            #expect(model.photoInfo?.fileSize != PhotoInfo.unknown)
         }
     }
 }

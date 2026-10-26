@@ -15,7 +15,7 @@ struct CatalogWindowViewModelEditCommandsTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             model.selectAll()
             model.setViewMode(.loupe)
             try await waitUntil { model.editTarget?.id == id && model.canEdit }
@@ -55,7 +55,7 @@ struct CatalogWindowViewModelEditCommandsTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.editTarget?.id == id && model.canEdit }
             #expect(!model.canRevertToOriginal)
@@ -110,7 +110,7 @@ struct CatalogWindowViewModelEditCommandsTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.editTarget?.id == id && model.canEdit }
             #expect(!model.canNudgeEditControl)
@@ -143,7 +143,7 @@ struct CatalogWindowViewModelEditCommandsTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.editTarget?.id == id && model.canEdit }
             model.setEditValue(0.5, for: .exposure)
@@ -165,7 +165,7 @@ struct CatalogWindowViewModelEditCommandsTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.editTarget?.id == id && model.editHistogram != nil }
             let opened = try #require(model.editHistogram)
@@ -175,7 +175,7 @@ struct CatalogWindowViewModelEditCommandsTests {
             let darkened = try #require(model.editHistogram)
             #expect(meanBrightness(darkened) < meanBrightness(opened) / 2)
 
-            model.toggleEditPanel()
+            model.toggleInspector(.edit)
             #expect(model.editHistogram == nil)
         }
     }

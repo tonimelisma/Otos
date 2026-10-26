@@ -281,7 +281,8 @@ everything expensive happens on an actor off the main thread.
 | library reorganization | `LibraryReorganizationRunner` + ViewModel confirmation/remap; planner/executor stay off MainActor |
 | heavy byte-reading work | keep decoding/parsing in its consumer, check live `FileMaterialization` status, and submit deliberate downloads to `MaterializationCoordinator` |
 | grid rendering/selection/zoom | the `MediaGrid*` boundary (ADR 0006); selection *model* intents live on `CatalogWindowViewModel` |
-| loupe zoom and info overlay | `LoupeZoomPolicy` (pure targets) + `LoupeZoomView` (`NSScrollView` magnification, reports/commands) + `CatalogWindowViewModelLoupeZoom` (intents, full-resolution request, info facts) + `LoupeInfoModel`/`LoupeInfoOverlay`; View ▸ Zoom In/Out dispatch by mode (APP-040/041) |
+| loupe zoom | `LoupeZoomPolicy` (pure targets) + `LoupeZoomView` (`NSScrollView` magnification, reports/commands) + `CatalogWindowViewModelLoupeZoom` (intents, full-resolution request); View ▸ Zoom In/Out dispatch by mode (APP-040) |
+| inspector (Info / Edit) | `CatalogWindowViewModelInspector` (`inspectorPane`, the one owner; `toggleInspector` / `setInspectorPane`; Info refreshed by every target writer through `refreshOpenWithMenu`) + `InfoPaneView` + `EditPanelView` in `ContentView`'s `.inspector` (APP-041, ADR 0036) |
 | loupe / preview decode | `LoupeView` + `PreviewImageLoader`/`VideoPreviewLoader` + `LoupeVideoPlayerView` (`AVPlayerView` inline) (ADR 0016; stored previews and the renderer, ADR 0035); mode intents on `CatalogWindowViewModel` |
 | loupe video (click-to-play) | `VideoPreviewLoader` + `LoupeVideoPlayerView` + `LoupeView` poster/AVPlayer swap; compare stays poster-only |
 | compare pair | `ComparePairPolicy` + `CompareView`; pair is capped selection |

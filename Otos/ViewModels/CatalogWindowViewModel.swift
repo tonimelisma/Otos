@@ -157,11 +157,9 @@ final class CatalogWindowViewModel {
     /// The focused asset whose "decode already sufficient" outcome has been logged, so
     /// the per-report re-evaluation records it once per focus.
     @ObservationIgnored var fullResolutionSkipLoggedID: MediaAssetID?
-    /// Loupe info overlay (APP-041): session-only toggle and the facts it shows.
-    var showsLoupeInfo = false
-    /// The trailing edit panel (View ▸ Show Edit, E). Edit state below is
-    /// resolved only while it is shown (ADR 0036).
-    var isEditPanelPresented = false
+    /// The trailing inspector's pane, nil while it is hidden (Info, APP-041; Edit, ADR 0036).
+    /// Edit state below is resolved only while the Edit pane is shown.
+    var inspectorPane: InspectorPane?
     /// The one still photo the panel edits; nil disables its controls.
     var editTarget: EditTarget?
     /// The panel's values for `editTarget`: the saved recipe plus any change still being
@@ -248,8 +246,8 @@ final class CatalogWindowViewModel {
     /// refused — so a caller can wait for an edit to settle without guessing a duration.
     @ObservationIgnored var submittedEditCommandCount = 0
     @ObservationIgnored var handledEditCommandCount = 0
-    var loupeInfo: LoupeInfoModel?
-    @ObservationIgnored var loupeInfoTask: Task<Void, Never>?
+    var photoInfo: PhotoInfo?
+    @ObservationIgnored var photoInfoTask: Task<Void, Never>?
     /// The window's undo stack: likes (APP-039), Move to Trash (ADR 0022) and edits (ADR
     /// 0036). One window, one manager, owned here so Edit ▸ Undo renders `undoMenuState`
     /// rather than searching a responder chain that ends in an AppKit collection view.
@@ -628,7 +626,7 @@ final class CatalogWindowViewModel {
         mediaTrashEventTask?.cancel()
         mediaTrashIntentTask?.cancel()
         openWithMenuTask?.cancel()
-        loupeInfoTask?.cancel()
+        photoInfoTask?.cancel()
         focusedKindTask?.cancel()
         currentTargetChoiceTask?.cancel()
         viewportForwardingTask?.cancel()

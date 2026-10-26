@@ -108,19 +108,14 @@ nonisolated enum EditLaneCommand: Sendable {
 extension CatalogWindowViewModel {
     // MARK: - Panel
 
-    /// View ▸ Show Edit / Hide Edit (E) and the toolbar button.
-    func toggleEditPanel() {
-        isEditPanelPresented.toggle()
-        OtosLog.ui.noticeOperation("edit.panel", phase: isEditPanelPresented ? "shown" : "hidden")
-        if isEditPanelPresented {
-            refreshEditTarget()
-        } else {
-            endCropping()
-            commitPendingEdit()
-            editTargetTask?.cancel()
-            editTargetTask = nil
-            clearEditTarget()
-        }
+    /// The Edit pane left the inspector: its tools end, a pending change is saved, and the
+    /// photo is let go.
+    func endEditing() {
+        endCropping()
+        commitPendingEdit()
+        editTargetTask?.cancel()
+        editTargetTask = nil
+        clearEditTarget()
     }
 
     /// Photo ▸ Trim Video… (⌘T): asks the loupe's player to show `AVPlayerView`'s trim UI.
@@ -631,6 +626,7 @@ extension CatalogWindowViewModel {
             model.restoreEdit(id: id, recipe: inverse, inverse: recipe, actionName: actionName)
         }
         windowUndoManager.setActionName(actionName)
+        revealUndoneChange([id])
         if editTarget?.id == id {
             editSavedRecipe = recipe
             editDraft = recipe

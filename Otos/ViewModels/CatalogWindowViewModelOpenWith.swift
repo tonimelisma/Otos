@@ -40,6 +40,7 @@ extension CatalogWindowViewModel {
         // must still end the loupe's edit tools. A target already resolved or being read
         // is left alone there.
         refreshEditTarget()
+        refreshPhotoInfo()
         guard !targets.isEmpty else {
             openWithMenuTask?.cancel()
             openWithMenu = .empty

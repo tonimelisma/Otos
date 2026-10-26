@@ -114,12 +114,12 @@ struct CompareView: View {
                                     detailReader: detailReader
                                 )
                             } else {
-                                ContentUnavailableView("No Photo", systemImage: "photo")
+                                ContentUnavailableView("No Selection", systemImage: "photo")
                                     .foregroundStyle(.secondary)
                             }
                         }
                     case .empty:
-                        ContentUnavailableView("No Photo", systemImage: "photo")
+                        ContentUnavailableView("No Selection", systemImage: "photo")
                             .foregroundStyle(.secondary)
                     }
                     // The active pane's picture carries the grid's selection outline

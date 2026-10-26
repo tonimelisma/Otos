@@ -119,24 +119,32 @@ struct CatalogWindowViewModelLoupeZoomTests {
         #expect(!model.canZoomIn && !model.canZoomOut)
     }
 
-    @Test func infoOverlayFollowsFocusAndToggle() async throws {
+    /// The inspector holds one pane (APP-041): I shows Info for the current target in any
+    /// mode and follows it, E switches the column to Edit, and the shown pane's key hides it.
+    @Test func infoPaneFollowsTheTargetAndToggle() async throws {
         let model = makeZoomModel(loader: FakePreviewLoader())
         let ids = makeIDs(count: 2)
         model.applyState(zoomWindowState(ids: ids))
+        model.selectAssets([ids[0]])
+        #expect(model.photoInfo == nil)
+
+        model.toggleInspector(.info)
+        #expect(model.inspectorPane == .info)
+        try await waitUntil { model.photoInfo?.fileName == "asset-0.jpg" }
+        #expect(model.photoInfo?.captureDate == PhotoInfo.unknown)
+
         model.openLoupe(id: ids[0])
-        #expect(model.loupeInfo == nil)
-
-        model.toggleLoupeInfo()
-        try await waitUntil { model.loupeInfo != nil }
-        #expect(model.loupeInfo?.fileName == "asset-0.jpg")
-        #expect(model.loupeInfo?.captureDate == LoupeInfoModel.unknown)
-
         model.focusNext()
-        try await waitUntil { model.loupeInfo?.fileName == "asset-1.jpg" }
+        try await waitUntil { model.photoInfo?.fileName == "asset-1.jpg" }
 
-        model.toggleLoupeInfo()
-        #expect(model.loupeInfo == nil)
-        #expect(!model.showsLoupeInfo)
+        model.toggleInspector(.edit)
+        #expect(model.inspectorPane == .edit)
+        #expect(model.isEditPanelPresented)
+        #expect(model.photoInfo == nil)
+
+        model.toggleInspector(.edit)
+        #expect(model.inspectorPane == nil)
+        #expect(!model.showsInfo)
     }
 }
 

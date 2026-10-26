@@ -39,6 +39,7 @@ struct SettingsView: View {
                 )
             }
             .formStyle(.grouped)
+            .frame(width: 520, height: 170)
             .tabItem {
                 Label("General", systemImage: "gearshape")
             }
@@ -49,6 +50,7 @@ struct SettingsView: View {
                 removeLibrary: removeLibrary,
                 moveLibrary: moveLibrary
             )
+            .frame(width: 640, height: 360)
             .tabItem {
                 Label("Libraries", systemImage: "folder")
             }
@@ -58,6 +60,7 @@ struct SettingsView: View {
                 destinations: removableDestinations,
                 forgetSource: forgetRemovableSource
             )
+            .frame(width: 680, height: 360)
             .tabItem {
                 Label("Removable Media", systemImage: "sdcard")
             }
@@ -66,12 +69,13 @@ struct SettingsView: View {
                 preferences: importPreferences,
                 setPreferences: setImportPreferences
             )
+            .frame(width: 520, height: 330)
             .tabItem {
                 Label("Import", systemImage: "square.and.arrow.down")
             }
         }
-        .frame(width: 660, height: 380)
-        .scenePadding()
+        // Each tab sizes the window to itself (Settings: resize per pane), so a short
+        // pane is not left mostly empty.
         .alert(
             libraryRemovalNotice.map(LibraryRemovalNoticePresentation.title) ?? "",
             isPresented: Binding(
@@ -180,19 +184,7 @@ private struct RemovableMediaSettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Removable Media")
-                    .font(.title3.weight(.semibold))
-                Spacer()
-                Button(role: .destructive) {
-                    forgetCandidate = selectedRoot
-                } label: {
-                    Label("Forget", systemImage: "trash")
-                }
-                .disabled(selectedRoot == nil)
-            }
-
+        VStack(alignment: .leading, spacing: 8) {
             Table(sortedSources, selection: $selectedPath) {
                 TableColumn("Name") { source in
                     Label(source.displayName, systemImage: source.kind.sidebarSystemImage)
@@ -229,7 +221,15 @@ private struct RemovableMediaSettingsView: View {
                 }
                 .width(min: 110, ideal: 130)
             }
+            HStack {
+                Spacer()
+                Button("Forget…", role: .destructive) {
+                    forgetCandidate = selectedRoot
+                }
+                .disabled(selectedRoot == nil)
+            }
         }
+        .padding(20)
         .alert("Forget Removable Media?", isPresented: forgetAlertBinding, presenting: forgetCandidate) { root in
             Button("Forget", role: .destructive) {
                 forgetSource(root)
@@ -281,44 +281,45 @@ private struct LibrariesSettingsView: View {
     @State private var removalCandidate: LibraryRoot?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Libraries")
-                    .font(.title3.weight(.semibold))
-                Spacer()
-                Button {
-                    showingImporter = true
-                } label: {
-                    Label("Add Library", systemImage: "plus")
+        VStack(alignment: .leading, spacing: 8) {
+            // The same headed table as Removable Media. Dragging a row, its Move Up / Move
+            // Down menu items and ⌘↑ / ⌘↓ all call `moveLibrary`.
+            Table(of: CatalogLibraryState.self, selection: $selectedPath) {
+                TableColumn("Name") { library in
+                    Text(library.displayName)
+                        .lineLimit(1)
                 }
-                Button(role: .destructive) {
-                    removalCandidate = selectedRoot
-                } label: {
-                    Label("Remove", systemImage: "minus")
+                .width(min: 120, ideal: 160)
+                TableColumn("Location") { library in
+                    Text(library.path.rawValue)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .foregroundStyle(.secondary)
                 }
-                .disabled(selectedRoot == nil)
+                TableColumn("Status") { library in
+                    Text(library.availability.label)
+                        .foregroundStyle(library.availability == .unavailable ? Color.orange : Color.secondary)
+                }
+                .width(min: 90, ideal: 100)
+            } rows: {
+                ForEach(libraries) { library in
+                    TableRow(library)
+                        .draggable(library.path.rawValue)
+                }
+                .dropDestination(for: String.self) { index, paths in
+                    // `index` is the row the drop landed above, in the table as drawn: the
+                    // move names that library (or the end), not a position.
+                    guard let dropped = paths.first else { return }
+                    let anchor = libraries.indices.contains(index) ? libraries[index].path : nil
+                    moveLibrary(LibraryRootPath(rawValue: dropped), .before(anchor))
+                }
             }
-
-            // List, because only List supports drag-to-reorder (`.onMove`) in
-            // this SDK, and drag/Move Up/Move Down/⌘↑/⌘↓ all need to share
-            // one path.
-            List(selection: $selectedPath) {
-                ForEach(Array(libraries.enumerated()), id: \.element.path) { index, library in
-                    libraryRow(library)
-                        .tag(library.path)
-                        .contextMenu {
-                            Button("Move Up") { moveLibrary(library.path, .up) }
-                                .disabled(index == 0)
-                            Button("Move Down") { moveLibrary(library.path, .down) }
-                                .disabled(index == libraries.count - 1)
-                        }
-                }
-                .onMove { indices, destination in
-                    // `destination` is the row the drop landed above, in the list as
-                    // drawn: the move names that library (or the end), not a position.
-                    guard let sourceIndex = indices.first else { return }
-                    let anchor = libraries.indices.contains(destination) ? libraries[destination].path : nil
-                    moveLibrary(libraries[sourceIndex].path, .before(anchor))
+            .contextMenu(forSelectionType: LibraryRootPath.self) { paths in
+                if let path = paths.first, let index = libraries.firstIndex(where: { $0.path == path }) {
+                    Button("Move Up") { moveLibrary(path, .up) }
+                        .disabled(index == 0)
+                    Button("Move Down") { moveLibrary(path, .down) }
+                        .disabled(index == libraries.count - 1)
                 }
             }
             // Invisible, keyboard-only mirrors of the Move Up/Down menu items —
@@ -335,7 +336,18 @@ private struct LibrariesSettingsView: View {
                     .disabled(!canMoveSelected(by: 1))
                     .opacity(0).allowsHitTesting(false)
             }
+            HStack {
+                Spacer()
+                Button("Remove…", role: .destructive) {
+                    removalCandidate = selectedRoot
+                }
+                .disabled(selectedRoot == nil)
+                Button("Add Library…") {
+                    showingImporter = true
+                }
+            }
         }
+        .padding(20)
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.folder]) { result in
             if case let .success(url) = result {
                 addLibrary(url)
@@ -357,21 +369,6 @@ private struct LibrariesSettingsView: View {
                 and adding it again will require a new scan.
                 """
             )
-        }
-    }
-
-    private func libraryRow(_ library: CatalogLibraryState) -> some View {
-        HStack {
-            Text(library.displayName)
-                .lineLimit(1)
-                .frame(minWidth: 140, idealWidth: 180, alignment: .leading)
-            Text(library.path.rawValue)
-                .lineLimit(1)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text(library.availability.label)
-                .foregroundStyle(library.availability == .unavailable ? Color.orange : Color.secondary)
-                .frame(minWidth: 100, idealWidth: 120, alignment: .leading)
         }
     }
 
@@ -460,7 +457,7 @@ private extension LibraryRootKind {
         case .library:
             "Library"
         case .removableVolume:
-            "Volume"
+            "Card"
         case .deviceMTP:
             "Camera"
         }

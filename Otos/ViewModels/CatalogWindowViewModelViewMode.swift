@@ -45,14 +45,11 @@ extension CatalogWindowViewModel {
                 detail = try await reader.detail(for: id)
             } catch {
                 // The kind stays unknown, as it has been since focus moved, and the next
-                // focus change reads again. The overlay still follows focus.
-                guard let self, !Task.isCancelled, focusedAssetID == id else { return }
-                refreshLoupeInfo()
+                // focus change reads again.
                 return
             }
             guard let self, !Task.isCancelled, focusedAssetID == id else { return }
             focusedAssetKind = detail?.bestKind
-            refreshLoupeInfo()
             // Opening a video prepares it, exactly as opening an image decodes it: no
             // click stands between the user and a playable asset. Kind is only known
             // here, so this is the one place that can start it.
@@ -409,7 +406,6 @@ extension CatalogWindowViewModel {
                     )
                     if slot == .loupe {
                         self.requestFullResolutionIfNeeded()
-                        self.refreshLoupeInfo()
                     }
                 }
             }

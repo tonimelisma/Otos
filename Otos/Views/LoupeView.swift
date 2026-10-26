@@ -41,8 +41,6 @@ struct LoupeView: View {
     var cropEditor: CropEditorInput?
     var videoTrimCommand: VideoTrimCommand?
     var onVideoTrimmed: @MainActor (MediaAssetID) -> Void = { _ in }
-    /// Info overlay (APP-041); nil when hidden.
-    var loupeInfo: LoupeInfoModel?
     /// The pane shows the photo without its edit (Show Original): marked, DES-098.
     var showsOriginal = false
     @Environment(\.colorScheme) private var colorScheme
@@ -161,8 +159,7 @@ struct LoupeView: View {
                 }
             }
             .contentShape(Rectangle())
-            // Top center, clear of the curation group's top-leading zone (DES-066) and the
-            // info overlay's bottom-leading one (DES-088).
+            // Top center, clear of the curation group's top-leading zone (DES-066).
             .overlay(alignment: .top) {
                 if showsOriginal {
                     Text("Original")
@@ -174,12 +171,6 @@ struct LoupeView: View {
                         .allowsHitTesting(false)
                         // The picture's own value says it (above).
                         .accessibilityHidden(true)
-                }
-            }
-            .overlay(alignment: .bottomLeading) {
-                if let loupeInfo {
-                    LoupeInfoOverlay(model: loupeInfo)
-                        .padding(12)
                 }
             }
             .overlay { ContextMenuHost(makeMenu: contextMenu) }

@@ -97,7 +97,6 @@ extension CatalogWindowViewModel {
         loupeZoomCommand = nil
         fullResolutionRequestedIDs.removeAll()
         fullResolutionSkipLoggedID = nil
-        refreshLoupeInfo()
     }
 
     private func stepLoupeZoom(_ direction: Int) {
@@ -158,56 +157,5 @@ extension CatalogWindowViewModel {
             "reason": "decodeSufficient", "id": id.relativePath.rawValue,
             "decoded": "\(decoded)", "native": "\(native)", "displayed": "\(displayed)",
         ])
-    }
-
-    // MARK: - Info overlay
-
-    /// View ▸ Show Info / Hide Info and I.
-    func toggleLoupeInfo() {
-        showsLoupeInfo.toggle()
-        let shown = showsLoupeInfo
-        OtosLog.ui.notice("op=loupe.info shown=\(shown, privacy: .public)")
-        refreshLoupeInfo()
-    }
-
-    /// Rebuilds the overlay for the focused asset. Called on toggle, focus change, and
-    /// when the loupe decode lands (that is when the native size becomes known).
-    func refreshLoupeInfo() {
-        loupeInfoTask?.cancel()
-        guard showsLoupeInfo, viewMode == .loupe, let id = focusedAssetID else {
-            loupeInfo = nil
-            loupeInfoTask = nil
-            return
-        }
-        let store = catalogStore
-        loupeInfoTask = Task { [weak self] in
-            let asset: MediaAsset?
-            do {
-                asset = try await store.mediaAssets(for: [id])[id]
-            } catch {
-                guard !Task.isCancelled, let self, focusedAssetID == id, showsLoupeInfo else { return }
-                // A failed read is not an asset without facts: nothing reads `Unknown` for
-                // it. The overlay keeps what it showed for this asset, drops another
-                // asset's, and the next refresh reads again.
-                OtosLog.ui.errorOperation("loupe.info", phase: "readFailed", fields: [
-                    "id": id.relativePath.rawValue,
-                    "error": String(describing: error),
-                ])
-                if loupeInfo?.id != id {
-                    loupeInfo = nil
-                }
-                loupeInfoTask = nil
-                return
-            }
-            guard !Task.isCancelled, let self, focusedAssetID == id, showsLoupeInfo else { return }
-            let preview = panePreviews[.loupe]
-            loupeInfo = LoupeInfoModel.make(
-                id: id,
-                asset: asset,
-                kind: focusedAssetKind,
-                nativePixelSize: preview?.id == id ? preview?.nativePixelSize : nil
-            )
-            loupeInfoTask = nil
-        }
     }
 }

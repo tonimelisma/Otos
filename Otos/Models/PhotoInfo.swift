@@ -1,14 +1,14 @@
 import CoreGraphics
 import Foundation
 
-/// Loupe info overlay model guide
+/// Photo info guide
 ///
-/// The read-only facts the loupe shows on I (APP-041): file name, capture date,
-/// pixel dimensions, kind and format, and file size. Every value comes from a catalog
-/// fact the app already holds — `MediaAsset` plus the native size the preview decode
-/// reported — and nothing is fetched for the overlay. A fact the catalog does not have
-/// reads `Unknown` rather than disappearing (APP-001, DES-053).
-nonisolated struct LoupeInfoModel: Equatable, Sendable {
+/// The read-only facts the inspector's Info pane shows for the current target (APP-041):
+/// file name, capture date, pixel dimensions, kind and format, and file size. Every value
+/// is a catalog fact the app already holds — `MediaAsset` plus the upright size the
+/// catalog's metadata reports — and nothing is fetched for the pane. A fact the catalog
+/// does not have reads `Unknown` rather than disappearing (APP-001, DES-053).
+nonisolated struct PhotoInfo: Equatable, Sendable {
     static let unknown = "Unknown"
 
     /// The asset these facts describe.
@@ -25,7 +25,7 @@ nonisolated struct LoupeInfoModel: Equatable, Sendable {
         kind: MediaKind?,
         nativePixelSize: CGSize?,
         calendar: Calendar = .current
-    ) -> LoupeInfoModel {
+    ) -> PhotoInfo {
         let fileName = asset?.name ?? id.relativePath.fileName
         let captureDate: String = if let date = asset?.bestCaptureDate {
             date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, calendar: calendar))
@@ -56,7 +56,7 @@ nonisolated struct LoupeInfoModel: Equatable, Sendable {
         } else {
             unknown
         }
-        return LoupeInfoModel(
+        return PhotoInfo(
             id: id,
             fileName: fileName,
             captureDate: captureDate,

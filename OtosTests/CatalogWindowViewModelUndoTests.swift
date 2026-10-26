@@ -80,7 +80,10 @@ struct CatalogWindowViewModelUndoTests {
         }
     }
 
-    @Test func undoNeverAdvancesTheSelection() async throws {
+    /// Undo never auto-advances, and it shows what it changed (F-18): after a like advanced
+    /// to the next photo, undoing it selects the liked photo again rather than leaving the
+    /// change out of sight.
+    @Test func undoRevealsWhatItChangedAndNeverAdvances() async throws {
         try await withCatalogedLibrary(fileCount: 3) { library in
             let model = makeUndoModel(store: library.store)
             model.applyState(undoWindowState(ids: library.ids))
@@ -97,7 +100,7 @@ struct CatalogWindowViewModelUndoTests {
 
             model.undoLastChange()
             try await expectSettledChoices([.notRated, .notRated, .notRated], model, library)
-            #expect(model.gridSelection.selection == [ids[1]])
+            #expect(model.gridSelection.selection == [ids[0]])
         }
     }
 

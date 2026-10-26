@@ -20,7 +20,8 @@ struct CatalogFilterControl: View {
         Button {
             isPresented.toggle()
         } label: {
-            Image(systemName: "line.3.horizontal.decrease")
+            // Active, the glyph changes shape as well as color (DES-029).
+            Image(systemName: descriptor.filter.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease")
                 .foregroundStyle(descriptor.filter.isActive ? Color.accentColor : Color.primary)
         }
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
@@ -169,9 +170,6 @@ struct CatalogSortMenuContent: View {
     }
 }
 
-/// Photos-style discrete thumbnail sizing. Uses AppKit `NSSegmentedControl` with
-/// momentary tracking so the −/+ pair renders as one fused control (SwiftUI
-/// `ControlGroup` only applies logical spacing on modern macOS toolbars).
 /// The toolbar's −/+: the same View ▸ Zoom Out / Zoom In intents in every mode — grid
 /// density in the grid, the image in the loupe (APP-040) — enabled exactly when the menu
 /// items are.
@@ -182,70 +180,88 @@ struct CatalogZoomControl: View {
     let zoomIn: () -> Void
 
     var body: some View {
-        ZoomSegmentedControl(canZoomOut: canZoomOut, canZoomIn: canZoomIn, zoomOut: zoomOut, zoomIn: zoomIn)
-            .frame(width: 64, height: 24)
-            .accessibilityLabel("Zoom")
-            .help("Zoom")
+        ToolbarSegmentedControl(
+            segments: [
+                ToolbarSegment(systemImage: "minus", title: "Zoom Out", isEnabled: canZoomOut),
+                ToolbarSegment(systemImage: "plus", title: "Zoom In", isEnabled: canZoomIn),
+            ],
+            selected: nil,
+            choose: { $0 == 0 ? zoomOut() : zoomIn() }
+        )
+        .frame(width: 64, height: 24)
+        .accessibilityLabel("Zoom")
+        .help("Zoom")
     }
 }
 
-/// Native fused momentary −/+ segment for the toolbar.
-struct ZoomSegmentedControl: NSViewRepresentable {
-    let canZoomOut: Bool
-    let canZoomIn: Bool
-    let zoomOut: () -> Void
-    let zoomIn: () -> Void
+/// One segment of a toolbar segmented control: its symbol, the act it names (tooltip and
+/// accessibility description), and whether it acts now.
+struct ToolbarSegment: Equatable {
+    let systemImage: String
+    let title: String
+    let isEnabled: Bool
+}
+
+/// A fused group of toolbar buttons drawn as one AppKit `NSSegmentedControl` — the one
+/// idiom for every joined group in the toolbar (`hig-validation.md` F-26): SwiftUI's
+/// `ControlGroup` lays a modern macOS toolbar's buttons out apart. With `selected` it
+/// shows a state (the targets' curation choice, none when they differ); without, its
+/// segments are momentary buttons.
+struct ToolbarSegmentedControl: NSViewRepresentable {
+    let segments: [ToolbarSegment]
+    let selected: Int?
+    let choose: (Int) -> Void
 
     final class Coordinator: NSObject {
-        var zoomOut: () -> Void
-        var zoomIn: () -> Void
+        var choose: (Int) -> Void
 
-        init(zoomOut: @escaping () -> Void, zoomIn: @escaping () -> Void) {
-            self.zoomOut = zoomOut
-            self.zoomIn = zoomIn
+        init(choose: @escaping (Int) -> Void) {
+            self.choose = choose
         }
 
         @objc func segmentClicked(_ sender: NSSegmentedControl) {
-            switch sender.selectedSegment {
-            case 0:
-                zoomOut()
-            case 1:
-                zoomIn()
-            default:
-                break
-            }
+            let index = sender.selectedSegment
+            guard index >= 0 else { return }
+            choose(index)
         }
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(zoomOut: zoomOut, zoomIn: zoomIn)
+        Coordinator(choose: choose)
     }
 
     func makeNSView(context: Context) -> NSSegmentedControl {
-        let minus = NSImage(systemSymbolName: "minus", accessibilityDescription: "Zoom Out") ?? NSImage()
-        let plus = NSImage(systemSymbolName: "plus", accessibilityDescription: "Zoom In") ?? NSImage()
         let control = NSSegmentedControl(
-            images: [minus, plus],
-            trackingMode: .momentary,
+            images: segments.map { Self.image($0) },
+            trackingMode: selected == nil ? .momentary : .selectOne,
             target: context.coordinator,
             action: #selector(Coordinator.segmentClicked(_:))
         )
         control.segmentStyle = .automatic
-        control.setToolTip("Zoom Out", forSegment: 0)
-        control.setToolTip("Zoom In", forSegment: 1)
-        applyEnablement(control)
+        apply(to: control)
         return control
     }
 
     func updateNSView(_ control: NSSegmentedControl, context: Context) {
-        context.coordinator.zoomOut = zoomOut
-        context.coordinator.zoomIn = zoomIn
-        applyEnablement(control)
+        context.coordinator.choose = choose
+        apply(to: control)
     }
 
-    private func applyEnablement(_ control: NSSegmentedControl) {
-        control.setEnabled(canZoomOut, forSegment: 0)
-        control.setEnabled(canZoomIn, forSegment: 1)
+    private func apply(to control: NSSegmentedControl) {
+        for (index, segment) in segments.enumerated() {
+            control.setImage(Self.image(segment), forSegment: index)
+            control.setToolTip(segment.title, forSegment: index)
+            control.setEnabled(segment.isEnabled, forSegment: index)
+        }
+        if control.trackingMode == .selectOne {
+            // The state the model reports, never the click itself: a click whose choice
+            // does not land leaves the segment showing what is true.
+            control.selectedSegment = selected ?? -1
+        }
+    }
+
+    private static func image(_ segment: ToolbarSegment) -> NSImage {
+        NSImage(systemSymbolName: segment.systemImage, accessibilityDescription: segment.title) ?? NSImage()
     }
 }
 
@@ -354,25 +370,23 @@ final class ToolbarAnchorView: NSView {
 /// targets — the same intent P, U, X, the Photo menu, the hover group and the context
 /// menu call. Photos' toolbar heart, in Otos's vocabulary. `currentChoice` is the one
 /// choice every target holds, or nil when they differ or nothing is targeted; the
-/// matching segment is filled so the current item's state is visible at a glance.
+/// matching segment is drawn selected so the current item's state is visible at a glance.
 struct CatalogCurationToolbarControl: View {
     let currentChoice: MediaChoice?
     let isEnabled: Bool
     let choose: (MediaChoice) -> Void
 
     var body: some View {
-        ControlGroup {
-            ForEach(MediaChoice.allCases, id: \.self) { choice in
-                Button {
-                    choose(choice)
-                } label: {
-                    Label(choice.actionLabel, systemImage: choice.systemImage)
-                        .symbolVariant(currentChoice == choice ? .fill : .none)
-                }
-                .help(choice.actionLabel)
-            }
-        }
-        .disabled(!isEnabled)
+        ToolbarSegmentedControl(
+            segments: MediaChoice.allCases.map { choice in
+                ToolbarSegment(systemImage: choice.systemImage, title: choice.actionLabel, isEnabled: isEnabled)
+            },
+            selected: currentChoice.flatMap { MediaChoice.allCases.firstIndex(of: $0) },
+            choose: { choose(MediaChoice.allCases[$0]) }
+        )
+        .frame(width: 96, height: 24)
+        .accessibilityLabel("Curation")
+        .accessibilityValue(currentChoice?.accessibilityValue ?? "mixed")
     }
 }
 
