@@ -172,47 +172,45 @@ struct CatalogSortMenuContent: View {
 /// Photos-style discrete thumbnail sizing. Uses AppKit `NSSegmentedControl` with
 /// momentary tracking so the −/+ pair renders as one fused control (SwiftUI
 /// `ControlGroup` only applies logical spacing on modern macOS toolbars).
+/// The toolbar's −/+: the same View ▸ Zoom Out / Zoom In intents in every mode — grid
+/// density in the grid, the image in the loupe (APP-040) — enabled exactly when the menu
+/// items are.
 struct CatalogZoomControl: View {
-    let columnCount: Int
-    let makeThumbnailsSmaller: () -> Void
-    let makeThumbnailsLarger: () -> Void
+    let canZoomOut: Bool
+    let canZoomIn: Bool
+    let zoomOut: () -> Void
+    let zoomIn: () -> Void
 
     var body: some View {
-        ZoomSegmentedControl(
-            columnCount: columnCount,
-            makeThumbnailsSmaller: makeThumbnailsSmaller,
-            makeThumbnailsLarger: makeThumbnailsLarger
-        )
-        .frame(width: 64, height: 24)
-        .accessibilityLabel("Thumbnail Size")
-        .help("Thumbnail Size")
+        ZoomSegmentedControl(canZoomOut: canZoomOut, canZoomIn: canZoomIn, zoomOut: zoomOut, zoomIn: zoomIn)
+            .frame(width: 64, height: 24)
+            .accessibilityLabel("Zoom")
+            .help("Zoom")
     }
 }
 
 /// Native fused momentary −/+ segment for the toolbar.
 struct ZoomSegmentedControl: NSViewRepresentable {
-    let columnCount: Int
-    let makeThumbnailsSmaller: () -> Void
-    let makeThumbnailsLarger: () -> Void
+    let canZoomOut: Bool
+    let canZoomIn: Bool
+    let zoomOut: () -> Void
+    let zoomIn: () -> Void
 
     final class Coordinator: NSObject {
-        var makeThumbnailsSmaller: () -> Void
-        var makeThumbnailsLarger: () -> Void
+        var zoomOut: () -> Void
+        var zoomIn: () -> Void
 
-        init(
-            makeThumbnailsSmaller: @escaping () -> Void,
-            makeThumbnailsLarger: @escaping () -> Void
-        ) {
-            self.makeThumbnailsSmaller = makeThumbnailsSmaller
-            self.makeThumbnailsLarger = makeThumbnailsLarger
+        init(zoomOut: @escaping () -> Void, zoomIn: @escaping () -> Void) {
+            self.zoomOut = zoomOut
+            self.zoomIn = zoomIn
         }
 
         @objc func segmentClicked(_ sender: NSSegmentedControl) {
             switch sender.selectedSegment {
             case 0:
-                makeThumbnailsSmaller()
+                zoomOut()
             case 1:
-                makeThumbnailsLarger()
+                zoomIn()
             default:
                 break
             }
@@ -220,17 +218,12 @@ struct ZoomSegmentedControl: NSViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(
-            makeThumbnailsSmaller: makeThumbnailsSmaller,
-            makeThumbnailsLarger: makeThumbnailsLarger
-        )
+        Coordinator(zoomOut: zoomOut, zoomIn: zoomIn)
     }
 
     func makeNSView(context: Context) -> NSSegmentedControl {
-        let minus = NSImage(systemSymbolName: "minus", accessibilityDescription: "Smaller Thumbnails")
-            ?? NSImage()
-        let plus = NSImage(systemSymbolName: "plus", accessibilityDescription: "Larger Thumbnails")
-            ?? NSImage()
+        let minus = NSImage(systemSymbolName: "minus", accessibilityDescription: "Zoom Out") ?? NSImage()
+        let plus = NSImage(systemSymbolName: "plus", accessibilityDescription: "Zoom In") ?? NSImage()
         let control = NSSegmentedControl(
             images: [minus, plus],
             trackingMode: .momentary,
@@ -238,21 +231,21 @@ struct ZoomSegmentedControl: NSViewRepresentable {
             action: #selector(Coordinator.segmentClicked(_:))
         )
         control.segmentStyle = .automatic
-        control.setToolTip("Smaller Thumbnails", forSegment: 0)
-        control.setToolTip("Larger Thumbnails", forSegment: 1)
+        control.setToolTip("Zoom Out", forSegment: 0)
+        control.setToolTip("Zoom In", forSegment: 1)
         applyEnablement(control)
         return control
     }
 
     func updateNSView(_ control: NSSegmentedControl, context: Context) {
-        context.coordinator.makeThumbnailsSmaller = makeThumbnailsSmaller
-        context.coordinator.makeThumbnailsLarger = makeThumbnailsLarger
+        context.coordinator.zoomOut = zoomOut
+        context.coordinator.zoomIn = zoomIn
         applyEnablement(control)
     }
 
     private func applyEnablement(_ control: NSSegmentedControl) {
-        control.setEnabled(columnCount < GridColumnCount.maximum, forSegment: 0)
-        control.setEnabled(columnCount > GridColumnCount.minimum, forSegment: 1)
+        control.setEnabled(canZoomOut, forSegment: 0)
+        control.setEnabled(canZoomIn, forSegment: 1)
     }
 }
 
@@ -305,31 +298,23 @@ struct CatalogShareToolbarButton: View {
     }
 }
 
-struct CatalogInfoToolbarButton: View {
-    let isEnabled: Bool
+/// A toolbar button that shows and hides a surface. It is a toggle, so the toolbar draws
+/// it pressed while the surface is shown — one idiom for Info and Edit, and the state
+/// is never carried by the glyph alone (DES-029). Its tooltip names the act a click does.
+struct CatalogSurfaceToolbarToggle: View {
+    let title: String
+    let systemImage: String
     let isShowing: Bool
+    var isEnabled = true
     let toggle: () -> Void
 
     var body: some View {
-        Button(action: toggle) {
-            Label("Info", systemImage: isShowing ? "info.circle.fill" : "info.circle")
+        Toggle(isOn: Binding(get: { isShowing }, set: { _ in toggle() })) {
+            Label(title, systemImage: systemImage)
         }
-        .help(isShowing ? "Hide Info" : "Show Info")
+        .toggleStyle(.button)
+        .help(isShowing ? "Hide \(title)" : "Show \(title)")
         .disabled(!isEnabled)
-    }
-}
-
-/// Shows and hides the trailing edit panel; View ▸ Show Edit (E) is its menu-bar
-/// equivalent.
-struct CatalogEditToolbarButton: View {
-    let isShowing: Bool
-    let toggle: () -> Void
-
-    var body: some View {
-        Button(action: toggle) {
-            Label("Edit", systemImage: "slider.horizontal.3")
-        }
-        .help(isShowing ? "Hide Edit" : "Show Edit")
     }
 }
 

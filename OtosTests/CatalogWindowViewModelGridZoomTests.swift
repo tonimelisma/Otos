@@ -70,11 +70,16 @@ struct CatalogWindowViewModelGridZoomTests {
             model.zoomInGrid()
         }
         #expect(model.gridColumnCount == GridColumnCount.minimum)
+        // The menu items and the toolbar's −/+ share this one enablement.
+        #expect(!model.canZoomIn)
+        #expect(model.canZoomOut)
 
         for _ in 0 ..< 20 {
             model.zoomOutGrid()
         }
         #expect(model.gridColumnCount == GridColumnCount.maximum)
+        #expect(model.canZoomIn)
+        #expect(!model.canZoomOut)
     }
 
     @Test func defaultsToSeventyTwoStripTileEdge() {

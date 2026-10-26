@@ -195,11 +195,11 @@ struct ContentView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 CatalogZoomControl(
-                    columnCount: viewModel.gridColumnCount,
-                    makeThumbnailsSmaller: viewModel.zoomOutGrid,
-                    makeThumbnailsLarger: viewModel.zoomInGrid
+                    canZoomOut: viewModel.canZoomOut,
+                    canZoomIn: viewModel.canZoomIn,
+                    zoomOut: viewModel.zoomOut,
+                    zoomIn: viewModel.zoomIn
                 )
-                .disabled(viewModel.viewMode != .grid)
             }
             // Trailing-edge Info and Share (APP-041, APP-036). File ▸ Share… and View ▸
             // Show Info are the menu-bar equivalents every toolbar item must have; the
@@ -212,9 +212,11 @@ struct ContentView: View {
                 )
             }
             ToolbarItem(placement: .primaryAction) {
-                CatalogInfoToolbarButton(
-                    isEnabled: viewModel.viewMode == .loupe,
+                CatalogSurfaceToolbarToggle(
+                    title: "Info",
+                    systemImage: "info.circle",
                     isShowing: viewModel.showsLoupeInfo,
+                    isEnabled: viewModel.viewMode == .loupe,
                     toggle: viewModel.toggleLoupeInfo
                 )
             }
@@ -226,7 +228,9 @@ struct ContentView: View {
                 )
             }
             ToolbarItem(placement: .primaryAction) {
-                CatalogEditToolbarButton(
+                CatalogSurfaceToolbarToggle(
+                    title: "Edit",
+                    systemImage: "slider.horizontal.3",
                     isShowing: viewModel.isEditPanelPresented,
                     toggle: viewModel.toggleEditPanel
                 )
@@ -525,6 +529,7 @@ struct ContentView: View {
                 onPaneMediaChoice: { pane, choice in
                     viewModel.submitMediaChoice(choice, target: .compare(pane), origin: .inline)
                 },
+                activePane: viewModel.activeComparePane,
                 onPaneActivated: viewModel.activateComparePane,
                 contextMenu: viewModel.makeMediaItemContextMenu
             )

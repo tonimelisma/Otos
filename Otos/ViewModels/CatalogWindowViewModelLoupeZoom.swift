@@ -27,10 +27,27 @@ extension CatalogWindowViewModel {
         requestFullResolutionIfNeeded()
     }
 
-    var canZoom: Bool {
+    /// Whether Zoom In acts now — View ▸ Zoom In (⌘=) and the toolbar's + alike: fewer
+    /// grid columns, or a loupe image below its ceiling. Compare has no zoom.
+    var canZoomIn: Bool {
         switch viewMode {
-        case .grid: true
-        case .loupe: loupeZoomReport != nil
+        case .grid:
+            gridColumnCount > GridColumnCount.minimum
+        case .loupe:
+            loupeZoomReport.map {
+                $0.magnification < LoupeZoomPolicy.maximumMagnification(fit: $0.fit) * (1 - LoupeZoomPolicy.fitTolerance)
+            } ?? false
+        case .compare:
+            false
+        }
+    }
+
+    /// Whether Zoom Out acts now — View ▸ Zoom Out (⌘−) and the toolbar's − alike: more
+    /// grid columns, or a loupe image zoomed past fit.
+    var canZoomOut: Bool {
+        switch viewMode {
+        case .grid: gridColumnCount < GridColumnCount.maximum
+        case .loupe: loupeZoomReport.map { !$0.isFit } ?? false
         case .compare: false
         }
     }

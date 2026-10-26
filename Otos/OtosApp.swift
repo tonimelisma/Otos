@@ -129,6 +129,9 @@ public struct OtosApp: App {
                 }
         }
         .commands {
+            // View ▸ Show Sidebar / Hide Sidebar (⌃⌘S): the menu equivalent of the
+            // toolbar's sidebar button, which every toolbar item has.
+            SidebarCommands()
             CommandGroup(replacing: .newItem) {
                 // File ▸ Open / Open With / Reveal: file-level acts on the current
                 // targets (APP-035, APP-036). ⌘O stays reserved for opening files into Otos.
@@ -335,20 +338,12 @@ public struct OtosApp: App {
                 // "+" here would only fire on ⌘⇧=. Using "=" makes the physical ⌘= work and
                 // the menu render ⌘= honestly; the ⌘+/⌘− glyph symmetry is sacrificed (F3).
                 .keyboardShortcut("=", modifiers: .command)
-                .disabled(
-                    !catalogViewModel.canZoom
-                        || (catalogViewModel.viewMode == .grid
-                            && catalogViewModel.gridColumnCount <= GridColumnCount.minimum)
-                )
+                .disabled(!catalogViewModel.canZoomIn)
                 Button("Zoom Out") {
                     catalogViewModel.zoomOut()
                 }
                 .keyboardShortcut("-", modifiers: .command)
-                .disabled(
-                    !catalogViewModel.canZoom
-                        || (catalogViewModel.viewMode == .grid
-                            && catalogViewModel.gridColumnCount >= GridColumnCount.maximum)
-                )
+                .disabled(!catalogViewModel.canZoomOut)
                 Button("Toggle Actual Size") {
                     catalogViewModel.toggleLoupeZoom()
                 }

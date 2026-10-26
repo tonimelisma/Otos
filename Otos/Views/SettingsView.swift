@@ -135,12 +135,14 @@ private struct ImportSettingsView: View {
                 )
             }
 
-            Section("Destination folders") {
-                Picker("Folder policy", selection: binding(\.destinationFolderPolicy)) {
+            // Named for what lands in the library, never Otos's own vocabulary (DES-035,
+            // DES-039): "Subfolders: Year / Month", "File names: Capture date and time".
+            Section("Destination") {
+                Picker("Subfolders", selection: binding(\.destinationFolderPolicy)) {
                     Text("None").tag(DestinationFolderPolicy.none)
                     Text("Year / Month").tag(DestinationFolderPolicy.yearMonth)
                 }
-                Picker("Filename policy", selection: binding(\.destinationNamePolicy)) {
+                Picker("File names", selection: binding(\.destinationNamePolicy)) {
                     Text("Keep original name").tag(DestinationNamePolicy.original)
                     Text("Capture date and time").tag(DestinationNamePolicy.captureDateTime)
                 }

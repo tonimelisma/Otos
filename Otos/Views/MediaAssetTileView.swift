@@ -420,7 +420,7 @@ extension MediaAssetTileView {
         guard let layer = contentView.layer else {
             return
         }
-        let newWidth: CGFloat = selected ? 3 : 0
+        let newWidth: CGFloat = selected ? MediaAssetTilePresentation.selectionBorderWidth : 0
         let shouldAnimate = animated && !MediaGridAnimation.prefersReducedMotion
         if shouldAnimate, layer.borderWidth != newWidth {
             let animation = CABasicAnimation(keyPath: "borderWidth")

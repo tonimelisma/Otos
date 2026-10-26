@@ -263,6 +263,66 @@ photo changes a thumbnail somewhere in the grid without revealing it.
 **Proposed:** none yet; it applies equally to curation (APP-039), so it belongs to one
 decision for the whole undo stack, not to the edit panel alone.
 
+## Toolbar and app-wide consistency audit (2026-10-25)
+
+The installed app, read surface by surface (grid, loupe, Compare, the Info overlay, every
+menu, the four Settings tabs) against the HIG, Photos, Lightroom Classic and Lightroom,
+and Otos's own rules.
+
+### F-20 — Edit value fields showed their label with no photo open (applied)
+
+With no photo open, the value was empty, so each field showed its placeholder, the
+control's name: "Exposure … Exposure". **Applied:** the fields have no placeholder and show
+`—` until a photo is open (APP-046).
+
+### F-21 — The Edit toolbar button never showed that it was on (applied)
+
+Info swapped to a filled glyph while shown; Edit looked the same either way. **Applied:**
+both are toggles that the toolbar draws pressed while shown, one idiom with one glyph
+(DES-097).
+
+### F-22 — Compare did not show which pane the commands act on (applied)
+
+The edit panel, the Photo menu and the toolbar act on the active pane; nothing marked it.
+**Applied:** the active picture carries the grid's selection outline (DES-096). DES-061
+said 2.5 pt while tiles drew 3 pt; the rule now says 3 pt, and both draw from one
+constant.
+
+### F-23 — The toolbar's −/+ were greyed out in the loupe, but ⌘= / ⌘− zoomed it (applied)
+
+One command behaved two ways. **Applied:** the toolbar calls View ▸ Zoom Out / Zoom In in
+every mode, and both read one enablement (`canZoomIn` / `canZoomOut`; APP-013).
+
+### F-24 — No menu item for the sidebar (applied)
+
+The toolbar's sidebar button had no menu equivalent. **Applied:** `SidebarCommands`, so
+View ▸ Show Sidebar / Hide Sidebar (⌃⌘S) is there (APP-002).
+
+### F-25 — Settings said "Folder policy" and "Filename policy" (applied)
+
+Internal vocabulary in the interface (DES-035, DES-039). **Applied:** "Destination",
+"Subfolders" and "File names".
+
+### F-26 — Consistency findings not yet taken up (proposed)
+
+- **Curation in the toolbar:** Like / Not Rated / Dislike sit as three separate buttons,
+  while the view modes and zoom are joined segments.
+- **An active filter:** it shows only as a tinted Filter glyph, and the title still reads
+  "All Media" (DES-029: never colour alone).
+- **Settings:**
+  - Four tabs use three layouts: grouped forms, a list without column headers, and a
+    table with headers.
+  - All sit in a fixed 660 × 380 window, so General is mostly empty.
+- **Vocabulary:** Settings says "Volume" where the import flow says "card"; Loupe says
+  "No Selection" where Compare says "No Photo".
+- **Menu names:** View ▸ "Toggle Actual Size" breaks the Show/Hide naming; Preview says
+  "Actual Size".
+- **Edit panel:** every section header carries a filled Reset pill, even when disabled,
+  and six of them compete with the section titles. Highlights rests at the far right
+  (−100…0) while every other tonal slider rests at its centre.
+- **Info:** an overlay on the photo, while Edit is a column, and both show the file name.
+  Lightroom keeps Info and Edit in one right-hand column.
+
 ## Re-test procedure
 
 Run before shipping any user-facing surface:
