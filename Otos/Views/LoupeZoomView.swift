@@ -20,7 +20,8 @@ import SwiftUI
 struct LoupeZoomView: NSViewRepresentable {
     let assetID: MediaAssetID
     let image: CGImage
-    let nativePixelSize: CGSize?
+    /// The original's long edge in pixels, which sets 100 percent; nil uses the decode's.
+    let nativeLongEdge: CGFloat?
     let command: LoupeZoomCommand?
     var onReport: (LoupeZoomReport) -> Void = { _ in }
     var onDoubleClick: (CGPoint) -> Void = { _ in }
@@ -37,7 +38,7 @@ struct LoupeZoomView: NSViewRepresentable {
         view.onReport = onReport
         view.onDoubleClick = onDoubleClick
         view.setPicking(isPicking, onPick: onPick)
-        view.setContent(image: image, nativePixelSize: nativePixelSize, assetID: assetID)
+        view.setContent(image: image, nativeLongEdge: nativeLongEdge, assetID: assetID)
         view.apply(command)
     }
 }
@@ -48,6 +49,7 @@ final class LoupeZoomScrollView: NSScrollView {
 
     private let document = LoupeZoomDocumentView(frame: .zero)
     private var currentAssetID: MediaAssetID?
+    private var nativeLongEdge: CGFloat?
     private var appliedGeneration: UInt64 = 0
     private var lastReported: LoupeZoomReport?
     private var needsRefit = true
@@ -106,11 +108,14 @@ final class LoupeZoomScrollView: NSScrollView {
         }
     }
 
-    func setContent(image: CGImage, nativePixelSize: CGSize?, assetID: MediaAssetID) {
+    func setContent(image: CGImage, nativeLongEdge: CGFloat?, assetID: MediaAssetID) {
         document.image = image
-        let pixels = nativePixelSize ?? CGSize(width: image.width, height: image.height)
-        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        let size = LoupeZoomPolicy.documentSize(nativePixelSize: pixels, backingScale: scale)
+        self.nativeLongEdge = nativeLongEdge
+        let size = LoupeZoomPolicy.documentSize(
+            imagePixelSize: CGSize(width: image.width, height: image.height),
+            nativeLongEdge: nativeLongEdge,
+            backingScale: window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        )
         if document.frame.size != size {
             document.frame = NSRect(origin: .zero, size: size)
         }
@@ -129,9 +134,7 @@ final class LoupeZoomScrollView: NSScrollView {
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         if let currentAssetID, let image = document.image {
-            let native = CGSize(width: document.frame.width * (window?.backingScaleFactor ?? 2),
-                                height: document.frame.height * (window?.backingScaleFactor ?? 2))
-            setContent(image: image, nativePixelSize: native, assetID: currentAssetID)
+            setContent(image: image, nativeLongEdge: nativeLongEdge, assetID: currentAssetID)
         }
     }
 
@@ -185,8 +188,9 @@ final class LoupeZoomScrollView: NSScrollView {
     }
 }
 
-/// Layer-backed image host. Draws whatever decode it holds stretched into its frame,
-/// which is the native pixel size in points; a double-click reports its point.
+/// Layer-backed image host. Draws whatever decode it holds scaled into its frame, which
+/// has the decode's shape at the original's resolution in points
+/// (`LoupeZoomPolicy.documentSize`); a double-click reports its point.
 final class LoupeZoomDocumentView: NSView {
     var onDoubleClick: (CGPoint) -> Void = { _ in }
     var isPicking = false

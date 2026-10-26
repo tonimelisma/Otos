@@ -105,7 +105,7 @@ struct LoupeView: View {
                         LoupeZoomView(
                             assetID: focusedAssetID,
                             image: image,
-                            nativePixelSize: panePreview?.nativePixelSize,
+                            nativeLongEdge: panePreview?.nativePixelSize.map { max($0.width, $0.height) },
                             command: loupeZoomCommand,
                             onReport: onZoomReport,
                             onDoubleClick: onZoomDoubleClick,

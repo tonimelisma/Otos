@@ -4,8 +4,8 @@ import Foundation
 /// Loupe zoom policy guide
 ///
 /// Pure geometry for the loupe's zoom (APP-040). Magnification is the scroll view's
-/// own unit: `1` means one image pixel per device pixel, because the document view is
-/// sized to the image's native pixel size divided by the backing scale. "Fit" is the
+/// own unit: `1` means one original pixel per device pixel, because the document view
+/// has the decode's shape at the original's resolution, divided by the backing scale. "Fit" is the
 /// magnification that letterboxes the whole image in the pane and is the floor; the
 /// ceiling is 100 percent, or fit itself when a small image already fills the pane
 /// at less than 100 percent. Every keyboard, menu and gesture path computes its target
@@ -15,9 +15,22 @@ nonisolated enum LoupeZoomPolicy {
     /// Within one percent of fit counts as fit — a pinch never lands exactly.
     static let fitTolerance: CGFloat = 0.01
 
-    static func documentSize(nativePixelSize: CGSize, backingScale: CGFloat) -> CGSize {
+    /// The document for `imagePixelSize`, the decode on screen, at the original's
+    /// resolution. Its shape is always the decode's: the catalog's size can disagree with
+    /// what the decoder shows (a HEIF rotated by its `irot` property records its stored,
+    /// unrotated size), and a document of the wrong shape stretches the picture. Only the
+    /// scale comes from the original, through its long edge, which no rotation changes.
+    static func documentSize(imagePixelSize: CGSize, nativeLongEdge: CGFloat?, backingScale: CGFloat) -> CGSize {
         let scale = backingScale > 0 ? backingScale : 1
-        return CGSize(width: nativePixelSize.width / scale, height: nativePixelSize.height / scale)
+        let imageLongEdge = max(imagePixelSize.width, imagePixelSize.height)
+        guard imageLongEdge > 0 else {
+            return .zero
+        }
+        let pixelsPerImagePixel = (nativeLongEdge ?? imageLongEdge) / imageLongEdge
+        return CGSize(
+            width: imagePixelSize.width * pixelsPerImagePixel / scale,
+            height: imagePixelSize.height * pixelsPerImagePixel / scale
+        )
     }
 
     static func fitMagnification(documentSize: CGSize, paneSize: CGSize) -> CGFloat {

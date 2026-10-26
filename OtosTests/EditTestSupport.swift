@@ -16,15 +16,17 @@ struct EditableLibrary {
 
 func withEditableLibrary(
     fileCount: Int,
+    fileExtension: String = "jpg",
+    write: (URL) throws -> Void = writeGradientJPEG,
     isolation: isolated (any Actor)? = #isolation,
     _ body: (EditableLibrary) async throws -> Void
 ) async throws {
     let temp = try makeTestDirectory()
     let root = temp.appending(path: "Photos", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    let names = (0 ..< fileCount).map { "edit-\($0).jpg" }
+    let names = (0 ..< fileCount).map { "edit-\($0).\(fileExtension)" }
     for name in names {
-        try writeGradientJPEG(to: root.appending(path: name))
+        try write(root.appending(path: name))
     }
     let rootPath = try CatalogPath.normalizedExistingDirectoryPath(for: root)
     let ids = names.map { MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: $0)) }
@@ -79,6 +81,15 @@ func writeGradientJPEG(to url: URL) throws {
     let image = try #require(gradientImage(width: 96, height: 64))
     let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, "public.jpeg" as CFString, 1, nil))
     CGImageDestinationAddImage(destination, image, nil)
+    try #require(CGImageDestinationFinalize(destination))
+}
+
+/// The 96×64 gradient stored as a HEIC turned a quarter clockwise by its `irot` property
+/// (ImageIO writes the property for orientation 6), so it shows upright as 64×96.
+func writeRotatedHEIC(to url: URL) throws {
+    let image = try #require(gradientImage(width: 96, height: 64))
+    let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, "public.heic" as CFString, 1, nil))
+    CGImageDestinationAddImage(destination, image, [kCGImagePropertyOrientation: 6] as CFDictionary)
     try #require(CGImageDestinationFinalize(destination))
 }
 

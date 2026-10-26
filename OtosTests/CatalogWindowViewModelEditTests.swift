@@ -194,6 +194,26 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    /// Crop geometry takes the photo's upright size from the decode it is edited from,
+    /// never from the catalog row: a HEIF turned by its `irot` property can be cataloged
+    /// with its stored landscape size while it shows upright.
+    @Test func cropGeometryUsesTheOpenedPhotosUprightSize() async throws {
+        try await withEditableLibrary(fileCount: 1, fileExtension: "heic", write: writeRotatedHEIC) { library in
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            model.toggleEditPanel()
+            model.selectAll()
+            model.setViewMode(.loupe)
+            try await waitUntil { model.editTarget?.id == library.ids[0] && model.canEdit }
+
+            #expect(model.editOriginalPixelSize == CGSize(width: 64, height: 96))
+            #expect(model.cropFrameSize == CGSize(width: 64, height: 96))
+            model.turnPhoto(clockwise: true)
+            #expect(model.cropFrameSize == CGSize(width: 96, height: 64))
+        }
+    }
+
     @Test func rotateRightAndUndoTurnTheSavedPhoto() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]

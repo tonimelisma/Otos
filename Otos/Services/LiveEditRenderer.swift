@@ -50,9 +50,11 @@ actor LiveEditRenderer {
         queue.asUnownedSerialExecutor()
     }
 
-    /// Opens the photo at `url`, if it is not the one open, and reports its facts.
-    func open(_ url: URL) throws -> EditPhotoFacts {
-        try openPhoto(url).facts
+    /// Opens the photo at `url`, if it is not the one open, and reports its facts and
+    /// upright size.
+    func open(_ url: URL) throws -> OpenedEditPhoto {
+        let photo = try openPhoto(url)
+        return OpenedEditPhoto(facts: photo.facts, pixelSize: photo.nativeSize)
     }
 
     /// The photo at `url` with `recipe` applied, at the preview's size.
