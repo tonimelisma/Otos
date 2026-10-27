@@ -70,14 +70,26 @@ nonisolated struct RootRuntimeState: Equatable {
     /// it, so the work an eject drains is finite. Resume clears it; a new attachment
     /// starts from a fresh state.
     var isQuiesced = false
+    /// Process-local: the import batches now copying from this root. While a card
+    /// (`.removableVolume`) is being imported, enrichment does not read it: the copier
+    /// needs the card reader, and every copy reuses the overlay the card already has, so
+    /// card work started now only slows the import it competes with (ARC-053, ENR-017).
+    /// A camera keeps enriching, because import copies its enrichment staging (ARC-049).
+    var importingBatches: Set<ImportBatchID> = []
 
     var path: LibraryRootPath {
         root.path
     }
 
-    /// Available and not quiesced: enrichment may claim this root's assets.
+    /// Whether an import is copying from this card, so enrichment leaves it alone.
+    var isCardBeingImported: Bool {
+        root.kind == .removableVolume && !importingBatches.isEmpty
+    }
+
+    /// Available, not quiesced, and not a card being imported: enrichment may claim this
+    /// root's assets.
     var isEnrichable: Bool {
-        availability == .available && !isQuiesced
+        availability == .available && !isQuiesced && !isCardBeingImported
     }
 
     init(

@@ -120,12 +120,42 @@ struct CatalogStoreRemovableSourceTests {
         let cardID = MediaAssetID(libraryRootPath: cardPath, relativePath: MediaRelativePath(rawValue: "card.jpg"))
 
         try await store.quiesceRemovableSource(identity: .volume(uuid: "test-card"))
-        let whileQuiesced = try await store.enrichmentCandidates(prioritizing: [cardID], limit: 10)
+        let whileQuiesced = try await store.priorityEnrichmentCandidates([cardID])
         #expect(!whileQuiesced.contains { $0.asset.id.libraryRootPath == cardPath })
 
         try await store.resumeRemovableSource(identity: .volume(uuid: "test-card"))
-        let afterResume = try await store.enrichmentCandidates(prioritizing: [cardID], limit: 10)
+        let afterResume = try await store.priorityEnrichmentCandidates([cardID])
         #expect(afterResume.contains { $0.asset.id == cardID })
+    }
+
+    /// ENR-017: while an import copies from a card, enrichment is offered nothing on it —
+    /// claims taken before are released — and the fixed library keeps enriching. When the
+    /// import ends, however it ended, the card is offered again.
+    @Test func aCardBeingImportedOffersNoEnrichmentUntilTheImportEnds() async throws {
+        let fixture = try await makeRemountFixture()
+        let store = fixture.store
+        try await store.attachRemovableVolume(
+            mountURL: fixture.firstMount,
+            identity: .volume(uuid: "test-card"),
+            displayName: "Card",
+            isEjectable: true
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: fixture.firstMount)
+        _ = try await waitForSelectedRelativePaths(store, rootPath: cardPath, expected: ["card.jpg"])
+        let cardID = MediaAssetID(libraryRootPath: cardPath, relativePath: MediaRelativePath(rawValue: "card.jpg"))
+        #expect(try await store.priorityEnrichmentCandidates([cardID]).map(\.asset.id) == [cardID])
+
+        let batch = ImportBatchID()
+        await store.beginImportSourceRead(batch, source: cardPath)
+        #expect(await store.enrichableRootPaths() == [fixture.fixedRootPath])
+        #expect(try await store.priorityEnrichmentCandidates([cardID]).isEmpty)
+        let background = try await store.enrichmentCandidates(limit: 10)
+        #expect(background.allSatisfy { $0.asset.id.libraryRootPath == fixture.fixedRootPath })
+
+        await store.endImportSourceRead(batch, source: cardPath)
+        #expect(await store.enrichableRootPaths().contains(cardPath))
+        // The claim taken before the import was released when it began.
+        #expect(try await store.priorityEnrichmentCandidates([cardID]).map(\.asset.id) == [cardID])
     }
 
     /// Quiescence belongs to one attachment's pending unmount. A card quiesced at one
@@ -155,7 +185,7 @@ struct CatalogStoreRemovableSourceTests {
         _ = try await waitForSelectedRelativePaths(store, rootPath: secondPath, expected: ["card.jpg"])
         let cardID = MediaAssetID(libraryRootPath: secondPath, relativePath: MediaRelativePath(rawValue: "card.jpg"))
 
-        let candidates = try await store.enrichmentCandidates(prioritizing: [cardID], limit: 10)
+        let candidates = try await store.priorityEnrichmentCandidates([cardID])
         #expect(candidates.contains { $0.asset.id == cardID })
     }
 
@@ -222,7 +252,7 @@ struct CatalogStoreRemovableSourceTests {
         )
 
         #expect(outcome == .busy(displayName: root.displayName))
-        let afterRefusal = try await store.enrichmentCandidates(prioritizing: [cardID], limit: 10)
+        let afterRefusal = try await store.priorityEnrichmentCandidates([cardID])
         #expect(afterRefusal.contains { $0.asset.id == cardID })
     }
 

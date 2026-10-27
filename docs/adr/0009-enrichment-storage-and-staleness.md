@@ -235,12 +235,28 @@ Adjacent decisions requiring separate ADRs or specs:
    it stops lower-priority admission and bounds pre-existing same-root contention
    instead of cancelling work the provider may already be performing.
 
-   Enrichment remains cursorless: Store selects and claims eligible rows through
-   `enrichmentCandidates(prioritizing:limit:)`. Visible work outranks fallback;
-   available connected/removable roots precede fixed roots, then capture date and
+   Enrichment remains cursorless. Store claims priority rows through
+   `priorityEnrichmentCandidates(_:)` and background rows through
+   `enrichmentCandidates(limit:)`. Priority rows are the viewport and the `freshly`
+   hand-off, and each pass claims them first, before queued work is drained and
+   outside the 32-identity window. The window bounds look-ahead, and a row on screen
+   is not look-ahead: a window full of slow background claims would otherwise make a
+   visible row wait behind every one of them, because a freed slot drains the queue
+   before it claims. The priority list's own length is the bound. Among background
+   rows, available connected/removable roots precede fixed roots, then capture date and
    stable path break ties. MTP staging submits device-priority work, with stills
    before videos, then capture date and path. No durable materialization queue or
    status column exists.
+
+   A root enrichment may read is one the Store currently offers
+   (`RootRuntimeState.isEnrichable`): available, not quiesced for eject, and not a
+   card being imported. While an import copies from a `.removableVolume` source, the
+   Store offers nothing there and releases the claims it handed out, and each pass
+   drops queued work on any root it no longer offers. Work already reading finishes.
+   Card reads during the copy would compete with the copier for the card reader, and
+   import settlement reuses the overlay the card already has (§9), so enriching the
+   card then only slows the import. A camera keeps enriching, because import copies
+   its enrichment staging (ARC-049).
 
    `MaterializationCoordinator` brackets each coalesced physical transfer with one
    Store known-materialization begin/end pair. Only measured regular-file hydration
@@ -293,8 +309,11 @@ Adjacent decisions requiring separate ADRs or specs:
 9. **Import settlement may reuse a validated source overlay.** After the published
    destination facts and Plan-0060 XXH3-128 digest are available, `CatalogStore`
    may read the source row's current `(size, mtime)` facts, enrichment stamps,
-   normalized metadata JSON, and app-owned thumbnail path. Only a source whose
-   facts and digest agree is eligible. Metadata and normalized facts are cloned
+   normalized metadata JSON, and app-owned thumbnail path. The copy is the source
+   file, byte for byte, so the source's overlay is eligible whenever its enrichment
+   stamps name the size and mtime the import copied, the same freshness rule every
+   row's overlay answers to. No digest proves it: a card is never hashed in place
+   (ADR 0018), and its overlay is as current for the copy as it is for the card. Metadata and normalized facts are cloned
    into the destination's independent filesystem-path identity; a source thumbnail
    is copied into a separately staged destination thumbnail and promoted through
    the same atomic thumbnail path used by ordinary enrichment. Missing, stale,

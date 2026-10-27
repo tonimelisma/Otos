@@ -39,11 +39,10 @@ nonisolated struct ReusableEnrichmentOverlay: Equatable, Sendable {
     let metadata: AssetMetadata
     let enrichedKind: MediaKind?
     let enrichedFormat: MediaFormatToken?
-    let sourceByteSize: Int64?
-    let sourceMTimeSeconds: Int?
-    let contentHash: XXH3Digest128?
-    let contentHashSourceSize: Int64?
-    let contentHashSourceMTimeSeconds: Int?
+    /// The size and mtime the source's overlay was derived from (its enrichment stamps).
+    /// Reuse requires them to name the bytes the import copied.
+    let enrichedSourceSize: Int64?
+    let enrichedSourceMTimeSeconds: Int?
     let thumbnailPath: String?
     let previewPath: String?
 }

@@ -108,8 +108,8 @@ detail through a controller-owned `MediaTileDetailReader` that batches, deduplic
 cancels, and generation-checks detail reads. Thumbnails remain file-backed and are
 loaded off the main actor.
 
-Enrichment selection moves from a resident map scan to a Store claim query:
-`enrichmentCandidates(prioritizing:limit:)`.
+Enrichment selection moves from a resident map scan to Store claim queries:
+`priorityEnrichmentCandidates(_:)` and `enrichmentCandidates(limit:)` (ADR 0009).
 
 The catalog schema starts from one baseline migration, `v1_catalog_baseline`, whose
 statements are `CatalogSchema.baselineStatements`. Otos had no users when the

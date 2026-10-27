@@ -5,9 +5,11 @@ import UniformTypeIdentifiers
 
 nonisolated enum ImportOverlayReuseMiss: String, Equatable, Sendable {
     case absentSourceRow
+    /// The source's enrichment stamps do not name the size and mtime the import copied.
     case staleSourceOverlay
-    case missingOrMismatchedHash
-    case removableSourceNotHashed
+    /// The copy settled without a digest (a recovered entry journaled before hashing),
+    /// so the library row is enriched for one and reuse would only be redone.
+    case copyNotHashed
     case missingThumbnail
     /// A still whose source row has no stored preview (a camera row, enriched from byte
     /// ranges): reusing it would stamp a library row that then never gets one, so the
@@ -282,11 +284,9 @@ extension CatalogStore {
         guard let row = try Row.fetchOne(
             db,
             sql: """
-            SELECT m.byte_size, m.content_modified_at_unix,
-                   m.enriched_kind, m.enriched_format,
+            SELECT m.enriched_kind, m.enriched_format,
                    m.enriched_source_size, m.enriched_source_mtime,
-                   m.content_hash_xxh3_128, m.content_hash_source_size,
-                   m.content_hash_source_mtime, m.thumbnail_path, m.preview_path,
+                   m.thumbnail_path, m.preview_path,
                    a.metadata_extra_json
             FROM media_asset m
             LEFT JOIN asset_metadata a
@@ -312,19 +312,14 @@ extension CatalogStore {
             ])
             return nil
         }
-        let modified: Double? = row["content_modified_at_unix"]
         let enrichedKindRaw: String? = row["enriched_kind"]
         let enrichedFormatRaw: String? = row["enriched_format"]
-        let contentHashData: Data? = row["content_hash_xxh3_128"]
         return ReusableEnrichmentOverlay(
             metadata: metadata,
             enrichedKind: enrichedKindRaw.flatMap(MediaKind.init(rawValue:)),
             enrichedFormat: enrichedFormatRaw.map(MediaFormatToken.init(rawValue:)),
-            sourceByteSize: row["byte_size"],
-            sourceMTimeSeconds: modified.map { Int($0.rounded(.down)) } ?? -1,
-            contentHash: contentHashData.flatMap(XXH3Digest128.init(data:)),
-            contentHashSourceSize: row["content_hash_source_size"],
-            contentHashSourceMTimeSeconds: row["content_hash_source_mtime"],
+            enrichedSourceSize: row["enriched_source_size"],
+            enrichedSourceMTimeSeconds: row["enriched_source_mtime"],
             thumbnailPath: row["thumbnail_path"],
             previewPath: row["preview_path"]
         )

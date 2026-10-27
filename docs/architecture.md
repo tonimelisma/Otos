@@ -167,12 +167,14 @@ everything expensive happens on an actor off the main thread.
   epoch and the namespace lease right before its write; a stale one re-queues its
   dirt. One reconcile loop per Store, woken by a revision-counted doorbell, is the only
   drainer of dirt, and every dirt insertion requests a pass. Import settlement
-  validates current source `(size, mtime)` facts plus the Plan-0060 XXH3-128 digest,
-  and may clone the source's normalized enrichment overlay while copying an
-  independent destination thumbnail. Reuse is available only for sources whose bytes
-  are local: a `.removableVolume` source is never hashed in place, so its settlement
-  records a typed `removableSourceNotHashed` miss. A reuse miss falls back to ordinary
-  enrichment; source and destination overlay lifecycles remain independent.
+  clones the source's normalized enrichment overlay, copying an independent
+  destination thumbnail and preview, whenever the source's enrichment stamps name the
+  size and mtime the import copied — for a card as for any source, since the copy is
+  the source file. A reuse miss falls back to ordinary enrichment; source and
+  destination overlay lifecycles remain independent. While an import copies from a
+  card, the Store stops offering the card to enrichment
+  (`beginImportSourceRead`/`endImportSourceRead`, bracketed by
+  `MediaOperationCoordinator` around each run).
 - **Import publication recovery**: a completed staging hash is durably recorded with
   `.readyToPublish` before exclusive publication, and the published final is durably
   recorded as `.publishedPendingSettlement` before settlement or source deletion.
