@@ -89,6 +89,11 @@ extension MediaGridViewController {
             scrollAnchor: scrollAnchor,
             completion: completion
         )
+        // Here rather than in the completion: the apply has already placed every surviving
+        // header at its new section (`mediaSnapshot` documents why the layout is current
+        // on return), and an animated apply's completion lands only after the motion, so a
+        // header would show its old day for the length of it.
+        renderVisibleDayHeaders()
     }
 
     /// An animated apply keeps its true-diff path but runs with a zero duration when the

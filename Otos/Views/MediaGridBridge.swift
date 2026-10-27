@@ -603,21 +603,45 @@ extension MediaGridViewController {
         else {
             return nil
         }
-        // Blank rather than hidden. `isHidden` does not survive: AppKit sends
-        // `applyLayoutAttributes:` after this provider returns, and the attributes carry
-        // their own `hidden` — false — which overwrites it, so the first header kept
-        // reappearing from under the bar on a rubber-band scroll. Rendering no content
-        // is not something the collection view can undo. Set on every dequeue, both
-        // ways, because supplementary views are recycled.
-        guard MediaGridDayHeaderVisibility.drawsInFlowHeader(section: indexPath.section),
-              indexPath.section < appliedDaySections.count,
-              let day = appliedDaySections[indexPath.section]
-        else {
-            header.configure(nil)
-            return header
-        }
-        header.configure(.map(date: day.date, itemCount: day.itemCount))
+        renderDayHeader(header, section: indexPath.section)
         return header
+    }
+
+    /// Draws what `MediaGridDayHeaderPolicy` says the header at `section` shows.
+    ///
+    /// Blank rather than hidden. `isHidden` does not survive: AppKit sends
+    /// `applyLayoutAttributes:` after the provider returns, and the attributes carry
+    /// their own `hidden` — false — which overwrites it, so the first header kept
+    /// reappearing from under the bar on a rubber-band scroll. Rendering no content is
+    /// not something the collection view can undo. Set both ways, because supplementary
+    /// views are recycled.
+    private func renderDayHeader(_ header: MediaGridDayHeaderView, section: Int) {
+        header.configure(MediaGridDayHeaderPolicy.presentation(
+            section: section,
+            daySections: appliedDaySections
+        ))
+    }
+
+    /// Redraws every header on screen from the days just applied.
+    ///
+    /// The provider runs only when AppKit makes a header view, and a diffable apply keeps
+    /// the view of every section whose identity (`.day(date)`) survives, however far it
+    /// moved. So a header drawn blank as the first section stayed blank after a newer day
+    /// was inserted above it, and a day that grew kept its old count. What a header draws
+    /// is therefore re-derived for its current section after every apply, not only when
+    /// the view is made.
+    func renderVisibleDayHeaders() {
+        for indexPath in collectionView.indexPathsForVisibleSupplementaryElements(
+            ofKind: MediaGridDayHeaderView.elementKind
+        ) {
+            guard let header = collectionView.supplementaryView(
+                forElementKind: MediaGridDayHeaderView.elementKind,
+                at: indexPath
+            ) as? MediaGridDayHeaderView else {
+                continue
+            }
+            renderDayHeader(header, section: indexPath.section)
+        }
     }
 
     private func makeCollectionItem(
