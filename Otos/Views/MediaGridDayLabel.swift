@@ -143,9 +143,13 @@ final class MediaGridDayHeaderView: NSView, NSCollectionViewElement {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// The label this header currently draws; `nil` is a blank header.
+    private(set) var presentation: MediaGridDayLabelPresentation?
+
     /// A drawn header closes its run off with the DES-023 rule. `nil` leaves the
     /// header's space blank — no label and no rule.
     func configure(_ presentation: MediaGridDayLabelPresentation?) {
+        self.presentation = presentation
         label.render(presentation, showsHairline: presentation != nil)
     }
 }

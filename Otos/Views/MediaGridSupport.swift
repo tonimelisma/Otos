@@ -251,18 +251,27 @@ nonisolated enum MediaGridScrollWorkCadence {
     }
 }
 
-/// Whether a day section draws its own in-flow header (DES-069).
+/// What a day section's in-flow header draws (DES-069): a pure function of where the
+/// section sits and the days the grid last applied, so it has one answer however the
+/// header view came to be on screen.
 ///
-/// Every section does, except the first. The bar covers the top-most header's rect
-/// exactly, so a header at the top of the viewport is never separately visible — with
-/// one exception: rubber-band scrolling past the top pushes the content down while the
-/// bar stays at the viewport edge, and the first section's header slides out from under
-/// it as a duplicate of the label already being drawn. No other header can do this,
-/// because no other header is at the top when the content bounces. Since the first
-/// header is never visible on its own anyway, not drawing it removes the duplicate and
-/// nothing else; its space is still reserved, so the first row does not move.
-nonisolated enum MediaGridDayHeaderVisibility {
-    static func drawsInFlowHeader(section: Int) -> Bool {
-        section > 0
+/// Every section draws its day, except the first. The bar covers the top-most header's
+/// rect exactly, so a header at the top of the viewport is never separately visible —
+/// with one exception: rubber-band scrolling past the top pushes the content down while
+/// the bar stays at the viewport edge, and the first section's header slides out from
+/// under it as a duplicate of the label already being drawn. No other header can do
+/// this, because no other header is at the top when the content bounces. Since the
+/// first header is never visible on its own anyway, not drawing it removes the
+/// duplicate and nothing else; its space is still reserved, so the first row does not
+/// move. An ungrouped section (`nil` day) draws nothing.
+nonisolated enum MediaGridDayHeaderPolicy {
+    static func presentation(
+        section: Int,
+        daySections: [MediaGridDayBarPolicy.Day?]
+    ) -> MediaGridDayLabelPresentation? {
+        guard section > 0, section < daySections.count, let day = daySections[section] else {
+            return nil
+        }
+        return .map(date: day.date, itemCount: day.itemCount)
     }
 }
