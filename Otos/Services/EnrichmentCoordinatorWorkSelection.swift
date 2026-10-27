@@ -45,101 +45,54 @@ extension EnrichmentCoordinator {
         guard !isShuttingDown else {
             return []
         }
+        await dropQueuedClaims(outside: store.enrichableRootPaths())
         let availableSlots = admissionPolicy.enrichConcurrency - enrichingCount
         guard availableSlots > 0 else {
             return []
         }
 
-        var items = drainQueuedEnrichment(limit: availableSlots)
-        guard items.count < availableSlots else {
-            return items
-        }
-
-        let remainingClaimCapacity = max(claimWindowLimit - readyClaims.count, 0)
-        guard remainingClaimCapacity > 0 else {
-            return items
-        }
-
         do {
-            var readinessCounts: [String: Int] = [:]
-            var totalExamined = 0
-            var totalDeferred = 0
+            var routing = ClaimRouting()
+            // Rows the user is looking at (and rows a download just made local) are claimed
+            // before queued work is drained, and outside the claim window. The window bounds
+            // look-ahead, and a row on screen is not look-ahead: when the window is full of
+            // background work — a card whose reads crawl behind an import, a slow cloud
+            // root — a visible row would otherwise wait behind every queued claim, because a
+            // freed slot drains the queue first and claims nothing (ENR-018). The priority
+            // list is bounded by the viewport and the materialization hand-off.
+            let unclaimedPriority = prioritizedEnrichmentIDs().filter {
+                readyClaims[$0] == nil && !schedule.hasDemand(for: $0)
+            }
+            if !unclaimedPriority.isEmpty {
+                let claimed = try await store.priorityEnrichmentCandidates(unclaimedPriority)
+                for candidate in claimed {
+                    await recordClaimedCandidate(candidate.asset)
+                }
+                let (ready, deferred) = partitionByRetryLedger(claimed, now: now)
+                routing.examined += claimed.count
+                routing.deferred += deferred.count
+                if !deferred.isEmpty {
+                    await releaseDeferredLedgerClaims(deferred)
+                }
+                await route(ready, now: now, into: &routing)
+            }
+
+            var items = drainQueuedEnrichment(limit: availableSlots)
             var lastClaimLimit = 0
             for _ in 0 ..< Self.maxReadinessRoutingPasses {
+                guard items.count < availableSlots else { break }
                 let currentReadyCapacity = max(availableSlots - items.count, 0)
                 let currentClaimCapacity = max(claimWindowLimit - readyClaims.count, 0)
                 guard currentClaimCapacity > 0 else { break }
                 let claimLimit = min(max(claimBatchSize, currentReadyCapacity), currentClaimCapacity)
                 lastClaimLimit = claimLimit
-                let priorityIDs = prioritizedEnrichmentIDs()
-                let claimed = try await claimSkippingLedgerDeferrals(
-                    prioritizing: priorityIDs,
-                    limit: claimLimit,
-                    now: now
-                )
-                totalExamined += claimed.totalExamined
-                totalDeferred += claimed.deferredIDs.count
+                let claimed = try await claimSkippingLedgerDeferrals(limit: claimLimit, now: now)
+                routing.examined += claimed.totalExamined
+                routing.deferred += claimed.deferredIDs.count
                 if !claimed.deferredIDs.isEmpty {
                     await releaseDeferredLedgerClaims(claimed.deferredIDs)
                 }
-                var releasedIDs: [MediaAssetID] = []
-                for candidate in claimed.ready {
-                    let asset = candidate.asset
-                    guard schedule.readinessProbeIsDue(asset.id, now: now) else {
-                        releasedIDs.append(asset.id)
-                        continue
-                    }
-
-                    // A row on a device that answers ranged reads is reachable without a
-                    // local file, so the filesystem is not the right thing to ask about it.
-                    //
-                    // Checked *before* the readiness probe rather than as a fallback after
-                    // it, because `lstat` on a staging path that was never written answers
-                    // `.unknown`, which routes to a readiness retry — and that retry can
-                    // never succeed, because nothing is ever going to create the file. Every
-                    // camera row would be deferred, re-probed, and deferred again forever,
-                    // which is exactly what a live 991-item card did: `probes=128 ready=0
-                    // retryReadiness=32 dispatched=0`, on repeat, with no enrichment at all.
-                    //
-                    // This is the "route, not a bypass" the design called for: the row is
-                    // genuinely ready, by a different route to its bytes.
-                    if rangeCapableRootPaths.contains(asset.id.libraryRootPath) {
-                        enqueueReadyCandidate(candidate)
-                        readinessCounts["rangedReady", default: 0] += 1
-                        continue
-                    }
-
-                    switch readinessChecker.status(of: asset.id.fileURL) {
-                    case .materialized:
-                        enqueueReadyCandidate(candidate)
-                        readinessCounts["ready", default: 0] += 1
-                    case .dataless:
-                        guard schedule.outstandingCount < handoffPolicy.globalOutstandingLimit else {
-                            releasedIDs.append(asset.id)
-                            readinessCounts["materializationBound", default: 0] += 1
-                            continue
-                        }
-                        schedule.demand(
-                            DownloadWork(
-                                id: asset.id,
-                                url: asset.id.fileURL,
-                                sourceSize: asset.byteSize,
-                                captureDate: asset.bestCaptureDate,
-                                isVideo: asset.bestKind == .video,
-                                isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath)
-                            ),
-                            ownsStoreClaim: true
-                        )
-                        readinessCounts["needsMaterialization", default: 0] += 1
-                    case .unknown:
-                        schedule.deferReadinessProbe(asset.id, now: now)
-                        releasedIDs.append(asset.id)
-                        readinessCounts["retryReadiness", default: 0] += 1
-                    }
-                }
-                if !releasedIDs.isEmpty {
-                    await releaseDeferredLedgerClaims(releasedIDs)
-                }
+                await route(claimed.ready, now: now, into: &routing)
                 items.append(contentsOf: drainQueuedEnrichment(limit: availableSlots - items.count))
                 if items.count >= availableSlots || claimed.ready.isEmpty || claimed.totalExamined == 0 {
                     break
@@ -149,21 +102,96 @@ extension EnrichmentCoordinator {
                 }
             }
             await recordDispatchedWork(items)
-            if !readinessCounts.isEmpty {
+            if !routing.readinessCounts.isEmpty {
                 OtosLog.metadata.notice(
-                    "op=catalog.enrichment.readiness phase=route probes=\(totalExamined, privacy: .public) ready=\(readinessCounts["ready", default: 0], privacy: .public) needsMaterialization=\(readinessCounts["needsMaterialization", default: 0], privacy: .public) rangedReady=\(readinessCounts["rangedReady", default: 0], privacy: .public) retryReadiness=\(readinessCounts["retryReadiness", default: 0], privacy: .public) materializationBound=\(readinessCounts["materializationBound", default: 0], privacy: .public)"
+                    "op=catalog.enrichment.readiness phase=route probes=\(routing.examined, privacy: .public) ready=\(routing.readinessCounts["ready", default: 0], privacy: .public) needsMaterialization=\(routing.readinessCounts["needsMaterialization", default: 0], privacy: .public) rangedReady=\(routing.readinessCounts["rangedReady", default: 0], privacy: .public) retryReadiness=\(routing.readinessCounts["retryReadiness", default: 0], privacy: .public) materializationBound=\(routing.readinessCounts["materializationBound", default: 0], privacy: .public)"
                 )
             }
             logClaimBatch(
-                claimedCount: totalExamined,
+                claimedCount: routing.examined,
                 dispatchedCount: items.count,
                 limit: lastClaimLimit,
-                deferredCount: totalDeferred
+                deferredCount: routing.deferred
             )
             return items
         } catch {
             await recordCandidateQueryFailure(error)
             return []
+        }
+    }
+
+    /// What one pass's claims came to, for its readiness and scheduler-route lines.
+    private struct ClaimRouting {
+        var readinessCounts: [String: Int] = [:]
+        var examined = 0
+        var deferred = 0
+    }
+
+    /// Routes claimed rows by where their bytes are: ready rows join the queue, dataless
+    /// rows become materialization demand, and rows whose readiness is unknown or that
+    /// the hand-off cannot take now are released back to the Store.
+    private func route(
+        _ candidates: [ClaimedEnrichmentCandidate],
+        now: ContinuousClock.Instant,
+        into routing: inout ClaimRouting
+    ) async {
+        var releasedIDs: [MediaAssetID] = []
+        for candidate in candidates {
+            let asset = candidate.asset
+            guard schedule.readinessProbeIsDue(asset.id, now: now) else {
+                releasedIDs.append(asset.id)
+                continue
+            }
+
+            // A row on a device that answers ranged reads is reachable without a
+            // local file, so the filesystem is not the right thing to ask about it.
+            //
+            // Checked *before* the readiness probe rather than as a fallback after
+            // it, because `lstat` on a staging path that was never written answers
+            // `.unknown`, which routes to a readiness retry — and that retry can
+            // never succeed, because nothing is ever going to create the file. Every
+            // camera row would be deferred, re-probed, and deferred again forever,
+            // which is exactly what a live 991-item card did: `probes=128 ready=0
+            // retryReadiness=32 dispatched=0`, on repeat, with no enrichment at all.
+            //
+            // This is the "route, not a bypass" the design called for: the row is
+            // genuinely ready, by a different route to its bytes.
+            if rangeCapableRootPaths.contains(asset.id.libraryRootPath) {
+                enqueueReadyCandidate(candidate)
+                routing.readinessCounts["rangedReady", default: 0] += 1
+                continue
+            }
+
+            switch readinessChecker.status(of: asset.id.fileURL) {
+            case .materialized:
+                enqueueReadyCandidate(candidate)
+                routing.readinessCounts["ready", default: 0] += 1
+            case .dataless:
+                guard schedule.outstandingCount < handoffPolicy.globalOutstandingLimit else {
+                    releasedIDs.append(asset.id)
+                    routing.readinessCounts["materializationBound", default: 0] += 1
+                    continue
+                }
+                schedule.demand(
+                    DownloadWork(
+                        id: asset.id,
+                        url: asset.id.fileURL,
+                        sourceSize: asset.byteSize,
+                        captureDate: asset.bestCaptureDate,
+                        isVideo: asset.bestKind == .video,
+                        isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath)
+                    ),
+                    ownsStoreClaim: true
+                )
+                routing.readinessCounts["needsMaterialization", default: 0] += 1
+            case .unknown:
+                schedule.deferReadinessProbe(asset.id, now: now)
+                releasedIDs.append(asset.id)
+                routing.readinessCounts["retryReadiness", default: 0] += 1
+            }
+        }
+        if !releasedIDs.isEmpty {
+            await releaseDeferredLedgerClaims(releasedIDs)
         }
     }
 
@@ -181,7 +209,6 @@ extension EnrichmentCoordinator {
     /// routed to materialization remain independently claimed so the next pass's
     /// query naturally skips past them and surfaces different rows.
     private func claimSkippingLedgerDeferrals(
-        prioritizing priorityIDs: [MediaAssetID],
         limit: Int,
         now: ContinuousClock.Instant
     ) async throws -> (ready: [ClaimedEnrichmentCandidate], deferredIDs: [MediaAssetID], totalExamined: Int) {
@@ -189,7 +216,7 @@ extension EnrichmentCoordinator {
         var deferredIDs: [MediaAssetID] = []
         var totalExamined = 0
         for _ in 0 ..< Self.maxLedgerSkipPasses {
-            let batch = try await claimEnrichmentCandidates(prioritizing: priorityIDs, limit: limit)
+            let batch = try await claimEnrichmentCandidates(limit: limit)
             guard !batch.isEmpty else {
                 break
             }
@@ -301,11 +328,10 @@ extension EnrichmentCoordinator {
         }
     }
 
-    private func claimEnrichmentCandidates(
-        prioritizing priorityIDs: [MediaAssetID],
-        limit: Int
-    ) async throws -> [ClaimedEnrichmentCandidate] {
-        let candidates = try await store.enrichmentCandidates(prioritizing: priorityIDs, limit: limit)
+    /// Background claims, in Store order. Priority rows were claimed first, outside the
+    /// window, by `dequeueEnrichmentWork`.
+    private func claimEnrichmentCandidates(limit: Int) async throws -> [ClaimedEnrichmentCandidate] {
+        let candidates = try await store.enrichmentCandidates(limit: limit)
         for candidate in candidates {
             await recordClaimedCandidate(candidate.asset)
         }
@@ -341,6 +367,26 @@ extension EnrichmentCoordinator {
             } else {
                 false
             }
+        }
+    }
+
+    /// Drops queued work whose root the Store has stopped offering — a card being
+    /// imported, a source quiesced for eject. A queued record is a Store claim that has
+    /// not started reading; the Store released those claims when it stopped offering the
+    /// root, so dropping them owes nothing, and the claim window they held is free for
+    /// rows enrichment may read. Work already reading is left to finish.
+    private func dropQueuedClaims(outside enrichableRoots: Set<LibraryRootPath>) {
+        var dropped: [LibraryRootPath: Int] = [:]
+        for (id, record) in readyClaims where !enrichableRoots.contains(id.libraryRootPath) {
+            if case .queuedEnrichment = record.state {
+                readyClaims[id] = nil
+                dropped[id.libraryRootPath, default: 0] += 1
+            }
+        }
+        for (rootPath, count) in dropped {
+            OtosLog.metadata.notice(
+                "op=catalog.enrichment.coordinator phase=dropUnofferedRoot rootPath=\(rootPath.rawValue, privacy: .public) dropped=\(count, privacy: .public)"
+            )
         }
     }
 

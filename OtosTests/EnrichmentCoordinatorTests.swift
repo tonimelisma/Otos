@@ -116,7 +116,7 @@ struct EnrichmentCoordinatorTests {
 
         await blocker.release()
         await coordinator.shutdown()
-        let reclaimed = try await store.enrichmentCandidates(prioritizing: [], limit: 3)
+        let reclaimed = try await store.enrichmentCandidates(limit: 3)
 
         #expect(Set(reclaimed.map(\.asset.relativePath.rawValue)) == Set(relativeNames))
         try await store.releaseEnrichmentClaims(reclaimed.map(\.asset.id))
@@ -162,6 +162,95 @@ struct EnrichmentCoordinatorTests {
             await Set(enrichment.startedRelativePaths()) == [running],
             "work the drain dropped started anyway"
         )
+        await coordinator.shutdown()
+    }
+
+    /// ENR-018: a row the user is looking at is claimed ahead of queued background work and
+    /// outside the claim window. With the window full of slow background claims, the next
+    /// free slot goes to the visible row, not to the next queued one.
+    @Test func aVisibleRowStartsBeforeQueuedBackgroundWork() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let names = ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg", "f.jpg"]
+        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(names))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 6 }
+        let visibleID = try #require(scanned.testAssets.first { $0.relativePath.rawValue == "f.jpg" }?.id)
+
+        let gate = PathGateEnrichment()
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: gate.enricher(),
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            enrichConcurrency: 1,
+            claimBatchSize: 3,
+            claimWindowLimit: 3
+        )
+        await coordinator.start()
+        await gate.waitForStartedCount(1)
+        // Equal capture dates claim in path order: "a.jpg" runs, "b.jpg" and "c.jpg" fill
+        // the rest of the window.
+        #expect(await gate.startedRelativePaths() == ["a.jpg"])
+        #expect(await coordinator.readyClaims.count == 3)
+
+        await coordinator.updateViewport([visibleID])
+        await gate.release("a.jpg")
+        await gate.waitForStartedCount(2)
+
+        #expect(await gate.startedRelativePaths() == ["a.jpg", "f.jpg"])
+        await gate.releaseAll()
+        await coordinator.shutdown()
+    }
+
+    /// ENR-017: once an import starts copying from a card, the work queued on the card is
+    /// dropped and nothing new starts there; the work already reading finishes. When the
+    /// import ends the card enriches again.
+    @Test func queuedCardWorkIsDroppedWhileTheCardIsImported() async throws {
+        let temp = try makeTestDirectory()
+        let card = temp.appending(path: "CARD", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: card, withIntermediateDirectories: true)
+        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["a.jpg", "b.jpg", "c.jpg"]))
+        try await store.start(scansSavedLibraries: false)
+        try await store.attachRemovableVolume(
+            mountURL: card,
+            identity: .volume(uuid: "test-card"),
+            displayName: "CARD",
+            isEjectable: true
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: card)
+        _ = try await waitForCatalogStoreState(store) { state in
+            state.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
+
+        let gate = PathGateEnrichment()
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: gate.enricher(),
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            enrichConcurrency: 1,
+            claimBatchSize: 3,
+            claimWindowLimit: 3
+        )
+        await coordinator.start()
+        await gate.waitForStartedCount(1)
+        #expect(await coordinator.readyClaims.count == 3)
+
+        let batch = ImportBatchID()
+        await store.beginImportSourceRead(batch, source: cardPath)
+        try await waitUntil { await coordinator.readyClaims.count == 1 }
+        await gate.release("a.jpg")
+        try await waitUntil { await coordinator.readyClaims.isEmpty }
+        #expect(await gate.startedRelativePaths() == ["a.jpg"])
+
+        // The card is offered again, so a second card row starts; which one is the retry
+        // ledger's to decide and not this test's.
+        await store.endImportSourceRead(batch, source: cardPath)
+        await gate.waitForStartedCount(2)
+        await gate.releaseAll()
         await coordinator.shutdown()
     }
 
@@ -1187,5 +1276,66 @@ private extension Result where Failure == EnrichmentAdmissionPolicy.Rejection {
             return reason
         }
         return nil
+    }
+}
+
+/// Holds each enrichment until its path is released, so a test decides exactly which
+/// slot frees when.
+private actor PathGateEnrichment {
+    private var startedPaths: [String] = []
+    private var releasedPaths: Set<String> = []
+    private var releasedAll = false
+    private var pathWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    private var countWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    nonisolated func enricher() -> MediaEnricher {
+        MediaEnricher { id, _, _, _, _, _ in
+            await self.run(id.relativePath.rawValue)
+            return .transient
+        }
+    }
+
+    func startedRelativePaths() -> [String] {
+        startedPaths
+    }
+
+    func release(_ path: String) {
+        releasedPaths.insert(path)
+        for waiter in pathWaiters.removeValue(forKey: path) ?? [] {
+            waiter.resume()
+        }
+    }
+
+    func releaseAll() {
+        releasedAll = true
+        let waiters = pathWaiters.values.flatMap(\.self)
+        pathWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func waitForStartedCount(_ expected: Int) async {
+        if startedPaths.count >= expected {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            countWaiters.append((expected, continuation))
+        }
+    }
+
+    private func run(_ path: String) async {
+        startedPaths.append(path)
+        let ready = countWaiters.filter { startedPaths.count >= $0.0 }
+        countWaiters.removeAll { startedPaths.count >= $0.0 }
+        for waiter in ready {
+            waiter.1.resume()
+        }
+        guard !releasedAll, !releasedPaths.contains(path) else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            pathWaiters[path, default: []].append(continuation)
+        }
     }
 }

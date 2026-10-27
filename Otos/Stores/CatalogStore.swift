@@ -1518,65 +1518,67 @@ extension CatalogStore {
         return timedMetadata.value
     }
 
-    func enrichmentCandidates(
-        prioritizing priorityIDs: [MediaAssetID],
-        limit: Int
-    ) async throws -> [ClaimedEnrichmentCandidate] {
+    /// Claims the rows among `ids` that need enrichment on a root enrichment may read, in
+    /// `ids` order. These are the rows the user is looking at and rows a download just made
+    /// local; the coordinator claims them ahead of background work and outside its claim
+    /// window, so the list's own length is the bound.
+    func priorityEnrichmentCandidates(_ ids: [MediaAssetID]) async throws -> [ClaimedEnrichmentCandidate] {
+        var seen = Set<MediaAssetID>()
+        let uniqueIDs = EnrichmentClaimGateway.unclaimedPriorityIDs(ids, claimedIDs: &seen)
+        guard !uniqueIDs.isEmpty else {
+            return []
+        }
+        let queryStart = ContinuousClock.now
+        let claims = try await priorityEnrichmentCandidates(ids: uniqueIDs, limit: uniqueIDs.count)
+        await recordSlowEnrichmentCandidateQueryIfNeeded(
+            priorityCount: uniqueIDs.count,
+            returnedCount: claims.value.count,
+            waitMs: claims.waitMs,
+            execMs: claims.execMs,
+            queryStart: queryStart
+        )
+        return claims.value
+    }
+
+    /// Claims up to `limit` background rows: removable sources first, then libraries, each
+    /// newest capture first (ADR 0013, ADR 0018).
+    func enrichmentCandidates(limit: Int) async throws -> [ClaimedEnrichmentCandidate] {
         guard limit > 0 else {
             return []
         }
-
         let queryStart = ContinuousClock.now
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreEnrichmentCandidateQuery")
         defer {
             OtosSignpost.persistence.endInterval("CatalogStoreEnrichmentCandidateQuery", signpost)
         }
+        let claims = try await claimedEnrichmentCandidates(limit: limit)
+        await recordSlowEnrichmentCandidateQueryIfNeeded(
+            priorityCount: 0,
+            returnedCount: claims.value.count,
+            waitMs: claims.waitMs,
+            execMs: claims.execMs,
+            queryStart: queryStart
+        )
+        return claims.value
+    }
 
-        var candidates: [ClaimedEnrichmentCandidate] = []
-        candidates.reserveCapacity(limit)
-        var claimedIDs = Set<MediaAssetID>()
-        let uniquePriorityIDs = EnrichmentClaimGateway.unclaimedPriorityIDs(priorityIDs, claimedIDs: &claimedIDs)
-        var waitMs = 0
-        var execMs = 0
-
-        if !uniquePriorityIDs.isEmpty {
-            let priorityClaims = try await priorityEnrichmentCandidates(
-                ids: uniquePriorityIDs,
-                limit: limit
-            )
-            candidates.append(contentsOf: priorityClaims.value)
-            waitMs += priorityClaims.waitMs
-            execMs += priorityClaims.execMs
-            for candidate in candidates {
-                claimedIDs.insert(candidate.asset.id)
-            }
+    private func recordSlowEnrichmentCandidateQueryIfNeeded(
+        priorityCount: Int,
+        returnedCount: Int,
+        waitMs: Int,
+        execMs: Int,
+        queryStart: ContinuousClock.Instant
+    ) async {
+        guard waitMs + execMs > Self.slowQueryDiagnosticThresholdMs else {
+            return
         }
-
-        if candidates.count < limit {
-            let remaining = limit - candidates.count
-            let queriedClaims = try await claimedEnrichmentCandidates(limit: remaining)
-            waitMs += queriedClaims.waitMs
-            execMs += queriedClaims.execMs
-            for candidate in queriedClaims.value
-                where candidates.count < limit && !claimedIDs.contains(candidate.asset.id)
-            {
-                claimedIDs.insert(candidate.asset.id)
-                candidates.append(candidate)
-            }
-        }
-
-        let queryMs = waitMs + execMs
-        let wallMs = DiagnosticsTiming.milliseconds(since: queryStart)
-        if queryMs > Self.slowQueryDiagnosticThresholdMs {
-            await recordSlowEnrichmentCandidateQuery(
-                priorityCount: priorityIDs.count,
-                returnedCount: candidates.count,
-                waitMs: waitMs,
-                execMs: execMs,
-                wallMs: wallMs
-            )
-        }
-        return candidates
+        await recordSlowEnrichmentCandidateQuery(
+            priorityCount: priorityCount,
+            returnedCount: returnedCount,
+            waitMs: waitMs,
+            execMs: execMs,
+            wallMs: DiagnosticsTiming.milliseconds(since: queryStart)
+        )
     }
 
     private func recordSlowEnrichmentCandidateQuery(
@@ -2901,6 +2903,56 @@ extension CatalogStore {
         OtosLog.catalog.notice(
             "op=catalog.removable.quiesce phase=finish identity=\(identity, privacy: .public) rootPath=\(root.path.rawValue, privacy: .public) kind=\(root.kind.rawValue, privacy: .public)"
         )
+    }
+
+    /// An import batch starts copying from `source`. For a card this stops enrichment
+    /// reading it until `endImportSourceRead`: no new claims there, and the claims already
+    /// handed out are released, so the coordinator drops the work it queued for them
+    /// (`EnrichmentCoordinator.dequeueEnrichmentWork`). Work already reading finishes.
+    func beginImportSourceRead(_ batch: ImportBatchID, source: LibraryRootPath) async {
+        guard var state = roots[source] else {
+            return
+        }
+        let wasEnrichable = state.isEnrichable
+        state.importingBatches.insert(batch)
+        upsert(state)
+        let paused = wasEnrichable && !state.isEnrichable
+        if paused {
+            await releaseEnrichmentClaimsForRoot(state.rowID)
+            notifyCatalogChanged()
+        }
+        OtosLog.catalog.noticeOperation("import.sourceRead", phase: "begin", fields: [
+            "rootPath": source.rawValue,
+            "batch": "\(batch.unixMilliseconds)",
+            "kind": state.root.kind.rawValue,
+            "enrichmentPaused": "\(state.isCardBeingImported)",
+        ])
+    }
+
+    /// The batch stopped copying from `source`, however it ended. When it was the last
+    /// import reading a card, enrichment may claim the card again.
+    func endImportSourceRead(_ batch: ImportBatchID, source: LibraryRootPath) async {
+        guard var state = roots[source], state.importingBatches.contains(batch) else {
+            return
+        }
+        let wasEnrichable = state.isEnrichable
+        state.importingBatches.remove(batch)
+        upsert(state)
+        if !wasEnrichable, state.isEnrichable {
+            notifyCatalogChanged()
+        }
+        OtosLog.catalog.noticeOperation("import.sourceRead", phase: "end", fields: [
+            "rootPath": source.rawValue,
+            "batch": "\(batch.unixMilliseconds)",
+            "kind": state.root.kind.rawValue,
+            "enrichmentResumed": "\(!wasEnrichable && state.isEnrichable)",
+        ])
+    }
+
+    /// The roots enrichment may claim on now: one answer, read by the claim queries and
+    /// by the coordinator's queue alike.
+    func enrichableRootPaths() -> Set<LibraryRootPath> {
+        Set(roots.values.filter(\.isEnrichable).map(\.path))
     }
 
     func resumeRemovableSource(identity: DeviceIdentity) async throws {
@@ -5010,16 +5062,14 @@ extension CatalogStore {
         var stagedPreview: StagedDerivedImage?
         var reuseResult = ImportOverlayReuseResult.notReused
         if let sourceRootID = roots[operation.sourceRootPath]?.rowID {
-            if operation.sourceKind == .removableVolume {
-                // ADR 0018: a `.removableVolume` source is never hashed in
-                // place, so it can have no source digest to validate a reuse against.
-                // Short-circuit to a typed miss without fetching the overlay or
-                // attempting the digest comparison; the destination is enriched
-                // normally after import.
+            if operation.contentHash == nil {
+                // The destination is a library row, which carries the copy's digest; a
+                // copy settled without one is enriched for it anyway, so reuse would only
+                // stamp products that enrichment then redoes.
                 reuseResult = ImportOverlayReuseResult(
                     metadataCloned: false,
                     thumbnailCopied: false,
-                    miss: .removableSourceNotHashed
+                    miss: .copyNotHashed
                 )
             } else if let sourceOverlay = try await dbWriter.read({ db in
                 try Self.fetchReusableEnrichmentOverlay(
@@ -5028,22 +5078,21 @@ extension CatalogStore {
                     db: db
                 )
             }) {
+                // The copy is the source file, byte for byte, so the source's overlay is
+                // the copy's whenever it is current for the bytes that were copied: its
+                // enrichment stamps name the size and mtime the import read. This is the
+                // same freshness rule enrichment applies to every row (ADR 0009), and it
+                // holds for a card exactly as for a library.
                 let sourceMTime = MediaAsset.mtimeSeconds(operation.sourceModifiedAt)
-                let sourceFactsCurrent = sourceOverlay.sourceByteSize != nil
-                    && sourceOverlay.sourceMTimeSeconds != nil
-                    && sourceOverlay.sourceByteSize == operation.sourceByteSize
-                    && sourceOverlay.sourceMTimeSeconds == sourceMTime
-                let hashMatches = operation.contentHash != nil
-                    && sourceOverlay.contentHash == operation.contentHash
-                    && sourceOverlay.contentHashSourceSize != nil
-                    && sourceOverlay.contentHashSourceMTimeSeconds != nil
-                    && sourceOverlay.contentHashSourceSize == sourceOverlay.sourceByteSize
-                    && sourceOverlay.contentHashSourceMTimeSeconds == sourceOverlay.sourceMTimeSeconds
+                let sourceFactsCurrent = sourceOverlay.enrichedSourceSize != nil
+                    && sourceOverlay.enrichedSourceMTimeSeconds != nil
+                    && sourceOverlay.enrichedSourceSize == operation.sourceByteSize
+                    && sourceOverlay.enrichedSourceMTimeSeconds == sourceMTime
                 let destinationID = MediaAssetID(
                     libraryRootPath: operation.destinationRootPath,
                     relativePath: operation.destinationRelativePath
                 )
-                if sourceFactsCurrent, hashMatches, sourceOverlay.enrichedKind == .image,
+                if sourceFactsCurrent, sourceOverlay.enrichedKind == .image,
                    sourceOverlay.previewPath == nil
                 {
                     reuseResult = ImportOverlayReuseResult(
@@ -5051,7 +5100,7 @@ extension CatalogStore {
                         thumbnailCopied: false,
                         miss: .missingPreview
                     )
-                } else if sourceFactsCurrent, hashMatches {
+                } else if sourceFactsCurrent {
                     if let sourceThumbnail = sourceOverlay.thumbnailPath {
                         if let thumbnailDirectory {
                             do {
@@ -5093,12 +5142,6 @@ extension CatalogStore {
                     } else {
                         reusableOverlay = sourceOverlay
                     }
-                } else if sourceFactsCurrent {
-                    reuseResult = ImportOverlayReuseResult(
-                        metadataCloned: false,
-                        thumbnailCopied: false,
-                        miss: .missingOrMismatchedHash
-                    )
                 } else {
                     reuseResult = ImportOverlayReuseResult(
                         metadataCloned: false,

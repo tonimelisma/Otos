@@ -50,11 +50,11 @@ re-claims it, and it leaves the claim index as soon as its metadata is current.
 
 Removable content still receives a digest after import, from the destination's
 still-local staged bytes, through the existing import worker — never from the card.
-The source row keeps no digest, permanently. Overlay reuse requires the source
-digest as proof the cloned overlay was extracted from exactly the bytes published
-at the destination, so reuse is unavailable for removable sources (a typed
-`removableSourceNotHashed` miss) and unchanged for device-staging sources, where
-the digest is already computed from local bytes.
+The source row keeps no digest, permanently. Import overlay reuse does not read the
+digest: the copy is the source file, so the source's overlay is the copy's whenever
+its enrichment stamps name the size and mtime the import copied (ADR 0009 §9). A card's
+overlay is reused exactly as a camera's or a library's, and the copy keeps the digest
+the import computed.
 
 ## Alternatives considered
 

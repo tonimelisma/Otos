@@ -20,9 +20,9 @@ struct CatalogStoreEnrichmentClaimTests {
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
 
-        let firstClaim = try await store.enrichmentCandidates(prioritizing: [], limit: 1)
+        let firstClaim = try await store.enrichmentCandidates(limit: 1)
         #expect(firstClaim.map(\.asset.relativePath) == [rel])
-        let blockedByLease = try await store.enrichmentCandidates(prioritizing: [], limit: 1)
+        let blockedByLease = try await store.enrichmentCandidates(limit: 1)
         #expect(blockedByLease.isEmpty)
         #expect(try await enrichmentClaimedRowCount(databaseURL: databaseURL) == 1)
 
@@ -32,7 +32,7 @@ struct CatalogStoreEnrichmentClaimTests {
         #expect(try await enrichmentClaimedRowCount(databaseURL: databaseURL) == 0)
     }
 
-    @Test func priorityClaimingContinuesPastContendedRowsBeforeFallback() async throws {
+    @Test func priorityClaimingSkipsRowsAlreadyClaimed() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -53,12 +53,11 @@ struct CatalogStoreEnrichmentClaimTests {
         let visibleSecondID = try #require(idsByName["visible-second.jpg"])
         let visibleThirdID = try #require(idsByName["visible-third.jpg"])
 
-        let firstClaim = try await store.enrichmentCandidates(prioritizing: [claimedID], limit: 1)
+        let firstClaim = try await store.priorityEnrichmentCandidates([claimedID])
         #expect(firstClaim.map(\.asset.relativePath.rawValue) == ["claimed.jpg"])
 
-        let visibleClaims = try await store.enrichmentCandidates(
-            prioritizing: [claimedID, visibleSecondID, visibleThirdID],
-            limit: 2
+        let visibleClaims = try await store.priorityEnrichmentCandidates(
+            [claimedID, visibleSecondID, visibleThirdID]
         )
 
         #expect(visibleClaims.map(\.asset.relativePath.rawValue) == ["visible-second.jpg", "visible-third.jpg"])
@@ -80,7 +79,7 @@ struct CatalogStoreEnrichmentClaimTests {
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 3 }
 
-        let claims = try await store.enrichmentCandidates(prioritizing: [], limit: 3)
+        let claims = try await store.enrichmentCandidates(limit: 3)
 
         #expect(claims.map(\.asset.relativePath.rawValue) == ["newest.jpg", "middle.jpg", "old.jpg"])
     }
@@ -127,7 +126,7 @@ struct CatalogStoreEnrichmentClaimTests {
                 && snapshot.removableSources.first?.availability == .available
         }
 
-        let claims = try await store.enrichmentCandidates(prioritizing: [], limit: 2)
+        let claims = try await store.enrichmentCandidates(limit: 2)
 
         #expect(claims.map(\.asset.relativePath.rawValue) == ["card-old.jpg", "fixed-new.jpg"])
     }

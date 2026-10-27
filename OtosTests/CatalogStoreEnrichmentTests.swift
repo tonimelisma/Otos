@@ -429,8 +429,6 @@ struct CatalogStoreEnrichmentTests {
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
-        // A library-kind source, because a removable one is never hashed and so
-        // short-circuits to `.removableSourceNotHashed` before reuse is considered.
         try await store.addLibrary(url: source)
         try await store.addLibrary(url: destination)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
@@ -647,39 +645,51 @@ struct CatalogStoreEnrichmentTests {
         #expect(detail.enrichedSourceMTimeSeconds == 1000)
     }
 
-    /// ARC-053: a `.removableVolume` source is never hashed in place, so
-    /// import settlement must short-circuit overlay reuse to a typed miss instead of
-    /// comparing digests that cannot both exist. The destination still settles with the
-    /// digest computed from its local staged copy and needs enrichment until ordinary
-    /// enrichment stamps it.
-    @Test func removableSourceImportSettlementRecordsTypedReuseMiss() async throws {
-        let temp = try makeTestDirectory()
-        let card = temp.appending(path: "CARD", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: card, withIntermediateDirectories: true)
-        try Data("camera".utf8).write(to: card.appending(path: "IMG_1.JPG"))
-        let cardPath = try CatalogPath.normalizedDirectoryPath(for: card)
+    /// ARC-053: the copy is the card file, byte for byte, so the card's overlay becomes
+    /// the copy's whenever its enrichment stamps name the bytes the import copied. A card
+    /// is never hashed in place; the copy keeps the digest the import computed from it.
+    @Test func aCardImportReusesTheCardsCurrentOverlay() async throws {
+        let card = try await enrichedCardImportFixture()
+        let result = try await card.settle(sourceModifiedAt: card.scannedModifiedAt)
 
-        let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
-        let destinationPath = try CatalogPath.normalizedDirectoryPath(for: destination)
+        #expect(result.miss == nil)
+        #expect(result.metadataCloned)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        try await store.start(scansSavedLibraries: false)
-        try await store.attachRemovableVolume(
-            mountURL: card,
-            identity: .volume(uuid: "test"),
-            displayName: "CARD",
-            isEjectable: true
-        )
-        try await store.addLibrary(url: destination)
+        let state = try await catalogStoreTestState(card.store)
+        let copy = try #require(state.testAssets.first { $0.id.libraryRootPath == card.destinationPath })
+        #expect(copy.bestCaptureDate == card.captureDate)
+        #expect(copy.contentHash == card.copyDigest)
+        #expect(!copy.needsEnrichment(hashRequired: true))
+    }
 
-        let staging = destination.appending(path: ".stage.otos-import-staging")
-        try Data("camera".utf8).write(to: staging)
-        guard case let .complete(digest) = ContentHasher().hashMaterializedFile(at: staging) else {
-            Issue.record("expected staging digest")
-            return
-        }
-        let batch = ImportBatchID()
+    /// ARC-053: a card file that changed after it was enriched has an overlay for other
+    /// bytes; the copy is enriched from its own.
+    @Test func aCardImportWithAStaleOverlayEnrichesTheCopy() async throws {
+        let card = try await enrichedCardImportFixture()
+        let result = try await card.settle(sourceModifiedAt: card.scannedModifiedAt.addingTimeInterval(60))
+
+        #expect(result.miss == .staleSourceOverlay)
+        #expect(result.metadataCloned == false)
+
+        let state = try await catalogStoreTestState(card.store)
+        let copy = try #require(state.testAssets.first { $0.id.libraryRootPath == card.destinationPath })
+        #expect(copy.contentHash == card.copyDigest)
+        #expect(copy.needsEnrichment(hashRequired: true))
+    }
+}
+
+/// A card holding one enriched photo, a library to import it into, and its staged copy.
+private struct EnrichedCardImport {
+    let store: CatalogStore
+    let cardPath: LibraryRootPath
+    let destinationPath: LibraryRootPath
+    let staging: URL
+    let copyDigest: XXH3Digest128
+    let scannedSize: Int64
+    let scannedModifiedAt: Date
+    let captureDate: Date
+
+    func settle(sourceModifiedAt: Date) async throws -> ImportOverlayReuseResult {
         let operation = ActiveFileOperation(
             operationKey: .make(),
             sourceKind: .removableVolume,
@@ -690,34 +700,81 @@ struct CatalogStoreEnrichmentTests {
             destinationRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
             stagingURL: staging,
             companionStagingURLs: [],
-            contentHash: digest,
-            importBatch: ImportBatchID(unixMilliseconds: batch.unixMilliseconds),
-            sourceByteSize: 6,
-            sourceModifiedAt: Date(timeIntervalSince1970: 1000),
-            destinationModifiedAt: Date(timeIntervalSince1970: 1000),
+            contentHash: copyDigest,
+            importBatch: ImportBatchID(),
+            sourceByteSize: scannedSize,
+            sourceModifiedAt: sourceModifiedAt,
+            destinationModifiedAt: sourceModifiedAt,
             phase: .readyToPublish,
             updatedAt: Date()
         )
         try await store.beginImportOperation(operation)
-
-        let result = try await store.settleImportedAsset(
+        return try await store.settleImportedAsset(
             operation: operation,
-            byteSize: 6,
-            contentModifiedAt: Date(timeIntervalSince1970: 1000),
+            byteSize: scannedSize,
+            contentModifiedAt: sourceModifiedAt,
             companions: []
         )
-
-        #expect(result.miss == .removableSourceNotHashed)
-        #expect(result.metadataCloned == false)
-        #expect(result.thumbnailCopied == false)
-
-        let state = try await catalogStoreTestState(store)
-        let destinationAsset = try #require(
-            state.testAssets.first { $0.id.libraryRootPath == destinationPath }
-        )
-        #expect(destinationAsset.contentHash == digest)
-        #expect(destinationAsset.needsEnrichment(hashRequired: true))
     }
+}
+
+private func enrichedCardImportFixture() async throws -> EnrichedCardImport {
+    let temp = try makeTestDirectory()
+    let card = temp.appending(path: "CARD", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: card, withIntermediateDirectories: true)
+    try Data("camera".utf8).write(to: card.appending(path: "IMG_1.JPG"))
+    let cardPath = try CatalogPath.normalizedDirectoryPath(for: card)
+
+    let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+    let destinationPath = try CatalogPath.normalizedDirectoryPath(for: destination)
+
+    let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+    try await store.start(scansSavedLibraries: false)
+    try await store.attachRemovableVolume(
+        mountURL: card,
+        identity: .volume(uuid: "test"),
+        displayName: "CARD",
+        isEjectable: true
+    )
+    try await store.addLibrary(url: destination)
+    let cardID = MediaAssetID(libraryRootPath: cardPath, relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"))
+    _ = try await waitForCatalogStoreState(store) { state in
+        !state.isScanning && state.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+    }
+    // The facts the scan recorded for the card file, read where the scan read them.
+    let attributes = try FileManager.default.attributesOfItem(atPath: cardID.fileURL.path(percentEncoded: false))
+    let scannedSize = try #require((attributes[.size] as? NSNumber)?.int64Value)
+    let scannedModifiedAt = try #require(attributes[.modificationDate] as? Date)
+
+    // A card row is enriched without a digest: it is read in place (ADR 0018).
+    let captureDate = Date(timeIntervalSince1970: 1_767_279_600)
+    #expect(await store.applyEnrichmentBatch([
+        EnrichmentResult(
+            id: cardID,
+            metadata: .localCapture(instant: captureDate),
+            thumbnailPath: nil,
+            sourceSize: scannedSize,
+            sourceMTimeSeconds: MediaAsset.mtimeSeconds(scannedModifiedAt),
+            contentHash: nil
+        ),
+    ]) == .applied(count: 1))
+
+    let staging = destination.appending(path: ".stage.otos-import-staging")
+    try Data("camera".utf8).write(to: staging)
+    guard case let .complete(copyDigest) = ContentHasher().hashMaterializedFile(at: staging) else {
+        throw CancellationError()
+    }
+    return EnrichedCardImport(
+        store: store,
+        cardPath: cardPath,
+        destinationPath: destinationPath,
+        staging: staging,
+        copyDigest: copyDigest,
+        scannedSize: scannedSize,
+        scannedModifiedAt: scannedModifiedAt,
+        captureDate: captureDate
+    )
 }
 
 // MARK: - Helpers

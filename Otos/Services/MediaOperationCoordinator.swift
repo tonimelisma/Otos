@@ -589,7 +589,14 @@ actor MediaOperationCoordinator {
         // The task owns the actual executor lifetime. It is registered before this actor
         // can process a detach, so a source removal cancels this same task and the run's
         // final journal outcome still settles the old batch.
+        //
+        // The run also brackets its read of the source in the Store, which stops
+        // enrichment reading a card while it is copied (ENR-017). `execute` returns for
+        // every ending — success, failure, cancellation — so the bracket always closes.
+        let store = store
+        let source = request.source
         let task = Task { [weak self] in
+            await store.beginImportSourceRead(batch, source: source)
             let result = await executor.execute(
                 plan: request.plan,
                 batch: batch,
@@ -600,6 +607,7 @@ actor MediaOperationCoordinator {
             ) { progress in
                 sampleSink.yield(progress)
             }
+            await store.endImportSourceRead(batch, source: source)
             // Close the stream and let the delivery task drain it before the result is
             // reported: no progress can follow `executionFinished`.
             sampleSink.finish()
