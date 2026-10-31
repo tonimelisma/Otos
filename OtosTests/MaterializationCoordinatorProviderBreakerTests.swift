@@ -29,7 +29,7 @@ struct MaterializationCoordinatorProviderBreakerTests {
     }
 
     @Test func twoConsecutiveProviderUnavailableOpensBreakerAndSuppressesNextFile() async throws {
-        // Production policy: backgroundPerRootCap=1, globalConcurrency=16, so without
+        // Production policy: backgroundPerRootCap=4, globalConcurrency=16, so without
         // the breaker the third file would dispatch immediately. With the breaker it
         // must not dispatch until the cooldown fires.
         let root = "/Library/RootA"

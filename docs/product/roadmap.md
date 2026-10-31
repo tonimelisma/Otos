@@ -35,11 +35,6 @@ Earlier vocabulary notes in this file include:
   work, not part of the first browsing foundation.
 - Other product ideas may be outside this note or may be added later if the user
   explicitly asks to work on planning.
-- Faster visible-tile thumbnails on cloud-synced libraries: raise
-  materialization (download) concurrency for viewport-priority enrichment.
-  Measured 2026-07-09: one visible RAW took ~50 s of OneDrive download through
-  the fixed 4-worker pool; a screenful of unenriched RAWs drains at cloud
-  speed. Needs an owner decision on bandwidth/disk tradeoffs.
 - Hash-based duplicate detection (ADR 0018) must account for the removable-volume
   digest gap: a `.removableVolume` source is never hashed in place (ADR 0018/0013),
   so its rows have no digest until imported, and import reuse short-circuits for it.
@@ -196,4 +191,10 @@ P0/P1 items through Import Into User Libraries are now largely shipped; current 
   [SwiftUI performance](https://developer.apple.com/documentation/xcode/understanding-and-improving-swiftui-performance).
 
 - Video playback in loupe — shipped as loupe click-to-play poster→player swap (APP-020).
-- Bare-key G/E/C view shortcuts — deferred; ⌘1/2/3 shipped (APP-020).
+
+## Never Building
+
+The owner ruled these out (2026-10-31); they are not ideas to revisit.
+
+- Star ratings and color labels. Curation is Liked, Not Rated and Disliked only.
+- User albums or collections.
