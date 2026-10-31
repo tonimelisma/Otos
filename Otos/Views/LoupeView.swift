@@ -43,7 +43,7 @@ struct LoupeView: View {
     var onVideoTrimmed: @MainActor (MediaAssetID) -> Void = { _ in }
     /// The pane shows the photo without its edit (Show Original): marked, DES-098.
     var showsOriginal = false
-    /// The focused photo is a Live Photo whose motion can play now (DES-101).
+    /// The focused photo is a Live Photo whose motion can play now (DES-106).
     var canPlayLivePhoto = false
     var onPlayLivePhoto: () -> Void = {}
     @Environment(\.colorScheme) private var colorScheme

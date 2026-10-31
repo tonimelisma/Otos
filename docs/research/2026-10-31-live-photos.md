@@ -1,6 +1,6 @@
 # Live Photos: what pairs a still and its movie, and what the pair rule costs
 
-Date: 2026-10-31. Feeds ADR 0040.
+Date: 2026-10-31. Feeds ADR 0041.
 
 ## What links the two files
 

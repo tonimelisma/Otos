@@ -13,6 +13,14 @@ nonisolated enum SidebarSelectionPolicy {
         fixedLibraries(in: libraries).count >= 2
     }
 
+    /// Whether the Places row exists: as soon as there is one fixed library to map, and
+    /// before any of its items has a location, so the row is discoverable and the
+    /// sidebar does not reflow as enrichment finds coordinates (ADR 0040). Places never
+    /// includes removables, like All Media.
+    static func showsPlaces(libraries: [CatalogLibraryState]) -> Bool {
+        !fixedLibraries(in: libraries).isEmpty
+    }
+
     /// Selection at launch or when no explicit user sidebar choice is in effect.
     /// Priority: connected removable/camera (most-recently attached) → single library → All Media.
     static func defaultSelection(

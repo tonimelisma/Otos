@@ -108,12 +108,22 @@ final class CatalogWindowViewModel {
         didSet { refreshOpenWithMenu() }
     }
 
+    /// The map the user last looked at in Places: the newest viewport report. Kept
+    /// across a visit to a place under it so Back returns to the same map. Written only
+    /// by `mapViewportChanged`.
+    var mapViewport: MapViewport?
+    /// The stacks drawn on the Places map for `mapViewport`, from the cluster lane.
+    var mapClusters: [MapPlaceCluster] = []
+    /// The camera the Places map should adopt next: fit on entry and on a filter
+    /// change, the last viewport on return from a place, a zoom step on ⌘= / ⌘−.
+    var mapCameraRequest: MapCameraRequest?
+
     /// Media kind of `focusedAssetID`, read once per focus change through the same
     /// `tileDetailReader` the panes use. Views must not guess kind: guessing is what
     /// drew a play button on still photographs. `nil` means "not yet
     /// known" and renders no affordance — MED-002, unknown stays unknown.
     var focusedAssetKind: MediaKind?
-    /// The motion movie of the focused Live Photo (ADR 0040), read with its kind; nil for
+    /// The motion movie of the focused Live Photo (ADR 0041), read with its kind; nil for
     /// anything else and until known. The loupe offers to play it.
     var focusedLivePhotoMotion: MediaAssetID?
     /// Symmetric compare pair (positional left/right slots). Empty outside compare mode.
@@ -421,6 +431,14 @@ final class CatalogWindowViewModel {
     /// The grid's middle visible item from the newest viewport report — what quit saves
     /// as the grid's place, because the grid centers on it when it comes back.
     @ObservationIgnored var gridViewportCenterID: MediaAssetID?
+    /// The Places map's cluster lane (ADR 0040, `CatalogWindowViewModelMap.swift`): a
+    /// revision pair and one doorbell-driven loop. A request is a count, never a flag a
+    /// finishing pass clears (ADR 0032).
+    @ObservationIgnored var mapClusterRequested: UInt64 = 0
+    @ObservationIgnored var mapClusterCovered: UInt64 = 0
+    @ObservationIgnored var mapClusterContinuation: AsyncStream<Void>.Continuation?
+    @ObservationIgnored var mapClusterTask: Task<Void, Never>?
+    @ObservationIgnored var mapCameraRevision: UInt64 = 0
     /// `NSApplication.willTerminateNotification` registration that saves the place.
     @ObservationIgnored var terminationObserver: (any NSObjectProtocol)?
     @ObservationIgnored let previewLoader: any PreviewLoading
@@ -616,6 +634,8 @@ final class CatalogWindowViewModel {
             NotificationCenter.default.removeObserver(terminationObserver)
         }
         stateConsumptionTask?.cancel()
+        mapClusterTask?.cancel()
+        mapClusterContinuation?.finish()
         catalogStartupTask?.cancel()
         queryForwardingTask?.cancel()
         mutationForwardingTask?.cancel()
@@ -729,6 +749,7 @@ extension CatalogWindowViewModel {
         startEditing(store: store)
         startHandOff(store: store)
         startExport()
+        startMapClustering()
         startStateConsumption(
             projection: projection,
             store: store,
@@ -968,6 +989,7 @@ extension CatalogWindowViewModel {
         // Before anything compares the new order with the old: a remapped selection or
         // focus must already carry its new identity, or the prune below would drop it.
         applyPendingIdentityRemaps(nextState.pendingIdentityRemaps)
+        applyMapState(previous: previousState, next: nextState)
 
         // A new scope is a different collection, so the user's place in the old one means
         // nothing there. A filter or sort change narrows or reorders the same collection,
@@ -1209,6 +1231,8 @@ extension CatalogWindowViewModel {
                 && !nextState.removableSources.contains { $0.path == path }
         case let .importBatch(batchID):
             !nextState.importBatches.contains { $0.batchID == batchID }
+        case .places, .place:
+            !SidebarSelectionPolicy.showsPlaces(libraries: nextState.libraries)
         case .allMedia, .allImports:
             false
         }

@@ -76,6 +76,11 @@ extension CatalogWindowViewModel {
     }
 
     func setViewMode(_ mode: BrowserViewMode) {
+        // Places has one presentation, the map (ADR 0040); the picker and ⌘1/2/3 are
+        // disabled there and a stray call changes nothing.
+        guard canChangeViewMode else {
+            return
+        }
         switch mode {
         case .grid:
             exitToGrid()
@@ -504,7 +509,7 @@ extension CatalogWindowViewModel {
     }
 
     /// Plays the focused Live Photo's motion in place of its still, once, then shows the
-    /// still again (ADR 0040). The movie is materialized at interactive priority like any
+    /// still again (ADR 0041). The movie is materialized at interactive priority like any
     /// video the loupe opens. Its player stands in the pane under the still's identity, so
     /// the existing focus rule tears it down when focus or mode moves; the still is the
     /// item, and nothing (trim, edit) can address the movie through it.

@@ -335,5 +335,20 @@ nonisolated enum LibraryOrderMove: Equatable, Sendable {
 nonisolated struct CatalogOrderedAssets: Equatable, Sendable {
     let ids: [MediaAssetID]
     let dayBuckets: [Date?]
+    /// Each row's primary location, index-paired with `ids`; empty unless the scope
+    /// requires a location (`.places`, `.place`), where every row has one (ADR 0040).
+    let coordinates: [PlaceCoordinate]
     let pendingIdentityRemaps: [CatalogIdentityRemapBatch]
+
+    init(
+        ids: [MediaAssetID],
+        dayBuckets: [Date?],
+        coordinates: [PlaceCoordinate] = [],
+        pendingIdentityRemaps: [CatalogIdentityRemapBatch]
+    ) {
+        self.ids = ids
+        self.dayBuckets = dayBuckets
+        self.coordinates = coordinates
+        self.pendingIdentityRemaps = pendingIdentityRemaps
+    }
 }

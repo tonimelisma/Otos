@@ -94,7 +94,7 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
     let contentTypeIdentifier: String?
     let fileExtension: String
     let companions: [MediaCompanion]
-    /// For a Live Photo's motion movie, its still (ADR 0040): the two name as one bundle,
+    /// For a Live Photo's motion movie, its still (ADR 0041): the two name as one bundle,
     /// so the movie never leaves its still's folder or name.
     let livePhotoStillPath: MediaRelativePath?
 

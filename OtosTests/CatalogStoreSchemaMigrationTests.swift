@@ -509,7 +509,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(rows == ["HEIF HEIF nil", "JPEG JPEG nil", "ARW ARW nil"])
     }
 
-    /// ADR 0040: v9 adds the content identifier a Live Photo pairs on, and makes the
+    /// ADR 0041: v9 adds the content identifier a Live Photo pairs on, and makes the
     /// families that can carry it — HEIF, JPEG and ISO BMFF — stale, so `MetadataRefresher`
     /// re-reads them from local bytes. Other families keep their revision.
     @Test func v9ClearsTheRevisionsOfFamiliesThatCarryAContentIdentifier() async throws {

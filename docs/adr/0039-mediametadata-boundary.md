@@ -35,7 +35,7 @@ MediaMetadata 0.7.0 adds what a consumer needs to stop re-deriving:
 - `CaptureTimestamps.Role.isAudioOnly` (0.7.1);
 - PNG, WebP and GIF as families of their own, read from their headers (0.8.0);
 - `CaptureTimestamps(entries:)`, the inverse of `entries` (0.8.1).
-- `contentIdentifier`, Apple's Live Photo pairing identifier (0.8.2; ADR 0040).
+- `contentIdentifier`, Apple's Live Photo pairing identifier (0.8.2; ADR 0041).
 
 ## Decision
 

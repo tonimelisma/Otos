@@ -27,7 +27,7 @@ nonisolated struct CaptureWallComponents: Equatable, Sendable {
 nonisolated enum ImportNaming {
     /// Files that name together: one folder, one stem compared case-insensitively — a
     /// RAW and its JPEG, say — and a Live Photo's movie with its still, whatever its stem
-    /// (ADR 0040). They share one name date and one collision suffix.
+    /// (ADR 0041). They share one name date and one collision suffix.
     struct Bundle: Equatable, Sendable {
         let members: [PlanningFileFacts]
         let stem: String

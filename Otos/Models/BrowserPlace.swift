@@ -56,10 +56,12 @@ private nonisolated extension BrowserPlace {
     /// persistence conformances and this file is the whole schema.
     nonisolated struct Record: Codable {
         nonisolated struct Scope: Codable {
-            /// `allMedia`, `library`, `importBatch`, or `allImports`.
+            /// `allMedia`, `places`, `place`, `library`, `importBatch`, or `allImports`.
             var kind: String
             var path: String?
             var batchUnixMilliseconds: Int64?
+            var latitude: Double?
+            var longitude: Double?
         }
 
         nonisolated struct Asset: Codable {
@@ -116,6 +118,14 @@ private nonisolated extension BrowserPlace {
         switch scope.kind {
         case "allMedia":
             .allMedia
+        case "places":
+            .places
+        case "place":
+            if let latitude = scope.latitude, let longitude = scope.longitude {
+                .place(PlaceCoordinate(latitude: latitude, longitude: longitude))
+            } else {
+                nil
+            }
         case "allImports":
             .allImports
         case "library":
@@ -156,6 +166,10 @@ private nonisolated extension BrowserPlace.Record {
         switch selection {
         case .allMedia:
             Scope(kind: "allMedia")
+        case .places:
+            Scope(kind: "places")
+        case let .place(coordinate):
+            Scope(kind: "place", latitude: coordinate.latitude, longitude: coordinate.longitude)
         case .allImports:
             Scope(kind: "allImports")
         case let .library(path):

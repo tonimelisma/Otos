@@ -1,4 +1,4 @@
-# ADR 0040: A Live Photo is one item
+# ADR 0041: A Live Photo is one item
 
 ## Context
 

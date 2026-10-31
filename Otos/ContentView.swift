@@ -103,6 +103,7 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView(
                 showsAllMedia: SidebarSelectionPolicy.showsAllMedia(libraries: viewModel.state.libraries),
+                showsPlaces: SidebarSelectionPolicy.showsPlaces(libraries: viewModel.state.libraries),
                 libraries: viewModel.state.libraries,
                 importBatches: viewModel.state.importBatches,
                 removableSources: viewModel.state.removableSources,
@@ -207,11 +208,25 @@ struct ContentView: View {
             }
         }
         .toolbar {
+            // Back to Map, while the grid shows one place under the Places map (ADR 0040).
+            // A different scope is a different surface, so the item exists only there.
+            if viewModel.showsPlaceLeaf {
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        viewModel.returnToPlaces()
+                    } label: {
+                        Label("Back to Map", systemImage: "chevron.left")
+                    }
+                    .help("Back to Map")
+                }
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 ViewModePicker(
                     viewMode: viewModel.viewMode,
                     setViewMode: viewModel.setViewMode
                 )
+                // The map has one presentation (DES-053: disabled, never removed).
+                .disabled(!viewModel.canChangeViewMode)
                 CatalogFilterControl(
                     descriptor: viewModel.queryDescriptor,
                     options: viewModel.state.filterOptions,
@@ -451,6 +466,28 @@ struct ContentView: View {
 
     @ViewBuilder
     var detailContent: some View {
+        if viewModel.showsPlacesMap {
+            PlacesMapView(
+                map: viewModel.state.map ?? .empty,
+                clusters: viewModel.mapClusters,
+                cameraRequest: viewModel.mapCameraRequest,
+                selection: viewModel.gridSelection.selection,
+                emptyState: viewModel.state.mediaEmptyState,
+                tileContentStore: viewModel.tileContentStore,
+                thumbnailDirectory: viewModel.thumbnailDirectory,
+                detailReader: viewModel.tileDetailReader,
+                onViewportChanged: viewModel.mapViewportChanged,
+                onClusterClick: viewModel.selectMapCluster,
+                onClusterDoubleClick: viewModel.activateMapCluster,
+                clearFilters: viewModel.clearMediaFilter
+            )
+        } else {
+            browserContent
+        }
+    }
+
+    @ViewBuilder
+    private var browserContent: some View {
         switch viewModel.viewMode {
         case .grid:
             MediaGridView(

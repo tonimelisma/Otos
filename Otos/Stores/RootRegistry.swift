@@ -94,6 +94,18 @@ nonisolated struct RootRegistry {
             return CatalogScopePredicate(
                 rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths)
             )
+        case .places:
+            // The map spans the fixed libraries exactly like All Media; membership is
+            // the extra "has a location" dimension (ADR 0040).
+            return CatalogScopePredicate(
+                rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
+                location: .located
+            )
+        case let .place(coordinate):
+            return CatalogScopePredicate(
+                rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
+                location: .at(coordinate)
+            )
         case let .library(path):
             guard availableLibraryPaths.contains(path),
                   let rootID = statesByPath[path]?.rowID

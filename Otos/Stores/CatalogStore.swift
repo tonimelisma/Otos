@@ -200,7 +200,7 @@ actor CatalogStore {
 
         /// Whether the write changed what a scoped query returns or its order: the sort
         /// date, the kind and format filters, or — through the content identifier and the
-        /// kind — which movies a Live Photo hides (ADR 0040). Anything else is detail-only.
+        /// kind — which movies a Live Photo hides (ADR 0041). Anything else is detail-only.
         func changesStructure(to new: EnrichmentOverlayBeforeWrite) -> Bool {
             bestCaptureUnix != new.bestCaptureUnix
                 || bestKind != new.bestKind
@@ -784,13 +784,28 @@ extension CatalogStore {
         let groupsByDate = descriptor.sort.field == .bestDate
         var ids: [MediaAssetID] = []
         var dayBuckets: [Date?] = []
+        var coordinates: [PlaceCoordinate] = []
         ids.reserveCapacity(timedRows.value.rows.count)
         if groupsByDate {
             dayBuckets.reserveCapacity(timedRows.value.rows.count)
         }
+        if scope.requiresLocation {
+            coordinates.reserveCapacity(timedRows.value.rows.count)
+        }
         for row in timedRows.value.rows {
             guard let rootPath = validRootPathsByRowID[row.libraryRootID] else {
                 continue
+            }
+            if scope.requiresLocation {
+                // The join guarantees a location on every row; a row without one would be
+                // a query defect, not an item without a place, so it is not shown.
+                guard let coordinate = row.coordinate else {
+                    OtosLog.catalog.errorOperation("catalog.store.query.order", phase: "locationMissing", fields: [
+                        "path": row.relativePath.rawValue,
+                    ])
+                    continue
+                }
+                coordinates.append(coordinate)
             }
             ids.append(MediaAssetID(libraryRootPath: rootPath, relativePath: row.relativePath))
             if groupsByDate {
@@ -811,7 +826,12 @@ extension CatalogStore {
         OtosLog.catalog.notice(
             "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )
-        return CatalogOrderedAssets(ids: ids, dayBuckets: dayBuckets, pendingIdentityRemaps: timedRows.value.pending)
+        return CatalogOrderedAssets(
+            ids: ids,
+            dayBuckets: dayBuckets,
+            coordinates: coordinates,
+            pendingIdentityRemaps: timedRows.value.pending
+        )
     }
 
     func orderedAssetIDs(
@@ -843,10 +863,13 @@ extension CatalogStore {
         return timedCount.value
     }
 
-    /// Rows this scope holds in currently reachable roots, ignoring the user filter.
-    /// Projection uses it to tell an empty scope from a scope the filter emptied.
+    /// Rows this scope holds in currently reachable roots, under `filter` (the default
+    /// ignores the user filter). Projection uses the unfiltered count to tell an empty
+    /// scope from a scope the filter emptied, and the filtered All Media count to say
+    /// how many items the Places map leaves out (ADR 0040).
     func visibleAssetCount(
         for selection: SidebarSelection,
+        filter: MediaFilter = .all,
         availableLibraryPaths: Set<LibraryRootPath>
     ) async throws -> Int {
         let scope = scopePredicate(selection: selection, availableLibraryPaths: availableLibraryPaths)
@@ -855,10 +878,10 @@ extension CatalogStore {
         }
         let dbWriter = try database()
         let timedCount = try await timedRead(dbWriter) { db in
-            try CatalogQueryGateway.countAssets(scope: scope, db: db)
+            try CatalogQueryGateway.countAssets(scope: scope, filter: filter, db: db)
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.visibleCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
+            "op=catalog.store.query.visibleCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) filtered=\(filter.isActive, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
         )
         return timedCount.value
     }
@@ -971,7 +994,7 @@ extension CatalogStore {
     /// commands. Device/MTP rows are intentionally excluded because they do not
     /// represent user-filesystem originals. Companion membership comes from the
     /// inventoried pairing table, never from a filename heuristic; a Live Photo's motion
-    /// movie from the pair rule (ADR 0040).
+    /// movie from the pair rule (ADR 0041).
     func mediaTrashItems(for ids: [MediaAssetID]) async throws -> [MediaTrashItem] {
         var seen = Set<MediaAssetID>()
         let requested = ids.filter { seen.insert($0).inserted }
@@ -1006,7 +1029,7 @@ extension CatalogStore {
         return items
     }
 
-    /// The motion movie of `id` when it is a Live Photo's still (ADR 0040), else nil.
+    /// The motion movie of `id` when it is a Live Photo's still (ADR 0041), else nil.
     func livePhotoMotion(of id: MediaAssetID) async throws -> MediaAssetID? {
         guard let rootID = roots[id.libraryRootPath]?.rowID else { return nil }
         let dbWriter = try database()

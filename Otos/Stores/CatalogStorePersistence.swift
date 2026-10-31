@@ -477,7 +477,7 @@ extension CatalogStore {
 
     /// Writes a metadata record and every column derived from it: the stored record, the
     /// `ts_*` instants, the kind and format, the duration, the capture wall and the content
-    /// identifier a Live Photo pairs on (ADR 0040). Enrichment
+    /// identifier a Live Photo pairs on (ADR 0041). Enrichment
     /// and a metadata refresh (ADR 0039) both write through here, so a re-read row derives
     /// exactly what a fresh enrichment would.
     ///

@@ -4,7 +4,7 @@ import MediaMetadata
 @testable import OtosKit
 import Testing
 
-/// ADR 0040: a still and a movie that share a folder and Apple's content identifier, and are
+/// ADR 0041: a still and a movie that share a folder and Apple's content identifier, and are
 /// the only still and movie there that do, are one Live Photo — one item whose movie is a
 /// member of the still's.
 @Suite(.testDirectory)
@@ -113,7 +113,7 @@ struct LivePhotoTests {
         }
     }
 
-    /// The loupe offers the motion of the Live Photo it shows (DES-101), and only of one.
+    /// The loupe offers the motion of the Live Photo it shows (DES-106), and only of one.
     @Test func theLoupeOffersToPlayALivePhotosMotion() async throws {
         try await withLibrary(["IMG_9.HEIC", "IMG_9.MOV", "IMG_10.JPG"]) { library in
             try await library.enrich("IMG_9.HEIC", kind: .image, contentIdentifier: identifier)

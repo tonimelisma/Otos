@@ -187,7 +187,7 @@ nonisolated enum CatalogSchema {
         }
     }
 
-    /// MediaMetadata 0.8.2 (ADR 0040): Apple's content identifier, which a Live Photo's
+    /// MediaMetadata 0.8.2 (ADR 0041): Apple's content identifier, which a Live Photo's
     /// still and motion movie share, stored as the library reports it. `parent_path` is the
     /// folder part of `relative_path` (`a/b/` for `a/b/c.heic`, empty at the root), so the
     /// pair rule (`LivePhotoSQL`) can ask for one folder through one index.

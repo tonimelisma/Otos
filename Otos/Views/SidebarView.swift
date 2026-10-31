@@ -5,6 +5,7 @@ import SwiftUI
 /// selection ownership and asynchronous delivery remain in the ViewModel.
 struct SidebarView: View {
     let showsAllMedia: Bool
+    let showsPlaces: Bool
     let libraries: [CatalogLibraryState]
     let importBatches: [ImportBatchSummary]
     let removableSources: [CatalogLibraryState]
@@ -17,6 +18,7 @@ struct SidebarView: View {
 
     init(
         showsAllMedia: Bool,
+        showsPlaces: Bool,
         libraries: [CatalogLibraryState],
         importBatches: [ImportBatchSummary],
         removableSources: [CatalogLibraryState],
@@ -27,6 +29,7 @@ struct SidebarView: View {
         ejectSource: @MainActor @Sendable @escaping (LibraryRoot) -> Void
     ) {
         self.showsAllMedia = showsAllMedia
+        self.showsPlaces = showsPlaces
         self.libraries = libraries
         self.importBatches = importBatches
         self.removableSources = removableSources
@@ -44,6 +47,14 @@ struct SidebarView: View {
                     EmptyView()
                 }
                 .tag(SidebarSelection.allMedia)
+            }
+            if showsPlaces {
+                // The map of every located item in the fixed libraries (ADR 0040); the
+                // row stays highlighted while a place under it is open.
+                SidebarRow(systemImage: "map", title: "Places") {
+                    EmptyView()
+                }
+                .tag(SidebarSelection.places)
             }
 
             Section("Libraries") {
@@ -173,7 +184,7 @@ struct SidebarView: View {
 
     private var selectionBinding: Binding<SidebarSelection> {
         Binding(
-            get: { sidebarSelection },
+            get: { sidebarSelection.sidebarRow },
             set: selectSidebar
         )
     }
@@ -202,6 +213,7 @@ private struct SidebarRow<Trailing: View>: View {
 #Preview {
     SidebarView(
         showsAllMedia: true,
+        showsPlaces: true,
         libraries: [
             CatalogLibraryState(
                 root: LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures")),

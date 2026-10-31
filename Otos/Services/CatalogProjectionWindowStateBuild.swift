@@ -25,11 +25,19 @@ extension CatalogProjection {
         let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: allRoots)
         let orderedAssetIDs: [MediaAssetID]
         let dayBuckets: [Date?]
+        let coordinates: [PlaceCoordinate]
         let pendingIdentityRemaps: [CatalogIdentityRemapBatch]
         let orderQueryMs: Int
-        if let reuseIDs = reuse.orderedAssetIDs, resolvedDescriptor == reuse.descriptor {
+        // The map's coordinates are read with the order and can move without it (a
+        // re-enriched location), so a detail-only pass under the Places scope re-runs
+        // the query rather than reusing the last order.
+        if let reuseIDs = reuse.orderedAssetIDs,
+           resolvedDescriptor == reuse.descriptor,
+           resolvedDescriptor.scope != .places
+        {
             orderedAssetIDs = reuseIDs
             dayBuckets = reuse.dayBuckets ?? []
+            coordinates = []
             pendingIdentityRemaps = reuse.pendingIdentityRemaps ?? []
             orderQueryMs = 0
         } else {
@@ -41,6 +49,7 @@ extension CatalogProjection {
             )
             orderedAssetIDs = ordered.ids
             dayBuckets = ordered.dayBuckets
+            coordinates = ordered.coordinates
             pendingIdentityRemaps = ordered.pendingIdentityRemaps
             orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
         }
@@ -56,21 +65,23 @@ extension CatalogProjection {
             request: request,
             resolvedDescriptor: resolvedDescriptor,
             importBatches: importBatches,
-            ordered: (orderedAssetIDs, dayBuckets),
+            ordered: (orderedAssetIDs, dayBuckets, coordinates),
             orderQueryMs: orderQueryMs
         )
-        // The two supplementary reads are independent; an error in either fails the build.
+        // The supplementary reads are independent; an error in any fails the build.
         async let unfilteredVisibleAssetCount = unfilteredVisibleAssetCount(facts, store: store)
         async let allAssetCount = catalogedAssetCount(facts, store: store)
         async let filterOptions = store.filterOptions(
             for: facts.resolvedDescriptor.scope,
             availableLibraryPaths: facts.availableLibraryPaths
         )
+        async let filteredFixedAssetCount = filteredFixedAssetCount(facts, store: store)
         var (state, metrics) = try await windowState(
             from: facts,
             allAssetCount: allAssetCount,
             unfilteredVisibleAssetCount: unfilteredVisibleAssetCount,
-            filterOptions: filterOptions
+            filterOptions: filterOptions,
+            filteredFixedAssetCount: filteredFixedAssetCount
         )
         state.pendingIdentityRemaps = pendingIdentityRemaps
         return (state, metrics)
@@ -95,7 +106,7 @@ extension CatalogProjection {
         request: CatalogQueryRequest,
         resolvedDescriptor: CatalogQueryDescriptor,
         importBatches: [ImportBatchSummary],
-        ordered: (ids: [MediaAssetID], dayBuckets: [Date?]),
+        ordered: (ids: [MediaAssetID], dayBuckets: [Date?], coordinates: [PlaceCoordinate]),
         orderQueryMs: Int
     ) -> CatalogProjectionBuildFacts {
         let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: allRoots)
@@ -103,6 +114,7 @@ extension CatalogProjection {
             for: resolvedDescriptor.scope,
             orderedAssetIDs: ordered.ids,
             dayBuckets: ordered.dayBuckets,
+            coordinates: ordered.coordinates,
             availableLibraryPaths: availableLibraryPaths,
             rootsByPath: CatalogWindowPolicy.rootsByPath(from: allRoots)
         )
@@ -115,6 +127,7 @@ extension CatalogProjection {
             availableLibraryPaths: availableLibraryPaths,
             scopedAssetIDs: scoped.ids,
             scopedDayBuckets: scoped.dayBuckets,
+            scopedCoordinates: scoped.coordinates,
             orderQueryMs: orderQueryMs
         )
     }
@@ -125,7 +138,8 @@ extension CatalogProjection {
         from facts: CatalogProjectionBuildFacts,
         allAssetCount: Int,
         unfilteredVisibleAssetCount: Int,
-        filterOptions: CatalogFilterOptions
+        filterOptions: CatalogFilterOptions,
+        filteredFixedAssetCount: Int
     ) -> (CatalogWindowState, CatalogProjectionBuildMetrics) {
         let signpost = OtosSignpost.performance.beginInterval("CatalogWindowStateBuild")
         defer {
@@ -150,7 +164,13 @@ extension CatalogProjection {
                 scopedAssetIDs: facts.scopedAssetIDs,
                 scopedDayBuckets: facts.scopedDayBuckets,
                 filterOptions: filterOptions,
-                mediaEmptyState: mediaEmptyState
+                mediaEmptyState: mediaEmptyState,
+                map: CatalogWindowPolicy.mapState(
+                    for: facts.resolvedDescriptor,
+                    scopedAssetIDs: facts.scopedAssetIDs,
+                    scopedCoordinates: facts.scopedCoordinates,
+                    filteredFixedAssetCount: filteredFixedAssetCount
+                )
             ),
             detailRefreshGeneration: detailRefreshGeneration
         )
@@ -180,5 +200,22 @@ extension CatalogProjection {
             return facts.orderedAssetIDs.count
         }
         return try await store.catalogedAssetCount(for: facts.resolvedDescriptor.scope)
+    }
+
+    /// Items the fixed libraries hold under the current filter, located or not — what
+    /// the Places map measures its own count against to say how many it leaves off
+    /// (ADR 0040). Only the Places scope asks.
+    private func filteredFixedAssetCount(
+        _ facts: CatalogProjectionBuildFacts,
+        store: CatalogStore
+    ) async throws -> Int {
+        guard facts.resolvedDescriptor.scope == .places else {
+            return 0
+        }
+        return try await store.visibleAssetCount(
+            for: .allMedia,
+            filter: facts.resolvedDescriptor.filter,
+            availableLibraryPaths: facts.availableLibraryPaths
+        )
     }
 }

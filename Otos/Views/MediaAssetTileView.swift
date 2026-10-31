@@ -174,7 +174,7 @@ final class MediaAssetTileView: NSView {
         contentView.addSubview(thumbnailView)
 
         kindBadge.wantsLayer = true
-        kindBadge.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        kindBadge.layer?.backgroundColor = DesignPalette.badgeNSColor.cgColor
         kindBadge.layer?.cornerRadius = Layout.badgeCornerRadius
         kindBadge.layer?.maskedCorners = [.layerMinXMaxYCorner]
         kindBadge.layer?.masksToBounds = true
@@ -188,7 +188,7 @@ final class MediaAssetTileView: NSView {
         kindBadge.addSubview(badgeLabel)
 
         editBadge.wantsLayer = true
-        editBadge.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        editBadge.layer?.backgroundColor = DesignPalette.badgeNSColor.cgColor
         editBadge.layer?.cornerRadius = Layout.badgeCornerRadius
         editBadge.layer?.maskedCorners = [.layerMaxXMaxYCorner]
         editBadge.layer?.masksToBounds = true

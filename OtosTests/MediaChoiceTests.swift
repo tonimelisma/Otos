@@ -95,6 +95,6 @@ struct MediaChoiceTests {
         #expect(query.sql.contains("media_choice IN (?, ?)") || query.sql.contains("media_choice IN (?,?)"))
         #expect(!query.sql.contains("liked"))
         #expect(!query.sql.contains("disliked"))
-        #expect(query.sql.contains("ORDER BY name_sort_key"))
+        #expect(query.sql.contains("ORDER BY media_asset.name_sort_key"))
     }
 }
