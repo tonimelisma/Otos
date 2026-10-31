@@ -1040,3 +1040,14 @@ nonisolated struct ImportBatchSummary: Equatable, Sendable {
     let batchID: ImportBatchID
     let assetCount: Int
 }
+
+/// The motion movie of a Live Photo, the member its still's item carries (ADR 0041).
+nonisolated struct LivePhotoMotion: Equatable, Sendable {
+    let relativePath: MediaRelativePath
+    /// Cataloged size, a filesystem fact.
+    let byteSize: Int64?
+
+    func id(in root: LibraryRootPath) -> MediaAssetID {
+        MediaAssetID(libraryRootPath: root, relativePath: relativePath)
+    }
+}

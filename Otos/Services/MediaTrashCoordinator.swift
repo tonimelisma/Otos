@@ -889,11 +889,12 @@ actor MediaTrashCoordinator {
         _ left: MediaTrashMember,
         _ right: MediaTrashMember
     ) -> Bool {
-        switch (left.role, right.role) {
-        case (.companion, .primary): true
-        case (.primary, .companion): false
-        case (.companion, .companion), (.primary, .primary):
-            left.relativePath.rawValue < right.relativePath.rawValue
+        // Members first and the primary last: an item whose primary failed to move is
+        // still in the catalog to be retried, and undo puts the primary back first.
+        switch (left.role == .primary, right.role == .primary) {
+        case (false, true): true
+        case (true, false): false
+        default: left.relativePath.rawValue < right.relativePath.rawValue
         }
     }
 }

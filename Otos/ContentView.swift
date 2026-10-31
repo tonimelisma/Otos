@@ -567,7 +567,9 @@ struct ContentView: View {
                     : nil,
                 videoTrimCommand: viewModel.videoTrimCommand,
                 onVideoTrimmed: viewModel.finishTrim(id:),
-                showsOriginal: viewModel.loupeShowsOriginal
+                showsOriginal: viewModel.loupeShowsOriginal,
+                canPlayLivePhoto: viewModel.canPlayLivePhoto,
+                onPlayLivePhoto: { viewModel.playLivePhoto() }
             )
             .navigationTitle(viewModel.state.title)
         case .compare:

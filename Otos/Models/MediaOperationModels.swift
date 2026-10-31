@@ -94,6 +94,9 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
     let contentTypeIdentifier: String?
     let fileExtension: String
     let companions: [MediaCompanion]
+    /// For a Live Photo's motion movie, its still (ADR 0041): the two name as one bundle,
+    /// so the movie never leaves its still's folder or name.
+    let livePhotoStillPath: MediaRelativePath?
 
     init(
         id: MediaAssetID,
@@ -108,7 +111,8 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
         mediaKind: MediaKind?,
         fileExtension: String,
         companions: [MediaCompanion],
-        contentTypeIdentifier: String? = nil
+        contentTypeIdentifier: String? = nil,
+        livePhotoStillPath: MediaRelativePath? = nil
     ) {
         self.id = id
         self.sourceURL = sourceURL
@@ -123,6 +127,7 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
         self.contentTypeIdentifier = contentTypeIdentifier
         self.fileExtension = fileExtension
         self.companions = companions
+        self.livePhotoStillPath = livePhotoStillPath
     }
 
     /// Best planning date: embedded capture wall when present, else source mtime.

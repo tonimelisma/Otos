@@ -22,6 +22,7 @@ nonisolated enum MediaOperationGateway {
                    content_modified_at_unix, capture_wall_compact, capture_wall_precision,
                    enriched_source_size, enriched_source_mtime,
                    NOT (\(settledPredicate)) AS naming_settled,
+                   \(LivePhotoSQL.stillPath(ofMotion: "media_asset")) AS live_photo_still_path,
                    (enriched_source_size IS NOT NULL
                     AND enriched_source_mtime IS NOT NULL) AS enrichment_has_looked
             FROM media_asset
@@ -80,7 +81,8 @@ nonisolated enum MediaOperationGateway {
                 mediaKind: kindRaw.flatMap(MediaKind.init(rawValue:)),
                 fileExtension: ext,
                 companions: companionsByPrimary[relative.rawValue] ?? [],
-                contentTypeIdentifier: row["content_type_identifier"]
+                contentTypeIdentifier: row["content_type_identifier"],
+                livePhotoStillPath: (row["live_photo_still_path"] as String?).map(MediaRelativePath.init(rawValue:))
             )
         }
     }
