@@ -179,6 +179,14 @@ actor CatalogStore {
         let captureWallCompact: Int64?
         let thumbnailPath: String?
         let previewPath: String?
+        let contentIdentifier: String?
+
+        static let columnsSQL = """
+        SELECT best_capture_unix, best_kind, best_format, capture_wall_compact, thumbnail_path, preview_path,
+            content_identifier
+        FROM media_asset
+        WHERE library_root_id = ? AND relative_path = ?
+        """
 
         init(row: Row) {
             bestCaptureUnix = row["best_capture_unix"]
@@ -187,6 +195,17 @@ actor CatalogStore {
             captureWallCompact = row["capture_wall_compact"]
             thumbnailPath = row["thumbnail_path"]
             previewPath = row["preview_path"]
+            contentIdentifier = row["content_identifier"]
+        }
+
+        /// Whether the write changed what a scoped query returns or its order: the sort
+        /// date, the kind and format filters, or — through the content identifier and the
+        /// kind — which movies a Live Photo hides (ADR 0040). Anything else is detail-only.
+        func changesStructure(to new: EnrichmentOverlayBeforeWrite) -> Bool {
+            bestCaptureUnix != new.bestCaptureUnix
+                || bestKind != new.bestKind
+                || bestFormat != new.bestFormat
+                || contentIdentifier != new.contentIdentifier
         }
     }
 
@@ -951,7 +970,8 @@ extension CatalogStore {
     /// Snapshots only catalog-proven physical members for explicit system-Trash
     /// commands. Device/MTP rows are intentionally excluded because they do not
     /// represent user-filesystem originals. Companion membership comes from the
-    /// inventoried pairing table, never from a filename heuristic.
+    /// inventoried pairing table, never from a filename heuristic; a Live Photo's motion
+    /// movie from the pair rule (ADR 0040).
     func mediaTrashItems(for ids: [MediaAssetID]) async throws -> [MediaTrashItem] {
         var seen = Set<MediaAssetID>()
         let requested = ids.filter { seen.insert($0).inserted }
@@ -965,16 +985,38 @@ extension CatalogStore {
             else {
                 continue
             }
-            let companions = try await dbWriter.read { db in
-                try Self.fetchCompanions(libraryRootID: rootState.rowID, db: db)
-                    .filter { $0.primaryRelativePath == id.relativePath }
+            let (companions, motion) = try await dbWriter.read { db in
+                try (
+                    Self.fetchCompanions(libraryRootID: rootState.rowID, db: db)
+                        .filter { $0.primaryRelativePath == id.relativePath },
+                    CatalogQueryGateway.fetchLivePhotoMotions(
+                        libraryRootID: rootState.rowID,
+                        stillPaths: [id.relativePath],
+                        db: db
+                    )[id.relativePath]
+                )
             }
             let members = companions.map {
                 MediaTrashMember(relativePath: $0.relativePath, role: .companion, byteSize: $0.byteSize)
+            } + [motion].compactMap(\.self).map {
+                MediaTrashMember(relativePath: $0.relativePath, role: .livePhotoMotion, byteSize: $0.byteSize)
             } + [MediaTrashMember(relativePath: id.relativePath, role: .primary, byteSize: assets[id]?.byteSize)]
             items.append(MediaTrashItem(id: id, root: rootState.root, members: members))
         }
         return items
+    }
+
+    /// The motion movie of `id` when it is a Live Photo's still (ADR 0040), else nil.
+    func livePhotoMotion(of id: MediaAssetID) async throws -> MediaAssetID? {
+        guard let rootID = roots[id.libraryRootPath]?.rowID else { return nil }
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            try CatalogQueryGateway.fetchLivePhotoMotions(
+                libraryRootID: rootID,
+                stillPaths: [id.relativePath],
+                db: db
+            )[id.relativePath]?.id(in: id.libraryRootPath)
+        }
     }
 
     /// Hides the requested items behind one pending Move to Trash. Only existing,
@@ -2037,11 +2079,7 @@ extension CatalogStore {
                 }
             }
         }
-        let overlayColumnsSQL = """
-        SELECT best_capture_unix, best_kind, best_format, capture_wall_compact, thumbnail_path, preview_path
-        FROM media_asset
-        WHERE library_root_id = ? AND relative_path = ?
-        """
+        let overlayColumnsSQL = EnrichmentOverlayBeforeWrite.columnsSQL
         let overlayColumnsArguments: StatementArguments = [rootID, result.id.relativePath.rawValue]
         let oldRow: EnrichmentOverlayBeforeWrite? = try Row.fetchOne(
             db,
@@ -2061,11 +2099,7 @@ extension CatalogStore {
             sql: overlayColumnsSQL,
             arguments: overlayColumnsArguments
         ).map(EnrichmentOverlayBeforeWrite.init(row:))
-        if let old = oldRow, let newRow,
-           old.bestCaptureUnix != newRow.bestCaptureUnix
-           || old.bestKind != newRow.bestKind
-           || old.bestFormat != newRow.bestFormat
-        {
+        if let old = oldRow, let newRow, old.changesStructure(to: newRow) {
             outcome.structureChanged = true
         }
         if oldRow?.captureWallCompact != newRow?.captureWallCompact {
@@ -2159,10 +2193,7 @@ extension CatalogStore {
                     """,
                     arguments: arguments + [refresh.sourceSize, refresh.sourceSize, refresh.sourceMTimeSeconds]
                 ) != nil else { continue }
-                let overlaySQL = """
-                SELECT best_capture_unix, best_kind, best_format, capture_wall_compact, thumbnail_path, preview_path
-                FROM media_asset WHERE library_root_id = ? AND relative_path = ?
-                """
+                let overlaySQL = EnrichmentOverlayBeforeWrite.columnsSQL
                 let oldRow = try Row.fetchOne(db, sql: overlaySQL, arguments: arguments)
                     .map(EnrichmentOverlayBeforeWrite.init(row:))
                 try Self.writeMetadataProjection(
@@ -2176,11 +2207,7 @@ extension CatalogStore {
                 )
                 let newRow = try Row.fetchOne(db, sql: overlaySQL, arguments: arguments)
                     .map(EnrichmentOverlayBeforeWrite.init(row:))
-                if let oldRow, let newRow,
-                   oldRow.bestCaptureUnix != newRow.bestCaptureUnix
-                   || oldRow.bestKind != newRow.bestKind
-                   || oldRow.bestFormat != newRow.bestFormat
-                {
+                if let oldRow, let newRow, oldRow.changesStructure(to: newRow) {
                     outcome.structureChanged = true
                 }
                 if oldRow?.captureWallCompact != newRow?.captureWallCompact {

@@ -399,6 +399,10 @@ public struct OtosApp: App {
                 }
                 .keyboardShortcut("\\", modifiers: [])
                 .disabled(!catalogViewModel.canShowOriginal && !catalogViewModel.isShowingOriginal)
+                Button("Play Live Photo") {
+                    catalogViewModel.playLivePhoto()
+                }
+                .disabled(!catalogViewModel.canPlayLivePhoto)
             }
             CommandGroup(replacing: .help) {}
         }

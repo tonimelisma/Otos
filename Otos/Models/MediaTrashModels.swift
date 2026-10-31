@@ -6,6 +6,8 @@ import Foundation
 /// coordinator never discovers same-basename files and never carries media bytes.
 nonisolated enum MediaTrashMemberRole: Equatable, Sendable {
     case companion
+    /// A Live Photo's motion movie, which goes with its still (ADR 0040).
+    case livePhotoMotion
     case primary
 }
 

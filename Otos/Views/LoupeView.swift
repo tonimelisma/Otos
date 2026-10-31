@@ -43,6 +43,9 @@ struct LoupeView: View {
     var onVideoTrimmed: @MainActor (MediaAssetID) -> Void = { _ in }
     /// The pane shows the photo without its edit (Show Original): marked, DES-098.
     var showsOriginal = false
+    /// The focused photo is a Live Photo whose motion can play now (DES-101).
+    var canPlayLivePhoto = false
+    var onPlayLivePhoto: () -> Void = {}
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -171,6 +174,23 @@ struct LoupeView: View {
                         .allowsHitTesting(false)
                         // The picture's own value says it (above).
                         .accessibilityHidden(true)
+                }
+            }
+            // Top trailing: clear of the curation group (top leading, DES-066) and the
+            // Original mark (top center, DES-098).
+            .overlay(alignment: .topTrailing) {
+                if canPlayLivePhoto {
+                    Button(action: onPlayLivePhoto) {
+                        Label("Live", systemImage: "livephoto")
+                            .font(.callout.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(.regularMaterial, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(12)
+                    .help("Play Live Photo")
+                    .accessibilityLabel("Play Live Photo")
                 }
             }
             .overlay { ContextMenuHost(makeMenu: contextMenu) }

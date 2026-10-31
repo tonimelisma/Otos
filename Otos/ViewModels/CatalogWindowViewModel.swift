@@ -113,6 +113,9 @@ final class CatalogWindowViewModel {
     /// drew a play button on still photographs. `nil` means "not yet
     /// known" and renders no affordance — MED-002, unknown stays unknown.
     var focusedAssetKind: MediaKind?
+    /// The motion movie of the focused Live Photo (ADR 0040), read with its kind; nil for
+    /// anything else and until known. The loupe offers to play it.
+    var focusedLivePhotoMotion: MediaAssetID?
     /// Symmetric compare pair (positional left/right slots). Empty outside compare mode.
     var comparePair = ComparePair.empty {
         didSet { refreshOpenWithMenu() }

@@ -107,6 +107,11 @@ extension CatalogStore {
         migrator.registerMigration(CatalogSchema.captureInstantMigrationIdentifier) { db in
             try CatalogSchema.migrateToCaptureInstant(db)
         }
+        migrator.registerMigration(CatalogSchema.contentIdentifierMigrationIdentifier) { db in
+            for statement in CatalogSchema.contentIdentifierStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -471,7 +476,8 @@ extension CatalogStore {
     }
 
     /// Writes a metadata record and every column derived from it: the stored record, the
-    /// `ts_*` instants, the kind and format, the duration and the capture wall. Enrichment
+    /// `ts_*` instants, the kind and format, the duration, the capture wall and the content
+    /// identifier a Live Photo pairs on (ADR 0040). Enrichment
     /// and a metadata refresh (ADR 0039) both write through here, so a re-read row derives
     /// exactly what a fresh enrichment would.
     ///
@@ -507,7 +513,8 @@ extension CatalogStore {
                 enriched_format = ?,
                 duration_seconds = ?,
                 capture_wall_compact = ?,
-                capture_wall_precision = ?
+                capture_wall_precision = ?,
+                content_identifier = ?
             WHERE library_root_id = ?
                 AND relative_path = ?
             """,
@@ -518,6 +525,7 @@ extension CatalogStore {
                 metadata.durationSeconds,
                 captureWall?.compact,
                 captureWall?.precision,
+                metadata.contentIdentifier,
                 libraryRootID,
                 relativePath.rawValue,
             ]
