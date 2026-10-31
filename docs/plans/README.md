@@ -3,6 +3,9 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
+Plan 0109 (duplicates, card checksums, and Trash that can be put back) is active:
+`0109-duplicates.md`.
+
 Plan 0108 (editing, previews, hand-off and export) is complete across fourteen
 increments and was removed at closure. It opened 2026-10-24 when the owner chose to edit
 photos inside Otos: one current edit per photo in the catalog, no sidecars, originals
