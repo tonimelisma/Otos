@@ -26,7 +26,7 @@ extension CatalogWindowViewModel {
     /// The map has one presentation, so the view-mode picker and ⌘1/2/3 are disabled
     /// while it shows (DES-053: disabled, never removed).
     var canChangeViewMode: Bool {
-        !showsPlacesMap
+        !showsPlacesMap && !showsDuplicatesList
     }
 
     /// Whether Back to Map applies: the grid shows one place under the map.

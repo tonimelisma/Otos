@@ -56,9 +56,10 @@ nonisolated enum CatalogWindowPolicy {
                     removableSources: removableSources
                 )
             }
-        case .places, .place:
-            // Places exists with the fixed libraries it maps; a place under it goes with
-            // it. Either resolves to the default once the last fixed library is removed.
+        case .places, .place, .duplicates, .duplicateGroup:
+            // Places and Duplicates exist with the fixed libraries they span; a leaf under
+            // either goes with it. Each resolves to the default once the last fixed
+            // library is removed.
             if SidebarSelectionPolicy.showsPlaces(libraries: libraries) {
                 return sidebarSelection
             }
@@ -134,7 +135,7 @@ nonisolated enum CatalogWindowPolicy {
                 return false
             }
             switch sidebarSelection {
-            case .allMedia, .places, .place, .importBatch, .allImports:
+            case .allMedia, .places, .place, .importBatch, .allImports, .duplicates, .duplicateGroup:
                 // These scopes span the fixed libraries. Batch and location *membership*
                 // are applied by Store.orderedAssetIDs; this pass only re-applies the
                 // root-kind rule, which also holds for IDs carried over from a reused
@@ -192,6 +193,8 @@ nonisolated enum CatalogWindowPolicy {
             "All Media"
         case .places, .place:
             "Places"
+        case .duplicates, .duplicateGroup:
+            "Duplicates"
         case let .library(path):
             libraries.first { $0.path == path }?.displayName ?? "Library"
         case let .importBatch(batchID):
@@ -214,8 +217,8 @@ nonisolated enum CatalogWindowPolicy {
         }
         let sidebarSelection = descriptor.scope
         switch sidebarSelection {
-        case .allMedia, .importBatch, .allImports:
-            // Both span the fixed libraries, so both answer emptiness the same way: a
+        case .allMedia, .importBatch, .allImports, .duplicates, .duplicateGroup:
+            // These span the fixed libraries, so they answer emptiness the same way: a
             // batch whose rows exist but whose libraries are offline is unreachable,
             // not absent.
             let fixedLibraries = libraries.filter { $0.kind == .library }
@@ -274,6 +277,7 @@ nonisolated enum CatalogWindowPolicy {
                 roots: parts.removableSources
             ),
             map: parts.map,
+            duplicates: parts.duplicates,
             queryGeneration: parts.queryGeneration
         )
     }

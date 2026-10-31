@@ -92,15 +92,31 @@ nonisolated struct CatalogScopePredicate: Equatable {
 
     /// Catalog roots the scope admits, ascending. Already narrowed to the kinds and
     /// availability the selection allows.
+    /// What a scope requires of a row's content digest (ADR 0042).
+    enum ContentConstraint: Equatable {
+        case any
+        /// The row's current digest is shared by another visible row: Duplicates.
+        case duplicated
+        /// The row's current digest is exactly this: one group under Duplicates.
+        case identical(XXH3Digest128)
+    }
+
     let rootIDs: [Int64]
     /// Import-batch stamp the scope requires, when the selection is an Imports row.
     let importBatchUnixMs: Int64?
     let location: LocationConstraint
+    let content: ContentConstraint
 
-    init(rootIDs: [Int64], importBatchUnixMs: Int64? = nil, location: LocationConstraint = .any) {
+    init(
+        rootIDs: [Int64],
+        importBatchUnixMs: Int64? = nil,
+        location: LocationConstraint = .any,
+        content: ContentConstraint = .any
+    ) {
         self.rootIDs = rootIDs
         self.importBatchUnixMs = importBatchUnixMs
         self.location = location
+        self.content = content
     }
 
     /// Whether reads over this scope join `asset_metadata`, and so can carry each

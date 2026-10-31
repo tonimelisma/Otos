@@ -199,6 +199,10 @@ extension CatalogWindowViewModel {
         let ordered = state.mediaGrid.orderedAssetIDs
         switch target {
         case .current:
+            // The duplicates list has one presentation: its rows are the selection.
+            if showsDuplicatesList {
+                return orderedSelectedAssetIDs
+            }
             switch viewMode {
             case .grid:
                 return orderedSelectedAssetIDs

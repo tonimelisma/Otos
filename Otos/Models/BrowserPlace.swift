@@ -120,6 +120,8 @@ private nonisolated extension BrowserPlace {
             .allMedia
         case "places":
             .places
+        case "duplicates":
+            .duplicates
         case "place":
             if let latitude = scope.latitude, let longitude = scope.longitude {
                 .place(PlaceCoordinate(latitude: latitude, longitude: longitude))
@@ -170,6 +172,10 @@ private nonisolated extension BrowserPlace.Record {
             Scope(kind: "places")
         case let .place(coordinate):
             Scope(kind: "place", latitude: coordinate.latitude, longitude: coordinate.longitude)
+        case .duplicates, .duplicateGroup:
+            // A group is named by its digest, which is never written out (ADR 0018); the
+            // window reopens on the list it was reached from.
+            Scope(kind: "duplicates")
         case .allImports:
             Scope(kind: "allImports")
         case let .library(path):

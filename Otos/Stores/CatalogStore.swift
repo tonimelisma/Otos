@@ -5754,3 +5754,96 @@ extension CatalogStore {
         ])
     }
 }
+
+// MARK: - Duplicates (ADR 0042)
+
+extension CatalogStore {
+    /// Every visible copy whose current digest another visible copy shares, and every
+    /// remembered "Keep All Copies" pair among them.
+    func duplicateCopies(
+        availableLibraryPaths: Set<LibraryRootPath>
+    ) async throws -> (copies: [DuplicateCopyFacts], keptPairs: Set<DuplicateKeptPair>) {
+        let libraries = roots.values.filter { $0.root.kind == .library && availableLibraryPaths.contains($0.path) }
+        guard !libraries.isEmpty else {
+            return ([], [])
+        }
+        let rootIDs = libraries.map(\.rowID).sorted()
+        let pathsByRowID = roots.pathsByRowID
+        let namesByPath = Dictionary(uniqueKeysWithValues: libraries.map { ($0.path, $0.root.displayName) })
+        return try await database().read { db in
+            let copies = try DuplicatesGateway.fetchDuplicateCopies(rootIDs: rootIDs, db: db).compactMap { row in
+                row.facts(pathsByRowID: pathsByRowID, namesByPath: namesByPath)
+            }
+            let keptPairs = try DuplicatesGateway.fetchKeptPairs(rootIDs: rootIDs, db: db).compactMap { row in
+                row.pair(pathsByRowID: pathsByRowID)
+            }
+            return (copies, Set(keptPairs))
+        }
+    }
+
+    /// Keep All Copies: remembers every pair of copies in each group as kept together.
+    /// Returns the pairs this call added, so undo can forget exactly those.
+    func keepCopiesTogether(_ groups: [[MediaAssetID]]) async throws -> Set<DuplicateKeptPair> {
+        var pairs: Set<DuplicateKeptPair> = []
+        for members in groups {
+            for (index, left) in members.enumerated() {
+                for right in members[(index + 1)...] {
+                    pairs.insert(DuplicateKeptPair(left, right))
+                }
+            }
+        }
+        let rowIDs = roots.rowIDSnapshot()
+        let requested = pairs
+        let added = try await database().write { db -> Set<DuplicateKeptPair> in
+            var added: Set<DuplicateKeptPair> = []
+            for pair in requested {
+                guard let firstRoot = rowIDs[pair.first.libraryRootPath],
+                      let secondRoot = rowIDs[pair.second.libraryRootPath]
+                else {
+                    continue
+                }
+                try db.execute(
+                    sql: """
+                    INSERT OR IGNORE INTO duplicate_kept_pair (first_root_id, first_path, second_root_id, second_path)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    arguments: [firstRoot, pair.first.relativePath.rawValue, secondRoot, pair.second.relativePath.rawValue]
+                )
+                if db.changesCount > 0 {
+                    added.insert(pair)
+                }
+            }
+            return added
+        }
+        OtosLog.catalog.noticeOperation("duplicates.keepAll", phase: "written", fields: [
+            "groups": "\(groups.count)", "pairs": "\(added.count)",
+        ])
+        if !added.isEmpty {
+            notifyCatalogChanged()
+        }
+        return added
+    }
+
+    /// Undo of Keep All Copies: forgets exactly the pairs it added.
+    func forgetKeptPairs(_ pairs: Set<DuplicateKeptPair>) async throws {
+        let rowIDs = roots.rowIDSnapshot()
+        try await database().write { db in
+            for pair in pairs {
+                guard let firstRoot = rowIDs[pair.first.libraryRootPath],
+                      let secondRoot = rowIDs[pair.second.libraryRootPath]
+                else {
+                    continue
+                }
+                try db.execute(
+                    sql: """
+                    DELETE FROM duplicate_kept_pair
+                    WHERE first_root_id = ? AND first_path = ? AND second_root_id = ? AND second_path = ?
+                    """,
+                    arguments: [firstRoot, pair.first.relativePath.rawValue, secondRoot, pair.second.relativePath.rawValue]
+                )
+            }
+        }
+        OtosLog.catalog.noticeOperation("duplicates.keepAll", phase: "forgotten", fields: ["pairs": "\(pairs.count)"])
+        notifyCatalogChanged()
+    }
+}

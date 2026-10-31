@@ -79,6 +79,9 @@ nonisolated struct CatalogWindowState: Equatable {
     /// The Places map's content: the located items in display order and the count left
     /// off the map. Set only while the resolved scope is `.places` (ADR 0040).
     var map: CatalogMapState?
+    /// Duplicate groups across the fixed libraries (ADR 0042), in every scope: the sidebar's
+    /// Duplicates row exists while any group is active, and the list draws under `.duplicates`.
+    var duplicates: CatalogDuplicatesState = .empty
     var queryGeneration: UInt64 = 0
     /// Remaps committed but not yet acknowledged by the window, read with the ordered
     /// IDs. The window applies each batch once, before it shows the new identities.

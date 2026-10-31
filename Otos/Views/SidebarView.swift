@@ -6,6 +6,8 @@ import SwiftUI
 struct SidebarView: View {
     let showsAllMedia: Bool
     let showsPlaces: Bool
+    /// How many photos have duplicates, while the Duplicates row exists (ADR 0042).
+    let duplicatesCount: Int?
     let libraries: [CatalogLibraryState]
     let importBatches: [ImportBatchSummary]
     let removableSources: [CatalogLibraryState]
@@ -19,6 +21,7 @@ struct SidebarView: View {
     init(
         showsAllMedia: Bool,
         showsPlaces: Bool,
+        duplicatesCount: Int? = nil,
         libraries: [CatalogLibraryState],
         importBatches: [ImportBatchSummary],
         removableSources: [CatalogLibraryState],
@@ -30,6 +33,7 @@ struct SidebarView: View {
     ) {
         self.showsAllMedia = showsAllMedia
         self.showsPlaces = showsPlaces
+        self.duplicatesCount = duplicatesCount
         self.libraries = libraries
         self.importBatches = importBatches
         self.removableSources = removableSources
@@ -101,6 +105,20 @@ struct SidebarView: View {
                         }
                         .tag(SidebarSelection.library(source.path))
                     }
+                }
+            }
+
+            // Last, so its arrival pushes no row under the pointer (ADR 0042). Its count
+            // is the bar's L1 unit: photos with duplicates.
+            if let duplicatesCount {
+                Section {
+                    SidebarRow(systemImage: "square.on.square", title: "Duplicates") {
+                        Text("\(duplicatesCount)")
+                            .font(.subheadline)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                    .tag(SidebarSelection.duplicates)
                 }
             }
         }
