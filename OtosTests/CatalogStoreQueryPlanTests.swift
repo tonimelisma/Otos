@@ -85,6 +85,71 @@ struct CatalogStoreQueryPlanTests {
         #expect(!usesTemporarySort(plans.globalEnrichment))
     }
 
+    /// The Places scopes join `asset_metadata` for the coordinate (ADR 0040). The order
+    /// must still come from the capture index — a walk, never a temporary sort — and the
+    /// join must be a primary-key lookup per row, which is what makes the deferred
+    /// partial index on `primary_latitude` unnecessary (measured 2026-10-31,
+    /// `docs/research/2026-10-31-map-views-in-photo-managers.md`).
+    @Test func locatedOrderQueryKeepsTheCaptureIndexAndLooksUpMetadataByKey() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        try await dbQueue.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO asset_metadata (library_root_id, relative_path, primary_latitude, primary_longitude)
+                VALUES (?, ?, ?, ?)
+                """,
+                arguments: [rootID1, "a.jpg", 60.17, 24.94]
+            )
+        }
+        let rootLocated = try #require(CatalogQueryGateway.orderedAssetIDQuery(
+            descriptor: .default,
+            scope: CatalogScopePredicate(rootIDs: [rootID1], location: .located)
+        ))
+        let globalLocated = try #require(CatalogQueryGateway.orderedAssetIDQuery(
+            descriptor: .default,
+            scope: CatalogScopePredicate(rootIDs: [rootID1, rootID2], location: .located)
+        ))
+        let onePlace = try #require(CatalogQueryGateway.orderedAssetIDQuery(
+            descriptor: .default,
+            scope: CatalogScopePredicate(
+                rootIDs: [rootID1, rootID2],
+                location: .at(PlaceCoordinate(latitude: 60.17, longitude: 24.94))
+            )
+        ))
+
+        let (rootPlan, globalPlan, placePlan, rows) = try await dbQueue.read { db in
+            try (
+                explainPlan(db, query: rootLocated),
+                explainPlan(db, query: globalLocated),
+                explainPlan(db, query: onePlace),
+                CatalogQueryGateway.fetchOrderedAssetIDRows(
+                    descriptor: .default,
+                    scope: CatalogScopePredicate(rootIDs: [rootID1, rootID2], location: .located),
+                    db: db
+                )
+            )
+        }
+
+        for plan in [rootPlan, globalPlan, placePlan] {
+            #expect(plan.contains("idx_media_asset_best_capture_"))
+            #expect(plan.contains("SEARCH asset_metadata USING INDEX sqlite_autoindex_asset_metadata_1"))
+            #expect(!usesTemporarySort(plan))
+        }
+        #expect(rootPlan.contains("idx_media_asset_best_capture_root_desc"))
+        #expect(globalPlan.contains("idx_media_asset_best_capture_global_desc"))
+        #expect(rows.map(\.relativePath.rawValue) == ["a.jpg"])
+        #expect(rows.first?.coordinate == PlaceCoordinate(latitude: 60.17, longitude: 24.94))
+    }
+
     @Test func enrichmentClaimQueryUsesPartialIndexWithoutNotInExclusion() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")

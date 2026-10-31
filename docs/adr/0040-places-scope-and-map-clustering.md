@@ -128,8 +128,11 @@ SwiftUI annotations cannot keep up.
 
 ### A partial index on `primary_latitude`
 
-Rejected until measured (Pike). The join is a primary-key lookup per row; a located
-query over a 23k-item library is the same shape as the ordered query it extends.
+Rejected after measuring (Pike). On the real catalog (16,254 fixed-library rows, 12,834
+located) the joined order query runs in about 30 ms warm against 11 ms for All Media:
+the order still walks the capture index and the join is a primary-key lookup per row,
+with no temporary sort (`docs/research/2026-10-31-map-views-in-photo-managers.md`;
+plan pinned by `CatalogStoreQueryPlanTests`).
 
 ## Consequences
 
