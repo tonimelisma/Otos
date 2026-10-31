@@ -7,10 +7,8 @@ three additions:
 - **Bursts are never duplicates.** A "Same photo" group means one capture saved as
   several files, never several captures that look alike. Three gates enforce it
   (increment 5).
-- **Move to Trash can be put back after a relaunch, edits included.** Edits already
-  travel with an undo inside the session (`TrashedOverlay.editRecipe`). What is missing
-  is the item's overlay after a quit, and a way to withdraw items still pending
-  (increment 1).
+- **Move to Trash can be put back after a relaunch, edits included,** and items still
+  pending can be withdrawn after a relaunch (increment 1).
 - **No single-letter shortcuts** for the Duplicates actions: menu items, buttons and
   VoiceOver actions only. The owner's library calibrates the Same-photo threshold
   (increment 0).
@@ -77,47 +75,15 @@ and land first.
 3. Write `docs/research/2026-11-…-duplicate-calibration.md` with the probe, data and
    chosen thresholds.
 
-## Increment 1 — Trash that can be put back
+## Increment 1 — Trash that can be put back (landed)
 
-Today an item's overlay survives only inside the session's undo record. Once the move
-is proven, its row and overlay are purged. After a relaunch, Finder's Put Back returns a
-bare file, and items still pending cannot be withdrawn.
-
-- **Overlay lives while the item is in the Trash.** An item in the system Trash is not
-  proven deleted (ADR 0008).
-  - When the queue moves an item, Store keeps a durable trashed record in the same
-    transaction that removes the row. It holds:
-    - original root and path;
-    - the reported trash URL of each member;
-    - file identifier, size and birth time;
-    - curation, import batch and edit recipe.
-  - **On Put Back:** when a scan or event upserts a path with no row, the ADR 0034
-    witness also considers trashed records. It requires the same identifier, size and
-    birth time, the same volume, and that the trash URL no longer exists. A pairing
-    re-catalogs the row with its overlay and deletes the record.
-  - **When the Trash is emptied:** the record is purged once its trash URLs are proven
-    absent. Otos learns that from a filesystem-event stream on the Trash folders that
-    hold its records, plus a check at launch. A report, not time (ADR 0033).
-  - ⌘Z within the session keeps today's path and consumes the record the same way.
-- **Withdraw pending items after a relaunch.** The trash status bar gains one act,
-  `Don't Move` (DES-032: offer Cancel whenever cancelling is safe). It withdraws every
-  item still pending, through the same queue intent undo uses, so there is one
-  implementation path. ⌘Z remains the in-session route.
-- **Docs to update:**
-  - ADR 0022 (rewrite: overlay lifetime, trashed records, the Trash event stream);
-  - ADR 0008 (overlay lifecycle sentence);
-  - ADR 0034 (witness sources);
-  - APP-027 and APP-039;
-  - ARC-058;
-  - DES-089 and `docs/design/trash-status-bar.md` (the new button, its title and
-    disabled rules).
-- **Tests:**
-  - trash, relaunch the store, simulate Put Back → curation and edit restored;
-  - Trash emptied → record purged;
-  - a copy placed at the original path (new identifier) is not paired;
-  - pending items withdrawn after reopen;
-  - interleaving: Put Back delivered while the queue's pass is suspended at its lease
-    await.
+Landed as the simpler shape the code allowed: the trashed item's **row is kept**, hidden,
+with the Trash path `trashItem` reported (`media_asset.trash_path`, schema v10), instead of
+a separate trashed-record table. A file seen again at the row's own path (Finder's Put Back,
+also after a relaunch, or undo) shows the row with all its overlay. A scan purges the row
+only once the Trash no longer holds the file. The undo-time overlay snapshot is gone. The
+trash bar gained `Cancel`, which withdraws every pending item from the rows themselves.
+Recorded in ADR 0022, ADR 0008, ARC-058, APP-039, DES-089 and `trash-status-bar.md`.
 
 ## Increment 2 — Card checksums
 

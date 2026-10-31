@@ -175,6 +175,7 @@ nonisolated enum EnrichmentClaimGateway {
               AND relative_path = ?
               AND (\(stalenessSQLPredicate(hashRequired: hashRequired)))
               AND enrichment_claimed IS NULL
+              AND trash_path IS NULL
             """,
             arguments: [libraryRootID, relativePath.rawValue]
         )
@@ -250,6 +251,7 @@ private nonisolated func rootEnrichmentClaimQuery(
         WHERE library_root_id = ?
           AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(hashRequired: hashRequired)))
           AND enrichment_claimed IS NULL
+          AND trash_path IS NULL
         ORDER BY best_capture_unix DESC, relative_path
         LIMIT ?
         """,
@@ -273,6 +275,7 @@ private nonisolated func globalEnrichmentClaimQuery(
         WHERE library_root_id IN (\(placeholders))
           AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(hashRequired: hashRequired)))
           AND enrichment_claimed IS NULL
+          AND trash_path IS NULL
         ORDER BY best_capture_unix DESC, library_root_id, relative_path
         LIMIT ?
         """,
@@ -296,6 +299,7 @@ private nonisolated func claimStoredAssetsNeedingEnrichment(
         WHERE (library_root_id, relative_path) IN (\(sqlTuplePlaceholders(rowCount: keys.count, columnCount: 2)))
           AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(hashRequired: hashRequired)))
           AND enrichment_claimed IS NULL
+          AND trash_path IS NULL
         """,
         arguments: StatementArguments(arguments)
     )

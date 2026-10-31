@@ -103,7 +103,6 @@ struct MediaTrashCoordinatorOwnershipTests {
                 successfulReadsSinceFailure.withLock { $0 += 1 }
                 return try await store.pendingTrashItems()
             },
-            trashedOverlay: { try await store.trashedOverlay(for: $0) },
             trashItems: { try await store.mediaTrashItems(for: $0) }
         )
         // The file is cloud-only and its download never finishes, so the item stays pending.
@@ -176,51 +175,11 @@ struct MediaTrashCoordinatorOwnershipTests {
         await coordinator.shutdown()
     }
 
-    /// Undo puts back the choice an item had. If the overlay cannot be read, the item is not
-    /// moved yet: moving it would lose the choice for good.
-    @Test func anUnreadableOverlayDefersTheMoveInsteadOfLosingTheChoice() async throws {
-        let fixture = try await Fixture.make(names: ["a.jpg"])
-        let log = Log()
-        let overlayReads = Mutex(0)
-        let store = fixture.store
-        let reads = MediaTrashCoordinator.StoreReads(
-            pendingItems: { try await store.pendingTrashItems() },
-            trashedOverlay: { ids in
-                let attempt = overlayReads.withLock { count in
-                    count += 1
-                    return count
-                }
-                if attempt == 1 {
-                    log.append("overlay#1 failed")
-                    throw InjectedReadFailure()
-                }
-                log.append("overlay#\(attempt) ok")
-                return try await store.trashedOverlay(for: ids)
-            },
-            trashItems: { try await store.mediaTrashItems(for: $0) }
-        )
-        let coordinator = MediaTrashCoordinator(
-            store: store,
-            materializationRequester: nil,
-            files: .testing(trash: fixture.trashing(log)),
-            retryPolicy: Self.retry,
-            reads: reads
-        )
-        _ = try await fixture.store.markPendingTrash([fixture.ids[0]], batch: MediaTrashBatchID())
-        await coordinator.start()
-
-        try await waitUntil { try await fixture.store.pendingTrashItems().isEmpty }
-
-        #expect(log.entries == ["overlay#1 failed", "overlay#2 ok", "trash a.jpg"])
-        await coordinator.shutdown()
-    }
-
     @Test func aDownloadSizeThatCannotBeReadIsUnknownNotZero() async throws {
         let fixture = try await Fixture.make(names: ["a.jpg"])
         let store = fixture.store
         let reads = MediaTrashCoordinator.StoreReads(
             pendingItems: { try await store.pendingTrashItems() },
-            trashedOverlay: { try await store.trashedOverlay(for: $0) },
             trashItems: { _ in throw InjectedReadFailure() }
         )
         let coordinator = MediaTrashCoordinator(

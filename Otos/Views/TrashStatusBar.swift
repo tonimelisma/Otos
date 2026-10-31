@@ -64,11 +64,13 @@ nonisolated struct TrashStatusPresentation: Equatable, Sendable {
 
 /// Bottom status surface for the trash queue (DES-089). Shown in every scope while
 /// any item is waiting to move to the Trash, below the selection's own status surface.
-/// Two zones, *what* (L1 over L3) and *progress*, at one fixed height across states
-/// (DES-018, DES-053). Passive: it renders a `TrashStatusPresentation` and has no acts;
-/// the queue's questions arrive as alerts, and undo is ⌘Z.
+/// *What* (L1 over L3), *progress*, then *the act* — Cancel, which leaves every item still
+/// waiting where it is (DES-032) — at one fixed height across states (DES-018, DES-053).
+/// Passive: it renders a `TrashStatusPresentation` and calls `cancel`; the queue's
+/// questions arrive as alerts.
 struct TrashStatusBar: View {
     let presentation: TrashStatusPresentation
+    let cancel: @MainActor () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -121,6 +123,7 @@ struct TrashStatusBar: View {
                 }
                 .accessibilityElement(children: .combine)
             }
+            Button("Cancel", action: cancel)
         }
         .frame(minHeight: Self.contentHeight, maxHeight: Self.contentHeight)
         .padding(.horizontal, 16)
