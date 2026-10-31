@@ -94,32 +94,15 @@ any copy whose digest differs from the card row's current one (`reason=digestMis
 The staged hash stays inline until increment 0's measurement shows it limits throughput.
 Recorded in ADR 0018, ENR-013, ENR-017.
 
-## Increment 3 — Import knows what the libraries hold
+## Increment 3 — Import knows what the libraries hold (landed)
 
-- **Skip content matches.** Import planning takes the card's current digests as values
-  in its snapshot. A card item whose digest matches an Identical-eligible library row is
-  skipped by the plan, and L1's `new` count excludes it.
-  - The match counts only rows that are reachable, fully enumerated, current and not
-    pending trash.
-  - Matches found after Ready wait for the next plan. A pressed Import imports the plan
-    it showed.
-- **Import bar copy** (`import-bar.md`, DES-034/035). Path matches and content matches
-  share one clause:
-  - `139 already in Summer Photos`;
-  - `… in your libraries` when the matches span libraries.
-- **Erase.** The alert's path-proven sentence is unchanged. A content-matched item is
-  erasable only if its matching library row is re-checked at erase time as current,
-  reachable and not pending trash (APP-032, ADR 0026).
-- **Docs to update:**
-  - ADR 0018, 0019 and 0026;
-  - APP-029, APP-032;
-  - `docs/design/import-bar.md`.
-- **Tests:**
-  - renamed library copy → skipped;
-  - match only in a pending-trash row → imported;
-  - match only in an offline root → imported;
-  - Ready counts stable while hashing completes;
-  - Erase refuses an item whose match went pending trash after planning.
+A card item whose every member's current digest matches an available library row (not
+pending trash) is planned `skipInLibrary(library:)`. The plan counts it in `skipCount`,
+and in `skipElsewhereCount` when the holder is another library. The import bar says
+`N already in your libraries` when any are elsewhere, and the Erase alert's path-proven
+sentence is then omitted. A card Erase re-confirms each content match through
+`CatalogStore.librariesHoldContent`, and a failed read keeps the file. Recorded in
+ADR 0018, ADR 0026, APP-032, `import-bar.md`.
 
 ## Increment 4 — Identical duplicates
 

@@ -663,7 +663,32 @@ actor MediaImportExecutor {
         guard case let .import(sourceRoot, _, _) = context.plan.mode else {
             return EraseOutcome(deletedCount: 0, skippedCount: 0, failedCount: 0)
         }
-        let candidates = sourceDeletionCandidates(plan: context.plan, erasableSourcePaths: erasableSourcePaths)
+        // Content matches are confirmed against the catalog now; a failed read confirms none,
+        // so those files stay on the card (ADR 0032 rule 4: an error is not a fact).
+        let matchedDigests = Set(context.plan.entries.compactMap { entry -> XXH3Digest128? in
+            guard case .skipInLibrary = entry.disposition else { return nil }
+            return entry.source.contentHash
+        })
+        let heldContent: Set<XXH3Digest128>
+        if matchedDigests.isEmpty {
+            heldContent = []
+        } else {
+            do {
+                heldContent = try await store.librariesHoldContent(matchedDigests)
+            } catch {
+                OtosLog.mediaIO.errorOperation("import.erase", phase: "contentRecheckFailed", fields: [
+                    "run": context.runID,
+                    "count": "\(matchedDigests.count)",
+                    "error": String(describing: error),
+                ])
+                heldContent = []
+            }
+        }
+        let candidates = sourceDeletionCandidates(
+            plan: context.plan,
+            erasableSourcePaths: erasableSourcePaths,
+            heldContent: heldContent
+        )
         // Acquired here, not in `execute()`: the copy phase has already finished,
         // so this holds the source root's namespace for the erase sweep only. A
         // denial leaves every candidate un-erased and is reported as an incomplete
@@ -781,14 +806,21 @@ actor MediaImportExecutor {
         )
     }
 
+    /// The manifest entries this run may erase: what it published, what was already at its
+    /// destination path, empty files — and items a library holds by content, but only those
+    /// the catalog still confirms now, at erase time (`heldContent`): the library row they
+    /// matched when the plan was built may since have gone to the Trash or offline.
     private func sourceDeletionCandidates(
         plan: MediaOperationPlan,
-        erasableSourcePaths publishedPaths: Set<MediaRelativePath>
+        erasableSourcePaths publishedPaths: Set<MediaRelativePath>,
+        heldContent: Set<XXH3Digest128>
     ) -> [EraseManifestEntry] {
         let retainedPaths = Set(plan.entries.compactMap { entry -> MediaRelativePath? in
             switch entry.disposition {
             case .skipPreexisting, .excluded:
                 entry.source.relativePath
+            case .skipInLibrary:
+                entry.source.contentHash.flatMap { heldContent.contains($0) ? entry.source.relativePath : nil }
             case .copy, .blocked:
                 nil
             }

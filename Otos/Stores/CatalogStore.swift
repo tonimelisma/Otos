@@ -638,6 +638,11 @@ extension CatalogStore {
                 db: db
             )
         }
+        let libraryRowIDs = roots.availableFixedLibraryRowIDs()
+        let pathsByRowID = roots.pathsByRowID
+        let libraryContent = try await dbWriter.read { db in
+            try MediaOperationGateway.fetchLibraryContent(libraryRootIDs: libraryRowIDs, db: db)
+        }.compactMapValues { pathsByRowID[$0] }
         let destinationCapabilities = await Self.probeCapabilities(of: destination)
         return ImportPlanningSnapshot(
             generation: generation,
@@ -648,11 +653,23 @@ extension CatalogStore {
             destinationNamespaceRevision: destinationState.namespaceRevision,
             sourceMedia: sourceMedia,
             destinationOccupants: destinationOccupants,
+            libraryContent: libraryContent,
             policy: policy,
             calendar: calendar,
             timeZone: timeZone,
             destinationCapabilities: destinationCapabilities
         )
+    }
+
+    /// The digests among `digests` that a fixed library still holds now: a row in an
+    /// available library, not pending trash, with a digest current for its file. A card
+    /// Erase asks this just before deleting items the plan skipped by content (ADR 0018).
+    func librariesHoldContent(_ digests: Set<XXH3Digest128>) async throws -> Set<XXH3Digest128> {
+        let libraryRowIDs = roots.availableFixedLibraryRowIDs()
+        let held = try await database().read { db in
+            try MediaOperationGateway.fetchLibraryContent(libraryRootIDs: libraryRowIDs, db: db)
+        }
+        return digests.filter { held[$0] != nil }
     }
 
     /// The kind of a known root, so a caller can dispatch on what a root *is* rather

@@ -237,6 +237,11 @@ the primary action stays `Import`, disabled.
 ### C · Ready
 
 L1 `42 new items · 68 MB` · L3 `139 already in Summer Photos`, omitted at zero. The
+count is every item a library already holds: at its destination path, or by content —
+renamed, in another folder, or in another library (ADR 0018). When any of them is held
+by a library other than the destination, the one place that is true for all of them is
+named instead: `139 already in your libraries`. A content match is read from the plan,
+so the count holds until the next plan; a match found after Ready waits for it. The
 weight is stated only when every new item's size is known; with any unknown, L1 is the
 count alone (`42 new items`), because a partial sum would read as the whole.
 Action: `Import` — no count: the number is L1's primary fact, and Otos imports
@@ -257,7 +262,9 @@ macOS (Get Info, Storage, Software Update); Finder's "free space" belongs to a b
 error, which this is not.
 
 - **Nothing new:** L1 `Nothing new on this card` · L3 `All 181 items are already in
-  Summer Photos` · action `Eject Card`. The choices zone stays fully present: the
+  Summer Photos` (`… in your libraries` under the rule above) · action `Eject Card`. The
+  Erase alert's second sentence is stated only when every item is in the destination;
+  items held elsewhere are confirmed against the catalog at erase time instead. The choices zone stays fully present: the
   destination pop-up is *what that sentence is measured against*, and changing it
   re-plans against a different library, which can make the same card full of new
   items again. Checking `Erase the card` here turns the primary button into

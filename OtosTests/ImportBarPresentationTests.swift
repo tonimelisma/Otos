@@ -52,7 +52,8 @@ struct ImportBarPresentationTests {
         blockedCount: Int = 0,
         companionCopyCount: Int = 0,
         copyBytes: Int64 = 0,
-        unknownSizeCopyCount: Int = 0
+        unknownSizeCopyCount: Int = 0,
+        skipElsewhereCount: Int = 0
     ) -> MediaOperationPlanTotals {
         MediaOperationPlanTotals(
             copyCount: copyCount,
@@ -60,7 +61,8 @@ struct ImportBarPresentationTests {
             blockedCount: blockedCount,
             companionCopyCount: companionCopyCount,
             copyBytes: copyBytes,
-            unknownSizeCopyCount: unknownSizeCopyCount
+            unknownSizeCopyCount: unknownSizeCopyCount,
+            skipElsewhereCount: skipElsewhereCount
         )
     }
 
@@ -301,6 +303,25 @@ struct ImportBarPresentationTests {
             state: .ready(summary: Self.totals(copyCount: 5, copyBytes: 1000), generation: 1, skippedPackageCount: 0)
         ))
         #expect(drawn.secondaryLine == .none)
+    }
+
+    /// Items another library holds by content are named where they are: the libraries,
+    /// not the destination. The Erase alert's path-proven sentence is not borrowed.
+    @Test func itemsHeldByAnotherLibraryAreNamedAsInYourLibraries() {
+        let some = Self.map(Self.presentation(
+            state: .ready(
+                summary: Self.totals(copyCount: 2, skipCount: 7, copyBytes: 1000, skipElsewhereCount: 3),
+                generation: 1,
+                skippedPackageCount: 0
+            )
+        ))
+        #expect(some.secondaryLine == .plain("7 already in your libraries"))
+
+        let all = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(skipCount: 5, skipElsewhereCount: 5), generation: 1, skippedPackageCount: 0)
+        ))
+        #expect(all.secondaryLine == .plain("All 5 items are already in your libraries"))
+        #expect(!all.eraseConfirmationProvenClean)
     }
 
     @Test func readyNothingNewVariant() {

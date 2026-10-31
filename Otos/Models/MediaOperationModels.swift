@@ -171,6 +171,9 @@ nonisolated struct DestinationOccupantFacts: Equatable, Sendable {
 nonisolated enum MediaOperationDisposition: Equatable, Sendable {
     case copy(destination: MediaRelativePath)
     case skipPreexisting(destination: MediaRelativePath)
+    /// A library already holds this item's bytes (its current digest matches a library
+    /// row's, ADR 0018), wherever and under whatever name, so it is not copied again.
+    case skipInLibrary(library: LibraryRootPath)
     case excluded(ExclusionReason)
     case blocked(MediaOperationBlockReason)
 }
@@ -299,7 +302,7 @@ nonisolated struct MediaOperationPlanEntry: Equatable, Sendable {
         switch disposition {
         case let .copy(destination), let .skipPreexisting(destination):
             destination
-        case .blocked, .excluded:
+        case .skipInLibrary, .blocked, .excluded:
             nil
         }
     }
@@ -337,8 +340,11 @@ nonisolated struct EraseManifest: Equatable, Sendable {
     ) -> Self {
         var byPath: [MediaRelativePath: EraseManifestEntry] = [:]
         for entry in planEntries {
+            // A content match is eligible here and re-checked against the catalog at erase
+            // time (`MediaImportExecutor.sourceDeletionCandidates`): the library row it
+            // matched may have gone since the plan was built.
             let eligible = switch entry.disposition {
-            case .copy, .skipPreexisting, .excluded: true
+            case .copy, .skipPreexisting, .skipInLibrary, .excluded: true
             case .blocked: false
             }
             guard eligible else { continue }
@@ -430,7 +436,12 @@ nonisolated struct PartialByteCount: Equatable, Sendable, ExpressibleByIntegerLi
 
 nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {
     var copyCount: Int
+    /// Items not copied because a library already holds them: at their destination path, or
+    /// by content anywhere in a library.
     var skipCount: Int
+    /// The part of `skipCount` held by a library other than the destination, so the bar
+    /// says where they are truthfully (`import-bar.md`).
+    var skipElsewhereCount: Int
     var blockedCount: Int
     var companionCopyCount: Int
     /// The sizes of the items to copy that the plan knows. An item whose size is unknown
@@ -452,10 +463,12 @@ nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {
         companionCopyCount: Int,
         copyBytes: Int64,
         unknownSizeCopyCount: Int = 0,
-        excludedCount: Int = 0
+        excludedCount: Int = 0,
+        skipElsewhereCount: Int = 0
     ) {
         self.copyCount = copyCount
         self.skipCount = skipCount
+        self.skipElsewhereCount = skipElsewhereCount
         self.blockedCount = blockedCount
         self.companionCopyCount = companionCopyCount
         self.copyBytes = copyBytes
@@ -752,6 +765,9 @@ nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
     let sourceMedia: [PlanningFileFacts]
     let destinationOccupants: [MediaRelativePath: DestinationOccupantFacts]
     let destinationOccupantKeys: Set<FilesystemNameKey>
+    /// Every current digest the fixed libraries hold, and one library holding it — only rows
+    /// in an available library, not pending trash, with a digest current for their file.
+    let libraryContent: [XXH3Digest128: LibraryRootPath]
     let policy: ImportPolicy
     let calendar: Calendar
     let timeZone: TimeZone
@@ -766,6 +782,7 @@ nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
         destinationNamespaceRevision: UInt64,
         sourceMedia: [PlanningFileFacts],
         destinationOccupants: [MediaRelativePath: DestinationOccupantFacts],
+        libraryContent: [XXH3Digest128: LibraryRootPath] = [:],
         policy: ImportPolicy,
         calendar: Calendar,
         timeZone: TimeZone,
@@ -782,6 +799,7 @@ nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
         destinationOccupantKeys = Set(destinationOccupants.keys.map {
             FilesystemNamespaceSemantics.nameKey(relativePath: $0, capabilities: destinationCapabilities)
         })
+        self.libraryContent = libraryContent
         self.policy = policy
         self.calendar = calendar
         self.timeZone = timeZone

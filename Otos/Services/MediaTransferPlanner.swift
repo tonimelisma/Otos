@@ -78,7 +78,7 @@ nonisolated enum MediaTransferPlanner {
             policy: snapshot.policy,
             entries: entries,
             eraseManifest: eraseManifest,
-            totals: totals(from: entries)
+            totals: totals(from: entries, destination: snapshot.destinationRoot)
         )
     }
 
@@ -134,6 +134,18 @@ private nonisolated extension MediaTransferPlanner {
         // skipped or silently retried forever (ARC-057).
         if bundle.members.contains(where: \.isSourceUnreadable) {
             return blockAll(.sourceUnreadable)
+        }
+        // A library already holds these bytes, under any name in any folder: nothing to
+        // copy. Every member must match — a Live Photo whose still is held but whose movie
+        // is not is imported whole — and a member without a current digest matches nothing.
+        if let library = libraryHolding(bundle, snapshot: snapshot) {
+            return bundle.members.map { member in
+                MediaOperationPlanEntry(
+                    source: member,
+                    companionDestinations: [:],
+                    disposition: .skipInLibrary(library: library)
+                )
+            }
         }
         guard bundle.isNameable(under: snapshot.policy) else {
             return blockAll(.noUsableDate)
@@ -245,7 +257,7 @@ private nonisolated extension MediaTransferPlanner {
                         relativePath: relative,
                         capabilities: snapshot.destinationCapabilities
                     ))
-                case .blocked, .excluded:
+                case .skipInLibrary, .blocked, .excluded:
                     break
                 }
             }
@@ -326,12 +338,31 @@ private nonisolated extension MediaTransferPlanner {
         return .skip(candidate)
     }
 
+    /// The library holding every member's current digest, or nil when any member has none
+    /// or a library does not hold it. The destination is preferred when it holds them all.
+    static func libraryHolding(_ bundle: ImportNaming.Bundle, snapshot: ImportPlanningSnapshot) -> LibraryRootPath? {
+        var libraries: Set<LibraryRootPath> = []
+        for member in bundle.members {
+            guard let digest = member.contentHash, let library = snapshot.libraryContent[digest] else {
+                return nil
+            }
+            libraries.insert(library)
+        }
+        guard let first = libraries.first else {
+            return nil
+        }
+        return libraries.contains(snapshot.destinationRoot) ? snapshot.destinationRoot : first
+    }
+
     static func datesMatchToFilesystemPrecision(_ left: Date?, _ right: Date?) -> Bool {
         guard let left, let right else { return false }
         return Int(left.timeIntervalSince1970) == Int(right.timeIntervalSince1970)
     }
 
-    static func totals(from entries: [MediaOperationPlanEntry]) -> MediaOperationPlanTotals {
+    static func totals(
+        from entries: [MediaOperationPlanEntry],
+        destination snapshotDestination: LibraryRootPath
+    ) -> MediaOperationPlanTotals {
         var totals = MediaOperationPlanTotals(
             copyCount: 0,
             skipCount: 0,
@@ -352,6 +383,11 @@ private nonisolated extension MediaTransferPlanner {
                 totals.companionCopyCount += entry.companionDestinations.count
             case .skipPreexisting:
                 totals.skipCount += 1
+            case let .skipInLibrary(library):
+                totals.skipCount += 1
+                if library != snapshotDestination {
+                    totals.skipElsewhereCount += 1
+                }
             case .blocked:
                 totals.blockedCount += 1
             case .excluded:

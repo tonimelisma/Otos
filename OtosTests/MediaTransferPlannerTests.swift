@@ -36,6 +36,7 @@ struct MediaTransferPlannerTests {
         sourceMedia: [PlanningFileFacts],
         destinationRoot: LibraryRootPath = destination,
         destinationOccupants: [MediaRelativePath: DestinationOccupantFacts] = [:],
+        libraryContent: [XXH3Digest128: LibraryRootPath] = [:],
         policy: ImportPolicy
     ) -> ImportPlanningSnapshot {
         ImportPlanningSnapshot(
@@ -47,6 +48,7 @@ struct MediaTransferPlannerTests {
             destinationNamespaceRevision: 1,
             sourceMedia: sourceMedia,
             destinationOccupants: destinationOccupants,
+            libraryContent: libraryContent,
             policy: policy,
             calendar: Calendar(identifier: .gregorian),
             timeZone: TimeZone(secondsFromGMT: 0) ?? .current
@@ -268,6 +270,63 @@ struct MediaTransferPlannerTests {
         )
 
         #expect(plan.entries[0].disposition == .copy(destination: next))
+    }
+
+    /// ADR 0018: a card item whose current digest a library holds — renamed, in another
+    /// folder, or in another library — is not copied again, and the plan counts where it is.
+    @Test func anItemALibraryHoldsByContentIsNotCopiedAgain() throws {
+        let held = try #require(XXH3Digest128(data: Data(repeating: 1, count: 16)))
+        let other = try #require(XXH3Digest128(data: Data(repeating: 2, count: 16)))
+        let backup = LibraryRootPath(rawValue: "/tmp/backup")
+        func withDigest(_ name: String, _ digest: XXH3Digest128?) -> PlanningFileFacts {
+            let base = Self.facts(name: name, captureWallCompact: 20_260_101_120_000)
+            return PlanningFileFacts(
+                id: base.id,
+                sourceURL: base.sourceURL,
+                relativePath: base.relativePath,
+                byteSize: base.byteSize,
+                contentModifiedAt: base.contentModifiedAt,
+                captureWallCompact: base.captureWallCompact,
+                mediaKind: base.mediaKind,
+                fileExtension: base.fileExtension,
+                companions: [],
+                contentTypeIdentifier: base.contentTypeIdentifier,
+                contentHash: digest
+            )
+        }
+        let snapshot = Self.snapshot(
+            sourceMedia: [withDigest("IMG_1.JPG", held), withDigest("IMG_2.JPG", other), withDigest("IMG_3.JPG", nil)],
+            libraryContent: [held: backup],
+            policy: {
+                var policy = ImportPolicy.from(.default)
+                policy.destinationFolderPolicy = .none
+                policy.destinationNamePolicy = .original
+                return policy
+            }()
+        )
+
+        let plan = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
+
+        let dispositions = Dictionary(uniqueKeysWithValues: plan.entries.map { ($0.source.relativePath.rawValue, $0.disposition) })
+        #expect(dispositions["IMG_1.JPG"] == .skipInLibrary(library: backup))
+        #expect(dispositions["IMG_2.JPG"].map {
+            if case .copy = $0 {
+                true
+            } else {
+                false
+            }
+        } == true)
+        #expect(dispositions["IMG_3.JPG"].map {
+            if case .copy = $0 {
+                true
+            } else {
+                false
+            }
+        } == true)
+        #expect(plan.totals.copyCount == 2)
+        #expect(plan.totals.skipCount == 1)
+        #expect(plan.totals.skipElsewhereCount == 1)
+        #expect(plan.eraseManifest.entries.contains { $0.relativePath.rawValue == "IMG_1.JPG" })
     }
 
     @Test func captureWallMtimeIsTheSharedExpectedDestinationFact() throws {
