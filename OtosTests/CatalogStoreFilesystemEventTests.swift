@@ -403,10 +403,10 @@ struct CatalogStoreFilesystemEventTests {
 
     /// ARC-041: a file reconcile that observed a path missing does not delete a row the
     /// path's owner restored while the reconcile was suspended. The reconcile is held
-    /// right after its observation; undo puts the file back and restores the row with
-    /// its overlay; the held reconcile then finds the root's namespace changed, defers,
-    /// and re-observes. A stale delete would purge the overlay, and the row the restore's
-    /// own dirt re-creates afterwards would come back without it.
+    /// right after its observation; undo puts the file back and shows the row again; the
+    /// held reconcile then finds the root's namespace changed, defers, and re-observes. A
+    /// stale delete would purge the overlay, and the row the restore's own dirt re-creates
+    /// afterwards would come back without it.
     @Test func staleMissingObservationDoesNotDeleteARestoredRow() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -438,6 +438,7 @@ struct CatalogStoreFilesystemEventTests {
         }
         let id = try #require(cataloged.testAssets.first?.id)
         let item = try #require(try await store.mediaTrashItems(for: [id]).first)
+        _ = try await store.setMediaChoice(.liked, for: [id])
 
         try FileManager.default.moveItem(at: file, to: aside)
         emit(
@@ -449,11 +450,9 @@ struct CatalogStoreFilesystemEventTests {
         await gate.waitForArrivals(1)
 
         try FileManager.default.moveItem(at: aside, to: file)
-        let batch = ImportBatchID(unixMilliseconds: 1000)
         let restored = await store.restoreTrashedItem(TrashedItem(
             item: item,
-            members: item.members.map { TrashedMember(member: $0, trashURL: nil) },
-            overlay: TrashedOverlay(mediaChoice: .liked, importBatch: batch)
+            members: item.members.map { TrashedMember(member: $0, trashURL: nil) }
         ))
         #expect(restored)
 
@@ -461,7 +460,7 @@ struct CatalogStoreFilesystemEventTests {
         try await waitUntil { await store.isFilesystemQuiescent }
         let settled = try await waitForCatalogStoreState(store) { !$0.isScanning }
         #expect(settled.testAssets.map(\.id) == [id])
-        #expect(try await store.assetIDs(inImportBatch: batch) == [id])
+        #expect(try await store.mediaAssets(for: [id])[id]?.mediaChoice == .liked)
     }
 
     @Test func diskChangeReconcilesAfterRescan() async throws {

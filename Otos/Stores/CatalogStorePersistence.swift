@@ -112,6 +112,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.trashPathMigrationIdentifier) { db in
+            for statement in CatalogSchema.trashPathStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -377,6 +382,23 @@ extension CatalogStore {
     struct CatalogedFileDeletionTarget {
         /// The thumbnail and preview files to delete with the row.
         let derivedImagePaths: [String]
+        /// Where the system Trash holds the row's file, when the queue moved it there.
+        let trashPath: String?
+    }
+
+    /// Whether a row whose path is missing must be kept because its file is in the system
+    /// Trash: the queue recorded where the Trash put it, and that file is still there. Only
+    /// an `ENOENT` proves it gone; any other answer is not a fact, so the row is kept and
+    /// the next scan asks again (ADR 0008, ADR 0032 rule 4).
+    static func isHeldInTrash(trashPath: String?) -> Bool {
+        guard let trashPath else {
+            return false
+        }
+        var info = stat()
+        if lstat(trashPath, &info) == 0 {
+            return true
+        }
+        return errno != ENOENT
     }
 
     static func catalogedFileDeletionTarget(
@@ -387,7 +409,7 @@ extension CatalogStore {
         guard let row = try Row.fetchOne(
             db,
             sql: """
-            SELECT thumbnail_path, preview_path
+            SELECT thumbnail_path, preview_path, trash_path
             FROM media_asset
             WHERE library_root_id = ? AND relative_path = ?
             """,
@@ -397,7 +419,10 @@ extension CatalogStore {
         }
         let thumbnailPath: String? = row["thumbnail_path"]
         let previewPath: String? = row["preview_path"]
-        return CatalogedFileDeletionTarget(derivedImagePaths: [thumbnailPath, previewPath].compactMap(\.self))
+        return CatalogedFileDeletionTarget(
+            derivedImagePaths: [thumbnailPath, previewPath].compactMap(\.self),
+            trashPath: row["trash_path"]
+        )
     }
 
     static func enrichmentResultMatchesCurrentRow(
@@ -622,17 +647,28 @@ extension CatalogStore {
         try JSONDecoder().decode(AssetMetadata.self, from: Data(json.utf8))
     }
 
+    /// A cataloged media row as a scan's deletion pass sees it.
+    struct ExistingAssetRow {
+        let relativePath: MediaRelativePath
+        /// The thumbnail and preview files to delete with the row.
+        let derivedImagePaths: [String]
+        let hadEnrichment: Bool
+        /// Where the system Trash holds the row's file, when the queue moved it there.
+        let trashPath: String?
+    }
+
     static func fetchExistingAssetRows(
         libraryRootID: Int64,
         underSubtree: MediaRelativePath? = nil,
         db: Database
-    ) throws -> [(relativePath: MediaRelativePath, derivedImagePaths: [String], hadEnrichment: Bool)] {
+    ) throws -> [ExistingAssetRow] {
         let rows: [Row] = if let underSubtree {
             // Component-safe: `a/b` matches itself and `a/b/...`, never `a/b2`.
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT relative_path, thumbnail_path, preview_path, enriched_source_size, enriched_source_mtime
+                SELECT relative_path, thumbnail_path, preview_path, enriched_source_size, enriched_source_mtime,
+                    trash_path
                 FROM media_asset
                 WHERE library_root_id = ?
                   AND (relative_path = ? OR relative_path LIKE ? ESCAPE '\\')
@@ -647,7 +683,8 @@ extension CatalogStore {
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT relative_path, thumbnail_path, preview_path, enriched_source_size, enriched_source_mtime
+                SELECT relative_path, thumbnail_path, preview_path, enriched_source_size, enriched_source_mtime,
+                    trash_path
                 FROM media_asset
                 WHERE library_root_id = ?
                 """,
@@ -657,11 +694,12 @@ extension CatalogStore {
         return rows.map { row in
             let thumbnailPath: String? = row["thumbnail_path"]
             let previewPath: String? = row["preview_path"]
-            return (
+            return ExistingAssetRow(
                 relativePath: MediaRelativePath(rawValue: row["relative_path"]),
                 derivedImagePaths: [thumbnailPath, previewPath].compactMap(\.self),
                 hadEnrichment: (row["enriched_source_size"] as Int64?) != nil
-                    || (row["enriched_source_mtime"] as Int64?) != nil
+                    || (row["enriched_source_mtime"] as Int64?) != nil,
+                trashPath: row["trash_path"]
             )
         }
     }
@@ -1087,6 +1125,23 @@ extension CatalogStore {
                 + "rootPath=\(libraryRootPath.rawValue) to=\(file.relativePath.rawValue)"
             OtosLog.catalog.notice("\(message, privacy: .public)")
         }
+        // A file at the path of a row whose file sits in the system Trash is that file put
+        // back — Finder's Put Back, or undo — so the row shows again with everything Otos
+        // held for it (ADR 0022). Path is identity (ADR 0008): whatever file now occupies
+        // the path is the asset.
+        try db.execute(
+            sql: """
+            UPDATE media_asset SET pending_trash_batch_unix_ms = NULL, trash_path = NULL
+            WHERE library_root_id = ? AND relative_path = ? AND trash_path IS NOT NULL
+            """,
+            arguments: [libraryRootID, file.relativePath.rawValue]
+        )
+        let putBack = db.changesCount > 0
+        if putBack {
+            let message = "op=catalog.scan.reconcile phase=putBack "
+                + "rootPath=\(libraryRootPath.rawValue) relativePath=\(file.relativePath.rawValue)"
+            OtosLog.catalog.notice("\(message, privacy: .public)")
+        }
         // The compound key makes a scan idempotent: observing the same relative
         // path refreshes its current filesystem facts instead of creating scan
         // history or a second asset identity.
@@ -1139,7 +1194,7 @@ extension CatalogStore {
                 pathKey: pathKey
             )
         )
-        return db.changesCount > 0
+        return db.changesCount > 0 || putBack
     }
 
     private static func upsertAssetMetadata(

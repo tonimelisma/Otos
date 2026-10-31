@@ -166,7 +166,7 @@ struct ContentView: View {
                     )
                 }
                 if let trashStatus = TrashStatusPresentation.map(viewModel.trashQueueState) {
-                    TrashStatusBar(presentation: trashStatus)
+                    TrashStatusBar(presentation: trashStatus, cancel: viewModel.cancelPendingTrash)
                 }
                 if let handOff = viewModel.handOffProgress {
                     ProgressStatusBar(

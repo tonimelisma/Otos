@@ -17,15 +17,16 @@ drawn only while at least one item is pending, and removed when the queue drains
 
 ## Zones and height
 
-Two zones at one fixed height across every state (DES-018, DES-053):
+Three zones at one fixed height across every state (DES-018, DES-053):
 
 | Zone | Content |
 | --- | --- |
 | What | L1 (`title3`, semibold) over L3 (`subheadline`); an orange attention badge before L1 when the queue needs attention |
 | Progress | Working only: a small determinate linear indicator with `M of N` beside it; blank space otherwise |
+| Act | `Cancel`, in every state (DES-032): withdraws every item still waiting — they reappear where they were, selected — including items left from an earlier run, when no undo entry remains. Items already in the Trash stay there; ⌘Z or Finder's Put Back returns them. No confirmation: nothing is lost. |
 
-No buttons. The queue's questions arrive as alerts (`Delete … Immediately?`), and
-withdrawing a Move to Trash is ⌘Z.
+The queue's questions arrive as alerts (`Delete … Immediately?`). ⌘Z withdraws one
+Move to Trash within the session.
 
 ## States
 
@@ -52,5 +53,5 @@ one is waiting.
 
 ## Accessibility
 
-L1 is a header; the progress zone reads as one element with its value. The bar adds no
-Tab stop. With Reduce Motion the indicator's value change uses a 0.1 s linear step.
+L1 is a header; the progress zone reads as one element with its value. `Cancel` is the
+bar's one Tab stop. With Reduce Motion the indicator's value change uses a 0.1 s linear step.

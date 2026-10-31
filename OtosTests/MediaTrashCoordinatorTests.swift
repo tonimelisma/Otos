@@ -129,7 +129,9 @@ struct MediaTrashCoordinatorTests {
 
         try await waitUntil { try await fixture.store.pendingTrashItems().isEmpty }
         #expect(calls.entries == ["a.xmp", "a.jpg"])
-        #expect(try await fixture.store.mediaAssets(for: [fixture.id]).isEmpty)
+        // The row stays, hidden, while its file is in the Trash (ADR 0022).
+        #expect(try await fixture.store.mediaAssets(for: [fixture.id]).keys.contains(fixture.id))
+        #expect(try await catalogStoreTestState(fixture.store).testAssets.isEmpty)
         #expect(await fixture.store.hasNamespaceMutationLease(for: fixture.rootPath) == false)
         await coordinator.shutdown()
     }
@@ -395,7 +397,7 @@ extension MediaTrashCoordinatorTests {
         let batch = MediaTrashBatchID()
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: batch)
         await coordinator.start()
-        try await waitUntil { try await fixture.store.mediaAssets(for: [fixture.id]).isEmpty }
+        try await waitUntil { try await fixture.store.pendingTrashItems().isEmpty }
         #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: "a.jpg").path))
 
         let outcome = await coordinator.undo(batch: batch, ids: [fixture.id])
@@ -442,7 +444,7 @@ extension MediaTrashCoordinatorTests {
         let batch = MediaTrashBatchID()
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: batch)
         await coordinator.start()
-        try await waitUntil { try await fixture.store.mediaAssets(for: [fixture.id]).isEmpty }
+        try await waitUntil { try await fixture.store.pendingTrashItems().isEmpty }
         try writeCatalogStoreFile(fixture.root.appending(path: "a.jpg"), contents: "newer")
 
         let outcome = await coordinator.undo(batch: batch, ids: [fixture.id])

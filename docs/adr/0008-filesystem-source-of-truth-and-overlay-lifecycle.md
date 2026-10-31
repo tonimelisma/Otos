@@ -65,7 +65,9 @@ Captured owner guidance for verification:
   may be inventoried and transferred during explicit import/reorganization. The
   catalog can be made exportable if portability is ever needed.
 - Explicit Move to Trash is a user-initiated filesystem mutation owned by ADR 0022: system Trash only, catalog-proven members only, exact-path
-  partial reconciliation, and no byte read or materialization request.
+  partial reconciliation, and no byte read or materialization request. An item in the
+  system Trash is not proven deleted: its row and overlay stay, hidden, until the Trash no
+  longer holds its file, so Finder's Put Back returns it with everything Otos held.
 - Persisting one thumbnail per asset is acceptable even at a million assets;
   regenerating thumbnails is expensive precisely because most originals are in the
   cloud, so thumbnails are kept, not evicted.
