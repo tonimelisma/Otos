@@ -46,8 +46,9 @@ struct CatalogWindowViewModelMapTests {
         #expect(model.showsPlacesMap)
         #expect(!model.canChangeViewMode)
         let request = try #require(model.mapCameraRequest)
-        #expect(abs(request.region.centerLatitude - Self.helsinki.latitude) < 0.0001)
-        #expect(request.region.latitudeDelta == 0.02)
+        let region = MapClusterPolicy.region(of: request.bounds)
+        #expect(abs(region.centerLatitude - Self.helsinki.latitude) < 0.001)
+        #expect(MapClusterPolicy.contains(Self.helsinki, in: request.bounds))
         // A mode change on the map is refused rather than acted on.
         model.setViewMode(.loupe)
         #expect(model.viewMode == .grid)
@@ -85,10 +86,10 @@ struct CatalogWindowViewModelMapTests {
         let before = try #require(model.mapCameraRequest)
         model.zoomIn()
         let after = try #require(model.mapCameraRequest)
-        let shown = MapClusterPolicy.region(of: cityViewport())
+        let shown = cityViewport()
         #expect(after.revision == before.revision + 1)
-        #expect(abs(after.region.latitudeDelta - shown.latitudeDelta / 2) < 0.0001)
-        #expect(abs(after.region.centerLatitude - shown.centerLatitude) < 0.0001)
+        #expect(abs(after.bounds.width - shown.width / 2) < 1)
+        #expect(abs(after.bounds.centerX - (shown.originX + shown.width / 2)) < 1)
     }
 
     @MainActor
@@ -119,8 +120,7 @@ struct CatalogWindowViewModelMapTests {
         // Back lands on the viewport the user left, not on a re-fit.
         let request = try #require(model.mapCameraRequest)
         #expect(request.revision == revisionBeforeReturn + 1)
-        let left = MapClusterPolicy.region(of: cityViewport())
-        #expect(abs(request.region.latitudeDelta - left.latitudeDelta) < 0.0001)
+        #expect(request.bounds == MapClusterPolicy.bounds(of: cityViewport()))
     }
 
     @MainActor
@@ -143,10 +143,51 @@ struct CatalogWindowViewModelMapTests {
 
         #expect(model.queryDescriptor.scope == .places)
         let after = try #require(model.mapCameraRequest)
-        let shown = MapClusterPolicy.region(of: viewport(latitudinalMeters: 400_000))
+        let shown = viewport(latitudinalMeters: 400_000)
         #expect(after.revision == before.revision + 1)
-        #expect(after.region.latitudeDelta <= shown.latitudeDelta / 4)
-        #expect(abs(after.region.centerLatitude - 60.175) < 0.0001)
+        #expect(after.bounds.width <= shown.width / 4)
+        #expect(abs(MapClusterPolicy.region(of: after.bounds).centerLatitude - 60.175) < 0.001)
+    }
+
+    /// MapKit clamps a camera past its zoom-out. The viewport that follows a fit's own
+    /// request says whether every item is shown; a miss gets one unpadded re-ask, and a
+    /// miss after that is left alone.
+    @MainActor
+    @Test func aFitTheMapCouldNotKeepIsAskedOnceMoreWithoutMargin() throws {
+        let model = makeViewModel()
+        model.startMapClustering()
+        model.selectSidebar(.places)
+        let located = [
+            LocatedAsset(id: id("helsinki.jpg"), coordinate: Self.helsinki),
+            LocatedAsset(id: id("la.jpg"), coordinate: PlaceCoordinate(latitude: 34.05, longitude: -118.24)),
+        ]
+        model.applyState(windowState(model, scope: .places, ids: located.map(\.id), map: CatalogMapState(located: located, unlocatedCount: 0)))
+        let fit = try #require(model.mapCameraRequest)
+        let fitRegion = MapClusterPolicy.region(of: fit.bounds)
+        #expect(fitRegion.longitudeDelta > 143 * 1.3)
+
+        // The map settles on a camera that shows only Helsinki, as the fit's own follow-up.
+        var narrow = cityViewport()
+        narrow.cameraRevision = fit.revision
+        model.mapViewportChanged(narrow)
+
+        let refit = try #require(model.mapCameraRequest)
+        #expect(refit.revision == fit.revision + 1)
+        let refitRegion = MapClusterPolicy.region(of: refit.bounds)
+        #expect(refitRegion.longitudeDelta < fitRegion.longitudeDelta)
+        #expect(MapClusterPolicy.contains(Self.helsinki, in: refit.bounds))
+
+        // Still short after the unpadded ask: no further request.
+        var stillNarrow = viewport(latitudinalMeters: 30000)
+        stillNarrow.cameraRevision = refit.revision
+        model.mapViewportChanged(stillNarrow)
+        #expect(model.mapCameraRequest?.revision == refit.revision)
+
+        // A pan the user makes afterwards never re-fits.
+        var pan = viewport(latitudinalMeters: 40000)
+        pan.cameraRevision = refit.revision
+        model.mapViewportChanged(pan)
+        #expect(model.mapCameraRequest?.revision == refit.revision)
     }
 
     // MARK: - Fixtures

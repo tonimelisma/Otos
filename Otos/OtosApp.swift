@@ -125,6 +125,7 @@ public struct OtosApp: App {
                     )
                     #if DEBUG
                         SmokeLibrarySelection.applyIfPresent(to: catalogViewModel)
+                        SmokeWindowCapture.applyIfPresent(to: catalogViewModel)
                     #endif
                 }
         }

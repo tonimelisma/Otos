@@ -33,37 +33,62 @@ struct SmokeLibrarySelectionTests {
         let directory = try makeTestDirectory()
         let expected = try CatalogPath.normalizedDirectoryPath(for: directory)
 
-        let plain = SmokeLibrarySelection.configuredRootPath(environment: [
+        let plain = SmokeLibrarySelection.configuredRequest(environment: [
             SmokeLibrarySelection.environmentVariable: directory.path(percentEncoded: false),
         ])
-        let trailingSlash = SmokeLibrarySelection.configuredRootPath(environment: [
+        let trailingSlash = SmokeLibrarySelection.configuredRequest(environment: [
             SmokeLibrarySelection.environmentVariable: directory.path(percentEncoded: false) + "/",
         ])
-        let padded = SmokeLibrarySelection.configuredRootPath(environment: [
+        let padded = SmokeLibrarySelection.configuredRequest(environment: [
             SmokeLibrarySelection.environmentVariable: "  \(directory.path(percentEncoded: false))  ",
         ])
 
-        #expect(plain == expected)
-        #expect(trailingSlash == expected)
-        #expect(padded == expected)
+        #expect(plain == .root(expected))
+        #expect(trailingSlash == .root(expected))
+        #expect(padded == .root(expected))
     }
 
     /// A tilde is expanded rather than treated as a relative path component.
     @Test func configuredRootPathExpandsTilde() throws {
-        let path = try #require(SmokeLibrarySelection.configuredRootPath(environment: [
+        let path = try #require(SmokeLibrarySelection.configuredRequest(environment: [
             SmokeLibrarySelection.environmentVariable: "~",
         ]))
         let home = try CatalogPath.normalizedDirectoryPath(
             for: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
         )
 
-        #expect(path == home)
-        #expect(path.rawValue.hasPrefix("/"))
+        #expect(path == .root(home))
+        #expect(home.rawValue.hasPrefix("/"))
+    }
+
+    /// `places` is the one non-path request: the Places map, which exists with a fixed
+    /// library and nothing else (ADR 0040).
+    @Test func placesRequestSelectsTheMapOnlyWithAFixedLibrary() {
+        #expect(SmokeLibrarySelection.configuredRequest(environment: [
+            SmokeLibrarySelection.environmentVariable: " places ",
+        ]) == .places)
+        #expect(SmokeLibrarySelection.resolve(
+            requested: .places,
+            among: [libraryState(path: "/Pictures")]
+        ) == .select(.places))
+        #expect(SmokeLibrarySelection.resolve(
+            requested: .places,
+            among: [libraryState(path: "/Volumes/CARD", kind: .removableVolume)]
+        ) == .noFixedLibrary(registered: [LibraryRootPath(rawValue: "/Volumes/CARD")]))
+        #expect(SmokeLibrarySelection.resolve(requested: .places, among: []) == .noFixedLibrary(registered: []))
+    }
+
+    /// The capture seam waits on a published fact: stacks for the map, items for a grid.
+    @Test func captureIsReadyOnTheFirstStacksOrTheFirstItems() {
+        #expect(!SmokeWindowCapture.isReady(showsPlacesMap: true, clusterCount: 0, gridCount: 10))
+        #expect(SmokeWindowCapture.isReady(showsPlacesMap: true, clusterCount: 1, gridCount: 0))
+        #expect(!SmokeWindowCapture.isReady(showsPlacesMap: false, clusterCount: 0, gridCount: 0))
+        #expect(SmokeWindowCapture.isReady(showsPlacesMap: false, clusterCount: 0, gridCount: 3))
     }
 
     @Test func configuredRootPathIgnoresMissingOrEmptyEnvironment() {
-        #expect(SmokeLibrarySelection.configuredRootPath(environment: [:]) == nil)
-        #expect(SmokeLibrarySelection.configuredRootPath(environment: [
+        #expect(SmokeLibrarySelection.configuredRequest(environment: [:]) == nil)
+        #expect(SmokeLibrarySelection.configuredRequest(environment: [
             SmokeLibrarySelection.environmentVariable: "  ",
         ]) == nil)
     }
@@ -72,7 +97,7 @@ struct SmokeLibrarySelectionTests {
         let requested = LibraryRootPath(rawValue: "/Pictures")
 
         let resolution = SmokeLibrarySelection.resolve(
-            requested: requested,
+            requested: .root(requested),
             among: [libraryState(path: "/Other"), libraryState(path: "/Pictures")]
         )
 
@@ -84,7 +109,7 @@ struct SmokeLibrarySelectionTests {
         let requested = LibraryRootPath(rawValue: "/Volumes/Card")
 
         let resolution = SmokeLibrarySelection.resolve(
-            requested: requested,
+            requested: .root(requested),
             among: [libraryState(path: "/Volumes/Card", kind: .removableVolume)]
         )
 
@@ -95,7 +120,7 @@ struct SmokeLibrarySelectionTests {
     /// than making itself registered.
     @Test func unregisteredRootSelectsNothingAndNamesRegisteredRoots() {
         let resolution = SmokeLibrarySelection.resolve(
-            requested: LibraryRootPath(rawValue: "/tmp/scratch/smoke-library"),
+            requested: .root(LibraryRootPath(rawValue: "/tmp/scratch/smoke-library")),
             among: [libraryState(path: "/Pictures"), libraryState(path: "/Archive")]
         )
 
@@ -107,7 +132,7 @@ struct SmokeLibrarySelectionTests {
 
     @Test func noKnownSourcesYetStillReportsNotRegistered() {
         let resolution = SmokeLibrarySelection.resolve(
-            requested: LibraryRootPath(rawValue: "/Pictures"),
+            requested: .root(LibraryRootPath(rawValue: "/Pictures")),
             among: []
         )
 
@@ -123,11 +148,11 @@ struct SmokeLibrarySelectionTests {
         var state = CatalogWindowState.empty
         state.libraries = [libraryState(path: "/Pictures")]
 
-        #expect(SmokeLibrarySelection.resolution(requested: requested, in: state) == nil)
+        #expect(SmokeLibrarySelection.resolution(requested: .root(requested), in: state) == nil)
         state.mediaEmptyState = .noMedia
-        #expect(SmokeLibrarySelection.resolution(requested: requested, in: state) == .select(.library(requested)))
+        #expect(SmokeLibrarySelection.resolution(requested: .root(requested), in: state) == .select(.library(requested)))
         state.libraries = [libraryState(path: "/Other")]
-        #expect(SmokeLibrarySelection.resolution(requested: requested, in: state) == .notRegistered(
+        #expect(SmokeLibrarySelection.resolution(requested: .root(requested), in: state) == .notRegistered(
             requested: requested,
             registered: [LibraryRootPath(rawValue: "/Other")]
         ))

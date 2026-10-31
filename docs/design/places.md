@@ -60,8 +60,12 @@ Standard style, following light and dark; points of interest excluded **[deviati
 DES-104]**; pan and zoom only; `MapZoomStepper` and `MapScaleView` as the only chrome.
 No user-location control and no permission prompt.
 
-Camera: on entering Places, fit every located item with a margin (a single point gets
-a town-sized span); on a filter change, re-fit; on return from a place, the viewport
+Camera: on entering Places, fit every located item with a margin, in map points so a
+library shot on two continents (more than 180° of longitude) does not wrap (a single
+point gets a 2 km square). MapKit refuses a camera past its zoom-out (about 153° of
+longitude at a 1232 pt map), so when the viewport that follows a fit leaves an item
+outside, the fit is asked once more without margin but grown to the camera the map
+just showed, and left there if it still misses. On a filter change, re-fit; on return from a place, the viewport
 the user left; ⌘= / ⌘− halve or double the span about the center. A flight is 0.25 s
 ease-out (DES-070), a snap under Reduce Motion (DES-075).
 
@@ -75,9 +79,10 @@ only for two or more members. Before the thumbnail has ever decoded, the kind gl
 tertiary strength (DES-063). Once painted, the thumbnail stays as long as the stack's
 representative is the same item.
 
-Cells are 64 pt on a side in screen points at the current zoom, so two stacks never
-touch (48 pt plus a 16 pt gutter). Only cells touching the viewport, padded by one
-cell, are drawn.
+Cells are 64 pt on a side in screen points at the current zoom, and a stack whose
+center would fall within a cell of an earlier stack's center merges into it, so two
+stacks never touch whatever the cell boundaries happen to be (48 pt plus a 16 pt
+gutter). Only cells touching the viewport, padded by one cell, are drawn.
 
 | Act | Result |
 | --- | --- |
@@ -106,6 +111,16 @@ when the first item is located.
 Tab reaches the toolbar and the zoom stepper; ⌘= / ⌘− zoom; ⌘1 / ⌘2 / ⌘3 are disabled.
 Stacks are not keyboard-focusable; the keyboard path to the photos is a grid (a place,
 or any other scope). This is a stated limit, not an oversight.
+
+## Verification
+
+`script/smoke-run.sh --verify places` with `OTOS_SMOKE_CAPTURE_PATH`,
+`OTOS_SMOKE_APPEARANCE` and `OTOS_SMOKE_CAPTURE_SETTLE_SECONDS` launches the dev build
+on the real library, selects Places and writes the window's own rendering to a PNG
+(ADR 0020). The bar and the map tiles come through; the sidebar's material and the
+stacks (SwiftUI annotations inside the map) do not, so the stacks are verified from
+the `op=map.cluster` log line, which carries each stack's count and position in view
+points.
 
 ## Not in this spec
 

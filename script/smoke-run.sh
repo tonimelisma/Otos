@@ -14,15 +14,22 @@ CATALOG_DB="$HOME/Library/Application Support/net.melisma.Otos.dev/Catalog/catal
 MODE="${1:---jank}"
 if [[ "$MODE" == "--help" || "$MODE" == "help" ]]; then
   cat >&2 <<'USAGE'
-usage: script/smoke-run.sh [--jank|--verify] <library-root>
+usage: script/smoke-run.sh [--jank|--verify] <library-root|places>
 
 The root must already be registered in the catalog. A smoke run selects an
 existing root; it never adds, removes, or otherwise changes what libraries
 exist (ADR 0020). There is no default: a machine's registered roots
 are never guessable, so pass the root explicitly, every time.
 
+`places` selects the Places map (ADR 0040), which needs a registered fixed library.
+
 Environment:
-  OTOS_SMOKE_SELECT_ROOT       an already-registered root, if not an argument
+  OTOS_SMOKE_SELECT_ROOT       an already-registered root (or places), if not an argument
+  OTOS_SMOKE_CAPTURE_PATH      with --verify: write the window's own rendering to this
+                               PNG once it shows the selection, then quit
+  OTOS_SMOKE_APPEARANCE        light|dark: the app's appearance for that capture
+  OTOS_SMOKE_CAPTURE_SETTLE_SECONDS  seconds to let map tiles and thumbnails land
+                               before the capture (MapKit reports neither; default 0)
   OTOS_SMOKE_SETTLE_SECONDS    seconds to wait before jank scrolling (default: 10)
   OTOS_SMOKE_SCROLL_CYCLES     down/up scroll cycles (default: 6)
   OTOS_SMOKE_SCROLL_DELTA      pixel delta per scroll event (default: 900)
@@ -63,8 +70,15 @@ existing root; it never adds, removes, or otherwise changes what libraries
 exist (ADR 0020). There is no default: a machine's registered roots
 are never guessable, so pass the root explicitly, every time.
 
+`places` selects the Places map (ADR 0040), which needs a registered fixed library.
+
 Environment:
-  OTOS_SMOKE_SELECT_ROOT       an already-registered root, if not an argument
+  OTOS_SMOKE_SELECT_ROOT       an already-registered root (or places), if not an argument
+  OTOS_SMOKE_CAPTURE_PATH      with --verify: write the window's own rendering to this
+                               PNG once it shows the selection, then quit
+  OTOS_SMOKE_APPEARANCE        light|dark: the app's appearance for that capture
+  OTOS_SMOKE_CAPTURE_SETTLE_SECONDS  seconds to let map tiles and thumbnails land
+                               before the capture (MapKit reports neither; default 0)
   OTOS_SMOKE_SETTLE_SECONDS    seconds to wait before jank scrolling (default: 10)
   OTOS_SMOKE_SCROLL_CYCLES     down/up scroll cycles (default: 6)
   OTOS_SMOKE_SCROLL_DELTA      pixel delta per scroll event (default: 900)
@@ -185,15 +199,29 @@ verify_selection_applied() {
 
 
 run_verify() {
-  check_provider_readiness
+  if [[ "$SMOKE_ROOT" != "places" ]]; then
+    check_provider_readiness
+  fi
   QUIT_ON_EXIT=1
   # Live before the launch, so the selection line cannot be logged ahead of it.
-  otos_log_stream_open "process == \"$APP_NAME\" AND subsystem == \"$SUBSYSTEM\" AND eventMessage CONTAINS \"op=smoke.select\""
+  otos_log_stream_open "process == \"$APP_NAME\" AND subsystem == \"$SUBSYSTEM\" AND eventMessage CONTAINS \"op=smoke.\""
   local app_pid
   app_pid="$(run_selected_launch)"
   APP_PID="$app_pid"
   verify_selection_applied "$app_pid"
   echo "Smoke launch succeeded, window scoped to root=$SMOKE_ROOT"
+  if [[ -n "${OTOS_SMOKE_CAPTURE_PATH:-}" ]]; then
+    local capture_line
+    # The app reports the capture itself; the wait is on that report. The bound is a
+    # deadline for an app that never reaches it (crashed, or nothing to show).
+    # time: deadline
+    if ! capture_line="$(otos_log_stream_await 'op=smoke\.capture.*phase=(finish|failed)' 600)"; then
+      echo "Smoke capture did not report for path=$OTOS_SMOKE_CAPTURE_PATH pid=$app_pid" >&2
+      exit 1
+    fi
+    echo "$capture_line"
+    [[ "$capture_line" != *phase=failed* ]] || exit 1
+  fi
 }
 
 check_provider_readiness() {
@@ -291,14 +319,16 @@ if [[ -z "$SMOKE_ROOT" ]]; then
   exit 1
 fi
 
-if [[ ! -d "$SMOKE_ROOT" ]]; then
+if [[ "$SMOKE_ROOT" != "places" && ! -d "$SMOKE_ROOT" ]]; then
   echo "Smoke library root is not a directory: $SMOKE_ROOT" >&2
   echo "Pass a root path or set OTOS_SMOKE_SELECT_ROOT." >&2
   echo >&2
   registered_roots_message >&2
   exit 1
 fi
-SMOKE_ROOT="$(cd "$SMOKE_ROOT" && pwd -P)"
+if [[ "$SMOKE_ROOT" != "places" ]]; then
+  SMOKE_ROOT="$(cd "$SMOKE_ROOT" && pwd -P)"
+fi
 
 # Both modes launch and later quit the app, so both need an unambiguous instance.
 refuse_if_app_already_running

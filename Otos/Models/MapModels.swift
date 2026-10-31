@@ -46,10 +46,13 @@ nonisolated struct MapViewport: Equatable, Sendable {
     var height: Double
     var viewWidth: Double
     var viewHeight: Double
+    /// The camera request this viewport followed (`MapCameraRequest.revision`), 0 before
+    /// any — so the model can tell a fit's own settled viewport from the one the map
+    /// reported at first layout, and from a pan the user made since.
+    var cameraRevision: UInt64 = 0
 }
 
-/// A geographic region in degrees, for camera requests. The view converts to
-/// `MKCoordinateRegion` at its edge.
+/// A geographic region in degrees, for diagnostics and tests; never a camera request.
 nonisolated struct MapRegion: Equatable, Sendable {
     var centerLatitude: Double
     var centerLongitude: Double
@@ -57,8 +60,27 @@ nonisolated struct MapRegion: Equatable, Sendable {
     var longitudeDelta: Double
 }
 
+/// A rectangle in map points, for camera requests. The view converts to `MKMapRect`
+/// at its edge. Map points, not degrees: a region in degrees wider than 180° of
+/// longitude wraps when MapKit fits it, and a library shot on two continents is
+/// exactly that wide (measured 2026-10-31: the fit left a stack 27 pt past the edge).
+nonisolated struct MapBounds: Equatable, Sendable {
+    var originX: Double
+    var originY: Double
+    var width: Double
+    var height: Double
+
+    var centerX: Double {
+        originX + width / 2
+    }
+
+    var centerY: Double {
+        originY + height / 2
+    }
+}
+
 /// A stack on the map: the located items that fall in one cluster cell at the current
-/// viewport. `id` is the representative — the first member in display order — so a
+/// viewport, merged with any neighbor whose stack would touch it. `id` is the representative — the first member in display order — so a
 /// stack whose front photo is unchanged keeps its view, and with it its painted
 /// thumbnail, across camera changes (the grid's no-blank rule, applied to the map).
 nonisolated struct MapPlaceCluster: Identifiable, Equatable, Sendable {
@@ -79,5 +101,5 @@ nonisolated struct MapPlaceCluster: Identifiable, Equatable, Sendable {
 /// A camera the map should adopt, numbered so the view applies each request once.
 nonisolated struct MapCameraRequest: Equatable, Sendable {
     let revision: UInt64
-    let region: MapRegion
+    let bounds: MapBounds
 }
