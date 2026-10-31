@@ -15,6 +15,8 @@ extension CatalogMediaEmptyState {
             ""
         case .noMedia:
             "No Media"
+        case .noLocatedMedia:
+            "No Located Media"
         case .noFilterMatches:
             "No Matching Media"
         case .checkingLibraries:
@@ -38,6 +40,8 @@ extension CatalogMediaEmptyState {
             ""
         case .noMedia:
             "Add a library with media files to begin."
+        case .noLocatedMedia:
+            "Photos and videos with location information appear here as they are cataloged."
         case .noFilterMatches:
             "No media in this scope matches the active filters."
         case .checkingLibraries:
@@ -64,6 +68,8 @@ extension CatalogMediaEmptyState {
             ""
         case .noMedia:
             "photo.on.rectangle"
+        case .noLocatedMedia:
+            "map"
         case .noFilterMatches:
             "line.3.horizontal.decrease.circle"
         case .checkingLibraries, .libraryChecking:

@@ -17,6 +17,8 @@ nonisolated struct CatalogProjectionWindowStateParts {
     let scopedDayBuckets: [Date?]
     let filterOptions: CatalogFilterOptions
     let mediaEmptyState: CatalogMediaEmptyState
+    /// The Places map's content; nil for every other scope (ADR 0040).
+    let map: CatalogMapState?
 }
 
 /// The order a detail-only publication may reuse instead of re-running the ordered-asset
@@ -49,5 +51,7 @@ nonisolated struct CatalogProjectionBuildFacts {
     let availableLibraryPaths: Set<LibraryRootPath>
     let scopedAssetIDs: [MediaAssetID]
     let scopedDayBuckets: [Date?]
+    /// Each scoped ID's location, index-paired; empty unless the scope requires one.
+    let scopedCoordinates: [PlaceCoordinate]
     let orderQueryMs: Int
 }

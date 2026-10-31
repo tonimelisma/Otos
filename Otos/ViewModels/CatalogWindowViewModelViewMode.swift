@@ -60,6 +60,11 @@ extension CatalogWindowViewModel {
     }
 
     func setViewMode(_ mode: BrowserViewMode) {
+        // Places has one presentation, the map (ADR 0040); the picker and ⌘1/2/3 are
+        // disabled there and a stray call changes nothing.
+        guard canChangeViewMode else {
+            return
+        }
         switch mode {
         case .grid:
             exitToGrid()

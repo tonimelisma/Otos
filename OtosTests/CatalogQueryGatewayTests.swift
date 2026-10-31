@@ -65,8 +65,8 @@ struct CatalogQueryGatewayTests {
             scope: CatalogScopePredicate(rootIDs: [7], importBatchUnixMs: 100)
         ))
 
-        #expect(query.sql.contains("library_root_id = ?"))
-        #expect(query.sql.contains("AND import_batch_unix_ms = ?"))
+        #expect(query.sql.contains("media_asset.library_root_id = ?"))
+        #expect(query.sql.contains("AND media_asset.import_batch_unix_ms = ?"))
         #expect(query.sql.contains("INDEXED BY idx_media_asset_best_capture_root_"))
     }
 
@@ -136,7 +136,7 @@ struct CatalogQueryGatewayTests {
                 descriptor: descriptor,
                 scope: CatalogScopePredicate(rootIDs: [1]),
                 db: db
-            ).map(\.1.rawValue)
+            ).map(\.relativePath.rawValue)
         }
         #expect(paths == ["disliked.jpg", "liked.jpg"])
     }

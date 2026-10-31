@@ -32,6 +32,8 @@ struct BrowserPlaceTests {
     @Test func everyScopeKindRoundTrips() {
         let scopes: [SidebarSelection] = [
             .allMedia,
+            .places,
+            .place(PlaceCoordinate(latitude: 60.17, longitude: 24.94)),
             .allImports,
             .library(pictures),
             .importBatch(ImportBatchID(unixMilliseconds: 1_790_000_000_000)),

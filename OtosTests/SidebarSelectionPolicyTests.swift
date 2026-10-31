@@ -20,6 +20,16 @@ struct SidebarSelectionPolicyTests {
         #expect(SidebarSelectionPolicy.showsAllMedia(libraries: [pictures, archive]))
     }
 
+    /// Places needs one fixed library to map and never a located item: the row is
+    /// there to be found, and the sidebar does not reflow as enrichment finds places.
+    @Test func showsPlacesRequiresOneFixedLibrary() {
+        let card = removableSource(path: "/Volumes/CARD", identity: .volume(uuid: "card"))
+        #expect(!SidebarSelectionPolicy.showsPlaces(libraries: []))
+        #expect(!SidebarSelectionPolicy.showsPlaces(libraries: [card]))
+        #expect(SidebarSelectionPolicy.showsPlaces(libraries: [pictures]))
+        #expect(SidebarSelectionPolicy.showsPlaces(libraries: [pictures, archive]))
+    }
+
     @Test func defaultSelectionPrefersConnectedRemovable() {
         let older = removableSource(
             path: "/Volumes/OLD",

@@ -176,14 +176,15 @@ actor CatalogProjection {
             request: request,
             resolvedDescriptor: Self.resolvedDescriptor(for: request, allRoots: allRoots, importBatches: []),
             importBatches: [],
-            ordered: (orderedAssetIDs, []),
+            ordered: (orderedAssetIDs, [], []),
             orderQueryMs: 0
         )
         return windowState(
             from: facts,
             allAssetCount: orderedAssetIDs.count,
             unfilteredVisibleAssetCount: facts.scopedAssetIDs.count,
-            filterOptions: .empty
+            filterOptions: .empty,
+            filteredFixedAssetCount: 0
         ).0
     }
 }

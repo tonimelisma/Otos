@@ -30,30 +30,41 @@ extension CatalogWindowViewModel {
     /// Whether Zoom In acts now — View ▸ Zoom In (⌘=) and the toolbar's + alike: fewer
     /// grid columns, or a loupe image below its ceiling. Compare has no zoom.
     var canZoomIn: Bool {
+        if showsPlacesMap {
+            return mapViewport != nil
+        }
         switch viewMode {
         case .grid:
-            gridColumnCount > GridColumnCount.minimum
+            return gridColumnCount > GridColumnCount.minimum
         case .loupe:
-            loupeZoomReport.map {
-                $0.magnification < LoupeZoomPolicy.maximumMagnification(fit: $0.fit) * (1 - LoupeZoomPolicy.fitTolerance)
+            return loupeZoomReport.map { report in
+                let ceiling = LoupeZoomPolicy.maximumMagnification(fit: report.fit)
+                return report.magnification < ceiling * (1 - LoupeZoomPolicy.fitTolerance)
             } ?? false
         case .compare:
-            false
+            return false
         }
     }
 
     /// Whether Zoom Out acts now — View ▸ Zoom Out (⌘−) and the toolbar's − alike: more
     /// grid columns, or a loupe image zoomed past fit.
     var canZoomOut: Bool {
+        if showsPlacesMap {
+            return mapViewport != nil
+        }
         switch viewMode {
-        case .grid: gridColumnCount < GridColumnCount.maximum
-        case .loupe: loupeZoomReport.map { !$0.isFit } ?? false
-        case .compare: false
+        case .grid: return gridColumnCount < GridColumnCount.maximum
+        case .loupe: return loupeZoomReport.map { !$0.isFit } ?? false
+        case .compare: return false
         }
     }
 
     /// View ▸ Zoom In (⌘=).
     func zoomIn() {
+        if showsPlacesMap {
+            zoomMap(by: 0.5)
+            return
+        }
         switch viewMode {
         case .grid: zoomInGrid()
         case .loupe: stepLoupeZoom(1)
@@ -63,6 +74,10 @@ extension CatalogWindowViewModel {
 
     /// View ▸ Zoom Out (⌘−).
     func zoomOut() {
+        if showsPlacesMap {
+            zoomMap(by: 2)
+            return
+        }
         switch viewMode {
         case .grid: zoomOutGrid()
         case .loupe: stepLoupeZoom(-1)

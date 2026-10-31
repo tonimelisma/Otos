@@ -847,18 +847,38 @@ nonisolated struct CatalogMediaGridState: Equatable {
     }
 }
 
-/// Selection of a sidebar row. Media selection will be modeled separately
-/// because it answers a different question.
+/// The collection the browser shows: a sidebar row, or the one place reached by
+/// drilling into the Places map. Media selection is modeled separately because it
+/// answers a different question.
+///
+/// `.places` is every located item across the fixed libraries, presented as a map
+/// (ADR 0040). `.place` is the leaf under it — the items at exactly one coordinate —
+/// presented as the ordinary grid; the sidebar keeps the Places row highlighted for it.
 nonisolated enum SidebarSelection: Hashable {
     case allMedia
+    case places
+    case place(PlaceCoordinate)
     case library(LibraryRootPath)
     case importBatch(ImportBatchID)
     case allImports
+
+    /// The row the sidebar highlights for this scope: `.place` has no row of its own and
+    /// highlights Places, the row it was reached from.
+    var sidebarRow: SidebarSelection {
+        if case .place = self {
+            return .places
+        }
+        return self
+    }
 
     var diagnosticDescription: String {
         switch self {
         case .allMedia:
             "allMedia"
+        case .places:
+            "places"
+        case let .place(coordinate):
+            "place:\(coordinate.diagnosticDescription)"
         case let .library(path):
             "library:\(path.rawValue)"
         case let .importBatch(batchID):
