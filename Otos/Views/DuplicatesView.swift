@@ -177,13 +177,20 @@ private struct DuplicateGroupHeader: View {
     let group: DuplicateGroup
     let actions: DuplicatesActions
 
+    private var title: String {
+        switch group.id {
+        case .identical: "Identical · \(group.copies.count) copies"
+        case .samePhoto: "Same photo · \(group.copies.count) versions"
+        }
+    }
+
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Identical · \(group.copies.count) copies")
+                Text(title)
                     .font(.headline)
                 if group.defaultKeep == nil {
-                    Text("Choose a copy to keep")
+                    Text(group.wait == .samePhoto ? "Choose the version to keep" : "Choose a copy to keep")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }

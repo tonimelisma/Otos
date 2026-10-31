@@ -116,6 +116,15 @@ nonisolated struct RootRegistry {
                 rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
                 content: .identical(digest)
             )
+        case let .duplicateGroup(.samePhoto(members)):
+            return CatalogScopePredicate(
+                rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
+                content: .members(members.compactMap { id in
+                    statesByPath[id.libraryRootPath].map {
+                        CatalogScopePredicate.MemberKey(rootID: $0.rowID, relativePath: id.relativePath.rawValue)
+                    }
+                })
+            )
         case let .library(path):
             guard availableLibraryPaths.contains(path),
                   let rootID = statesByPath[path]?.rowID

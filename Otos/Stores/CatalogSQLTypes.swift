@@ -99,6 +99,13 @@ nonisolated struct CatalogScopePredicate: Equatable {
         case duplicated
         /// The row's current digest is exactly this: one group under Duplicates.
         case identical(XXH3Digest128)
+        /// The row is one of these: a same-photo group under Duplicates, by root row id and path.
+        case members([MemberKey])
+    }
+
+    struct MemberKey: Equatable {
+        let rootID: Int64
+        let relativePath: String
     }
 
     let rootIDs: [Int64]

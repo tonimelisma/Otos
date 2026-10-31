@@ -18,8 +18,10 @@ A list of groups above a fixed-height bar (DES-018, DES-053).
   each — `Backup and Photos share 29,870 photos` — with `Keep Both Libraries`. A chevron
   shows the shared groups under it.
 - **Each group** is a section:
-  - header (`.headline`): `Identical · 3 copies`;
-  - `.subheadline`: `Choose a copy to keep` when it waits;
+  - header (`.headline`): `Identical · 3 copies`, or `Same photo · 2 versions` for versions
+    of one capture (resized, re-encoded, metadata stripped), which are never preselected;
+  - `.subheadline`: `Choose a copy to keep` when it waits (`Choose the version to keep`
+    for same photo);
   - a trailing `Keep All`.
 - **Each copy** is a row:
   - a 48 pt aspect-fit thumbnail;

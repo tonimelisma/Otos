@@ -5847,3 +5847,118 @@ extension CatalogStore {
         notifyCatalogChanged()
     }
 }
+
+// MARK: - Same photo (ADR 0042)
+
+extension CatalogStore {
+    /// Visible stills in the fixed libraries whose thumbnail has no current render signature.
+    func renderSignatureCandidates(limit: Int) async throws -> [RenderSignatureCandidate] {
+        let libraries = roots.values.filter { $0.root.kind == .library && $0.availability == .available }
+        guard !libraries.isEmpty else {
+            return []
+        }
+        let rootIDs = libraries.map(\.rowID).sorted()
+        let pathsByRowID = roots.pathsByRowID
+        let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
+        return try await database().read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT library_root_id, relative_path, thumbnail_path, \(RenderSignatureSQL.source("media_asset")) AS source
+                FROM media_asset
+                WHERE library_root_id IN (\(placeholders))
+                  AND thumbnail_path IS NOT NULL
+                  AND kind IN ('image', 'raw')
+                  AND pending_trash_batch_unix_ms IS NULL
+                  AND trash_path IS NULL
+                  AND render_signature_source IS NOT \(RenderSignatureSQL.source("media_asset"))
+                ORDER BY library_root_id, relative_path
+                LIMIT ?
+                """,
+                arguments: StatementArguments(rootIDs + [limit])
+            ).compactMap { row in
+                guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
+                return RenderSignatureCandidate(
+                    id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"])),
+                    thumbnailPath: row["thumbnail_path"],
+                    source: row["source"]
+                )
+            }
+        }
+    }
+
+    /// Writes render signatures for rows whose thumbnail is still the one they were read from.
+    @discardableResult
+    func applyRenderSignatures(_ results: [RenderSignatureResult]) async throws -> Int {
+        let rowIDs = roots.rowIDSnapshot()
+        let written = try await database().write { db -> Int in
+            var written = 0
+            for result in results {
+                guard let rootID = rowIDs[result.id.libraryRootPath] else { continue }
+                try db.execute(
+                    sql: """
+                    UPDATE media_asset
+                    SET render_dhash = ?, render_gray = ?, render_signature_source = ?
+                    WHERE library_root_id = ? AND relative_path = ?
+                      AND \(RenderSignatureSQL.source("media_asset")) = ?
+                    """,
+                    arguments: [
+                        result.signature.map { Int64(bitPattern: $0.differenceHash) },
+                        result.signature.map { Data($0.gray) },
+                        result.source,
+                        rootID,
+                        result.id.relativePath.rawValue,
+                        result.source,
+                    ]
+                )
+                written += db.changesCount
+            }
+            return written
+        }
+        if written > 0 {
+            notifyCatalogChanged()
+        }
+        return written
+    }
+
+    /// Visible stills with a current render signature, with the facts the same-photo rule
+    /// compares. Grayscale renders are read separately, only for confirmed candidates.
+    func samePhotoCandidates(availableLibraryPaths: Set<LibraryRootPath>) async throws -> [SamePhotoCandidate] {
+        let libraries = roots.values.filter { $0.root.kind == .library && availableLibraryPaths.contains($0.path) }
+        guard !libraries.isEmpty else {
+            return []
+        }
+        let rootIDs = libraries.map(\.rowID).sorted()
+        let pathsByRowID = roots.pathsByRowID
+        let namesByPath = Dictionary(uniqueKeysWithValues: libraries.map { ($0.path, $0.root.displayName) })
+        return try await database().read { db in
+            try DuplicatesGateway.fetchSamePhotoCandidates(rootIDs: rootIDs, db: db).compactMap { row in
+                row.candidate(pathsByRowID: pathsByRowID, namesByPath: namesByPath)
+            }
+        }
+    }
+
+    /// The stored render signatures of these rows.
+    func renderSignatures(for ids: [MediaAssetID]) async throws -> [MediaAssetID: RenderSignature] {
+        let rowIDs = roots.rowIDSnapshot()
+        return try await database().read { db in
+            var signatures: [MediaAssetID: RenderSignature] = [:]
+            for id in ids {
+                guard let rootID = rowIDs[id.libraryRootPath],
+                      let row = try Row.fetchOne(
+                          db,
+                          sql: "SELECT render_dhash, render_gray FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                          arguments: [rootID, id.relativePath.rawValue]
+                      ),
+                      let hash = row["render_dhash"] as Int64?,
+                      let gray = row["render_gray"] as Data?,
+                      let signature = RenderSignature(differenceHash: UInt64(bitPattern: hash), gray: Array(gray))
+                else {
+                    continue
+                }
+                signatures[id] = signature
+            }
+            return signatures
+        }
+    }
+}

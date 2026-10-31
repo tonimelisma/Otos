@@ -85,27 +85,69 @@ extension CatalogProjection {
             filteredFixedAssetCount: filteredFixedAssetCount
         )
         let duplicates = try await duplicateCopies
-        state.duplicates = Self.duplicatesState(copies: duplicates.copies, keptPairs: duplicates.keptPairs)
+        let identical = DuplicateGroupPolicy.groups(copies: duplicates.copies, keptPairs: duplicates.keptPairs)
+        let samePhoto = try await samePhotoGroups(
+            store: store,
+            availableLibraryPaths: facts.availableLibraryPaths,
+            excluding: Set(identical.flatMap(\.copies).map(\.id)),
+            keptPairs: duplicates.keptPairs
+        )
+        state.duplicates = Self.duplicatesState(groups: identical + samePhoto)
         state.pendingIdentityRemaps = pendingIdentityRemaps
         return (state, metrics)
     }
 
-    /// The keeper rule over the Store's copies, off the MainActor (ADR 0042).
-    static func duplicatesState(
-        copies: [DuplicateCopyFacts],
+    /// Versions of the same photo (ADR 0042): candidates from stored signatures and capture
+    /// facts, then only the candidates' grayscale renders read to confirm them. A group the
+    /// user kept whole is set aside like an identical one.
+    func samePhotoGroups(
+        store: CatalogStore,
+        availableLibraryPaths: Set<LibraryRootPath>,
+        excluding excluded: Set<MediaAssetID>,
         keptPairs: Set<DuplicateKeptPair>
-    ) -> CatalogDuplicatesState {
-        let signpost = OtosSignpost.performance.beginInterval("DuplicateGroups")
-        defer { OtosSignpost.performance.endInterval("DuplicateGroups", signpost) }
-        let groups = DuplicateGroupPolicy.groups(copies: copies, keptPairs: keptPairs)
+    ) async throws -> [DuplicateGroup] {
+        let signpost = OtosSignpost.performance.beginInterval("SamePhotoGroups")
+        defer { OtosSignpost.performance.endInterval("SamePhotoGroups", signpost) }
+        let candidates = try await store.samePhotoCandidates(availableLibraryPaths: availableLibraryPaths)
+        let pairs = SamePhotoPolicy.candidatePairs(candidates, excluding: excluded)
+        guard !pairs.isEmpty else {
+            return []
+        }
+        let involved = Array(Set(pairs.flatMap { [$0.0.copy.id, $0.1.copy.id] }))
+        let signatures = try await store.renderSignatures(for: involved)
+        return SamePhotoPolicy.groups(candidates: candidates, signatures: signatures, excluding: excluded).map { group in
+            let ids = group.copies.map(\.id)
+            var everyPairKept = true
+            for (index, left) in ids.enumerated() {
+                for right in ids[(index + 1)...] where !keptPairs.contains(DuplicateKeptPair(left, right)) {
+                    everyPairKept = false
+                }
+            }
+            guard everyPairKept else {
+                return group
+            }
+            return DuplicateGroup(
+                id: group.id,
+                copies: group.copies,
+                defaultKeep: Set(ids),
+                wait: nil,
+                isKept: true,
+                libraryPair: group.libraryPair
+            )
+        }
+    }
+
+    /// The published duplicates, off the MainActor (ADR 0042).
+    static func duplicatesState(groups: [DuplicateGroup]) -> CatalogDuplicatesState {
         let state = CatalogDuplicatesState(groups: groups)
         OtosLog.catalog.debugOperation("duplicates.groups", phase: "built", fields: [
-            "copies": "\(copies.count)",
+            "copies": "\(groups.reduce(0) { $0 + $1.copies.count })",
             "groups": "\(groups.count)",
             "kept": "\(state.keptGroups.count)",
             "preselected": "\(groups.count { !$0.isKept && $0.defaultKeep != nil })",
             "waitSpansLibraries": "\(groups.count { $0.wait == .spansLibraries })",
             "waitAuthoredWork": "\(groups.count { $0.wait == .differingAuthoredWork })",
+            "samePhoto": "\(groups.count { $0.wait == .samePhoto })",
         ])
         return state
     }

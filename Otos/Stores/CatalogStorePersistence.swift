@@ -122,6 +122,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.renderSignatureMigrationIdentifier) { db in
+            for statement in CatalogSchema.renderSignatureStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
