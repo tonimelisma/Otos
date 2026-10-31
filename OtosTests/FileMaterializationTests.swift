@@ -192,7 +192,7 @@ struct FileMaterializationTests {
 
     /// The other half, so the change is scoped rather than global: background keeps PR 172's
     /// behaviour exactly, because its reason still holds — a background transfer squatting
-    /// `rootBackgroundCap=1` blocks every other candidate for that root.
+    /// a `rootBackgroundCap` slot holds back the root's other candidates.
     @Test func backgroundMaterializationStillShortCircuitsOnTheSameInput() async {
         let result = await FileMaterialization.materialize(
             URL(fileURLWithPath: "/tmp/slow-provider.arw"),

@@ -183,22 +183,31 @@ struct MaterializationCoordinatorTests {
         #expect(policy.rejection(for: request("next.jpg", priority: .interactive), inFlight: inFlight) == nil)
     }
 
-    @Test func backgroundIsLimitedToOneTransferPerRoot() async throws {
+    @Test func backgroundIsLimitedToTheRootCap() async throws {
+        let cap = MaterializationAdmissionPolicy.production.backgroundPerRootCap
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) }
         )
-        let first = Task { await coordinator.materialize(request("one.jpg", priority: .background)) }
-        try await executor.waitForStarts(1)
-        let second = Task { await coordinator.materialize(request("two.jpg", priority: .background)) }
+        let admitted = (0 ..< cap).map { "admitted-\($0).jpg" }
+        var tasks: [Task<MaterializationResult, Never>] = []
+        for name in admitted {
+            tasks.append(Task { await coordinator.materialize(request(name, priority: .background)) })
+        }
+        try await executor.waitForStarts(cap)
+        tasks.append(Task { await coordinator.materialize(request("over-cap.jpg", priority: .background)) })
         try await waitForAdmission(coordinator) { await coordinator.queuedRequestCount() == 1 }
-        #expect(await executor.startedNames() == ["one.jpg"])
+        #expect(await executor.startedNames().sorted() == admitted.sorted())
         try await executor.releaseNext()
-        try await executor.waitForStarts(2)
-        #expect(await executor.startedNames() == ["one.jpg", "two.jpg"])
-        try await executor.releaseNext()
-        _ = await (first.value, second.value)
+        try await executor.waitForStarts(cap + 1)
+        #expect(await executor.startedNames().contains("over-cap.jpg"))
+        for _ in 0 ..< cap {
+            try await executor.releaseNext()
+        }
+        for task in tasks {
+            _ = await task.value
+        }
         await coordinator.shutdown()
     }
 
@@ -206,23 +215,31 @@ struct MaterializationCoordinatorTests {
     /// `command` is exempt from the background per-root cap that a background transfer
     /// already holds, and is selected ahead of queued background work.
     @Test func commandIsAdmittedPastTheBackgroundRootCap() async throws {
+        let cap = MaterializationAdmissionPolicy.production.backgroundPerRootCap
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) }
         )
-        let first = Task { await coordinator.materialize(request("one.jpg", priority: .background)) }
-        try await executor.waitForStarts(1)
-        let queued = Task { await coordinator.materialize(request("two.jpg", priority: .background)) }
+        var tasks: [Task<MaterializationResult, Never>] = []
+        for index in 0 ..< cap {
+            tasks.append(Task { await coordinator.materialize(request("admitted-\(index).jpg", priority: .background)) })
+        }
+        try await executor.waitForStarts(cap)
+        tasks.append(Task { await coordinator.materialize(request("queued.jpg", priority: .background)) })
         try await waitForAdmission(coordinator) { await coordinator.queuedRequestCount() == 1 }
-        let trash = Task { await coordinator.materialize(request("trash.jpg", priority: .command)) }
-        try await executor.waitForStarts(2)
-        #expect(await executor.startedNames() == ["one.jpg", "trash.jpg"])
+        tasks.append(Task { await coordinator.materialize(request("trash.jpg", priority: .command)) })
+        try await executor.waitForStarts(cap + 1)
+        #expect(await executor.startedNames().contains("trash.jpg"))
+        #expect(await !(executor.startedNames().contains("queued.jpg")))
+        for _ in 0 ..< (cap + 1) {
+            try await executor.releaseNext()
+        }
+        try await executor.waitForStarts(cap + 2)
         try await executor.releaseNext()
-        try await executor.releaseNext()
-        try await executor.waitForStarts(3)
-        try await executor.releaseNext()
-        _ = await (first.value, queued.value, trash.value)
+        for task in tasks {
+            _ = await task.value
+        }
         await coordinator.shutdown()
     }
 

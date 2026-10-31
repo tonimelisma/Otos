@@ -138,7 +138,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
     // Per-root breaker for definite provider refusal (ETIMEDOUT). Two consecutive
     // `providerUnavailable` on one root at device/background priority open a 60s window
     // where further device/background admissions on that root report `providerBreakerOpen`
-    // instead of dispatching and blocking `backgroundPerRootCap=1` for 2s each.
+    // instead of dispatching and blocking a `backgroundPerRootCap` slot for 2s each.
     //
     // Invariant: interactive demand is never suppressed. A user click both must not be
     // dropped and is the cheapest probe that the provider recovered — an interactive

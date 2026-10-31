@@ -239,7 +239,7 @@ extension FileMaterialization {
 
     /// How hard a materialization tries, and for how long — derived from the request's
     /// priority, so a background-only policy cannot reach interactive work. The two-strike
-    /// probe exists to stop a background transfer squatting `rootBackgroundCap=1` for two
+    /// probe exists to stop a background transfer squatting a `rootBackgroundCap` slot for two
     /// minutes — a slot interactive work never holds.
     ///
     /// Applying that probe to interactive requests fails them early. Measured 2026-08-31:
@@ -382,7 +382,7 @@ extension FileMaterialization {
                 // Two consecutive `providerUnavailable` probes mean the provider
                 // is not serving (e.g. OneDrive signed out, `ETIMEDOUT` in 1s)
                 // and continued polling would waste the full 120s holding
-                // `rootBackgroundCap=1`. Fail fast to free the slot; the
+                // a `rootBackgroundCap` slot. Fail fast to free the slot; the
                 // retry ledger (15/60/300/900) will pace the next attempt.
                 // A single transient ETIMEDOUT that heals on the next tick
                 // yields only one probe failure and does not short-circuit.
@@ -569,7 +569,7 @@ nonisolated enum MaterializationOutcome: Equatable {
     case timedOut
     /// The provider definitively refused a byte read with `ETIMEDOUT` (errno 60/110)
     /// twice consecutively, so continued polling would waste the 120s timeout
-    /// holding `rootBackgroundCap=1` while the provider is not serving. Treated
+    /// holding a `rootBackgroundCap` slot while the provider is not serving. Treated
     /// identically to `timedOut` by retry pacing, but attributed separately so a
     /// future short-circuit can be measured.
     case providerUnavailable
