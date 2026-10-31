@@ -70,11 +70,18 @@ Map view mode.
   (`CatalogWindowViewModelMap.swift`) under ADR 0032: a revision pair, one doorbell
   loop, the arithmetic off the main actor through `@concurrent`, the result assigned
   synchronously. `MapClusterPolicy` is pure: a Web Mercator grid of 64 pt cells at the
-  current viewport, members in display order, only cells touching the padded viewport
-  emitted, so stacks never overlap and their count is bounded by the viewport's area.
+  current viewport, members in display order, a stack merged into an earlier one whose
+  center lies within a cell of it, only cells touching the padded viewport emitted, so
+  stacks never overlap and their count is bounded by the viewport's area.
 - **The map's camera is a request, not a mirror.** The map owns its camera as control
   state and reports where it settled (`MapViewport`, in map points). The ViewModel asks
-  for a camera, numbered so the view applies each once: fit all located items on entry
+  for a camera as map-point bounds (`MapBounds`, never degrees: a region wider than
+  180° of longitude wraps when MapKit fits it, and a two-continent library is that
+  wide — found on the real library, 2026-10-31), numbered so the view applies each
+  once. A viewport report carries the request it followed, so a fit is checked: MapKit
+  clamps a camera past its zoom-out, and a fit whose own viewport leaves an item
+  outside is asked once more without margin, grown to the camera the map proved it can
+  show, then left. Cameras requested: fit all located items on entry
   and on a filter change, the last viewport on return from a place, a quarter-span zoom
   on a stack that can still split, a step on View ▸ Zoom In / Out.
 - **The map has one presentation.** While Places shows, the view-mode picker and ⌘1 /

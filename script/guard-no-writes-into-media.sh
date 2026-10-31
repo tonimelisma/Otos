@@ -19,6 +19,9 @@ ALLOWLIST=(
   # User-commanded Move to Trash: removeItem only after an explicit `Delete … Immediately?`
   # answer, and moveItem only to put an undone item back from the Trash (ADR 0022).
   "Otos/Services/MediaTrashCoordinator.swift"
+  # DEBUG-only smoke capture: one PNG at the path the developer named, refused under
+  # any library root before the write (ADR 0020).
+  "Otos/Support/SmokeWindowCapture.swift"
 )
 is_allowlisted() { local p="$1" a; for a in "${ALLOWLIST[@]}"; do [[ "$p" == "$a" ]] && return 0; done; return 1; }
 check_root() {

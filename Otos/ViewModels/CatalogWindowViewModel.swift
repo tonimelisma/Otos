@@ -439,6 +439,11 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var mapClusterContinuation: AsyncStream<Void>.Continuation?
     @ObservationIgnored var mapClusterTask: Task<Void, Never>?
     @ObservationIgnored var mapCameraRevision: UInt64 = 0
+    /// A fit the map has not yet confirmed: the request's revision and whether it still
+    /// carries the margin. MapKit clamps a camera it cannot show (a two-continent library
+    /// with margin exceeds its zoom-out at a window's width), so the fit is checked
+    /// against the viewport that followed it and re-asked once without margin.
+    @ObservationIgnored var mapPendingFit: (revision: UInt64, padded: Bool)?
     /// `NSApplication.willTerminateNotification` registration that saves the place.
     @ObservationIgnored var terminationObserver: (any NSObjectProtocol)?
     @ObservationIgnored let previewLoader: any PreviewLoading

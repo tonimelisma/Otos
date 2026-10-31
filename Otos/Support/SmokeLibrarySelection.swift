@@ -23,50 +23,76 @@
     /// and never against elapsed time.
     nonisolated enum SmokeLibrarySelection {
         static let environmentVariable = "OTOS_SMOKE_SELECT_ROOT"
+        /// The one non-path value: the Places map (ADR 0040), which has no root to name.
+        static let placesValue = "places"
+
+        /// What the environment asked the window to show.
+        enum Request: Equatable {
+            case root(LibraryRootPath)
+            case places
+
+            var diagnosticDescription: String {
+                switch self {
+                case let .root(path): path.rawValue
+                case .places: SmokeLibrarySelection.placesValue
+                }
+            }
+        }
 
         enum Resolution: Equatable {
             case select(SidebarSelection)
             /// Nothing was selected. Carries the registered roots so the log names them
             /// rather than telling the developer only that their path was wrong.
             case notRegistered(requested: LibraryRootPath, registered: [LibraryRootPath])
+            /// Places was asked for, but no fixed library exists to map.
+            case noFixedLibrary(registered: [LibraryRootPath])
         }
 
-        /// The requested root, normalized the same way `CatalogStore` normalizes roots
-        /// before persisting them, so a tilde, a trailing slash, or a symlinked parent
-        /// still matches the stored spelling.
-        static func configuredRootPath(
+        /// The request: `places`, or a root normalized the same way `CatalogStore`
+        /// normalizes roots before persisting them, so a tilde, a trailing slash, or a
+        /// symlinked parent still matches the stored spelling.
+        static func configuredRequest(
             environment: [String: String] = ProcessInfo.processInfo.environment
-        ) -> LibraryRootPath? {
+        ) -> Request? {
             guard let rawValue = environment[environmentVariable]?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
                 !rawValue.isEmpty
             else {
                 return nil
             }
+            if rawValue == placesValue {
+                return .places
+            }
             let url = URL(fileURLWithPath: NSString(string: rawValue).expandingTildeInPath, isDirectory: true)
-            return try? CatalogPath.normalizedDirectoryPath(for: url)
+            return (try? CatalogPath.normalizedDirectoryPath(for: url)).map(Request.root)
         }
 
-        /// Pure match of a requested root against the sources the window currently knows.
-        /// Fixed libraries and removable sources are both selectable, exactly as the
-        /// sidebar treats them.
+        /// Pure match of a request against the sources the window currently knows. Fixed
+        /// libraries and removable sources are both selectable, exactly as the sidebar
+        /// treats them; Places needs one fixed library, exactly as its row does.
         static func resolve(
-            requested: LibraryRootPath,
+            requested: Request,
             among sources: [CatalogLibraryState]
         ) -> Resolution {
-            if sources.contains(where: { $0.path == requested }) {
-                return .select(.library(requested))
+            let registered = sources.map(\.path).sorted { $0.rawValue < $1.rawValue }
+            switch requested {
+            case let .root(path):
+                if sources.contains(where: { $0.path == path }) {
+                    return .select(.library(path))
+                }
+                return .notRegistered(requested: path, registered: registered)
+            case .places:
+                if SidebarSelectionPolicy.showsPlaces(libraries: sources) {
+                    return .select(.places)
+                }
+                return .noFixedLibrary(registered: registered)
             }
-            return .notRegistered(
-                requested: requested,
-                registered: sources.map(\.path).sorted { $0.rawValue < $1.rawValue }
-            )
         }
 
-        /// What one published window state means for the requested root: nothing yet while
-        /// the catalog's first load is unfinished, then a selection or the registered roots.
+        /// What one published window state means for the request: nothing yet while the
+        /// catalog's first load is unfinished, then a selection or the registered roots.
         static func resolution(
-            requested: LibraryRootPath,
+            requested: Request,
             in state: CatalogWindowState
         ) -> Resolution? {
             guard state.mediaEmptyState != .loadingCatalog else {
@@ -88,11 +114,11 @@
             to viewModel: CatalogWindowViewModel,
             environment: [String: String] = ProcessInfo.processInfo.environment
         ) {
-            guard let requested = configuredRootPath(environment: environment) else {
+            guard let requested = configuredRequest(environment: environment) else {
                 return
             }
             OtosLog.app.notice(
-                "op=smoke.select phase=start requestedPath=\(requested.rawValue, privacy: .public)"
+                "op=smoke.select phase=start requestedPath=\(requested.diagnosticDescription, privacy: .public)"
             )
             let states = Observations { @MainActor [weak viewModel] in
                 viewModel?.state
@@ -109,16 +135,17 @@
                     case let .select(selection):
                         viewModel.selectSidebar(selection)
                         OtosLog.app.notice(
-                            "op=smoke.select phase=finish outcome=selected path=\(requested.rawValue, privacy: .public)"
+                            "op=smoke.select phase=finish outcome=selected path=\(requested.diagnosticDescription, privacy: .public)"
                         )
                         return
-                    case let .notRegistered(_, registered) where !reportedUnregistered:
+                    case let .notRegistered(_, registered) where !reportedUnregistered,
+                         let .noFixedLibrary(registered) where !reportedUnregistered:
                         reportedUnregistered = true
                         let names = registered.map(\.rawValue).joined(separator: ", ")
                         OtosLog.app.error(
-                            "op=smoke.select phase=report outcome=notRegistered requestedPath=\(requested.rawValue, privacy: .public) registeredRoots=[\(names, privacy: .public)] hint=a smoke run never adds a root; pass one that is already registered"
+                            "op=smoke.select phase=report outcome=notRegistered requestedPath=\(requested.diagnosticDescription, privacy: .public) registeredRoots=[\(names, privacy: .public)] hint=a smoke run never adds a root; pass one that is already registered, or places with a fixed library registered"
                         )
-                    case .notRegistered:
+                    case .notRegistered, .noFixedLibrary:
                         continue
                     }
                 }

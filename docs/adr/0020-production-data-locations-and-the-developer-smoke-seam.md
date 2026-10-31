@@ -48,9 +48,19 @@ pointed somewhere else.
 the user has configured.** `SmokeLibrarySelection` resolves
 `OTOS_SMOKE_SELECT_ROOT` against the roots the Store already holds and applies the
 ordinary `selectSidebar` intent. If the requested path is not an already-registered
-root, it selects nothing and logs the registered roots. There is no path in the seam
-that registers, removes, or edits a root. The whole seam is `#if DEBUG`: a release
-build contains no way for an environment variable to steer the catalog.
+root, it selects nothing and logs the registered roots. The one non-path value,
+`places`, selects the Places map (ADR 0040) when a fixed library is registered. There
+is no path in the seam that registers, removes, or edits a root. The whole seam is
+`#if DEBUG`: a release build contains no way for an environment variable to steer
+the catalog.
+
+**A smoke run may capture the window's own rendering, and nothing else.**
+`SmokeWindowCapture` (`OTOS_SMOKE_CAPTURE_PATH`, `OTOS_SMOKE_APPEARANCE`) writes the
+main window's `cacheDisplay` to a PNG once the selection has something to show — the
+first stacks on the map, the first items in a grid — a fact the ViewModel publishes,
+never a timer. It reads no screen and needs no permission, so a design pass (light,
+dark, grayscale) is agent-owned; a Metal-backed layer such as map tiles may be blank
+in it, which the run's log states. `#if DEBUG` as well.
 
 The environment variable was renamed from its previous spelling rather than reused,
 so an exported value left over in a shell cannot silently keep the old

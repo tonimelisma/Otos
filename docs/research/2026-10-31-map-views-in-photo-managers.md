@@ -66,6 +66,25 @@ the order still comes from the capture index, so the partial index on
 `OtosTests/CatalogStoreQueryPlanTests.swift#locatedOrderQueryKeepsTheCaptureIndexAndLooksUpMetadataByKey`
 pins the plan.
 
+## Run on the real library (2026-10-31, dev build, `smoke-run.sh --verify places`)
+
+Window capture through the DEBUG seam (`SmokeWindowCapture`, ADR 0020), 1452×949 pt:
+the Places bar reads `10,872 items on the map` / `5,382 items have no location` in
+light and dark; map tiles render after a 12 s settle; the sidebar's material and the
+stacks (SwiftUI annotations inside the map) are not drawn by `cacheDisplay`. Logs:
+`op=map.camera reason=enter`, then `op=map.cluster … clusters=3 … ms=7–49` on 10,870
+located items at the fit camera, with each stack's view position.
+
+Two defects found and fixed from that log: the fit, requested in degrees with a
+longitude span over 180° (California to Finland), wrapped and left one stack 27 pt
+past the right edge — camera requests are now map-point bounds; and two stacks in
+adjacent cells sat 33 pt apart, overlapping their 48 pt faces — stacks within a cell
+of each other now merge. A third finding: MapKit clamps the camera at about 153° of
+longitude for a 1232 pt map (a 209° request settled at 152.73°, in degrees or map
+points alike), so a fit is checked against the viewport that follows it and re-asked
+once at the proven camera; the rerun settled with both stacks 14 pt inside the edges
+(`stacks=10896@30,551 1@1218,273 view=1232x845`).
+
 ## Sources
 
 - Apple Support, Find photos and videos by location on Mac:

@@ -8,7 +8,7 @@ import SwiftUI
 // map itself with one thumbnail stack per cluster. The view is passive — it renders
 // `CatalogMapState` and the ViewModel's clusters and camera request, holds only the
 // map's own camera as control state, and reports where the camera settled. MapKit
-// types stop at this file: the model speaks in `MapViewport` and `MapRegion`.
+// types stop at this file: the model speaks in `MapViewport` and `MapBounds`.
 //
 // No Location Services: the map never asks where the user is, so there is no user
 // location control and no permission prompt. The map's tile requests are the one
@@ -101,7 +101,8 @@ struct PlacesMapView: View {
             width: rect.size.width,
             height: rect.size.height,
             viewWidth: viewSize.width,
-            viewHeight: viewSize.height
+            viewHeight: viewSize.height,
+            cameraRevision: appliedCameraRevision
         ))
     }
 
@@ -113,18 +114,14 @@ struct PlacesMapView: View {
             return
         }
         appliedCameraRevision = request.revision
-        let region = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(
-                latitude: request.region.centerLatitude,
-                longitude: request.region.centerLongitude
-            ),
-            span: MKCoordinateSpan(
-                latitudeDelta: request.region.latitudeDelta,
-                longitudeDelta: request.region.longitudeDelta
-            )
+        let rect = MKMapRect(
+            x: request.bounds.originX,
+            y: request.bounds.originY,
+            width: request.bounds.width,
+            height: request.bounds.height
         )
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
-            camera = .region(region)
+            camera = .rect(rect)
         }
     }
 }

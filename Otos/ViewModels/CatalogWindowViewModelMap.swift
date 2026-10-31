@@ -74,10 +74,19 @@ extension CatalogWindowViewModel {
             }
             mapClusterCovered = startedFrom
             mapClusters = clusters
+            let region = MapClusterPolicy.region(of: viewport)
             OtosLog.ui.noticeOperation("map.cluster", phase: "finish", fields: [
                 "located": "\(map.located.count)",
                 "clusters": "\(clusters.count)",
+                "exact": "\(clusters.filter(\.isExactPlace).count)",
                 "ms": "\(DiagnosticsTiming.milliseconds(since: started))",
+                "center": String(format: "%.2f,%.2f", region.centerLatitude, region.centerLongitude),
+                "span": String(format: "%.2fx%.2f", region.latitudeDelta, region.longitudeDelta),
+                "view": String(format: "%.0fx%.0f", viewport.viewWidth, viewport.viewHeight),
+                "stacks": clusters.prefix(8).map { cluster in
+                    let point = MapClusterPolicy.viewPoint(of: cluster.coordinate, in: viewport)
+                    return String(format: "%d@%.0f,%.0f", cluster.count, point.x, point.y)
+                }.joined(separator: " "),
             ])
         }
     }
@@ -104,24 +113,38 @@ extension CatalogWindowViewModel {
         let firstLocated = (previous.map?.located.isEmpty ?? true) && !map.located.isEmpty
         if entered, previous.resolvedSidebarSelection.sidebarRow == .places, let viewport = mapViewport {
             // Back from a place: the map the user left.
-            requestMapCamera(MapClusterPolicy.region(of: viewport), reason: "return")
+            requestMapCamera(MapClusterPolicy.bounds(of: viewport), reason: "return")
         } else if entered || filterChanged || firstLocated {
-            if let region = MapClusterPolicy.fittingRegion(map.located.map(\.coordinate)) {
-                requestMapCamera(region, reason: entered ? "enter" : (filterChanged ? "filter" : "firstLocated"))
-            }
+            let reason = entered ? "enter" : (filterChanged ? "filter" : "firstLocated")
+            requestFit(map.located, reason: reason, padded: true)
         }
         if previous.map != next.map || entered {
             requestMapClusters()
         }
     }
 
-    private func requestMapCamera(_ region: MapRegion, reason: String) {
+    /// Asks for the camera that shows every located item, and remembers the ask so the
+    /// viewport that follows it can be checked (`mapViewportChanged`).
+    private func requestFit(_ located: [LocatedAsset], reason: String, padded: Bool, atLeast: MapBounds? = nil) {
+        guard var bounds = MapClusterPolicy.fittingBounds(located.map(\.coordinate), padded: padded) else {
+            return
+        }
+        if let atLeast {
+            bounds = MapClusterPolicy.expanded(bounds, toAtLeast: atLeast)
+        }
+        requestMapCamera(bounds, reason: reason)
+        mapPendingFit = (mapCameraRevision, padded)
+    }
+
+    private func requestMapCamera(_ bounds: MapBounds, reason: String) {
         mapCameraRevision &+= 1
-        mapCameraRequest = MapCameraRequest(revision: mapCameraRevision, region: region)
+        mapCameraRequest = MapCameraRequest(revision: mapCameraRevision, bounds: bounds)
+        let region = MapClusterPolicy.region(of: bounds)
         OtosLog.ui.noticeOperation("map.camera", phase: "request", fields: [
             "reason": reason,
             "revision": "\(mapCameraRevision)",
-            "latitudeDelta": String(format: "%.4f", region.latitudeDelta),
+            "center": String(format: "%.2f,%.2f", region.centerLatitude, region.centerLongitude),
+            "span": String(format: "%.2fx%.2f", region.latitudeDelta, region.longitudeDelta),
         ])
     }
 
@@ -135,6 +158,38 @@ extension CatalogWindowViewModel {
         }
         mapViewport = viewport
         requestMapClusters()
+        checkPendingFit(against: viewport)
+    }
+
+    /// A fit is a promise the map may not keep: MapKit clamps a camera past its zoom-out
+    /// (measured 2026-10-31: about 153° of longitude at a 1232 pt map, where a
+    /// two-continent library with its margin asks for 209°). The viewport that followed
+    /// the fit's own request says whether it held; if not, the fit is asked once more
+    /// without its margin but grown to the camera the map just proved it can show, so
+    /// whatever margin fits is kept. A miss after that is logged and left — the items
+    /// are where they are, and the map shows what it can.
+    private func checkPendingFit(against viewport: MapViewport) {
+        guard let pending = mapPendingFit, viewport.cameraRevision == pending.revision, let map = state.map else {
+            return
+        }
+        let shown = MapClusterPolicy.bounds(of: viewport)
+        let onePoint = viewport.width / viewport.viewWidth
+        let outside = map.located.filter {
+            !MapClusterPolicy.contains($0.coordinate, in: shown, tolerance: onePoint)
+        }.count
+        if outside == 0 {
+            mapPendingFit = nil
+            return
+        }
+        OtosLog.ui.noticeOperation("map.camera", phase: pending.padded ? "refit" : "unfit", fields: [
+            "revision": "\(pending.revision)",
+            "outside": "\(outside)",
+        ])
+        if pending.padded {
+            requestFit(map.located, reason: "refit", padded: false, atLeast: shown)
+        } else {
+            mapPendingFit = nil
+        }
     }
 
     /// Single click: the stack's members become the selection, as a click on a tile
@@ -156,7 +211,7 @@ extension CatalogWindowViewModel {
         let members = Set(cluster.memberIDs)
         let coordinates = map.located.filter { members.contains($0.id) }.map(\.coordinate)
         requestMapCamera(
-            MapClusterPolicy.zoomRegion(into: cluster, members: coordinates, viewport: viewport),
+            MapClusterPolicy.zoomBounds(into: cluster, members: coordinates, viewport: viewport),
             reason: "cluster"
         )
     }
@@ -166,7 +221,7 @@ extension CatalogWindowViewModel {
         guard let viewport = mapViewport else {
             return
         }
-        requestMapCamera(MapClusterPolicy.scaledRegion(of: viewport, by: factor), reason: "step")
+        requestMapCamera(MapClusterPolicy.scaledBounds(of: viewport, by: factor), reason: "step")
     }
 
     /// The items at exactly one coordinate, as the ordinary grid. Not a sidebar row:

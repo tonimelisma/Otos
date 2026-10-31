@@ -113,21 +113,62 @@ struct MapClusterPolicyTests {
         #expect(MapClusterPolicy.clusters(located: items, viewport: empty).isEmpty)
     }
 
-    @Test func fittingRegionCoversEveryCoordinateWithAMarginAndNeverCollapses() throws {
-        let spread = try #require(MapClusterPolicy.fittingRegion([
-            PlaceCoordinate(latitude: 60, longitude: 24),
-            PlaceCoordinate(latitude: 50, longitude: 10),
-        ]))
-        #expect(abs(spread.centerLatitude - 55) < 0.0001)
-        #expect(abs(spread.centerLongitude - 17) < 0.0001)
-        #expect(spread.latitudeDelta > 10)
-        #expect(spread.longitudeDelta > 14)
+    @Test func fittingBoundsHoldEveryCoordinateWithAMarginAndNeverCollapse() throws {
+        let helsinkiPoint = PlaceCoordinate(latitude: 60.17, longitude: 24.94)
+        let losAngeles = PlaceCoordinate(latitude: 34.05, longitude: -118.24)
+        let spread = try #require(MapClusterPolicy.fittingBounds([helsinkiPoint, losAngeles]))
+        #expect(MapClusterPolicy.contains(helsinkiPoint, in: spread))
+        #expect(MapClusterPolicy.contains(losAngeles, in: spread))
+        // The margin: a fifth of the extent on each side.
+        let extent = try #require(MapClusterPolicy.fittingBounds([helsinkiPoint, losAngeles]))
+        let region = MapClusterPolicy.region(of: extent)
+        #expect(region.longitudeDelta > 143 * 1.3)
 
-        let single = try #require(MapClusterPolicy.fittingRegion([PlaceCoordinate(latitude: 60.17, longitude: 24.94)]))
-        #expect(single.latitudeDelta == 0.02)
-        #expect(single.longitudeDelta == 0.02)
+        let single = try #require(MapClusterPolicy.fittingBounds([helsinkiPoint]))
+        let singleRegion = MapClusterPolicy.region(of: single)
+        // About 2 km at Helsinki: roughly 0.018° of latitude.
+        #expect(singleRegion.latitudeDelta > 0.015 && singleRegion.latitudeDelta < 0.025)
+        #expect(MapClusterPolicy.contains(helsinkiPoint, in: single))
 
-        #expect(MapClusterPolicy.fittingRegion([]) == nil)
+        #expect(MapClusterPolicy.fittingBounds([]) == nil)
+    }
+
+    /// A library shot on two continents spans more than 180° of longitude. A camera in
+    /// degrees wrapped that and left a stack past the edge (2026-10-31); map-point
+    /// bounds cannot wrap.
+    @Test func aFitAcrossMoreThanHalfTheWorldStillHoldsBothEnds() throws {
+        let tokyo = PlaceCoordinate(latitude: 35.68, longitude: 139.69)
+        let lima = PlaceCoordinate(latitude: -12.05, longitude: -77.04)
+        let bounds = try #require(MapClusterPolicy.fittingBounds([tokyo, lima]))
+        #expect(MapClusterPolicy.contains(tokyo, in: bounds))
+        #expect(MapClusterPolicy.contains(lima, in: bounds))
+        #expect(bounds.width <= MapClusterPolicy.worldMapPoints)
+    }
+
+    /// Two cells next to each other can hold items whose centers are closer than a
+    /// stack is wide (measured 2026-10-31: 33 pt apart). They become one stack.
+    @Test func stacksWhoseFacesWouldOverlapMerge() {
+        let city = viewport(MKCoordinateRegion(center: helsinki, latitudinalMeters: 20000, longitudinalMeters: 20000))
+        // Two points a few screen points apart, placed to straddle a cell boundary.
+        let base = PlaceCoordinate(latitude: 60.17, longitude: 24.94)
+        let basePoint = MapClusterPolicy.viewPoint(of: base, in: city)
+        let perPoint = city.width / city.viewWidth
+        let cell = MapClusterPolicy.cellPoints * perPoint
+        let baseMap = MKMapPoint(CLLocationCoordinate2D(latitude: base.latitude, longitude: base.longitude))
+        let boundaryX = (floor(baseMap.x / cell) + 1) * cell
+        let left = MKMapPoint(x: boundaryX - 2 * perPoint, y: baseMap.y).coordinate
+        let right = MKMapPoint(x: boundaryX + 2 * perPoint, y: baseMap.y).coordinate
+        let items = [
+            located("a.jpg", left.latitude, left.longitude),
+            located("b.jpg", right.latitude, right.longitude),
+        ]
+        _ = basePoint
+
+        let clusters = MapClusterPolicy.clusters(located: items, viewport: city)
+
+        #expect(clusters.count == 1)
+        #expect(clusters.first?.memberIDs == [id("a.jpg"), id("b.jpg")])
+        #expect(clusters.first?.isExactPlace == false)
     }
 
     @Test func zoomIntoAStackAlwaysNarrowsTheViewport() {
@@ -138,30 +179,28 @@ struct MapClusterPolicyTests {
             memberIDs: [id("a.jpg"), id("b.jpg")],
             isExactPlace: false
         )
-        let before = MapClusterPolicy.region(of: country)
 
-        let zoomed = MapClusterPolicy.zoomRegion(
+        let zoomed = MapClusterPolicy.zoomBounds(
             into: cluster,
             members: [PlaceCoordinate(latitude: 60.170, longitude: 24.94), PlaceCoordinate(latitude: 60.180, longitude: 24.94)],
             viewport: country
         )
 
-        #expect(zoomed.latitudeDelta <= before.latitudeDelta / 4)
-        #expect(zoomed.longitudeDelta <= before.longitudeDelta / 4)
-        #expect(abs(zoomed.centerLatitude - 60.175) < 0.0001)
+        #expect(zoomed.width <= country.width / 4)
+        #expect(zoomed.height <= country.height / 4)
+        #expect(abs(MapClusterPolicy.region(of: zoomed).centerLatitude - 60.175) < 0.001)
     }
 
     @Test func zoomStepsScaleAboutTheCenter() {
         let city = viewport(MKCoordinateRegion(center: helsinki, latitudinalMeters: 20000, longitudinalMeters: 20000))
-        let before = MapClusterPolicy.region(of: city)
 
-        let zoomedIn = MapClusterPolicy.scaledRegion(of: city, by: 0.5)
-        let zoomedOut = MapClusterPolicy.scaledRegion(of: city, by: 2)
+        let zoomedIn = MapClusterPolicy.scaledBounds(of: city, by: 0.5)
+        let zoomedOut = MapClusterPolicy.scaledBounds(of: city, by: 2)
 
-        #expect(abs(zoomedIn.latitudeDelta - before.latitudeDelta / 2) < 0.0001)
-        #expect(abs(zoomedOut.latitudeDelta - before.latitudeDelta * 2) < 0.0001)
-        #expect(abs(zoomedIn.centerLatitude - before.centerLatitude) < 0.0001)
-        #expect(abs(zoomedOut.centerLongitude - before.centerLongitude) < 0.0001)
+        #expect(abs(zoomedIn.width - city.width / 2) < 1)
+        #expect(abs(zoomedOut.width - city.width * 2) < 1)
+        #expect(abs(zoomedIn.centerX - (city.originX + city.width / 2)) < 1)
+        #expect(abs(zoomedOut.centerY - (city.originY + city.height / 2)) < 1)
     }
 
     @Test func accessibilityLabelLeadsWithTheCountThenThePlace() {
