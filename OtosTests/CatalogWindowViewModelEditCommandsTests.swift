@@ -20,11 +20,16 @@ struct CatalogWindowViewModelEditCommandsTests {
             model.setViewMode(.loupe)
             try await waitUntil { model.editTarget?.id == id && model.canEdit }
             #expect(!model.canShowOriginal)
+            // The opened photo's histogram, so the edit's can be told from it: the edited
+            // preview can arrive through the saved edit, which counts no histogram.
+            try await waitUntil { model.editHistogram != nil }
+            let openedHistogram = model.editHistogram
 
             model.setEditValue(1, for: .exposure)
             try await waitUntil { model.hasSettledEdits && model.editLivePreview?.recipe == EditRecipe(exposure: 1) }
             let edited = try #require(model.displayedPanePreview(.loupe)?.image)
 
+            try await waitUntil { model.editHistogram != openedHistogram }
             let editedHistogram = model.editHistogram
             model.toggleShowOriginal()
             #expect(model.isShowingOriginal)

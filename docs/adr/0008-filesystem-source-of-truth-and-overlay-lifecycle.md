@@ -202,7 +202,8 @@ subordinate, rebuildable overlay.
    with two `FileHandle.read(1)` probes (each kernel-capped at 1s), and
    `MaterializationCoordinator` records a per-root 60s `providerBreakerOpen`
    suppression after two consecutive `providerUnavailable` on that root so the next
-   31 background candidates do not each pay 2s on `backgroundPerRootCap=1`.
+   background candidates do not each pay 2s holding a `backgroundPerRootCap`
+   slot (four per root, the owner's choice of 2026-10-31).
    Materialization status stays transient and is never persisted. The current
    catalog/scanner still reads only filesystem facts and materializes nothing;
    byte-reading materialization is the enrichment owner's job (ADR 0009). See

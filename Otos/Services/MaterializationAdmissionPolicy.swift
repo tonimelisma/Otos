@@ -49,6 +49,9 @@ nonisolated struct MaterializationAdmissionPolicy: Equatable, Sendable {
     var byteBudget: Int64
     var largeVideoThresholdBytes: Int64
     var largeVideoCap: Int
+    /// How many background transfers one root may hold at once. Four is the owner's
+    /// choice (2026-10-31) for draining a cloud library's backlog faster; interactive
+    /// work is exempt and keeps its reserved global slot.
     var backgroundPerRootCap: Int
 
     static let production = MaterializationAdmissionPolicy(
@@ -57,7 +60,7 @@ nonisolated struct MaterializationAdmissionPolicy: Equatable, Sendable {
         byteBudget: 2 * 1024 * 1024 * 1024,
         largeVideoThresholdBytes: 256 * 1024 * 1024,
         largeVideoCap: 2,
-        backgroundPerRootCap: 1
+        backgroundPerRootCap: 4
     )
 
     func rejection(
