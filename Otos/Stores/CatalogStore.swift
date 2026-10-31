@@ -2152,7 +2152,8 @@ extension CatalogStore {
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT a.library_root_id, a.relative_path, a.byte_size, a.enriched_source_mtime
+                SELECT a.library_root_id, a.relative_path, a.byte_size, a.enriched_source_mtime,
+                    (\(Self.predatesContentIdentifierSQL) AND m.camera_make = 'Apple') AS may_complete_live_photo
                 FROM media_asset a
                 JOIN asset_metadata m USING (library_root_id, relative_path)
                 JOIN library_root r ON r.id = a.library_root_id
@@ -2173,10 +2174,63 @@ extension CatalogStore {
                         relativePath: MediaRelativePath(rawValue: row["relative_path"])
                     ),
                     sourceSize: row["byte_size"],
-                    sourceMTimeSeconds: row["enriched_source_mtime"]
+                    sourceMTimeSeconds: row["enriched_source_mtime"],
+                    mayCompleteLivePhoto: row["may_complete_live_photo"] ?? false
                 )
             }
         }
+    }
+
+    /// A record read before MediaMetadata reported the content identifier (0.8.2), of a
+    /// family that can carry one. v7 cleared every stored revision and v9 cleared these
+    /// families' again, and every read since stores its revision, so a NULL revision here
+    /// is exactly a record the identifier was never read for.
+    nonisolated static let predatesContentIdentifierSQL =
+        "(m.family IN ('heif', 'jpeg', 'isoBMFF') AND m.extraction_revision IS NULL)"
+
+    /// Hands rows whose bytes are not local back to enrichment, which downloads each once
+    /// and derives everything from that one read — metadata, checksum, thumbnail and
+    /// preview — rather than a metadata read alone (ADR 0041). The row's enrichment
+    /// signature is cleared, the fact enrichment claims on: its stored products describe a
+    /// reading the current reader would extend. A row whose file changed or whose record
+    /// was re-read meanwhile is left alone. Returns how many rows were handed over.
+    @discardableResult
+    func requestEnrichmentDownload(_ candidates: [MetadataRefreshCandidate]) async throws -> Int {
+        guard !candidates.isEmpty else { return 0 }
+        let rootIDs = roots.rowIDSnapshot()
+        let dbWriter = try database()
+        let requested = try await dbWriter.write { db in
+            var count = 0
+            for candidate in candidates {
+                guard let rootID = rootIDs[candidate.id.libraryRootPath] else { continue }
+                try db.execute(
+                    sql: """
+                    UPDATE media_asset SET enriched_source_size = NULL, enriched_source_mtime = NULL
+                    WHERE library_root_id = ? AND relative_path = ?
+                        AND byte_size IS ? AND enriched_source_size IS ? AND enriched_source_mtime IS ?
+                        AND EXISTS (
+                            SELECT 1 FROM asset_metadata m
+                            WHERE m.library_root_id = media_asset.library_root_id
+                                AND m.relative_path = media_asset.relative_path
+                                AND \(Self.predatesContentIdentifierSQL)
+                        )
+                    """,
+                    arguments: [
+                        rootID, candidate.id.relativePath.rawValue,
+                        candidate.sourceSize, candidate.sourceSize, candidate.sourceMTimeSeconds,
+                    ]
+                )
+                count += db.changesCount
+            }
+            return count
+        }
+        OtosLog.metadata.noticeOperation("metadata.refresh", phase: "downloadRequested", fields: [
+            "candidates": "\(candidates.count)", "requested": "\(requested)",
+        ])
+        if requested > 0 {
+            notifyCatalogChanged()
+        }
+        return requested
     }
 
     /// The library's current revision for `asset_metadata.family`, as SQL: one `WHEN` per

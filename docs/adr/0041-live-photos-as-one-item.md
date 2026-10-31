@@ -49,12 +49,22 @@ identifier.
 
 **Rows read before 0.8.2** carry no identifier. Migration v9 adds the column and clears the
 stored extraction revision of HEIF, JPEG and ISO BMFF records, as v7 did for 0.7.1, so
-`MetadataRefresher` re-reads them from local bytes. A cloud-only original is not downloaded
-for this (ADR 0039): its pair forms when its bytes are next local.
+`MetadataRefresher` re-reads them from local bytes.
+
+**A cloud-only original that may be half of a Live Photo is downloaded** (owner's decision,
+2026-10-31): its pair cannot form without its bytes. That is a record of a family that can
+carry the identifier, read before 0.8.2 (a NULL revision after v7 and v9), made by Apple.
+`MetadataRefresher` reads nothing for it and hands it to enrichment
+(`CatalogStore.requestEnrichmentDownload` clears its enrichment signature), so the file is
+downloaded once and everything that download can give is derived from it: metadata,
+checksum, thumbnail and preview. No product waits for a second download. Any other stale
+cloud-only record is still not downloaded for a parser fix (ADR 0039).
 
 ## Consequences
 
 - A Live Photo shows as one tile once both halves have been read, and as two before that.
+- Backfilling an iPhone library downloads its cloud-only Apple stills and movies once,
+  under enrichment's per-library limit and the 5 GB free-space floor (ADR 0027).
   The motion tile leaving the grid is a structural apply like any other enrichment reorder.
 - An edit, curation or Trash on the still covers the motion; nothing can act on the motion
   alone from the grid.

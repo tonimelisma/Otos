@@ -81,6 +81,10 @@ nonisolated struct MetadataRefreshCandidate: Equatable, Sendable {
     let id: MediaAssetID
     let sourceSize: Int64?
     let sourceMTimeSeconds: Int?
+    /// The record predates the content identifier a Live Photo pairs on and the file was
+    /// made by Apple, so it may be half of a Live Photo (ADR 0041). Such a row is worth
+    /// downloading when its bytes are not local; any other stale row is not (ADR 0039).
+    var mayCompleteLivePhoto = false
 }
 
 /// A metadata record re-read from a row's local bytes by the current reader, to replace the

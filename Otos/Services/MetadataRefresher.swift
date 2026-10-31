@@ -15,6 +15,12 @@ import OSLog
 /// hundreds of gigabytes to correct a few fields (`docs/research/2026-10-25-mediametadata-0.7.md`).
 /// A skipped row is offered again on the next pass, so it is re-read once it is local.
 ///
+/// One exception, by the owner's decision: an Apple-made record that predates the content
+/// identifier may be half of a Live Photo, and the pair cannot form without its bytes
+/// (ADR 0041). This pass reads nothing for it; it hands the row to enrichment
+/// (`CatalogStore.requestEnrichmentDownload`), which downloads it once and derives every
+/// product from that one read.
+///
 /// One pass per launch, started with enrichment. The pass walks candidates in path order
 /// through the store's cursor, checks each file's materialization immediately before its
 /// read, reads on the cooperative pool off this actor (`@concurrent`), and hands records
@@ -79,16 +85,21 @@ actor MetadataRefresher {
             guard let last = page.last else { break }
             cursor = last.id
             var refreshes: [MetadataRefresh] = []
+            var downloads: [MetadataRefreshCandidate] = []
             for candidate in page where !Task.isCancelled {
-                if let refresh = await read(candidate, isLocal: isLocal) {
+                switch await read(candidate, isLocal: isLocal) {
+                case let .read(refresh):
                     refreshes.append(refresh)
-                } else {
+                case .notLocal where candidate.mayCompleteLivePhoto:
+                    downloads.append(candidate)
+                case .notLocal, .retry:
                     summary.skipped += 1
                 }
             }
             summary.read += refreshes.count
             do {
                 summary.written += try await store.applyMetadataRefresh(refreshes)
+                summary.downloadsRequested += try await store.requestEnrichmentDownload(downloads)
             } catch {
                 summary.failed = true
                 OtosLog.metadata.errorOperation("metadata.refresh", phase: "writeFailed", fields: [
@@ -101,32 +112,40 @@ actor MetadataRefresher {
             "read": "\(summary.read)",
             "written": "\(summary.written)",
             "skipped": "\(summary.skipped)",
+            "downloadsRequested": "\(summary.downloadsRequested)",
             "failed": "\(summary.failed)",
             "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
         return summary
     }
 
-    /// The candidate's record as the current reader reads it, or nil when its original is
-    /// not local. The materialization check sits immediately before the read, so the read
-    /// never downloads.
+    private enum CandidateRead {
+        case read(MetadataRefresh)
+        /// The original is not on this Mac; this pass reads nothing that would download it.
+        case notLocal
+        /// The reader asked to retry; the row stays a candidate for the next pass.
+        case retry
+    }
+
+    /// The candidate's record as the current reader reads it. The materialization check
+    /// sits immediately before the read, so the read never downloads.
     @concurrent
     private static func read(
         _ candidate: MetadataRefreshCandidate,
         isLocal: @Sendable (URL) -> Bool
-    ) async -> MetadataRefresh? {
+    ) async -> CandidateRead {
         let url = candidate.id.fileURL
-        guard isLocal(url) else { return nil }
+        guard isLocal(url) else { return .notLocal }
         let result = MediaMetadataReader.read(url: url)
-        guard !result.outcome.shouldRetry else { return nil }
-        return MetadataRefresh(
+        guard !result.outcome.shouldRetry else { return .retry }
+        return .read(MetadataRefresh(
             id: candidate.id,
             metadata: MediaEnricher.map(result),
             enrichedKind: MediaEnricher.normalizedKind(result.format),
             enrichedFormat: MediaFormatToken.normalize(result.format),
             sourceSize: candidate.sourceSize,
             sourceMTimeSeconds: candidate.sourceMTimeSeconds
-        )
+        ))
     }
 }
 
@@ -136,5 +155,7 @@ nonisolated struct MetadataRefreshSummary: Equatable, Sendable {
     var written = 0
     /// Rows whose original is not local, or whose read the reader asked to retry.
     var skipped = 0
+    /// Cloud-only rows that may complete a Live Photo, handed to enrichment to download.
+    var downloadsRequested = 0
     var failed = false
 }
