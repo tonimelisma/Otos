@@ -141,6 +141,39 @@ nonisolated struct StagedDerivedImage: Equatable {
 /// work; the store stamps those so a file changed mid-enrichment is detected as stale.
 /// A generated thumbnail or preview may be staged, in which case `thumbnailPath` /
 /// `previewPath` is the final path to stamp only after Store promotes the staged file.
+/// What one enrichment of a claimed row reads and produces (ADR 0018). Decided by the
+/// Store at claim time from the row's staleness and the claim predicate it was claimed
+/// under, and carried to the enricher rather than re-derived.
+nonisolated enum EnrichmentScope: Equatable, Sendable {
+    /// Metadata, thumbnail and preview without a digest: a removable card's first pass,
+    /// so what the user looks at comes before a read of every byte.
+    case metadata
+    /// Metadata, thumbnail, preview and the digest from one materialized file.
+    case metadataAndHash
+    /// The digest alone: metadata and products are current. A card's second pass, and a
+    /// library row whose digest went stale while its metadata did not.
+    case hash
+
+    /// The scope for a row claimed under `hashRequired`'s predicate. A row whose metadata
+    /// is current was claimed for its digest only.
+    init(hashRequired: Bool, metadataStale: Bool) {
+        switch (hashRequired, metadataStale) {
+        case (false, _): self = .metadata
+        case (true, true): self = .metadataAndHash
+        case (true, false): self = .hash
+        }
+    }
+}
+
+/// A digest read on its own (`EnrichmentScope.hash`), valid only for the file signature
+/// it was read at (ADR 0018).
+nonisolated struct ContentHashResult: Equatable, Sendable {
+    let id: MediaAssetID
+    let contentHash: XXH3Digest128
+    let sourceSize: Int64?
+    let sourceMTimeSeconds: Int?
+}
+
 nonisolated struct EnrichmentResult: Equatable {
     let id: MediaAssetID
     let metadata: AssetMetadata
@@ -157,9 +190,8 @@ nonisolated struct EnrichmentResult: Equatable {
     let editRevision: Int64
     let sourceSize: Int64?
     let sourceMTimeSeconds: Int?
-    /// Absent when the enricher skipped hashing (`EnrichWork.shouldHash == false`,
-    /// a `.removableVolume` source — ADR 0018). The store then leaves the
-    /// row's existing hash columns untouched rather than clearing them.
+    /// Absent when the scope was `.metadata` (a card's first pass, ADR 0018). The store
+    /// then leaves the row's existing hash columns untouched rather than clearing them.
     let contentHash: XXH3Digest128?
 
     init(

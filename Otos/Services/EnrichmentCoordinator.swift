@@ -97,10 +97,8 @@ actor EnrichmentCoordinator {
         let isVideo: Bool
         let captureDate: Date?
         let isDeviceStaging: Bool
-        /// False only for `.removableVolume` sources (ADR 0018): hashing
-        /// them in place would force a full read of the whole card merely to
-        /// checksum it. Populated in `makeWork` from `removableRootPaths`.
-        let shouldHash: Bool
+        /// What this enrichment reads and produces, as the Store's claim decided it.
+        let scope: EnrichmentScope
     }
 
     nonisolated struct DownloadWork: Equatable, Sendable {
@@ -573,7 +571,7 @@ extension EnrichmentCoordinator {
                             return
                         }
                         let outcome = await enricher.enrich(
-                            work.id, access, work.sourceSize, work.sourceMTimeSeconds, work.shouldHash, recipe
+                            work.id, access, work.sourceSize, work.sourceMTimeSeconds, work.scope, recipe
                         )
                         await self.finishEnrich(work, outcome)
                     }

@@ -24,7 +24,9 @@ nonisolated enum MediaOperationGateway {
                    NOT (\(settledPredicate)) AS naming_settled,
                    \(LivePhotoSQL.stillPath(ofMotion: "media_asset")) AS live_photo_still_path,
                    (enriched_source_size IS NOT NULL
-                    AND enriched_source_mtime IS NOT NULL) AS enrichment_has_looked
+                    AND enriched_source_mtime IS NOT NULL) AS enrichment_has_looked,
+                   CASE WHEN NOT (\(EnrichmentClaimGateway.hashStalenessSQLPredicate()))
+                        THEN content_hash_xxh3_128 END AS current_content_hash
             FROM media_asset
             WHERE library_root_id = ?
             ORDER BY relative_path COLLATE NOCASE, relative_path
@@ -82,7 +84,8 @@ nonisolated enum MediaOperationGateway {
                 fileExtension: ext,
                 companions: companionsByPrimary[relative.rawValue] ?? [],
                 contentTypeIdentifier: row["content_type_identifier"],
-                livePhotoStillPath: (row["live_photo_still_path"] as String?).map(MediaRelativePath.init(rawValue:))
+                livePhotoStillPath: (row["live_photo_still_path"] as String?).map(MediaRelativePath.init(rawValue:)),
+                contentHash: (row["current_content_hash"] as Data?).flatMap(XXH3Digest128.init(data:))
             )
         }
     }

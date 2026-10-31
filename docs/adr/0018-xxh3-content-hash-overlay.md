@@ -36,25 +36,43 @@ of enrichment overlay or import settlement. `ActiveFileOperation` carries an
 optional digest across the publish/settle crash window. Recovery uses a journaled
 digest and never rereads a published cloud placeholder merely to fill a hash.
 
-Import planning remains fact-only: selected live path, live size, and the shared
-expected destination mtime. It reads neither this hash nor import provenance.
+Import planning's collision decision remains fact-only: selected live path, live size,
+and the shared expected destination mtime; it reads no import provenance. A plan entry
+carries the source's current digest only so the copy can be verified against it.
 
-Hash production is gated on **byte locality**, not on "every enriched asset."
-Enrichment computes a digest only for roots whose bytes it reads in place: fixed
-libraries and device-staging roots. A `.removableVolume` source is read in place,
-so hashing it during enrichment would force a full read of the whole volume merely
-to checksum it; enrichment there produces metadata and a thumbnail but never a
-digest. A removable-row asset with current metadata is therefore fully enriched
-with no hash: its claim predicate is metadata-only, so a missing digest never
-re-claims it, and it leaves the claim index as soon as its metadata is current.
+Hash production is gated on **byte locality**: a digest is read only from bytes that
+are local without a download made for the digest's sake. Each enrichment claim carries
+one scope the Store decides from the claim predicate and the row's staleness
+(`EnrichmentScope`):
 
-Removable content still receives a digest after import, from the destination's
-still-local staged bytes, through the existing import worker — never from the card.
-The source row keeps no digest, permanently. Import overlay reuse does not read the
-digest: the copy is the source file, so the source's overlay is the copy's whenever
-its enrichment stamps name the size and mtime the import copied (ADR 0009 §9). A card's
-overlay is reused exactly as a camera's or a library's, and the copy keeps the digest
-the import computed.
+- A **fixed library** row with stale metadata is read once for metadata, products and
+  digest (`metadataAndHash`), with the deliberate background materialization libraries
+  already get (ADR 0008).
+- A row whose metadata is current but whose digest is stale gets the digest alone
+  (`hash`): nothing is parsed or rendered again, and no planning revision moves, because a
+  digest names no file.
+- A **removable volume** is read for metadata and products first (`metadata`), so what
+  the user looks at is never behind a read of every byte. Its rows are offered for their
+  digests (`hash`) only once no row of that card needs metadata — the card is checksummed
+  while it sits idle, in anticipation of an import. Its bytes are local, so this
+  downloads nothing. The import bracket (ENR-017) withdraws both passes while an import
+  reads the card, and an eject quiesces them like any card claim.
+- A **camera** (`.deviceMTP`) row is enriched from ranged reads and is never hashed in
+  place; a digest would force the whole-file transfer.
+
+**An import never waits for a checksum.** Pressing Import does not wait for a card's
+digest pass to finish. Each copy is still hashed from its local staged bytes — the only
+read that proves what the copy holds, because a digest is valid only for the bytes read.
+When the card row carries a digest current for the size and mtime the import copied, the
+staged digest must equal it: a copy that differs (a failing reader, a flaky hub) is never
+published, its entry fails with `reason=digestMismatch`, and the next plan offers it
+again. Without a card digest the copy is hashed and published as before. Whether the
+staged read limits import throughput is measured, not assumed (plan 0109 increment 0):
+until a measurement shows it does, it stays inline.
+
+Import overlay reuse does not read the digest: the copy is the source file, so the
+source's overlay is the copy's whenever its enrichment stamps name the size and mtime
+the import copied (ADR 0009 §9). The copy keeps the digest the import computed.
 
 ## Alternatives considered
 
@@ -76,12 +94,15 @@ the import computed.
 Every pre-migration row is hash-stale and enters the ordinary enrichment lifecycle
 once; there is no migration-time filesystem walk. This accepts the one-time full
 byte read for the current library while preserving existing materialization and
-claim bounds. The one-time read is scoped to hash-required roots: a
-`.removableVolume` row is never read in full merely to fill a hash, and a stale
-digest that predates a source's removable kind is left untouched rather than
-cleared. Hashes are rebuildable subordinate overlay, not IDs, and their signature
-makes stale bytes explicit. Import pays one sequential staging read after the
-existing system copy, while keeping the correct copyfile and publication path.
+claim bounds. The one-time read covers libraries and attached cards; a card is read in
+full for its digests only after its thumbnails, never while an import reads it.
+Hashes are rebuildable subordinate overlay, not IDs, and their signature makes stale
+bytes explicit. Import pays one sequential staging read after the existing system copy,
+and that read now also verifies the copy against the card's digest where one exists.
+
+A card row's digest can be wrong only if its bytes changed without a size or mtime
+change, which the signature cannot see; the staged comparison then fails the entry
+rather than publishing it, which is the safe direction.
 
 The vendored implementation must be refreshed only by a later explicit dependency
 decision with new vectors and compatibility review.

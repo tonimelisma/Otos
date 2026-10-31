@@ -166,15 +166,15 @@ struct MetadataRefresherTests {
 
         let state = FakeMaterialization(dataless: [apple.fileURL.path(percentEncoded: false)])
         let downloads = TestCounter()
-        let reads = TestRecorder<Bool>()
+        let reads = TestRecorder<EnrichmentScope>()
         let coordinator = EnrichmentCoordinator(
             store: store,
-            enricher: MediaEnricher { id, access, size, mtime, shouldHash, _ in
+            enricher: MediaEnricher { id, access, size, mtime, scope, _ in
                 let url = access.localURL ?? id.fileURL
                 if await state.isDataless(url.path(percentEncoded: false)) {
                     return .notMaterialized
                 }
-                reads.record(shouldHash)
+                reads.record(scope)
                 return .complete(EnrichmentResult(
                     id: id,
                     metadata: AssetMetadata(
@@ -204,7 +204,7 @@ struct MetadataRefresherTests {
         await coordinator.shutdown()
 
         #expect(downloads.value == 1)
-        #expect(reads.values == [true])
+        #expect(reads.values == [.metadataAndHash])
         #expect(enriched.testAssets.first { $0.id == apple }?.thumbnailPath == "new.jpg")
         #expect(enriched.testAssets.first { $0.id == other }?.thumbnailPath == "old.jpg")
         let stored = try await store.metadataRefreshCandidates(after: nil, limit: 10)

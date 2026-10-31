@@ -312,8 +312,9 @@ Adjacent decisions requiring separate ADRs or specs:
    normalized metadata JSON, and app-owned thumbnail path. The copy is the source
    file, byte for byte, so the source's overlay is eligible whenever its enrichment
    stamps name the size and mtime the import copied, the same freshness rule every
-   row's overlay answers to. No digest proves it: a card is never hashed in place
-   (ADR 0018), and its overlay is as current for the copy as it is for the card. Metadata and normalized facts are cloned
+   row's overlay answers to. The reuse needs no digest: a card's own digest pass may
+   not have run yet (ADR 0018), and its overlay is as current for the copy as it is
+   for the card; where the card has a digest, the copy was already verified against it. Metadata and normalized facts are cloned
    into the destination's independent filesystem-path identity; a source thumbnail
    is copied into a separately staged destination thumbnail and promoted through
    the same atomic thumbnail path used by ordinary enrichment. Missing, stale,

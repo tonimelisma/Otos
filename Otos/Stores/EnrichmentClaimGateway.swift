@@ -109,6 +109,23 @@ nonisolated enum EnrichmentClaimGateway {
         """
     }
 
+    /// Whether any row of this root still needs metadata or a thumbnail — claimed or not, so
+    /// a row in flight still counts. Through the metadata-only root index.
+    static func hasRowsNeedingMetadata(rootID: Int64, db: Database) throws -> Bool {
+        try Bool.fetchOne(
+            db,
+            sql: """
+            SELECT EXISTS(
+                SELECT 1 FROM media_asset INDEXED BY \(metadataOnlyRootIndexName)
+                WHERE library_root_id = ?
+                  AND (\(stalenessSQLPredicate(hashRequired: false)))
+                  AND trash_path IS NULL
+            )
+            """,
+            arguments: [rootID]
+        ) ?? false
+    }
+
     static func fetchStoredAssetsNeedingEnrichment(
         rootIDs: [Int64],
         limit: Int,

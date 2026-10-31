@@ -91,7 +91,7 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "a.jpg")
         )
 
-        let outcome = await enricher.enrich(id, .localFile(url), 100, 1000, true, nil)
+        let outcome = await enricher.enrich(id, .localFile(url), 100, 1000, .metadataAndHash, nil)
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete, got \(outcome)")
             return
@@ -124,7 +124,7 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "a.heic")
         )
         let outcome = await enricher.enrich(
-            id, .localFile(fixtureDirectory.appending(path: "ios-heic-offset-date.heic")), 100, 1000, true, nil
+            id, .localFile(fixtureDirectory.appending(path: "ios-heic-offset-date.heic")), 100, 1000, .metadataAndHash, nil
         )
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete, got \(outcome)")
@@ -152,7 +152,7 @@ struct MediaEnricherTests {
             libraryRootPath: LibraryRootPath(rawValue: "/Lib"),
             relativePath: MediaRelativePath(rawValue: "turned.heic")
         )
-        let outcome = await enricher.enrich(id, .localFile(file), 100, 1000, true, nil)
+        let outcome = await enricher.enrich(id, .localFile(file), 100, 1000, .metadataAndHash, nil)
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete, got \(outcome)")
             return
@@ -203,7 +203,7 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "a.mov")
         )
         let outcome = await enricher.enrich(
-            id, .localFile(fixtureDirectory.appending(path: "mov-no-embedded-capture-date.mov")), 100, 1000, true, nil
+            id, .localFile(fixtureDirectory.appending(path: "mov-no-embedded-capture-date.mov")), 100, 1000, .metadataAndHash, nil
         )
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete, got \(outcome)")
@@ -226,7 +226,7 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "broken.jpg")
         )
 
-        let outcome = await enricher.enrich(id, .localFile(stubURL), 0, 1000, true, nil)
+        let outcome = await enricher.enrich(id, .localFile(stubURL), 0, 1000, .metadataAndHash, nil)
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete for zero-byte stub, got \(outcome)")
             return
@@ -249,7 +249,7 @@ struct MediaEnricherTests {
         )
 
         // Unsupported is definitive (stamped, never retried), even with empty metadata.
-        let outcome = await enricher.enrich(id, .localFile(textURL), 9, 1000, true, nil)
+        let outcome = await enricher.enrich(id, .localFile(textURL), 9, 1000, .metadataAndHash, nil)
         guard case .complete = outcome else {
             Issue.record("expected .complete for unsupported, got \(outcome)")
             return
@@ -267,7 +267,7 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "gone.jpg")
         )
 
-        let outcome = await enricher.enrich(id, .localFile(missing), 100, 1000, true, nil)
+        let outcome = await enricher.enrich(id, .localFile(missing), 100, 1000, .metadataAndHash, nil)
         guard case .notMaterialized = outcome else {
             Issue.record("expected .notMaterialized for a missing file, got \(outcome)")
             return
@@ -290,7 +290,7 @@ struct MediaEnricherTests {
             .localFile(url),
             100,
             1000,
-            true, nil
+            .metadataAndHash, nil
         )
         guard case .notMaterialized = outcome else {
             Issue.record("expected notMaterialized, got \(outcome)")
@@ -316,7 +316,7 @@ struct MediaEnricherTests {
             .localFile(url),
             100,
             1000,
-            true, nil
+            .metadataAndHash, nil
         )
         guard case .notMaterialized = outcome else {
             Issue.record("expected notMaterialized, got \(outcome)")
@@ -341,7 +341,7 @@ struct MediaEnricherTests {
             .localFile(fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg")),
             100,
             1000,
-            true, nil
+            .metadataAndHash, nil
         )
         guard case .complete = outcome else {
             Issue.record("expected complete enrichment, got \(outcome)")
@@ -371,12 +371,39 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "a.jpg")
         )
 
-        let outcome = await enricher.enrich(id, .localFile(url), 100, 1000, false, nil)
+        let outcome = await enricher.enrich(id, .localFile(url), 100, 1000, .metadata, nil)
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete for removable source, got \(outcome)")
             return
         }
         #expect(result.contentHash == nil)
         #expect(hasherCalls.withLock { $0 } == 0)
+    }
+
+    /// A digest-only claim (a card's second pass, ADR 0018) hashes the file and returns the
+    /// digest alone: nothing is parsed and no thumbnail is rendered.
+    @Test func aDigestOnlyClaimHashesWithoutRenderingAnything() async throws {
+        let temp = try makeTestDirectory()
+        let thumbnailDirectory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
+        let url = fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg")
+        let digest = try #require(XXH3Digest128(data: Data(repeating: 3, count: 16)))
+        let enricher = MediaEnricher.live(
+            thumbnailDirectory: thumbnailDirectory,
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            contentHasher: { _ in .complete(digest) }
+        )
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/Volumes/CARD"),
+            relativePath: MediaRelativePath(rawValue: "a.jpg")
+        )
+
+        let outcome = await enricher.enrich(id, .localFile(url), 100, 1000, .hash, nil)
+
+        guard case let .hashed(result) = outcome else {
+            Issue.record("expected .hashed for a digest-only claim, got \(outcome)")
+            return
+        }
+        #expect(result == ContentHashResult(id: id, contentHash: digest, sourceSize: 100, sourceMTimeSeconds: 1000))
+        #expect(!FileManager.default.fileExists(atPath: thumbnailDirectory.path))
     }
 }

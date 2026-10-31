@@ -493,7 +493,7 @@ extension EnrichmentCoordinator {
             isVideo: asset.bestKind == .video,
             captureDate: asset.bestCaptureDate,
             isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath),
-            shouldHash: candidate.hashRequired
+            scope: candidate.scope
         )
     }
 

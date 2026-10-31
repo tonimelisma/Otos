@@ -1366,8 +1366,22 @@ actor MediaImportExecutor {
                     "bytes": "\(sourceByteSize)",
                     "elapsedMs": "\(hashMs)",
                     "mbps": throughputMBps(bytes: sourceByteSize, elapsedMs: hashMs),
+                    "verifiedAgainstSource": "\(entry.source.contentHash != nil)",
                 ]
             )
+            // The source's own digest, read while the card sat idle (ADR 0018), is what the
+            // staged bytes must be. A copy that differs is not the source file: it is never
+            // published, and the entry fails so the next plan offers it again.
+            if let expected = entry.source.contentHash, expected != contentHash {
+                await Self.abandonEntry(
+                    operation.operationKey,
+                    stagingFiles: [stagingURL],
+                    store: store,
+                    reason: "digestMismatch"
+                )
+                logSkipped(reason: "digestMismatch")
+                return .failed(.other)
+            }
         case .cancelled:
             await Self.abandonEntry(operation.operationKey, stagingFiles: [stagingURL], store: store, reason: "hashCancelled")
             OtosLog.mediaIO.noticeOperation(

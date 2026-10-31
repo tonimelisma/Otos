@@ -149,7 +149,7 @@ struct OriginalsReadOnlyTests {
             .localFile(root.appending(path: "photo.jpg")),
             100,
             1000,
-            true, nil
+            .metadataAndHash, nil
         )
         guard case .complete = outcome else {
             Issue.record("Expected enrichment to complete, got \(outcome)")
