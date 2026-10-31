@@ -129,6 +129,88 @@ struct MetadataRefresherTests {
         #expect(candidates.map(\.id.relativePath.rawValue) == ["older.heic", "unknown.heic"])
     }
 
+    /// ADR 0041: a cloud-only, Apple-made record that predates the content identifier may be
+    /// half of a Live Photo, so it is handed to enrichment, which downloads it once and
+    /// writes every product from that one read — metadata, checksum and thumbnail. A
+    /// non-Apple record is skipped and never downloaded, as ADR 0039 has it.
+    @Test func aCloudOnlyAppleRecordIsDownloadedOnceAndFullyEnriched() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["IMG_1.HEIC", "b.heic"]))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
+        let apple = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "IMG_1.HEIC"))
+        let other = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "b.heic"))
+        let hash = try #require(XXH3Digest128(canonicalBytes: [UInt8](repeating: 7, count: 16)))
+        _ = await store.applyEnrichmentBatch(scanned.testAssets.map { asset in
+            EnrichmentResult(
+                id: asset.id,
+                metadata: AssetMetadata(family: "heif", cameraMake: asset.id == apple ? "Apple" : "Canon"),
+                enrichedKind: .image,
+                thumbnailPath: "old.jpg",
+                sourceSize: asset.byteSize,
+                sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
+                contentHash: hash
+            )
+        })
+
+        let summary = await MetadataRefresher(store: store, isLocal: { _ in false }).refresh()
+
+        #expect(summary == MetadataRefreshSummary(read: 0, written: 0, skipped: 1, downloadsRequested: 1, failed: false))
+        let handedOver = try await catalogStoreTestState(store).testAssets
+        #expect(handedOver.first { $0.id == apple }?.needsEnrichment(hashRequired: true) == true)
+        #expect(handedOver.first { $0.id == other }?.needsEnrichment(hashRequired: true) == false)
+
+        let state = FakeMaterialization(dataless: [apple.fileURL.path(percentEncoded: false)])
+        let downloads = TestCounter()
+        let reads = TestRecorder<Bool>()
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: MediaEnricher { id, access, size, mtime, shouldHash, _ in
+                let url = access.localURL ?? id.fileURL
+                if await state.isDataless(url.path(percentEncoded: false)) {
+                    return .notMaterialized
+                }
+                reads.record(shouldHash)
+                return .complete(EnrichmentResult(
+                    id: id,
+                    metadata: AssetMetadata(
+                        family: "heif",
+                        cameraMake: "Apple",
+                        contentIdentifier: "66E9019A-9CAF-4603-A6C3-2F22030B7C65",
+                        extractionRevision: MediaMetadataReader.extractionRevision(for: .heif)
+                    ),
+                    enrichedKind: .image,
+                    thumbnailPath: "new.jpg",
+                    sourceSize: size,
+                    sourceMTimeSeconds: mtime,
+                    contentHash: hash
+                ))
+            },
+            materialize: { url in
+                downloads.increment()
+                await state.materialize(url.path(percentEncoded: false))
+                return .testMaterialized
+            },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+        )
+        await coordinator.start()
+        let enriched = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.testAssets.allSatisfy { !$0.needsEnrichment(hashRequired: true) }
+        }
+        await coordinator.shutdown()
+
+        #expect(downloads.value == 1)
+        #expect(reads.values == [true])
+        #expect(enriched.testAssets.first { $0.id == apple }?.thumbnailPath == "new.jpg")
+        #expect(enriched.testAssets.first { $0.id == other }?.thumbnailPath == "old.jpg")
+        let stored = try await store.metadataRefreshCandidates(after: nil, limit: 10)
+        #expect(stored.map(\.id) == [other])
+    }
+
     private func revisions(_ databaseURL: URL) async throws -> [String: (revision: Int?, family: String?)] {
         try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             var result: [String: (revision: Int?, family: String?)] = [:]

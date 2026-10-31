@@ -103,7 +103,8 @@ what those facts mean. That covers:
     revisions are per family, and a re-read can change family (0.7.1's `unknown` 1 is
     0.8.0's `png` 0).
   - A cloud-only row is skipped and offered again next launch. Card and camera rows are
-    never refreshed.
+    never refreshed. The one exception is a record that may be half of a Live Photo
+    (ADR 0041): it is handed to enrichment, which downloads it once for every product.
   - No per-fix migration is written again.
 - **Import reuse derives like enrichment.** A reused overlay is written through
   `writeMetadataProjection` with the destination's own mtime, so a reused video row
