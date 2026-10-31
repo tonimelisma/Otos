@@ -25,8 +25,8 @@ and land first.
 - **Identical** groups are files with the same XXH3-128 digest and size. Both
   signatures must be current, both rows in a reachable, fully enumerated root, and
   neither row pending trash. Images and videos.
-- **Same photo** groups are stills only. The stored thumbnail's feature print proposes a
-  candidate; a pixel comparison then confirms it; three gates exclude separate captures.
+- **Same photo** groups are stills only. A difference hash of the stored thumbnail
+  proposes a candidate; a pixel comparison then confirms it; three gates exclude separate captures.
   Same-photo groups are never preselected.
 - **Preselection.** Otos marks copies to move only in an Identical group that sits inside
   one library, where at most one copy carries authored overlay (curation, edit) or
@@ -59,7 +59,11 @@ and land first.
    `elapsedMs`/`mbps` against copy time per entry, and whole-run wall time with and
    without hashing on the same card. This decides whether increment 2 overlaps the
    staged hash with the next copy (only if the hash measurably limits throughput).
-2. **Same-photo calibration** on the owner's library. Run a throwaway probe over stored
+2. **Same-photo calibration** — done 2026-10-31 in
+   `docs/research/2026-10-31-duplicate-calibration.md`: the feature print is dropped;
+   dHash ≤ 10 plus 32 × 32 MAD < 4 finds 89 % of synthetic copies with no unrelated
+   match; static bursts are separated only by capture sub-seconds. The original method
+   follows. Calibration on the owner's library. Run a throwaway probe over stored
    thumbnails only (Application Support), reading no originals. For each pair the probe
    records:
    - feature-print rev-2 distance;
@@ -208,17 +212,19 @@ bare file, and items still pending cannot be withdrawn.
 
 ## Increment 5 — Same photo
 
-- **MediaMetadata first (ADR 0039).** The library must report capture sub-seconds, body
-  serial, shutter count, and Apple MakerNote BurstUUID / ContentIdentifier. Ship whatever
-  it lacks there, then bump. Otos stores what it reports, as reported.
-- **Feature print overlay.** A rev-2 print of the stored thumbnail is produced in
-  enrichment after the thumbnail and stored with its revision. It reads no original
-  bytes; a revision change makes it stale.
+- **MediaMetadata first (ADR 0039).** The library must report capture sub-seconds — the
+  one fact that separates a static burst in the owner's library (calibration note) —
+  plus body serial, shutter count, and Apple MakerNote BurstUUID / ContentIdentifier.
+  Ship whatever it lacks there, then bump. Otos stores what it reports, as reported.
+- **Render signature overlay.** A 64-bit dHash and a 32 × 32 grayscale render of the
+  stored thumbnail are produced in enrichment after the thumbnail. They read no original
+  bytes and need no revision beyond the thumbnail's own.
 - **Candidates and confirmation:**
-  - Candidates come from print distance within the same aspect ratio of display
-    geometry.
-  - Confirmation is the aligned-thumbnail pixel difference, at the thresholds from
-    increment 0.
+  - Candidates are pairs whose dHash is within Hamming 10 and whose display-geometry
+    aspect ratio matches.
+  - Confirmation is the 32 × 32 mean absolute difference below 4 (0–255). Both
+    thresholds were measured on previews; the tests re-measure them on thumbnails before
+    they ship.
   - Images are never compared with videos. `isUtility` images are excluded.
 - **Burst gates:**
   1. Two files with capture metadata that differ in sub-seconds, shutter count or
@@ -238,7 +244,7 @@ bare file, and items still pending cannot be withdrawn.
   - a resized and EXIF-stripped copy groups with its source;
   - an ambiguous stripped copy groups with nothing;
   - RAW+JPEG and HEIC/JPEG pairs never group;
-  - a revision change re-prints without reading originals.
+  - the signature is produced from the stored thumbnail without reading the original.
 
 ## Closure
 
