@@ -19,6 +19,8 @@ nonisolated struct CatalogProjectionWindowStateParts {
     let mediaEmptyState: CatalogMediaEmptyState
     /// The Places map's content; nil for every other scope (ADR 0040).
     let map: CatalogMapState?
+    /// Duplicate groups (ADR 0042), published in every scope.
+    var duplicates: CatalogDuplicatesState = .empty
 }
 
 /// The order a detail-only publication may reuse instead of re-running the ordered-asset

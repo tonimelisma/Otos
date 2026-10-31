@@ -859,10 +859,16 @@ nonisolated struct CatalogMediaGridState: Equatable {
 /// `.places` is every located item across the fixed libraries, presented as a map
 /// (ADR 0040). `.place` is the leaf under it — the items at exactly one coordinate —
 /// presented as the ordinary grid; the sidebar keeps the Places row highlighted for it.
+///
+/// `.duplicates` is every copy in a duplicate group across the fixed libraries,
+/// presented as the duplicates list (ADR 0042); `.duplicateGroup` is the leaf under it —
+/// one group's copies in the ordinary Compare, Loupe or grid.
 nonisolated enum SidebarSelection: Hashable {
     case allMedia
     case places
     case place(PlaceCoordinate)
+    case duplicates
+    case duplicateGroup(DuplicateGroupID)
     case library(LibraryRootPath)
     case importBatch(ImportBatchID)
     case allImports
@@ -870,10 +876,11 @@ nonisolated enum SidebarSelection: Hashable {
     /// The row the sidebar highlights for this scope: `.place` has no row of its own and
     /// highlights Places, the row it was reached from.
     var sidebarRow: SidebarSelection {
-        if case .place = self {
-            return .places
+        switch self {
+        case .place: .places
+        case .duplicateGroup: .duplicates
+        default: self
         }
-        return self
     }
 
     var diagnosticDescription: String {
@@ -884,6 +891,10 @@ nonisolated enum SidebarSelection: Hashable {
             "places"
         case let .place(coordinate):
             "place:\(coordinate.diagnosticDescription)"
+        case .duplicates:
+            "duplicates"
+        case let .duplicateGroup(group):
+            "duplicateGroup:\(group.kindName)"
         case let .library(path):
             "library:\(path.rawValue)"
         case let .importBatch(batchID):

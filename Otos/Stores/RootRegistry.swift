@@ -106,6 +106,16 @@ nonisolated struct RootRegistry {
                 rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
                 location: .at(coordinate)
             )
+        case .duplicates:
+            return CatalogScopePredicate(
+                rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
+                content: .duplicated
+            )
+        case let .duplicateGroup(.identical(digest)):
+            return CatalogScopePredicate(
+                rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
+                content: .identical(digest)
+            )
         case let .library(path):
             guard availableLibraryPaths.contains(path),
                   let rootID = statesByPath[path]?.rowID

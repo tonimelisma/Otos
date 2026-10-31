@@ -223,6 +223,38 @@ nonisolated enum CatalogSchema {
         "ALTER TABLE media_asset ADD COLUMN trash_path TEXT",
     ]
 
+    /// Duplicates (ADR 0042). "Keep All Copies" is remembered per pair of paths, as overlay
+    /// on both copies: an Otos move carries it (`ON UPDATE CASCADE`), and a copy's proven
+    /// deletion or its library's removal ends it (`ON DELETE CASCADE`). The digest index
+    /// lets the duplicates read group by content without a full scan per pass.
+    static let duplicatesMigrationIdentifier = "v11_duplicate_kept_pair"
+
+    static let duplicatesStatements: [String] = [
+        """
+        CREATE TABLE duplicate_kept_pair (
+            first_root_id INTEGER NOT NULL,
+            first_path TEXT NOT NULL,
+            second_root_id INTEGER NOT NULL,
+            second_path TEXT NOT NULL,
+            PRIMARY KEY (first_root_id, first_path, second_root_id, second_path),
+            FOREIGN KEY (first_root_id, first_path)
+                REFERENCES media_asset(library_root_id, relative_path)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            FOREIGN KEY (second_root_id, second_path)
+                REFERENCES media_asset(library_root_id, relative_path)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        )
+        """,
+        """
+        CREATE INDEX idx_duplicate_kept_pair_second
+        ON duplicate_kept_pair(second_root_id, second_path)
+        """,
+        """
+        CREATE INDEX idx_media_asset_content_hash
+        ON media_asset(content_hash_xxh3_128) WHERE content_hash_xxh3_128 IS NOT NULL
+        """,
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (

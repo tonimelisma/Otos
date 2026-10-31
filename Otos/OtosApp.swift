@@ -319,6 +319,25 @@ public struct OtosApp: App {
                 }
                 .keyboardShortcut(.delete, modifiers: .command)
                 .disabled(!catalogViewModel.canMoveTargetedMediaToTrash)
+                Divider()
+                // Duplicates (ADR 0042): the list's rows are the targets. No bare keys — P, U
+                // and X already mean a choice, and one key never means two things.
+                Button("Keep This Copy") {
+                    catalogViewModel.keepSelectedDuplicateCopies()
+                }
+                .disabled(!catalogViewModel.canKeepSelectedDuplicateCopies)
+                Button("Move This Copy to Trash") {
+                    catalogViewModel.markSelectedDuplicateCopiesForTrash()
+                }
+                .disabled(!catalogViewModel.canMarkSelectedDuplicateCopiesForTrash)
+                Button("Keep All Copies") {
+                    catalogViewModel.keepAllDuplicateCopies()
+                }
+                .disabled(!catalogViewModel.canKeepAllSelectedDuplicateCopies)
+                Button("Move Marked Items to Trash") {
+                    catalogViewModel.moveMarkedDuplicatesToTrash()
+                }
+                .disabled(!catalogViewModel.canMoveMarkedDuplicatesToTrash)
             }
             CommandMenu("Library") {
                 Button("Reorganize Library…") {

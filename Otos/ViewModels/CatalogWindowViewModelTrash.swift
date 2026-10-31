@@ -58,7 +58,16 @@ extension CatalogWindowViewModel {
         guard canMoveTargetedMediaToTrash else {
             return
         }
-        let ids = targetIDs(.current)
+        moveMediaToTrash(targetIDs(.current))
+    }
+
+    /// The one Move to Trash path for a known set of items: the current targets, or the
+    /// copies Duplicates marked (ADR 0042). Asks the large-download question when it
+    /// applies (APP-045), then hides the items behind one undoable command.
+    func moveMediaToTrash(_ ids: [MediaAssetID]) {
+        guard mediaTrashTask == nil, !ids.isEmpty else {
+            return
+        }
         guard asksBeforeLargeTrashDownload else {
             performMoveToTrash(ids)
             return

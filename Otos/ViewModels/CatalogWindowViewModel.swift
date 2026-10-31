@@ -117,6 +117,9 @@ final class CatalogWindowViewModel {
     /// The camera the Places map should adopt next: fit on entry and on a filter
     /// change, the last viewport on return from a place, a zoom step on ⌘= / ⌘−.
     var mapCameraRequest: MapCameraRequest?
+    /// The user's marks and the on-screen groups while working through Duplicates
+    /// (ADR 0042). Window state, not catalog state: marks are a decision in progress.
+    var duplicatesSession = DuplicatesSession()
 
     /// Media kind of `focusedAssetID`, read once per focus change through the same
     /// `tileDetailReader` the panes use. Views must not guess kind: guessing is what
@@ -402,6 +405,10 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let mediaTrashIntentStream: AsyncStream<TrashIntent>
     @ObservationIgnored let mediaTrashIntentContinuation: AsyncStream<TrashIntent>.Continuation
     @ObservationIgnored var mediaTrashIntentTask: Task<Void, Never>?
+    /// Keep All Copies and its undo, in the order the user acted (ADR 0032 rule 5).
+    @ObservationIgnored let duplicatesIntentStream: AsyncStream<DuplicatesIntent>
+    @ObservationIgnored let duplicatesIntentContinuation: AsyncStream<DuplicatesIntent>.Continuation
+    @ObservationIgnored var duplicatesIntentTask: Task<Void, Never>?
 
     @ObservationIgnored private var stateConsumptionTask: Task<Void, Never>?
     @ObservationIgnored private var catalogStartupTask: Task<Void, Never>?
@@ -495,6 +502,9 @@ final class CatalogWindowViewModel {
             bufferingPolicy: .unbounded
         )
         let (mediaTrashIntentStream, mediaTrashIntentContinuation) = AsyncStream<TrashIntent>.makeStream(
+            bufferingPolicy: .unbounded
+        )
+        let (duplicatesIntentStream, duplicatesIntentContinuation) = AsyncStream<DuplicatesIntent>.makeStream(
             bufferingPolicy: .unbounded
         )
         let (mediaChoiceStream, mediaChoiceContinuation) = AsyncStream<MediaChoiceCommand>.makeStream(
@@ -610,6 +620,8 @@ final class CatalogWindowViewModel {
         self.importIntentContinuation = importIntentContinuation
         self.mediaTrashIntentStream = mediaTrashIntentStream
         self.mediaTrashIntentContinuation = mediaTrashIntentContinuation
+        self.duplicatesIntentStream = duplicatesIntentStream
+        self.duplicatesIntentContinuation = duplicatesIntentContinuation
         self.mediaChoiceStream = mediaChoiceStream
         self.mediaChoiceContinuation = mediaChoiceContinuation
         self.viewportStream = viewportStream
@@ -653,6 +665,7 @@ final class CatalogWindowViewModel {
         mediaTrashTask?.cancel()
         mediaTrashEventTask?.cancel()
         mediaTrashIntentTask?.cancel()
+        duplicatesIntentTask?.cancel()
         openWithMenuTask?.cancel()
         photoInfoTask?.cancel()
         focusedKindTask?.cancel()
@@ -680,6 +693,7 @@ final class CatalogWindowViewModel {
         mutationContinuation.finish()
         importIntentContinuation.finish()
         mediaTrashIntentContinuation.finish()
+        duplicatesIntentContinuation.finish()
         mediaChoiceContinuation.finish()
         editRenderContinuation.finish()
         editCommandContinuation.finish()
@@ -762,6 +776,7 @@ extension CatalogWindowViewModel {
         )
         startCatalog(store: store)
         startMediaTrash()
+        startDuplicatesIntentConsumer()
         if startsSourceMonitoring {
             startRemovableVolumeMonitoring()
             startDeviceStagingSweepThenCameraMonitoring()
@@ -995,6 +1010,7 @@ extension CatalogWindowViewModel {
         // focus must already carry its new identity, or the prune below would drop it.
         applyPendingIdentityRemaps(nextState.pendingIdentityRemaps)
         applyMapState(previous: previousState, next: nextState)
+        applyDuplicatesState(previous: previousState, next: nextState)
 
         // A new scope is a different collection, so the user's place in the old one means
         // nothing there. A filter or sort change narrows or reorders the same collection,
@@ -1237,6 +1253,12 @@ extension CatalogWindowViewModel {
         case let .importBatch(batchID):
             !nextState.importBatches.contains { $0.batchID == batchID }
         case .places, .place:
+            !SidebarSelectionPolicy.showsPlaces(libraries: nextState.libraries)
+        case let .duplicateGroup(group):
+            // The group is gone — resolved, or its copies moved — so its leaf is too.
+            !nextState.duplicates.groups.contains { $0.id == group }
+        case .duplicates:
+            // Stays while selected, empty or not (ADR 0042), while libraries exist.
             !SidebarSelectionPolicy.showsPlaces(libraries: nextState.libraries)
         case .allMedia, .allImports:
             false

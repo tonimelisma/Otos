@@ -76,6 +76,7 @@ extension CatalogProjection {
             availableLibraryPaths: facts.availableLibraryPaths
         )
         async let filteredFixedAssetCount = filteredFixedAssetCount(facts, store: store)
+        async let duplicateCopies = store.duplicateCopies(availableLibraryPaths: facts.availableLibraryPaths)
         var (state, metrics) = try await windowState(
             from: facts,
             allAssetCount: allAssetCount,
@@ -83,8 +84,30 @@ extension CatalogProjection {
             filterOptions: filterOptions,
             filteredFixedAssetCount: filteredFixedAssetCount
         )
+        let duplicates = try await duplicateCopies
+        state.duplicates = Self.duplicatesState(copies: duplicates.copies, keptPairs: duplicates.keptPairs)
         state.pendingIdentityRemaps = pendingIdentityRemaps
         return (state, metrics)
+    }
+
+    /// The keeper rule over the Store's copies, off the MainActor (ADR 0042).
+    static func duplicatesState(
+        copies: [DuplicateCopyFacts],
+        keptPairs: Set<DuplicateKeptPair>
+    ) -> CatalogDuplicatesState {
+        let signpost = OtosSignpost.performance.beginInterval("DuplicateGroups")
+        defer { OtosSignpost.performance.endInterval("DuplicateGroups", signpost) }
+        let groups = DuplicateGroupPolicy.groups(copies: copies, keptPairs: keptPairs)
+        let state = CatalogDuplicatesState(groups: groups)
+        OtosLog.catalog.debugOperation("duplicates.groups", phase: "built", fields: [
+            "copies": "\(copies.count)",
+            "groups": "\(groups.count)",
+            "kept": "\(state.keptGroups.count)",
+            "preselected": "\(groups.count { !$0.isKept && $0.defaultKeep != nil })",
+            "waitSpansLibraries": "\(groups.count { $0.wait == .spansLibraries })",
+            "waitAuthoredWork": "\(groups.count { $0.wait == .differingAuthoredWork })",
+        ])
+        return state
     }
 
     static func resolvedDescriptor(

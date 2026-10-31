@@ -104,6 +104,9 @@ struct ContentView: View {
             SidebarView(
                 showsAllMedia: SidebarSelectionPolicy.showsAllMedia(libraries: viewModel.state.libraries),
                 showsPlaces: SidebarSelectionPolicy.showsPlaces(libraries: viewModel.state.libraries),
+                duplicatesCount: viewModel.showsDuplicatesRow
+                    ? viewModel.duplicatesSession.shownActiveGroups(in: viewModel.state.duplicates).count
+                    : nil,
                 libraries: viewModel.state.libraries,
                 importBatches: viewModel.state.importBatches,
                 removableSources: viewModel.state.removableSources,
@@ -218,6 +221,17 @@ struct ContentView: View {
                         Label("Back to Map", systemImage: "chevron.left")
                     }
                     .help("Back to Map")
+                }
+            }
+            // Back to Duplicates, while the browser shows one duplicate group (ADR 0042).
+            if viewModel.showsDuplicateGroupLeaf {
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        viewModel.returnToDuplicates()
+                    } label: {
+                        Label("Back to Duplicates", systemImage: "chevron.left")
+                    }
+                    .help("Back to Duplicates")
                 }
             }
             ToolbarItemGroup(placement: .primaryAction) {
@@ -466,7 +480,20 @@ struct ContentView: View {
 
     @ViewBuilder
     var detailContent: some View {
-        if viewModel.showsPlacesMap {
+        if viewModel.showsDuplicatesList {
+            DuplicatesView(
+                duplicates: viewModel.state.duplicates,
+                session: viewModel.duplicatesSession,
+                selection: Binding(
+                    get: { viewModel.gridSelection.selection },
+                    set: { viewModel.setDuplicatesSelection($0) }
+                ),
+                tileContentStore: viewModel.tileContentStore,
+                thumbnailDirectory: viewModel.thumbnailDirectory,
+                detailReader: viewModel.tileDetailReader,
+                actions: viewModel.duplicatesActions
+            )
+        } else if viewModel.showsPlacesMap {
             PlacesMapView(
                 map: viewModel.state.map ?? .empty,
                 clusters: viewModel.mapClusters,

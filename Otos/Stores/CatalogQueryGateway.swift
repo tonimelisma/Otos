@@ -509,6 +509,39 @@ private nonisolated func scopeClause(
         arguments.append(importBatchUnixMs)
         predicate += "\n  AND media_asset.import_batch_unix_ms = ?"
     }
+    // A duplicate's digest must be current for its file; the group subquery repeats the
+    // visibility rules so a copy waiting for the Trash makes no one else a duplicate.
+    let currentDigest = """
+      AND media_asset.content_hash_xxh3_128 IS NOT NULL
+      AND length(media_asset.content_hash_xxh3_128) = 16
+      AND media_asset.content_hash_source_size = COALESCE(media_asset.byte_size, -1)
+      AND media_asset.content_hash_source_mtime = CAST(COALESCE(media_asset.content_modified_at_unix, -1) AS INTEGER)
+    """
+    switch scope.content {
+    case .any:
+        break
+    case .duplicated:
+        predicate += currentDigest
+        predicate += """
+
+          AND media_asset.content_hash_xxh3_128 IN (
+              SELECT twin.content_hash_xxh3_128 FROM media_asset AS twin
+              WHERE twin.library_root_id IN (\(sqlPlaceholders(count: scope.rootIDs.count)))
+                AND twin.pending_trash_batch_unix_ms IS NULL
+                AND twin.trash_path IS NULL
+                AND NOT \(LivePhotoSQL.isPairedMotion("twin"))
+                AND twin.content_hash_source_size = COALESCE(twin.byte_size, -1)
+                AND twin.content_hash_source_mtime = CAST(COALESCE(twin.content_modified_at_unix, -1) AS INTEGER)
+              GROUP BY twin.content_hash_xxh3_128
+              HAVING COUNT(*) > 1
+          )
+        """
+        arguments.append(contentsOf: scope.rootIDs)
+    case let .identical(digest):
+        predicate += currentDigest
+        predicate += "\n  AND media_asset.content_hash_xxh3_128 = ?"
+        arguments.append(digest.data)
+    }
     var join = ""
     switch scope.location {
     case .any:
