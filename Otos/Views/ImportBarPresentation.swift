@@ -297,6 +297,9 @@ nonisolated enum ImportBarPresentation {
         // true generic term rather than an empty-string substitution that
         // would build a broken sentence ("already in ").
         let destinationName = presentation.destinationDisplayName ?? "the library"
+        // Where the skipped items are: the destination, unless some are held by content in
+        // another library — then the one true place to name is all of them.
+        let skippedPlace = summary.skipElsewhereCount > 0 ? "your libraries" : destinationName
         if summary.copyCount == 0, summary.companionCopyCount == 0 {
             if summary.skipCount == 0 {
                 return ImportBarDrawnState(
@@ -319,12 +322,14 @@ nonisolated enum ImportBarPresentation {
                 primaryLine: "Nothing new on this card",
                 primaryBadge: .none,
                 secondaryLine: .plain(
-                    "All \(summary.skipCount) \(summary.skipCount == 1 ? "item is" : "items are") already in \(destinationName)"
+                    "All \(summary.skipCount) \(summary.skipCount == 1 ? "item is" : "items are") already in \(skippedPlace)"
                 ),
                 middleZone: .choices(track: nil, eraseEnabled: true, eraseDisabledReason: nil),
                 primaryAction: action,
                 primaryEnabled: true,
-                eraseConfirmationProvenClean: true
+                // The Erase alert's "already in <destination>" is a path-proven sentence;
+                // items held by content elsewhere are confirmed at erase time instead.
+                eraseConfirmationProvenClean: summary.skipElsewhereCount == 0
             )
         }
         let secondary: ImportBarDrawnState.SecondaryLine = if let advisory = spaceAdvisory(
@@ -332,7 +337,7 @@ nonisolated enum ImportBarPresentation {
             presentation: presentation
         ) {
             .plain(advisory)
-        } else if let already = alreadyInLibraryLine(skipCount: summary.skipCount, destinationName: destinationName) {
+        } else if let already = alreadyInLibraryLine(skipCount: summary.skipCount, destinationName: skippedPlace) {
             .plain(already)
         } else {
             .none

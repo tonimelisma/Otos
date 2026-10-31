@@ -38,7 +38,12 @@ digest and never rereads a published cloud placeholder merely to fill a hash.
 
 Import planning's collision decision remains fact-only: selected live path, live size,
 and the shared expected destination mtime; it reads no import provenance. A plan entry
-carries the source's current digest only so the copy can be verified against it.
+carries the source's current digest so the copy can be verified against it, and so the
+plan knows what the libraries already hold: an item whose every member's current digest
+matches an available library row (not pending trash) is skipped (`skipInLibrary`) —
+renamed, moved, or in another library, it is not copied again. A digest names no file,
+so digests arriving after Ready change nothing until the next plan; the bar's counts
+hold. A card Erase re-confirms each content match against the catalog before deleting.
 
 Hash production is gated on **byte locality**: a digest is read only from bytes that
 are local without a download made for the digest's sake. Each enrichment claim carries

@@ -90,6 +90,35 @@ nonisolated enum MediaOperationGateway {
         }
     }
 
+    /// Every current digest in these libraries, mapped to one library row id holding it.
+    /// Current means the digest was read at the row's present size and mtime; a row waiting
+    /// for, or already in, the Trash holds nothing.
+    static func fetchLibraryContent(libraryRootIDs: [Int64], db: Database) throws -> [XXH3Digest128: Int64] {
+        guard !libraryRootIDs.isEmpty else {
+            return [:]
+        }
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+            SELECT content_hash_xxh3_128, library_root_id
+            FROM media_asset
+            WHERE library_root_id IN (\(Array(repeating: "?", count: libraryRootIDs.count).joined(separator: ", ")))
+              AND pending_trash_batch_unix_ms IS NULL
+              AND trash_path IS NULL
+              AND NOT (\(EnrichmentClaimGateway.hashStalenessSQLPredicate()))
+            """,
+            arguments: StatementArguments(libraryRootIDs)
+        )
+        var content: [XXH3Digest128: Int64] = [:]
+        for row in rows {
+            guard let digest = (row["content_hash_xxh3_128"] as Data?).flatMap(XXH3Digest128.init(data:)) else {
+                continue
+            }
+            content[digest] = content[digest] ?? row["library_root_id"]
+        }
+        return content
+    }
+
     static func fetchDestinationOccupants(
         libraryRootID: Int64,
         db: Database

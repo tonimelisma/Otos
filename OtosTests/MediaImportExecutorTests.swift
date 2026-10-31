@@ -1719,3 +1719,33 @@ struct ImportVerifiesTheStagedCopyTests {
         await coordinator.shutdown()
     }
 }
+
+/// ADR 0018: what an import may treat as "already in a library" is re-read from the
+/// catalog when a card is erased; a library copy waiting for the Trash no longer counts.
+@Suite(.testDirectory)
+struct LibraryContentRecheckTests {
+    @Test func aLibraryCopyWaitingForTheTrashNoLongerHoldsTheContent() async throws {
+        let temp = try makeTestDirectory()
+        let libraryURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: libraryURL, withIntermediateDirectories: true)
+        try Data("held".utf8).write(to: libraryURL.appending(path: "a.jpg"))
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: libraryURL)
+        let library = try CatalogPath.normalizedDirectoryPath(for: libraryURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        let facts = try #require(await store.planningMedia(for: library)?.first)
+        let digest = try #require(XXH3Digest128(data: Data(repeating: 4, count: 16)))
+        _ = await store.applyContentHash(ContentHashResult(
+            id: facts.id,
+            contentHash: digest,
+            sourceSize: facts.byteSize,
+            sourceMTimeSeconds: facts.contentModifiedAt.map { Int($0.timeIntervalSince1970.rounded(.down)) }
+        ))
+
+        #expect(try await store.librariesHoldContent([digest]) == [digest])
+        _ = try await store.markPendingTrash([facts.id], batch: MediaTrashBatchID())
+        #expect(try await store.librariesHoldContent([digest]).isEmpty)
+        await store.shutdown()
+    }
+}

@@ -138,6 +138,15 @@ nonisolated struct RootRegistry {
         }.sorted()
     }
 
+    /// Row ids of the fixed libraries that are available now — reachable and scanned — whose
+    /// digests an import may trust as "already in a library".
+    func availableFixedLibraryRowIDs() -> [Int64] {
+        statesByPath.values
+            .filter { $0.root.kind == .library && $0.availability == .available }
+            .map(\.rowID)
+            .sorted()
+    }
+
     /// Enrichable roots whose rows get a digest-only pass after their metadata (ADR 0018).
     func enrichableCardRootIDs() -> [Int64] {
         statesByPath.values.filter { $0.isEnrichable && $0.root.hashesCardAfterMetadata }.map(\.rowID).sorted()

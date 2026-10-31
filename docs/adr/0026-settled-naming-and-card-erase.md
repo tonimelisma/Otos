@@ -32,7 +32,9 @@ The plan also owns an immutable `EraseManifest`. It contains only paths classifi
 as media, useful sidecars, recognized cruft, or recognized source artifacts; unknown
 files are never added. A copy path enters the execution candidate set only after
 that entry publishes, while preexisting and excluded entries enter from their plan
-dispositions. Execution does not enumerate the source volume. `SourceEraser` is the
+dispositions. An entry a library holds by content (`skipInLibrary`, ADR 0018) enters only
+if, at erase time, the catalog still confirms an available library row with that current
+digest and no pending trash; a failed read confirms none, and the file stays on the card. Execution does not enumerate the source volume. `SourceEraser` is the
 sole destructive source owner, and source deletion requires its root namespace
 lease; a fixed library root is rejected as read-only. Namespace-key collisions are
 represented as foreign/ambiguous occupancy and never trap or authorize row
