@@ -56,6 +56,9 @@ actor LiveEditRenderer {
 
     private struct OpenPhoto {
         let url: URL
+        /// The original's bytes, read once when the photo opens; a re-decode or a fresh
+        /// RAW filter develops from them rather than reading the file again.
+        let still: ImageRenderer.StillSource
         var source: Source
         /// The original's oriented full-resolution size.
         let nativeSize: CGSize
@@ -149,7 +152,7 @@ actor LiveEditRenderer {
                 return ImageRenderer.applying(recipe, toDevelopedRAW: false, image)
             }
             // A crop changed how much of the frame is kept: decode again at the size it needs.
-            let decoded = try ImageRenderer.decodeImage(url, outputLongEdge: previewLongEdge, recipe: recipe)
+            let decoded = try ImageRenderer.decodeImage(photo.still, outputLongEdge: previewLongEdge, recipe: recipe)
             let redecoded = CIImage(cgImage: decoded.image)
             photo.source = .image(redecoded, decodedLongEdge: max(decoded.image.width, decoded.image.height))
             open = photo
@@ -178,7 +181,7 @@ actor LiveEditRenderer {
             guard max(image.extent.width, image.extent.height) < expectedLongEdge * 0.75 else {
                 return image
             }
-            let fresh = try ImageRenderer.openRAW(url, outputLongEdge: previewLongEdge, recipe: recipe).filter
+            let fresh = try ImageRenderer.openRAW(photo.still, outputLongEdge: previewLongEdge, recipe: recipe).filter
             photo.source = .raw(fresh)
             open = photo
             return try ImageRenderer.developed(fresh, recipe: resolved)
@@ -191,19 +194,22 @@ actor LiveEditRenderer {
         }
         context.clearCaches()
         let longEdge = ThumbnailStore.previewMaxPixelSize
+        let still = try ImageRenderer.StillSource.read(url)
         let photo: OpenPhoto
         if ImageRenderer.isRAW(url) {
-            let opened = try ImageRenderer.openRAW(url, outputLongEdge: longEdge, recipe: .neutral)
+            let opened = try ImageRenderer.openRAW(still, outputLongEdge: longEdge, recipe: .neutral)
             photo = OpenPhoto(
                 url: url,
+                still: still,
                 source: .raw(opened.filter),
                 nativeSize: opened.nativeSize,
                 facts: Self.rawFacts(opened.filter)
             )
         } else {
-            let decoded = try ImageRenderer.decodeImage(url, outputLongEdge: longEdge, recipe: .neutral)
+            let decoded = try ImageRenderer.decodeImage(still, outputLongEdge: longEdge, recipe: .neutral)
             photo = OpenPhoto(
                 url: url,
+                still: still,
                 source: .image(
                     CIImage(cgImage: decoded.image),
                     decodedLongEdge: max(decoded.image.width, decoded.image.height)
