@@ -255,6 +255,22 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// Same photo (ADR 0042). A still's render signature — a 64-bit difference hash and a
+    /// 32 × 32 grayscale render of its stored thumbnail — with the thumbnail it was read
+    /// from (`render_signature_source`), so a re-rendered thumbnail makes it stale without
+    /// any write site having to know. MediaMetadata 0.9 adds capture sub-seconds and Apple's
+    /// burst identifier, new fields its families' revisions do not announce; the families
+    /// that carry EXIF are cleared, as v9 did, so `MetadataRefresher` re-reads them from
+    /// local bytes and a cloud-only original is not downloaded for it (ADR 0039).
+    static let renderSignatureMigrationIdentifier = "v12_render_signature"
+
+    static let renderSignatureStatements: [String] = [
+        "ALTER TABLE media_asset ADD COLUMN render_dhash INTEGER",
+        "ALTER TABLE media_asset ADD COLUMN render_gray BLOB",
+        "ALTER TABLE media_asset ADD COLUMN render_signature_source TEXT",
+        "UPDATE asset_metadata SET extraction_revision = NULL WHERE family IN ('heif', 'jpeg', 'tiff')",
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (

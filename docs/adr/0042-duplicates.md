@@ -87,5 +87,48 @@ browser place saved in a leaf reopens on the list.
   them, and the list claims nothing about them.
 - The bar shows file sizes, as the trash bar does. Whether a move needs a download is
   asked at act time by APP-045, not predicted in the bar.
-- Same-photo groups, found by pixels rather than bytes, extend `DuplicateGroupID` and the
-  same policy (plan 0109 increment 5).
+## Same photo
+
+Versions of one photo — resized, re-encoded, metadata stripped — are different bytes of one
+capture. They are found by pixels, confirmed by pixels, and kept apart from separate
+captures by capture metadata (`SamePhotoPolicy`):
+
+1. **Capture metadata decides first.** Two files that both name a camera and an instant
+   are one capture only if all of these agree:
+   - the camera model;
+   - the whole-second instant;
+   - where both files carry them, the EXIF sub-seconds, the body serial and Apple's burst
+     identifier (MediaMetadata 0.9).
+
+   This gate is what separates a still-scene burst. On the owner's library, 5 % of
+   same-second burst pairs are as pixel-close as true copies, and every checked pair
+   differed in sub-seconds (`docs/research/2026-10-31-duplicate-calibration.md`).
+2. **The pixels must match almost exactly.** Each still's **render signature** — a 64-bit
+   difference hash and a 32 × 32 grayscale render of its *stored thumbnail* — is the
+   measure. A hash within 10 bits proposes a pair; a mean absolute difference below 4 (of
+   255) confirms it. Vision's feature print was measured and rejected: on real 256 px
+   renders it does not separate copies from burst frames.
+3. **A file without capture metadata joins only the one original clearly closer than every
+   other.** If two are about as close, it could be either frame, and it joins none.
+
+Other rules:
+- A RAW is never grouped with a processed file.
+- Copies already in an identical group are left to that group.
+- Same-photo groups are never preselected (`DuplicateGroupWait.samePhoto`). Keep All Copies
+  sets them aside by the same per-pair memory.
+- Candidates are blocked by kind, display aspect and whole-second instant, so a library is
+  never compared all against all. Grayscale renders are read only for proposed pairs.
+
+`RenderSignatureRefresher` is the one producer of signatures:
+- It reads stored thumbnails only, so it never opens an original or downloads one.
+- It records the thumbnail each signature came from (`render_signature_source`: path,
+  rendered revision, enrichment stamps). A re-rendered thumbnail makes the signature stale
+  with no write site having to know.
+- It is one loop woken by the Store's change notifications (ADR 0032).
+
+MediaMetadata 0.9's new fields are backfilled the way new library fields always are
+(ADR 0039): migration v12 clears the EXIF families' extraction revisions, and
+`MetadataRefresher` re-reads them from local bytes only.
+
+- `DuplicateGroupID.samePhoto` names a group by its members, and its leaf scope selects
+  them explicitly (`ContentConstraint.members`).

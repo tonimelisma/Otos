@@ -31,6 +31,8 @@ nonisolated struct AssetMetadata: Codable, Equatable {
     var videoCodec: String?
     /// Apple's content identifier, shared by a Live Photo's still and motion movie (ADR 0041).
     var contentIdentifier: String?
+    /// Apple's burst identifier, shared by every frame of one burst (MediaMetadata 0.9).
+    var burstIdentifier: String?
     /// `MediaMetadataReader.extractionRevision` of the reader that produced this record;
     /// nil for a record read before revisions were stored. A lower revision is a record
     /// the current reader may read differently (ADR 0039).
@@ -53,6 +55,7 @@ nonisolated struct AssetMetadata: Codable, Equatable {
         frameRate: Double? = nil,
         videoCodec: String? = nil,
         contentIdentifier: String? = nil,
+        burstIdentifier: String? = nil,
         extractionRevision: Int? = nil
     ) {
         self.family = family
@@ -71,6 +74,7 @@ nonisolated struct AssetMetadata: Codable, Equatable {
         self.frameRate = frameRate
         self.videoCodec = videoCodec
         self.contentIdentifier = contentIdentifier
+        self.burstIdentifier = burstIdentifier
         self.extractionRevision = extractionRevision
     }
 }
@@ -114,6 +118,8 @@ nonisolated struct CaptureTimestampRecord: Codable, Equatable {
     var hour: Int?
     var minute: Int?
     var second: Int?
+    /// The fraction of `second` the file records, digits as written (MediaMetadata 0.9).
+    var fractionalSecondDigits: String?
 }
 
 /// One location candidate preserved in the metadata detail JSON.

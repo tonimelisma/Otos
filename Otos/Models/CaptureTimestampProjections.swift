@@ -25,7 +25,8 @@ nonisolated extension CaptureTimestampRecord {
             day: time.day,
             hour: time.hour,
             minute: time.minute,
-            second: time.second
+            second: time.second,
+            fractionalSecondDigits: time.fractionalSecondDigits
         )
     }
 }
@@ -61,7 +62,8 @@ nonisolated extension CaptureTime {
             second: second,
             utcOffsetSeconds: record.utcOffsetSeconds,
             instant: record.instant,
-            precision: precision
+            precision: precision,
+            fractionalSecondDigits: record.fractionalSecondDigits
         )
     }
 }

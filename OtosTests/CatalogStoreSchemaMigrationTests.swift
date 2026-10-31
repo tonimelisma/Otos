@@ -170,6 +170,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.contentIdentifierMigrationIdentifier,
             CatalogSchema.trashPathMigrationIdentifier,
             CatalogSchema.duplicatesMigrationIdentifier,
+            CatalogSchema.renderSignatureMigrationIdentifier,
         ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
@@ -253,6 +254,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.contentIdentifierMigrationIdentifier,
             CatalogSchema.trashPathMigrationIdentifier,
             CatalogSchema.duplicatesMigrationIdentifier,
+            CatalogSchema.renderSignatureMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -574,7 +576,9 @@ struct CatalogStoreSchemaMigrationTests {
                 return "\(row["relative_path"] as String) '\(parent)' \(identifier ?? "-") \(revision.map(String.init) ?? "nil")"
             }
         }
-        #expect(rows == ["a/b.heic 'a/' - nil", "c.jpg '' - nil", "d.mov '' - nil", "e.arw '' - 1"])
+        // v12 then clears the EXIF families too (MediaMetadata 0.9's sub-seconds), the TIFF
+        // RAW among them, so every row here reads its local bytes again.
+        #expect(rows == ["a/b.heic 'a/' - nil", "c.jpg '' - nil", "d.mov '' - nil", "e.arw '' - nil"])
     }
 
     @Test func refusedCatalogDeniesNamespaceLeaseAsCatalogUnavailable() async throws {

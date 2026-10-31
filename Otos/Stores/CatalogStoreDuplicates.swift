@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import MediaMetadata
 
 /// Duplicates SQL (ADR 0042), run inside the Store's database access by `CatalogStore`'s
 /// duplicates reads and Keep All writes (in `CatalogStore.swift`, beside the state they use).
@@ -12,7 +13,9 @@ nonisolated enum DuplicatesGateway {
     struct CopyRow {
         let rootID: Int64
         let relativePath: String
-        let digest: XXH3Digest128
+        /// The current digest; present for an identical-copies read, absent for a same-photo
+        /// read, which compares pixels instead.
+        let digest: XXH3Digest128?
         let byteSize: Int64?
         let createdAt: Double?
         let mediaChoice: String?
@@ -25,22 +28,29 @@ nonisolated enum DuplicatesGateway {
             pathsByRowID: [Int64: LibraryRootPath],
             namesByPath: [LibraryRootPath: String]
         ) -> DuplicateCopyFacts? {
+            guard let digest, let copy = copy(pathsByRowID: pathsByRowID, namesByPath: namesByPath) else {
+                return nil
+            }
+            return DuplicateCopyFacts(copy: copy, digest: digest)
+        }
+
+        func copy(
+            pathsByRowID: [Int64: LibraryRootPath],
+            namesByPath: [LibraryRootPath: String]
+        ) -> DuplicateCopy? {
             guard let root = pathsByRowID[rootID], let name = namesByPath[root] else {
                 return nil
             }
-            return DuplicateCopyFacts(
-                copy: DuplicateCopy(
-                    id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: relativePath)),
-                    libraryDisplayName: name,
-                    byteSize: byteSize,
-                    createdAt: createdAt.map(Date.init(timeIntervalSince1970:)),
-                    pixelWidth: pixelWidth,
-                    pixelHeight: pixelHeight,
-                    mediaChoice: mediaChoice.flatMap(MediaChoice.init(rawValue:)) ?? .default,
-                    isEdited: isEdited,
-                    hasCompanions: hasCompanions
-                ),
-                digest: digest
+            return DuplicateCopy(
+                id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: relativePath)),
+                libraryDisplayName: name,
+                byteSize: byteSize,
+                createdAt: createdAt.map(Date.init(timeIntervalSince1970:)),
+                pixelWidth: pixelWidth,
+                pixelHeight: pixelHeight,
+                mediaChoice: mediaChoice.flatMap(MediaChoice.init(rawValue:)) ?? .default,
+                isEdited: isEdited,
+                hasCompanions: hasCompanions
             )
         }
     }
@@ -136,6 +146,162 @@ nonisolated enum DuplicatesGateway {
                 firstPath: row["first_path"],
                 secondRootID: row["second_root_id"],
                 secondPath: row["second_path"]
+            )
+        }
+    }
+}
+
+// MARK: - Same photo (ADR 0042)
+
+/// The thumbnail a render signature is read from, named by what makes it that rendering:
+/// its path, the edit revision it was rendered with, and the file signature enrichment
+/// read. A signature whose source no longer matches is stale.
+nonisolated enum RenderSignatureSQL {
+    static func source(_ row: String) -> String {
+        """
+        (\(row).thumbnail_path || '|' || \(row).rendered_revision || '|'
+            || IFNULL(\(row).enriched_source_size, '') || '|' || IFNULL(\(row).enriched_source_mtime, ''))
+        """
+    }
+}
+
+/// A still whose thumbnail has no current render signature.
+nonisolated struct RenderSignatureCandidate: Equatable, Sendable {
+    let id: MediaAssetID
+    let thumbnailPath: String
+    let source: String
+}
+
+/// What a render signature read produced for one candidate: the signature, or nil when the
+/// thumbnail could not be decoded — recorded, so the row is not offered again until its
+/// thumbnail changes.
+nonisolated struct RenderSignatureResult: Equatable, Sendable {
+    let id: MediaAssetID
+    let source: String
+    let signature: RenderSignature?
+}
+
+/// One still the same-photo rule compares, with the capture facts that tell captures apart.
+nonisolated struct SamePhotoCandidate: Equatable, Sendable {
+    let copy: DuplicateCopy
+    let isRaw: Bool
+    /// Whole-second capture instant, from the library's selection.
+    let captureInstant: Double?
+    let fractionalSecondDigits: String?
+    let cameraModel: String?
+    let serialNumber: String?
+    let burstIdentifier: String?
+    /// Display width over height, from stored geometry.
+    let aspectRatio: Double?
+    let differenceHash: UInt64
+
+    /// Whether the file names its capture: an instant and a camera.
+    var hasCaptureMetadata: Bool {
+        captureInstant != nil && cameraModel != nil
+    }
+}
+
+nonisolated extension DuplicatesGateway {
+    struct SamePhotoRow {
+        let copy: CopyRow
+        let kind: String?
+        let captureInstant: Double?
+        let cameraModel: String?
+        let serialNumber: String?
+        let orientation: Int?
+        let metadataJSON: String?
+        let differenceHash: Int64
+
+        func candidate(
+            pathsByRowID: [Int64: LibraryRootPath],
+            namesByPath: [LibraryRootPath: String]
+        ) -> SamePhotoCandidate? {
+            guard let copied = copy.copy(pathsByRowID: pathsByRowID, namesByPath: namesByPath) else {
+                return nil
+            }
+            // The stored record is the library's own report (ADR 0039); a record that does
+            // not decode leaves these two unknown, which the rule treats as unknown.
+            let metadata: AssetMetadata? = metadataJSON.flatMap { json in
+                do {
+                    return try CatalogStore.decodeMetadataExtraJSON(json)
+                } catch {
+                    OtosLog.catalog.errorOperation("duplicates.samePhoto", phase: "metadataUndecodable", fields: [
+                        "relativePath": copied.id.relativePath.rawValue,
+                    ])
+                    return nil
+                }
+            }
+            let original = metadata?.timestamps.first { $0.role == CaptureTimestamps.Role.original.rawValue }
+            let width = copied.pixelWidth.map(Double.init)
+            let height = copied.pixelHeight.map(Double.init)
+            // Orientations 5–8 turn the raster a quarter, so display width is stored height.
+            let quarterTurned = (5 ... 8).contains(orientation ?? 1)
+            let aspect: Double? = if let width, let height, width > 0, height > 0 {
+                quarterTurned ? height / width : width / height
+            } else {
+                nil
+            }
+            return SamePhotoCandidate(
+                copy: copied,
+                isRaw: kind == "raw",
+                captureInstant: captureInstant,
+                fractionalSecondDigits: original?.fractionalSecondDigits,
+                cameraModel: cameraModel,
+                serialNumber: serialNumber,
+                burstIdentifier: metadata?.burstIdentifier,
+                aspectRatio: aspect,
+                differenceHash: UInt64(bitPattern: differenceHash)
+            )
+        }
+    }
+
+    static func fetchSamePhotoCandidates(rootIDs: [Int64], db: Database) throws -> [SamePhotoRow] {
+        let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+            SELECT a.library_root_id, a.relative_path, a.content_hash_xxh3_128, a.byte_size, a.created_at_unix,
+                   a.media_choice, a.edit_recipe_json IS NOT NULL AS edited, a.kind, a.capture_instant_unix,
+                   a.render_dhash,
+                   m.pixel_width, m.pixel_height, m.orientation, m.camera_model, m.serial_number,
+                   m.metadata_extra_json,
+                   EXISTS(
+                       SELECT 1 FROM media_companion c
+                       WHERE c.library_root_id = a.library_root_id AND c.primary_relative_path = a.relative_path
+                   ) AS has_companions
+            FROM media_asset a
+            LEFT JOIN asset_metadata m
+              ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
+            WHERE a.library_root_id IN (\(placeholders))
+              AND a.kind IN ('image', 'raw')
+              AND a.pending_trash_batch_unix_ms IS NULL
+              AND a.trash_path IS NULL
+              AND a.render_dhash IS NOT NULL
+              AND a.render_signature_source = \(RenderSignatureSQL.source("a"))
+            """,
+            arguments: StatementArguments(rootIDs)
+        )
+        return rows.map { row in
+            SamePhotoRow(
+                copy: CopyRow(
+                    rootID: row["library_root_id"],
+                    relativePath: row["relative_path"],
+                    digest: nil,
+                    byteSize: row["byte_size"],
+                    createdAt: row["created_at_unix"],
+                    mediaChoice: row["media_choice"],
+                    isEdited: row["edited"],
+                    pixelWidth: row["pixel_width"],
+                    pixelHeight: row["pixel_height"],
+                    hasCompanions: row["has_companions"]
+                ),
+                kind: row["kind"],
+                captureInstant: row["capture_instant_unix"],
+                cameraModel: row["camera_model"],
+                serialNumber: row["serial_number"],
+                orientation: row["orientation"],
+                metadataJSON: row["metadata_extra_json"],
+                differenceHash: row["render_dhash"]
             )
         }
     }

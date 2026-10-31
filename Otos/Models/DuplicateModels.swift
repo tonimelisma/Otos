@@ -10,14 +10,18 @@ import Foundation
 // user's "Keep All Copies" — remembered per pair of paths, overlay with the copies'
 // own lifecycle.
 
-/// What makes copies one group. Identical copies share a content digest.
+/// What makes copies one group. Identical copies share a content digest; versions of the
+/// same photo share a picture, proven by their thumbnails, and are named by their members.
 nonisolated enum DuplicateGroupID: Hashable, Sendable {
     case identical(XXH3Digest128)
+    /// Members in `duplicateOrderKey` order.
+    case samePhoto([MediaAssetID])
 
     /// No digest is logged (ADR 0018); logs name a group by its first copy's path.
     var kindName: String {
         switch self {
         case .identical: "identical"
+        case .samePhoto: "samePhoto"
         }
     }
 }
@@ -66,6 +70,8 @@ nonisolated enum DuplicateGroupWait: Equatable, Sendable {
     case spansLibraries
     /// More than one copy carries authored work — edits, companions, or different choices.
     case differingAuthoredWork
+    /// Versions of one photo, not identical files: which to keep is the user's to judge.
+    case samePhoto
 }
 
 /// Two libraries that share identical items, summarized as one row before their groups.
@@ -369,4 +375,152 @@ nonisolated struct DuplicatesTally: Equatable, Sendable {
     let bytesToMove: PartialByteCount
     let needingChoice: Int
     let held: Int
+}
+
+/// Versions of the same photo (ADR 0042): different files of one capture — resized,
+/// re-encoded, metadata stripped — proven by their thumbnails, never preselected.
+///
+/// The question is "are these the same capture?", not "do these look alike?", and three
+/// gates keep separate captures — bursts, brackets — apart:
+///
+/// 1. Capture metadata decides first. Two files that both name a camera and an instant are
+///    one capture only if the camera model, the whole-second instant and, where both carry
+///    them, the sub-seconds, body serial and burst identifier agree.
+/// 2. The pixels must match almost exactly: a difference hash within
+///    `RenderSignature.candidateHammingDistance` proposes, and a mean grayscale difference
+///    below `RenderSignature.confirmedMeanDifference` confirms.
+/// 3. A file without capture metadata joins only the one original clearly closer than every
+///    other; two about equally close mean it could be either frame, and it joins none.
+///
+/// A RAW is never grouped with a processed file, and copies already in an identical group
+/// are left to that group.
+nonisolated enum SamePhotoPolicy {
+    /// Pairs worth comparing pixels for: same kind, same display aspect, a near hash, and
+    /// gate 1. Blocked by aspect and instant, so a library is never compared all against all.
+    static func candidatePairs(
+        _ candidates: [SamePhotoCandidate],
+        excluding excluded: Set<MediaAssetID>
+    ) -> [(SamePhotoCandidate, SamePhotoCandidate)] {
+        let eligible = candidates.filter { !excluded.contains($0.copy.id) && $0.aspectRatio != nil }
+        let buckets = Dictionary(grouping: eligible) { candidate in
+            AspectBucket(isRaw: candidate.isRaw, aspect: Int(((candidate.aspectRatio ?? 0) * 100).rounded()))
+        }
+        var pairs: [(SamePhotoCandidate, SamePhotoCandidate)] = []
+        for members in buckets.values where members.count > 1 {
+            let byInstant = Dictionary(grouping: members.filter(\.hasCaptureMetadata)) { $0.captureInstant ?? 0 }
+            let stripped = members.filter { !$0.hasCaptureMetadata }
+            for group in byInstant.values {
+                for (index, left) in group.enumerated() {
+                    for right in group[(index + 1)...] where isCandidate(left, right) {
+                        pairs.append((left, right))
+                    }
+                }
+            }
+            for (index, copy) in stripped.enumerated() {
+                for other in members where other.hasCaptureMetadata && isCandidate(copy, other) {
+                    pairs.append((copy, other))
+                }
+                for other in stripped[(index + 1)...] where isCandidate(copy, other) {
+                    pairs.append((copy, other))
+                }
+            }
+        }
+        return pairs
+    }
+
+    static func isCandidate(_ left: SamePhotoCandidate, _ right: SamePhotoCandidate) -> Bool {
+        guard left.isRaw == right.isRaw,
+              let leftAspect = left.aspectRatio, let rightAspect = right.aspectRatio,
+              abs(log(leftAspect / rightAspect)) < 0.01,
+              (left.differenceHash ^ right.differenceHash).nonzeroBitCount <= RenderSignature.candidateHammingDistance
+        else {
+            return false
+        }
+        guard left.hasCaptureMetadata, right.hasCaptureMetadata else {
+            return true
+        }
+        func agree(_ first: String?, _ second: String?) -> Bool {
+            guard let first, let second else { return true }
+            return first == second
+        }
+        return left.cameraModel == right.cameraModel
+            && left.captureInstant == right.captureInstant
+            && agree(left.fractionalSecondDigits, right.fractionalSecondDigits)
+            && agree(left.serialNumber, right.serialNumber)
+            && agree(left.burstIdentifier, right.burstIdentifier)
+    }
+
+    /// Groups from confirmed pairs: gate 2 on every pair, gate 3 on every file without
+    /// capture metadata, then copies joined through any confirmed pair.
+    static func groups(
+        candidates: [SamePhotoCandidate],
+        signatures: [MediaAssetID: RenderSignature],
+        excluding excluded: Set<MediaAssetID>
+    ) -> [DuplicateGroup] {
+        let pairs = candidatePairs(candidates, excluding: excluded)
+        var confirmed: [(SamePhotoCandidate, SamePhotoCandidate, Double)] = []
+        for (left, right) in pairs {
+            guard let leftSignature = signatures[left.copy.id], let rightSignature = signatures[right.copy.id] else {
+                continue
+            }
+            let difference = leftSignature.meanDifference(to: rightSignature)
+            if difference < RenderSignature.confirmedMeanDifference {
+                confirmed.append((left, right, difference))
+            }
+        }
+        // Gate 3: a file without capture metadata keeps only an edge to the one original
+        // clearly closest; if two originals are about as close, it keeps none.
+        var dropped: Set<Int> = []
+        let strippedIDs = Set(candidates.filter { !$0.hasCaptureMetadata }.map(\.copy.id))
+        for strippedID in strippedIDs {
+            let edges = confirmed.enumerated().compactMap { index, edge -> (Int, Double)? in
+                let other = edge.0.copy.id == strippedID ? edge.1 : (edge.1.copy.id == strippedID ? edge.0 : nil)
+                guard let other, other.hasCaptureMetadata else { return nil }
+                return (index, edge.2)
+            }.sorted { $0.1 < $1.1 }
+            guard edges.count > 1 else { continue }
+            let clearlyCloser = edges[1].1 >= edges[0].1 * 2 + 0.5
+            for (position, edge) in edges.enumerated() where !clearlyCloser || position > 0 {
+                dropped.insert(edge.0)
+            }
+        }
+        var parent: [MediaAssetID: MediaAssetID] = [:]
+        func root(_ id: MediaAssetID) -> MediaAssetID {
+            var current = id
+            while let next = parent[current], next != current {
+                current = next
+            }
+            return current
+        }
+        var copies: [MediaAssetID: DuplicateCopy] = [:]
+        for (index, edge) in confirmed.enumerated() where !dropped.contains(index) {
+            copies[edge.0.copy.id] = edge.0.copy
+            copies[edge.1.copy.id] = edge.1.copy
+            let left = root(edge.0.copy.id)
+            let right = root(edge.1.copy.id)
+            parent[left] = parent[left] ?? left
+            parent[right] = parent[right] ?? right
+            if left != right {
+                parent[right] = left
+            }
+        }
+        let members = Dictionary(grouping: copies.keys, by: root)
+        return members.values.filter { $0.count > 1 }.map { ids in
+            let ordered = ids.sorted { $0.duplicateOrderKey < $1.duplicateOrderKey }
+            let libraries = Set(ordered.map(\.libraryRootPath)).sorted { $0.rawValue < $1.rawValue }
+            return DuplicateGroup(
+                id: .samePhoto(ordered),
+                copies: ordered.compactMap { copies[$0] },
+                defaultKeep: nil,
+                wait: .samePhoto,
+                isKept: false,
+                libraryPair: libraries.count == 2 ? DuplicateLibraryPair(libraries[0], libraries[1]) : nil
+            )
+        }
+    }
+
+    private struct AspectBucket: Hashable {
+        let isRaw: Bool
+        let aspect: Int
+    }
 }

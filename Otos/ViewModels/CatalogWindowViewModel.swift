@@ -316,6 +316,8 @@ final class CatalogWindowViewModel {
     /// Re-reads metadata an older MediaMetadata revision produced, from local bytes only
     /// (ADR 0039); runs once per launch with enrichment.
     @ObservationIgnored let metadataRefresher: MetadataRefresher?
+    /// Signs stored thumbnails for same-photo duplicates (ADR 0042); starts with enrichment.
+    @ObservationIgnored let renderSignatureRefresher: RenderSignatureRefresher?
     @ObservationIgnored let materializationCoordinator: MaterializationCoordinator?
     @ObservationIgnored let deviceStagingRegistry: DeviceStagingRegistry
     @ObservationIgnored private let mediaTileDetailReader: MediaTileDetailReader
@@ -595,6 +597,9 @@ final class CatalogWindowViewModel {
         self.metadataRefresher = metadataRefresher ?? (
             startsEnrichment && enrichmentCoordinator == nil ? MetadataRefresher(store: catalogStore) : nil
         )
+        renderSignatureRefresher = startsEnrichment && enrichmentCoordinator == nil
+            ? RenderSignatureRefresher(store: catalogStore, thumbnailDirectory: catalogStore.thumbnailDirectory)
+            : nil
         self.stallMonitor = stallMonitor
         self.startsStallMonitor = startsStallMonitor
         self.startsEnrichment = startsEnrichment
@@ -848,7 +853,9 @@ extension CatalogWindowViewModel {
         // so a coordinator started too early could stay idle until some unrelated change.
         // `store.start()` is idempotent and shared, so this awaits the same load
         // `startCatalog` runs.
-        enrichmentStartTask = Task { [coordinator, materializationCoordinator, metadataRefresher, store = catalogStore] in
+        enrichmentStartTask = Task { [
+            coordinator, materializationCoordinator, metadataRefresher, renderSignatureRefresher, store = catalogStore
+        ] in
             do {
                 try await store.start()
             } catch {
@@ -857,6 +864,7 @@ extension CatalogWindowViewModel {
             }
             await materializationCoordinator?.start()
             await coordinator.start()
+            await renderSignatureRefresher?.start()
             await metadataRefresher?.refresh()
         }
     }

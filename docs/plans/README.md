@@ -3,8 +3,38 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-Plan 0109 (duplicates, card checksums, and Trash that can be put back) is active:
-`0109-duplicates.md`.
+Plan 0109 (duplicates, card checksums, and Trash that can be put back) is complete across
+six increments and was removed at closure. It opened 2026-10-31 from the design study
+`docs/research/2026-10-31-duplicate-detection.md` and its two adversarial reviews.
+
+**Decisions and where they live.**
+- **Trash.** Kept rows while a file is in the Trash, Put Back after a relaunch, and the
+  trash bar's Cancel: ADR 0022, ARC-058, DES-089.
+- **Card digests.** Idle cards are checksummed behind their thumbnails, and the import
+  verifies each staged copy against the card's digest: ADR 0018, ENR-013, ENR-017.
+- **Import skips.** The import skips items a library holds by content, and Erase
+  re-confirms each match: ADR 0018/0026, APP-032, `import-bar.md`.
+- **Duplicates.** Identical copies with a safe-only keeper rule and per-pair Keep All
+  memory: ADR 0042, APP-060, DES-107, the DES-052 deviation, `docs/design/duplicates.md`.
+- **Same photo.** Versions of one photo, by stored-thumbnail render signatures and three
+  burst gates: ADR 0042, APP-061, ENR-021.
+- **MediaMetadata 0.9.0.** EXIF sub-seconds and Apple's burst identifier.
+
+**Calibration.** The Vision feature print was rejected for a difference hash plus a 32 × 32
+pixel difference: `docs/research/2026-10-31-duplicate-calibration.md`.
+
+**Owner decisions.** Bursts are never duplicates, and Duplicates has no single-letter
+shortcuts.
+
+**Deliberately left out.**
+- The bar's "N not checked yet" and "N to download" lines. APP-045 asks about a download
+  at act time.
+- Exclusion of `isUtility` screenshots. Same-photo groups are never preselected, so a
+  wrong group costs a click, not a photo.
+
+**Still open.** The staged-copy hash's cost against copy time is unmeasured, because no
+card import ran during the plan. It stays inline until a measurement shows it limits
+throughput.
 
 Plan 0108 (editing, previews, hand-off and export) is complete across fourteen
 increments and was removed at closure. It opened 2026-10-24 when the owner chose to edit

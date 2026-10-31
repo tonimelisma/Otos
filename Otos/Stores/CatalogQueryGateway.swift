@@ -541,6 +541,16 @@ private nonisolated func scopeClause(
         predicate += currentDigest
         predicate += "\n  AND media_asset.content_hash_xxh3_128 = ?"
         arguments.append(digest.data)
+    case let .members(keys):
+        guard !keys.isEmpty else {
+            return nil
+        }
+        let tuples = Array(repeating: "(?, ?)", count: keys.count).joined(separator: ", ")
+        predicate += "\n  AND (media_asset.library_root_id, media_asset.relative_path) IN (VALUES \(tuples))"
+        for key in keys {
+            arguments.append(key.rootID)
+            arguments.append(key.relativePath)
+        }
     }
     var join = ""
     switch scope.location {
