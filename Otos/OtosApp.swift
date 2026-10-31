@@ -330,18 +330,22 @@ public struct OtosApp: App {
             // the menu bar read `Apple, Otos, Edit, View, Library, View, Window, Help`
             // `CommandGroup(after:)` places into the existing one.
             CommandGroup(after: .sidebar) {
+                // Disabled, not hidden, while Places shows its map (ADR 0040, DES-053).
                 Button("Grid") {
                     catalogViewModel.setViewMode(.grid)
                 }
                 .keyboardShortcut(KeyEquivalent(BrowserViewMode.grid.keyboardShortcutDigit), modifiers: .command)
+                .disabled(!catalogViewModel.canChangeViewMode)
                 Button("Loupe") {
                     catalogViewModel.setViewMode(.loupe)
                 }
                 .keyboardShortcut(KeyEquivalent(BrowserViewMode.loupe.keyboardShortcutDigit), modifiers: .command)
+                .disabled(!catalogViewModel.canChangeViewMode)
                 Button("Compare") {
                     catalogViewModel.setViewMode(.compare)
                 }
                 .keyboardShortcut(KeyEquivalent(BrowserViewMode.compare.keyboardShortcutDigit), modifiers: .command)
+                .disabled(!catalogViewModel.canChangeViewMode)
                 Divider()
                 Button("Swap Compared Photos") {
                     catalogViewModel.swapComparedPhotos()

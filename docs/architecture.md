@@ -52,7 +52,9 @@ compiles it.
   CatalogWindowViewModel (@MainActor)  ── the SwiftUI bridge; assigns @Observable state
         │  owns loupeVideoState (single owner); VideoPreviewLoader (@MainActor factory) checks SF_DATALESS + interactive demand and creates AVPlayer
         ▼
-  SwiftUI views  →  grid / loupe(+filmstrip) detail (mode-switched)
+  SwiftUI views  →  grid / loupe(+filmstrip) detail (mode-switched), or the Places map
+                     when the scope is `.places` (ADR 0040: the ViewModel's cluster lane
+                     turns `CatalogWindowState.map` + the reported viewport into stacks)
                      MediaGridBridgeView (AppKit NSCollectionView; .grid or .strip)
                      PreviewImageLoader (actor) — full-size decode off MainActor; submits interactive demand
                      LoupeVideoPlayerView (NSViewRepresentable AVPlayerView) — inline controls; player owned by ViewModel
@@ -100,7 +102,7 @@ exists only for a live attachment: on detach the session's outcome is logged
 (`op=import.outcome phase=settled`) and discarded, because the import bar is drawn only
 on the card's own row. A reattached card at the same path starts a fresh session and
 cannot inherit the previous run's outcome.
-| `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus (`loupeVideoState` single owner), owned per-slot pane-request tasks, lossless serial delivery of catalog mutations, import intents and trash undo/redo/prompt answers (one stream and one consumer each, so the user's order is the delivery order), monitor/task lifetimes, import presentation bridge | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer; `await` materialize suspends without blocking main thread |
+| `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus (`loupeVideoState` single owner), the Places map's viewport, camera requests and cluster lane (ADR 0040), owned per-slot pane-request tasks, lossless serial delivery of catalog mutations, import intents and trash undo/redo/prompt answers (one stream and one consumer each, so the user's order is the delivery order), monitor/task lifetimes, import presentation bridge | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer; `await` materialize suspends without blocking main thread |
 
 Rule of thumb: the main thread only assigns final UI state and starts work;
 everything expensive happens on an actor off the main thread.
@@ -288,6 +290,7 @@ everything expensive happens on an actor off the main thread.
 | loupe / preview decode | `LoupeView` + `PreviewImageLoader`/`VideoPreviewLoader` + `LoupeVideoPlayerView` (`AVPlayerView` inline) (ADR 0016; stored previews and the renderer, ADR 0035); mode intents on `CatalogWindowViewModel` |
 | loupe video (click-to-play) | `VideoPreviewLoader` + `LoupeVideoPlayerView` + `LoupeView` poster/AVPlayer swap; compare stays poster-only |
 | compare pair | `ComparePairPolicy` + `CompareView`; pair is capped selection |
+| the Places map / a place under it | scope: `SidebarSelection.places` / `.place` resolved by `RootRegistry.scopePredicate` into `CatalogScopePredicate.LocationConstraint` (the join reads coordinates with the order); content: `CatalogWindowPolicy.mapState` → `CatalogWindowState.map`; stacks: `MapClusterPolicy` (pure) run by `CatalogWindowViewModelMap` (revision-counted lane, `@concurrent`); view: `PlacesMapView` (passive; owns only the map's camera, reports `MapViewport`) (ADR 0040) |
 | reopening where the user left off | `BrowserPlace` (versioned preference value) + `CatalogWindowViewModelBrowserPlace` (load at init, restore once after the first matching result, save at quit) (ADR 0031) |
 | curation choice/filter | `MediaChoice` + `CatalogStore.setMediaChoices` (one transaction, reports priors) + `MediaFilter`/`CatalogQueryGateway`; ViewModel owns intents and the curation `UndoManager` (APP-039), views remain passive |
 | handing photos to other apps (copy, drag, share, open) | `HandOffPreparer` (what each photo hands over; prepared files in Application Support's `HandOff`, cleared each launch; `HandOffPromise` for drags) + `CatalogWindowViewModelHandOff` (one ordered lane, progress, Cancel) + `ProgressStatusBar`; files written by `MediaFileWriter` (ADR 0037) |

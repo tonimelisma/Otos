@@ -191,6 +191,16 @@ P0/P1 items through Import Into User Libraries are now largely shipped; current 
   [SwiftUI performance](https://developer.apple.com/documentation/xcode/understanding-and-improving-swiftui-performance).
 
 - Video playback in loupe — shipped as loupe click-to-play poster→player swap (APP-020).
+- Bare-key G/E/C view shortcuts — deferred; ⌘1/2/3 shipped (APP-020).
+
+## Places (ideas beyond ADR 0040)
+
+- Place names from reverse geocoding (`CLGeocoder`), as Photos and Lightroom show.
+- Assigning or moving a location as authored overlay — drag onto the map, never a write
+  to the file.
+- `Nearby` from one photo, and a map of a card or an import batch (a contextual
+  command from the grid).
+- Satellite imagery as a toggle; a filmstrip under the map.
 
 ## Never Building
 

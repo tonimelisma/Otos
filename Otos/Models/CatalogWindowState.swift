@@ -15,6 +15,9 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
     /// not known yet. Nothing is claimed: the grid draws nothing (APP-044).
     case loadingCatalog
     case noMedia
+    /// The Places scope holds nothing: no cataloged item in the fixed libraries carries
+    /// a location yet (ADR 0040).
+    case noLocatedMedia
     case noFilterMatches
     case checkingLibraries
     case noAvailableMedia
@@ -36,6 +39,8 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
             "loadingCatalog"
         case .noMedia:
             "noMedia"
+        case .noLocatedMedia:
+            "noLocatedMedia"
         case .noFilterMatches:
             "noFilterMatches"
         case .checkingLibraries:
@@ -71,6 +76,9 @@ nonisolated struct CatalogWindowState: Equatable {
     var resolvedSidebarSelection: SidebarSelection
     var mediaEmptyState: CatalogMediaEmptyState
     var deviceConnectionBanner: CatalogDeviceConnectionBanner?
+    /// The Places map's content: the located items in display order and the count left
+    /// off the map. Set only while the resolved scope is `.places` (ADR 0040).
+    var map: CatalogMapState?
     var queryGeneration: UInt64 = 0
     /// Remaps committed but not yet acknowledged by the window, read with the ordered
     /// IDs. The window applies each batch once, before it shows the new identities.

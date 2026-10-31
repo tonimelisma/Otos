@@ -33,7 +33,7 @@ struct CatalogStoreQueryPlanTests {
             )
         }
 
-        #expect(ids.map(\.1.rawValue) == ["alpha.jpg", "raw-original.nef", "retagged.mov"])
+        #expect(ids.map(\.relativePath.rawValue) == ["alpha.jpg", "raw-original.nef", "retagged.mov"])
     }
 
     @Test func querySchemaStreamsCatalogOrderAndEnrichmentCandidatesFromIndexes() async throws {

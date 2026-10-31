@@ -34,6 +34,9 @@ nonisolated struct CatalogProjectionChangeSummary {
     let emptyStateChanged: Bool
     let resolvedSelectionChanged: Bool
     let detailRefreshChanged: Bool
+    /// The map's located items or its left-off count moved without the identities
+    /// moving — a re-enriched coordinate, or an item that gained one.
+    let mapChanged: Bool
     let mediaIdentityEqualityUs: Int
 
     var stateChanged: Bool {
@@ -44,6 +47,7 @@ nonisolated struct CatalogProjectionChangeSummary {
             || emptyStateChanged
             || resolvedSelectionChanged
             || detailRefreshChanged
+            || mapChanged
     }
 
     static func compare(
@@ -60,6 +64,7 @@ nonisolated struct CatalogProjectionChangeSummary {
                 emptyStateChanged: true,
                 resolvedSelectionChanged: true,
                 detailRefreshChanged: true,
+                mapChanged: current.map != nil,
                 mediaIdentityEqualityUs: 0
             )
         }
@@ -81,6 +86,7 @@ nonisolated struct CatalogProjectionChangeSummary {
             resolvedSelectionChanged: previous.resolvedSidebarSelection != current.resolvedSidebarSelection,
             detailRefreshChanged: previous.mediaGrid.detailRefreshGeneration
                 != current.mediaGrid.detailRefreshGeneration,
+            mapChanged: previous.map != current.map,
             mediaIdentityEqualityUs: identityUs
         )
     }

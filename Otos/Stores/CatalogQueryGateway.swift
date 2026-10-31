@@ -41,7 +41,7 @@ nonisolated enum CatalogQueryGateway {
         descriptor: CatalogQueryDescriptor,
         scope: CatalogScopePredicate,
         db: Database
-    ) throws -> [(libraryRootID: Int64, relativePath: MediaRelativePath, bestCaptureUnix: Double?)] {
+    ) throws -> [OrderedAssetIDRow] {
         guard let query = orderedAssetIDQuery(descriptor: descriptor, scope: scope) else {
             return []
         }
@@ -50,8 +50,30 @@ nonisolated enum CatalogQueryGateway {
             sql: query.sql,
             arguments: query.arguments
         ).map { row in
-            (row["library_root_id"], MediaRelativePath(rawValue: row["relative_path"]), row["best_capture_unix"])
+            let coordinate: PlaceCoordinate? = if scope.requiresLocation,
+                                                  let latitude: Double = row["primary_latitude"],
+                                                  let longitude: Double = row["primary_longitude"]
+            {
+                PlaceCoordinate(latitude: latitude, longitude: longitude)
+            } else {
+                nil
+            }
+            return OrderedAssetIDRow(
+                libraryRootID: row["library_root_id"],
+                relativePath: MediaRelativePath(rawValue: row["relative_path"]),
+                bestCaptureUnix: row["best_capture_unix"],
+                coordinate: coordinate
+            )
         }
+    }
+
+    /// One row of the ordered-ID query. `coordinate` is set only for a scope that
+    /// requires a location, where the join guarantees one (ADR 0040).
+    struct OrderedAssetIDRow {
+        let libraryRootID: Int64
+        let relativePath: MediaRelativePath
+        let bestCaptureUnix: Double?
+        let coordinate: PlaceCoordinate?
     }
 
     static func orderedAssetIDQuery(
@@ -66,10 +88,13 @@ nonisolated enum CatalogQueryGateway {
         let filter = filterPredicate(for: descriptor.filter)
         arguments.append(contentsOf: filter.arguments)
         let filterSQL = filter.sql.map { "\n  AND \($0)" } ?? ""
+        let locationColumns = scope.requiresLocation
+            ? ", asset_metadata.primary_latitude, asset_metadata.primary_longitude"
+            : ""
         return SQLQuery(
             sql: """
-            SELECT library_root_id, relative_path, best_capture_unix
-            FROM media_asset INDEXED BY \(order.indexName)
+            SELECT media_asset.library_root_id, media_asset.relative_path, media_asset.best_capture_unix\(locationColumns)
+            FROM media_asset INDEXED BY \(order.indexName)\(scopeClause.join)
             WHERE \(scopeClause.sql)\(filterSQL)
             ORDER BY \(order.orderBy)
             """,
@@ -107,7 +132,7 @@ nonisolated enum CatalogQueryGateway {
         return SQLQuery(
             sql: """
             SELECT DISTINCT best_kind, best_format
-            FROM media_asset
+            FROM media_asset\(scopeClause.join)
             WHERE \(scopeClause.sql)
               AND best_kind IS NOT NULL
             ORDER BY best_kind, best_format
@@ -116,18 +141,27 @@ nonisolated enum CatalogQueryGateway {
         )
     }
 
-    static func countAssets(scope: CatalogScopePredicate, db: Database) throws -> Int {
+    /// Rows in scope, optionally narrowed by the user filter.
+    static func countAssets(
+        scope: CatalogScopePredicate,
+        filter: MediaFilter = .all,
+        db: Database
+    ) throws -> Int {
         guard let scopeClause = scopeClause(scope) else {
             return 0
         }
+        var arguments = scopeClause.arguments
+        let filterPredicate = filterPredicate(for: filter)
+        arguments.append(contentsOf: filterPredicate.arguments)
+        let filterSQL = filterPredicate.sql.map { "\n  AND \($0)" } ?? ""
         return try Int.fetchOne(
             db,
             sql: """
             SELECT COUNT(*)
-            FROM media_asset
-            WHERE \(scopeClause.sql)
+            FROM media_asset\(scopeClause.join)
+            WHERE \(scopeClause.sql)\(filterSQL)
             """,
-            arguments: StatementArguments(scopeClause.arguments)
+            arguments: StatementArguments(arguments)
         ) ?? 0
     }
 
@@ -319,66 +353,93 @@ private nonisolated func orderPlan(
     case (.bestDate, true):
         return (
             "idx_media_asset_best_capture_root_\(suffix)",
-            "best_capture_unix \(direction), relative_path"
+            "media_asset.best_capture_unix \(direction), media_asset.relative_path"
         )
     case (.bestDate, false):
         return (
             "idx_media_asset_best_capture_global_\(suffix)",
-            "best_capture_unix \(direction), library_root_id, relative_path"
+            "media_asset.best_capture_unix \(direction), media_asset.library_root_id, media_asset.relative_path"
         )
     case (.name, true):
         return (
             "idx_media_asset_name_root_\(suffix)",
-            "name_sort_key \(direction), relative_path"
+            "media_asset.name_sort_key \(direction), media_asset.relative_path"
         )
     case (.name, false):
         return (
             "idx_media_asset_name_global_\(suffix)",
-            "name_sort_key \(direction), library_root_id, relative_path"
+            "media_asset.name_sort_key \(direction), media_asset.library_root_id, media_asset.relative_path"
         )
     case (.size, true):
         return (
             "idx_media_asset_size_root_\(suffix)",
-            "(byte_size IS NULL), byte_size \(direction), relative_path"
+            "(media_asset.byte_size IS NULL), media_asset.byte_size \(direction), media_asset.relative_path"
         )
     case (.size, false):
         return (
             "idx_media_asset_size_global_\(suffix)",
-            "(byte_size IS NULL), byte_size \(direction), library_root_id, relative_path"
+            """
+            (media_asset.byte_size IS NULL), media_asset.byte_size \(direction), \
+            media_asset.library_root_id, media_asset.relative_path
+            """
         )
     }
 }
 
-/// Builds the `WHERE` fragment for a resolved scope, or `nil` when the scope
-/// selects nothing and the caller should skip SQLite entirely.
+/// Builds the `FROM` join and `WHERE` fragment for a resolved scope, or `nil` when the
+/// scope selects nothing and the caller should skip SQLite entirely.
 ///
-/// Every scoped read goes through here, which is what keeps root membership and
-/// batch membership from drifting apart between queries. A single-root scope uses
-/// `=` so the root-local ordering indexes stay usable.
+/// Every scoped read goes through here, which is what keeps root membership, batch
+/// membership and location membership from drifting apart between queries. A
+/// single-root scope uses `=` so the root-local ordering indexes stay usable. A scope
+/// that requires a location joins `asset_metadata`, where the primary location lives,
+/// so the same read can also carry each row's coordinate; columns are qualified with
+/// their table so the join introduces no ambiguity.
 private nonisolated func scopeClause(
     _ scope: CatalogScopePredicate
-) -> (sql: String, arguments: [any DatabaseValueConvertible])? {
+) -> (join: String, sql: String, arguments: [any DatabaseValueConvertible])? {
     guard !scope.selectsNothing else {
         return nil
     }
     var arguments: [any DatabaseValueConvertible] = []
     let rootPredicate: String
     if scope.rootIDs.count == 1, let rootID = scope.rootIDs.first {
-        rootPredicate = "library_root_id = ?"
+        rootPredicate = "media_asset.library_root_id = ?"
         arguments.append(rootID)
     } else {
-        rootPredicate = "library_root_id IN (\(sqlPlaceholders(count: scope.rootIDs.count)))"
+        rootPredicate = "media_asset.library_root_id IN (\(sqlPlaceholders(count: scope.rootIDs.count)))"
         arguments.append(contentsOf: scope.rootIDs)
     }
     // Items waiting to move to the Trash are hidden from every user-facing media
     // query; this scope clause is the one choke point those queries share.
-    let visiblePredicate = "\(rootPredicate)\n  AND pending_trash_batch_unix_ms IS NULL"
-    guard let importBatchUnixMs = scope.importBatchUnixMs else {
-        return (visiblePredicate, arguments)
+    var predicate = "\(rootPredicate)\n  AND media_asset.pending_trash_batch_unix_ms IS NULL"
+    if let importBatchUnixMs = scope.importBatchUnixMs {
+        arguments.append(importBatchUnixMs)
+        predicate += "\n  AND media_asset.import_batch_unix_ms = ?"
     }
-    arguments.append(importBatchUnixMs)
-    return ("\(visiblePredicate)\n  AND import_batch_unix_ms = ?", arguments)
+    var join = ""
+    switch scope.location {
+    case .any:
+        break
+    case .located:
+        join = locationJoin
+        predicate += "\n  AND asset_metadata.primary_latitude IS NOT NULL"
+        predicate += "\n  AND asset_metadata.primary_longitude IS NOT NULL"
+    case let .at(coordinate):
+        join = locationJoin
+        arguments.append(coordinate.latitude)
+        arguments.append(coordinate.longitude)
+        predicate += "\n  AND asset_metadata.primary_latitude = ?\n  AND asset_metadata.primary_longitude = ?"
+    }
+    return (join, predicate, arguments)
 }
+
+private nonisolated let locationJoin = """
+
+JOIN asset_metadata
+  ON asset_metadata.library_root_id = media_asset.library_root_id
+  AND asset_metadata.relative_path = media_asset.relative_path
+"""
 
 private nonisolated func filterPredicate(
     for filter: MediaFilter

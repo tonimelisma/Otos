@@ -41,6 +41,20 @@ nonisolated enum DesignPalette {
         colorScheme == .dark ? Color(hex: 0x2A2A2C) : Color(hex: 0xFBFBFC)
     }
 
+    // MARK: - DES-062 badge
+
+    /// The badge well on a thumbnail: black at 55% in both appearances, because it sits
+    /// on a photograph, not on chrome. `badgeNSColor` is the same value for the AppKit
+    /// tile.
+    static let badge = Color(nsColor: badgeNSColor)
+    static let badgeNSColor = NSColor.black.withAlphaComponent(0.55)
+    /// Text on `badge`.
+    static let badgeLabel = Color.white
+
+    /// The edge of a thumbnail stack on the Places map (DES-103): white, so the stack
+    /// separates from any map underneath it; the accent replaces it for selection.
+    static let mapStackEdge = Color.white
+
     // MARK: - DES-023 hairline
 
     /// 8% black light / 10% white dark. DES-084: under Increase Contrast,

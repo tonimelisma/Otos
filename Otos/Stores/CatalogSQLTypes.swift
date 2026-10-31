@@ -80,15 +80,33 @@ nonisolated struct SQLQuery {
 /// read takes bare root IDs, so a new query cannot honor one dimension and forget
 /// the other.
 nonisolated struct CatalogScopePredicate: Equatable {
+    /// What a scope requires of a row's stored primary location (ADR 0040).
+    enum LocationConstraint: Equatable {
+        /// Location plays no part.
+        case any
+        /// The row has a primary location: the Places map.
+        case located
+        /// The row's primary location is exactly this: one place under the map.
+        case at(PlaceCoordinate)
+    }
+
     /// Catalog roots the scope admits, ascending. Already narrowed to the kinds and
     /// availability the selection allows.
     let rootIDs: [Int64]
     /// Import-batch stamp the scope requires, when the selection is an Imports row.
     let importBatchUnixMs: Int64?
+    let location: LocationConstraint
 
-    init(rootIDs: [Int64], importBatchUnixMs: Int64? = nil) {
+    init(rootIDs: [Int64], importBatchUnixMs: Int64? = nil, location: LocationConstraint = .any) {
         self.rootIDs = rootIDs
         self.importBatchUnixMs = importBatchUnixMs
+        self.location = location
+    }
+
+    /// Whether reads over this scope join `asset_metadata`, and so can carry each
+    /// row's coordinate.
+    var requiresLocation: Bool {
+        location != .any
     }
 
     /// No root can satisfy the scope, so every read over it is empty without

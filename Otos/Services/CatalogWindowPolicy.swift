@@ -56,6 +56,16 @@ nonisolated enum CatalogWindowPolicy {
                     removableSources: removableSources
                 )
             }
+        case .places, .place:
+            // Places exists with the fixed libraries it maps; a place under it goes with
+            // it. Either resolves to the default once the last fixed library is removed.
+            if SidebarSelectionPolicy.showsPlaces(libraries: libraries) {
+                return sidebarSelection
+            }
+            return SidebarSelectionPolicy.selectionOnSelectedSourceRemoved(
+                libraries: libraries,
+                removableSources: removableSources
+            )
         case let .library(path):
             let pathIsValid = libraries.contains { $0.path == path }
                 || removableSources.contains { $0.path == path }
@@ -106,48 +116,82 @@ nonisolated enum CatalogWindowPolicy {
 
     /// `dayBuckets` is the grid's day-grouping key (DES-069) — empty under any
     /// sort but `.bestDate` (see `CatalogMediaGridState.dayBuckets`), otherwise
-    /// paired index-for-index with `orderedAssetIDs`. Filtered in the same pass
-    /// as the IDs so the two never desync; an empty `dayBuckets` in means an
-    /// empty `dayBuckets` out, regardless of how many IDs survive the filter.
+    /// paired index-for-index with `orderedAssetIDs`; `coordinates` is the map's key,
+    /// empty unless the scope requires a location (ADR 0040), otherwise paired the
+    /// same way. Both are filtered in the same pass as the IDs so none can desync; an
+    /// empty companion in means an empty companion out, regardless of how many IDs
+    /// survive the filter.
     static func assetIDs(
         for sidebarSelection: SidebarSelection,
         orderedAssetIDs: [MediaAssetID],
         dayBuckets: [Date?],
+        coordinates: [PlaceCoordinate] = [],
         availableLibraryPaths: Set<LibraryRootPath>,
         rootsByPath: [LibraryRootPath: CatalogLibraryState]
-    ) -> (ids: [MediaAssetID], dayBuckets: [Date?]) {
+    ) -> (ids: [MediaAssetID], dayBuckets: [Date?], coordinates: [PlaceCoordinate]) {
         func keeps(_ id: MediaAssetID) -> Bool {
             guard availableLibraryPaths.contains(id.libraryRootPath) else {
                 return false
             }
             switch sidebarSelection {
-            case .allMedia, .importBatch, .allImports:
-                // Both scopes span the fixed libraries. Batch *membership* is applied by
-                // Store.orderedAssetIDs; this pass only re-applies the root-kind rule,
-                // which also holds for IDs carried over from a reused order (ADR 0007).
+            case .allMedia, .places, .place, .importBatch, .allImports:
+                // These scopes span the fixed libraries. Batch and location *membership*
+                // are applied by Store.orderedAssetIDs; this pass only re-applies the
+                // root-kind rule, which also holds for IDs carried over from a reused
+                // order (ADR 0007).
                 return rootsByPath[id.libraryRootPath]?.kind == .library
             case let .library(path):
                 return id.libraryRootPath == path
             }
         }
-        guard dayBuckets.count == orderedAssetIDs.count else {
-            return (orderedAssetIDs.filter(keeps), [])
-        }
+        let pairsBuckets = dayBuckets.count == orderedAssetIDs.count
+        let pairsCoordinates = coordinates.count == orderedAssetIDs.count
         var filteredIDs: [MediaAssetID] = []
         var filteredBuckets: [Date?] = []
+        var filteredCoordinates: [PlaceCoordinate] = []
         filteredIDs.reserveCapacity(orderedAssetIDs.count)
-        filteredBuckets.reserveCapacity(orderedAssetIDs.count)
-        for (id, bucket) in zip(orderedAssetIDs, dayBuckets) where keeps(id) {
-            filteredIDs.append(id)
-            filteredBuckets.append(bucket)
+        if pairsBuckets {
+            filteredBuckets.reserveCapacity(orderedAssetIDs.count)
         }
-        return (filteredIDs, filteredBuckets)
+        if pairsCoordinates {
+            filteredCoordinates.reserveCapacity(orderedAssetIDs.count)
+        }
+        for (index, id) in orderedAssetIDs.enumerated() where keeps(id) {
+            filteredIDs.append(id)
+            if pairsBuckets {
+                filteredBuckets.append(dayBuckets[index])
+            }
+            if pairsCoordinates {
+                filteredCoordinates.append(coordinates[index])
+            }
+        }
+        return (filteredIDs, filteredBuckets, filteredCoordinates)
+    }
+
+    /// The Places map's content for a resolved `.places` scope: the scoped IDs paired
+    /// with their coordinates, and how many items the same libraries and filter hold
+    /// without a location. Nil for every other scope.
+    static func mapState(
+        for descriptor: CatalogQueryDescriptor,
+        scopedAssetIDs: [MediaAssetID],
+        scopedCoordinates: [PlaceCoordinate],
+        filteredFixedAssetCount: Int
+    ) -> CatalogMapState? {
+        guard descriptor.scope == .places, scopedCoordinates.count == scopedAssetIDs.count else {
+            return nil
+        }
+        return CatalogMapState(
+            located: zip(scopedAssetIDs, scopedCoordinates).map { LocatedAsset(id: $0, coordinate: $1) },
+            unlocatedCount: max(0, filteredFixedAssetCount - scopedAssetIDs.count)
+        )
     }
 
     static func title(for sidebarSelection: SidebarSelection, libraries: [CatalogLibraryState]) -> String {
         switch sidebarSelection {
         case .allMedia:
             "All Media"
+        case .places, .place:
+            "Places"
         case let .library(path):
             libraries.first { $0.path == path }?.displayName ?? "Library"
         case let .importBatch(batchID):
@@ -179,6 +223,18 @@ nonisolated enum CatalogWindowPolicy {
                 return .checkingLibraries
             }
             return allAssetCount == 0 ? .noMedia : .noAvailableMedia
+        case .places, .place:
+            // The map spans the fixed libraries too. An empty map with reachable
+            // libraries means no item carries a location — enrichment may still be
+            // finding them — never that there is no media.
+            let fixedLibraries = libraries.filter { $0.kind == .library }
+            if fixedLibraries.contains(where: { $0.availability == .unknown }) {
+                return .checkingLibraries
+            }
+            if allAssetCount > 0, !fixedLibraries.contains(where: \.isAvailable) {
+                return .noAvailableMedia
+            }
+            return .noLocatedMedia
         case let .library(path):
             let library = libraries.first { $0.path == path }
             if library?.kind == .deviceMTP, library?.isEnumerating == true {
@@ -217,6 +273,7 @@ nonisolated enum CatalogWindowPolicy {
                 for: parts.resolvedDescriptor.scope,
                 roots: parts.removableSources
             ),
+            map: parts.map,
             queryGeneration: parts.queryGeneration
         )
     }
