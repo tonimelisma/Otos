@@ -60,18 +60,28 @@ final nonisolated class ImageRenderer: Sendable {
     /// large enough for its crop to reach that size.
     func render(_ url: URL, longEdge: Int?, recipe: EditRecipe = .neutral) async throws -> Rendered {
         let lane = lane
+        let enqueued = ContinuousClock.now
         return try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 let start = ContinuousClock.now
                 let signpost = OtosSignpost.rendering.beginInterval("ImageRender")
                 defer { OtosSignpost.rendering.endInterval("ImageRender", signpost) }
                 do {
-                    let rendered = try Self.renderNow(url, longEdge: longEdge, recipe: recipe)
+                    let source = try StillSource.read(url)
+                    let developStart = ContinuousClock.now
+                    let rendered = try Self.renderNow(source, longEdge: longEdge, recipe: recipe)
+                    // The lane's time splits into reading the original and developing it, so
+                    // a slow render says whether its source or its decoder set the pace;
+                    // `queueWaitMs` is the backlog in front of it on this lane.
                     OtosLog.rendering.noticeOperation("render.still", phase: "finish", fields: [
                         "lane": lane,
                         "decoder": rendered.decoder.rawValue,
                         "width": "\(rendered.image.width)",
                         "height": "\(rendered.image.height)",
+                        "bytes": "\(source.data.count)",
+                        "queueWaitMs": "\(DiagnosticsTiming.milliseconds(from: enqueued, to: start))",
+                        "readMs": "\(DiagnosticsTiming.milliseconds(source.readDuration))",
+                        "developMs": "\(DiagnosticsTiming.milliseconds(since: developStart))",
                         "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
                         "path": url.path(percentEncoded: false),
                     ])
@@ -88,15 +98,31 @@ final nonisolated class ImageRenderer: Sendable {
         }
     }
 
+    /// A still's original, read whole in one timed read before anything decodes it. The
+    /// decoders are handed the bytes rather than the file, so every byte a render needs is
+    /// read here and the time a render spends waiting on its source is measured apart from
+    /// the time it spends developing (`render.still` `readMs` / `developMs`).
+    struct StillSource {
+        let url: URL
+        let data: Data
+        let readDuration: Duration
+
+        static func read(_ url: URL) throws -> StillSource {
+            let start = ContinuousClock.now
+            let data = try Data(contentsOf: url)
+            return StillSource(url: url, data: data, readDuration: ContinuousClock.now - start)
+        }
+    }
+
     static func isRAW(_ url: URL) -> Bool {
         UTType(filenameExtension: url.pathExtension)?.conforms(to: .rawImage) == true
     }
 
-    private static func renderNow(_ url: URL, longEdge: Int?, recipe: EditRecipe) throws -> Rendered {
-        if isRAW(url) {
-            return try developRAW(url, longEdge: longEdge, recipe: recipe)
+    private static func renderNow(_ source: StillSource, longEdge: Int?, recipe: EditRecipe) throws -> Rendered {
+        if isRAW(source.url) {
+            return try developRAW(source, longEdge: longEdge, recipe: recipe)
         }
-        let decoded = try decodeImage(url, outputLongEdge: longEdge, recipe: recipe)
+        let decoded = try decodeImage(source, outputLongEdge: longEdge, recipe: recipe)
         guard !recipe.isNeutral else {
             return decoded
         }
@@ -135,11 +161,12 @@ final nonisolated class ImageRenderer: Sendable {
     /// Opens a RAW for development with the newest decoder the file supports, scaled for
     /// an edited long edge of at most `outputLongEdge`.
     static func openRAW(
-        _ url: URL,
+        _ source: StillSource,
         outputLongEdge: Int?,
         recipe: EditRecipe
     ) throws -> OpenedRAW {
-        guard let filter = CIRAWFilter(imageURL: url) else {
+        let hint = UTType(filenameExtension: source.url.pathExtension)?.identifier
+        guard let filter = CIRAWFilter(imageData: source.data, identifierHint: hint) else {
             throw RenderError.unreadable
         }
         let sensor = filter.nativeSize
@@ -324,17 +351,17 @@ final nonisolated class ImageRenderer: Sendable {
         image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
     }
 
-    private static func developRAW(_ url: URL, longEdge: Int?, recipe: EditRecipe) throws -> Rendered {
-        let opened = try openRAW(url, outputLongEdge: longEdge, recipe: recipe)
+    private static func developRAW(_ source: StillSource, longEdge: Int?, recipe: EditRecipe) throws -> Rendered {
+        let opened = try openRAW(source, outputLongEdge: longEdge, recipe: recipe)
         let image = try applyingEffects(recipe, applyingGeometry(recipe, developed(opened.filter, recipe: recipe)))
         return try Rendered(image: bitmap(image), decoder: opened.decoder, nativePixelSize: opened.nativeSize)
     }
 
     /// Decodes a still that is not a RAW, oriented, large enough for the recipe's edited
     /// long edge to reach `outputLongEdge` (the whole original when nil).
-    static func decodeImage(_ url: URL, outputLongEdge: Int?, recipe: EditRecipe) throws -> Rendered {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary)
-        else {
+    static func decodeImage(_ still: StillSource, outputLongEdge: Int?, recipe: EditRecipe) throws -> Rendered {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(still.data as CFData, sourceOptions) else {
             throw RenderError.unreadable
         }
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
