@@ -245,6 +245,38 @@ nonisolated enum CatalogQueryGateway {
         return details
     }
 
+    /// The motion movie of each still in `stillPaths` that is a Live Photo (ADR 0041), with
+    /// its cataloged size. A still that pairs nothing is absent from the result.
+    static func fetchLivePhotoMotions(
+        libraryRootID: Int64,
+        stillPaths: [MediaRelativePath],
+        db: Database
+    ) throws -> [MediaRelativePath: LivePhotoMotion] {
+        guard !stillPaths.isEmpty else { return [:] }
+        var argumentValues: [any DatabaseValueConvertible] = [libraryRootID]
+        argumentValues.append(contentsOf: stillPaths.map(\.rawValue))
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+            SELECT still.relative_path AS still_path, motion.relative_path AS motion_path,
+                motion.byte_size AS motion_size
+            FROM media_asset AS still
+            \(LivePhotoSQL.motionJoin(stills: "still", motion: "motion"))
+            WHERE still.library_root_id = ?
+                AND still.relative_path IN (\(sqlPlaceholders(count: stillPaths.count)))
+            """,
+            arguments: StatementArguments(argumentValues)
+        )
+        var motions: [MediaRelativePath: LivePhotoMotion] = [:]
+        for row in rows {
+            motions[MediaRelativePath(rawValue: row["still_path"])] = LivePhotoMotion(
+                relativePath: MediaRelativePath(rawValue: row["motion_path"]),
+                byteSize: row["motion_size"]
+            )
+        }
+        return motions
+    }
+
     static func fetchImportBatches(db: Database) throws -> [ImportBatchSummary] {
         try Row.fetchAll(
             db,
@@ -253,6 +285,7 @@ nonisolated enum CatalogQueryGateway {
             FROM media_asset
             WHERE import_batch_unix_ms IS NOT NULL
               AND pending_trash_batch_unix_ms IS NULL
+              AND NOT \(LivePhotoSQL.isPairedMotion("media_asset"))
             GROUP BY import_batch_unix_ms
             ORDER BY import_batch_unix_ms DESC
             """
@@ -343,6 +376,60 @@ nonisolated enum CatalogQueryGateway {
     }
 }
 
+/// The Live Photo pair rule (ADR 0041), the one place it is written. A still and a movie
+/// are one Live Photo when they share a root, a folder and Apple's content identifier, and
+/// are the only still and the only movie there that do. Any other count pairs nothing.
+///
+/// The rule is evaluated where it is used, never stored: it reads only facts each row
+/// already holds, so a rename, move, deletion, enrichment or refresh can never leave it
+/// stale. `idx_media_asset_content_identifier` makes each test one indexed lookup, and only
+/// a movie with an identifier reaches it.
+nonisolated enum LivePhotoSQL {
+    /// True for a movie that a Live Photo's still stands for. `row` names the table or
+    /// alias the predicate tests; an unaliased scoped query passes `media_asset`.
+    static func isPairedMotion(_ row: String) -> String {
+        """
+        (\(row).best_kind = 'video' AND \(row).content_identifier IS NOT NULL
+            AND (SELECT COUNT(*) \(group(of: row)) AND member.best_kind = 'video') = 1
+            AND (SELECT COUNT(*) \(group(of: row)) AND member.best_kind != 'video') = 1)
+        """
+    }
+
+    /// Joins each still in `stills` to its Live Photo's movie: `motion` is a paired movie of
+    /// the still's group, and the rule's single-still count makes that still `stills`.
+    static func motionJoin(stills: String, motion: String) -> String {
+        """
+        JOIN media_asset AS \(motion)
+            ON \(motion).library_root_id = \(stills).library_root_id
+            AND \(motion).content_identifier = \(stills).content_identifier
+            AND \(motion).parent_path = \(stills).parent_path
+            AND \(stills).best_kind != 'video'
+            AND \(isPairedMotion(motion))
+        """
+    }
+
+    /// The relative path of the still whose Live Photo `row` is the movie of, or NULL.
+    static func stillPath(ofMotion row: String) -> String {
+        """
+        (SELECT still.relative_path FROM media_asset AS still
+            WHERE \(isPairedMotion(row))
+            AND still.library_root_id = \(row).library_root_id
+            AND still.content_identifier = \(row).content_identifier
+            AND still.parent_path = \(row).parent_path
+            AND still.best_kind != 'video')
+        """
+    }
+
+    private static func group(of row: String) -> String {
+        """
+        FROM media_asset AS member
+            WHERE member.library_root_id = \(row).library_root_id
+            AND member.content_identifier = \(row).content_identifier
+            AND member.parent_path = \(row).parent_path
+        """
+    }
+}
+
 private nonisolated func orderPlan(
     for sort: MediaSortOrder,
     rootLocal: Bool
@@ -410,9 +497,14 @@ private nonisolated func scopeClause(
         rootPredicate = "media_asset.library_root_id IN (\(sqlPlaceholders(count: scope.rootIDs.count)))"
         arguments.append(contentsOf: scope.rootIDs)
     }
-    // Items waiting to move to the Trash are hidden from every user-facing media
-    // query; this scope clause is the one choke point those queries share.
-    var predicate = "\(rootPredicate)\n  AND media_asset.pending_trash_batch_unix_ms IS NULL"
+    // Items waiting to move to the Trash, and the movie of a Live Photo — a member of its
+    // still's item (ADR 0041) — are hidden from every user-facing media query; this scope
+    // clause is the one choke point those queries share.
+    var predicate = """
+    \(rootPredicate)
+      AND media_asset.pending_trash_batch_unix_ms IS NULL
+      AND NOT \(LivePhotoSQL.isPairedMotion("media_asset"))
+    """
     if let importBatchUnixMs = scope.importBatchUnixMs {
         arguments.append(importBatchUnixMs)
         predicate += "\n  AND media_asset.import_batch_unix_ms = ?"

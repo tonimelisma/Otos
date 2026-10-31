@@ -528,6 +528,7 @@ nonisolated struct MediaEnricher {
             durationSeconds: result.video?.durationSeconds,
             frameRate: result.video?.frameRate,
             videoCodec: result.video?.codec?.identifier,
+            contentIdentifier: result.contentIdentifier,
             extractionRevision: MediaMetadataReader.extractionRevision(for: result.format.family)
         )
     }

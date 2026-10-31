@@ -26,7 +26,8 @@ nonisolated struct CaptureWallComponents: Equatable, Sendable {
 /// (ARC-050), so the two can never name one file differently.
 nonisolated enum ImportNaming {
     /// Files that name together: one folder, one stem compared case-insensitively — a
-    /// RAW and its JPEG, say. They share one name date and one collision suffix.
+    /// RAW and its JPEG, say — and a Live Photo's movie with its still, whatever its stem
+    /// (ADR 0041). They share one name date and one collision suffix.
     struct Bundle: Equatable, Sendable {
         let members: [PlanningFileFacts]
         let stem: String
@@ -39,8 +40,9 @@ nonisolated enum ImportNaming {
 
         init(members: [PlanningFileFacts]) {
             self.members = members
-            stem = members.first.map { MediaCompanionPairing.stem(of: $0.relativePath) } ?? ""
-            directoryKey = members.first.map { MediaCompanionPairing.directoryKey(of: $0.relativePath) } ?? ""
+            let namedPath = members.first.map { $0.livePhotoStillPath ?? $0.relativePath }
+            stem = namedPath.map(MediaCompanionPairing.stem(of:)) ?? ""
+            directoryKey = namedPath.map(MediaCompanionPairing.directoryKey(of:)) ?? ""
             wallCompact = members.compactMap(\.captureWallCompact).max()
             fallbackModifiedAt = members.compactMap(\.contentModifiedAt).min()
         }
@@ -78,9 +80,10 @@ nonisolated enum ImportNaming {
         var groups: [String: [PlanningFileFacts]] = [:]
         var order: [String] = []
         for item in sorted {
-            let key = MediaCompanionPairing.directoryKey(of: item.relativePath)
+            let namedPath = item.livePhotoStillPath ?? item.relativePath
+            let key = MediaCompanionPairing.directoryKey(of: namedPath)
                 + "\u{1}"
-                + MediaCompanionPairing.stem(of: item.relativePath)
+                + MediaCompanionPairing.stem(of: namedPath)
             if groups[key] == nil {
                 order.append(key)
             }

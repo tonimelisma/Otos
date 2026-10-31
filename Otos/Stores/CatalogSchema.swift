@@ -187,6 +187,31 @@ nonisolated enum CatalogSchema {
         }
     }
 
+    /// MediaMetadata 0.8.2 (ADR 0041): Apple's content identifier, which a Live Photo's
+    /// still and motion movie share, stored as the library reports it. `parent_path` is the
+    /// folder part of `relative_path` (`a/b/` for `a/b/c.heic`, empty at the root), so the
+    /// pair rule (`LivePhotoSQL`) can ask for one folder through one index.
+    ///
+    /// Records read before 0.8.2 lack the field, which raises no extraction revision. Their
+    /// families' revisions are cleared, as v7 did, so `MetadataRefresher` re-reads them from
+    /// local bytes; a cloud-only original is not downloaded for it (ADR 0039).
+    static let contentIdentifierMigrationIdentifier = "v9_media_asset_content_identifier"
+
+    static let contentIdentifierStatements: [String] = [
+        "ALTER TABLE media_asset ADD COLUMN content_identifier TEXT",
+        """
+        ALTER TABLE media_asset ADD COLUMN parent_path TEXT GENERATED ALWAYS AS (
+            rtrim(relative_path, replace(relative_path, '/', ''))
+        ) VIRTUAL
+        """,
+        """
+        CREATE INDEX idx_media_asset_content_identifier
+        ON media_asset(library_root_id, content_identifier, parent_path)
+        WHERE content_identifier IS NOT NULL
+        """,
+        "UPDATE asset_metadata SET extraction_revision = NULL WHERE family IN ('heif', 'jpeg', 'isoBMFF')",
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (

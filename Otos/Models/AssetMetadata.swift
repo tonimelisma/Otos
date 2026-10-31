@@ -29,6 +29,8 @@ nonisolated struct AssetMetadata: Codable, Equatable {
     var durationSeconds: Double?
     var frameRate: Double?
     var videoCodec: String?
+    /// Apple's content identifier, shared by a Live Photo's still and motion movie (ADR 0041).
+    var contentIdentifier: String?
     /// `MediaMetadataReader.extractionRevision` of the reader that produced this record;
     /// nil for a record read before revisions were stored. A lower revision is a record
     /// the current reader may read differently (ADR 0039).
@@ -50,6 +52,7 @@ nonisolated struct AssetMetadata: Codable, Equatable {
         durationSeconds: Double? = nil,
         frameRate: Double? = nil,
         videoCodec: String? = nil,
+        contentIdentifier: String? = nil,
         extractionRevision: Int? = nil
     ) {
         self.family = family
@@ -67,6 +70,7 @@ nonisolated struct AssetMetadata: Codable, Equatable {
         self.durationSeconds = durationSeconds
         self.frameRate = frameRate
         self.videoCodec = videoCodec
+        self.contentIdentifier = contentIdentifier
         self.extractionRevision = extractionRevision
     }
 }

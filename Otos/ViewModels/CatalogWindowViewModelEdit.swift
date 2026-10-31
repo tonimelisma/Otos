@@ -126,8 +126,10 @@ extension CatalogWindowViewModel {
         OtosLog.ui.noticeOperation("edit.trim", phase: "requested", fields: ["id": id.relativePath.rawValue])
     }
 
+    /// A video the loupe shows — not a Live Photo's motion, which plays under its still.
     var canTrimVideo: Bool {
-        viewMode == .loupe && loupeVideoState != nil && loupeVideoState?.id == focusedAssetID
+        viewMode == .loupe && focusedAssetKind == .video && loupeVideoState != nil
+            && loupeVideoState?.id == focusedAssetID
     }
 
     /// The trim UI closed with Trim: the range it left on the player is saved as one step.

@@ -34,11 +34,13 @@ extension CatalogWindowViewModel {
     func setFocus(_ id: MediaAssetID?) {
         focusedAssetID = id
         focusedAssetKind = nil
+        focusedLivePhotoMotion = nil
         resetLoupeZoomForFocusChange()
         refreshPanePreviews()
         focusedKindTask?.cancel()
         guard let id else { return }
         let reader = tileDetailReader
+        let store = catalogStore
         focusedKindTask = Task { [weak self] in
             let detail: MediaTileDetail?
             do {
@@ -56,6 +58,20 @@ extension CatalogWindowViewModel {
             if focusedAssetKind == .video, viewMode == .loupe {
                 prepareLoupeVideo(id: id, startPlaying: false)
             }
+            guard let kind = focusedAssetKind, kind != .video else { return }
+            let motion: MediaAssetID?
+            do {
+                motion = try await store.livePhotoMotion(of: id)
+            } catch {
+                // Not known to be a Live Photo, so nothing offers to play it; the next
+                // focus change reads again.
+                OtosLog.ui.errorOperation("loupe.livePhoto", phase: "readFailed", fields: [
+                    "id": id.relativePath.rawValue, "error": String(describing: error),
+                ])
+                return
+            }
+            guard !Task.isCancelled, focusedAssetID == id else { return }
+            focusedLivePhotoMotion = motion
         }
     }
 
@@ -484,6 +500,72 @@ extension CatalogWindowViewModel {
     /// Explicit play intent from the poster's play glyph — same path, playing.
     func playLoupeVideo(id: MediaAssetID) {
         prepareLoupeVideo(id: id, startPlaying: true)
+    }
+
+    /// Whether the loupe can play the focused Live Photo's motion now: it shows one, and
+    /// is not already playing it.
+    var canPlayLivePhoto: Bool {
+        viewMode == .loupe && focusedLivePhotoMotion != nil && loupeVideoState == nil
+    }
+
+    /// Plays the focused Live Photo's motion in place of its still, once, then shows the
+    /// still again (ADR 0041). The movie is materialized at interactive priority like any
+    /// video the loupe opens. Its player stands in the pane under the still's identity, so
+    /// the existing focus rule tears it down when focus or mode moves; the still is the
+    /// item, and nothing (trim, edit) can address the movie through it.
+    func playLivePhoto() {
+        guard canPlayLivePhoto, let still = focusedAssetID, let motion = focusedLivePhotoMotion,
+              !isEjecting(still.libraryRootPath)
+        else { return }
+        let detailReader = tileDetailReader
+        let loader = videoLoader
+        loupeVideoPrepareTask?.cancel()
+        loupeVideoPrepareTask = Task { @MainActor [weak self] in
+            let detail: MediaTileDetail?
+            do {
+                detail = try await detailReader.detail(for: motion)
+            } catch {
+                OtosLog.ui.errorOperation("loupe.livePhoto", phase: "motionReadFailed", fields: [
+                    "id": still.relativePath.rawValue, "error": String(describing: error),
+                ])
+                return
+            }
+            guard let prepared = await loader.preparePlayer(id: motion, detail: detail) else {
+                OtosLog.ui.noticeOperation("loupe.livePhoto", phase: "unavailable", fields: [
+                    "id": still.relativePath.rawValue,
+                ])
+                return
+            }
+            let player = prepared.player
+            // The movie reports its own end; the still comes back then. Observed before it
+            // plays, so a short movie cannot end unseen. A focus or mode change meanwhile
+            // tears the player down and cancels this task, which ends the wait.
+            let ended = NotificationCenter.default.notifications(
+                named: AVPlayerItem.didPlayToEndTimeNotification,
+                object: player.currentItem
+            )
+            do {
+                guard let self, !Task.isCancelled, focusedAssetID == still, viewMode == .loupe else {
+                    loader.cleanup(prepared)
+                    return
+                }
+                loupeVideoState = LoupeVideoState(
+                    id: still, player: player, isPlaying: true, displaySize: prepared.displaySize
+                )
+                player.play()
+                OtosLog.ui.noticeOperation("loupe.livePhoto", phase: "play", fields: [
+                    "id": still.relativePath.rawValue,
+                ])
+            }
+            for await _ in ended {
+                break
+            }
+            guard let self, !Task.isCancelled, loupeVideoState?.player === player else { return }
+            OtosLog.ui.noticeOperation("loupe.livePhoto", phase: "ended", fields: [
+                "id": still.relativePath.rawValue,
+            ])
+            clearLoupeVideo()
+        }
     }
 
     /// An eject of `root` is about to unmount it, and a player showing a file there holds
