@@ -27,10 +27,12 @@ import UniformTypeIdentifiers
 /// the volume below `FreeSpaceFloor` is not started and publishes `.diskFloor` once per
 /// pause; declining keeps the items pending until a later pass finds room.
 ///
+/// A moved item's row stays in the catalog, hidden, with the place the Trash put its file
+/// (ADR 0022): everything Otos held for it waits there, so undo, or Finder's Put Back after a
+/// relaunch, shows it again when the file returns to its path.
+///
 /// A failed Store read is not a fact. A pass whose pending-item read fails publishes
-/// nothing — the queue state the user last saw stands — and retries on a timer; a move whose
-/// overlay read fails waits rather than trashing an item whose authored choice undo could
-/// then not restore.
+/// nothing — the queue state the user last saw stands — and retries on a timer.
 ///
 /// A pass works from a snapshot of the pending items taken before its awaits, and the
 /// user can answer a prompt or undo while it runs. Every such answer records the items it
@@ -86,13 +88,11 @@ actor MediaTrashCoordinator {
     /// The Store reads the queue depends on, injectable so a test can make one fail.
     nonisolated struct StoreReads: Sendable {
         var pendingItems: @Sendable () async throws -> [PendingTrashItem]
-        var trashedOverlay: @Sendable ([MediaAssetID]) async throws -> [MediaAssetID: TrashedOverlay]
         var trashItems: @Sendable ([MediaAssetID]) async throws -> [MediaTrashItem]
 
         static func live(_ store: CatalogStore) -> StoreReads {
             StoreReads(
                 pendingItems: { try await store.pendingTrashItems() },
-                trashedOverlay: { try await store.trashedOverlay(for: $0) },
                 trashItems: { try await store.mediaTrashItems(for: $0) }
             )
         }
@@ -367,9 +367,27 @@ actor MediaTrashCoordinator {
         return restored
     }
 
+    /// Withdraws every item still waiting to move — the trash bar's Cancel. The items come
+    /// from the Store's pending rows, so a request made in an earlier run is withdrawn the
+    /// same way. A failed read withdraws nothing and is logged (ADR 0032 rule 4).
+    func withdrawAllPending() async -> [MediaAssetID] {
+        let ids: [MediaAssetID]
+        do {
+            ids = try await reads.pendingItems().map(\.item.id)
+        } catch {
+            logReadFailure(error, read: "withdrawAllPending")
+            return []
+        }
+        let withdrawn = await withdraw(ids)
+        OtosLog.catalog.noticeOperation("mediaTrash.queue", phase: "cancelled", fields: [
+            "requested": "\(ids.count)", "withdrawn": "\(withdrawn.count)",
+        ])
+        return withdrawn
+    }
+
     /// Undoes one Move to Trash: items still pending reappear without any filesystem
     /// call; items already in the Trash move back to their original paths (never over
-    /// an existing file) and are re-cataloged with their authored overlay.
+    /// an existing file) and show again with everything their rows kept.
     func undo(batch: MediaTrashBatchID, ids: [MediaAssetID]) async -> UndoResult {
         guard !isShuttingDown else {
             return UndoResult(failed: ids)
@@ -643,21 +661,6 @@ actor MediaTrashCoordinator {
             _ = await store.releaseNamespaceMutationLease(lease)
             return
         }
-        // The overlay is what undo puts back. Moving the item without it would lose the
-        // user's authored choice for good, so an unreadable overlay defers the move.
-        let overlay: TrashedOverlay?
-        do {
-            overlay = try await reads.trashedOverlay([item.id])[item.id]
-        } catch {
-            logReadFailure(error, read: "trashedOverlay")
-            _ = await store.releaseNamespaceMutationLease(lease)
-            scheduleWake(after: retryPolicy.delays.first ?? .seconds(15))
-            return
-        }
-        guard !revoked.contains(item.id) else {
-            _ = await store.releaseNamespaceMutationLease(lease)
-            return
-        }
         var results: [MediaTrashPathResult] = []
         var moved: [TrashedMember] = []
         var evicted = false
@@ -677,7 +680,7 @@ actor MediaTrashCoordinator {
             }
             do {
                 let trashURL = try files.trash(memberURL)
-                results.append(result(item, member, succeeded: true))
+                results.append(result(item, member, succeeded: true, trashURL: trashURL))
                 moved.append(TrashedMember(member: member, trashURL: trashURL))
             } catch {
                 results.append(result(item, member, succeeded: false))
@@ -686,10 +689,10 @@ actor MediaTrashCoordinator {
         }
         // The catalog follows the moves while the lease that covers them is still held,
         // so no scan or reconcile of this root can run between the two.
-        await store.reconcileTrashedPaths(results.filter(\.succeeded))
+        await store.reconcileTrashedPaths(results.filter(\.succeeded), batch: batch)
         _ = await store.releaseNamespaceMutationLease(lease)
         await settleMove(
-            TrashedItem(item: item, members: moved, overlay: overlay),
+            TrashedItem(item: item, members: moved),
             batch: batch,
             evicted: evicted,
             allSucceeded: !results.contains { !$0.succeeded }
@@ -742,7 +745,8 @@ actor MediaTrashCoordinator {
                 logFailure(error, operation: "removeItem", member: member)
             }
         }
-        await store.reconcileTrashedPaths(results.filter(\.succeeded))
+        // Deleted, not in the Trash: no location is passed, so the rows leave the catalog.
+        await store.reconcileTrashedPaths(results.filter(\.succeeded), batch: MediaTrashBatchID())
         _ = await store.releaseNamespaceMutationLease(lease)
         forget([item.id])
         if results.contains(where: { !$0.succeeded }) {
@@ -756,14 +760,16 @@ actor MediaTrashCoordinator {
     private func result(
         _ item: MediaTrashItem,
         _ member: MediaTrashMember,
-        succeeded: Bool
+        succeeded: Bool,
+        trashURL: URL? = nil
     ) -> MediaTrashPathResult {
         MediaTrashPathResult(
             id: item.id,
             rootPath: item.root.path,
             relativePath: member.relativePath,
             role: member.role,
-            succeeded: succeeded
+            succeeded: succeeded,
+            trashURL: trashURL
         )
     }
 
@@ -872,10 +878,8 @@ actor MediaTrashCoordinator {
             _ = await store.releaseNamespaceMutationLease(lease)
             return false
         }
-        // Re-cataloged, choice included, under the same lease that put the files back.
-        let restored = await store.restoreTrashedItem(
-            TrashedItem(item: item, members: returned, overlay: trashedItem.overlay)
-        )
+        // Shown again under the same lease that put the files back; the row kept everything.
+        let restored = await store.restoreTrashedItem(TrashedItem(item: item, members: returned))
         _ = await store.releaseNamespaceMutationLease(lease)
         if !restored {
             OtosLog.catalog.errorOperation("mediaTrash.undo", phase: "catalogRestoreFailed", fields: [

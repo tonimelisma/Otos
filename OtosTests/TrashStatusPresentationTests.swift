@@ -158,7 +158,7 @@ struct TrashStatusBarRenderingTests {
         for (name, queueState) in Self.states {
             let presentation = try #require(TrashStatusPresentation.map(queueState))
             for scheme in [ColorScheme.light, .dark] {
-                let view = TrashStatusBar(presentation: presentation)
+                let view = TrashStatusBar(presentation: presentation, cancel: {})
                     .environment(\.colorScheme, scheme)
                     .frame(width: 900)
                 let host = NSHostingView(rootView: view)

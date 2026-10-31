@@ -58,16 +58,9 @@ nonisolated struct MediaTrashPathResult: Equatable, Sendable {
     let relativePath: MediaRelativePath
     let role: MediaTrashMemberRole
     let succeeded: Bool
-}
-
-/// The authored overlay a trashed item carried, snapshotted just before its row left
-/// the catalog so undo can restore it with the file. Rebuildable overlay (thumbnails,
-/// metadata) is not kept: enrichment rebuilds it.
-nonisolated struct TrashedOverlay: Equatable, Sendable {
-    let mediaChoice: MediaChoice
-    let importBatch: ImportBatchID?
-    /// The photo's edit, put back with it (ADR 0036); nil when it was never edited.
-    var editRecipe: StoredEditRecipe?
+    /// Where the system Trash put the file; `nil` when it failed, was deleted immediately,
+    /// or the Trash reported no location.
+    var trashURL: URL?
 }
 
 /// Where one member of a trashed item went, as `trashItem` reported it.
@@ -81,5 +74,4 @@ nonisolated struct TrashedMember: Equatable, Sendable {
 nonisolated struct TrashedItem: Equatable, Sendable {
     let item: MediaTrashItem
     let members: [TrashedMember]
-    let overlay: TrashedOverlay?
 }

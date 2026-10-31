@@ -37,9 +37,9 @@ struct CatalogWindowViewModelTrashTests {
             model.moveTargetedMediaToTrash()
             let path = fixture.path(fixture.ids[0])
             try await waitUntil { !FileManager.default.fileExists(atPath: path) }
-            try await waitUntil {
-                try await fixture.store.mediaAssets(for: fixture.ids).isEmpty
-            }
+            // Moved: no longer waiting for the queue. Its row is kept, hidden, while the file
+            // is in the Trash (ADR 0022).
+            try await waitUntil { try await fixture.store.pendingTrashItems().isEmpty }
             // The queue can move the file before the main actor registers the undo, and
             // undo with nothing registered does nothing; wait for the registration itself.
             try await waitUntil { model.undoMenuState.canUndo }
@@ -47,7 +47,7 @@ struct CatalogWindowViewModelTrashTests {
             model.undoLastChange()
             try await waitUntil { FileManager.default.fileExists(atPath: path) }
             try await waitUntil {
-                try await fixture.store.mediaAssets(for: fixture.ids).count == 1
+                try await catalogStoreTestState(fixture.store).testAssets.map(\.id) == fixture.ids
             }
             #expect(model.undoMenuState.redoTitle == "Redo Move to Trash")
             #expect(model.trashAlertMessage == nil)

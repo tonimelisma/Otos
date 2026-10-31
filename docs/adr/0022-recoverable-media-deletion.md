@@ -49,10 +49,17 @@ placeholder with `removeItem` succeeds immediately without a download (probed
 behavior, and the prompt promises nothing about it. Every per-path failure logs
 its reason with the error domain/code or the materialization outcome.
 
-Each path returns an independent success result. Store reconciliation removes
-only catalog rows for paths the filesystem operation reports as moved. A
-companion failure does not roll back a preceding success; a primary failure
-does not claim that the item fully moved. The next complete reachable scan is
+Each path returns an independent success result. A media row whose file
+`trashItem` moved is **kept**, still hidden under its command, with the file path
+the Trash reported (`media_asset.trash_path`): an item in the system Trash is not
+proven deleted (ADR 0008), so everything Otos holds for it — curation, edit, import
+batch, thumbnail and preview — stays on the row. A scan purges such a row only
+when the Trash no longer holds that file (`lstat` reports `ENOENT`; any other
+answer keeps it for the next scan). A file seen again at the row's own path —
+Finder's Put Back, in this run or after a relaunch, or Otos's own undo — shows the
+row again, because path is identity. A companion row, and a file deleted
+immediately, leave the catalog at once. A companion failure does not roll back a
+preceding success; a primary failure does not claim that the item fully moved. The next complete reachable scan is
 the crash-recovery path and remains the source of truth; no speculative Trash
 journal or rollback is added.
 
@@ -75,21 +82,25 @@ against a root currently being trashed or reorganized.
 | Change Disliked into deletion or hiding | Curation state and filesystem mutation answer different user questions. |
 | Rollback after a partial move | System Trash has already changed filesystem truth; pretending rollback succeeded would be false. |
 | Durable deletion journal | A complete next scan already reconciles the exact path truth; add durable state only after fault-injection proves it insufficient. |
+| Purge the row once the file is in the Trash, snapshotting overlay for undo | Loses the overlay for good after a relaunch, though the file is recoverable; the item is not proven deleted. |
+| A separate trashed-items table re-matched on Put Back | A second record of the same asset; the kept row already is that record, and Put Back returns the file to the row's own path. |
+| Persist the undo stack across launches | Not a macOS idiom; Finder's Put Back is the system's way back, and the kept row makes it complete. |
 
 ## Consequences
 
 Move to Trash is registered on the window's one undo stack (APP-039). The queue
-records, per command, the location `trashItem` reported for each member and the
-item's authored overlay (curation choice, import batch) snapshotted before its row
-left the catalog. Undo runs inside the queue's drain task, between passes, so it
-never interleaves with a half-finished move: items still pending are withdrawn with
-no filesystem call; trashed items are moved back primary first under the root
-lease, never over an existing file, then re-cataloged from the filesystem and given
-back their overlay. Redo hides the items again under a new command. Undo records
-are in memory, like every undo entry; after relaunch Finder's Put Back still
-restores the file, without its Otos overlay. Finder's own Put Back is not the undo
-because it is not reachable from Otos's ⌘Z and the catalog had already purged the
-overlay.
+records, per command, the location `trashItem` reported for each member. Undo runs
+inside the queue's drain task, between passes, so it never interleaves with a
+half-finished move: items still pending are withdrawn with no filesystem call;
+trashed items are moved back primary first under the root lease, never over an
+existing file, and reconciled from the filesystem, which shows their kept rows
+again. Redo hides the items again under a new command. Undo records are in memory,
+like every undo entry; after a relaunch, Finder's Put Back is the way back, and it
+returns the item with its overlay because the row was kept.
+
+The trash status bar's **Cancel** withdraws every item still waiting to move, read
+from the pending rows themselves, so a request left from an earlier run can be taken
+back when no undo entry remains (DES-089). Items already in the Trash stay there.
 
 - Move to Trash has no confirmation or success alert: it is undoable (HIG: no alerts for common, undoable actions).
 - Partial failures retain truthful catalog rows and selected failed identities and expose Show in Finder/Dismiss with bounded counts and no raw paths.

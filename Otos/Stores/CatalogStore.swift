@@ -1078,12 +1078,15 @@ extension CatalogStore {
         let changed = try await dbWriter.write { db in
             var changed: [MediaAssetID] = []
             for (id, rootID) in eligible {
-                // Mark touches only visible rows; clear touches only pending ones.
+                // Mark touches only visible rows; clear touches only pending ones whose file
+                // has not moved yet — a row whose file is in the Trash shows again only when
+                // the file comes back to its path.
                 try db.execute(
                     sql: """
                     UPDATE media_asset SET pending_trash_batch_unix_ms = ?
                     WHERE library_root_id = ? AND relative_path = ?
                       AND (pending_trash_batch_unix_ms IS NULL) = ?
+                      AND trash_path IS NULL
                     """,
                     arguments: [batch?.unixMilliseconds, rootID, id.relativePath.rawValue, batch != nil]
                 )
@@ -1108,43 +1111,12 @@ extension CatalogStore {
         return changed
     }
 
-    /// The authored overlay of each requested row, read just before the queue moves it
-    /// to the Trash so undo can put it back.
-    func trashedOverlay(for ids: [MediaAssetID]) async throws -> [MediaAssetID: TrashedOverlay] {
-        let rootIDs = roots.rowIDSnapshot()
-        let dbWriter = try database()
-        return try await dbWriter.read { db in
-            var overlays: [MediaAssetID: TrashedOverlay] = [:]
-            for id in ids {
-                guard let rootID = rootIDs[id.libraryRootPath],
-                      let row = try Row.fetchOne(
-                          db,
-                          sql: """
-                          SELECT media_choice, import_batch_unix_ms, edit_recipe_json, edit_revision
-                          FROM media_asset
-                          WHERE library_root_id = ? AND relative_path = ?
-                          """,
-                          arguments: [rootID, id.relativePath.rawValue]
-                      )
-                else {
-                    continue
-                }
-                let batchMs: Int64? = row["import_batch_unix_ms"]
-                overlays[id] = try TrashedOverlay(
-                    mediaChoice: MediaChoice(rawValue: row["media_choice"]) ?? .default,
-                    importBatch: batchMs.map { ImportBatchID(unixMilliseconds: $0) },
-                    editRecipe: Self.storedEditRecipe(json: row["edit_recipe_json"], revision: row["edit_revision"])
-                )
-            }
-            return overlays
-        }
-    }
-
-    /// Re-catalogs an item undo moved back from the Trash and re-applies its authored
-    /// overlay. The paths are reconciled from the filesystem exactly as a file event
-    /// would (the file is the truth); only then is the overlay written onto the row.
-    /// Returns whether the item is back: its row exists and, when it had an overlay,
-    /// the overlay is on that row. A failed read or write is logged and answers false.
+    /// Re-catalogs an item undo moved back from the Trash. Its row never left the catalog
+    /// (ADR 0022): it was kept, hidden, while the file sat in the Trash. Reconciling the
+    /// returned paths from the filesystem — exactly as a file event would — sees the file at
+    /// the row's own path, which shows the row again with everything Otos held for it.
+    /// Returns whether the item is back: its row exists and is no longer hidden. A failed
+    /// read is logged and answers false.
     func restoreTrashedItem(_ trashed: TrashedItem) async -> Bool {
         guard let rootRowID = roots[trashed.item.root.path]?.rowID else {
             return false
@@ -1165,36 +1137,21 @@ extension CatalogStore {
         let primaryPath = trashed.item.id.relativePath.rawValue
         let isBack: Bool
         do {
-            isBack = try await database().write { db in
-                if let overlay = trashed.overlay {
-                    // The edit comes back with the photo. Its products are not known to
-                    // carry it, so enrichment renders them again from the recipe (ADR 0036).
-                    let recipeJSON = try overlay.editRecipe.map { try Self.editRecipeJSON($0.recipe) }
-                    try db.execute(
-                        sql: """
-                        UPDATE media_asset SET media_choice = ?, import_batch_unix_ms = ?,
-                            edit_recipe_json = ?, edit_revision = ?, rendered_revision = 0
-                        WHERE library_root_id = ? AND relative_path = ?
-                        """,
-                        arguments: [
-                            overlay.mediaChoice.rawValue,
-                            overlay.importBatch?.unixMilliseconds,
-                            recipeJSON,
-                            overlay.editRecipe?.revision ?? 0,
-                            rootRowID,
-                            primaryPath,
-                        ]
-                    )
-                    return db.changesCount == 1
-                }
-                return try Bool.fetchOne(
+            isBack = try await database().read { db in
+                try Bool.fetchOne(
                     db,
-                    sql: "SELECT EXISTS(SELECT 1 FROM media_asset WHERE library_root_id = ? AND relative_path = ?)",
+                    sql: """
+                    SELECT EXISTS(
+                        SELECT 1 FROM media_asset
+                        WHERE library_root_id = ? AND relative_path = ?
+                          AND pending_trash_batch_unix_ms IS NULL AND trash_path IS NULL
+                    )
+                    """,
                     arguments: [rootRowID, primaryPath]
                 ) ?? false
             }
         } catch {
-            OtosLog.catalog.errorOperation("mediaTrash.undo", phase: "restoreWriteFailed", fields: [
+            OtosLog.catalog.errorOperation("mediaTrash.undo", phase: "restoreReadFailed", fields: [
                 "path": primaryPath,
                 "error": String(describing: error),
             ])
@@ -1206,7 +1163,6 @@ extension CatalogStore {
         OtosLog.catalog.noticeOperation("mediaTrash.undo", phase: "restored", fields: [
             "path": primaryPath,
             "rowBack": "\(isBack)",
-            "overlay": "\(trashed.overlay != nil)",
         ])
         return isBack
     }
@@ -1226,7 +1182,7 @@ extension CatalogStore {
                 sql: """
                 SELECT library_root_id, relative_path, pending_trash_batch_unix_ms
                 FROM media_asset INDEXED BY idx_media_asset_pending_trash
-                WHERE pending_trash_batch_unix_ms IS NOT NULL
+                WHERE pending_trash_batch_unix_ms IS NOT NULL AND trash_path IS NULL
                 ORDER BY pending_trash_batch_unix_ms, library_root_id, relative_path
                 """
             ).map { row in
@@ -3992,10 +3948,12 @@ private extension CatalogStore {
         let observedKeys = Set(observedPaths.map {
             FilesystemNamespaceSemantics.nameKey(relativePath: $0, capabilities: scanCapabilities)
         })
+        // A row whose file is in the system Trash is missing from its path but not proven
+        // deleted: it stays until the Trash no longer holds the file (ADR 0022).
         let missingRows = existingRows.filter {
             !observedKeys.contains(
                 FilesystemNamespaceSemantics.nameKey(relativePath: $0.relativePath, capabilities: scanCapabilities)
-            )
+            ) && !Self.isHeldInTrash(trashPath: $0.trashPath)
         }
         guard !missingRows.isEmpty else {
             return 0
@@ -4968,6 +4926,11 @@ private extension CatalogStore {
             guard isCurrent(witness) else {
                 return .deferred
             }
+            // Its file is in the system Trash, not proven deleted: the row stays until a
+            // scan finds the Trash no longer holds it.
+            if Self.isHeldInTrash(trashPath: deletionTarget?.trashPath) {
+                return .unchanged
+            }
             let deleted = try await dbQueue.write { db -> Bool in
                 var changed = false
                 if try Self.deleteAssetRow(rootRowID: rootRowID, relativePath: relativePath, db: db) {
@@ -5409,10 +5372,13 @@ extension CatalogStore {
         return current.generation == lease.generation && current.owner == lease.owner
     }
 
-    /// Removes only catalog rows for paths the filesystem executor reports as
-    /// successfully moved to system Trash. Unmoved members remain cataloged for the
-    /// next scan/retry, and overlay—including media choice—is retained with them.
-    func reconcileTrashedPaths(_ paths: [MediaTrashPathResult]) async {
+    /// Follows the paths the trash queue reports as gone from their roots. A media row whose
+    /// file went to the system Trash is kept, hidden under the item's command, with the
+    /// file's place in the Trash: the item is not proven deleted, so its overlay stays
+    /// (ADR 0008, ADR 0022), and a scan purges the row only once that file is gone. A
+    /// companion, or a file deleted immediately (no Trash location), leaves the catalog.
+    /// Unmoved members are not passed in and stay cataloged for the next retry.
+    func reconcileTrashedPaths(_ paths: [MediaTrashPathResult], batch: MediaTrashBatchID) async {
         var changed = false
         for path in paths where path.succeeded {
             guard let rootRowID = roots[path.rootPath]?.rowID else {
@@ -5423,6 +5389,38 @@ extension CatalogStore {
                 scope: .file(path.relativePath),
                 fileAction: .deleteIfMissing
             )
+            if let trashURL = path.trashURL, path.role != .companion {
+                do {
+                    let marked = try await database().write { db in
+                        try db.execute(
+                            sql: """
+                            UPDATE media_asset
+                            SET trash_path = ?, pending_trash_batch_unix_ms = ?, enrichment_claimed = NULL
+                            WHERE library_root_id = ? AND relative_path = ?
+                            """,
+                            arguments: [
+                                trashURL.path(percentEncoded: false),
+                                batch.unixMilliseconds,
+                                rootRowID,
+                                path.relativePath.rawValue,
+                            ]
+                        )
+                        return db.changesCount > 0
+                    }
+                    if marked {
+                        changed = true
+                        continue
+                    }
+                } catch {
+                    OtosLog.catalog.errorOperation("mediaTrash.reconcile", phase: "markFailed", fields: [
+                        "path": path.relativePath.rawValue,
+                        "error": String(describing: error),
+                    ])
+                    // The file is gone from its path; the next scan sees that and keeps or
+                    // purges the row by the same rule, so nothing is left wrong for good.
+                    continue
+                }
+            }
             changed = await deleteCatalogedPath(
                 relativePath: path.relativePath,
                 rootRowID: rootRowID,

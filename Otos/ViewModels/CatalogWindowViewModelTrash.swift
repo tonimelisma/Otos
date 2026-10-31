@@ -32,6 +32,8 @@ nonisolated enum TrashIntent: Sendable {
     case deleteImmediately([MediaAssetID])
     case restore([MediaAssetID])
     case keepWaitingForSpace([MediaAssetID])
+    /// The trash bar's Cancel: every item still waiting to move stays where it is.
+    case cancelPending
 }
 
 extension CatalogWindowViewModel {
@@ -269,6 +271,9 @@ extension CatalogWindowViewModel {
                     await coordinator.restore(ids)
                 case let .keepWaitingForSpace(ids):
                     await coordinator.keepWaitingForSpace(ids)
+                case .cancelPending:
+                    let withdrawn = await coordinator.withdrawAllPending()
+                    self?.selectAssets(withdrawn)
                 }
                 if self == nil {
                     return
@@ -318,6 +323,16 @@ extension CatalogWindowViewModel {
         OtosLog.ui.notice(
             "op=trash.decision phase=ask kind=\(decision.kindName, privacy: .public) count=\(decision.ids.count, privacy: .public)"
         )
+    }
+
+    /// The trash bar's Cancel (DES-089): every item still waiting to move to the Trash
+    /// reappears where it was. Items already in the Trash stay there — ⌘Z or Finder's Put
+    /// Back returns them. Reads the queue's own pending rows, so it works the same after a
+    /// relaunch, when no undo entry remains.
+    func cancelPendingTrash() {
+        OtosLog.ui.notice("op=trash.cancel phase=start")
+        // Command: ordered with undo, redo and prompt answers on the one intent stream.
+        submitTrashIntent(.cancelPending)
     }
 
     /// The user chose Delete in a decision prompt: the items are deleted immediately.

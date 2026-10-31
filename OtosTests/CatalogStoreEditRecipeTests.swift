@@ -135,32 +135,6 @@ struct CatalogStoreEditRecipeTests {
         }
     }
 
-    /// Move to Trash's undo puts the edit back with the photo, and its products are
-    /// rendered again rather than trusted.
-    @Test func trashUndoPutsTheEditBack() async throws {
-        try await withEditableLibrary(fileCount: 1) { library in
-            let id = library.ids[0]
-            _ = try await library.store.setEditRecipe(EditRecipe(shadows: 40), for: id)
-            let overlay = try #require(try await library.store.trashedOverlay(for: [id])[id])
-            #expect(overlay.editRecipe == StoredEditRecipe(recipe: EditRecipe(shadows: 40), revision: 1))
-            _ = try await library.store.setEditRecipe(EditRecipe(shadows: -10), for: id)
-            let item = try #require(try await library.store.mediaTrashItems(for: [id]).first)
-
-            let restored = await library.store.restoreTrashedItem(TrashedItem(
-                item: item,
-                members: item.members.map { TrashedMember(member: $0, trashURL: nil) },
-                overlay: overlay
-            ))
-
-            #expect(restored)
-            #expect(
-                try await library.store.editRecipe(for: id)
-                    == StoredEditRecipe(recipe: EditRecipe(shadows: 40), revision: 1)
-            )
-            #expect(try await library.store.mediaTileDetails(for: [id])[id]?.renderedRevision == 0)
-        }
-    }
-
     /// A recipe written before a control existed decodes that control as neutral.
     @Test func aRecipeMissingAControlDecodesItAsNeutral() throws {
         let stored = try CatalogStore.storedEditRecipe(json: #"{"exposure":0.5}"#, revision: 3)

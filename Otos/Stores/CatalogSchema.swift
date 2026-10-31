@@ -212,6 +212,17 @@ nonisolated enum CatalogSchema {
         "UPDATE asset_metadata SET extraction_revision = NULL WHERE family IN ('heif', 'jpeg', 'isoBMFF')",
     ]
 
+    /// The file path where the system Trash put a moved item's file (ADR 0022). A row whose file the queue
+    /// moved to the Trash stays in the catalog, hidden by its pending mark, until the file is
+    /// proven gone from the Trash: an item in the Trash is not proven deleted (ADR 0008), so
+    /// everything Otos holds for it is kept, and Finder's Put Back — or undo — returns the
+    /// file to the row's own path, where the next scan of that path shows it again.
+    static let trashPathMigrationIdentifier = "v10_media_asset_trash_path"
+
+    static let trashPathStatements: [String] = [
+        "ALTER TABLE media_asset ADD COLUMN trash_path TEXT",
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (
