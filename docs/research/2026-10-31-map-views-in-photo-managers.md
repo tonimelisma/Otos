@@ -45,6 +45,27 @@ so.
 `MediaEnricher.mapLocations` from MediaMetadata's `exifGPS`, `quickTime` and `sonyNRTM`
 sources; the first location is primary. No index on the columns; none added (Pike).
 
+## Measurement: the located order query on the real catalog (2026-10-31)
+
+Read-only `VACUUM INTO` snapshot of the installed catalog: 18,465 assets, 14,686 with
+a primary location; two fixed libraries holding 16,254 visible rows, 12,834 of them
+located. `sqlite3 -readonly` with `.timer on`, warm cache, three runs each (ms):
+
+| Query | Plan | Run 1 | Run 2 | Run 3 |
+| --- | --- | --- | --- | --- |
+| All Media order (baseline, no join) | SCAN via `idx_media_asset_best_capture_global_desc` | 11 (cold 270) | 12 | 11 |
+| Places order (join, coordinates) | same SCAN + SEARCH `asset_metadata` by primary key; no temp B-tree | 106 (cold) | 28 | 31 |
+| Places count (join) | — | 26 | 22 | 23 |
+| All Media count (the left-off number) | — | 13 | 9 | 9 |
+| Places filter options (join) | — | 24 | 25 | — |
+
+So a Places publication costs about 75 ms of SQLite on this library, all off the main
+actor, versus about 25 ms for All Media. The join is a primary-key lookup per row and
+the order still comes from the capture index, so the partial index on
+`primary_latitude` that ADR 0040 deferred is not needed at this size.
+`OtosTests/CatalogStoreQueryPlanTests.swift#locatedOrderQueryKeepsTheCaptureIndexAndLooksUpMetadataByKey`
+pins the plan.
+
 ## Sources
 
 - Apple Support, Find photos and videos by location on Mac:
