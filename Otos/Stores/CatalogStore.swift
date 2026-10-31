@@ -14,15 +14,14 @@ nonisolated enum CatalogStoreChange: Equatable {
     case libraryRemoved(LibraryRootPath)
 }
 
-/// An asset the Store has claimed for enrichment, together with the claim-time
-/// `hashRequired` fact — decided once, by the owner of root kind, at the moment the row
-/// is claimed under a specific partial-index predicate (ADR 0018). Carried
-/// rather than re-derived downstream: a later re-derivation reads root kind from a
-/// possibly-staler cache and can disagree with the predicate the row was actually
-/// claimed under.
+/// An asset the Store has claimed for enrichment, together with the claim-time scope —
+/// decided once, by the owner of root kind, from the partial-index predicate the row was
+/// claimed under and its staleness at that moment (ADR 0018). Carried rather than
+/// re-derived downstream: a later re-derivation reads root kind from a possibly-staler
+/// cache and can disagree with the predicate the row was actually claimed under.
 nonisolated struct ClaimedEnrichmentCandidate: Sendable {
     let asset: MediaAsset
-    let hashRequired: Bool
+    let scope: EnrichmentScope
 }
 
 /// Catalog Store guide
@@ -1670,7 +1669,10 @@ extension CatalogStore {
                 ) else {
                     continue
                 }
-                candidates.append(ClaimedEnrichmentCandidate(asset: asset, hashRequired: hashRequired))
+                candidates.append(ClaimedEnrichmentCandidate(
+                    asset: asset,
+                    scope: EnrichmentScope(hashRequired: hashRequired, metadataStale: asset.metadataStale)
+                ))
             }
             return candidates
         }
@@ -1700,21 +1702,29 @@ extension CatalogStore {
     {
         let prioritizedRootIDs = roots.enrichableRootIDsByRemovablePriority()
         let (hashRequiredRootIDs, hashNotRequiredRootIDs) = roots.enrichableRootIDsByHashRequirement()
+        let cardRootIDs = roots.enrichableCardRootIDs()
         let dbWriter = try database()
         let timedStoredAssets = try await timedWrite(dbWriter) { db in
             var storedAssets: [(asset: StoredAsset, hashRequired: Bool)] = []
-            // The fallback spans roots of mixed kinds (ADR 0018): `.removableVolume`
-            // is claimed with the metadata-only predicate and index, every other kind
-            // with the broad predicate. `INDEXED BY` forbids one statement across both,
-            // so partition by hash requirement within each priority tier. `.deviceMTP`
-            // is removable-priority but hash-required, `.removableVolume` is
-            // removable-priority and hash-not-required, `.library` is fixed and
-            // hash-required; the tiers therefore claim in that order.
+            // The fallback spans roots of mixed kinds (ADR 0018): a root hashed in its
+            // metadata pass (`.library`) is claimed with the broad predicate and index,
+            // the others (`.removableVolume`, `.deviceMTP`) with the metadata-only one.
+            // `INDEXED BY` forbids one statement across both, so partition by hash
+            // requirement within each priority tier: removable roots first (ENR-011),
+            // then a card's digest-only pass, then fixed libraries.
             let removableRoots = Set(prioritizedRootIDs.removable)
             let fixedRoots = Set(prioritizedRootIDs.fixed)
+            // A card's digests come in a pass of their own, offered only once no row of that
+            // card still needs metadata or a thumbnail, so checksumming every byte never
+            // delays what the user is looking at. Claimed under the broad predicate, those
+            // rows' metadata is current, so their scope is the digest alone.
+            let cardsReadyToHash = try cardRootIDs.filter { rootID in
+                try !EnrichmentClaimGateway.hasRowsNeedingMetadata(rootID: rootID, db: db)
+            }
             let claimGroups: [(rootIDs: [Int64], hashRequired: Bool)] = [
                 (removableRoots.intersection(hashRequiredRootIDs).sorted(), true),
                 (removableRoots.intersection(hashNotRequiredRootIDs).sorted(), false),
+                (cardsReadyToHash, true),
                 (fixedRoots.intersection(hashRequiredRootIDs).sorted(), true),
                 (fixedRoots.intersection(hashNotRequiredRootIDs).sorted(), false),
             ]
@@ -1742,9 +1752,10 @@ extension CatalogStore {
             else {
                 return nil
             }
+            let asset = mediaAsset(from: entry.asset, rootPath: rootPath)
             return ClaimedEnrichmentCandidate(
-                asset: mediaAsset(from: entry.asset, rootPath: rootPath),
-                hashRequired: entry.hashRequired
+                asset: asset,
+                scope: EnrichmentScope(hashRequired: entry.hashRequired, metadataStale: asset.metadataStale)
             )
         }
         let result = DatabaseTimedValue(
@@ -1910,6 +1921,66 @@ extension CatalogStore {
         OtosLog.metadata.notice(
             "op=catalog.enrichment.claims phase=startupClear count=\(clearedCount, privacy: .public)"
         )
+    }
+
+    /// Writes a digest read on its own (`EnrichmentScope.hash`) while the row's file
+    /// signature is still the one it was read at, and releases the row's claim whatever the
+    /// answer (ADR 0018). A digest names no file, so no planning revision moves. A failed
+    /// write publishes nothing and is logged; the row stays hash-stale and is claimed again.
+    func applyContentHash(_ result: ContentHashResult) async -> EnrichmentApplyOutcome {
+        guard let rootRowID = roots[result.id.libraryRootPath]?.rowID else {
+            return .applied(count: 0)
+        }
+        let relativePath = result.id.relativePath.rawValue
+        do {
+            let written = try await database().write { db -> Int in
+                try db.execute(
+                    sql: """
+                    UPDATE media_asset SET
+                        content_hash_xxh3_128 = ?,
+                        content_hash_source_size = ?,
+                        content_hash_source_mtime = ?,
+                        enrichment_claimed = NULL
+                    WHERE library_root_id = ? AND relative_path = ?
+                      AND COALESCE(byte_size, -1) = COALESCE(?, -1)
+                      AND CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER) = COALESCE(?, -1)
+                    """,
+                    arguments: [
+                        result.contentHash.data,
+                        result.sourceSize,
+                        result.sourceMTimeSeconds,
+                        rootRowID,
+                        relativePath,
+                        result.sourceSize,
+                        result.sourceMTimeSeconds,
+                    ]
+                )
+                let written = db.changesCount
+                if written == 0 {
+                    // The file changed while it was read: the digest is for other bytes.
+                    try db.execute(
+                        sql: "UPDATE media_asset SET enrichment_claimed = NULL WHERE library_root_id = ? AND relative_path = ?",
+                        arguments: [rootRowID, relativePath]
+                    )
+                }
+                return written
+            }
+            OtosLog.metadata.noticeOperation("enrichment.contentHash", phase: written > 0 ? "applied" : "stale", fields: [
+                "rootPath": result.id.libraryRootPath.rawValue,
+                "relativePath": relativePath,
+            ])
+            if written > 0 {
+                notifyCatalogChanged()
+            }
+            return .applied(count: written)
+        } catch {
+            OtosLog.metadata.errorOperation("enrichment.contentHash", phase: "writeFailed", fields: [
+                "relativePath": relativePath,
+                "error": String(describing: error),
+            ])
+            await releaseEnrichmentClaimsAfterBatch([result.id])
+            return .writeFailed
+        }
     }
 
     /// Applies a batch of completed enrichments in one transaction and one notification.

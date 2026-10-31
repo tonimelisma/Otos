@@ -85,32 +85,14 @@ only once the Trash no longer holds the file. The undo-time overlay snapshot is 
 trash bar gained `Cancel`, which withdraws every pending item from the rows themselves.
 Recorded in ADR 0022, ADR 0008, ARC-058, APP-039, DES-089 and `trash-status-bar.md`.
 
-## Increment 2 — Card checksums
+## Increment 2 — Card checksums (landed)
 
-- **Hash-required removable volumes.** `.removableVolume` roots become hash-required in a
-  second claim phase. A card row is offered for its digest only when no row of that card
-  needs metadata or a thumbnail.
-  - The claim indexes and `stalenessSQLPredicate` gain a removable hash phase.
-  - ENR-017's bracket withdraws hashing claims with the rest.
-  - Eject quiesces them through the existing claim release. `ContentHasher`'s
-    `shouldContinue` stops a file mid-read.
-- **Verify the staged copy.** The import worker still hashes the staged copy. When the
-  source row's digest is current for the copied size and mtime, the two are compared. A
-  mismatch fails that entry with a logged reason
-  (`op=mediaOperation.entry phase=failed reason=digestMismatch`) and publishes nothing.
-  If increment 0 shows the staged hash limits throughput, overlap it with the worker's
-  next copy, still verified before publish.
-- **Docs to update:**
-  - ADR 0018 (rewrite: every root enrichment reads is hashed; the staged comparison);
-  - ENR-013, ENR-017, ENR-018 (whether fresh import rows outrank queued work is
-    restated as measured, not assumed);
-  - ARC-053.
-- **Tests:**
-  - card digests are produced only after the card's thumbnails;
-  - no card hashing while an import reads it;
-  - an eject mid-hash publishes nothing;
-  - a corrupted staged copy (injected byte flip) fails its entry;
-  - Import pressed before hashing ends imports everything.
+Each claim carries an `EnrichmentScope`. A card is read for metadata first and offered
+for digests only once no row of it needs metadata. A row with current metadata gets the
+digest alone, with nothing re-rendered. The import still hashes each staged copy and fails
+any copy whose digest differs from the card row's current one (`reason=digestMismatch`).
+The staged hash stays inline until increment 0's measurement shows it limits throughput.
+Recorded in ADR 0018, ENR-013, ENR-017.
 
 ## Increment 3 — Import knows what the libraries hold
 

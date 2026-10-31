@@ -97,6 +97,9 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
     /// For a Live Photo's motion movie, its still (ADR 0041): the two name as one bundle,
     /// so the movie never leaves its still's folder or name.
     let livePhotoStillPath: MediaRelativePath?
+    /// The source's digest, present only while it is current for `byteSize` and
+    /// `contentModifiedAt` (ADR 0018). The import compares the staged copy's digest with it.
+    let contentHash: XXH3Digest128?
 
     init(
         id: MediaAssetID,
@@ -112,7 +115,8 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
         fileExtension: String,
         companions: [MediaCompanion],
         contentTypeIdentifier: String? = nil,
-        livePhotoStillPath: MediaRelativePath? = nil
+        livePhotoStillPath: MediaRelativePath? = nil,
+        contentHash: XXH3Digest128? = nil
     ) {
         self.id = id
         self.sourceURL = sourceURL
@@ -128,6 +132,7 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
         self.fileExtension = fileExtension
         self.companions = companions
         self.livePhotoStillPath = livePhotoStillPath
+        self.contentHash = contentHash
     }
 
     /// Best planning date: embedded capture wall when present, else source mtime.

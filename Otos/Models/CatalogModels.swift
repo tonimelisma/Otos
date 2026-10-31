@@ -312,21 +312,26 @@ nonisolated struct LibraryRoot: Identifiable, Hashable {
         kind != .library
     }
 
-    /// Whether enrichment on this root produces a content hash (ADR 0018).
+    /// Whether enrichment hashes this root's files in the same pass as their metadata
+    /// (ADR 0018). A fixed library does: enrichment reads the file anyway.
     ///
-    /// The rule is byte locality, not root kind for its own sake: a digest costs every byte
-    /// of the file, so it is only free where enrichment is reading those bytes anyway. A
-    /// fixed library is. A removable volume is not — hashing in place would read the whole
-    /// card to checksum it.
+    /// A removable volume is hashed too, but in a pass of its own once every row of the
+    /// card has its metadata and thumbnail (`hashesCardAfterMetadata`): its bytes are local,
+    /// so the digest downloads nothing, and the card is checksummed while it sits idle so an
+    /// import never waits for one.
     ///
-    /// `.deviceMTP` is in the second group: a camera row is enriched from a few kilobytes
-    /// of ranged reads, not from a downloaded copy, and requiring a digest would force the
-    /// whole-file transfer. Those rows receive their digest after import, from the
-    /// destination's local bytes, as ADR 0018 prescribes for a removable volume.
+    /// `.deviceMTP` is never hashed in place: a camera row is enriched from a few kilobytes
+    /// of ranged reads, and a digest would force the whole-file transfer. Those rows receive
+    /// their digest at import, from the staged copy's local bytes.
     ///
     /// Single home for the rule so a future root kind cannot diverge one caller.
     var isContentHashRequired: Bool {
         kind == .library
+    }
+
+    /// Whether this root's rows get a digest-only pass once the card's metadata is current.
+    var hashesCardAfterMetadata: Bool {
+        kind == .removableVolume
     }
 }
 

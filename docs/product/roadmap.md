@@ -35,11 +35,6 @@ Earlier vocabulary notes in this file include:
   work, not part of the first browsing foundation.
 - Other product ideas may be outside this note or may be added later if the user
   explicitly asks to work on planning.
-- Hash-based duplicate detection (ADR 0018) must account for the removable-volume
-  digest gap: a `.removableVolume` source is never hashed in place (ADR 0018/0013),
-  so its rows have no digest until imported, and import reuse short-circuits for it.
-  A future duplicate feature needs the destination digest after import or an
-  explicit digest-free rule for card sources.
 
 ## Non-Authoritative Idea Sequence
 

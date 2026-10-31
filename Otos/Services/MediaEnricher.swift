@@ -34,7 +34,7 @@ nonisolated struct MediaEnricher {
         _ access: EnrichmentByteAccess,
         _ sourceSize: Int64?,
         _ sourceMTimeSeconds: Int?,
-        _ shouldHash: Bool,
+        _ scope: EnrichmentScope,
         _ recipe: StoredEditRecipe?
     ) async -> EnrichmentOutcome
 
@@ -50,7 +50,7 @@ nonisolated struct MediaEnricher {
             ContentHasher().hashMaterializedFile(at: url)
         }
     ) -> MediaEnricher {
-        MediaEnricher { id, access, sourceSize, sourceMTimeSeconds, shouldHash, recipe in
+        MediaEnricher { id, access, sourceSize, sourceMTimeSeconds, scope, recipe in
             // A camera row has no local file, so the readiness checker — which asks the
             // filesystem — cannot speak for it. It is routed here precisely because its
             // bytes are reachable another way, and answering `.notMaterialized` would send
@@ -67,12 +67,10 @@ nonisolated struct MediaEnricher {
             guard readinessChecker.status(of: url) == .materialized else {
                 return .notMaterialized
             }
-            // `shouldHash` is false only for `.removableVolume` sources (ADR
-            // 0018): hashing them in place would force a full read of the whole card
-            // merely to checksum it. Skip the read entirely rather than hash and
-            // discard — `contentHash` stays nil and the store leaves any existing
-            // digest untouched.
-            guard shouldHash else {
+            // A card's first pass (ADR 0018): metadata and thumbnail before a read of
+            // every byte. `contentHash` stays nil and the store leaves any existing digest
+            // untouched; the card's digest comes in its second pass.
+            guard scope != .metadata else {
                 return await Self.enrichWithoutHash(
                     id: id,
                     url: url,
@@ -104,6 +102,16 @@ nonisolated struct MediaEnricher {
                 )
                 guard readinessChecker.status(of: url) == .materialized else {
                     return .notMaterialized
+                }
+                // Metadata and products are current: the digest is all this claim was for,
+                // so nothing is parsed or rendered again.
+                if scope == .hash {
+                    return .hashed(ContentHashResult(
+                        id: id,
+                        contentHash: contentHash,
+                        sourceSize: sourceSize,
+                        sourceMTimeSeconds: sourceMTimeSeconds
+                    ))
                 }
                 return await Self.parseAndComplete(
                     id: id,
@@ -535,10 +543,13 @@ nonisolated struct MediaEnricher {
 }
 
 /// The result of enriching one asset. The coordinator collects `.complete` results into
-/// a batch for `CatalogStore.applyEnrichmentBatch`; `.transient`/`.notMaterialized` are
-/// re-queued (the asset stays `needsEnrichment`).
+/// a batch for `CatalogStore.applyEnrichmentBatch` and hands `.hashed` digests to
+/// `CatalogStore.applyContentHash`; `.transient`/`.notMaterialized` are re-queued (the
+/// asset stays `needsEnrichment`).
 nonisolated enum EnrichmentOutcome {
     case complete(EnrichmentResult)
+    /// A digest-only claim's digest (`EnrichmentScope.hash`).
+    case hashed(ContentHashResult)
     case transient
     case notMaterialized
 }

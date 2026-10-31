@@ -138,6 +138,11 @@ nonisolated struct RootRegistry {
         }.sorted()
     }
 
+    /// Enrichable roots whose rows get a digest-only pass after their metadata (ADR 0018).
+    func enrichableCardRootIDs() -> [Int64] {
+        statesByPath.values.filter { $0.isEnrichable && $0.root.hashesCardAfterMetadata }.map(\.rowID).sorted()
+    }
+
     func enrichableRootIDsByRemovablePriority() -> (removable: [Int64], fixed: [Int64]) {
         var removable: [Int64] = []
         var fixed: [Int64] = []
@@ -151,12 +156,10 @@ nonisolated struct RootRegistry {
         return (removable.sorted(), fixed.sorted())
     }
 
-    /// Partitions enrichable roots by whether enrichment on them ever produces a
-    /// content hash (ADR 0018): every kind except `.removableVolume`, which is read
-    /// in place and would otherwise force a full read of the whole volume merely to
-    /// checksum it. Orthogonal to `enrichableRootIDsByRemovablePriority`, which
-    /// partitions by claim *priority* — `.deviceMTP` is removable-priority but still
-    /// hash-required, so the two partitions do not coincide.
+    /// Partitions enrichable roots by whether enrichment hashes them in the same pass as
+    /// their metadata (ADR 0018, `LibraryRoot.isContentHashRequired`). Orthogonal to
+    /// `enrichableRootIDsByRemovablePriority`, which partitions by claim *priority*. A card's
+    /// later digest-only pass is `enrichableCardRootIDs`.
     func enrichableRootIDsByHashRequirement() -> (hashRequired: Set<Int64>, hashNotRequired: Set<Int64>) {
         var hashRequired: Set<Int64> = []
         var hashNotRequired: Set<Int64> = []

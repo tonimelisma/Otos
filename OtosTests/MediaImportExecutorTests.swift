@@ -1637,3 +1637,85 @@ private final class ProgressCollector: Sendable {
         recorder.values
     }
 }
+
+/// ADR 0018: a card row's digest, read while the card sat idle, is what its staged copy
+/// must hash to. A copy that does not is never published.
+@Suite(.testDirectory)
+struct ImportVerifiesTheStagedCopyTests {
+    @Test func aStagedCopyThatDoesNotMatchTheCardsDigestIsNeverPublished() async throws {
+        let temp = try makeTestDirectory()
+        let destinationURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let sourceURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
+        try Data("first".utf8).write(to: sourceURL.appending(path: "a.jpg"))
+        try Data("second".utf8).write(to: sourceURL.appending(path: "b.jpg"))
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destinationURL)
+        let destination = try CatalogPath.normalizedDirectoryPath(for: destinationURL)
+        try await store.attachRemovableVolume(
+            mountURL: sourceURL,
+            identity: .volume(uuid: "verify-staged"),
+            displayName: "Card",
+            isEjectable: true
+        )
+        let source = try CatalogPath.normalizedDirectoryPath(for: sourceURL)
+        _ = try await waitForCatalogStoreState(store) { state in
+            !state.isScanning && state.removableSources.first?.activity == .idle
+        }
+        await markEnrichmentLookedAtEveryRow(store, root: source)
+        // The card row's digest says other bytes than a.jpg holds: what a copy through a
+        // failing reader would produce, seen from the other side.
+        let media = try #require(await store.planningMedia(for: source))
+        let first = try #require(media.first { $0.relativePath.rawValue == "a.jpg" })
+        let wrong = try #require(XXH3Digest128(data: Data(repeating: 9, count: 16)))
+        let written = await store.applyContentHash(ContentHashResult(
+            id: first.id,
+            contentHash: wrong,
+            sourceSize: first.byteSize,
+            sourceMTimeSeconds: first.contentModifiedAt.map { Int($0.timeIntervalSince1970.rounded(.down)) }
+        ))
+        #expect(written == .applied(count: 1))
+
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: PreferencesDomain.suite(UUID().uuidString)
+        )
+        await coordinator.start()
+        await coordinator.setDestination(destination, for: source)
+        let plan = try await waitForValue(every: .milliseconds(25)) { await coordinator.readyPlan(for: source) }
+        #expect(plan.entries.first { $0.source.relativePath.rawValue == "a.jpg" }?.source.contentHash == wrong)
+
+        let result = await MediaImportExecutor(store: store).execute(
+            plan: plan,
+            batch: ImportBatchID(),
+            sourceKind: .removableVolume,
+            sourceDeviceIdentity: .volume(uuid: "verify-staged"),
+            deleteSourceRequested: false,
+            runID: UUID().uuidString
+        ) { _ in }
+
+        guard case let .completed(tally, _, nil) = result else {
+            Issue.record("Expected completed with one per-file failure, got \(result)")
+            await coordinator.shutdown()
+            return
+        }
+        #expect(tally.publishedCount == 1)
+        #expect(tally.failedCount == 1)
+        // Import names files by its policy, so look for what landed rather than a name.
+        let landed = try FileManager.default.subpathsOfDirectory(atPath: destinationURL.path)
+            .filter { path in
+                var isDirectory: ObjCBool = false
+                let url = destinationURL.appending(path: path)
+                return !url.lastPathComponent.hasPrefix(".")
+                    && FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+                    && !isDirectory.boolValue
+            }
+        #expect(landed.count == 1)
+        #expect(try landed.allSatisfy {
+            try Data(contentsOf: destinationURL.appending(path: $0)) == Data("second".utf8)
+        })
+        await coordinator.shutdown()
+    }
+}

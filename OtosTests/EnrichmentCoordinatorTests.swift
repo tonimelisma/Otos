@@ -804,7 +804,7 @@ struct EnrichmentCoordinatorTests {
             isVideo: false,
             captureDate: nil,
             isDeviceStaging: true,
-            shouldHash: false
+            scope: .metadata
         )
 
         let access = await coordinator.byteAccess(for: work)
@@ -878,7 +878,7 @@ struct EnrichmentCoordinatorTests {
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "a.arw"))
         let work = EnrichmentCoordinator.EnrichWork(
             id: id, url: id.fileURL, sourceSize: 1024, sourceMTimeSeconds: nil,
-            isVideo: false, captureDate: nil, isDeviceStaging: true, shouldHash: false
+            isVideo: false, captureDate: nil, isDeviceStaging: true, scope: .metadata
         )
 
         #expect(await coordinator.byteAccess(for: work).localURL == id.fileURL)
@@ -952,15 +952,12 @@ struct EnrichmentCoordinatorTests {
         await materializer.shutdown()
     }
 
-    /// `EnrichWork.shouldHash` must be the value Store's claim predicate decided
-    /// (`ClaimedEnrichmentCandidate.hashRequired`), not a value the coordinator
-    /// re-derives from its own notion of root kind — a coordinator-side cache of root
-    /// kinds would be a second owner of the same fact, able to disagree if a root's
-    /// kind changed between claim and dispatch. This test claims one asset from a `.library` root (hash
-    /// required) and one from a `.removableVolume` root (hash not required) in the same
-    /// coordinator, and confirms each dispatched `EnrichWork.shouldHash` matches its own
-    /// claim rather than a single shared coordinator-wide value.
-    @Test func dispatchedWorkCarriesClaimTimeHashRequiredPerRoot() async throws {
+    /// `EnrichWork.scope` is the value the Store's claim decided
+    /// (`ClaimedEnrichmentCandidate.scope`), not one the coordinator re-derives from its own
+    /// notion of root kind — a second owner of the same fact, able to disagree. A library
+    /// row is hashed in its metadata pass; a card row gets metadata first and its digest in
+    /// a pass of its own, once the card has no row left needing metadata (ADR 0018).
+    @Test func aCardIsHashedInItsOwnPassAfterItsMetadata() async throws {
         let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let removableRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -986,7 +983,7 @@ struct EnrichmentCoordinatorTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
         try await store.attachRemovableVolume(
             mountURL: removableRoot,
-            identity: .volume(uuid: "hash-required-claim"),
+            identity: .volume(uuid: "card-hash-pass"),
             displayName: "Card",
             isEjectable: false
         )
@@ -996,10 +993,14 @@ struct EnrichmentCoordinatorTests {
                 && snapshot.removableSources.first?.availability == .available
         }
 
-        let recorder = ShouldHashRecorder()
-        let enricher = MediaEnricher { id, access, size, mtime, shouldHash, _ in
+        let recorder = ScopeRecorder()
+        let digest = try #require(XXH3Digest128(data: Data(repeating: 7, count: 16)))
+        let enricher = MediaEnricher { id, access, size, mtime, scope, _ in
             let url = access.localURL ?? id.fileURL
-            await recorder.record(name: url.lastPathComponent, shouldHash: shouldHash)
+            await recorder.record(name: url.lastPathComponent, scope: scope)
+            if scope == .hash {
+                return .hashed(ContentHashResult(id: id, contentHash: digest, sourceSize: size, sourceMTimeSeconds: mtime))
+            }
             return .complete(
                 EnrichmentResult(
                     id: id,
@@ -1007,7 +1008,7 @@ struct EnrichmentCoordinatorTests {
                     thumbnailPath: "t.jpg",
                     sourceSize: size,
                     sourceMTimeSeconds: mtime,
-                    contentHash: shouldHash ? .empty : nil
+                    contentHash: scope == .metadataAndHash ? digest : nil
                 )
             )
         }
@@ -1018,30 +1019,34 @@ struct EnrichmentCoordinatorTests {
         )
         await coordinator.start()
 
-        // Not `needsEnrichment(hashRequired: true)`: the removable asset never gets a
-        // hash by design (ADR 0018), so that check would never clear for it. Wait on
-        // the enricher-recorded outcome instead.
-        try await recorder.waitForBoth()
+        try await recorder.waitFor(name: "card.jpg", count: 2)
+        let cardID = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: removableRawPath),
+            relativePath: MediaRelativePath(rawValue: "card.jpg")
+        )
+        try await waitUntil {
+            try await store.mediaAssets(for: [cardID])[cardID]?.hashStale == false
+        }
         await coordinator.shutdown()
 
-        #expect(await recorder.shouldHash(name: "fixed.jpg") == true)
-        #expect(await recorder.shouldHash(name: "card.jpg") == false)
+        #expect(await recorder.scopes(name: "fixed.jpg") == [.metadataAndHash])
+        #expect(await recorder.scopes(name: "card.jpg") == [.metadata, .hash])
     }
 }
 
-private actor ShouldHashRecorder {
-    private var valuesByName: [String: Bool] = [:]
+private actor ScopeRecorder {
+    private var scopesByName: [String: [EnrichmentScope]] = [:]
 
-    func record(name: String, shouldHash: Bool) {
-        valuesByName[name] = shouldHash
+    func record(name: String, scope: EnrichmentScope) {
+        scopesByName[name, default: []].append(scope)
     }
 
-    func shouldHash(name: String) -> Bool? {
-        valuesByName[name]
+    func scopes(name: String) -> [EnrichmentScope] {
+        scopesByName[name] ?? []
     }
 
-    func waitForBoth() async throws {
-        try await waitUntil { valuesByName["fixed.jpg"] != nil && valuesByName["card.jpg"] != nil }
+    func waitFor(name: String, count: Int) async throws {
+        try await waitUntil { (scopesByName[name]?.count ?? 0) >= count }
     }
 }
 

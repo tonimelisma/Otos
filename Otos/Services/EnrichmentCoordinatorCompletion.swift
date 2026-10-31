@@ -20,6 +20,11 @@ extension EnrichmentCoordinator {
         switch outcome {
         case let .complete(result):
             await recordCompletedEnrichment(result, id: id)
+        case let .hashed(result):
+            // A digest alone changes nothing the user sees, so it is written at once rather
+            // than batched with products; the write releases the row's claim.
+            readyClaims[id] = nil
+            await handleApplyOutcome(store.applyContentHash(result), batchCount: 1)
         case .notMaterialized:
             let pending = DownloadWork(
                 id: id,
