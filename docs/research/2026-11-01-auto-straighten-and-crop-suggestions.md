@@ -64,10 +64,15 @@ Findings:
   | Window selfie | −9.1° | +2.6° |
 
   Gravity agrees with what the photos show.
-- **Sign: calibrated by a controlled capture.** On 2026-11-01 four iPhone 18 Pro photos of a
-  plumb door frame were taken: back camera rolled each way, then front camera each way, all
-  held upright. Each photo's needed turn was measured from the frame's lean and compared
-  with its gravity reading, roll = `atan2(x, −y)` less the hold.
+- **Sign: calibrated by a controlled capture.** On 2026-11-01 six iPhone 18 Pro photos of a
+  plumb door frame were taken:
+  - back camera held upright, rolled each way;
+  - front camera held upright, rolled each way;
+  - back camera held landscape (hold −90°, `x` ≈ −1), rolled each way.
+
+  Each photo's needed turn was measured from the frame's lean and compared with its gravity
+  reading, roll = `atan2(x, −y)` less the hold. The landscape leans are least-squares fits of
+  the frame-to-wall edge at 1000 px (residual 0.3–0.4 px).
 
   | Camera | Needed turn (frame lean) | `atan2(x, −y)` less hold | Agreement |
   | --- | --- | --- | --- |
@@ -75,6 +80,8 @@ Findings:
   | Back | positive (top leans left) | +17.0° | same sign |
   | Front | +10.9° (measured at 1000 px) | −11.2° | opposite sign, same size |
   | Front | ≈ −25° (top leans right) | +27.4° | opposite sign |
+  | Back, landscape | +9.8° (top leans left) | +10.9° | same sign, within 1.1° |
+  | Back, landscape | −15.5° (top leans right) | −15.0° | same sign, within 0.5° |
 
   - **Back camera:** straighten = `atan2(x, −y)` less the hold. This is Core Motion's
     convention (+x toward the right of the screen). Exiftool's "+x toward the left edge" is
@@ -82,8 +89,9 @@ Findings:
   - **Front camera:** the sign is reversed. iOS saves front-camera photos mirrored by default
     ("Mirror Front Camera"), and the file records no tag saying whether mirroring was on, so
     a front-camera photo's sign is not knowable from its metadata.
-  - **Not covered:** a phone held landscape (hold ±90°). All four calibration shots were held
-    upright.
+  - **Landscape:** the same formula holds with the hold taken as the nearest quarter turn.
+    Only the −90° hold was captured; the +90° hold and upside-down are the same arithmetic
+    and were not measured.
   - **Earlier evidence that misled:** a bed-post selfie (front camera, so mirrored), and
     back-camera photos pointed downward, whose lines showed perspective rather than roll.
 - **Other cameras:**
