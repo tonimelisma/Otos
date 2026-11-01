@@ -141,6 +141,23 @@ struct MediaEnricherTests {
                 .path(percentEncoded: false)))
     }
 
+    /// A card's first pass does not develop an unedited RAW: its thumbnail is QuickLook's and
+    /// it has no preview, because a RAW9 development costs about a second whatever its size
+    /// and that pass is what an import waits on. A library pass develops it (ADR 0035), an
+    /// edited RAW is developed in either so its thumbnail shows the edit, and every other
+    /// still is developed.
+    @Test func aCardsFirstPassDevelopsEveryStillButAnUneditedRAW() {
+        var edited = EditRecipe.neutral
+        edited.exposure = 0.5
+        let raw = URL(fileURLWithPath: "/Volumes/CARD/DCIM/DSC00001.ARW")
+        #expect(!MediaEnricher.developsDuringEnrichment(raw, recipe: .neutral, scope: .metadata))
+        #expect(MediaEnricher.developsDuringEnrichment(raw, recipe: .neutral, scope: .metadataAndHash))
+        #expect(MediaEnricher.developsDuringEnrichment(raw, recipe: edited, scope: .metadata))
+        let heif = URL(fileURLWithPath: "/Volumes/CARD/DCIM/DSC00001.HIF")
+        #expect(MediaEnricher.developsDuringEnrichment(heif, recipe: .neutral, scope: .metadata))
+        #expect(!MediaEnricher.developsDuringEnrichment(URL(fileURLWithPath: "/Lib/a.mov"), recipe: edited, scope: .metadataAndHash))
+    }
+
     /// A HEIF that records its rotation only in its `irot` property (as Sony cameras write
     /// it) is cataloged with that orientation, so the catalog turns its stored size upright.
     @Test func aHeifTurnedByItsIrotPropertyIsReadWithItsOrientation() async throws {

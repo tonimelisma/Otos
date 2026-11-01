@@ -662,6 +662,21 @@ struct CatalogStoreEnrichmentTests {
         #expect(!copy.needsEnrichment(hashRequired: true))
     }
 
+    /// ADR 0035: a card's first pass leaves an unedited RAW without a preview, so its overlay
+    /// is not the copy's — reused, the library copy would never be developed. The copy is
+    /// enriched from its own bytes, which gives it the RAW9 preview.
+    @Test func aCardRAWWithoutAPreviewIsEnrichedAgainAsItsLibraryCopy() async throws {
+        let card = try await enrichedCardImportFixture(enrichedKind: .raw)
+        let result = try await card.settle(sourceModifiedAt: card.scannedModifiedAt)
+
+        #expect(result.miss == .missingPreview)
+        #expect(result.metadataCloned == false)
+
+        let state = try await catalogStoreTestState(card.store)
+        let copy = try #require(state.testAssets.first { $0.id.libraryRootPath == card.destinationPath })
+        #expect(copy.needsEnrichment(hashRequired: true))
+    }
+
     /// ARC-053: a card file that changed after it was enriched has an overlay for other
     /// bytes; the copy is enriched from its own.
     @Test func aCardImportWithAStaleOverlayEnrichesTheCopy() async throws {
@@ -718,7 +733,7 @@ private struct EnrichedCardImport {
     }
 }
 
-private func enrichedCardImportFixture() async throws -> EnrichedCardImport {
+private func enrichedCardImportFixture(enrichedKind: MediaKind? = nil) async throws -> EnrichedCardImport {
     let temp = try makeTestDirectory()
     let card = temp.appending(path: "CARD", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: card, withIntermediateDirectories: true)
@@ -753,6 +768,7 @@ private func enrichedCardImportFixture() async throws -> EnrichedCardImport {
         EnrichmentResult(
             id: cardID,
             metadata: .localCapture(instant: captureDate),
+            enrichedKind: enrichedKind,
             thumbnailPath: nil,
             sourceSize: scannedSize,
             sourceMTimeSeconds: MediaAsset.mtimeSeconds(scannedModifiedAt),
