@@ -131,8 +131,9 @@ extension CatalogWindowViewModel {
         commitEdit(actionName: horizontally ? "Flip Horizontal" : "Flip Vertical")
     }
 
-    /// The Crop section's Auto: straightens the photo so the horizon Vision finds in it is
-    /// level, as one undo step. Where Vision finds none, the photo is left as it is.
+    /// The Crop section's Auto: straightens the photo level, as one undo step — by the
+    /// camera's gravity reading at capture where the original carries one, else by the
+    /// horizon Vision finds in it. Where neither is found, the photo is left as it is.
     func autoStraighten() {
         guard canEdit, let target = editTarget, editPhotoFacts != nil else { return }
         commitPendingEdit()
@@ -143,9 +144,9 @@ extension CatalogWindowViewModel {
         ])
     }
 
-    /// A horizon reading landed. It is applied only to the photo it was read from, still
+    /// A level reading landed. It is applied only to the photo it was read from, still
     /// turned and flipped as it was read, since the angle is measured in that frame.
-    func applyAutoStraighten(id: MediaAssetID, shown: EditRecipe, _ reading: HorizonReading) {
+    func applyAutoStraighten(id: MediaAssetID, shown: EditRecipe, _ reading: LevelReading) {
         guard editTarget?.id == id, let facts = editPhotoFacts,
               editDraft.quarterTurns == shown.quarterTurns,
               editDraft.flipHorizontal == shown.flipHorizontal,
@@ -154,13 +155,14 @@ extension CatalogWindowViewModel {
             OtosLog.ui.noticeOperation("edit.autoStraighten", phase: "stale", fields: ["id": id.relativePath.rawValue])
             return
         }
-        guard case let .level(degrees) = reading else {
-            OtosLog.ui.noticeOperation("edit.autoStraighten", phase: "noHorizon", fields: ["id": id.relativePath.rawValue])
+        guard case let .level(degrees, source) = reading else {
+            OtosLog.ui.noticeOperation("edit.autoStraighten", phase: "noLevel", fields: ["id": id.relativePath.rawValue])
             return
         }
         let next = EditControl.straighten.applying(degrees, to: editDraft, facts: facts)
         OtosLog.ui.noticeOperation("edit.autoStraighten", phase: "applied", fields: [
             "id": id.relativePath.rawValue,
+            "source": source.rawValue,
             "degrees": String(format: "%.1f", next.straighten),
             "changed": "\(next != editDraft)",
         ])

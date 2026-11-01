@@ -104,8 +104,19 @@ Findings:
   be wrong. The pitch gate removes the looking-down case; lying down remains a case where
   Auto is wrong and is one undo away. Lightroom's line-based Auto has the same exposure on
   deliberately tilted shots.
-- **Where it belongs:** MediaMetadata (as of `2c5bbb1`) reads neither `AccelerationVector` nor any roll
-  tag. Under ADR 0039 the fact belongs in the library.
+- **Where it belongs:** under ADR 0039 the fact belongs in the library. MediaMetadata 0.9.1
+  reports it as `levelingTurnDegrees`. On the six calibration photos it reads −15.8°, +17.1°,
+  +10.9° and −15.0° for the back camera, and nil for both front-camera shots.
+- **Checked against Vision on the library's local photos:** 25 iPhone 15 Pro and 18 Pro photos
+  where both gave a reading.
+  - Only 5 agreed within 2°.
+  - In the disagreements inspected, gravity was right where the scene has gravity-aligned
+    structure. A child on a sofa needed +9.7°: rotating by it made the background door
+    frames plumb, while Vision's −10° leaned them. In a family photo the wall outlet and
+    corner were already plumb (gravity −0.7°, Vision +8.1°).
+  - The rest had no level for either to find: a snack bag shot at an angle, and a ceiling
+    fixture's label.
+  - Gravity follows the camera, so it levels the camera's world, not a tilted subject.
 
 ## 3. Literature and ready-made models
 
@@ -169,9 +180,11 @@ Findings:
    upright.
    - On the photos tested it was right where Vision was wrong, it costs no pixel analysis,
      and it is what the camera knew.
-   - Back camera only: its sign is calibrated (section 2). A front-camera photo's sign
-     depends on a mirroring setting the file does not record, so it falls back to the
-     pixels. The landscape hold still needs a calibration shot.
+   - Back camera only: its sign is calibrated (section 2), upright and landscape. A
+     front-camera photo's sign depends on a mirroring setting the file does not record, so
+     it falls back to the pixels.
+   - Built: MediaMetadata 0.9.1 reports iPhone gravity. Other makers' roll tags wait for
+     sample files to calibrate against.
 2. **Pixels second.**
    - Vision's horizon stays only as the fallback for photos with no level reading, because it
      misreads photos without a horizon.

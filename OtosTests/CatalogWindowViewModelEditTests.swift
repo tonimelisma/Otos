@@ -372,9 +372,71 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    /// An iPhone back camera's gravity reading levels the photo ahead of the horizon in its
+    /// pixels, and is mirrored on a photo shown flipped.
+    @Test func autoStraightenTakesTheCamerasLevelBeforeTheHorizon() async throws {
+        // Gravity 3° counterclockwise of straight down the screen: a −3° turn levels it.
+        let tilt = 3 * Double.pi / 180
+        let write: (URL) throws -> Void = {
+            try writeLeveledJPEG(
+                to: $0, risingBy: 6, gravity: (x: -sin(tilt), y: -cos(tilt), z: 0),
+                lensModel: "iPhone 18 Pro back triple camera 6.93mm f/1.48"
+            )
+        }
+        try await withEditableLibrary(fileCount: 1, write: write) { library in
+            let id = library.ids[0]
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            model.toggleInspector(.edit)
+            model.selectAll()
+            try await waitUntil { model.canEdit }
+
+            model.autoStraighten()
+            try await waitUntil { model.hasSettledEdits }
+            let plain = try #require(try await library.store.editRecipe(for: id)?.recipe.straighten)
+            #expect(abs(plain + 3) < 0.05)
+
+            model.undoLastChange()
+            try await waitUntil { model.hasSettledEdits }
+            model.flipPhoto(horizontally: true)
+            model.autoStraighten()
+            try await waitUntil { model.hasSettledEdits }
+            let flipped = try #require(try await library.store.editRecipe(for: id)?.recipe)
+            #expect(flipped.flipHorizontal)
+            #expect(abs(flipped.straighten - 3) < 0.05)
+        }
+    }
+
+    /// A front-camera photo's gravity reading says nothing about how it is shown, since iOS
+    /// may have mirrored it: Auto levels its horizon instead.
+    @Test func aFrontCameraPhotoIsLeveledByItsHorizon() async throws {
+        let tilt = 3 * Double.pi / 180
+        let write: (URL) throws -> Void = {
+            try writeLeveledJPEG(
+                to: $0, risingBy: 6, gravity: (x: -sin(tilt), y: -cos(tilt), z: 0),
+                lensModel: "iPhone 18 Pro front camera 2.715mm f/1.9"
+            )
+        }
+        try await withEditableLibrary(fileCount: 1, write: write) { library in
+            let id = library.ids[0]
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            model.toggleInspector(.edit)
+            model.selectAll()
+            try await waitUntil { model.canEdit }
+
+            model.autoStraighten()
+            try await waitUntil { model.hasSettledEdits }
+            let straighten = try #require(try await library.store.editRecipe(for: id)?.recipe.straighten)
+            #expect(abs(straighten - 6) < 1)
+        }
+    }
+
     /// A reading taken before the photo was turned is measured in another frame, and one
-    /// that found no horizon has nothing to apply: either leaves the photo as it is.
-    @Test func aStaleOrEmptyHorizonReadingChangesNothing() async throws {
+    /// that found no level has nothing to apply: either leaves the photo as it is.
+    @Test func aStaleOrEmptyLevelReadingChangesNothing() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
             let model = makeEditModel(store: library.store, ids: library.ids)
@@ -384,7 +446,7 @@ struct CatalogWindowViewModelEditTests {
             model.selectAll()
             try await waitUntil { model.canEdit }
 
-            model.applyAutoStraighten(id: id, shown: EditRecipe(quarterTurns: 1), .level(5))
+            model.applyAutoStraighten(id: id, shown: EditRecipe(quarterTurns: 1), .level(5, .gravity))
             model.applyAutoStraighten(id: id, shown: model.editDraft, .none)
 
             #expect(model.editDraft.straighten == 0)
