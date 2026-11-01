@@ -3,8 +3,8 @@ import Foundation
 import Testing
 
 /// Tests `CatalogWindowViewModel`'s grid-zoom intent (APP-006): clamping, persistence,
-/// and the zoom in/out convenience intents. Each test uses an isolated `UserDefaults`
-/// suite (never `.standard`) so tests cannot leak a real column-count preference into
+/// and the zoom in/out convenience intents. Each test uses its own in-memory `.suite`
+/// domain (never `.standard`) so tests cannot leak a real column-count preference into
 /// the developer's actual defaults domain or into each other.
 @MainActor
 struct CatalogWindowViewModelGridZoomTests {
