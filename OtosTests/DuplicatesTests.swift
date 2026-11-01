@@ -146,6 +146,14 @@ struct DuplicatesTests {
         #expect(!session.keeps(suffixed, in: group))
     }
 
+    /// Before the catalog loads the pane claims nothing, not even `No duplicates` (APP-044).
+    @Test func thePaneDrawsNothingBeforeTheCatalogLoads() throws {
+        let group = try Self.onlyGroup([Self.copy("a/IMG_1.jpg"), Self.copy("b/IMG_1 copy.jpg")])
+        #expect(DuplicatesPaneContent.of(.empty, isCatalogLoaded: false) == .nothing)
+        #expect(DuplicatesPaneContent.of(.empty, isCatalogLoaded: true) == .noDuplicates)
+        #expect(DuplicatesPaneContent.of(CatalogDuplicatesState(groups: [group]), isCatalogLoaded: true) == .list)
+    }
+
     @Test func theBarNamesTheActAndKeepsItsTitleWhenDisabled() {
         let none = DuplicatesBarPresentation.map(DuplicatesTally(
             photosWithDuplicates: 6, itemsToMove: [], bytesToMove: .zero, needingChoice: 6

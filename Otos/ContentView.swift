@@ -487,6 +487,7 @@ struct ContentView: View {
         if viewModel.showsDuplicatesList {
             DuplicatesView(
                 duplicates: viewModel.state.duplicates,
+                isCatalogLoaded: viewModel.state.isCatalogLoaded,
                 session: viewModel.duplicatesSession,
                 selection: Binding(
                     get: { viewModel.gridSelection.selection },
