@@ -162,4 +162,25 @@ struct EditGeometryTests {
         #expect(plain.temperature < -5)
         #expect(abs(flipped.temperature) <= 2)
     }
+
+    /// Auto straighten levels a horizon that rises to the right with a clockwise turn of
+    /// the same angle, and reads the photo as it is turned: the same horizon on a photo
+    /// flipped horizontally falls to the right, so it levels the other way.
+    @Test func autoStraightenLevelsTheHorizonAsThePhotoIsShown() async throws {
+        let url = try makeTestDirectory().appending(path: "horizon.jpg")
+        try writeHorizonJPEG(to: url, risingBy: 6)
+        let renderer = LiveEditRenderer()
+
+        let plain = try #require(try await renderer.horizonStraighten(url, shown: .neutral))
+        // Straighten and crop already on the photo do not change the reading.
+        let edited = try #require(try await renderer.horizonStraighten(
+            url, shown: EditRecipe(straighten: -20, crop: EditCrop(left: 0.1, top: 0.1, width: 0.5, height: 0.5))
+        ))
+        let flipped = try #require(try await renderer.horizonStraighten(url, shown: EditRecipe(flipHorizontal: true)))
+        await renderer.close()
+
+        #expect(abs(plain - 6) < 1)
+        #expect(abs(edited - plain) < 0.5)
+        #expect(abs(flipped + 6) < 1)
+    }
 }

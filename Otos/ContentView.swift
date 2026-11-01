@@ -56,7 +56,8 @@ struct ContentView: View {
                     setAspect: viewModel.setCropAspect,
                     rotateAspect: viewModel.rotateCropAspect,
                     turn: viewModel.turnPhoto(clockwise:),
-                    flip: viewModel.flipPhoto(horizontally:)
+                    flip: viewModel.flipPhoto(horizontally:),
+                    autoStraighten: viewModel.autoStraighten
                 ),
                 setEntering: viewModel.setEnteringEditValue,
                 setLensCorrection: viewModel.setLensCorrection,

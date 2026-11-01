@@ -302,6 +302,49 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    /// The Crop section's Auto levels the horizon as one undo step, and Undo puts it back.
+    @Test func autoStraightenLevelsTheHorizonAsOneUndoStep() async throws {
+        try await withEditableLibrary(fileCount: 1, write: { try writeHorizonJPEG(to: $0, risingBy: 6) }) { library in
+            let id = library.ids[0]
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            model.toggleInspector(.edit)
+            model.selectAll()
+            try await waitUntil { model.canEdit }
+
+            model.autoStraighten()
+            try await waitUntil { model.hasSettledEdits }
+            let straighten = try #require(try await library.store.editRecipe(for: id)?.recipe.straighten)
+            #expect(abs(straighten - 6) < 1)
+            #expect(model.undoMenuState.undoTitle == "Undo Auto Straighten")
+
+            model.undoLastChange()
+            try await waitUntil { model.hasSettledEdits }
+            #expect(try await library.store.editRecipe(for: id)?.recipe.straighten == 0)
+        }
+    }
+
+    /// A reading taken before the photo was turned is measured in another frame, and one
+    /// that found no horizon has nothing to apply: either leaves the photo as it is.
+    @Test func aStaleOrEmptyHorizonReadingChangesNothing() async throws {
+        try await withEditableLibrary(fileCount: 1) { library in
+            let id = library.ids[0]
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            model.toggleInspector(.edit)
+            model.selectAll()
+            try await waitUntil { model.canEdit }
+
+            model.applyAutoStraighten(id: id, shown: EditRecipe(quarterTurns: 1), .level(5))
+            model.applyAutoStraighten(id: id, shown: model.editDraft, .none)
+
+            #expect(model.editDraft.straighten == 0)
+            #expect(model.undoMenuState.undoTitle != "Undo Auto Straighten")
+        }
+    }
+
     @Test func leavingTheLoupeEndsTheCropTool() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let model = makeEditModel(store: library.store, ids: library.ids)

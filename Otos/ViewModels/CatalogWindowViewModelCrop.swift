@@ -130,6 +130,45 @@ extension CatalogWindowViewModel {
         commitEdit(actionName: horizontally ? "Flip Horizontal" : "Flip Vertical")
     }
 
+    /// The Crop section's Auto: straightens the photo so the horizon Vision finds in it is
+    /// level, as one undo step. Where Vision finds none, the photo is left as it is.
+    func autoStraighten() {
+        guard canEdit, let target = editTarget, editPhotoFacts != nil else { return }
+        commitPendingEdit()
+        submittedEditCommandCount += 1
+        editCommandContinuation.yield(.autoStraighten(id: target.id, shown: editDraft, sourceSize: target.sourceSize))
+        OtosLog.ui.noticeOperation("edit.autoStraighten", phase: "requested", fields: [
+            "id": target.id.relativePath.rawValue,
+        ])
+    }
+
+    /// A horizon reading landed. It is applied only to the photo it was read from, still
+    /// turned and flipped as it was read, since the angle is measured in that frame.
+    func applyAutoStraighten(id: MediaAssetID, shown: EditRecipe, _ reading: HorizonReading) {
+        guard editTarget?.id == id, let facts = editPhotoFacts,
+              editDraft.quarterTurns == shown.quarterTurns,
+              editDraft.flipHorizontal == shown.flipHorizontal,
+              editDraft.flipVertical == shown.flipVertical
+        else {
+            OtosLog.ui.noticeOperation("edit.autoStraighten", phase: "stale", fields: ["id": id.relativePath.rawValue])
+            return
+        }
+        guard case let .level(degrees) = reading else {
+            OtosLog.ui.noticeOperation("edit.autoStraighten", phase: "noHorizon", fields: ["id": id.relativePath.rawValue])
+            return
+        }
+        let next = EditControl.straighten.applying(degrees, to: editDraft, facts: facts)
+        OtosLog.ui.noticeOperation("edit.autoStraighten", phase: "applied", fields: [
+            "id": id.relativePath.rawValue,
+            "degrees": String(format: "%.1f", next.straighten),
+            "changed": "\(next != editDraft)",
+        ])
+        guard next != editDraft else { return }
+        editDraft = next
+        requestLiveEditRender()
+        commitEdit(actionName: "Auto Straighten")
+    }
+
     /// A crop render landed: shown while it is for the photo being cropped and newer than
     /// any render shown.
     func publishCropBase(id: MediaAssetID, recipe: EditRecipe, image: CGImage, sequence: UInt64) {

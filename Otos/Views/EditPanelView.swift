@@ -42,10 +42,10 @@ struct EditPanelView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 12) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(photoName ?? "No Selection")
-                            .font(.title3.weight(.semibold))
+                            .font(.title2.weight(.semibold))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -56,6 +56,9 @@ struct EditPanelView: View {
                     // A section the photo has nothing to adjust in is left out (ADR 0036): Optics
                     // without a lens profile, the RAW8-only Detail controls on other photos.
                     ForEach(EditSection.allCases.filter { $0.isAvailable(facts ?? .still) }) { section in
+                        // Photos' Adjust list: a hairline above each section, so where one
+                        // ends and the next begins reads without counting whitespace.
+                        Divider()
                         sectionView(section)
                     }
                 }
@@ -115,6 +118,9 @@ struct EditPanelView: View {
     }
 
     private func toggleFold(_ section: EditSection) {
+        // The crop tool's section stays open while the tool is on. Its heading is not
+        // disabled for that: the section in use must not read as unavailable.
+        guard !(section == .crop && crop.isCropping) else { return }
         var folded = Set(foldedSections.split(separator: ",").map(String.init))
         if folded.contains(section.id) {
             folded.remove(section.id)
@@ -130,10 +136,11 @@ struct EditPanelView: View {
 
     private func sectionView(_ section: EditSection) -> some View {
         let open = isOpen(section)
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 // A disclosure triangle: pointing in from the leading edge while folded,
-                // down while open (Disclosure controls).
+                // down while open (Disclosure controls). Photos' section heading: the
+                // triangle, the section's symbol and its name, larger than a control's.
                 Button {
                     toggleFold(section)
                 } label: {
@@ -142,39 +149,57 @@ struct EditPanelView: View {
                             .font(.footnote.weight(.semibold))
                             .rotationEffect(.degrees(open ? 90 : 0))
                             .foregroundStyle(.secondary)
+                            .frame(width: Self.disclosureWidth)
+                        Image(systemName: section.symbol)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20)
                         Text(section.title)
-                            .font(.headline)
+                            .font(.title3)
                     }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(section == .crop && crop.isCropping)
                 .accessibilityLabel(section.title)
                 .accessibilityValue(open ? "expanded" : "collapsed")
                 .accessibilityAddTraits(.isHeader)
                 .help(open ? "Hide \(section.title)" : "Show \(section.title)")
                 Spacer()
+                if section == .crop {
+                    // Photos' Auto sits in the heading beside its section's undo; here it
+                    // levels the horizon (Lightroom's Crop Auto).
+                    Button("Auto", action: cropActions.autoStraighten)
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                        .foregroundStyle(unavailableHelp == nil ? .secondary : .tertiary)
+                        .disabled(unavailableHelp != nil)
+                        .help(unavailableHelp ?? "Straighten the horizon automatically")
+                }
                 // Quiet beside the heading: a text button, so a column of section headings
                 // does not read as a column of push buttons.
+                let resetDisabled = unavailableHelp != nil || section.isNeutral(in: recipe)
                 Button("Reset") { resetSection(section) }
                     .buttonStyle(.borderless)
                     .controlSize(.small)
-                    .foregroundStyle(.secondary)
-                    .disabled(unavailableHelp != nil || section.isNeutral(in: recipe))
+                    // A forced color would hide the disabled state, so it steps down a
+                    // level of its own when there is nothing to reset.
+                    .foregroundStyle(resetDisabled ? .tertiary : .secondary)
+                    .disabled(resetDisabled)
                     .help(unavailableHelp ?? section.resetActionName)
             }
             if open {
                 sectionControls(section)
+                    // Indented under the heading, as Photos' controls sit under theirs, so
+                    // the headings form one edge the eye runs down.
+                    .padding(.leading, Self.contentIndent)
                     .transition(.opacity)
             }
         }
     }
 
     private func sectionControls(_ section: EditSection) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 4) {
             if section == .crop {
                 cropTool
-                aspectRow
             }
             if section == .color {
                 whiteBalancePicker
@@ -187,6 +212,7 @@ struct EditPanelView: View {
                     title: control.title,
                     formattedValue: facts.map { control.formatted(recipe, facts: $0) } ?? EditSliderRow.noValue,
                     value: control.sliderValue(in: recipe, facts: facts ?? .still),
+                    neutral: control.sliderValue(in: control.reset(recipe), facts: facts ?? .still),
                     range: control.sliderRange(facts ?? .still),
                     scaleLabels: control.scaleLabels(facts ?? .still),
                     isSelected: selectedControl == control,
@@ -208,9 +234,15 @@ struct EditPanelView: View {
             }
             if section == .crop {
                 orientationButtons
+                aspectRow
             }
         }
     }
+
+    /// The disclosure triangle's column, and the indent that puts a section's controls
+    /// under its symbol (DES-050 steps).
+    static let disclosureWidth: CGFloat = 12
+    static let contentIndent: CGFloat = 16
 
     /// The crop tool's switch: Done while it is on, which Return answers.
     private var cropTool: some View {
@@ -231,6 +263,7 @@ struct EditPanelView: View {
         HStack(spacing: 8) {
             Text("Aspect")
                 .font(.body)
+                .foregroundStyle(crop.isCropping ? .primary : .secondary)
             Spacer()
             Picker("Aspect", selection: Binding(get: { crop.aspect }, set: { cropActions.setAspect($0) })) {
                 ForEach(CropAspect.allCases) { aspect in
@@ -266,10 +299,15 @@ struct EditPanelView: View {
 
     /// Quarter turns and flips, as icons in Lightroom's order.
     private var orientationButtons: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 4) {
+            // Lightroom's group name: a label-left row like Aspect's (DES-017).
+            Text("Rotate & Flip")
+                .font(.body)
+                .fixedSize()
+                .foregroundStyle(unavailableHelp == nil ? .primary : .secondary)
+            Spacer()
             orientationButton("Rotate Left", systemImage: "rotate.left") { cropActions.turn(false) }
             orientationButton("Rotate Right", systemImage: "rotate.right") { cropActions.turn(true) }
-            Spacer()
             orientationButton(
                 "Flip Horizontal",
                 systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right"
@@ -286,10 +324,13 @@ struct EditPanelView: View {
         systemImage: String,
         action: @escaping @MainActor () -> Void
     ) -> some View {
+        // Lightroom's plain icons: four bordered buttons would crowd the label off its line.
         Button(action: action) {
             Image(systemName: systemImage)
+                .frame(width: 20, height: 22)
+                .contentShape(Rectangle())
         }
-        .controlSize(.small)
+        .buttonStyle(.borderless)
         .disabled(unavailableHelp != nil)
         .help(unavailableHelp ?? title)
         .accessibilityLabel(title)
@@ -315,6 +356,7 @@ struct EditPanelView: View {
     private var whiteBalancePicker: some View {
         HStack {
             Text("White Balance")
+                .foregroundStyle(unavailableHelp == nil ? .primary : .secondary)
             Spacer()
             Button(action: toggleNeutralPicker) {
                 Image(systemName: isPickingNeutral ? "eyedropper.full" : "eyedropper")
@@ -361,6 +403,9 @@ private struct EditSliderRow: View {
     let title: String
     let formattedValue: String
     let value: Double
+    /// Where the control is neutral. A control at its neutral value draws its name and
+    /// value in secondary color, as Lightroom dims an untouched slider.
+    let neutral: Double
     let range: ClosedRange<Double>
     /// Labels under a slider whose scale is not linear, at fractions of its travel.
     let scaleLabels: [(position: Double, text: String)]
@@ -377,11 +422,12 @@ private struct EditSliderRow: View {
     @FocusState private var isEntering: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack {
                 // Lightroom's gesture: double-clicking a control's name resets it.
                 Text(title)
                     .fontWeight(isSelected ? .semibold : nil)
+                    .foregroundStyle(isNeutral ? .secondary : .primary)
                     .onTapGesture(count: 2, perform: reset)
                     .accessibilityHidden(true)
                 Spacer()
@@ -391,6 +437,7 @@ private struct EditSliderRow: View {
                     .textFieldStyle(.plain)
                     .multilineTextAlignment(.trailing)
                     .monospacedDigit()
+                    .foregroundStyle(isNeutral ? .secondary : .primary)
                     .frame(width: 72)
                     .focused($isEntering)
                     .onSubmit {
@@ -419,6 +466,9 @@ private struct EditSliderRow: View {
                 onEditingChanged: { setDragging($0) }
             )
             .labelsHidden()
+            // Lightroom's thin track and small knob: the controls pack closely enough that
+            // a section reads as one group.
+            .controlSize(.small)
             // A value, not a selection: the accent stays for what is selected or acted on
             // (DES-024), and a fill from the left edge would read as an amount on a slider
             // whose neutral point is its middle.
@@ -430,7 +480,7 @@ private struct EditSliderRow: View {
             }
         }
         .padding(.horizontal, 6)
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
         // The selected adjustment is marked like a selected row (DES-024): the accent, as a
         // tint behind it, with its name in semibold so it reads without color (DES-029).
         .background(
@@ -458,6 +508,10 @@ private struct EditSliderRow: View {
         }
         .frame(height: 12)
         .accessibilityHidden(true)
+    }
+
+    private var isNeutral: Bool {
+        value == neutral
     }
 
     private func commitEntry() {
@@ -497,4 +551,6 @@ struct EditPanelCropActions {
     let turn: @MainActor (Bool) -> Void
     /// Horizontally when true.
     let flip: @MainActor (Bool) -> Void
+    /// Levels the horizon (the Crop section's Auto).
+    let autoStraighten: @MainActor () -> Void
 }
