@@ -127,6 +127,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.productStampsMigrationIdentifier) { db in
+            for statement in CatalogSchema.productStampsStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -453,7 +458,7 @@ extension CatalogStore {
                     (content_modified_at_unix IS NULL AND ? = -1)
                     OR (content_modified_at_unix >= ? AND content_modified_at_unix < ?)
                 )
-                AND edit_revision = ?
+                AND (? = 0 OR edit_revision = ?)
             """,
             arguments: [
                 libraryRootID,
@@ -462,52 +467,84 @@ extension CatalogStore {
                 sourceMTimeSeconds,
                 sourceMTimeSeconds,
                 sourceMTimeSeconds + 1,
+                // Only a thumbnail is drawn with the edit; metadata and a digest are the
+                // file's whatever the photo's edit.
+                result.rendering == nil && result.provisionalThumbnail == nil ? 0 : 1,
                 result.editRevision,
             ]
         ) != nil
     }
 
-    /// Hash columns use `COALESCE(?, column)` rather than a plain assignment: when
-    /// `result.contentHash` is absent (a `.removableVolume` source, ADR 0018),
-    /// the row's existing digest — if any was recorded before the source's
-    /// root kind or facts changed — must survive, not be clobbered to NULL.
+    /// Writes each product the result carries with its own stamp (ADR 0009), and leaves
+    /// the row's other products as they are: a card's metadata pass does not touch its
+    /// rendering or digest, and a rendering-and-digest pass does not re-write its metadata.
+    /// A provisional thumbnail replaces the shown thumbnail without stamping a rendering.
     static func writeEnrichmentOverlay(_ result: EnrichmentResult, libraryRootID: Int64, db: Database) throws {
-        try db.execute(
-            sql: """
-            UPDATE media_asset SET
-                thumbnail_path = ?,
-                preview_path = ?,
-                rendered_revision = ?,
-                enriched_source_size = ?,
-                enriched_source_mtime = ?,
-                content_hash_xxh3_128 = COALESCE(?, content_hash_xxh3_128),
-                content_hash_source_size = COALESCE(?, content_hash_source_size),
-                content_hash_source_mtime = COALESCE(?, content_hash_source_mtime)
-            WHERE library_root_id = ?
-                AND relative_path = ?
-            """,
-            arguments: [
-                result.thumbnailPath,
-                result.previewPath,
-                result.editRevision,
-                result.sourceSize,
-                result.sourceMTimeSeconds,
-                result.contentHash?.data,
-                result.contentHash != nil ? result.sourceSize : nil,
-                result.contentHash != nil ? result.sourceMTimeSeconds : nil,
-                libraryRootID,
-                result.id.relativePath.rawValue,
-            ]
-        )
-        try writeMetadataProjection(
-            result.metadata,
-            enrichedKind: result.enrichedKind,
-            enrichedFormat: result.enrichedFormat,
-            sourceMTimeSeconds: result.sourceMTimeSeconds,
-            libraryRootID: libraryRootID,
-            relativePath: result.id.relativePath,
-            db: db
-        )
+        if let rendering = result.rendering {
+            try db.execute(
+                sql: """
+                UPDATE media_asset SET
+                    thumbnail_path = ?,
+                    preview_path = ?,
+                    rendered_revision = ?,
+                    rendered_source_size = ?,
+                    rendered_source_mtime = ?
+                WHERE library_root_id = ?
+                    AND relative_path = ?
+                """,
+                arguments: [
+                    rendering.thumbnailPath,
+                    rendering.previewPath,
+                    result.editRevision,
+                    result.sourceSize,
+                    result.sourceMTimeSeconds,
+                    libraryRootID,
+                    result.id.relativePath.rawValue,
+                ]
+            )
+        } else if let provisional = result.provisionalThumbnail {
+            try db.execute(
+                sql: "UPDATE media_asset SET thumbnail_path = ? WHERE library_root_id = ? AND relative_path = ?",
+                arguments: [provisional.finalRelativePath, libraryRootID, result.id.relativePath.rawValue]
+            )
+        }
+        if let contentHash = result.contentHash {
+            try db.execute(
+                sql: """
+                UPDATE media_asset SET
+                    content_hash_xxh3_128 = ?,
+                    content_hash_source_size = ?,
+                    content_hash_source_mtime = ?
+                WHERE library_root_id = ?
+                    AND relative_path = ?
+                """,
+                arguments: [
+                    contentHash.data,
+                    result.sourceSize,
+                    result.sourceMTimeSeconds,
+                    libraryRootID,
+                    result.id.relativePath.rawValue,
+                ]
+            )
+        }
+        if let metadata = result.metadata {
+            try db.execute(
+                sql: """
+                UPDATE media_asset SET metadata_source_size = ?, metadata_source_mtime = ?
+                WHERE library_root_id = ? AND relative_path = ?
+                """,
+                arguments: [result.sourceSize, result.sourceMTimeSeconds, libraryRootID, result.id.relativePath.rawValue]
+            )
+            try writeMetadataProjection(
+                metadata.metadata,
+                enrichedKind: metadata.kind,
+                enrichedFormat: metadata.format,
+                sourceMTimeSeconds: result.sourceMTimeSeconds,
+                libraryRootID: libraryRootID,
+                relativePath: result.id.relativePath,
+                db: db
+            )
+        }
     }
 
     /// Writes a metadata record and every column derived from it: the stored record, the
@@ -568,59 +605,64 @@ extension CatalogStore {
         try upsertAssetMetadata(metadata, libraryRootID: libraryRootID, relativePath: relativePath, db: db)
     }
 
-    /// Writes a reused source overlay onto the row `landed` settled, with the destination's
-    /// own file facts and the derived images copied for it.
-    static func writeReusableEnrichmentOverlay(
-        _ overlay: ReusableEnrichmentOverlay,
-        for landed: LandedImport,
-        contentHash: XXH3Digest128,
-        db: Database
-    ) throws {
+    /// Writes each product the copy `landed` settled with gets, stamped with the
+    /// destination's own file facts (ADR 0009): its metadata, reused or read by the import,
+    /// and its rendering, reused, made by the import, or the source's provisional thumbnail
+    /// with no stamp. A product it does not get stays owed, for enrichment.
+    static func writeLandedProducts(_ landed: LandedImport, db: Database) throws {
         let destinationRootID = landed.destinationRootID
         let destinationRelativePath = landed.operation.destinationRelativePath
         let destinationByteSize = landed.byteSize
         let destinationMTimeSeconds = Int(landed.contentModifiedAt.timeIntervalSince1970.rounded(.down))
-        try db.execute(
-            sql: """
-            UPDATE media_asset SET
-                thumbnail_path = ?,
-                preview_path = ?,
-                rendered_revision = COALESCE(
-                    (SELECT rendered_revision FROM media_asset WHERE library_root_id = ? AND relative_path = ?),
-                    rendered_revision
-                ),
-                enriched_source_size = ?,
-                enriched_source_mtime = ?,
-                content_hash_xxh3_128 = ?,
-                content_hash_source_size = ?,
-                content_hash_source_mtime = ?
-            WHERE library_root_id = ? AND relative_path = ?
-            """,
-            arguments: [
-                landed.destinationThumbnailPath,
-                landed.destinationPreviewPath,
-                landed.sourceRootID,
-                landed.operation.sourceRelativePath.rawValue,
-                destinationByteSize,
-                destinationMTimeSeconds,
-                contentHash.data,
-                destinationByteSize,
-                destinationMTimeSeconds,
-                destinationRootID,
-                destinationRelativePath.rawValue,
-            ]
-        )
-        // The source's record, derived for the destination exactly as enrichment of the
-        // destination file would derive it.
-        try writeMetadataProjection(
-            overlay.metadata,
-            enrichedKind: overlay.enrichedKind,
-            enrichedFormat: overlay.enrichedFormat,
-            sourceMTimeSeconds: destinationMTimeSeconds,
-            libraryRootID: destinationRootID,
-            relativePath: destinationRelativePath,
-            db: db
-        )
+        if let rendering = landed.rendering {
+            if rendering.stamped {
+                try db.execute(
+                    sql: """
+                    UPDATE media_asset SET
+                        thumbnail_path = ?,
+                        preview_path = ?,
+                        rendered_revision = ?,
+                        rendered_source_size = ?,
+                        rendered_source_mtime = ?
+                    WHERE library_root_id = ? AND relative_path = ?
+                    """,
+                    arguments: [
+                        rendering.thumbnailPath,
+                        rendering.previewPath,
+                        rendering.renderedRevision,
+                        destinationByteSize,
+                        destinationMTimeSeconds,
+                        destinationRootID,
+                        destinationRelativePath.rawValue,
+                    ]
+                )
+            } else {
+                try db.execute(
+                    sql: "UPDATE media_asset SET thumbnail_path = ? WHERE library_root_id = ? AND relative_path = ?",
+                    arguments: [rendering.thumbnailPath, destinationRootID, destinationRelativePath.rawValue]
+                )
+            }
+        }
+        if let metadata = landed.metadata {
+            try db.execute(
+                sql: """
+                UPDATE media_asset SET metadata_source_size = ?, metadata_source_mtime = ?
+                WHERE library_root_id = ? AND relative_path = ?
+                """,
+                arguments: [destinationByteSize, destinationMTimeSeconds, destinationRootID, destinationRelativePath.rawValue]
+            )
+            // Derived for the destination exactly as enrichment of the destination file
+            // would derive it.
+            try writeMetadataProjection(
+                metadata.metadata,
+                enrichedKind: metadata.kind,
+                enrichedFormat: metadata.format,
+                sourceMTimeSeconds: destinationMTimeSeconds,
+                libraryRootID: destinationRootID,
+                relativePath: destinationRelativePath,
+                db: db
+            )
+        }
     }
 
     static func updateThumbnailPath(
@@ -677,7 +719,7 @@ extension CatalogStore {
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT relative_path, thumbnail_path, preview_path, enriched_source_size, enriched_source_mtime,
+                SELECT relative_path, thumbnail_path, preview_path, metadata_source_size, metadata_source_mtime,
                     trash_path
                 FROM media_asset
                 WHERE library_root_id = ?
@@ -693,7 +735,7 @@ extension CatalogStore {
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT relative_path, thumbnail_path, preview_path, enriched_source_size, enriched_source_mtime,
+                SELECT relative_path, thumbnail_path, preview_path, metadata_source_size, metadata_source_mtime,
                     trash_path
                 FROM media_asset
                 WHERE library_root_id = ?
@@ -707,8 +749,8 @@ extension CatalogStore {
             return ExistingAssetRow(
                 relativePath: MediaRelativePath(rawValue: row["relative_path"]),
                 derivedImagePaths: [thumbnailPath, previewPath].compactMap(\.self),
-                hadEnrichment: (row["enriched_source_size"] as Int64?) != nil
-                    || (row["enriched_source_mtime"] as Int64?) != nil,
+                hadEnrichment: (row["metadata_source_size"] as Int64?) != nil
+                    || (row["metadata_source_mtime"] as Int64?) != nil,
                 trashPath: row["trash_path"]
             )
         }

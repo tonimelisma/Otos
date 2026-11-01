@@ -3,26 +3,69 @@ import GRDB
 import OSLog
 import UniformTypeIdentifiers
 
-nonisolated enum ImportOverlayReuseMiss: String, Equatable, Sendable {
-    case absentSourceRow
-    /// The source's enrichment stamps do not name the size and mtime the import copied.
-    case staleSourceOverlay
-    /// The copy settled without a digest (a recovered entry journaled before hashing),
-    /// so the library row is enriched for one and reuse would only be redone.
-    case copyNotHashed
-    case missingThumbnail
-    /// A still whose source row has no stored preview (a camera row, enriched from byte
-    /// ranges, or an unedited RAW from a card's first pass): reusing it would stamp a
-    /// library row that then never gets one, so the copy is enriched from its own bytes
-    /// instead (ADR 0035).
-    case missingPreview
-    case thumbnailCopyFailed
-    case detachedSource
+/// Where one of an imported copy's products came from when it settled (ADR 0009).
+nonisolated enum ImportProductOrigin: String, Equatable, Sendable {
+    /// The source row's, current for the bytes the import copied.
+    case reused
+    /// Made by the import from the published copy while its bytes were local.
+    case made
+    /// The source's thumbnail without a rendering (QuickLook's on a card's first pass, a
+    /// camera's embedded preview), shown until enrichment renders the copy.
+    case provisional
+    /// Neither: the copy owes it, and enrichment makes it.
+    case owed
+}
+
+/// What settlement gave an imported copy, product by product.
+nonisolated struct ImportProductsResult: Equatable, Sendable {
+    let metadata: ImportProductOrigin
+    let rendering: ImportProductOrigin
+
+    static let owed = ImportProductsResult(metadata: .owed, rendering: .owed)
+}
+
+/// What the source row holds current for the bytes an import copied, so the import makes
+/// only the rest from the published copy (ADR 0009). The recipe is the source's saved
+/// edit, which the copy carries and its rendering shows.
+nonisolated struct ImportSourceProducts: Equatable, Sendable {
+    let metadataCurrent: Bool
+    let renderingCurrent: Bool
+    let recipe: StoredEditRecipe?
+
+    /// The products the import makes for the copy.
+    var owed: EnrichmentScope {
+        var scope: EnrichmentScope = []
+        if !metadataCurrent {
+            scope.insert(.metadata)
+        }
+        if !renderingCurrent {
+            scope.insert(.rendering)
+        }
+        return scope
+    }
+}
+
+/// The rendering a settled copy gets: the derived images copied or promoted for it, and
+/// whether they are a rendering (stamped with the copy's facts, at `renderedRevision`) or
+/// a provisional thumbnail (not stamped).
+nonisolated struct LandedRendering {
+    let thumbnailPath: String?
+    let previewPath: String?
+    let stamped: Bool
+    let renderedRevision: Int64
+}
+
+/// A copy's rendering while settlement stages it, before its images are promoted.
+nonisolated struct StagedRendering {
+    let thumbnail: StagedDerivedImage?
+    let preview: StagedDerivedImage?
+    let stamped: Bool
+    let renderedRevision: Int64
 }
 
 /// What landed in a library for one journaled import entry, as settlement records it:
-/// the published file's facts, the companions published beside it, and the source's
-/// overlay when it is reused. Where it landed and for which batch are the operation's.
+/// the published file's facts, the companions published beside it, and each product it
+/// gets. Where it landed and for which batch are the operation's.
 nonisolated struct LandedImport {
     let operation: ActiveFileOperation
     let destinationRootID: Int64
@@ -30,9 +73,8 @@ nonisolated struct LandedImport {
     let byteSize: Int64
     let contentModifiedAt: Date
     let companions: [MediaCompanion]
-    let reusableOverlay: ReusableEnrichmentOverlay?
-    let destinationThumbnailPath: String?
-    let destinationPreviewPath: String?
+    let metadata: EnrichedMetadata?
+    let rendering: LandedRendering?
 }
 
 extension CatalogStore {
@@ -80,18 +122,6 @@ extension CatalogStore {
             )
         }
     }
-}
-
-nonisolated struct ImportOverlayReuseResult: Equatable, Sendable {
-    let metadataCloned: Bool
-    let thumbnailCopied: Bool
-    let miss: ImportOverlayReuseMiss?
-
-    static let notReused = ImportOverlayReuseResult(
-        metadataCloned: false,
-        thumbnailCopied: false,
-        miss: .absentSourceRow
-    )
 }
 
 extension CatalogStore {
@@ -266,17 +296,19 @@ extension CatalogStore {
                 relativePath.rawValue,
             ]
         )
-        if let reusableOverlay = landed.reusableOverlay, let contentHash = operation.contentHash {
-            try writeReusableEnrichmentOverlay(reusableOverlay, for: landed, contentHash: contentHash, db: db)
-            // Reused products were rendered from the source's last rendered edit; an edit
-            // saved after them is enrichment's to render for the copy (ADR 0036).
-            try releaseUnrenderedEdits(db: db, rootID: destinationRootID, relativePath: relativePath)
-        }
+        try writeLandedProducts(landed, db: db)
+        // A rendering was drawn with the source's last rendered edit; an edit saved after
+        // it is enrichment's to render for the copy (ADR 0036).
+        try releaseUnrenderedEdits(db: db, rootID: destinationRootID, relativePath: relativePath)
         for companion in landed.companions {
             try upsertCompanion(companion, libraryRootID: destinationRootID, db: db)
         }
     }
 
+    /// The source row's products and their stamps, or nil when there is no row. Its
+    /// metadata is nil when the row has no record, or one this build cannot read: reuse is
+    /// per product, so that only makes the metadata owed. A recipe that cannot be decoded
+    /// throws: an unreadable recipe is a failed read, never an unedited photo (ADR 0036).
     static func fetchReusableEnrichmentOverlay(
         sourceRootID: Int64,
         sourceRelativePath: MediaRelativePath,
@@ -286,7 +318,9 @@ extension CatalogStore {
             db,
             sql: """
             SELECT m.enriched_kind, m.enriched_format,
-                   m.enriched_source_size, m.enriched_source_mtime,
+                   m.metadata_source_size, m.metadata_source_mtime,
+                   m.rendered_source_size, m.rendered_source_mtime, m.rendered_revision,
+                   m.edit_recipe_json, m.edit_revision,
                    m.thumbnail_path, m.preview_path,
                    a.metadata_extra_json
             FROM media_asset m
@@ -296,31 +330,36 @@ extension CatalogStore {
             WHERE m.library_root_id = ? AND m.relative_path = ?
             """,
             arguments: [sourceRootID, sourceRelativePath.rawValue]
-        ),
-            let metadataJSON: String = row["metadata_extra_json"]
-        else {
+        ) else {
             return nil
         }
-        let metadata: AssetMetadata
-        do {
-            metadata = try CatalogStore.decodeMetadataExtraJSON(metadataJSON)
-        } catch {
-            // Reuse is an optimization: a record this build cannot read is not reused,
-            // and settlement falls back to enriching the destination, as for any miss.
-            OtosLog.catalog.errorOperation("mediaOperation.settle", phase: "overlayUndecodable", fields: [
-                "relativePath": sourceRelativePath.rawValue,
-                "error": String(describing: error),
-            ])
-            return nil
+        var metadata: EnrichedMetadata?
+        if let metadataJSON: String = row["metadata_extra_json"] {
+            do {
+                let enrichedKindRaw: String? = row["enriched_kind"]
+                let enrichedFormatRaw: String? = row["enriched_format"]
+                metadata = try EnrichedMetadata(
+                    metadata: CatalogStore.decodeMetadataExtraJSON(metadataJSON),
+                    kind: enrichedKindRaw.flatMap(MediaKind.init(rawValue:)),
+                    format: enrichedFormatRaw.map(MediaFormatToken.init(rawValue:))
+                )
+            } catch {
+                // A record this build cannot read is not reused; the import reads the
+                // copy's metadata itself.
+                OtosLog.catalog.errorOperation("mediaOperation.settle", phase: "overlayUndecodable", fields: [
+                    "relativePath": sourceRelativePath.rawValue,
+                    "error": String(describing: error),
+                ])
+            }
         }
-        let enrichedKindRaw: String? = row["enriched_kind"]
-        let enrichedFormatRaw: String? = row["enriched_format"]
-        return ReusableEnrichmentOverlay(
+        return try ReusableEnrichmentOverlay(
             metadata: metadata,
-            enrichedKind: enrichedKindRaw.flatMap(MediaKind.init(rawValue:)),
-            enrichedFormat: enrichedFormatRaw.map(MediaFormatToken.init(rawValue:)),
-            enrichedSourceSize: row["enriched_source_size"],
-            enrichedSourceMTimeSeconds: row["enriched_source_mtime"],
+            metadataSourceSize: row["metadata_source_size"],
+            metadataSourceMTimeSeconds: row["metadata_source_mtime"],
+            renderedSourceSize: row["rendered_source_size"],
+            renderedSourceMTimeSeconds: row["rendered_source_mtime"],
+            renderedRevision: row["rendered_revision"] ?? 0,
+            recipe: CatalogStore.storedEditRecipe(json: row["edit_recipe_json"], revision: row["edit_revision"] ?? 0),
             thumbnailPath: row["thumbnail_path"],
             previewPath: row["preview_path"]
         )

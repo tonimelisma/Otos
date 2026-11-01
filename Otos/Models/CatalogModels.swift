@@ -312,25 +312,26 @@ nonisolated struct LibraryRoot: Identifiable, Hashable {
         kind != .library
     }
 
-    /// Whether enrichment hashes this root's files in the same pass as their metadata
-    /// (ADR 0018). A fixed library does: enrichment reads the file anyway.
+    /// Whether enrichment claims this root's rows for every stale product at once —
+    /// metadata, rendering and digest from one read (ADR 0009, ADR 0018). A fixed library
+    /// does: its files may be cloud-only, and a download is paid once for all of them.
     ///
-    /// A removable volume is hashed too, but in a pass of its own once every row of the
-    /// card has its metadata and thumbnail (`hashesCardAfterMetadata`): its bytes are local,
-    /// so the digest downloads nothing, and the card is checksummed while it sits idle so an
-    /// import never waits for one.
+    /// A removable volume is claimed for metadata first, which is what an import waits on,
+    /// and for its renderings and digests in a pass of its own once every row of the card
+    /// has its metadata (`producesAfterMetadata`): its bytes are local, so reading it twice
+    /// downloads nothing.
     ///
-    /// `.deviceMTP` is never hashed in place: a camera row is enriched from a few kilobytes
-    /// of ranged reads, and a digest would force the whole-file transfer. Those rows receive
-    /// their digest at import, from the staged copy's local bytes.
+    /// `.deviceMTP` is claimed for metadata only: a camera row is enriched from a few
+    /// kilobytes of ranged reads, and a rendering or digest would force the whole-file
+    /// transfer. Those rows get both at import, from the staged copy's local bytes.
     ///
     /// Single home for the rule so a future root kind cannot diverge one caller.
-    var isContentHashRequired: Bool {
+    var claimsEveryProductTogether: Bool {
         kind == .library
     }
 
-    /// Whether this root's rows get a digest-only pass once the card's metadata is current.
-    var hashesCardAfterMetadata: Bool {
+    /// Whether this root's rows get a rendering-and-digest pass once its metadata is current.
+    var producesAfterMetadata: Bool {
         kind == .removableVolume
     }
 }
@@ -576,16 +577,18 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     //
     // Filesystem facts (scan) and enrichment overlay have disjoint writers: the scan
     // refreshes facts and preserves these fields, while enrichment writes these and
-    // preserves facts. Staleness is derived, never stored: an asset needs
-    // enrichment when its current `(byteSize, contentModifiedAt-seconds)` no longer match
-    // the `(enrichedSourceSize, enrichedSourceMTimeSeconds)` the last enrichment recorded.
+    // preserves facts. Staleness is derived, never stored, per product (ADR 0009): the
+    // metadata, the rendering and the digest each record the `(size, mtime-seconds)` they
+    // were made from, and each is stale when the file's current pair differs.
     let thumbnailPath: String?
     let bestCaptureDate: Date?
     let bestKind: MediaKind?
     let bestFormat: MediaFormatToken?
     let durationSeconds: Double?
-    let enrichedSourceSize: Int64?
-    let enrichedSourceMTimeSeconds: Int?
+    let metadataSourceSize: Int64?
+    let metadataSourceMTimeSeconds: Int?
+    let renderedSourceSize: Int64?
+    let renderedSourceMTimeSeconds: Int?
     let contentHash: XXH3Digest128?
     let contentHashSourceSize: Int64?
     let contentHashSourceMTimeSeconds: Int?
@@ -604,8 +607,10 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         bestKind: MediaKind? = nil,
         bestFormat: MediaFormatToken? = nil,
         durationSeconds: Double? = nil,
-        enrichedSourceSize: Int64? = nil,
-        enrichedSourceMTimeSeconds: Int? = nil,
+        metadataSourceSize: Int64? = nil,
+        metadataSourceMTimeSeconds: Int? = nil,
+        renderedSourceSize: Int64? = nil,
+        renderedSourceMTimeSeconds: Int? = nil,
         contentHash: XXH3Digest128? = nil,
         contentHashSourceSize: Int64? = nil,
         contentHashSourceMTimeSeconds: Int? = nil,
@@ -623,8 +628,10 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         self.bestKind = bestKind
         self.bestFormat = bestFormat
         self.durationSeconds = durationSeconds
-        self.enrichedSourceSize = enrichedSourceSize
-        self.enrichedSourceMTimeSeconds = enrichedSourceMTimeSeconds
+        self.metadataSourceSize = metadataSourceSize
+        self.metadataSourceMTimeSeconds = metadataSourceMTimeSeconds
+        self.renderedSourceSize = renderedSourceSize
+        self.renderedSourceMTimeSeconds = renderedSourceMTimeSeconds
         self.contentHash = contentHash
         self.contentHashSourceSize = contentHashSourceSize
         self.contentHashSourceMTimeSeconds = contentHashSourceMTimeSeconds
@@ -643,19 +650,28 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         date.map { Int($0.timeIntervalSince1970.rounded(.down)) } ?? -1
     }
 
-    /// True when the enrichment stamp (thumbnail, parsed metadata, capture-wall
-    /// facts) is not valid for the current filesystem signature. Independent of
-    /// whether a hash is required at all.
+    /// True when the metadata stamp (parsed metadata, kind, format, capture-wall facts) is
+    /// not valid for the current filesystem signature.
     var metadataStale: Bool {
         let currentSize = byteSize ?? -1
         let currentMTime = Self.mtimeSeconds(contentModifiedAt)
-        return enrichedSourceSize != currentSize || enrichedSourceMTimeSeconds != currentMTime
+        return metadataSourceSize != currentSize || metadataSourceMTimeSeconds != currentMTime
+    }
+
+    /// True when the rendering stamp (the thumbnail and preview made from one development,
+    /// ADR 0035) is not valid for the current filesystem signature. A provisional
+    /// thumbnail — QuickLook's on a card's first pass, a camera's embedded one — is not a
+    /// rendering and leaves this true.
+    var renderingStale: Bool {
+        let currentSize = byteSize ?? -1
+        let currentMTime = Self.mtimeSeconds(contentModifiedAt)
+        return renderedSourceSize != currentSize || renderedSourceMTimeSeconds != currentMTime
     }
 
     /// True when the persisted content hash is missing, malformed, or does not match
     /// the current filesystem signature. Meaningless on its own: a root that never
     /// hashes (`.removableVolume`, see ADR 0018) must not be judged stale by this
-    /// alone. Callers gate it behind `hashRequired`.
+    /// alone. Callers gate it behind `everyProduct`.
     var hashStale: Bool {
         let currentSize = byteSize ?? -1
         let currentMTime = Self.mtimeSeconds(contentModifiedAt)
@@ -666,12 +682,13 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
             || contentHashSourceMTimeSeconds != currentMTime
     }
 
-    /// True when metadata is stale, or — only when a hash is required for this
-    /// asset's root kind — the hash is stale. `hashRequired` is a Store-owned
-    /// root-kind fact (ADR 0018); this pure value type never derives it itself, so a
-    /// caller cannot forget to supply it and silently fall back to a wrong default.
-    func needsEnrichment(hashRequired: Bool) -> Bool {
-        metadataStale || (hashRequired && hashStale)
+    /// True when metadata is stale, or — only when the row is claimed for every product —
+    /// its rendering or digest is. `everyProduct` is the claim predicate the Store chose
+    /// for the row's root and pass (ADR 0018); this pure value type never derives it
+    /// itself, so a caller cannot forget to supply it and silently fall back to a wrong
+    /// default. The Swift twin of `EnrichmentClaimGateway.stalenessSQLPredicate`.
+    func needsEnrichment(everyProduct: Bool) -> Bool {
+        metadataStale || (everyProduct && (renderingStale || hashStale))
     }
 }
 
@@ -698,8 +715,10 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
     let renderedRevision: Int64
     let bestKind: MediaKind?
     let durationSeconds: Double?
-    let enrichedSourceSize: Int64?
-    let enrichedSourceMTimeSeconds: Int?
+    /// The `(size, mtime)` the stored thumbnail and preview were rendered from (ADR 0009):
+    /// nil while the row has no rendering, including while a provisional thumbnail shows.
+    let renderedSourceSize: Int64?
+    let renderedSourceMTimeSeconds: Int?
     let mediaChoice: MediaChoice
 
     init(
@@ -714,8 +733,8 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
         renderedRevision: Int64 = 0,
         bestKind: MediaKind? = nil,
         durationSeconds: Double? = nil,
-        enrichedSourceSize: Int64? = nil,
-        enrichedSourceMTimeSeconds: Int? = nil,
+        renderedSourceSize: Int64? = nil,
+        renderedSourceMTimeSeconds: Int? = nil,
         mediaChoice: MediaChoice = .default
     ) {
         self.libraryRootPath = libraryRootPath
@@ -729,8 +748,8 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
         self.renderedRevision = renderedRevision
         self.bestKind = bestKind
         self.durationSeconds = durationSeconds
-        self.enrichedSourceSize = enrichedSourceSize
-        self.enrichedSourceMTimeSeconds = enrichedSourceMTimeSeconds
+        self.renderedSourceSize = renderedSourceSize
+        self.renderedSourceMTimeSeconds = renderedSourceMTimeSeconds
         self.mediaChoice = mediaChoice
     }
 
@@ -745,11 +764,11 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
         return CGSize(width: nativePixelWidth, height: nativePixelHeight)
     }
 
-    /// Enrichment ran and could not produce a real thumbnail (icon fallback is
-    /// never stored). Distinguishes "broken/unsupported media" from "not yet
-    /// enriched" (both have `thumbnailPath == nil`).
+    /// Rendering ran and could not produce a real thumbnail (icon fallback is never
+    /// stored). Distinguishes "broken/unsupported media" from "not yet rendered" (both
+    /// have `thumbnailPath == nil`).
     var thumbnailUnavailable: Bool {
-        enrichedSourceMTimeSeconds != nil && thumbnailPath == nil
+        renderedSourceMTimeSeconds != nil && thumbnailPath == nil
     }
 }
 

@@ -168,12 +168,18 @@ everything expensive happens on an actor off the main thread.
   reconcile observes its path once through `CatalogScanner.observeFile` and checks the
   epoch and the namespace lease right before its write; a stale one re-queues its
   dirt. One reconcile loop per Store, woken by a revision-counted doorbell, is the only
-  drainer of dirt, and every dirt insertion requests a pass. Import settlement
-  clones the source's normalized enrichment overlay, copying an independent
-  destination thumbnail and preview, whenever the source's enrichment stamps name the
-  size and mtime the import copied — for a card as for any source, since the copy is
-  the source file. A reuse miss falls back to ordinary enrichment; source and
-  destination overlay lifecycles remain independent. While an import copies from a
+  drainer of dirt, and every dirt insertion requests a pass. Each product — metadata,
+  rendering (thumbnail and preview), digest — has its own `(size, mtime)` stamp (ADR
+  0009), and a claim's `EnrichmentScope` is the set of its row's stale products, made
+  from one read. A card is claimed for metadata first, with a provisional QuickLook
+  thumbnail, which is all import readiness waits on, then for its renderings and
+  digests. After publishing a copy, `MediaImportExecutor` asks the Store which products
+  the source holds current for the copied bytes (`importSourceProducts`) and runs
+  `MediaEnricher` on the published copy for the rest while it is local; settlement takes
+  each product from the source, from what the import made, or — for a missing
+  rendering — the source's thumbnail as a provisional one. A product the copy still
+  lacks stays owed for ordinary enrichment; source and destination overlay lifecycles
+  remain independent. While an import copies from a
   card, the Store stops offering the card to enrichment
   (`beginImportSourceRead`/`endImportSourceRead`, bracketed by
   `MediaOperationCoordinator` around each run).
@@ -281,7 +287,7 @@ everything expensive happens on an actor off the main thread.
 | what is stored | `CatalogStore` + a SQLite migration in `CatalogStorePersistence` + an ADR |
 | platform source handling | the ViewModel owns monitor/session lifetimes; the Store owns attach/detach/remap/persistence |
 | import plan lifecycle / footer | `MediaOperationCoordinator` + ViewModel media-ops intents; views stay passive |
-| content hash production/persistence | `ContentHasher` stays inside `MediaEnricher` and `MediaImportExecutor`; enrichment hashes only byte-local roots (`.removableVolume` is gated off, ADR 0018/0013); `CatalogStore` validates source signatures and owns atomic overlay/journal settlement, including import overlay reuse diagnostics |
+| content hash production/persistence | `ContentHasher` stays inside `MediaEnricher` and `MediaImportExecutor`; enrichment hashes only byte-local roots (`.removableVolume` is gated off, ADR 0018/0013); `CatalogStore` validates source signatures and owns atomic overlay/journal settlement, including each imported copy's product origins (`reused`/`made`/`provisional`/`owed`) |
 | library reorganization | `LibraryReorganizationRunner` + ViewModel confirmation/remap; planner/executor stay off MainActor |
 | heavy byte-reading work | keep decoding/parsing in its consumer, check live `FileMaterialization` status, and submit deliberate downloads to `MaterializationCoordinator` |
 | grid rendering/selection/zoom | the `MediaGrid*` boundary (ADR 0006); selection *model* intents live on `CatalogWindowViewModel` |

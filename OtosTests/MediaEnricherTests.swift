@@ -33,54 +33,6 @@ struct MediaEnricherTests {
             .appending(path: "Fixtures/Media", directoryHint: .isDirectory)
     }
 
-    /// APP-015, at the seam where two owners write the same column.
-    ///
-    /// A camera row's provisional thumbnail is written at enumeration by one type; its
-    /// enrichment result is written by another. `EnrichmentResult` resolves
-    /// `generatedThumbnail?.finalRelativePath ?? thumbnailPath`, so a device pass that
-    /// produced no preview and reported nil for both *cleared* the column — pointing the
-    /// tile at nothing while its image sat on disk under the deterministic name.
-    ///
-    /// Found on a live 991-item card: 684 rows lost their thumbnail with all 8,606 files
-    /// still present. Neither owner's tests could see it alone.
-    @Test func aDeviceRowKeepsItsProvisionalThumbnailWhenNoPreviewIsProduced() throws {
-        let directory = try makeTestDirectory()
-        let id = MediaAssetID(
-            libraryRootPath: LibraryRootPath(rawValue: "/DeviceStaging/Cam"),
-            relativePath: MediaRelativePath(rawValue: "DSC00001.ARW")
-        )
-        let name = ThumbnailStore.relativeName(for: id)
-        try Data([0xFF, 0xD8, 0xFF, 0xD9]).write(to: directory.appending(path: name))
-
-        let result = EnrichmentResult(
-            id: id,
-            metadata: AssetMetadata(),
-            enrichedKind: nil,
-            enrichedFormat: nil,
-            thumbnailPath: MediaEnricher.testExistingThumbnailName(for: id, in: directory),
-            sourceSize: 1,
-            sourceMTimeSeconds: 1,
-            contentHash: nil,
-            generatedThumbnail: nil
-        )
-
-        #expect(
-            result.thumbnailPath == name,
-            "a pass with no new thumbnail must keep the one already on disk, not blank the tile"
-        )
-    }
-
-    /// The other half: a row with nothing on disk still reports nothing, rather than a path
-    /// that resolves to a missing file.
-    @Test func aRowWithNoThumbnailOnDiskReportsNone() throws {
-        let directory = try makeTestDirectory()
-        let id = MediaAssetID(
-            libraryRootPath: LibraryRootPath(rawValue: "/DeviceStaging/Cam"),
-            relativePath: MediaRelativePath(rawValue: "absent.arw")
-        )
-        #expect(MediaEnricher.testExistingThumbnailName(for: id, in: directory) == nil)
-    }
-
     @Test func enrichesJpegFixtureWithMetadataThumbnailAndTimestampFacts() async throws {
         let temp = try makeTestDirectory()
         let thumbnailDirectory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
@@ -91,19 +43,19 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "a.jpg")
         )
 
-        let outcome = await enricher.enrich(id, .localFile(url), 100, 1000, .metadataAndHash, nil)
+        let outcome = await enricher.enrich(id, .localFile(url), 100, 1000, [.metadata, .rendering, .hash], nil)
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete, got \(outcome)")
             return
         }
-        #expect(CaptureTimestamps(records: result.metadata.timestamps).captureInstant != nil)
-        #expect(!result.metadata.timestamps.isEmpty)
-        #expect(result.metadata.family != nil)
+        #expect(try CaptureTimestamps(records: #require(result.metadata).metadata.timestamps).captureInstant != nil)
+        #expect(result.metadata?.metadata.timestamps.isEmpty == false)
+        #expect(result.metadata?.metadata.family != nil)
         #expect(result.sourceSize == 100)
         #expect(result.sourceMTimeSeconds == 1000)
 
-        let thumbnailPath = try #require(result.thumbnailPath)
-        let generatedThumbnail = try #require(result.generatedThumbnail)
+        let thumbnailPath = try #require(result.rendering?.thumbnailPath)
+        let generatedThumbnail = try #require(result.rendering?.generatedThumbnail)
         let finalURL = thumbnailDirectory.appending(path: thumbnailPath, directoryHint: .notDirectory)
         let stagedURL = thumbnailDirectory.appending(
             path: generatedThumbnail.stagedRelativePath,
@@ -124,38 +76,86 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "a.heic")
         )
         let outcome = await enricher.enrich(
-            id, .localFile(fixtureDirectory.appending(path: "ios-heic-offset-date.heic")), 100, 1000, .metadataAndHash, nil
+            id, .localFile(fixtureDirectory.appending(path: "ios-heic-offset-date.heic")), 100, 1000, [.metadata, .rendering, .hash], nil
         )
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete, got \(outcome)")
             return
         }
-        let preview = try #require(result.generatedPreview)
-        #expect(result.previewPath == ThumbnailStore.previewRelativeName(for: id))
+        let preview = try #require(result.rendering?.generatedPreview)
+        #expect(result.rendering?.previewPath == ThumbnailStore.previewRelativeName(for: id))
         let previewImage = try #require(ThumbnailStore.load(preview.stagedRelativePath, in: directory))
         #expect(max(previewImage.width, previewImage.height) <= ThumbnailStore.previewMaxPixelSize)
-        let thumbnail = try #require(result.generatedThumbnail)
+        let thumbnail = try #require(result.rendering?.generatedThumbnail)
         let thumbnailImage = try #require(ThumbnailStore.load(thumbnail.stagedRelativePath, in: directory))
         #expect(max(thumbnailImage.width, thumbnailImage.height) <= ThumbnailStore.maxPixelSize)
         #expect(!FileManager.default.fileExists(atPath: ThumbnailStore.url(for: preview.finalRelativePath, in: directory)
                 .path(percentEncoded: false)))
     }
 
-    /// A card's first pass does not develop an unedited RAW: its thumbnail is QuickLook's and
-    /// it has no preview, because a RAW9 development costs about a second whatever its size
-    /// and that pass is what an import waits on. A library pass develops it (ADR 0035), an
-    /// edited RAW is developed in either so its thumbnail shows the edit, and every other
-    /// still is developed.
-    @Test func aCardsFirstPassDevelopsEveryStillButAnUneditedRAW() {
+    /// ADR 0009: a card's metadata pass reads metadata and makes a provisional QuickLook
+    /// thumbnail, with no rendering and no digest — the import waits on that pass alone.
+    @Test func aCardsMetadataPassMakesAProvisionalThumbnailAndNoRendering() async throws {
+        let temp = try makeTestDirectory()
+        let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
+        let enricher = MediaEnricher.live(thumbnailDirectory: directory)
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/Volumes/CARD"),
+            relativePath: MediaRelativePath(rawValue: "a.heic")
+        )
+        let outcome = await enricher.enrich(
+            id, .localFile(fixtureDirectory.appending(path: "ios-heic-offset-date.heic")), 100, 1000,
+            [.metadata, .provisionalThumbnail], nil
+        )
+        guard case let .complete(result) = outcome else {
+            Issue.record("expected .complete, got \(outcome)")
+            return
+        }
+        #expect(result.metadata != nil)
+        #expect(result.rendering == nil)
+        #expect(result.provisionalThumbnail != nil)
+        #expect(result.contentHash == nil)
+    }
+
+    /// An edited photo's thumbnail must show its edit, which only a rendering does, so its
+    /// metadata pass makes no provisional thumbnail (ADR 0036).
+    @Test func anEditedPhotosMetadataPassMakesNoProvisionalThumbnail() async throws {
+        let temp = try makeTestDirectory()
+        let enricher = MediaEnricher.live(thumbnailDirectory: temp.appending(path: "Thumbnails", directoryHint: .isDirectory))
         var edited = EditRecipe.neutral
         edited.exposure = 0.5
-        let raw = URL(fileURLWithPath: "/Volumes/CARD/DCIM/DSC00001.ARW")
-        #expect(!MediaEnricher.developsDuringEnrichment(raw, recipe: .neutral, scope: .metadata))
-        #expect(MediaEnricher.developsDuringEnrichment(raw, recipe: .neutral, scope: .metadataAndHash))
-        #expect(MediaEnricher.developsDuringEnrichment(raw, recipe: edited, scope: .metadata))
-        let heif = URL(fileURLWithPath: "/Volumes/CARD/DCIM/DSC00001.HIF")
-        #expect(MediaEnricher.developsDuringEnrichment(heif, recipe: .neutral, scope: .metadata))
-        #expect(!MediaEnricher.developsDuringEnrichment(URL(fileURLWithPath: "/Lib/a.mov"), recipe: edited, scope: .metadataAndHash))
+        let outcome = await enricher.enrich(
+            MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Volumes/CARD"), relativePath: MediaRelativePath(rawValue: "a.jpg")),
+            .localFile(fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg")), 100, 1000,
+            [.metadata, .provisionalThumbnail], StoredEditRecipe(recipe: edited, revision: 1)
+        )
+        guard case let .complete(result) = outcome else {
+            Issue.record("expected .complete, got \(outcome)")
+            return
+        }
+        #expect(result.metadata != nil)
+        #expect(result.provisionalThumbnail == nil)
+        #expect(result.rendering == nil)
+    }
+
+    /// A rendering alone — a card's later pass, or an edit — develops the still without
+    /// reading its metadata again (ADR 0009).
+    @Test func aRenderingScopeDevelopsWithoutReadingMetadata() async throws {
+        let temp = try makeTestDirectory()
+        let enricher = MediaEnricher.live(thumbnailDirectory: temp.appending(path: "Thumbnails", directoryHint: .isDirectory))
+        let outcome = await enricher.enrich(
+            MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Lib"), relativePath: MediaRelativePath(rawValue: "a.heic")),
+            .localFile(fixtureDirectory.appending(path: "ios-heic-offset-date.heic")), 100, 1000,
+            [.rendering], nil
+        )
+        guard case let .complete(result) = outcome else {
+            Issue.record("expected .complete, got \(outcome)")
+            return
+        }
+        #expect(result.metadata == nil)
+        #expect(result.rendering?.generatedPreview != nil)
+        #expect(result.rendering?.generatedThumbnail != nil)
+        #expect(result.provisionalThumbnail == nil)
     }
 
     /// A HEIF that records its rotation only in its `irot` property (as Sony cameras write
@@ -169,12 +169,12 @@ struct MediaEnricherTests {
             libraryRootPath: LibraryRootPath(rawValue: "/Lib"),
             relativePath: MediaRelativePath(rawValue: "turned.heic")
         )
-        let outcome = await enricher.enrich(id, .localFile(file), 100, 1000, .metadataAndHash, nil)
+        let outcome = await enricher.enrich(id, .localFile(file), 100, 1000, [.metadata, .rendering, .hash], nil)
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete, got \(outcome)")
             return
         }
-        #expect(result.metadata.orientation == 6)
+        #expect(result.metadata?.metadata.orientation == 6)
     }
 
     /// ADR 0039: Otos stores what the library reports, as it reports it — geometry from
@@ -220,14 +220,14 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "a.mov")
         )
         let outcome = await enricher.enrich(
-            id, .localFile(fixtureDirectory.appending(path: "mov-no-embedded-capture-date.mov")), 100, 1000, .metadataAndHash, nil
+            id, .localFile(fixtureDirectory.appending(path: "mov-no-embedded-capture-date.mov")), 100, 1000, [.metadata, .rendering, .hash], nil
         )
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete, got \(outcome)")
             return
         }
-        #expect(result.generatedPreview == nil)
-        #expect(result.previewPath == nil)
+        #expect(result.rendering?.generatedPreview == nil)
+        #expect(result.rendering?.previewPath == nil)
     }
 
     @Test func zeroByteStubIsDefinitiveCompleteWithoutThumbnail() async throws {
@@ -243,13 +243,13 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "broken.jpg")
         )
 
-        let outcome = await enricher.enrich(id, .localFile(stubURL), 0, 1000, .metadataAndHash, nil)
+        let outcome = await enricher.enrich(id, .localFile(stubURL), 0, 1000, [.metadata, .rendering, .hash], nil)
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete for zero-byte stub, got \(outcome)")
             return
         }
-        #expect(result.thumbnailPath == nil)
-        #expect(result.generatedThumbnail == nil)
+        #expect(result.rendering?.thumbnailPath == nil)
+        #expect(result.rendering?.generatedThumbnail == nil)
         #expect(result.sourceSize == 0)
         #expect(result.sourceMTimeSeconds == 1000)
     }
@@ -266,7 +266,7 @@ struct MediaEnricherTests {
         )
 
         // Unsupported is definitive (stamped, never retried), even with empty metadata.
-        let outcome = await enricher.enrich(id, .localFile(textURL), 9, 1000, .metadataAndHash, nil)
+        let outcome = await enricher.enrich(id, .localFile(textURL), 9, 1000, [.metadata, .rendering, .hash], nil)
         guard case .complete = outcome else {
             Issue.record("expected .complete for unsupported, got \(outcome)")
             return
@@ -284,7 +284,7 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "gone.jpg")
         )
 
-        let outcome = await enricher.enrich(id, .localFile(missing), 100, 1000, .metadataAndHash, nil)
+        let outcome = await enricher.enrich(id, .localFile(missing), 100, 1000, [.metadata, .rendering, .hash], nil)
         guard case .notMaterialized = outcome else {
             Issue.record("expected .notMaterialized for a missing file, got \(outcome)")
             return
@@ -307,7 +307,7 @@ struct MediaEnricherTests {
             .localFile(url),
             100,
             1000,
-            .metadataAndHash, nil
+            [.metadata, .rendering, .hash], nil
         )
         guard case .notMaterialized = outcome else {
             Issue.record("expected notMaterialized, got \(outcome)")
@@ -333,7 +333,7 @@ struct MediaEnricherTests {
             .localFile(url),
             100,
             1000,
-            .metadataAndHash, nil
+            [.metadata, .rendering, .hash], nil
         )
         guard case .notMaterialized = outcome else {
             Issue.record("expected notMaterialized, got \(outcome)")
@@ -358,7 +358,7 @@ struct MediaEnricherTests {
             .localFile(fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg")),
             100,
             1000,
-            .metadataAndHash, nil
+            [.metadata, .rendering, .hash], nil
         )
         guard case .complete = outcome else {
             Issue.record("expected complete enrichment, got \(outcome)")

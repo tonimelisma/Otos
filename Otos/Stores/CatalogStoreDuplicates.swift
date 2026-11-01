@@ -154,13 +154,14 @@ nonisolated enum DuplicatesGateway {
 // MARK: - Same photo (ADR 0042)
 
 /// The thumbnail a render signature is read from, named by what makes it that rendering:
-/// its path, the edit revision it was rendered with, and the file signature enrichment
-/// read. A signature whose source no longer matches is stale.
+/// its path, the edit revision it was rendered with, and the file signature it was
+/// rendered from (its rendering stamp, empty for a provisional thumbnail). A signature
+/// whose source no longer matches is stale.
 nonisolated enum RenderSignatureSQL {
     static func source(_ row: String) -> String {
         """
         (\(row).thumbnail_path || '|' || \(row).rendered_revision || '|'
-            || IFNULL(\(row).enriched_source_size, '') || '|' || IFNULL(\(row).enriched_source_mtime, ''))
+            || IFNULL(\(row).rendered_source_size, '') || '|' || IFNULL(\(row).rendered_source_mtime, ''))
         """
     }
 }

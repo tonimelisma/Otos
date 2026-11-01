@@ -199,7 +199,7 @@ actor PreviewImageLoader: PreviewLoading {
             let result = await materializationRequester.materialize(
                 MaterializationCoordinator.Request(
                     id: request.id,
-                    sourceSize: request.detail?.enrichedSourceSize,
+                    sourceSize: request.detail?.byteSize,
                     isVideo: isVideo,
                     priority: .interactive
                 )

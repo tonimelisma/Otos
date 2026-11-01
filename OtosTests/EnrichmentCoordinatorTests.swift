@@ -273,13 +273,13 @@ struct EnrichmentCoordinatorTests {
         await coordinator.start()
 
         let enriched = try await waitForCatalogStoreState(store) { snapshot in
-            snapshot.testAssets.count == 2 && snapshot.testAssets.allSatisfy { !$0.needsEnrichment(hashRequired: true) }
+            snapshot.testAssets.count == 2 && snapshot.testAssets.allSatisfy { !$0.needsEnrichment(everyProduct: true) }
         }
         await coordinator.shutdown()
 
         let visible = try #require(enriched.testAssets.first { $0.relativePath.rawValue == "a.jpg" })
         #expect(visible.thumbnailPath?.hasPrefix("thumb-") == true)
-        #expect(enriched.testAssets.allSatisfy { !$0.needsEnrichment(hashRequired: true) })
+        #expect(enriched.testAssets.allSatisfy { !$0.needsEnrichment(everyProduct: true) })
     }
 
     @Test func enrichesMaterializedAndDownloadsThenEnrichesDataless() async throws {
@@ -331,7 +331,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.start()
 
         let enriched = try await waitForCatalogStoreState(store) { snapshot in
-            snapshot.testAssets.count == 3 && snapshot.testAssets.allSatisfy { !$0.needsEnrichment(hashRequired: true) }
+            snapshot.testAssets.count == 3 && snapshot.testAssets.allSatisfy { !$0.needsEnrichment(everyProduct: true) }
         }
         await coordinator.shutdown()
 
@@ -345,13 +345,13 @@ struct EnrichmentCoordinatorTests {
         await context.coordinator.start()
 
         let enriched = try await waitForCatalogStoreState(context.store) { snapshot in
-            snapshot.testAssets.first?.needsEnrichment(hashRequired: true) == false
+            snapshot.testAssets.first?.needsEnrichment(everyProduct: true) == false
         }
         await context.coordinator.shutdown()
 
         let asset = try #require(enriched.testAssets.first)
         #expect(asset.thumbnailPath == "t.jpg")
-        #expect(asset.needsEnrichment(hashRequired: true) == false)
+        #expect(asset.needsEnrichment(everyProduct: true) == false)
     }
 
     @Test func transientOutcomeIsRetriedUntilComplete() async throws {
@@ -390,7 +390,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.start()
 
         let enriched = try await waitForCatalogStoreState(store) { snapshot in
-            snapshot.testAssets.first?.needsEnrichment(hashRequired: true) == false
+            snapshot.testAssets.first?.needsEnrichment(everyProduct: true) == false
         }
         await coordinator.shutdown()
         #expect(enriched.testAssets.first?.thumbnailPath == "t.jpg")
@@ -434,7 +434,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.start()
 
         let enriched = try await waitForCatalogStoreState(store) { snapshot in
-            snapshot.testAssets.first?.needsEnrichment(hashRequired: true) == false
+            snapshot.testAssets.first?.needsEnrichment(everyProduct: true) == false
         }
         await coordinator.shutdown()
         #expect(enriched.testAssets.first?.thumbnailPath == "t.jpg")
@@ -474,7 +474,7 @@ struct EnrichmentCoordinatorTests {
         )
         await coordinator.start()
         let enriched = try await waitForCatalogStoreState(store) {
-            $0.testAssets.count == 2 && $0.testAssets.allSatisfy { !$0.needsEnrichment(hashRequired: true) }
+            $0.testAssets.count == 2 && $0.testAssets.allSatisfy { !$0.needsEnrichment(everyProduct: true) }
         }
         await coordinator.shutdown()
 
@@ -482,11 +482,11 @@ struct EnrichmentCoordinatorTests {
         let ok = try #require(enriched.testAssets.first { $0.relativePath.rawValue == "ok.jpg" })
         #expect(empty.byteSize == 0)
         #expect(empty.thumbnailPath == nil)
-        #expect(empty.enrichedSourceSize == 0)
-        #expect(empty.enrichedSourceMTimeSeconds == 1000)
-        #expect(!empty.needsEnrichment(hashRequired: true))
+        #expect(empty.metadataSourceSize == 0)
+        #expect(empty.metadataSourceMTimeSeconds == 1000)
+        #expect(!empty.needsEnrichment(everyProduct: true))
         #expect(ok.thumbnailPath == "t.jpg")
-        #expect(!ok.needsEnrichment(hashRequired: true))
+        #expect(!ok.needsEnrichment(everyProduct: true))
         #expect(await enrichCalls.total == 1)
         #expect(await materializeCalls.total == 0)
     }
@@ -955,9 +955,10 @@ struct EnrichmentCoordinatorTests {
     /// `EnrichWork.scope` is the value the Store's claim decided
     /// (`ClaimedEnrichmentCandidate.scope`), not one the coordinator re-derives from its own
     /// notion of root kind — a second owner of the same fact, able to disagree. A library
-    /// row is hashed in its metadata pass; a card row gets metadata first and its digest in
-    /// a pass of its own, once the card has no row left needing metadata (ADR 0018).
-    @Test func aCardIsHashedInItsOwnPassAfterItsMetadata() async throws {
+    /// row is read for every product at once; a card row gets metadata and a provisional
+    /// thumbnail first, and its rendering and digest in a pass of its own, once the card has
+    /// no row left needing metadata (ADR 0009, ADR 0018).
+    @Test func aCardIsRenderedAndHashedInItsOwnPassAfterItsMetadata() async throws {
         let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let removableRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -1004,11 +1005,11 @@ struct EnrichmentCoordinatorTests {
             return .complete(
                 EnrichmentResult(
                     id: id,
-                    metadata: AssetMetadata(),
-                    thumbnailPath: "t.jpg",
+                    metadata: scope.contains(.metadata) ? EnrichedMetadata(metadata: AssetMetadata(), kind: nil, format: nil) : nil,
+                    rendering: scope.contains(.rendering) ? EnrichedRendering(thumbnailPath: "t.jpg") : nil,
                     sourceSize: size,
                     sourceMTimeSeconds: mtime,
-                    contentHash: scope == .metadataAndHash ? digest : nil
+                    contentHash: scope.contains(.hash) ? digest : nil
                 )
             )
         }
@@ -1025,12 +1026,13 @@ struct EnrichmentCoordinatorTests {
             relativePath: MediaRelativePath(rawValue: "card.jpg")
         )
         try await waitUntil {
-            try await store.mediaAssets(for: [cardID])[cardID]?.hashStale == false
+            let card = try await store.mediaAssets(for: [cardID])[cardID]
+            return card?.hashStale == false && card?.renderingStale == false
         }
         await coordinator.shutdown()
 
-        #expect(await recorder.scopes(name: "fixed.jpg") == [.metadataAndHash])
-        #expect(await recorder.scopes(name: "card.jpg") == [.metadata, .hash])
+        #expect(await recorder.scopes(name: "fixed.jpg") == [[.metadata, .rendering, .hash]])
+        #expect(await recorder.scopes(name: "card.jpg") == [[.metadata, .provisionalThumbnail], [.rendering, .hash]])
     }
 }
 

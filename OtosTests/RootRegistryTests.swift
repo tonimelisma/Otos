@@ -135,7 +135,7 @@ struct RootRegistryTests {
         registry.upsert(volume)
 
         #expect(registry.enrichableRootIDsByRemovablePriority().removable.isEmpty)
-        #expect(registry.enrichableRootIDsByHashRequirement().hashNotRequired.isEmpty)
+        #expect(registry.enrichableRootIDsByProductClaim().metadataFirst.isEmpty)
         #expect(registry.enrichableRootIDsByRemovablePriority().fixed == [1])
     }
 
@@ -145,9 +145,9 @@ struct RootRegistryTests {
         registry.upsert(volumeState(rowID: 2))
         registry.upsert(libraryState(path: otherPath, rowID: 3, availability: .unavailable))
 
-        let partitioned = registry.enrichableRootIDsByHashRequirement()
-        #expect(partitioned.hashRequired == [1])
-        #expect(partitioned.hashNotRequired == [2])
+        let partitioned = registry.enrichableRootIDsByProductClaim()
+        #expect(partitioned.everyProduct == [1])
+        #expect(partitioned.metadataFirst == [2])
     }
 
     /// The rule is byte locality, not kind for its own sake (ADR 0018): a digest costs
@@ -160,12 +160,12 @@ struct RootRegistryTests {
     /// ADR already prescribes for a removable volume.
     @Test func contentHashIsRequiredOnlyWhereEnrichmentAlreadyReadsEveryByte() {
         let path = LibraryRootPath(rawValue: "/x")
-        #expect(LibraryRoot(path: path, kind: .library).isContentHashRequired)
+        #expect(LibraryRoot(path: path, kind: .library).claimsEveryProductTogether)
         #expect(
-            !LibraryRoot(path: path, kind: .deviceMTP).isContentHashRequired,
+            !LibraryRoot(path: path, kind: .deviceMTP).claimsEveryProductTogether,
             "a camera row is read as ranges, so hashing it would re-download the file it avoided"
         )
-        #expect(!LibraryRoot(path: path, kind: .removableVolume).isContentHashRequired)
+        #expect(!LibraryRoot(path: path, kind: .removableVolume).claimsEveryProductTogether)
         #expect(LibraryRoot(path: path, kind: .removableVolume).isRemovableSource)
     }
 

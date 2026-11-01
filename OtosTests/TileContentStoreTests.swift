@@ -267,8 +267,8 @@ private func makeDetail(
         thumbnailPath: thumbnailPath,
         bestKind: kind,
         durationSeconds: duration,
-        enrichedSourceSize: thumbnailPath == nil ? nil : size,
-        enrichedSourceMTimeSeconds: thumbnailPath == nil ? nil : mtime
+        renderedSourceSize: thumbnailPath == nil ? nil : size,
+        renderedSourceMTimeSeconds: thumbnailPath == nil ? nil : mtime
     )
 }
 

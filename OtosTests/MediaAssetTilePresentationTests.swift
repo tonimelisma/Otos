@@ -521,8 +521,8 @@ private func makeDetail(
         renderedRevision: renderedRevision,
         bestKind: kind,
         durationSeconds: durationSeconds,
-        enrichedSourceSize: enrichedSize,
-        enrichedSourceMTimeSeconds: enrichedMTime,
+        renderedSourceSize: enrichedSize,
+        renderedSourceMTimeSeconds: enrichedMTime,
         mediaChoice: mediaChoice
     )
 }

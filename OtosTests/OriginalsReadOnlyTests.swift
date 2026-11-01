@@ -149,7 +149,7 @@ struct OriginalsReadOnlyTests {
             .localFile(root.appending(path: "photo.jpg")),
             100,
             1000,
-            .metadataAndHash, nil
+            [.metadata, .rendering, .hash], nil
         )
         guard case .complete = outcome else {
             Issue.record("Expected enrichment to complete, got \(outcome)")
@@ -196,11 +196,10 @@ struct OriginalsReadOnlyTests {
         let detail = MediaTileDetail(
             libraryRootPath: LibraryRootPath(rawValue: root.path),
             relativePath: MediaRelativePath(rawValue: "clip.mp4"),
+            byteSize: 1024,
             thumbnailPath: nil,
             bestKind: .video,
-            durationSeconds: nil,
-            enrichedSourceSize: 1024,
-            enrichedSourceMTimeSeconds: nil
+            durationSeconds: nil
         )
         let loader = VideoPreviewLoader(
             status: { _ in .materialized },

@@ -19,8 +19,8 @@ struct EnrichmentClaimGatewayTests {
             byteSize: 1024,
             createdAt: nil,
             contentModifiedAt: nil,
-            enrichedSourceSize: needsEnrichment ? nil : 1024,
-            enrichedSourceMTimeSeconds: needsEnrichment ? nil : 1
+            metadataSourceSize: needsEnrichment ? nil : 1024,
+            metadataSourceMTimeSeconds: needsEnrichment ? nil : 1
         )
     }
 
@@ -50,13 +50,15 @@ struct EnrichmentClaimGatewayTests {
             byteSize: 1024,
             createdAt: nil,
             contentModifiedAt: Date(timeIntervalSince1970: 1),
-            enrichedSourceSize: 1024,
-            enrichedSourceMTimeSeconds: 1,
+            metadataSourceSize: 1024,
+            metadataSourceMTimeSeconds: 1,
+            renderedSourceSize: 1024,
+            renderedSourceMTimeSeconds: 1,
             contentHash: XXH3Digest128.empty,
             contentHashSourceSize: 1024,
             contentHashSourceMTimeSeconds: 1
         )
-        #expect(currentAsset.needsEnrichment(hashRequired: true) == false)
+        #expect(currentAsset.needsEnrichment(everyProduct: true) == false)
         let assetsByID = [
             id: staleAsset,
             currentAsset.id: currentAsset,
@@ -68,7 +70,7 @@ struct EnrichmentClaimGatewayTests {
             assetsByID: assetsByID,
             rootIDsByPath: rootIDsByPath,
             isRootEnrichable: { $0 == rootPath },
-            isHashRequired: { _ in true }
+            claimsEveryProduct: { _ in true }
         )
 
         #expect(eligible.count == 1)
@@ -81,14 +83,14 @@ struct EnrichmentClaimGatewayTests {
             EnrichmentClaimGateway.enrichmentClaimQuery(
                 rootIDs: [],
                 limit: 1,
-                hashRequired: true
+                everyProduct: true
             ) == nil
         )
         #expect(
             EnrichmentClaimGateway.enrichmentClaimQuery(
                 rootIDs: [1],
                 limit: 0,
-                hashRequired: true
+                everyProduct: true
             ) == nil
         )
     }

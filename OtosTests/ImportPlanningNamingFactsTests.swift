@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 /// `naming_settled` is derived from the enrichment staleness predicate, which
-/// compares `content_modified_at_unix` against `enriched_source_mtime`. An asset
+/// compares `content_modified_at_unix` against `metadata_source_mtime`. An asset
 /// with neither can never satisfy it, so it reads "stale" forever — even after
 /// enrichment has supplied the capture wall that names it. Planning asks a
 /// different question and must not inherit that permanent answer.

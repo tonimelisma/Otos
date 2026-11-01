@@ -18,12 +18,12 @@ struct EnrichmentClaimIndexContractTests {
         let rootQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [1],
             limit: 4,
-            hashRequired: true
+            everyProduct: true
         ))
         let globalQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [1, 2],
             limit: 4,
-            hashRequired: true
+            everyProduct: true
         ))
         let plans = try await dbQueue.read { db in
             try (
@@ -40,12 +40,12 @@ struct EnrichmentClaimIndexContractTests {
         let rootQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [1],
             limit: 4,
-            hashRequired: false
+            everyProduct: false
         ))
         let globalQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [1, 2],
             limit: 4,
-            hashRequired: false
+            everyProduct: false
         ))
         let plans = try await dbQueue.read { db in
             try (
@@ -69,11 +69,11 @@ struct EnrichmentClaimIndexContractTests {
         let dbQueue = try await Self.migratedDatabase()
         let reparenthesized = """
         (
-            enriched_source_size IS NULL
-               OR enriched_source_mtime IS NULL
-               OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
+            metadata_source_size IS NULL
+               OR metadata_source_mtime IS NULL
+               OR COALESCE(byte_size, -1) <> COALESCE(metadata_source_size, -1)
                OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
-                  <> COALESCE(enriched_source_mtime, -1)
+                  <> COALESCE(metadata_source_mtime, -1)
         )
            OR (
             content_hash_xxh3_128 IS NULL

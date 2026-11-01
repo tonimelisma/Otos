@@ -7,13 +7,15 @@ import UniformTypeIdentifiers
 
 /// Media enricher guide
 ///
-/// Produces the products for one already-materialized media file: parsed metadata
-/// (the `MediaMetadata` library, byte-reading, synchronous), and — for a still that is
-/// developed (`developsDuringEnrichment`) — one `ImageRenderer` development that becomes
-/// the stored 2560 px preview and the 256 px thumbnail drawn from it (ADR 0035). An
-/// unedited RAW in a card's first pass, a video, or a still the renderer cannot read gets
-/// its thumbnail from QuickLook and no preview. It is a small `Sendable` value with one injectable closure, mirroring
-/// `CatalogScanner`, so the coordinator and tests can substitute a fake.
+/// Produces the products its `EnrichmentScope` names for one already-materialized media
+/// file, each from the one read (ADR 0009): the digest, parsed metadata (the
+/// `MediaMetadata` library, byte-reading, synchronous), and a rendering — for a still, one
+/// `ImageRenderer` development that becomes the stored 2560 px preview and the 256 px
+/// thumbnail drawn from it (ADR 0035); for a video, or a still the renderer cannot read,
+/// QuickLook's thumbnail and no preview. A card's metadata pass makes a provisional
+/// QuickLook thumbnail instead of a rendering. It is a small `Sendable` value with one
+/// injectable closure, mirroring `CatalogScanner`, so the coordinator, the import and tests
+/// can substitute a fake.
 ///
 /// It runs entirely off the main actor in a task-group child of the coordinator's worker
 /// pass (`EnrichmentCoordinator`). The first
@@ -68,86 +70,75 @@ nonisolated struct MediaEnricher {
             guard readinessChecker.status(of: url) == .materialized else {
                 return .notMaterialized
             }
-            // A card's first pass (ADR 0018): metadata and thumbnail before a read of
-            // every byte. `contentHash` stays nil and the store leaves any existing digest
-            // untouched; the card's digest comes in its second pass.
-            guard scope != .metadata else {
-                return await Self.enrichWithoutHash(
-                    id: id,
-                    url: url,
-                    sourceSize: sourceSize,
-                    sourceMTimeSeconds: sourceMTimeSeconds,
-                    thumbnailDirectory: thumbnailDirectory,
-                    readinessChecker: readinessChecker,
-                    recipe: recipe
-                )
-            }
-            let hashStart = ContinuousClock.now
-            let hashSignpost = OtosSignpost.mediaIO.beginInterval("ContentHash")
-            let hashOutcome = contentHasher(url)
-            OtosSignpost.mediaIO.endInterval("ContentHash", hashSignpost)
-            switch hashOutcome {
-            case let .complete(contentHash):
-                let hashMs = DiagnosticsTiming.milliseconds(since: hashStart)
-                OtosLog.mediaIO.noticeOperation(
-                    "contentHash",
-                    phase: "finish",
-                    fields: [
-                        "owner": "enrichment",
-                        "rootPath": id.libraryRootPath.rawValue,
-                        "relativePath": id.relativePath.rawValue,
-                        "bytes": "\(max(sourceSize ?? 0, 0))",
-                        "elapsedMs": "\(hashMs)",
-                        "mbps": throughputMBps(bytes: max(sourceSize ?? 0, 0), elapsedMs: hashMs),
-                    ]
-                )
-                guard readinessChecker.status(of: url) == .materialized else {
-                    return .notMaterialized
+            var contentHash: XXH3Digest128?
+            if scope.contains(.hash) {
+                let hashStart = ContinuousClock.now
+                let hashSignpost = OtosSignpost.mediaIO.beginInterval("ContentHash")
+                let hashOutcome = contentHasher(url)
+                OtosSignpost.mediaIO.endInterval("ContentHash", hashSignpost)
+                switch hashOutcome {
+                case let .complete(digest):
+                    let hashMs = DiagnosticsTiming.milliseconds(since: hashStart)
+                    OtosLog.mediaIO.noticeOperation(
+                        "contentHash",
+                        phase: "finish",
+                        fields: [
+                            "owner": "enrichment",
+                            "rootPath": id.libraryRootPath.rawValue,
+                            "relativePath": id.relativePath.rawValue,
+                            "bytes": "\(max(sourceSize ?? 0, 0))",
+                            "elapsedMs": "\(hashMs)",
+                            "mbps": throughputMBps(bytes: max(sourceSize ?? 0, 0), elapsedMs: hashMs),
+                        ]
+                    )
+                    guard readinessChecker.status(of: url) == .materialized else {
+                        return .notMaterialized
+                    }
+                    // Every other product is current: the digest is all this claim was
+                    // for, so nothing is parsed or rendered.
+                    if scope == .hash {
+                        return .hashed(ContentHashResult(
+                            id: id,
+                            contentHash: digest,
+                            sourceSize: sourceSize,
+                            sourceMTimeSeconds: sourceMTimeSeconds
+                        ))
+                    }
+                    contentHash = digest
+                case .cancelled:
+                    OtosLog.mediaIO.noticeOperation(
+                        "contentHash",
+                        phase: "cancelled",
+                        fields: [
+                            "owner": "enrichment",
+                            "rootPath": id.libraryRootPath.rawValue,
+                            "relativePath": id.relativePath.rawValue,
+                        ]
+                    )
+                    return .transient
+                case let .failed(category):
+                    OtosLog.mediaIO.errorOperation(
+                        "contentHash",
+                        phase: "failed",
+                        fields: [
+                            "owner": "enrichment",
+                            "rootPath": id.libraryRootPath.rawValue,
+                            "relativePath": id.relativePath.rawValue,
+                            "category": category.rawValue,
+                        ]
+                    )
+                    return .transient
                 }
-                // Metadata and products are current: the digest is all this claim was for,
-                // so nothing is parsed or rendered again.
-                if scope == .hash {
-                    return .hashed(ContentHashResult(
-                        id: id,
-                        contentHash: contentHash,
-                        sourceSize: sourceSize,
-                        sourceMTimeSeconds: sourceMTimeSeconds
-                    ))
-                }
-                return await Self.parseAndComplete(
-                    id: id,
-                    url: url,
-                    sourceSize: sourceSize,
-                    sourceMTimeSeconds: sourceMTimeSeconds,
-                    pass: .withDigest(contentHash),
-                    thumbnailDirectory: thumbnailDirectory,
-                    readinessChecker: readinessChecker,
-                    recipe: recipe
-                )
-            case .cancelled:
-                OtosLog.mediaIO.noticeOperation(
-                    "contentHash",
-                    phase: "cancelled",
-                    fields: [
-                        "owner": "enrichment",
-                        "rootPath": id.libraryRootPath.rawValue,
-                        "relativePath": id.relativePath.rawValue,
-                    ]
-                )
-                return .transient
-            case let .failed(category):
-                OtosLog.mediaIO.errorOperation(
-                    "contentHash",
-                    phase: "failed",
-                    fields: [
-                        "owner": "enrichment",
-                        "rootPath": id.libraryRootPath.rawValue,
-                        "relativePath": id.relativePath.rawValue,
-                        "category": category.rawValue,
-                    ]
-                )
-                return .transient
             }
+            return await Self.produce(
+                LocalRead(
+                    id: id, url: url, sourceSize: sourceSize, sourceMTimeSeconds: sourceMTimeSeconds,
+                    scope: scope, recipe: recipe
+                ),
+                contentHash: contentHash,
+                thumbnailDirectory: thumbnailDirectory,
+                readinessChecker: readinessChecker
+            )
         }
     }
 
@@ -238,44 +229,23 @@ nonisolated struct MediaEnricher {
         return .complete(
             EnrichmentResult(
                 id: id,
-                metadata: Self.map(result),
-                enrichedKind: Self.normalizedKind(result.format),
-                enrichedFormat: MediaFormatToken.normalize(result.format),
-                // Keeps the camera's provisional thumbnail when this pass produced no
-                // better one. `EnrichmentResult` resolves `generatedThumbnail?.finalRelative-
-                // Path ?? thumbnailPath`, so passing nil for both *clears* the column — and
-                // the provisional JPEG written at enumeration lives at exactly this
-                // deterministic name, so clearing it points the tile at nothing while its
-                // image sits on disk.
-                //
-                // Measured on a 991-item card: 684 rows lost their thumbnail this way, with
-                // all 8,606 files still present. A tile that had an image showing a
-                // placeholder is precisely what APP-015 exists to prevent, and no unit test
-                // caught it because the provisional write and the enrichment write are
-                // owned by different types.
-                thumbnailPath: Self.existingThumbnailName(for: id, in: thumbnailDirectory),
+                metadata: EnrichedMetadata(
+                    metadata: Self.map(result),
+                    kind: Self.normalizedKind(result.format),
+                    format: MediaFormatToken.normalize(result.format)
+                ),
+                // A camera row is never rendered in place (`claimsEveryProductTogether`):
+                // its rendering is made at import, from the staged copy. The embedded
+                // preview is a provisional thumbnail, and when there is none the result
+                // carries no thumbnail at all, so the camera's own thumbnail written at
+                // enumeration stays on the row (APP-015).
+                rendering: nil,
+                provisionalThumbnail: generatedThumbnail,
                 sourceSize: sourceSize ?? -1,
                 sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
-                contentHash: nil,
-                generatedThumbnail: generatedThumbnail
+                contentHash: nil
             )
         )
-    }
-
-    /// The deterministic thumbnail name for `id`, when a file is actually there.
-    ///
-    /// Returns nil when nothing is on disk, so a row with no thumbnail at all still reports
-    /// none rather than a path that resolves to a missing file.
-    static func existingThumbnailName(for id: MediaAssetID, in directory: URL) -> String? {
-        let name = ThumbnailStore.relativeName(for: id)
-        let url = directory.appending(path: name, directoryHint: .notDirectory)
-        return FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) ? name : nil
-    }
-
-    /// Test seam for `existingThumbnailName`, which is otherwise only reachable through a
-    /// live camera session.
-    static func testExistingThumbnailName(for id: MediaAssetID, in directory: URL) -> String? {
-        existingThumbnailName(for: id, in: directory)
     }
 
     /// Stages a grid thumbnail from a container's embedded preview, or nil when there is
@@ -318,126 +288,104 @@ nonisolated struct MediaEnricher {
         }
     }
 
-    /// The un-hashed path: identical to the post-hash continuation above except no
-    /// digest was produced, so `EnrichmentResult.contentHash` stays nil.
-    private static func enrichWithoutHash(
-        id: MediaAssetID,
-        url: URL,
-        sourceSize: Int64?,
-        sourceMTimeSeconds: Int?,
-        thumbnailDirectory: URL,
-        readinessChecker: any EnrichmentReadinessChecking,
-        recipe: StoredEditRecipe?
-    ) async -> EnrichmentOutcome {
-        await parseAndComplete(
-            id: id,
-            url: url,
-            sourceSize: sourceSize,
-            sourceMTimeSeconds: sourceMTimeSeconds,
-            pass: .cardFirstPass,
-            thumbnailDirectory: thumbnailDirectory,
-            readinessChecker: readinessChecker,
-            recipe: recipe
-        )
+    /// One local file's enrichment: which row, which file at which facts, the products the
+    /// claim covers, and the edit its rendering shows.
+    private struct LocalRead {
+        let id: MediaAssetID
+        let url: URL
+        let sourceSize: Int64?
+        let sourceMTimeSeconds: Int?
+        let scope: EnrichmentScope
+        let recipe: StoredEditRecipe?
     }
 
-    /// Which of the two passes that parse a file is running: a card's first pass, which
-    /// reads no digest and is what an import waits on (ADR 0018), or a pass that has read
-    /// the file's digest.
-    private enum Pass {
-        case cardFirstPass
-        case withDigest(XXH3Digest128)
-
-        var scope: EnrichmentScope {
-            switch self {
-            case .cardFirstPass: .metadata
-            case .withDigest: .metadataAndHash
-            }
-        }
-
-        var contentHash: XXH3Digest128? {
-            switch self {
-            case .cardFirstPass: nil
-            case let .withDigest(digest): digest
-            }
-        }
-    }
-
-    /// Metadata parse, readiness re-check, and thumbnail generation — shared by the
-    /// hashed and un-hashed paths once each has (or has decided not to produce) a
-    /// digest.
-    private static func parseAndComplete(
-        id: MediaAssetID,
-        url: URL,
-        sourceSize: Int64?,
-        sourceMTimeSeconds: Int?,
-        pass: Pass,
+    /// Makes the scope's products other than the digest from a local file whose bytes are
+    /// already read for it: metadata, then a rendering or a provisional thumbnail. Each is
+    /// present in the result only when the scope covered it (ADR 0009).
+    private static func produce(
+        _ read: LocalRead,
+        contentHash: XXH3Digest128?,
         thumbnailDirectory: URL,
-        readinessChecker: any EnrichmentReadinessChecking,
-        recipe: StoredEditRecipe?
+        readinessChecker: any EnrichmentReadinessChecking
     ) async -> EnrichmentOutcome {
-        let result = MediaMetadataReader.read(url: url)
-        guard !result.outcome.shouldRetry else {
-            return .transient
+        let (id, url, scope, recipe) = (read.id, read.url, read.scope, read.recipe)
+        var metadata: EnrichedMetadata?
+        var metadataMs = 0
+        if scope.contains(.metadata) {
+            let metadataStart = ContinuousClock.now
+            let parsed = MediaMetadataReader.read(url: url)
+            metadataMs = DiagnosticsTiming.milliseconds(since: metadataStart)
+            guard !parsed.outcome.shouldRetry else {
+                return .transient
+            }
+            metadata = EnrichedMetadata(
+                metadata: Self.map(parsed),
+                kind: Self.normalizedKind(parsed.format),
+                format: MediaFormatToken.normalize(parsed.format)
+            )
         }
         guard readinessChecker.status(of: url) == .materialized else {
             return .notMaterialized
         }
-        let rendered = await Self.renderStill(
-            id: id, url: url, recipe: recipe?.recipe ?? .neutral, scope: pass.scope, directory: thumbnailDirectory
-        )
-        let generatedThumbnail: StagedDerivedImage? = if let rendered {
-            rendered.thumbnail
+        let productsStart = ContinuousClock.now
+        var rendering: EnrichedRendering?
+        var provisionalThumbnail: StagedDerivedImage?
+        let products: String
+        if scope.contains(.rendering) {
+            if let rendered = await Self.renderStill(
+                id: id, url: url, recipe: recipe?.recipe ?? .neutral, directory: thumbnailDirectory
+            ) {
+                rendering = EnrichedRendering(generatedThumbnail: rendered.thumbnail, generatedPreview: rendered.preview)
+                products = "rendered"
+            } else {
+                rendering = await EnrichedRendering(
+                    generatedThumbnail: Self.generateThumbnail(id: id, url: url, directory: thumbnailDirectory)
+                )
+                products = "quickLook"
+            }
+        } else if scope.contains(.provisionalThumbnail), recipe?.recipe.isNeutral ?? true {
+            // An edited photo's thumbnail must show the edit, which only a rendering does;
+            // its current thumbnail stays until that rendering lands.
+            provisionalThumbnail = await Self.generateThumbnail(id: id, url: url, directory: thumbnailDirectory)
+            products = "provisional"
         } else {
-            await Self.generateThumbnail(id: id, url: url, directory: thumbnailDirectory)
+            products = "none"
         }
-        let metadata = Self.map(result)
+        // The item's costs apart: the metadata read is what an import's naming waits on,
+        // the products (a development, or QuickLook's thumbnail) what the grid waits on.
+        OtosLog.metadata.noticeOperation("enrichment.item", phase: "finish", fields: [
+            "rootPath": id.libraryRootPath.rawValue,
+            "relativePath": id.relativePath.rawValue,
+            "scope": "\(scope)",
+            "metadataMs": "\(metadataMs)",
+            "products": products,
+            "productsMs": "\(DiagnosticsTiming.milliseconds(since: productsStart))",
+        ])
         return .complete(
             EnrichmentResult(
                 id: id,
                 metadata: metadata,
-                enrichedKind: Self.normalizedKind(result.format),
-                enrichedFormat: MediaFormatToken.normalize(result.format),
-                thumbnailPath: nil,
-                sourceSize: sourceSize ?? -1,
-                sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
-                contentHash: pass.contentHash,
-                generatedThumbnail: generatedThumbnail,
-                generatedPreview: rendered?.preview,
+                rendering: rendering,
+                provisionalThumbnail: provisionalThumbnail,
+                sourceSize: read.sourceSize ?? -1,
+                sourceMTimeSeconds: read.sourceMTimeSeconds ?? -1,
+                contentHash: contentHash,
                 editRevision: recipe?.revision ?? 0
             )
         )
     }
 
-    /// Whether enrichment develops this file with `ImageRenderer` into a preview and the
-    /// thumbnail drawn from it (ADR 0035). Every still is, except an unedited RAW in a
-    /// card's first pass (`.metadata`): that pass is what an import waits on, and a RAW9
-    /// development costs about a second however small its output and gains nothing from
-    /// running beside another (research 2026-10-31-raw9-speed), so the card's RAW gets
-    /// QuickLook's thumbnail — the camera's embedded JPEG — eight at a time, and no
-    /// preview. Its library copy, which import does not give the card row's overlay, is
-    /// developed after the copy lands. A non-RAW still is an Image I/O decode of tens of
-    /// milliseconds, and an edited RAW's thumbnail must show the edit.
-    static func developsDuringEnrichment(_ url: URL, recipe: EditRecipe, scope: EnrichmentScope) -> Bool {
-        guard UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true else {
-            return false
-        }
-        return !(ImageRenderer.isRAW(url) && recipe.isNeutral && scope == .metadata)
-    }
-
     /// Renders a still's loupe preview and draws its grid thumbnail from it, both staged
     /// (ADR 0035): one development of the original serves both, so the grid and the loupe
-    /// show the same rendering. Nil for a file enrichment does not develop
-    /// (`developsDuringEnrichment`), or when the renderer cannot read the file; the caller
-    /// then takes the thumbnail from QuickLook and the asset has no preview.
+    /// show the same rendering. Nil for a video, or when the renderer cannot read the file;
+    /// the caller then takes the thumbnail from QuickLook and the asset has no preview.
     private static func renderStill(
         id: MediaAssetID,
         url: URL,
         recipe: EditRecipe,
-        scope: EnrichmentScope,
         directory: URL
     ) async -> (thumbnail: StagedDerivedImage, preview: StagedDerivedImage)? {
-        guard developsDuringEnrichment(url, recipe: recipe, scope: scope) else {
+        guard UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true else {
             return nil
         }
         let rendered: ImageRenderer.Rendered

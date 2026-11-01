@@ -44,7 +44,7 @@ A naming fact is settled by its own question, not by the enrichment staleness
 predicate. That predicate answers whether enrichment should run again for the
 current file facts; planning asks whether the file can be named. They diverge on
 a state the domain models: an asset with no filesystem mtime can never satisfy the
-predicate's `enriched_source_mtime` comparison, so it reads stale forever — and
+predicate's `metadata_source_mtime` comparison, so it reads stale forever — and
 borrowing that answer held such a source in metadata-waiting permanently, even
 after enrichment had supplied its capture wall. A known capture wall is therefore
 terminal whatever else is outstanding.
@@ -60,8 +60,8 @@ Otos, in two import batches five minutes apart, each pair's two names separated 
 exactly that video's duration.
 
 A row is terminal once a capture wall is stored, or once enrichment has looked and
-found none — `enriched_source_size`/`enriched_source_mtime` present, which the
-overlay write sets unconditionally on every completion path, so the distinction
+found none — its metadata stamp (`metadata_source_size`/`metadata_source_mtime`) present, which
+every write of a metadata result sets, so the distinction
 needs no new column. The permanent-wait failure this ADR originally fixed stays
 fixed: the gate keys on "has enrichment looked", never on the staleness predicate.
 Removable volumes make the wait bounded — their bytes are always local, so

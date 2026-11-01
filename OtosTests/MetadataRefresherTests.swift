@@ -110,7 +110,7 @@ struct MetadataRefresherTests {
                 try db.execute(
                     sql: """
                     INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key,
-                        kind, byte_size, content_modified_at_unix, enriched_source_size, enriched_source_mtime)
+                        kind, byte_size, content_modified_at_unix, metadata_source_size, metadata_source_mtime)
                     VALUES (?, ?, ?, ?, ?, 'image', 10, 100, 10, ?)
                     """,
                     arguments: [row.root, row.path, row.path, row.path, row.path, row.enrichedMTime]
@@ -161,8 +161,8 @@ struct MetadataRefresherTests {
 
         #expect(summary == MetadataRefreshSummary(read: 0, written: 0, skipped: 1, downloadsRequested: 1, failed: false))
         let handedOver = try await catalogStoreTestState(store).testAssets
-        #expect(handedOver.first { $0.id == apple }?.needsEnrichment(hashRequired: true) == true)
-        #expect(handedOver.first { $0.id == other }?.needsEnrichment(hashRequired: true) == false)
+        #expect(handedOver.first { $0.id == apple }?.needsEnrichment(everyProduct: true) == true)
+        #expect(handedOver.first { $0.id == other }?.needsEnrichment(everyProduct: true) == false)
 
         let state = FakeMaterialization(dataless: [apple.fileURL.path(percentEncoded: false)])
         let downloads = TestCounter()
@@ -199,12 +199,12 @@ struct MetadataRefresherTests {
         )
         await coordinator.start()
         let enriched = try await waitForCatalogStoreState(store) { snapshot in
-            snapshot.testAssets.allSatisfy { !$0.needsEnrichment(hashRequired: true) }
+            snapshot.testAssets.allSatisfy { !$0.needsEnrichment(everyProduct: true) }
         }
         await coordinator.shutdown()
 
         #expect(downloads.value == 1)
-        #expect(reads.values == [.metadataAndHash])
+        #expect(reads.values == [[.metadata, .rendering]])
         #expect(enriched.testAssets.first { $0.id == apple }?.thumbnailPath == "new.jpg")
         #expect(enriched.testAssets.first { $0.id == other }?.thumbnailPath == "old.jpg")
         let stored = try await store.metadataRefreshCandidates(after: nil, limit: 10)
