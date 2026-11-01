@@ -69,12 +69,19 @@ nonisolated enum EnrichmentClaimGateway {
     }
 
     static func metadataStalenessSQLPredicate() -> String {
+        stampStalenessSQL(stamp: "metadata_source")
+    }
+
+    /// A product stamp `<stamp>_size`/`<stamp>_mtime` that is absent or names other bytes
+    /// than the row's current `(size, mtime)`: the one staleness rule the metadata and
+    /// rendering stamps share (ADR 0009). The text is also the claim indexes' `WHERE`.
+    private static func stampStalenessSQL(stamp: String) -> String {
         """
-        metadata_source_size IS NULL
-           OR metadata_source_mtime IS NULL
-           OR COALESCE(byte_size, -1) <> COALESCE(metadata_source_size, -1)
+        \(stamp)_size IS NULL
+           OR \(stamp)_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(\(stamp)_size, -1)
            OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
-              <> COALESCE(metadata_source_mtime, -1)
+              <> COALESCE(\(stamp)_mtime, -1)
         """
     }
 
@@ -82,13 +89,7 @@ nonisolated enum EnrichmentClaimGateway {
     /// current `(size, mtime)`, or never. Its own stamp, so a row's metadata can be current
     /// while its rendering is still owed (a card's first pass, a camera, an edit).
     static func renderingStalenessSQLPredicate() -> String {
-        """
-        rendered_source_size IS NULL
-           OR rendered_source_mtime IS NULL
-           OR COALESCE(byte_size, -1) <> COALESCE(rendered_source_size, -1)
-           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
-              <> COALESCE(rendered_source_mtime, -1)
-        """
+        stampStalenessSQL(stamp: "rendered_source")
     }
 
     static func hashStalenessSQLPredicate() -> String {

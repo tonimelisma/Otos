@@ -97,6 +97,12 @@ nonisolated enum MediaFileWriter {
         }
     }
 
+    /// Whether `error` is a write refused for space, as this writer types it or as a
+    /// file-system error carries it in its chain.
+    static func refusedForSpace(_ error: Error) -> Bool {
+        error as? WriteError == .outOfSpace || FreeSpaceFloor.refusedForSpace(error)
+    }
+
     /// AVFoundation reports a full disk as its own `diskFull` code, or with a file-system
     /// cause in the error's chain.
     static func isDiskFull(_ error: Error) -> Bool {

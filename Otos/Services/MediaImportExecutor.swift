@@ -529,7 +529,7 @@ actor MediaImportExecutor {
             while let result = await group.next() {
                 inFlightBytes -= inFlightByIndex.removeValue(forKey: result.index) ?? 0
                 switch result.outcome {
-                case let .published(reuseResult, bytes, companionsNotCopied):
+                case let .published(products, bytes, companionsNotCopied):
                     let entry = copyEntries[result.index]
                     let notCopied = Set(companionsNotCopied)
                     erasableSourcePaths.insert(entry.source.relativePath)
@@ -545,7 +545,7 @@ actor MediaImportExecutor {
                         incompleteItems.append(entry.source.id)
                     }
                     publishedBytes += bytes
-                    productOrigins.record(reuseResult)
+                    productOrigins.record(products)
                     byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: bytes)
                 case .cancelled:
                     cancelFlag.cancel()
@@ -1642,9 +1642,9 @@ actor MediaImportExecutor {
         }
 
         let companions = Self.publishCompanions(request)
-        var reuseResult = ImportProductsResult.owed
+        let products: ImportProductsResult
         do {
-            reuseResult = try await request.store.settleImportedAsset(
+            products = try await request.store.settleImportedAsset(
                 operation: operation,
                 byteSize: settledByteSize,
                 contentModifiedAt: settledModified,
@@ -1685,7 +1685,7 @@ actor MediaImportExecutor {
             "worker": "\(request.workerID)",
         ])
         return .published(
-            reuseResult,
+            products,
             bytes: settledByteSize,
             companionsNotCopied: request.companionsNotCopied + companions.notCopied
         )

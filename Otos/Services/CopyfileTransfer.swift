@@ -46,38 +46,35 @@ nonisolated enum CopyfileTransfer {
         }
 
         if context.cancelled {
-            do {
-                try FileManager.default.removeItem(at: destination)
-            } catch where ErrorDiagnostics.isMissingFile(error) {
-                // Already gone: the outcome this removal wanted.
-            } catch {
-                OtosLog.mediaIO.errorOperation("mediaOperation.copy", phase: "partialRemoveFailed", fields: [
-                    "path": destination.path(percentEncoded: false),
-                    "error": String(describing: error),
-                ])
-            }
+            removePartialCopy(at: destination)
             return .cancelled
         }
         if result != 0 {
             // The failed step's own errno, read in the callback where copyfile set it; a
             // quit leaves it as it was, but nothing between that callback and here owns it.
             let code = context.failedErrno ?? errno
-            do {
-                try FileManager.default.removeItem(at: destination)
-            } catch where ErrorDiagnostics.isMissingFile(error) {
-                // Already gone: the outcome this removal wanted.
-            } catch {
-                OtosLog.mediaIO.errorOperation("mediaOperation.copy", phase: "partialRemoveFailed", fields: [
-                    "path": destination.path(percentEncoded: false),
-                    "error": String(describing: error),
-                ])
-            }
+            removePartialCopy(at: destination)
             return .failed(errno: code)
         }
         // The last progress callback can precede the final block; report the count
         // copyfile ends on, so a completed copy's progress is its full length.
         onProgress(Progress(completedBytes: copiedBytes(state)))
         return .completed
+    }
+
+    /// Removes what a stopped copy left at `destination`; a file already gone is the
+    /// outcome wanted.
+    private static func removePartialCopy(at destination: URL) {
+        do {
+            try FileManager.default.removeItem(at: destination)
+        } catch where ErrorDiagnostics.isMissingFile(error) {
+            // Already gone: the outcome this removal wanted.
+        } catch {
+            OtosLog.mediaIO.errorOperation("mediaOperation.copy", phase: "partialRemoveFailed", fields: [
+                "path": destination.path(percentEncoded: false),
+                "error": String(describing: error),
+            ])
+        }
     }
 
     private static func installStatusCallback(state: copyfile_state_t, contextPtr: UnsafeMutableRawPointer) {
