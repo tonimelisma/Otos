@@ -202,13 +202,24 @@ struct BrowserPlaceTests {
     /// Before the catalog loads, the sidebar draws the row the user left when the scope is
     /// its own title, and no count (APP-043, APP-044); a library's row waits for its name.
     @Test func beforeTheCatalogLoadsTheSidebarDrawsTheRowTheUserLeft() {
-        func rows(_ scope: SidebarSelection) -> (allMedia: Bool, places: Bool, duplicates: Bool, count: Int?) {
+        struct Rows {
+            let allMedia: Bool
+            let places: Bool
+            let duplicates: Bool
+            let count: Int?
+        }
+        func rows(_ scope: SidebarSelection) -> Rows {
             let domain = PreferencesDomain.suite(UUID().uuidString)
             BrowserPlace(descriptor: CatalogQueryDescriptor(scope: scope), viewMode: .grid, focus: nil, selection: [])
                 .save(to: domain.makeDefaults())
             let model = makeViewModel(domain)
             #expect(!model.state.isCatalogLoaded)
-            return (model.showsAllMediaRow, model.showsPlacesRow, model.showsDuplicatesRow, model.duplicatesRowCount)
+            return Rows(
+                allMedia: model.showsAllMediaRow,
+                places: model.showsPlacesRow,
+                duplicates: model.showsDuplicatesRow,
+                count: model.duplicatesRowCount
+            )
         }
 
         let allMedia = rows(.allMedia)
