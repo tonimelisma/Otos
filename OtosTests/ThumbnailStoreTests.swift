@@ -168,6 +168,28 @@ struct ThumbnailStoreTests {
         #expect(FileManager.default.fileExists(atPath: hiddenBeside.path(percentEncoded: false)))
         #expect(ThumbnailStore.clearStaging(in: temp.appending(path: "Missing", directoryHint: .isDirectory)) == 0)
     }
+
+    /// A missing folder is a missing file whichever call finds it: a listing reports
+    /// `NSFileReadNoSuchFileError`, a removal `NSFileNoSuchFileError`.
+    @Test func aMissingFileIsRecognizedFromAReadAndARemoval() throws {
+        let missing = try makeTestDirectory().appending(path: "Missing", directoryHint: .isDirectory)
+        #expect(throws: (any Error).self) {
+            do {
+                _ = try FileManager.default.contentsOfDirectory(at: missing, includingPropertiesForKeys: nil)
+            } catch {
+                #expect(ErrorDiagnostics.isMissingFile(error))
+                throw error
+            }
+        }
+        #expect(throws: (any Error).self) {
+            do {
+                try FileManager.default.removeItem(at: missing)
+            } catch {
+                #expect(ErrorDiagnostics.isMissingFile(error))
+                throw error
+            }
+        }
+    }
 }
 
 private func makeThumbnailTestImage() throws -> CGImage {

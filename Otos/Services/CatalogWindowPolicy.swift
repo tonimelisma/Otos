@@ -277,7 +277,6 @@ nonisolated enum CatalogWindowPolicy {
                 roots: parts.removableSources
             ),
             map: parts.map,
-            duplicates: parts.duplicates,
             queryGeneration: parts.queryGeneration
         )
     }

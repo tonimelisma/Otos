@@ -122,9 +122,12 @@ extension Logger {
 nonisolated enum ErrorDiagnostics {
     /// Whether a file operation failed because the file is not there, by domain and code.
     /// Removing a file that is already gone has the outcome its caller wanted.
+    /// Foundation reports a missing file as `NSFileNoSuchFileError` from a write or
+    /// remove and as `NSFileReadNoSuchFileError` from a read (a directory listing too).
     static func isMissingFile(_ error: Error) -> Bool {
         let nsError = error as NSError
-        return (nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileNoSuchFileError)
+        return (nsError.domain == NSCocoaErrorDomain
+            && (nsError.code == NSFileNoSuchFileError || nsError.code == NSFileReadNoSuchFileError))
             || (nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(ENOENT))
     }
 

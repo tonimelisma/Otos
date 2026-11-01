@@ -81,7 +81,9 @@ nonisolated struct CatalogWindowState: Equatable {
     var map: CatalogMapState?
     /// Duplicate groups across the fixed libraries (ADR 0042), in every scope: the sidebar's
     /// Duplicates row exists while any group is active, and the list draws under `.duplicates`.
-    var duplicates: CatalogDuplicatesState = .empty
+    /// Nil until Projection has built them once: they are built after the rest of the
+    /// window state is published, so detection never holds back the sidebar or the grid.
+    var duplicates: CatalogDuplicatesState?
     var queryGeneration: UInt64 = 0
     /// Remaps committed but not yet acknowledged by the window, read with the ordered
     /// IDs. The window applies each batch once, before it shows the new identities.

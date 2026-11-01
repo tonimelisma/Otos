@@ -47,24 +47,8 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
     }
 }
 
-/// What the duplicates pane draws: nothing before the catalog has loaded (APP-044), then
-/// the list, or `No duplicates` once no group exists.
-nonisolated enum DuplicatesPaneContent: Equatable, Sendable {
-    case nothing
-    case noDuplicates
-    case list
-
-    static func of(_ duplicates: CatalogDuplicatesState, isCatalogLoaded: Bool) -> DuplicatesPaneContent {
-        guard isCatalogLoaded else {
-            return .nothing
-        }
-        return duplicates.groups.isEmpty ? .noDuplicates : .list
-    }
-}
-
 struct DuplicatesView: View {
     let duplicates: CatalogDuplicatesState
-    let isCatalogLoaded: Bool
     let session: DuplicatesSession
     let selection: Binding<Set<MediaAssetID>>
     let tileContentStore: TileContentStore?
@@ -75,23 +59,13 @@ struct DuplicatesView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        switch DuplicatesPaneContent.of(duplicates, isCatalogLoaded: isCatalogLoaded) {
-        case .nothing:
-            Color.clear
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .noDuplicates:
-            withStatusBar(
+        VStack(spacing: 0) {
+            if duplicates.groups.isEmpty {
                 ContentUnavailableView("No duplicates", systemImage: "square.on.square")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            )
-        case .list:
-            withStatusBar(list)
-        }
-    }
-
-    private func withStatusBar(_ content: some View) -> some View {
-        VStack(spacing: 0) {
-            content
+            } else {
+                list
+            }
             Divider()
             DuplicatesStatusBar(
                 presentation: .map(session.tally(in: duplicates)),

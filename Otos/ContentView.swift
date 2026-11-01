@@ -109,7 +109,8 @@ struct ContentView: View {
             SidebarView(
                 showsAllMedia: viewModel.showsAllMediaRow,
                 showsPlaces: viewModel.showsPlacesRow,
-                duplicatesCount: viewModel.showsDuplicatesRow ? viewModel.duplicatesCount : nil,
+                showsDuplicates: viewModel.showsDuplicatesRow,
+                duplicatesCount: viewModel.duplicatesCount,
                 libraries: viewModel.state.libraries,
                 importBatches: viewModel.state.importBatches,
                 removableSources: viewModel.state.removableSources,
@@ -484,19 +485,24 @@ struct ContentView: View {
     @ViewBuilder
     var detailContent: some View {
         if viewModel.showsDuplicatesList {
-            DuplicatesView(
-                duplicates: viewModel.state.duplicates,
-                isCatalogLoaded: viewModel.state.isCatalogLoaded,
-                session: viewModel.duplicatesSession,
-                selection: Binding(
-                    get: { viewModel.gridSelection.selection },
-                    set: { viewModel.setDuplicatesSelection($0) }
-                ),
-                tileContentStore: viewModel.tileContentStore,
-                thumbnailDirectory: viewModel.thumbnailDirectory,
-                detailReader: viewModel.tileDetailReader,
-                actions: viewModel.duplicatesActions
-            )
+            // Until the groups are first built the pane claims nothing (APP-044).
+            if let duplicates = viewModel.state.duplicates {
+                DuplicatesView(
+                    duplicates: duplicates,
+                    session: viewModel.duplicatesSession,
+                    selection: Binding(
+                        get: { viewModel.gridSelection.selection },
+                        set: { viewModel.setDuplicatesSelection($0) }
+                    ),
+                    tileContentStore: viewModel.tileContentStore,
+                    thumbnailDirectory: viewModel.thumbnailDirectory,
+                    detailReader: viewModel.tileDetailReader,
+                    actions: viewModel.duplicatesActions
+                )
+            } else {
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         } else if viewModel.showsPlacesMap {
             PlacesMapView(
                 map: viewModel.state.map ?? .empty,

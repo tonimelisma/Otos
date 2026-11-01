@@ -54,6 +54,50 @@ struct CatalogProjectionEmptyStateTests {
         await secondStore.shutdown()
     }
 
+    /// Duplicate detection never holds back the window: with the duplicates build parked
+    /// at its suspension, the loaded window — sidebar and grid — is already published, with
+    /// its groups unknown rather than empty; released, the groups follow.
+    @Test func theWindowPublishesBeforeDuplicatesAreBuilt() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try "jpeg".write(to: root.appending(path: "a.jpg"), atomically: true, encoding: .utf8)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+
+        let gate = ArrivalGate()
+        let projection = CatalogProjection(cadence: .milliseconds(10), duplicatesBuilder: { _, _ in
+            await gate.arrive()
+            return .empty
+        })
+        let recorder = EmptyStateRecorder()
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer {
+            recordingTask.cancel()
+        }
+
+        await gate.waitForArrivals(1)
+        let window = await recorder.waitForState { states in
+            states.contains { !$0.libraries.isEmpty && $0.mediaGrid.orderedAssetIDs.count == 1 }
+        }
+        #expect(window.last?.duplicates == nil)
+
+        await gate.open()
+        let built = await recorder.waitForState { states in
+            states.contains { $0.duplicates != nil }
+        }
+        #expect(built.last?.duplicates == .empty)
+        #expect(built.last?.libraries.isEmpty == false)
+        await store.shutdown()
+    }
+
     /// Before the catalog's first load nothing is known, so nothing is claimed: no
     /// "No Media", no title (APP-044). A catalog that really is empty says so once loaded.
     @Test func beforeTheCatalogLoadsNoEmptinessIsClaimed() async throws {

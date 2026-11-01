@@ -1271,8 +1271,9 @@ extension CatalogWindowViewModel {
         case .places, .place:
             !SidebarSelectionPolicy.showsPlaces(libraries: nextState.libraries)
         case let .duplicateGroup(group):
-            // The group is gone — resolved, or its copies moved — so its leaf is too.
-            !nextState.duplicates.groups.contains { $0.id == group }
+            // The group is gone — resolved, or its copies moved — so its leaf is too. Groups
+            // not built yet say nothing about it.
+            nextState.duplicates.map { !$0.groups.contains { $0.id == group } } ?? false
         case .duplicates:
             // Stays while selected, empty or not (ADR 0042), while libraries exist.
             !SidebarSelectionPolicy.showsPlaces(libraries: nextState.libraries)
