@@ -8,10 +8,11 @@ import UniformTypeIdentifiers
 /// Media enricher guide
 ///
 /// Produces the products for one already-materialized media file: parsed metadata
-/// (the `MediaMetadata` library, byte-reading, synchronous), and — for a still — one
-/// `ImageRenderer` development that becomes the stored 2560 px preview and the 256 px
-/// thumbnail drawn from it (ADR 0035); a video, or a still the renderer cannot read,
-/// gets its thumbnail from QuickLook. It is a small `Sendable` value with one injectable closure, mirroring
+/// (the `MediaMetadata` library, byte-reading, synchronous), and — for a still that is
+/// developed (`developsDuringEnrichment`) — one `ImageRenderer` development that becomes
+/// the stored 2560 px preview and the 256 px thumbnail drawn from it (ADR 0035). An
+/// unedited RAW in a card's first pass, a video, or a still the renderer cannot read gets
+/// its thumbnail from QuickLook and no preview. It is a small `Sendable` value with one injectable closure, mirroring
 /// `CatalogScanner`, so the coordinator and tests can substitute a fake.
 ///
 /// It runs entirely off the main actor in a task-group child of the coordinator's worker
@@ -121,6 +122,7 @@ nonisolated struct MediaEnricher {
                     contentHash: contentHash,
                     thumbnailDirectory: thumbnailDirectory,
                     readinessChecker: readinessChecker,
+                    scope: scope,
                     recipe: recipe
                 )
             case .cancelled:
@@ -336,6 +338,7 @@ nonisolated struct MediaEnricher {
             contentHash: nil,
             thumbnailDirectory: thumbnailDirectory,
             readinessChecker: readinessChecker,
+            scope: .metadata,
             recipe: recipe
         )
     }
@@ -351,6 +354,7 @@ nonisolated struct MediaEnricher {
         contentHash: XXH3Digest128?,
         thumbnailDirectory: URL,
         readinessChecker: any EnrichmentReadinessChecking,
+        scope: EnrichmentScope,
         recipe: StoredEditRecipe?
     ) async -> EnrichmentOutcome {
         let result = MediaMetadataReader.read(url: url)
@@ -361,7 +365,7 @@ nonisolated struct MediaEnricher {
             return .notMaterialized
         }
         let rendered = await Self.renderStill(
-            id: id, url: url, recipe: recipe?.recipe ?? .neutral, directory: thumbnailDirectory
+            id: id, url: url, recipe: recipe?.recipe ?? .neutral, scope: scope, directory: thumbnailDirectory
         )
         let generatedThumbnail: StagedDerivedImage? = if let rendered {
             rendered.thumbnail
@@ -386,18 +390,35 @@ nonisolated struct MediaEnricher {
         )
     }
 
+    /// Whether enrichment develops this file with `ImageRenderer` into a preview and the
+    /// thumbnail drawn from it (ADR 0035). Every still is, except an unedited RAW in a
+    /// card's first pass (`.metadata`): that pass is what an import waits on, and a RAW9
+    /// development costs about a second however small its output and gains nothing from
+    /// running beside another (research 2026-10-31-raw9-speed), so the card's RAW gets
+    /// QuickLook's thumbnail — the camera's embedded JPEG — eight at a time, and no
+    /// preview. Its library copy, which import does not give the card row's overlay, is
+    /// developed after the copy lands. A non-RAW still is an Image I/O decode of tens of
+    /// milliseconds, and an edited RAW's thumbnail must show the edit.
+    static func developsDuringEnrichment(_ url: URL, recipe: EditRecipe, scope: EnrichmentScope) -> Bool {
+        guard UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true else {
+            return false
+        }
+        return !(ImageRenderer.isRAW(url) && recipe.isNeutral && scope == .metadata)
+    }
+
     /// Renders a still's loupe preview and draws its grid thumbnail from it, both staged
     /// (ADR 0035): one development of the original serves both, so the grid and the loupe
-    /// show the same rendering — RAW9 for a RAW where Apple supports the camera. Nil for
-    /// a video, or when the renderer cannot read the file; the caller then falls back to
-    /// Quick Look for the thumbnail and the asset has no preview.
+    /// show the same rendering. Nil for a file enrichment does not develop
+    /// (`developsDuringEnrichment`), or when the renderer cannot read the file; the caller
+    /// then takes the thumbnail from QuickLook and the asset has no preview.
     private static func renderStill(
         id: MediaAssetID,
         url: URL,
         recipe: EditRecipe,
+        scope: EnrichmentScope,
         directory: URL
     ) async -> (thumbnail: StagedDerivedImage, preview: StagedDerivedImage)? {
-        guard UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true else {
+        guard developsDuringEnrichment(url, recipe: recipe, scope: scope) else {
             return nil
         }
         let rendered: ImageRenderer.Rendered

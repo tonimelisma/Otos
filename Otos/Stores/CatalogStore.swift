@@ -5247,7 +5247,8 @@ extension CatalogStore {
                     libraryRootPath: operation.destinationRootPath,
                     relativePath: operation.destinationRelativePath
                 )
-                if sourceFactsCurrent, sourceOverlay.enrichedKind == .image,
+                if sourceFactsCurrent,
+                   sourceOverlay.enrichedKind == .image || sourceOverlay.enrichedKind == .raw,
                    sourceOverlay.previewPath == nil
                 {
                     reuseResult = ImportOverlayReuseResult(

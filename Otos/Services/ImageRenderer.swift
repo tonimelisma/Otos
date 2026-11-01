@@ -13,11 +13,15 @@ import UniformTypeIdentifiers
 /// derived from them show the same rendering; any other still is decoded by Image I/O
 /// with its orientation applied. The result is an 8-bit Display P3 bitmap.
 ///
-/// Rendering is blocking CPU and GPU work, so it leaves every actor on a named serial
-/// queue (ADR 0032 rule 6). There are two lanes, each rendering one image at a time:
-/// `background` for enrichment and `interactive` for what the user is looking at, so a
-/// backlog of enrichment renders never queues in front of the photo on screen, and at
-/// most two RAW developments — 160–340 MB each, measured — are in memory at once.
+/// Rendering is blocking CPU and GPU work, so it leaves every actor on named queues
+/// (ADR 0032 rule 6). There are two lanes: `background` for enrichment and `interactive`
+/// for what the user is looking at, so a backlog of enrichment renders never queues in
+/// front of the photo on screen. Each lane develops one RAW at a time — a RAW9
+/// development takes about a second, gains nothing from running beside another, and
+/// holds 160–340 MB — so at most two are in memory at once. Image I/O decodes have their
+/// own queue per lane: four at once on `background`, where four measured 2.5× the
+/// throughput of one and eight no more than four (research 2026-10-31-raw9-speed), and
+/// one at a time on `interactive`.
 ///
 /// The caller has already checked that the original's bytes are local; reading a
 /// dataless file here would block on its download.
@@ -44,15 +48,25 @@ final nonisolated class ImageRenderer: Sendable {
         case renderFailed
     }
 
-    static let background = ImageRenderer(lane: "background")
-    static let interactive = ImageRenderer(lane: "interactive")
+    static let background = ImageRenderer(lane: "background", qos: .utility, imageDecodes: 4)
+    static let interactive = ImageRenderer(lane: "interactive", qos: .userInitiated, imageDecodes: 1)
 
     private let lane: String
-    private let queue: DispatchQueue
+    private let rawQueue: OperationQueue
+    private let imageQueue: OperationQueue
 
-    private init(lane: String) {
+    private init(lane: String, qos: QualityOfService, imageDecodes: Int) {
         self.lane = lane
-        queue = DispatchQueue(label: "net.melisma.Otos.render.\(lane)", qos: lane == "interactive" ? .userInitiated : .utility)
+        rawQueue = Self.queue("net.melisma.Otos.render.\(lane).raw", qos: qos, width: 1)
+        imageQueue = Self.queue("net.melisma.Otos.render.\(lane).image", qos: qos, width: imageDecodes)
+    }
+
+    private static func queue(_ name: String, qos: QualityOfService, width: Int) -> OperationQueue {
+        let queue = OperationQueue()
+        queue.name = name
+        queue.qualityOfService = qos
+        queue.maxConcurrentOperationCount = width
+        return queue
     }
 
     /// Renders `url` with `recipe` applied so the edited photo's long edge is at most
@@ -61,8 +75,9 @@ final nonisolated class ImageRenderer: Sendable {
     func render(_ url: URL, longEdge: Int?, recipe: EditRecipe = .neutral) async throws -> Rendered {
         let lane = lane
         let enqueued = ContinuousClock.now
+        let queue = Self.isRAW(url) ? rawQueue : imageQueue
         return try await withCheckedThrowingContinuation { continuation in
-            queue.async {
+            queue.addOperation {
                 let start = ContinuousClock.now
                 let signpost = OtosSignpost.rendering.beginInterval("ImageRender")
                 defer { OtosSignpost.rendering.endInterval("ImageRender", signpost) }

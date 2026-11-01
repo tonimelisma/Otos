@@ -12,8 +12,9 @@ nonisolated enum ImportOverlayReuseMiss: String, Equatable, Sendable {
     case copyNotHashed
     case missingThumbnail
     /// A still whose source row has no stored preview (a camera row, enriched from byte
-    /// ranges): reusing it would stamp a library row that then never gets one, so the
-    /// copy is enriched from its own bytes instead (ADR 0035).
+    /// ranges, or an unedited RAW from a card's first pass): reusing it would stamp a
+    /// library row that then never gets one, so the copy is enriched from its own bytes
+    /// instead (ADR 0035).
     case missingPreview
     case thumbnailCopyFailed
     case detachedSource

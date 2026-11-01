@@ -1,7 +1,7 @@
 # ADR 0035: Stills are rendered once and kept as a thumbnail and a preview
 
 - Status: Accepted
-- Last updated: 2026-10-25
+- Last updated: 2026-10-31
 
 ## Context
 
@@ -28,15 +28,23 @@ and is never shown at full size except when zoomed to 100%.
   decoder the file supports (RAW9, else RAW8, else the filter's default). It decodes
   any other still with Image I/O, orientation applied. Output is an 8-bit Display P3
   bitmap, produced on one of two serial lanes: background for enrichment, interactive
-  for the loupe. At most two RAW developments, 160–340 MB each, are in memory at once,
-  and enrichment never queues in front of the photo on screen. A RAW's oriented native
+  for the loupe. Each lane develops one RAW at a time, so at most two RAW developments,
+  160–340 MB each, are in memory at once. Each lane also has its own queue of Image I/O
+  decodes, four at once on the background lane. Enrichment never queues in front of the
+  photo on screen. A RAW's oriented native
   size is read once, when its filter is made (`OpenedRAW`), and every scale factor and
   reported size comes from that value: under RAW9 the filter's `nativeSize` changes once
   a scale factor is set (research 2026-10-26-live-edit-latency).
 - **Two stored products per still,** made from one rendering during enrichment, while
-  the original's bytes are local:
+  the original's bytes are local, with one exception:
   - a 2560 px preview, 8-bit Display P3 HEIC, in `media_asset.preview_path`;
   - the 256 px grid thumbnail, drawn from that rendering.
+
+  The exception is a card's first pass (`EnrichmentScope.metadata`), the pass an import
+  waits on. There, an unedited RAW is not developed: it gets Quick Look's thumbnail, the
+  camera's embedded JPEG, and no preview. A RAW9 development costs about a second, and
+  neither a smaller output, draft mode, a shared context nor concurrency makes it cheaper
+  (research 2026-10-31-raw9-speed).
 
   Videos keep their Quick Look thumbnail and get no preview. If the renderer cannot
   read a still, its thumbnail falls back to Quick Look and it gets no preview. Both
@@ -56,17 +64,20 @@ and is never shown at full size except when zoomed to 100%.
   enrichment stamps of library stills, so the unchanged staleness predicate claims
   them again and enrichment renders both products, downloading cloud-only originals
   under the free-space floor (ENR-008). Card and camera rows are left stamped.
-- **Import reuse** copies the preview with the thumbnail. A still whose source row has
-  no preview (a camera row, enriched from byte ranges) is a reuse miss, so the library
-  copy is enriched from its own bytes and gains one.
+- **Import reuse** copies the preview with the thumbnail. A still or RAW whose source row
+  has no preview (a camera row enriched from byte ranges, or an unedited RAW from a card's
+  first pass) is a reuse miss, so the library copy is enriched from its own bytes and
+  gains one.
 - **No re-render on OS updates.** A macOS update that changes RAW9's output does not
   re-render, because re-rendering means re-downloading the library. Products follow the
   file's `(size, mtime)` and, from the editing increments on, the edit recipe.
 
 ## Consequences
 
-- Grid and loupe show the same rendering. Every RAW changes from the camera's look to
-  RAW9's as enrichment reaches it; a newer thumbnail of the same asset replacing the
+- In a library, grid and loupe show the same rendering. Every library RAW changes from
+  the camera's look to RAW9's as enrichment reaches it. A card shows its RAWs in the
+  camera's look, with the loupe developing them on open, and their imported copies change
+  to RAW9's once they are enriched; a newer thumbnail of the same asset replacing the
   painted one keeps the no-blank rule (APP-015).
 - About 6 GB of Application Support for previews, kept for the life of each photo
   (ADR 0008, ADR 0009: no eviction).
@@ -86,3 +97,6 @@ and is never shown at full size except when zoomed to 100%.
 - **JPEG previews:** about twice the size of HEIC.
 - **A separate preview directory and store type:** every file mechanic is the
   thumbnail's already; only encoding and extension differ.
+- **Developing a card's RAWs in its first pass:** it made a card of 37 RAWs ready to
+  import in 55–70 s instead of 6 s, and no `CIRAWFilter` option or concurrency made the
+  development cheaper.
