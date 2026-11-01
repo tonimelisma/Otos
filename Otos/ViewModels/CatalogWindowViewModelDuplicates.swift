@@ -25,15 +25,16 @@ extension CatalogWindowViewModel {
         return false
     }
 
-    /// The sidebar row exists while any group is active, and while it is selected — before
-    /// the catalog has loaded too, as the row the user left (APP-043).
+    /// The sidebar row exists, once the catalog has loaded (APP-044), while any group is
+    /// active and while it is selected.
     var showsDuplicatesRow: Bool {
-        !state.duplicates.activeGroups.isEmpty || sidebarSelection.sidebarRow == .duplicates
+        state.isCatalogLoaded
+            && (!state.duplicates.activeGroups.isEmpty || sidebarSelection.sidebarRow == .duplicates)
     }
 
-    /// The row's count: photos with duplicates, unknown until the catalog has loaded.
-    var duplicatesRowCount: Int? {
-        state.isCatalogLoaded ? state.duplicates.activeGroups.count : nil
+    /// The row's count: photos with duplicates.
+    var duplicatesCount: Int {
+        state.duplicates.activeGroups.count
     }
 
     var duplicatesTally: DuplicatesTally {

@@ -147,29 +147,26 @@ struct ThumbnailStoreTests {
         #expect(!FileManager.default.fileExists(atPath: thumbnailURL.path(percentEncoded: false)))
     }
 
-    @Test func startupCleanupDeletesOnlyHiddenTemporaryThumbnailFiles() throws {
+    /// Staging has its own subdirectory, so the startup sweep lists only what was staged —
+    /// never the finished images beside it, which number in the tens of thousands.
+    @Test func startupClearsOnlyTheStagingSubdirectory() throws {
         let temp = try makeTestDirectory()
         let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
-        let outside = temp.appending(path: ".outside.tmp", directoryHint: .notDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let staged = directory.appending(path: ".thumb.jpg.tmp", directoryHint: .notDirectory)
-        let visibleTemporary = directory.appending(path: "thumb.jpg.tmp", directoryHint: .notDirectory)
-        let hiddenNonTemporary = directory.appending(path: ".thumb.jpg", directoryHint: .notDirectory)
-        let hiddenTemporaryDirectory = directory.appending(path: ".nested.tmp", directoryHint: .isDirectory)
-        try Data("staged".utf8).write(to: staged)
-        try Data("visible".utf8).write(to: visibleTemporary)
-        try Data("hidden".utf8).write(to: hiddenNonTemporary)
-        try FileManager.default.createDirectory(at: hiddenTemporaryDirectory, withIntermediateDirectories: true)
-        try Data("original".utf8).write(to: outside)
+        let image = try makeThumbnailTestImage()
+        let promoted = try ThumbnailStore.stage(image, finalRelativeName: "kept.jpg", in: directory)
+        try ThumbnailStore.promote(promoted, in: directory)
+        let abandoned = try ThumbnailStore.stage(image, finalRelativeName: "abandoned.jpg", in: directory)
+        let hiddenBeside = directory.appending(path: ".beside.tmp", directoryHint: .notDirectory)
+        try Data("not staged".utf8).write(to: hiddenBeside)
 
-        let deletedCount = ThumbnailStore.deleteStagedTemporaryFiles(in: directory)
+        #expect(abandoned.stagedRelativePath.hasPrefix(ThumbnailStore.stagingDirectoryName + "/"))
+        #expect(ThumbnailStore.clearStaging(in: directory) == 1)
 
-        #expect(deletedCount == 1)
+        let staged = ThumbnailStore.url(for: abandoned.stagedRelativePath, in: directory)
         #expect(!FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))
-        #expect(FileManager.default.fileExists(atPath: visibleTemporary.path(percentEncoded: false)))
-        #expect(FileManager.default.fileExists(atPath: hiddenNonTemporary.path(percentEncoded: false)))
-        #expect(FileManager.default.fileExists(atPath: hiddenTemporaryDirectory.path(percentEncoded: false)))
-        #expect(FileManager.default.fileExists(atPath: outside.path(percentEncoded: false)))
+        #expect(ThumbnailStore.load("kept.jpg", in: directory) != nil)
+        #expect(FileManager.default.fileExists(atPath: hiddenBeside.path(percentEncoded: false)))
+        #expect(ThumbnailStore.clearStaging(in: temp.appending(path: "Missing", directoryHint: .isDirectory)) == 0)
     }
 }
 

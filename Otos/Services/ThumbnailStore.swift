@@ -28,9 +28,10 @@ import UniformTypeIdentifiers
 /// good thumbnail. `load` decodes synchronously on its caller's thread (callers run it from a `Task.detached`) and returns an immutable
 /// `CGImage`; the caller only assigns that already-decoded bitmap on the main actor.
 /// `delete`/`deleteAll` are the purge side for proven deletion and library removal.
-/// `deleteStagedTemporaryFiles` is startup hygiene for
-/// app-owned staged files abandoned by a prior process; it never reaches into media
-/// library roots. Catalog schema changes never purge thumbnails via a destructive
+/// Staged files live in their own `.staging` subdirectory, on the same volume so promotion
+/// is an atomic rename; `clearStaging` is startup hygiene for staged files abandoned by a
+/// prior process, and lists only that subdirectory — never the thousands of finished
+/// images beside it, and never media library roots. Catalog schema changes never purge thumbnails via a destructive
 /// database reset — future/unrecognized schemas refuse to open instead.
 nonisolated enum ThumbnailStore {
     /// 256 px long edge keeps a true grid thumbnail (max zoom loads originals, separately).
@@ -58,6 +59,17 @@ nonisolated enum ThumbnailStore {
 
     static func url(for relativeName: String, in directory: URL) -> URL {
         directory.appending(path: relativeName, directoryHint: .notDirectory)
+    }
+
+    /// Where images are written before promotion: a subdirectory of `directory`.
+    static let stagingDirectoryName = ".staging"
+
+    /// A fresh staged name for `finalRelativeName`, relative to `directory`, with the staging
+    /// subdirectory created.
+    private static func newStagedRelativeName(for finalRelativeName: String, in directory: URL) throws -> String {
+        let staging = directory.appending(path: stagingDirectoryName, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        return stagingDirectoryName + "/" + finalRelativeName + "." + UUID().uuidString + ".tmp"
     }
 
     static func move(_ relativeName: String, to newRelativeName: String, in directory: URL) throws {
@@ -127,8 +139,7 @@ nonisolated enum ThumbnailStore {
         let normalized = try normalizedImage(
             from: image, colorSpaceName: colorSpaceName, width: image.width, height: image.height
         )
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let stagedRelativeName = "." + finalRelativeName + "." + UUID().uuidString + ".tmp"
+        let stagedRelativeName = try newStagedRelativeName(for: finalRelativeName, in: directory)
         let stagedURL = url(for: stagedRelativeName, in: directory)
 
         guard let destination = CGImageDestinationCreateWithURL(
@@ -193,9 +204,8 @@ nonisolated enum ThumbnailStore {
         guard values.isRegularFile == true, (values.fileSize ?? 0) > 0 else {
             throw ThumbnailStoreError.writeFailed
         }
-        let stagedRelativeName = "." + finalRelativeName + "." + UUID().uuidString + ".tmp"
+        let stagedRelativeName = try newStagedRelativeName(for: finalRelativeName, in: directory)
         let stagedURL = url(for: stagedRelativeName, in: directory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         do {
             try FileManager.default.copyItem(at: sourceURL, to: stagedURL)
         } catch {
@@ -241,9 +251,8 @@ nonisolated enum ThumbnailStore {
         finalRelativeName: String,
         in directory: URL
     ) throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let finalURL = url(for: finalRelativeName, in: directory)
-        let stagedURL = url(for: ".\(finalRelativeName).\(UUID().uuidString).tmp", in: directory)
+        let stagedURL = try url(for: newStagedRelativeName(for: finalRelativeName, in: directory), in: directory)
         try data.write(to: stagedURL, options: [.atomic])
         if FileManager.default.fileExists(atPath: finalURL.path(percentEncoded: false)) {
             _ = try FileManager.default.replaceItemAt(finalURL, withItemAt: stagedURL)
@@ -358,34 +367,35 @@ nonisolated enum ThumbnailStore {
         }
     }
 
-    /// Deletes abandoned staged thumbnail temp files under the app-owned thumbnail
-    /// directory. The staged naming convention is hidden plus `.tmp`; final thumbnails
-    /// are deterministic non-hidden `.jpg` names and are left untouched.
+    /// Deletes what a prior process left staged and never promoted: everything in the
+    /// staging subdirectory. Finished images beside it are never listed. Runs before this
+    /// process stages anything, so nothing it deletes is in use.
     @discardableResult
-    static func deleteStagedTemporaryFiles(in directory: URL) -> Int {
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.isRegularFileKey]
-        ) else {
+    static func clearStaging(in directory: URL) -> Int {
+        let staging = directory.appending(path: stagingDirectoryName, directoryHint: .isDirectory)
+        let contents: [URL]
+        do {
+            contents = try FileManager.default.contentsOfDirectory(at: staging, includingPropertiesForKeys: nil)
+        } catch where ErrorDiagnostics.isMissingFile(error) {
+            return 0
+        } catch {
+            OtosLog.thumbnails.errorOperation("thumbnail.staging", phase: "listFailed", fields: [
+                "error": String(describing: error),
+            ])
             return 0
         }
         var removedCount = 0
         for url in contents {
-            let name = url.lastPathComponent
-            guard name.hasPrefix("."), name.hasSuffix(".tmp") else {
-                continue
-            }
-            let values = try? url.resourceValues(forKeys: [.isRegularFileKey])
-            guard values?.isRegularFile != false else {
-                continue
-            }
             do {
                 try FileManager.default.removeItem(at: url)
                 removedCount += 1
+            } catch where ErrorDiagnostics.isMissingFile(error) {
+                // Already gone: the outcome this removal wanted.
             } catch {
-                OtosLog.thumbnails.debug(
-                    "Staged thumbnail cleanup skipped name=\(name, privacy: .public)"
-                )
+                OtosLog.thumbnails.errorOperation("thumbnail.staging", phase: "removeFailed", fields: [
+                    "name": url.lastPathComponent,
+                    "error": String(describing: error),
+                ])
             }
         }
         return removedCount

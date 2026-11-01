@@ -109,8 +109,7 @@ struct ContentView: View {
             SidebarView(
                 showsAllMedia: viewModel.showsAllMediaRow,
                 showsPlaces: viewModel.showsPlacesRow,
-                showsDuplicates: viewModel.showsDuplicatesRow,
-                duplicatesCount: viewModel.duplicatesRowCount,
+                duplicatesCount: viewModel.showsDuplicatesRow ? viewModel.duplicatesCount : nil,
                 libraries: viewModel.state.libraries,
                 importBatches: viewModel.state.importBatches,
                 removableSources: viewModel.state.removableSources,

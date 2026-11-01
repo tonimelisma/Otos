@@ -26,8 +26,32 @@ import SwiftUI
 /// and `reply(toApplicationShouldTerminate:)` is called on both the success and failure
 /// paths — a failed delete must never trap the user in an app that will not quit. The
 /// launch sweep is the backstop for that case, as it already is for a crash.
+///
+/// It also owns the main window's view model and starts it as launch finishes, before the
+/// window is built: the catalog opens and loads its roots on its own actor while the main
+/// thread lays out the window's first frame, so the sidebar is complete when it first draws
+/// instead of waiting for the frame and then for the catalog (APP-044).
 private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
     private var clearingWindow: NSWindow?
+
+    /// The one place in the app that names the production catalog location,
+    /// UserDefaults.standard and the system Trash — every other type takes them as
+    /// required (no-default) parameters, so a caller cannot reach production data by
+    /// omitting an argument (ADR 0020).
+    let catalogViewModel = CatalogWindowViewModel(
+        catalogStore: CatalogStore(
+            location: .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos")
+        ),
+        preferencesDomain: .standard,
+        trashFiles: .live
+    )
+
+    func applicationWillFinishLaunching(_: Notification) {
+        catalogViewModel.start()
+        OtosLog.app.notice(
+            "op=sessionStart session=\(RunContext.sessionID, privacy: .public) kind=\(RunContext.runKind, privacy: .public)"
+        )
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // The common session never attaches a camera. Deferring termination and flashing a
@@ -95,34 +119,19 @@ public struct OtosApp: App {
 
     @NSApplicationDelegateAdaptor(OtosAppLifecycle.self) private var lifecycle
 
-    /// The one place in the app that names the production catalog location,
-    /// UserDefaults.standard and the system Trash — every other type takes them as
-    /// required (no-default) parameters, so a caller cannot reach production data by
-    /// omitting an argument (ADR 0020).
-    @State private var catalogViewModel = CatalogWindowViewModel(
-        catalogStore: CatalogStore(
-            location: .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos")
-        ),
-        preferencesDomain: .standard,
-        trashFiles: .live
-    )
+    private var catalogViewModel: CatalogWindowViewModel {
+        lifecycle.catalogViewModel
+    }
 
     public var body: some Scene {
         Window("Otos", id: "main") {
             ContentView(viewModel: catalogViewModel)
                 .task {
-                    // Bracket the window-attach/start entry point so a startup stall
-                    // can be attributed to it. The monitor flags the stall;
-                    // Instruments names the code.
-                    let attachOp = catalogViewModel.uiStallMonitor.beginOperation("OtosApp.windowAttach")
-                    defer { catalogViewModel.uiStallMonitor.endOperation(attachOp) }
+                    // The window's first frame is in: launch time ends here, and the
+                    // signpost marks it for Instruments.
                     let state = OtosSignpost.app.beginInterval("MainWindowContentAttached")
-                    OtosLog.app.info("Main window content attached")
+                    OtosLog.app.notice("op=window.attached")
                     OtosSignpost.app.endInterval("MainWindowContentAttached", state)
-                    catalogViewModel.start()
-                    OtosLog.app.notice(
-                        "op=sessionStart session=\(RunContext.sessionID, privacy: .public) kind=\(RunContext.runKind, privacy: .public)"
-                    )
                     #if DEBUG
                         SmokeLibrarySelection.applyIfPresent(to: catalogViewModel)
                         SmokeWindowCapture.applyIfPresent(to: catalogViewModel)

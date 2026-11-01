@@ -6,8 +6,7 @@ import SwiftUI
 struct SidebarView: View {
     let showsAllMedia: Bool
     let showsPlaces: Bool
-    let showsDuplicates: Bool
-    /// How many photos have duplicates (ADR 0042); nil before the catalog has loaded.
+    /// How many photos have duplicates, while the Duplicates row exists (ADR 0042).
     let duplicatesCount: Int?
     let libraries: [CatalogLibraryState]
     let importBatches: [ImportBatchSummary]
@@ -22,7 +21,6 @@ struct SidebarView: View {
     init(
         showsAllMedia: Bool,
         showsPlaces: Bool,
-        showsDuplicates: Bool = false,
         duplicatesCount: Int? = nil,
         libraries: [CatalogLibraryState],
         importBatches: [ImportBatchSummary],
@@ -35,7 +33,6 @@ struct SidebarView: View {
     ) {
         self.showsAllMedia = showsAllMedia
         self.showsPlaces = showsPlaces
-        self.showsDuplicates = showsDuplicates
         self.duplicatesCount = duplicatesCount
         self.libraries = libraries
         self.importBatches = importBatches
@@ -64,12 +61,16 @@ struct SidebarView: View {
                 .tag(SidebarSelection.places)
             }
 
-            Section("Libraries") {
-                ForEach(libraries) { library in
-                    SidebarRow(systemImage: "folder", title: library.displayName) {
-                        EmptyView()
+            // A header with no rows under it is a claim about nothing; before the catalog
+            // loads there are none (APP-044).
+            if !libraries.isEmpty {
+                Section("Libraries") {
+                    ForEach(libraries) { library in
+                        SidebarRow(systemImage: "folder", title: library.displayName) {
+                            EmptyView()
+                        }
+                        .tag(SidebarSelection.library(library.path))
                     }
-                    .tag(SidebarSelection.library(library.path))
                 }
             }
 
@@ -113,15 +114,13 @@ struct SidebarView: View {
 
             // Last, so its arrival pushes no row under the pointer (ADR 0042). Its count
             // is the bar's L1 unit: photos with duplicates.
-            if showsDuplicates {
+            if let duplicatesCount {
                 Section {
                     SidebarRow(systemImage: "square.on.square", title: "Duplicates") {
-                        if let duplicatesCount {
-                            Text("\(duplicatesCount)")
-                                .font(.subheadline)
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                        }
+                        Text("\(duplicatesCount)")
+                            .font(.subheadline)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
                     }
                     .tag(SidebarSelection.duplicates)
                 }

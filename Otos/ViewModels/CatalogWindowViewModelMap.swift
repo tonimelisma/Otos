@@ -23,13 +23,9 @@ extension CatalogWindowViewModel {
         sidebarSelection == .places
     }
 
-    /// The Places row: once the catalog has loaded, while a fixed library exists; before it,
-    /// while Places is the row the user left.
+    /// The Places row, while a fixed library exists, once the catalog has loaded (APP-044).
     var showsPlacesRow: Bool {
-        guard state.isCatalogLoaded else {
-            return SidebarSelectionPolicy.rowBeforeCatalogLoad(selection: sidebarSelection) == .places
-        }
-        return SidebarSelectionPolicy.showsPlaces(libraries: state.libraries)
+        state.isCatalogLoaded && SidebarSelectionPolicy.showsPlaces(libraries: state.libraries)
     }
 
     /// The map has one presentation, so the view-mode picker and ⌘1/2/3 are disabled
