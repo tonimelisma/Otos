@@ -223,21 +223,14 @@ actor MediaImportExecutor {
     /// reader is `FreeSpaceFloor.availableBytes(onVolumeOf:)`.
     private let volumeCapacity: @Sendable (URL) -> Int64?
     private let transfer: VolumeTransfer
-    /// Makes each copy's products its source does not hold current, from the published
-    /// copy while its bytes are local (ADR 0009): a cloud-synced library may evict the copy
-    /// soon after it uploads. The production maker is `MediaEnricher.live` over the
-    /// catalog's derived-image directory; a catalog without one makes none.
-    private let productMaker: MediaEnricher?
 
     init(
         store: CatalogStore,
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,
         volumeCapacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:),
-        transfer: @escaping VolumeTransfer = CopyfileTransfer.copy,
-        productMaker: MediaEnricher? = nil
+        transfer: @escaping VolumeTransfer = CopyfileTransfer.copy
     ) {
-        self.productMaker = productMaker ?? store.thumbnailDirectory.map { MediaEnricher.live(thumbnailDirectory: $0) }
         self.store = store
         self.cameraImport = cameraImport
         self.materializationRequester = materializationRequester
@@ -1493,8 +1486,7 @@ actor MediaImportExecutor {
             workerID: workerID,
             copyStarted: started,
             copyFinished: copyFinished,
-            hashFinished: hashFinished,
-            productMaker: productMaker
+            hashFinished: hashFinished
         ))
         if case .published = outcome {
             // Honest `mediaOperation.copy phase=finish` (actual bytes written) is
@@ -1527,8 +1519,6 @@ actor MediaImportExecutor {
         let copyStarted: ContinuousClock.Instant
         let copyFinished: ContinuousClock.Instant
         let hashFinished: ContinuousClock.Instant
-        /// Makes the copy's products its source does not hold current; nil makes none.
-        let productMaker: MediaEnricher?
     }
 
     /// The publication handoff is one crash boundary: journal gate, exclusive rename,
@@ -1576,7 +1566,9 @@ actor MediaImportExecutor {
                 "error": String(describing: error),
             ])
             await abandonBeforePublication("readyToPublishFailed")
-            return .failed(.other)
+            // A catalog that cannot commit for a full disk is the floor reached the hard
+            // way: the entry never landed, and the run stops (ADR 0027).
+            return .failed(error as? CatalogStoreError == .outOfSpace ? .outOfSpace : .other)
         }
         guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
             await abandonBeforePublication("namespaceLeaseUnavailable")
@@ -1597,13 +1589,16 @@ actor MediaImportExecutor {
                 relativePath: request.destinationRelative
             )
             return .skippedForeign
-        case let .failed(message):
+        case let .failed(failure):
             OtosLog.catalog.errorOperation("mediaOperation.publish", phase: "failed", fields: [
                 "key": operation.operationKey.rawValue,
-                "detail": message,
+                "detail": failure.detail,
+                "outOfSpace": "\(failure.outOfSpace)",
             ])
             await abandonBeforePublication("publishFailed")
-            return .failed(.other)
+            // A volume out of space is the floor reached the hard way (ADR 0027): it stops
+            // the run instead of failing this entry and trying the next.
+            return .failed(failure.outOfSpace ? .outOfSpace : .other)
         case .published:
             break
         }
@@ -1647,20 +1642,13 @@ actor MediaImportExecutor {
         }
 
         let companions = Self.publishCompanions(request)
-        let made = await Self.makeOwedProducts(
-            request,
-            operation: operation,
-            byteSize: settledByteSize,
-            modifiedAt: settledModified
-        )
         var reuseResult = ImportProductsResult.owed
         do {
             reuseResult = try await request.store.settleImportedAsset(
                 operation: operation,
                 byteSize: settledByteSize,
                 contentModifiedAt: settledModified,
-                companions: companions.published,
-                made: made
+                companions: companions.published
             )
         } catch {
             OtosLog.catalog.errorOperation("mediaOperation.settle", phase: "failed", fields: [
@@ -1703,58 +1691,6 @@ actor MediaImportExecutor {
         )
     }
 
-    /// Makes the products the copy's source does not hold current — its metadata, its
-    /// rendering — from the published copy, whose bytes are local now and may not be once
-    /// a cloud-synced library uploads and evicts it (ADR 0009). Nil when the source holds
-    /// every product, when there is no maker, or when making failed; settlement then
-    /// leaves what is missing owed, for enrichment.
-    private nonisolated static func makeOwedProducts(
-        _ request: PublishSettleRequest,
-        operation: ActiveFileOperation,
-        byteSize: Int64,
-        modifiedAt: Date
-    ) async -> EnrichmentResult? {
-        guard let maker = request.productMaker else {
-            return nil
-        }
-        let source: ImportSourceProducts
-        do {
-            source = try await request.store.importSourceProducts(operation)
-        } catch {
-            OtosLog.mediaIO.errorOperation("import.products", phase: "sourceUnreadable", fields: [
-                "destination": request.destinationRelative.rawValue,
-                "error": String(describing: error),
-            ])
-            return nil
-        }
-        let owed = source.owed
-        guard !owed.isEmpty else {
-            return nil
-        }
-        let started = ContinuousClock.now
-        let outcome = await maker.enrich(
-            MediaAssetID(libraryRootPath: request.destinationRoot, relativePath: request.destinationRelative),
-            .localFile(request.finalURL),
-            byteSize,
-            MediaAsset.mtimeSeconds(modifiedAt),
-            owed,
-            source.recipe
-        )
-        let made: EnrichmentResult? = if case let .complete(result) = outcome {
-            result
-        } else {
-            nil
-        }
-        OtosLog.mediaIO.noticeOperation("import.products", phase: made == nil ? "notMade" : "finish", fields: [
-            "batch": "\(request.batch.unixMilliseconds)",
-            "destination": request.destinationRelative.rawValue,
-            "owed": "\(owed)",
-            "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: started))",
-            "worker": "\(request.workerID)",
-        ])
-        return made
-    }
-
     /// Publishes each staged companion beside the published primary. Only a companion
     /// that landed is returned for the catalog, with the facts of the file that landed;
     /// one that met an occupant or a refusal stays on the source and is reported.
@@ -1783,12 +1719,12 @@ actor MediaImportExecutor {
                     "relativePath": companion.source.relativePath.rawValue,
                     "reason": "destinationExists",
                 ])
-            case let .failed(message):
+            case let .failed(failure):
                 ImportStaging.remove([companion.stagingURL], key: request.operation.operationKey, reason: "companionPublishFailed")
                 notCopied.append(companion.source.relativePath)
                 OtosLog.mediaIO.errorOperation("mediaOperation.companion", phase: "notCopied", fields: [
                     "relativePath": companion.source.relativePath.rawValue,
-                    "reason": message,
+                    "reason": failure.detail,
                 ])
             }
         }

@@ -20,10 +20,15 @@ refused, which exist nowhere but the card, are never touched. The remainder is
 offered by the ordinary post-settlement re-plan.
 
 A write that fails for space anyway (`ENOSPC` / `NSFileWriteOutOfSpaceError`) is a
-per-entry `EntryFailure.outOfSpace` and stops the run the same way — from a card's
-`copyfile` or from a camera's staging download, whose failure is typed
-(`CameraByteFailure`) from the same two error shapes. It is the backstop, not a
-second outcome.
+per-entry `EntryFailure.outOfSpace` and stops the run the same way. Every write an entry
+makes before it lands is typed by the same rule (`FreeSpaceFloor.refusedForSpace`, by the
+error's chain, never its wording): a card's `copyfile`, a camera's staging download
+(`CameraByteFailure`), the exclusive publication (`ExclusivePublication.Failure`), and the
+journal commit before it, whose `SQLITE_FULL` the Store types as
+`CatalogStoreError.outOfSpace`. `copyfile` is told to quit at a failed step: answering
+continue makes it write the step again, which on a full disk never ends — on 2026-10-31 an
+import's workers logged copyfile's ENOSPC 1.26 million times in 30 s and never reached this
+stop. It is the backstop, not a second outcome.
 
 Free space is never a property of a plan, never gates a control, and an import never
 observes it on a timer. `FreeSpaceFloor` is one constant and one check

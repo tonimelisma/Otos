@@ -675,25 +675,33 @@ struct CatalogStoreEnrichmentTests {
         #expect(!copy.hashStale)
     }
 
-    /// ADR 0009: a rendering the import made from the published copy is the copy's,
-    /// stamped with the copy's own facts, so enrichment never reads the copy for it.
-    @Test func aRenderingTheImportMadeIsTheCopys() async throws {
+    /// ADR 0009 §9: a copy that settles owing a product is offered to enrichment before any
+    /// other background row, because its bytes are local now and may not be once a
+    /// cloud-synced library evicts it. The import itself never waits for the product.
+    @Test func aCopyOwingARenderingIsClaimedBeforeOtherBackgroundWork() async throws {
         let card = try await enrichedCardImportFixture(rendered: false)
-        let mtime = MediaAsset.mtimeSeconds(card.scannedModifiedAt)
-        let made = EnrichmentResult(
-            id: MediaAssetID(libraryRootPath: card.destinationPath, relativePath: MediaRelativePath(rawValue: "IMG_1.JPG")),
-            metadata: nil,
-            rendering: EnrichedRendering(),
-            sourceSize: card.scannedSize,
-            sourceMTimeSeconds: mtime,
-            contentHash: nil
-        )
-        let result = try await card.settle(sourceModifiedAt: card.scannedModifiedAt, made: made)
+        _ = try await card.settle(sourceModifiedAt: card.scannedModifiedAt)
+        let copyID = MediaAssetID(libraryRootPath: card.destinationPath, relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"))
 
-        #expect(result == ImportProductsResult(metadata: .reused, rendering: .made))
-        let state = try await catalogStoreTestState(card.store)
-        let copy = try #require(state.testAssets.first { $0.id.libraryRootPath == card.destinationPath })
-        #expect(!copy.needsEnrichment(everyProduct: true))
+        let claimed = try await card.store.enrichmentCandidates(limit: 1)
+
+        #expect(claimed.map(\.asset.id) == [copyID])
+        #expect(claimed.first?.scope == .rendering)
+    }
+
+    /// A catalog write SQLite refuses because the disk is full (`SQLITE_FULL`) is typed as
+    /// out of space where the catalog writes, so an import stops on it (ADR 0027).
+    @Test func aCatalogWriteTheDiskCannotHoldIsTypedAsOutOfSpace() throws {
+        let queue = try DatabaseQueue(path: makeTestDirectory().appending(path: "full.sqlite").path(percentEncoded: false))
+        try queue.write { db in
+            try db.execute(sql: "CREATE TABLE t (b BLOB)")
+            try db.execute(sql: "PRAGMA max_page_count = 8")
+        }
+        #expect(throws: CatalogStoreError.outOfSpace) {
+            try CatalogStore.writeWithJournalDurability(queue) { db in
+                try db.execute(sql: "INSERT INTO t VALUES (zeroblob(1000000))")
+            }
+        }
     }
 
     /// ARC-053: a card file that changed after it was enriched has an overlay for other
@@ -722,7 +730,7 @@ private struct EnrichedCardImport {
     let scannedModifiedAt: Date
     let captureDate: Date
 
-    func settle(sourceModifiedAt: Date, made: EnrichmentResult? = nil) async throws -> ImportProductsResult {
+    func settle(sourceModifiedAt: Date) async throws -> ImportProductsResult {
         let operation = ActiveFileOperation(
             operationKey: .make(),
             sourceKind: .removableVolume,
@@ -746,8 +754,7 @@ private struct EnrichedCardImport {
             operation: operation,
             byteSize: scannedSize,
             contentModifiedAt: sourceModifiedAt,
-            companions: [],
-            made: made
+            companions: []
         )
     }
 }

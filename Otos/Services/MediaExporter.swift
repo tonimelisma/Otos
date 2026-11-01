@@ -163,8 +163,11 @@ nonisolated enum MediaExporter {
                 return target
             case .destinationExists:
                 continue
-            case let .failed(detail):
-                throw ExportError.publishFailed(detail)
+            case let .failed(failure):
+                if failure.outOfSpace {
+                    throw MediaFileWriter.WriteError.outOfSpace
+                }
+                throw ExportError.publishFailed(failure.detail)
             }
         }
         throw ExportError.namesExhausted

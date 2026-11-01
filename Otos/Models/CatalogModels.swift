@@ -977,6 +977,9 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
     case catalogUnavailable
     case unsupportedCatalogSchema(CatalogSchemaCompatibility)
     case importOperationMissing(ActiveFileOperationKey)
+    /// A durable journal or settlement write SQLite refused because the disk is full
+    /// (`SQLITE_FULL`): the floor reached the hard way (ADR 0027).
+    case outOfSpace
 
     var errorDescription: String? {
         switch self {
@@ -997,6 +1000,8 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
             problem.errorDescription
         case let .importOperationMissing(key):
             "The import journal operation \(key.rawValue) is no longer present."
+        case .outOfSpace:
+            "The disk is full."
         }
     }
 }

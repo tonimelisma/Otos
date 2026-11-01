@@ -117,10 +117,10 @@ struct MediaImportRecovery {
                     await persistPublished(operation, final: final)
                 case .destinationExists:
                     await recordForeignAndDiscard(operation)
-                case let .failed(message):
+                case let .failed(failure):
                     OtosLog.catalog.errorOperation("mediaOperation.recover", phase: "publishFailed", fields: [
                         "key": operation.operationKey.rawValue,
-                        "detail": message,
+                        "detail": failure.detail,
                     ])
                     await discard(operation, reason: "publishFailed")
                 }

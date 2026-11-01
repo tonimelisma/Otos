@@ -324,22 +324,20 @@ Adjacent decisions requiring separate ADRs or specs:
    diagnostic does not clear to unblocked while that demand still holds. Enrichment
    writes remain one timed transaction and one detail notification per batch.
 
-9. **Import publishes complete rows, product by product.** A cloud-synced library
-   uploads and then evicts an imported copy, so its products are made while its bytes
-   are local. After publication, the executor asks the Store which products the source
-   row holds current for the bytes the import copied (`importSourceProducts`) and runs
-   `MediaEnricher` on the published copy for the rest — its metadata, its rendering
-   with the source's edit. Settlement then takes each product separately: the source's,
-   when its stamp names the size and mtime the import copied (the copy is the source
-   file, byte for byte, the same freshness rule every row answers to); else the one the
-   import made; and, failing a rendering, the source's thumbnail as a provisional one.
-   The digest is the one the import computed from the staged copy. Reuse needs no
-   source digest: a card's own digest pass may not have run yet (ADR 0018), and where
-   it has, the copy was verified against it. Derived images are copied into separately
-   staged destination files and promoted through the same atomic path ordinary
-   enrichment uses. A product the copy still lacks stays owed for ordinary enrichment;
-   nothing blocks the import. Source and destination overlay lifecycles are
-   independent, and repeated journal recovery is idempotent.
+9. **Import settles each product separately and never waits for one.** Settlement takes
+   each of the source row's products whose stamp names the size and mtime the import
+   copied (the copy is the source file, byte for byte, the same freshness rule every row
+   answers to), and, failing a rendering, the source's thumbnail as a provisional one. The
+   digest is the one the import computed from the staged copy. Reuse needs no source
+   digest: a card's own digest pass may not have run yet (ADR 0018), and where it has,
+   the copy was verified against it. Derived images are copied into separately staged
+   destination files and promoted through the same atomic path ordinary enrichment uses.
+   Nothing is rendered or read during the import: a card renders its rows while it waits
+   for Import to be pressed, and a copy that settles still owing a product is offered to
+   enrichment before every other background row (`landedAwaitingProducts`), because its
+   bytes are local now and a cloud-synced library may evict it once uploaded. Source and
+   destination overlay lifecycles are independent, and repeated journal recovery is
+   idempotent.
 
 10. **Import publication and enrichment gates are durable safety boundaries.** The
     executor persists a complete `.readyToPublish` record (including the staging

@@ -171,6 +171,19 @@ extension CatalogStore {
         _ dbWriter: any DatabaseWriter,
         _ body: (Database) throws -> T
     ) throws -> T {
+        do {
+            return try writeWithFullSynchronous(dbWriter, body)
+        } catch let error as DatabaseError where error.resultCode == .SQLITE_FULL {
+            // Typed here, where the catalog's writes are, so an import stops on a full disk
+            // rather than failing entry after entry (ADR 0027).
+            throw CatalogStoreError.outOfSpace
+        }
+    }
+
+    private static func writeWithFullSynchronous<T>(
+        _ dbWriter: any DatabaseWriter,
+        _ body: (Database) throws -> T
+    ) throws -> T {
         try dbWriter.writeWithoutTransaction { db in
             try db.execute(sql: "PRAGMA synchronous = FULL")
             defer {

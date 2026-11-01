@@ -7,12 +7,10 @@ import UniformTypeIdentifiers
 nonisolated enum ImportProductOrigin: String, Equatable, Sendable {
     /// The source row's, current for the bytes the import copied.
     case reused
-    /// Made by the import from the published copy while its bytes were local.
-    case made
     /// The source's thumbnail without a rendering (QuickLook's on a card's first pass, a
     /// camera's embedded preview), shown until enrichment renders the copy.
     case provisional
-    /// Neither: the copy owes it, and enrichment makes it.
+    /// Neither: the copy owes it, and enrichment makes it, offering the copy first.
     case owed
 }
 
@@ -24,28 +22,7 @@ nonisolated struct ImportProductsResult: Equatable, Sendable {
     static let owed = ImportProductsResult(metadata: .owed, rendering: .owed)
 }
 
-/// What the source row holds current for the bytes an import copied, so the import makes
-/// only the rest from the published copy (ADR 0009). The recipe is the source's saved
-/// edit, which the copy carries and its rendering shows.
-nonisolated struct ImportSourceProducts: Equatable, Sendable {
-    let metadataCurrent: Bool
-    let renderingCurrent: Bool
-    let recipe: StoredEditRecipe?
-
-    /// The products the import makes for the copy.
-    var owed: EnrichmentScope {
-        var scope: EnrichmentScope = []
-        if !metadataCurrent {
-            scope.insert(.metadata)
-        }
-        if !renderingCurrent {
-            scope.insert(.rendering)
-        }
-        return scope
-    }
-}
-
-/// The rendering a settled copy gets: the derived images copied or promoted for it, and
+/// The rendering a settled copy gets: the source's derived images copied for it, and
 /// whether they are a rendering (stamped with the copy's facts, at `renderedRevision`) or
 /// a provisional thumbnail (not stamped).
 nonisolated struct LandedRendering {

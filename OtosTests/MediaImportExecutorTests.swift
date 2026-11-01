@@ -30,8 +30,28 @@ struct ExclusivePublicationTests {
     }
 }
 
+extension ExclusivePublicationTests {
+    /// A publication refused for space says so, typed, so an import stops at the floor
+    /// instead of failing entry after entry (ADR 0027).
+    @Test func aPublicationRefusedForSpaceIsTypedAsSuch() {
+        #expect(ExclusivePublication.Failure(errno: ENOSPC, call: "renamex_np").outOfSpace)
+        #expect(!ExclusivePublication.Failure(errno: EACCES, call: "renamex_np").outOfSpace)
+        #expect(ExclusivePublication.Failure(NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC))).outOfSpace)
+    }
+}
+
 @Suite(.testDirectory)
 struct CopyfileTransferTests {
+    /// copyfile(3) writes a failed data or attribute step again when the callback answers
+    /// continue, so a full disk retried forever. A failed step quits, and cancellation
+    /// still wins (verified on a 10 MB disk image: continue retried 2,001 times in 0.03 s,
+    /// quit stopped after one failure with ENOSPC).
+    @Test func aFailedStepQuitsTheCopyInsteadOfRetrying() {
+        #expect(CopyfileTransfer.statusAnswer(stage: COPYFILE_ERR, shouldContinue: true) == .fail)
+        #expect(CopyfileTransfer.statusAnswer(stage: COPYFILE_PROGRESS, shouldContinue: true) == .proceed)
+        #expect(CopyfileTransfer.statusAnswer(stage: COPYFILE_ERR, shouldContinue: false) == .cancel)
+    }
+
     @Test func copiesBytesAndReportsCompletion() throws {
         let temp = try makeTestDirectory()
         let source = temp.appending(path: "source.bin")
@@ -632,85 +652,6 @@ struct ImportExecutionProgressTests {
         let sourceAfter = try FilesystemTreeSnapshot.capture(root: sourceURL)
         #expect(sourceAfter == sourceBefore)
         await coordinator.shutdown()
-    }
-
-    /// ADR 0009 §9: a card row whose metadata is current but whose rendering is not yet
-    /// made gets that rendering from its published copy during the import — while the copy
-    /// is local — and the copy settles needing nothing. The metadata is the card's, so it
-    /// is not read again.
-    @Test func aCopyOwingARenderingGetsItFromThePublishedCopyDuringTheImport() async throws {
-        let temp = try makeTestDirectory()
-        let destinationURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
-        let sourceURL = temp.appending(path: "Card", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
-        try Data(repeating: 3, count: 4096).write(to: sourceURL.appending(path: "image.jpg"))
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        try await store.start(scansSavedLibraries: false)
-        try await store.addLibrary(url: destinationURL)
-        let destination = try CatalogPath.normalizedDirectoryPath(for: destinationURL)
-        try await store.attachRemovableVolume(
-            mountURL: sourceURL,
-            identity: .volume(uuid: "owed-rendering"),
-            displayName: "Card",
-            isEjectable: true
-        )
-        let source = try CatalogPath.normalizedDirectoryPath(for: sourceURL)
-        _ = try await waitForCatalogStoreState(store) { state in
-            !state.isScanning && state.removableSources.first?.activity == .idle
-        }
-        // The card's metadata pass: metadata current, rendering still owed.
-        let media = try #require(await store.planningMedia(for: source))
-        _ = await store.applyEnrichmentBatch(media.map { facts in
-            EnrichmentResult(
-                id: facts.id,
-                metadata: EnrichedMetadata(metadata: AssetMetadata(), kind: .image, format: nil),
-                rendering: nil,
-                sourceSize: facts.byteSize ?? 0,
-                sourceMTimeSeconds: MediaAsset.mtimeSeconds(facts.contentModifiedAt),
-                contentHash: nil
-            )
-        })
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: PreferencesDomain.suite(UUID().uuidString))
-        await coordinator.start()
-        await coordinator.setDestination(destination, for: source)
-        let plan = try await waitForReadyPlan(coordinator, source: source)
-
-        let calls = TestRecorder<ProductMakerCall>()
-        let maker = MediaEnricher { id, access, size, mtime, scope, _ in
-            calls.record(ProductMakerCall(id: id, url: access.localURL, scope: scope))
-            return .complete(EnrichmentResult(
-                id: id,
-                metadata: nil,
-                rendering: scope.contains(.rendering) ? EnrichedRendering() : nil,
-                sourceSize: size,
-                sourceMTimeSeconds: mtime,
-                contentHash: nil
-            ))
-        }
-        let result = await MediaImportExecutor(store: store, productMaker: maker).execute(
-            plan: plan,
-            batch: ImportBatchID(),
-            sourceKind: .removableVolume,
-            sourceDeviceIdentity: .volume(uuid: "owed-rendering"),
-            deleteSourceRequested: false,
-            runID: UUID().uuidString
-        ) { _ in }
-        await coordinator.shutdown()
-
-        guard case .completed = result else {
-            Issue.record("Expected completed execution, got \(result)")
-            return
-        }
-        let call = try #require(calls.values.first)
-        #expect(calls.values.count == 1)
-        #expect(call.scope == .rendering)
-        #expect(call.id.libraryRootPath == destination)
-        // The published copy itself, in the library, not the card file or a staging file.
-        #expect(call.url?.standardizedFileURL.path == call.id.fileURL.standardizedFileURL.path)
-        let state = try await catalogStoreTestState(store)
-        let copy = try #require(state.testAssets.first { $0.id.libraryRootPath == destination })
-        #expect(!copy.needsEnrichment(everyProduct: true))
     }
 
     /// APP-029: when every attempted entry fails `sourceStillMatches` for the
@@ -1827,11 +1768,4 @@ struct LibraryContentRecheckTests {
         #expect(try await store.librariesHoldContent([digest]).isEmpty)
         await store.shutdown()
     }
-}
-
-/// One call an import's product maker received.
-private struct ProductMakerCall {
-    let id: MediaAssetID
-    let url: URL?
-    let scope: EnrichmentScope
 }
