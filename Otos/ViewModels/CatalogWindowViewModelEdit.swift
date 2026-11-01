@@ -105,6 +105,23 @@ nonisolated enum EditLaneCommand: Sendable {
     case pickNeutral(id: MediaAssetID, point: CGPoint, shown: EditRecipe, sourceSize: Int64?)
     /// The Crop section's Auto: level the horizon of the photo as `shown` turns and flips it.
     case autoStraighten(id: MediaAssetID, shown: EditRecipe, sourceSize: Int64?)
+    /// The crop tool's Suggested menu: place `suggestion` by the subject of `frame`, the
+    /// photo edited with everything but its crop as `shown`, keeping `pixelRatio`.
+    case suggestCrop(
+        id: MediaAssetID,
+        frame: CGImage,
+        shown: EditRecipe,
+        suggestion: CropSuggestion,
+        pixelRatio: Double?
+    )
+}
+
+/// What reading the crop frame's subject found.
+nonisolated enum SubjectReading: Equatable, Sendable {
+    /// The subject, in fractions of the frame from its top-left corner.
+    case found(CGRect)
+    /// Vision found no subject: the crop is left as it is.
+    case none
 }
 
 /// What reading a photo's horizon found.
@@ -510,6 +527,13 @@ extension CatalogWindowViewModel {
                         self?.applyAutoStraighten(id: id, shown: shown, reading)
                     }
                     continue
+                case let .suggestCrop(id, frame, shown, suggestion, pixelRatio):
+                    if let subject = await pipeline.subject(id, of: frame) {
+                        self?.applySuggestedCrop(
+                            id: id, shown: shown, suggestion: suggestion, pixelRatio: pixelRatio, subject: subject
+                        )
+                    }
+                    continue
                 case let .save(save):
                     command = save
                 }
@@ -806,6 +830,29 @@ nonisolated struct EditPipeline: Sendable {
             return degrees.map(HorizonReading.level) ?? HorizonReading.none
         } catch {
             OtosLog.rendering.errorOperation("render.horizon", phase: "failed", fields: [
+                "id": id.relativePath.rawValue, "error": String(describing: error),
+            ])
+            return nil
+        }
+    }
+
+    /// Where the subject of the crop frame is, or nil when Vision cannot read it. A
+    /// frame Vision finds no subject in reads as `.none`.
+    @concurrent
+    func subject(_ id: MediaAssetID, of frame: CGImage) async -> SubjectReading? {
+        let start = ContinuousClock.now
+        do {
+            let subject = try LiveEditRenderer.salientSubject(in: frame)
+            OtosLog.rendering.noticeOperation("render.cropSubject", phase: "finish", fields: [
+                "id": id.relativePath.rawValue,
+                "found": "\(subject != nil)",
+                "subject": subject.map { String(format: "%.3f,%.3f,%.3f,%.3f", $0.minX, $0.minY, $0.width, $0.height) }
+                    ?? "none",
+                "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+            ])
+            return subject.map(SubjectReading.found) ?? SubjectReading.none
+        } catch {
+            OtosLog.rendering.errorOperation("render.cropSubject", phase: "failed", fields: [
                 "id": id.relativePath.rawValue, "error": String(describing: error),
             ])
             return nil

@@ -183,4 +183,45 @@ struct EditGeometryTests {
         #expect(abs(edited - plain) < 0.5)
         #expect(abs(flipped + 6) < 1)
     }
+
+    /// A line drawn falling to the right is leveled by a counterclockwise turn, one drawn
+    /// nearer vertical is made plumb, and a click draws no line.
+    @Test func aDrawnLineIsLeveledOrMadePlumb() throws {
+        let falling = try #require(StraightenLine.levelingTurn(
+            from: .zero, to: CGPoint(x: 100, y: 100 * tan(10 * Double.pi / 180))
+        ))
+        #expect(abs(falling + 10) < 0.001)
+        // Drawn right to left, the same line levels the same way.
+        let backwards = try #require(StraightenLine.levelingTurn(
+            from: CGPoint(x: 100, y: 100 * tan(10 * Double.pi / 180)), to: .zero
+        ))
+        #expect(abs(backwards + 10) < 0.001)
+        // Its foot 10 to the right of its head: turning clockwise brings the foot under it.
+        let leaning = try #require(StraightenLine.levelingTurn(from: .zero, to: CGPoint(x: 10, y: 100)))
+        #expect(abs(leaning - atan(0.1) * 180 / .pi) < 0.001)
+        #expect(StraightenLine.levelingTurn(from: .zero, to: CGPoint(x: 3, y: 4)) == nil)
+    }
+
+    /// Fit Subject is the smallest crop of the aspect holding the subject and its margin;
+    /// Subject on Thirds is the largest, with the subject's center on a third.
+    @Test func suggestedCropsArePlacedByTheSubject() {
+        let frame = CGSize(width: 1200, height: 800)
+        let subject = CGRect(x: 0.2, y: 0.2, width: 0.1, height: 0.15)
+
+        let fit = CropSuggestion.fitSubject.crop(subject: subject, frame: frame, pixelRatio: nil)
+        #expect(abs(fit.width * 1200 / (fit.height * 800) - 1.5) < 0.001)
+        #expect(fit.left <= subject.minX && fit.right >= subject.maxX)
+        #expect(fit.top <= subject.minY && fit.bottom >= subject.maxY)
+        #expect(abs(fit.height - 0.15 * 1.3) < 0.001)
+
+        let square = CropSuggestion.subjectOnThirds.crop(subject: subject, frame: frame, pixelRatio: 1)
+        #expect(abs(square.width * 1200 - square.height * 800) < 0.001)
+        #expect(square.height == 1)
+        // Wide enough to place: the subject's center sits on the left third.
+        #expect(abs(square.left + square.width / 3 - subject.midX) < 0.001)
+
+        // A subject bigger than any crop of the aspect gets the largest crop there is.
+        let huge = CropSuggestion.fitSubject.crop(subject: CGRect(x: 0, y: 0, width: 1, height: 1), frame: frame, pixelRatio: 1)
+        #expect(abs(huge.height - 1) < 0.001)
+    }
 }

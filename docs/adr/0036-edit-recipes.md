@@ -87,6 +87,13 @@ open takes 20–180 ms per change. Opening it again for every change takes about
     horizon in is left as it is. Rejected: `CIImage.autoAdjustmentFilters` with `.level`,
     whose documentation names neither the filter it returns nor an angle the recipe
     could store.
+  - The straighten line and suggested crops are tool intents that write the same recipe
+    fields as a drag: a straighten and a crop. The line's turn is pure geometry on the
+    canvas (`StraightenLine`). A suggestion reads the subject with Vision's objectness
+    saliency (attention saliency when it finds no object) from the crop tool's own frame
+    image, which is already the photo edited with everything but its crop, so its
+    fractions are the crop's; `CropSuggestion` places the crop from them. No suggestion
+    is stored: what is saved is the crop it produced.
   - A crop is developed from a frame large enough for the crop itself to reach the
     requested size: the RAW scale factor or the decode size is divided by the crop's
     share of the frame's long edge. A cropped preview therefore stays 2560 px, and the

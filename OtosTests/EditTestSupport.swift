@@ -288,3 +288,33 @@ func writeHorizonJPEG(to url: URL, risingBy degrees: Double) throws {
     CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
     try #require(CGImageDestinationFinalize(destination))
 }
+
+/// A 1200 × 800 photo of one subject: a red disk a fifth of the height across, centered at
+/// `center` (fractions from the top-left corner), on a plain gray ground.
+func writeSubjectJPEG(to url: URL, center: CGPoint) throws {
+    let width = 1200.0, height = 800.0
+    let context = try #require(CGContext(
+        data: nil,
+        width: Int(width),
+        height: Int(height),
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ))
+    context.setFillColor(CGColor(srgbRed: 0.55, green: 0.55, blue: 0.55, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    let diameter = height / 5
+    context.setFillColor(CGColor(srgbRed: 0.85, green: 0.1, blue: 0.1, alpha: 1))
+    // Core Graphics is y-up.
+    context.fillEllipse(in: CGRect(
+        x: center.x * width - diameter / 2,
+        y: (1 - center.y) * height - diameter / 2,
+        width: diameter,
+        height: diameter
+    ))
+    let image = try #require(context.makeImage())
+    let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, "public.jpeg" as CFString, 1, nil))
+    CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
+    try #require(CGImageDestinationFinalize(destination))
+}

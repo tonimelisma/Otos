@@ -154,6 +154,25 @@ actor LiveEditRenderer {
         return -Double(horizon.angle) * 180 / .pi
     }
 
+    /// Where the subject of `image` is, in fractions of it from its top-left corner: the
+    /// union of the objects Vision's objectness saliency finds, or of the regions its
+    /// attention saliency finds when it finds no object; nil when it finds neither. Pure
+    /// image analysis on the caller's executor — it touches none of the renderer's state.
+    nonisolated static func salientSubject(in image: CGImage) throws -> CGRect? {
+        let handler = VNImageRequestHandler(cgImage: image, options: [:])
+        let objectness = VNGenerateObjectnessBasedSaliencyImageRequest()
+        let attention = VNGenerateAttentionBasedSaliencyImageRequest()
+        try handler.perform([objectness, attention])
+        let boxes = (objectness.results?.first?.salientObjects ?? []).map(\.boundingBox)
+        let found = boxes.isEmpty ? (attention.results?.first?.salientObjects ?? []).map(\.boundingBox) : boxes
+        guard let first = found.first else {
+            return nil
+        }
+        let union = found.dropFirst().reduce(first) { $0.union($1) }
+        // Vision's boxes are normalized with a bottom-left origin.
+        return CGRect(x: union.minX, y: 1 - union.maxY, width: union.width, height: union.height)
+    }
+
     /// Lets go of the open photo, when editing moves to another photo or ends.
     func close() {
         open = nil

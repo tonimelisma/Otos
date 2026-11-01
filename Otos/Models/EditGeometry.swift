@@ -74,3 +74,114 @@ nonisolated struct EditGeometry: Equatable {
             .concatenating(CGAffineTransform(translationX: center.x, y: center.y))
     }
 }
+
+/// The crop tool's straighten line (Lightroom Classic's Angle tool): the clockwise turn, in
+/// degrees, that makes a line drawn from `start` to `end` on the photo as shown level — or
+/// plumb, when it is drawn nearer vertical than horizontal. Points are in a y-down space
+/// (the pane's), where a line falling to the right is turned clockwise from horizontal, so
+/// leveling it turns the photo counterclockwise. Nil for a line too short to have a
+/// direction.
+nonisolated enum StraightenLine {
+    /// Shorter than this, in the space's units, a drag is a click, not a line.
+    static let minimumLength: Double = 8
+
+    static func levelingTurn(from start: CGPoint, to end: CGPoint) -> Double? {
+        let dx = Double(end.x - start.x), dy = Double(end.y - start.y)
+        guard (dx * dx + dy * dy).squareRoot() >= minimumLength else { return nil }
+        // The line's tilt from horizontal, clockwise positive, folded into −90…90.
+        var tilt = atan2(dy, dx) * 180 / .pi
+        if tilt > 90 {
+            tilt -= 180
+        }
+        if tilt <= -90 {
+            tilt += 180
+        }
+        // Nearer vertical: the tilt from plumb is what levels it.
+        if tilt > 45 {
+            tilt -= 90
+        }
+        if tilt < -45 {
+            tilt += 90
+        }
+        return -tilt
+    }
+}
+
+/// A suggested crop (the crop tool's Suggested menu), placed by the subject Vision finds in
+/// the frame. Both keep the aspect the tool constrains, or the frame's own when it is free.
+nonisolated enum CropSuggestion: String, CaseIterable, Identifiable, Sendable {
+    /// The smallest crop of the aspect that holds the subject with a margin around it.
+    case fitSubject
+    /// The largest crop of the aspect, placed so the subject's center falls on the
+    /// rule-of-thirds point on its side of the frame.
+    case subjectOnThirds
+
+    /// The margin around the subject, as a share of its size on each side.
+    static let subjectMargin = 0.15
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .fitSubject: "Fit Subject"
+        case .subjectOnThirds: "Subject on Thirds"
+        }
+    }
+
+    /// The panel's button title, short enough for two beside the row's label.
+    var shortTitle: String {
+        switch self {
+        case .fitSubject: "Subject"
+        case .subjectOnThirds: "Thirds"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .fitSubject: "Crop close around the subject"
+        case .subjectOnThirds: "Crop with the subject on a third"
+        }
+    }
+
+    /// The crop, in fractions of a frame of `frame` pixels, for a subject at `subject` (fractions
+    /// of the frame from its top-left corner), keeping `pixelRatio` (width over height in pixels)
+    /// or the frame's own when nil.
+    func crop(subject: CGRect, frame: CGSize, pixelRatio: Double?) -> EditCrop {
+        guard frame.width > 0, frame.height > 0 else { return .whole }
+        let ratio = pixelRatio ?? Double(frame.width / frame.height)
+        let center = CGPoint(x: subject.midX, y: subject.midY)
+        let largest = EditCrop.largest(pixelRatio: ratio, frame: frame, around: center)
+        switch self {
+        case .fitSubject:
+            // The subject and its margin in pixels, grown on one axis to the aspect.
+            var width = Double(subject.width * frame.width) * (1 + 2 * Self.subjectMargin)
+            var height = Double(subject.height * frame.height) * (1 + 2 * Self.subjectMargin)
+            if width / height > ratio {
+                height = width / ratio
+            } else {
+                width = height * ratio
+            }
+            // Never larger than the largest crop of the aspect the frame holds.
+            let scale = min(1, largest.width * Double(frame.width) / width)
+            let fractionWidth = width * scale / Double(frame.width)
+            let fractionHeight = height * scale / Double(frame.height)
+            return EditCrop(
+                left: center.x - fractionWidth / 2,
+                top: center.y - fractionHeight / 2,
+                width: fractionWidth,
+                height: fractionHeight
+            ).clamped
+        case .subjectOnThirds:
+            let thirdX = center.x < 0.5 ? 1.0 / 3 : 2.0 / 3
+            let thirdY = center.y < 0.5 ? 1.0 / 3 : 2.0 / 3
+            return EditCrop(
+                left: center.x - thirdX * largest.width,
+                top: center.y - thirdY * largest.height,
+                width: largest.width,
+                height: largest.height
+            ).clamped
+        }
+    }
+}

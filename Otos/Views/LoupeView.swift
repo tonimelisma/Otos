@@ -57,6 +57,8 @@ struct LoupeView: View {
                         crop: cropEditor.crop,
                         fractionRatio: cropEditor.fractionRatio,
                         setCrop: cropEditor.setCrop,
+                        isDrawingLine: cropEditor.isDrawingLine,
+                        straighten: cropEditor.straighten,
                         escape: onEscape
                     )
                     .background(DesignPalette.content(for: colorScheme))
@@ -300,4 +302,8 @@ struct CropEditorInput {
     let crop: EditCrop
     let fractionRatio: Double?
     let setCrop: @MainActor (EditCrop, Bool) -> Void
+    /// The straighten line is armed by the panel's ruler.
+    let isDrawingLine: Bool
+    /// A line drawn on the canvas, from and to, in its y-down space.
+    let straighten: @MainActor (CGPoint, CGPoint) -> Void
 }

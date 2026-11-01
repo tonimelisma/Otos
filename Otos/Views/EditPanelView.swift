@@ -199,7 +199,11 @@ struct EditPanelView: View {
     private func sectionControls(_ section: EditSection) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             if section == .crop {
-                cropTool
+                HStack {
+                    cropTool
+                    Spacer()
+                    straightenLineTool
+                }
             }
             if section == .color {
                 whiteBalancePicker
@@ -235,6 +239,7 @@ struct EditPanelView: View {
             if section == .crop {
                 orientationButtons
                 aspectRow
+                suggestionsRow
             }
         }
     }
@@ -284,6 +289,39 @@ struct EditPanelView: View {
             .disabled(!crop.isCropping || crop.aspect == .free)
             .help("Rotate Aspect")
             .accessibilityLabel("Rotate Aspect")
+        }
+    }
+
+    /// Lightroom Classic's Angle tool: armed, the next drag on the canvas draws a line the
+    /// photo is leveled along. Drawn pressed while armed (DES-097's idiom); ⌘-drag on the
+    /// canvas does the same without arming it.
+    private var straightenLineTool: some View {
+        Toggle(isOn: Binding(get: { crop.isDrawingLine }, set: { _ in cropActions.toggleLine() })) {
+            Image(systemName: "ruler")
+        }
+        .toggleStyle(.button)
+        .controlSize(.small)
+        .disabled(unavailableHelp != nil || !crop.isCropping)
+        .help(crop.isCropping
+            ? "Draw along a line that should be level (or ⌘-drag on the photo)"
+            : "Start cropping to straighten along a line")
+        .accessibilityLabel("Straighten Along a Line")
+    }
+
+    /// Crops placed by the photo's subject, each one step, keeping the chosen aspect.
+    private var suggestionsRow: some View {
+        HStack(spacing: 4) {
+            Text("Suggested")
+                .font(.body)
+                .foregroundStyle(crop.isCropping ? .primary : .secondary)
+                .fixedSize()
+            Spacer()
+            ForEach(CropSuggestion.allCases) { suggestion in
+                Button(suggestion.shortTitle) { cropActions.suggest(suggestion) }
+                    .controlSize(.small)
+                    .disabled(!crop.canSuggest)
+                    .help(crop.isCropping ? suggestion.help : "Start cropping to use a suggested crop")
+            }
         }
     }
 
@@ -540,6 +578,10 @@ struct EditPanelCropState {
     let canCrop: Bool
     let aspect: CropAspect
     let isLandscape: Bool
+    /// The straighten line is armed.
+    var isDrawingLine = false
+    /// The tool shows the frame the draft crops, so a suggestion can be read from it.
+    var canSuggest = false
 }
 
 /// The crop tool's intents, as the panel calls them.
@@ -553,4 +595,7 @@ struct EditPanelCropActions {
     let flip: @MainActor (Bool) -> Void
     /// Levels the horizon (the Crop section's Auto).
     let autoStraighten: @MainActor () -> Void
+    /// Arms or disarms the straighten line.
+    let toggleLine: @MainActor () -> Void
+    let suggest: @MainActor (CropSuggestion) -> Void
 }

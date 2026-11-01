@@ -235,6 +235,8 @@ final class CatalogWindowViewModel {
     var editHistogram: EditHistogram?
     /// The crop tool is on: the loupe shows the whole frame with the crop over it.
     var isCropping = false
+    /// The crop tool's straighten line is armed: the next drag on the canvas draws it.
+    var isDrawingStraightenLine = false
     /// The photo edited with everything but its crop, which the crop tool draws over.
     var editCropBase: EditLivePreview?
     /// The crop tool's aspect choice and which way it stands; tool state, not saved.

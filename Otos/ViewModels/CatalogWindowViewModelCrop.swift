@@ -46,6 +46,7 @@ extension CatalogWindowViewModel {
         guard isCropping else { return }
         commitPendingCrop()
         isCropping = false
+        isDrawingStraightenLine = false
         editCropBase = nil
         // The pane shows the edited photo again: the cropped live render, until the saved
         // preview carries the crop.
@@ -167,6 +168,93 @@ extension CatalogWindowViewModel {
         editDraft = next
         requestLiveEditRender()
         commitEdit(actionName: "Auto Straighten")
+    }
+
+    /// The crop tool's straighten line (Lightroom Classic's Angle tool): armed by the
+    /// panel's ruler button, or held with ⌘ during a drag on the canvas.
+    func toggleStraightenLine() {
+        guard isCropping, canEdit else { return }
+        isDrawingStraightenLine.toggle()
+    }
+
+    /// A line was drawn on the crop canvas, in its y-down space: the photo turns so that
+    /// line is level, or plumb when it was drawn nearer vertical, as one `Straighten` step.
+    func straighten(along start: CGPoint, to end: CGPoint) {
+        isDrawingStraightenLine = false
+        guard isCropping, canEdit, let facts = editPhotoFacts,
+              let turn = StraightenLine.levelingTurn(from: start, to: end)
+        else { return }
+        // The line was drawn on the frame the canvas shows, which can be a render behind the
+        // draft while a straighten is still rendering: the turn is from that frame's angle.
+        let shown = editCropBase.flatMap { $0.id == editTarget?.id ? $0.recipe.straighten : nil } ?? editDraft.straighten
+        let next = EditControl.straighten.applying(shown + turn, to: editDraft, facts: facts)
+        OtosLog.ui.noticeOperation("edit.straightenLine", phase: "drawn", fields: [
+            "turn": String(format: "%.2f", turn),
+            "straighten": String(format: "%.1f", next.straighten),
+            "changed": "\(next != editDraft)",
+        ])
+        guard next != editDraft else { return }
+        editDraft = next
+        requestLiveEditRender()
+        commitEdit(actionName: "Straighten")
+    }
+
+    /// The crop tool's Suggested menu: places `suggestion` by the subject Vision finds in the
+    /// frame the tool shows, keeping the chosen aspect.
+    func suggestCrop(_ suggestion: CropSuggestion) {
+        guard canSuggestCrop, let target = editTarget, let base = editCropBase else {
+            return
+        }
+        commitPendingCrop()
+        submittedEditCommandCount += 1
+        editCommandContinuation.yield(.suggestCrop(
+            id: target.id, frame: base.image, shown: base.recipe, suggestion: suggestion, pixelRatio: cropPixelRatio
+        ))
+        OtosLog.ui.noticeOperation("edit.suggestCrop", phase: "requested", fields: [
+            "id": target.id.relativePath.rawValue, "suggestion": suggestion.rawValue,
+        ])
+    }
+
+    /// The tool shows the frame the draft crops: a suggestion is read from that picture, so
+    /// it waits while a turn, flip or straighten is still rendering.
+    var canSuggestCrop: Bool {
+        guard isCropping, canEdit, let base = editCropBase, base.id == editTarget?.id else { return false }
+        return Self.sameFrame(base.recipe, editDraft)
+    }
+
+    /// Whether two recipes frame the photo alike: the crop is a rectangle of that frame.
+    static func sameFrame(_ lhs: EditRecipe, _ rhs: EditRecipe) -> Bool {
+        lhs.quarterTurns == rhs.quarterTurns && lhs.flipHorizontal == rhs.flipHorizontal
+            && lhs.flipVertical == rhs.flipVertical && lhs.straighten == rhs.straighten
+    }
+
+    /// A subject reading landed. It is applied only while the tool still shows the same
+    /// frame — the same photo, turned, flipped and straightened as it was read — since the
+    /// subject is placed in that frame.
+    func applySuggestedCrop(
+        id: MediaAssetID,
+        shown: EditRecipe,
+        suggestion: CropSuggestion,
+        pixelRatio: Double?,
+        subject reading: SubjectReading
+    ) {
+        guard isCropping, editTarget?.id == id, let frame = cropFrameSize, Self.sameFrame(shown, editDraft) else {
+            OtosLog.ui.noticeOperation("edit.suggestCrop", phase: "stale", fields: ["id": id.relativePath.rawValue])
+            return
+        }
+        guard case let .found(subject) = reading else {
+            OtosLog.ui.noticeOperation("edit.suggestCrop", phase: "noSubject", fields: ["id": id.relativePath.rawValue])
+            return
+        }
+        let crop = suggestion.crop(subject: subject, frame: frame, pixelRatio: pixelRatio)
+        let next = crop.isWhole ? nil : crop
+        OtosLog.ui.noticeOperation("edit.suggestCrop", phase: "applied", fields: [
+            "id": id.relativePath.rawValue, "suggestion": suggestion.rawValue,
+            "crop": String(format: "%.3f,%.3f,%.3f,%.3f", crop.left, crop.top, crop.width, crop.height),
+        ])
+        guard next != editDraft.crop else { return }
+        editDraft.crop = next
+        commitEdit(actionName: "Suggested Crop")
     }
 
     /// A crop render landed: shown while it is for the photo being cropped and newer than
