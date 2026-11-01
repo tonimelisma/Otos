@@ -1599,6 +1599,15 @@ extension CatalogStore {
         let landed = Array(landedAwaitingProducts.prefix(limit))
         landedAwaitingProducts.removeFirst(landed.count)
         let landedClaims = try await priorityEnrichmentCandidates(ids: landed, limit: landed.count)
+        if !landed.isEmpty {
+            // Whether a fresh copy was enriched while its bytes were local: each claim's
+            // `enrichment.item` line names the file; this says the queue offered it first.
+            OtosLog.catalog.noticeOperation("enrichment.candidates", phase: "landed", fields: [
+                "offered": "\(landed.count)",
+                "claimed": "\(landedClaims.value.count)",
+                "waiting": "\(landedAwaitingProducts.count)",
+            ])
+        }
         var claims = landedClaims
         if landedClaims.value.count < limit {
             let tiers = try await claimedEnrichmentCandidates(limit: limit - landedClaims.value.count)
