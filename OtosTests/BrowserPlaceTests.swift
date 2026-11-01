@@ -176,6 +176,82 @@ struct BrowserPlaceTests {
         #expect(model.pendingPlaceRestore == nil)
     }
 
+    /// A Duplicates group is saved as the list it was reached from, and the list has one
+    /// presentation: a group left in Loupe reopens as the list, never as a Loupe over it.
+    @Test func aDuplicatesGroupLeftInLoupeReopensAsTheList() {
+        let domain = PreferencesDomain.suite(UUID().uuidString)
+        let ids = makeIDs(2)
+        let place = BrowserPlace(
+            descriptor: CatalogQueryDescriptor(scope: .duplicates),
+            viewMode: .loupe,
+            focus: ids[1],
+            selection: [ids[1]]
+        )
+        place.save(to: domain.makeDefaults())
+        let model = makeViewModel(domain)
+
+        model.applyState(loadedState(descriptor: place.descriptor, ids: ids))
+
+        #expect(model.sidebarSelection == .duplicates)
+        #expect(model.showsDuplicatesList)
+        #expect(model.viewMode == .grid)
+        #expect(model.gridSelection.selection == [ids[1]])
+        #expect(model.pendingPlaceRestore == nil)
+    }
+
+    /// Before the catalog loads, the sidebar draws the row the user left when the scope is
+    /// its own title, and no count (APP-043, APP-044); a library's row waits for its name.
+    @Test func beforeTheCatalogLoadsTheSidebarDrawsTheRowTheUserLeft() {
+        struct Rows {
+            let allMedia: Bool
+            let places: Bool
+            let duplicates: Bool
+            let count: Int?
+        }
+        func rows(_ scope: SidebarSelection) -> Rows {
+            let domain = PreferencesDomain.suite(UUID().uuidString)
+            BrowserPlace(descriptor: CatalogQueryDescriptor(scope: scope), viewMode: .grid, focus: nil, selection: [])
+                .save(to: domain.makeDefaults())
+            let model = makeViewModel(domain)
+            #expect(!model.state.isCatalogLoaded)
+            return Rows(
+                allMedia: model.showsAllMediaRow,
+                places: model.showsPlacesRow,
+                duplicates: model.showsDuplicatesRow,
+                count: model.duplicatesRowCount
+            )
+        }
+
+        let allMedia = rows(.allMedia)
+        #expect(allMedia.allMedia && !allMedia.places && !allMedia.duplicates)
+        let places = rows(.places)
+        #expect(!places.allMedia && places.places && !places.duplicates)
+        let duplicates = rows(.duplicates)
+        #expect(!duplicates.allMedia && !duplicates.places && duplicates.duplicates)
+        #expect(duplicates.count == nil)
+        let library = rows(.library(pictures))
+        #expect(!library.allMedia && !library.places && !library.duplicates)
+    }
+
+    /// Once loaded, the rows follow the catalog: All Media with two fixed libraries.
+    @Test func afterTheCatalogLoadsTheRowsFollowTheLibraries() {
+        let domain = PreferencesDomain.suite(UUID().uuidString)
+        let model = makeViewModel(domain)
+        let archive = LibraryRootPath(rawValue: "/Users/example/Archive")
+
+        model.applyState(loadedState(
+            descriptor: CatalogQueryDescriptor(scope: .allMedia),
+            ids: [],
+            libraries: [pictures, archive]
+        ))
+
+        #expect(model.state.isCatalogLoaded)
+        #expect(model.showsAllMediaRow)
+        #expect(model.showsPlacesRow)
+        #expect(!model.showsDuplicatesRow)
+        #expect(model.duplicatesRowCount == 0)
+    }
+
     /// Once the user goes somewhere else before the catalog has loaded, the old place
     /// would be a surprise jump — it is dropped.
     @Test func aUserChoiceBeforeLoadDropsThePendingPlace() {

@@ -21,6 +21,19 @@ nonisolated enum SidebarSelectionPolicy {
         !fixedLibraries(in: libraries).isEmpty
     }
 
+    /// The row the sidebar draws before the catalog has loaded: the one the user left
+    /// (APP-043), when its scope is its own title — All Media, Places or Duplicates. Nothing
+    /// else is claimed about the catalog yet (APP-044): a library's or an import's name
+    /// is catalog data, so its row arrives with the catalog.
+    static func rowBeforeCatalogLoad(selection: SidebarSelection) -> SidebarSelection? {
+        switch selection.sidebarRow {
+        case .allMedia, .places, .duplicates:
+            selection.sidebarRow
+        case .place, .duplicateGroup, .library, .importBatch, .allImports:
+            nil
+        }
+    }
+
     /// Selection at launch or when no explicit user sidebar choice is in effect.
     /// Priority: connected removable/camera (most-recently attached) → single library → All Media.
     static func defaultSelection(

@@ -53,11 +53,11 @@ A group whose every pair is kept is listed under Kept and counted nowhere else. 
 copy of copies kept together is the only one offered as extra. Keep All is undoable,
 delivered on one ordered intent stream (ADR 0032 rule 5).
 
-**Marks are window state.** The user's Keep / Move marks and which groups are on screen
-live in `DuplicatesSession`, owned by the view model. Groups found while the user is
-looking are held back behind `N more found · Show`, so the button's count and the rows
-under the pointer do not move. The act moves exactly the marked copies of the groups on
-screen, through the one Move to Trash path (`moveMediaToTrash`): its download question
+**Marks are window state.** The user's Keep / Move marks live in `DuplicatesSession`, owned
+by the view model; a mark is forgotten once no group holds its copy. The list always shows
+every active group: one found while the user looks joins at once, and one that resolves or
+vanishes leaves at once. The act moves exactly the marked copies the bar counts, through the
+one Move to Trash path (`moveMediaToTrash`): its download question
 (APP-045), its queue, and its undo are the ordinary ones. A group always keeps one copy:
 the mark refuses the last kept copy, and ⌘⌫ on a kept row is the ordinary Move to Trash,
 after which the group re-derives without it.
@@ -68,7 +68,12 @@ it. `.duplicateGroup(id)` is the leaf under it, one group's copies in the ordina
 Compare, Loupe or grid, reached by Return and left by Back to Duplicates. Both resolve
 through `CatalogScopePredicate.ContentConstraint`. A group is never named by its digest
 outside the catalog: no digest is logged or persisted in preferences (ADR 0018), so a
-browser place saved in a leaf reopens on the list.
+browser place saved in a leaf reopens on the list, which has one presentation: the view
+mode saved with it is not restored.
+
+**Empty files are never duplicates.** Every file of zero bytes shares the digest of no
+bytes, so a copy counts only with content (`byte_size > 0`). An empty file is a broken
+file, not a copy of another.
 
 ## Rejected alternatives
 
@@ -77,6 +82,7 @@ browser place saved in a leaf reopens on the list.
 | A duplicate-group table with IDs | A second identity for facts the digests already state; it would go stale with every scan. |
 | Preselect across libraries by sidebar order | Empties a mirror library in one unread bulk act (review finding 1). |
 | Persist per-copy marks | A decision in progress, not a fact about the files; it would outlive the groups it described. |
+| Hold groups found mid-visit behind `N more found · Show` | A second answer to "which groups exist", besides the published state. It snapshotted the catalog before its first load at launch and hid every group behind `0 photos · 164 more found`. The owner wants the list to show every duplicate, always (2026-11-01). |
 | Return as the bulk act's key | Return opens a group; a bulk move must not be one keystroke from a list. |
 | Single-letter shortcuts for Keep and Move | P, U and X already mean curation choices; one key never means two things. |
 

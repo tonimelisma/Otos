@@ -4,8 +4,8 @@ import OSLog
 // Duplicates intents (ADR 0042)
 //
 // Projection publishes the groups on `CatalogWindowState.duplicates` in every scope; this
-// file owns what is specific to working through them: the user's Keep marks, which groups
-// are on screen (`DuplicatesSession`), and the intents — Keep This Copy, Move This Copy to
+// file owns what is specific to working through them: the user's Keep marks and open
+// summaries (`DuplicatesSession`), and the intents — Keep This Copy, Move This Copy to
 // Trash, Keep All Copies, Keep Both Libraries, Move Marked Items to Trash, and opening a
 // group. Menu items, buttons and VoiceOver actions all call these. Moving copies goes
 // through `moveMediaToTrash`, the one Move to Trash path, so its undo, its download question
@@ -25,9 +25,15 @@ extension CatalogWindowViewModel {
         return false
     }
 
-    /// The sidebar row exists while any group is active, and while it is selected.
+    /// The sidebar row exists while any group is active, and while it is selected — before
+    /// the catalog has loaded too, as the row the user left (APP-043).
     var showsDuplicatesRow: Bool {
         !state.duplicates.activeGroups.isEmpty || sidebarSelection.sidebarRow == .duplicates
+    }
+
+    /// The row's count: photos with duplicates, unknown until the catalog has loaded.
+    var duplicatesRowCount: Int? {
+        state.isCatalogLoaded ? state.duplicates.activeGroups.count : nil
     }
 
     var duplicatesTally: DuplicatesTally {
@@ -41,15 +47,8 @@ extension CatalogWindowViewModel {
 
     // MARK: - State
 
-    func applyDuplicatesState(previous: CatalogWindowState, next: CatalogWindowState) {
-        let entered = previous.resolvedSidebarSelection != .duplicates && next.resolvedSidebarSelection == .duplicates
-        if entered || duplicatesSession.shownGroupIDs == nil {
-            duplicatesSession.adoptAll(next.duplicates)
-        } else {
-            // Resolved or vanished groups leave at once; newcomers wait for Show.
-            let live = Set(next.duplicates.activeGroups.map(\.id))
-            duplicatesSession.shownGroupIDs = duplicatesSession.shownGroupIDs?.intersection(live)
-        }
+    func applyDuplicatesState(_ next: CatalogWindowState) {
+        duplicatesSession.forgetMarks(absentFrom: next.duplicates)
     }
 
     // MARK: - Intents
@@ -73,7 +72,6 @@ extension CatalogWindowViewModel {
             toggleKept: { [weak self] in self?.duplicatesSession.showsKept.toggle() },
             openGroup: { [weak self] in self?.openSelectedDuplicateGroup() },
             moveMarked: { [weak self] in self?.moveMarkedDuplicatesToTrash() },
-            showHeld: { [weak self] in self?.showNewDuplicates() },
             revealNeedingChoice: { [weak self] in self?.revealDuplicateGroupNeedingChoice() }
         )
     }
@@ -147,15 +145,15 @@ extension CatalogWindowViewModel {
 
     /// A library pair's Keep Both Libraries: every group the two libraries share is kept.
     func keepBothLibraries(_ pair: DuplicateLibraryPair) {
-        let targets = duplicatesSession.shownActiveGroups(in: state.duplicates).filter { $0.libraryPair == pair }
+        let targets = state.duplicates.activeGroups.filter { $0.libraryPair == pair }
         guard !targets.isEmpty else {
             return
         }
         submitDuplicatesKeepAll(targets.map { $0.copies.map(\.id) }, actionName: "Keep Both Libraries")
     }
 
-    /// The bar's act: every copy marked in the groups on screen moves to the Trash, through
-    /// the one Move to Trash path. The list then takes in groups found meanwhile.
+    /// The bar's act: every marked copy moves to the Trash, through the one Move to Trash
+    /// path.
     func moveMarkedDuplicatesToTrash() {
         let ids = duplicatesTally.itemsToMove
         guard !ids.isEmpty, mediaTrashTask == nil else {
@@ -163,16 +161,10 @@ extension CatalogWindowViewModel {
         }
         OtosLog.ui.noticeOperation("duplicates.move", phase: "start", fields: ["count": "\(ids.count)"])
         moveMediaToTrash(ids)
-        duplicatesSession.adoptAll(state.duplicates)
     }
 
     var canMoveMarkedDuplicatesToTrash: Bool {
         showsDuplicatesList && mediaTrashTask == nil && !duplicatesTally.itemsToMove.isEmpty
-    }
-
-    /// `N more found · Show`.
-    func showNewDuplicates() {
-        duplicatesSession.adoptAll(state.duplicates)
     }
 
     func toggleDuplicateLibraryPair(_ pair: DuplicateLibraryPair) {
@@ -185,8 +177,7 @@ extension CatalogWindowViewModel {
 
     /// `6 need your choice · Show`: selects the first group that waits.
     func revealDuplicateGroupNeedingChoice() {
-        guard let group = duplicatesSession.shownActiveGroups(in: state.duplicates)
-            .first(where: duplicatesSession.needsChoice)
+        guard let group = state.duplicates.activeGroups.first(where: duplicatesSession.needsChoice)
         else {
             return
         }

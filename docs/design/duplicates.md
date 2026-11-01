@@ -38,10 +38,13 @@ A list of groups above a fixed-height bar (DES-018, DES-053).
   - One L3 clause:
     - `312 items marked · 4.2 GB` (file sizes, the trash bar's convention); or
     - `6 need your choice` with `Show`.
-  - `12 more found` with `Show` beside it while groups found during the visit are held
-    back.
 - **Act:** `Move 312 Items to Trash`, a plain bordered button with no Return equivalent.
   Disabled, it reads `Move Marked Items to Trash`, with the reason in its tooltip.
+
+The list is every active group, always: a group found while the user looks joins at once.
+
+**Before the catalog loads.** The sidebar row is drawn without a count when Duplicates is
+where the user left off (APP-043); its count arrives with the catalog.
 
 ## Defaults
 

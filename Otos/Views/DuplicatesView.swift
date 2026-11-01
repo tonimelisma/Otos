@@ -17,7 +17,6 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
 
     let primaryLine: String
     let secondary: Secondary
-    let heldLine: String?
     let actionTitle: String
     let actionEnabled: Bool
 
@@ -40,7 +39,6 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
         return DuplicatesBarPresentation(
             primaryLine: primary,
             secondary: secondary,
-            heldLine: tally.held > 0 ? "\(tally.held) more found" : nil,
             // DES-036: the count is the new information the click commits to; disabled, the
             // title keeps its place and says what it would do (DES-053).
             actionTitle: marked > 0 ? "Move \(marked) \(marked == 1 ? "Item" : "Items") to Trash" : "Move Marked Items to Trash",
@@ -49,8 +47,24 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
     }
 }
 
+/// What the duplicates pane draws: nothing before the catalog has loaded (APP-044), then
+/// the list, or `No duplicates` once no group exists.
+nonisolated enum DuplicatesPaneContent: Equatable, Sendable {
+    case nothing
+    case noDuplicates
+    case list
+
+    static func of(_ duplicates: CatalogDuplicatesState, isCatalogLoaded: Bool) -> DuplicatesPaneContent {
+        guard isCatalogLoaded else {
+            return .nothing
+        }
+        return duplicates.groups.isEmpty ? .noDuplicates : .list
+    }
+}
+
 struct DuplicatesView: View {
     let duplicates: CatalogDuplicatesState
+    let isCatalogLoaded: Bool
     let session: DuplicatesSession
     let selection: Binding<Set<MediaAssetID>>
     let tileContentStore: TileContentStore?
@@ -61,13 +75,23 @@ struct DuplicatesView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(spacing: 0) {
-            if duplicates.groups.isEmpty {
+        switch DuplicatesPaneContent.of(duplicates, isCatalogLoaded: isCatalogLoaded) {
+        case .nothing:
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .noDuplicates:
+            withStatusBar(
                 ContentUnavailableView("No duplicates", systemImage: "square.on.square")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                list
-            }
+            )
+        case .list:
+            withStatusBar(list)
+        }
+    }
+
+    private func withStatusBar(_ content: some View) -> some View {
+        VStack(spacing: 0) {
+            content
             Divider()
             DuplicatesStatusBar(
                 presentation: .map(session.tally(in: duplicates)),
@@ -76,12 +100,8 @@ struct DuplicatesView: View {
         }
     }
 
-    private var shownGroups: [DuplicateGroup] {
-        session.shownActiveGroups(in: duplicates)
-    }
-
     private var pairs: [(pair: DuplicateLibraryPair, groups: [DuplicateGroup])] {
-        let grouped = Dictionary(grouping: shownGroups.filter { $0.libraryPair != nil }) { $0.libraryPair! }
+        let grouped = Dictionary(grouping: duplicates.activeGroups.filter { $0.libraryPair != nil }) { $0.libraryPair! }
         return grouped.map { ($0.key, $0.value) }.sorted { $0.pair.first.rawValue < $1.pair.first.rawValue }
     }
 
@@ -102,7 +122,7 @@ struct DuplicatesView: View {
                     }
                 }
             }
-            ForEach(shownGroups.filter { $0.libraryPair == nil }) { group in
+            ForEach(duplicates.activeGroups.filter { $0.libraryPair == nil }) { group in
                 groupSection(group)
             }
             if !duplicates.keptGroups.isEmpty {
@@ -169,7 +189,6 @@ struct DuplicatesActions {
     let toggleKept: @MainActor () -> Void
     let openGroup: @MainActor () -> Void
     let moveMarked: @MainActor () -> Void
-    let showHeld: @MainActor () -> Void
     let revealNeedingChoice: @MainActor () -> Void
 }
 
@@ -448,17 +467,6 @@ struct DuplicatesStatusBar: View {
                 }
             }
             Spacer(minLength: 0)
-            if let held = presentation.heldLine {
-                HStack(spacing: 6) {
-                    Text(held)
-                        .font(.subheadline)
-                        .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                        .monospacedDigit()
-                    Button("Show", action: actions.showHeld)
-                        .buttonStyle(.link)
-                        .font(.subheadline)
-                }
-            }
             Button(presentation.actionTitle, action: actions.moveMarked)
                 .disabled(!presentation.actionEnabled)
                 .help(presentation.actionEnabled ? "" : "Mark copies to move, or choose a copy to keep in a group.")
