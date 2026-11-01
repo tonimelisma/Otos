@@ -46,36 +46,35 @@ nonisolated enum CopyfileTransfer {
         }
 
         if context.cancelled {
-            do {
-                try FileManager.default.removeItem(at: destination)
-            } catch where ErrorDiagnostics.isMissingFile(error) {
-                // Already gone: the outcome this removal wanted.
-            } catch {
-                OtosLog.mediaIO.errorOperation("mediaOperation.copy", phase: "partialRemoveFailed", fields: [
-                    "path": destination.path(percentEncoded: false),
-                    "error": String(describing: error),
-                ])
-            }
+            removePartialCopy(at: destination)
             return .cancelled
         }
         if result != 0 {
-            let code = errno
-            do {
-                try FileManager.default.removeItem(at: destination)
-            } catch where ErrorDiagnostics.isMissingFile(error) {
-                // Already gone: the outcome this removal wanted.
-            } catch {
-                OtosLog.mediaIO.errorOperation("mediaOperation.copy", phase: "partialRemoveFailed", fields: [
-                    "path": destination.path(percentEncoded: false),
-                    "error": String(describing: error),
-                ])
-            }
+            // The failed step's own errno, read in the callback where copyfile set it; a
+            // quit leaves it as it was, but nothing between that callback and here owns it.
+            let code = context.failedErrno ?? errno
+            removePartialCopy(at: destination)
             return .failed(errno: code)
         }
         // The last progress callback can precede the final block; report the count
         // copyfile ends on, so a completed copy's progress is its full length.
         onProgress(Progress(completedBytes: copiedBytes(state)))
         return .completed
+    }
+
+    /// Removes what a stopped copy left at `destination`; a file already gone is the
+    /// outcome wanted.
+    private static func removePartialCopy(at destination: URL) {
+        do {
+            try FileManager.default.removeItem(at: destination)
+        } catch where ErrorDiagnostics.isMissingFile(error) {
+            // Already gone: the outcome this removal wanted.
+        } catch {
+            OtosLog.mediaIO.errorOperation("mediaOperation.copy", phase: "partialRemoveFailed", fields: [
+                "path": destination.path(percentEncoded: false),
+                "error": String(describing: error),
+            ])
+        }
     }
 
     private static func installStatusCallback(state: copyfile_state_t, contextPtr: UnsafeMutableRawPointer) {
@@ -91,14 +90,19 @@ nonisolated enum CopyfileTransfer {
                 return COPYFILE_CONTINUE
             }
             let context = Unmanaged<CallbackContext>.fromOpaque(ctx).takeUnretainedValue()
-            if !context.shouldContinue() {
+            switch CopyfileTransfer.statusAnswer(stage: stage, shouldContinue: context.shouldContinue()) {
+            case .cancel:
                 context.cancelled = true
                 return COPYFILE_QUIT
+            case .fail:
+                context.failedErrno = errno
+                return COPYFILE_QUIT
+            case .proceed:
+                if what == COPYFILE_COPY_DATA, stage == COPYFILE_PROGRESS {
+                    context.onProgress(Progress(completedBytes: copiedBytes(state)))
+                }
+                return COPYFILE_CONTINUE
             }
-            if what == COPYFILE_COPY_DATA, stage == COPYFILE_PROGRESS {
-                context.onProgress(Progress(completedBytes: copiedBytes(state)))
-            }
-            return COPYFILE_CONTINUE
         }
 
         _ = copyfile_state_set(
@@ -109,13 +113,39 @@ nonisolated enum CopyfileTransfer {
         _ = copyfile_state_set(state, UInt32(COPYFILE_STATE_STATUS_CTX), contextPtr)
     }
 
+    /// What the status callback answers copyfile at one step.
+    enum StatusAnswer: Equatable {
+        case proceed
+        case cancel
+        case fail
+    }
+
+    /// A failed step quits the copy rather than continuing: after `COPYFILE_ERR` on a data
+    /// or extended-attribute write, `COPYFILE_CONTINUE` makes copyfile write it again
+    /// (copyfile(3)), so a full disk retried forever — on 2026-10-31 eight import workers
+    /// logged copyfile's "No space left on device" 1.26 million times in 30 s and never
+    /// reached the executor's `ENOSPC` stop (ADR 0027).
+    static func statusAnswer(stage: Int32, shouldContinue: Bool) -> StatusAnswer {
+        guard shouldContinue else {
+            return .cancel
+        }
+        return stage == COPYFILE_ERR ? .fail : .proceed
+    }
+
     private final class CallbackContext {
         let onProgress: @Sendable (Progress) -> Void
         let shouldContinue: @Sendable () -> Bool
         private let cancelledFlag = Mutex(false)
+        private let failedErrnoValue = Mutex<Int32?>(nil)
         var cancelled: Bool {
             get { cancelledFlag.withLock { $0 } }
             set { cancelledFlag.withLock { $0 = newValue } }
+        }
+
+        /// The errno of the step that failed, when one did.
+        var failedErrno: Int32? {
+            get { failedErrnoValue.withLock { $0 } }
+            set { failedErrnoValue.withLock { $0 = newValue } }
         }
 
         init(

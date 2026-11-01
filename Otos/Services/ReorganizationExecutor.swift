@@ -198,11 +198,11 @@ nonisolated enum ReorganizationExecutor {
                 nextStepIndex += 1
             case .destinationExists:
                 return stopped(.destinationTaken(step.destinationRelativePath), key: key, error: nil)
-            case let .failed(detail):
+            case let .failed(failure):
                 OtosLog.catalog.errorOperation("reorganization.execute", phase: "moveRefused", fields: [
                     "key": key.rawValue,
                     "path": step.sourceRelativePath.rawValue,
-                    "detail": detail,
+                    "detail": failure.detail,
                 ])
                 return stopped(.moveRefused(step.sourceRelativePath), key: key, error: nil)
             }
@@ -259,11 +259,11 @@ nonisolated enum ReorganizationExecutor {
                         store: store,
                         error: nil
                     )
-                case let .failed(detail):
+                case let .failed(failure):
                     OtosLog.catalog.errorOperation("reorganization.rollback", phase: "moveRefused", fields: [
                         "key": key.rawValue,
                         "path": step.destinationRelativePath.rawValue,
-                        "detail": detail,
+                        "detail": failure.detail,
                     ])
                     return await stuck(
                         .moveRefused(step.destinationRelativePath),

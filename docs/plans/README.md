@@ -3,19 +3,21 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-Plan 0110 (one freshness stamp per product, and imports that publish complete rows) is
+Plan 0110 (one freshness stamp per product) is
 complete in one increment and was removed at closure. It opened 2026-10-31, when a card's
 readiness was shown to wait on thumbnails and previews the import planner never reads,
 and an imported RAW's card thumbnail was discarded at import. Its decisions live in ADR
 0009 (metadata, rendering and digest each stamped by the bytes they were made from; a
-claim makes every stale product from one read; imports publish complete rows), ADR 0018
+claim makes every stale product from one read; an import settles products separately and
+never waits for one), ADR 0018
 (a card's metadata pass, then its rendering-and-digest pass), ADR 0035 (renderings, card
 provisional thumbnails, import renders), ENR-007, ENR-013, ENR-016, ENR-017, ARC-053 and
 ARC-057. Its measurements are `docs/research/2026-10-31-card-readiness-products.md`.
 **Owner decisions.** Readiness waits on metadata only; thumbnails made before an import are
-kept on the copy; an imported copy's products are made while it is local, even if that
-lengthens the import; a read made for one product makes every product the row owes, and a
-card, being local, may be read in passes.
+kept on the copy; an import never waits for a thumbnail — a card renders while it waits for
+Import, and a copy still owing one is rendered first after it lands, while it is local; a
+read made for one product makes every product the row owes, and a card, being local, may be
+read in passes.
 
 Plan 0109 (duplicates, card checksums, and Trash that can be put back) is complete across
 six increments and was removed at closure. It opened 2026-10-31 from the design study

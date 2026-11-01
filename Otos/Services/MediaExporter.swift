@@ -98,7 +98,7 @@ nonisolated enum MediaExporter {
                 "folder": folder.path(percentEncoded: false),
             ])
             return .folderUnavailable
-        } catch where error as? MediaFileWriter.WriteError == .outOfSpace || FreeSpaceFloor.refusedForSpace(error) {
+        } catch where MediaFileWriter.refusedForSpace(error) {
             OtosLog.mediaIO.errorOperation("export.item", phase: "outOfSpace", fields: [
                 "id": item.id.relativePath.rawValue, "error": String(describing: error),
             ])
@@ -163,8 +163,11 @@ nonisolated enum MediaExporter {
                 return target
             case .destinationExists:
                 continue
-            case let .failed(detail):
-                throw ExportError.publishFailed(detail)
+            case let .failed(failure):
+                if failure.outOfSpace {
+                    throw MediaFileWriter.WriteError.outOfSpace
+                }
+                throw ExportError.publishFailed(failure.detail)
             }
         }
         throw ExportError.namesExhausted

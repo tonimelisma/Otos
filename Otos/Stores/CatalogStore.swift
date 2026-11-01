@@ -256,6 +256,11 @@ actor CatalogStore {
     private var startupTask: Task<Void, Error>?
     private var unrequestedLoadedRootPaths: [LibraryRootPath] = []
     private var roots = RootRegistry()
+    /// Copies an import settled that still owe a product, in landing order. Their bytes are
+    /// local now, and a cloud-synced library may evict them once uploaded, so background
+    /// claims offer them before any other row (ADR 0009 §9). Runtime only: after a
+    /// relaunch they wait in the ordinary order.
+    private var landedAwaitingProducts: [MediaAssetID] = []
     private var changeContinuations: [UUID: AsyncStream<CatalogStoreChange>.Continuation] = [:]
     private var planningChangeContinuations: [UUID: AsyncStream<RootPlanningChange>.Continuation] = [:]
     private var changeDeliveries: [UUID: DeliveryCount] = [:]
@@ -1589,9 +1594,22 @@ extension CatalogStore {
         defer {
             OtosSignpost.persistence.endInterval("CatalogStoreEnrichmentCandidateQuery", signpost)
         }
-        let claims = try await claimedEnrichmentCandidates(limit: limit)
+        // Each landed copy is offered once, ahead of the tiers; one not claimed now (already
+        // claimed, or current) is enriched or done, and otherwise waits in the tiers' order.
+        let landed = Array(landedAwaitingProducts.prefix(limit))
+        landedAwaitingProducts.removeFirst(landed.count)
+        let landedClaims = try await priorityEnrichmentCandidates(ids: landed, limit: landed.count)
+        var claims = landedClaims
+        if landedClaims.value.count < limit {
+            let tiers = try await claimedEnrichmentCandidates(limit: limit - landedClaims.value.count)
+            claims = DatabaseTimedValue(
+                value: landedClaims.value + tiers.value,
+                waitMs: landedClaims.waitMs + tiers.waitMs,
+                execMs: landedClaims.execMs + tiers.execMs
+            )
+        }
         await recordSlowEnrichmentCandidateQueryIfNeeded(
-            priorityCount: 0,
+            priorityCount: landed.count,
             returnedCount: claims.value.count,
             waitMs: claims.waitMs,
             execMs: claims.execMs,
@@ -5208,49 +5226,21 @@ extension CatalogStore {
         }
     }
 
-    /// What the source row holds current for the bytes `operation` copied (ADR 0009), so the
-    /// import makes only the rest from the published copy while it is local. A source that
-    /// is detached or has no row holds nothing.
-    func importSourceProducts(_ operation: ActiveFileOperation) async throws -> ImportSourceProducts {
-        guard let sourceRootID = roots[operation.sourceRootPath]?.rowID else {
-            return ImportSourceProducts(metadataCurrent: false, renderingCurrent: false, recipe: nil)
-        }
-        let overlay = try await database().read { db in
-            try Self.fetchReusableEnrichmentOverlay(
-                sourceRootID: sourceRootID,
-                sourceRelativePath: operation.sourceRelativePath,
-                db: db
-            )
-        }
-        guard let overlay else {
-            return ImportSourceProducts(metadataCurrent: false, renderingCurrent: false, recipe: nil)
-        }
-        let mtimeSeconds = MediaAsset.mtimeSeconds(operation.sourceModifiedAt)
-        return ImportSourceProducts(
-            metadataCurrent: overlay.metadataCurrent(size: operation.sourceByteSize, mtimeSeconds: mtimeSeconds),
-            renderingCurrent: overlay.renderingCurrent(size: operation.sourceByteSize, mtimeSeconds: mtimeSeconds),
-            recipe: overlay.recipe
-        )
-    }
-
     /// Settles a published copy: its row, its companions, and each of its products (ADR
     /// 0009). The copy is the source file, byte for byte, so each of the source's products
     /// current for the bytes the import copied is the copy's — the same freshness rule
-    /// enrichment applies to every row. A product the source does not hold current is the
-    /// one `made` from the published copy, when the import made it; failing a rendering,
-    /// the source's thumbnail is carried as a provisional one. What the copy still lacks
-    /// stays owed, for enrichment.
+    /// enrichment applies to every row. Failing a rendering, the source's thumbnail is
+    /// carried as a provisional one. Nothing is made here: a product the copy still lacks
+    /// stays owed, and the copy is offered to enrichment ahead of other background work
+    /// while its bytes are local (`landedAwaitingProducts`).
     @discardableResult
     func settleImportedAsset(
         operation: ActiveFileOperation,
         byteSize: Int64,
         contentModifiedAt: Date,
-        companions: [MediaCompanion],
-        made: EnrichmentResult? = nil
+        companions: [MediaCompanion]
     ) async throws -> ImportProductsResult {
-        let madeImages = made?.stagedImages ?? []
         guard let rootRowID = roots[operation.destinationRootPath]?.rowID else {
-            discardStaged(madeImages)
             throw CatalogStoreError.catalogUnavailable
         }
         recordIndependentNamespaceMutation(
@@ -5262,17 +5252,12 @@ extension CatalogStore {
         let sourceRootID = roots[operation.sourceRootPath]?.rowID
         var overlay: ReusableEnrichmentOverlay?
         if let sourceRootID {
-            do {
-                overlay = try await dbWriter.read { db in
-                    try Self.fetchReusableEnrichmentOverlay(
-                        sourceRootID: sourceRootID,
-                        sourceRelativePath: operation.sourceRelativePath,
-                        db: db
-                    )
-                }
-            } catch {
-                discardStaged(madeImages)
-                throw error
+            overlay = try await dbWriter.read { db in
+                try Self.fetchReusableEnrichmentOverlay(
+                    sourceRootID: sourceRootID,
+                    sourceRelativePath: operation.sourceRelativePath,
+                    db: db
+                )
             }
         }
         let sourceMTime = MediaAsset.mtimeSeconds(operation.sourceModifiedAt)
@@ -5286,16 +5271,11 @@ extension CatalogStore {
         if let overlay, overlay.metadataCurrent(size: operation.sourceByteSize, mtimeSeconds: sourceMTime) {
             metadata = overlay.metadata
             metadataOrigin = .reused
-        } else if let madeMetadata = made?.metadata {
-            metadata = madeMetadata
-            metadataOrigin = .made
         }
 
-        // The rendering's images, staged for the copy: copies of the source's, or the ones
-        // the import made. `unused` collects what is staged but not written, to discard.
+        // The rendering's images, staged for the copy: copies of the source's.
         var rendering: StagedRendering?
         var renderingOrigin = ImportProductOrigin.owed
-        var unused = madeImages
         if let overlay, overlay.renderingCurrent(size: operation.sourceByteSize, mtimeSeconds: sourceMTime),
            let copied = stageCopies(of: overlay, for: destinationID, preview: true)
         {
@@ -5304,23 +5284,12 @@ extension CatalogStore {
             )
             renderingOrigin = .reused
         }
-        if renderingOrigin == .owed, let made, let madeRendering = made.rendering {
-            rendering = StagedRendering(
-                thumbnail: madeRendering.generatedThumbnail,
-                preview: madeRendering.generatedPreview,
-                stamped: true,
-                renderedRevision: made.editRevision
-            )
-            renderingOrigin = .made
-            unused.removeAll { $0 == madeRendering.generatedThumbnail || $0 == madeRendering.generatedPreview }
-        }
         if renderingOrigin == .owed, let overlay, overlay.thumbnailPath != nil,
            let copied = stageCopies(of: overlay, for: destinationID, preview: false)
         {
             rendering = StagedRendering(thumbnail: copied.thumbnail, preview: nil, stamped: false, renderedRevision: 0)
             renderingOrigin = .provisional
         }
-        discardStaged(unused)
 
         let directory = thumbnailDirectory
         try Self.writeWithJournalDurability(dbWriter) { db in
@@ -5368,6 +5337,9 @@ extension CatalogStore {
                 rendering: landedRendering
             ), db: db)
             try Self.deleteActiveFileOperation(key: operation.operationKey, db: db)
+        }
+        if metadataOrigin != .reused || renderingOrigin != .reused {
+            landedAwaitingProducts.append(destinationID)
         }
         _ = bumpNamespaceRevision(for: operation.destinationRootPath)
         notifyCatalogChanged()
@@ -5422,13 +5394,6 @@ extension CatalogStore {
                 "error": String(describing: error),
             ])
             return nil
-        }
-    }
-
-    private func discardStaged(_ images: [StagedDerivedImage]) {
-        guard let thumbnailDirectory else { return }
-        for image in images {
-            ThumbnailStore.discard(image, in: thumbnailDirectory)
         }
     }
 

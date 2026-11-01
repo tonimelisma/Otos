@@ -61,7 +61,24 @@ nonisolated enum ExclusivePublication {
     enum Outcome: Equatable, Sendable {
         case published
         case destinationExists
-        case failed(String)
+        case failed(Failure)
+    }
+
+    /// Why a publication failed: whether its volume refused for space, which a caller acts
+    /// on (an import stops at the floor, ADR 0027), and the detail for the log.
+    struct Failure: Equatable, Sendable {
+        let outOfSpace: Bool
+        let detail: String
+
+        init(errno code: Int32, call: String) {
+            outOfSpace = code == ENOSPC
+            detail = "\(call) errno=\(code)"
+        }
+
+        init(_ error: Error) {
+            outOfSpace = FreeSpaceFloor.refusedForSpace(error)
+            detail = String(describing: error)
+        }
     }
 
     static func publish(staging: URL, final: URL) -> Outcome {
@@ -102,7 +119,7 @@ nonisolated enum ExclusivePublication {
         if errno == EEXIST {
             return .destinationExists
         }
-        return .failed("renamex_np errno=\(errno)")
+        return .failed(Failure(errno: errno, call: "renamex_np"))
     }
 
     private static func publishWithHardLink(staging: URL, final: URL) -> Outcome {
@@ -118,7 +135,7 @@ nonisolated enum ExclusivePublication {
         if errno == EEXIST {
             return .destinationExists
         }
-        return .failed("link errno=\(errno)")
+        return .failed(Failure(errno: errno, call: "link"))
     }
 
     private static func publishWithCheckThenAct(staging: URL, final: URL) -> Outcome {
@@ -132,7 +149,7 @@ nonisolated enum ExclusivePublication {
             if FileManager.default.fileExists(atPath: final.path) {
                 return .destinationExists
             }
-            return .failed(String(describing: error))
+            return .failed(Failure(error))
         }
     }
 }

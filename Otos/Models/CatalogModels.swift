@@ -653,9 +653,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     /// True when the metadata stamp (parsed metadata, kind, format, capture-wall facts) is
     /// not valid for the current filesystem signature.
     var metadataStale: Bool {
-        let currentSize = byteSize ?? -1
-        let currentMTime = Self.mtimeSeconds(contentModifiedAt)
-        return metadataSourceSize != currentSize || metadataSourceMTimeSeconds != currentMTime
+        !stampIsCurrent(size: metadataSourceSize, mtimeSeconds: metadataSourceMTimeSeconds)
     }
 
     /// True when the rendering stamp (the thumbnail and preview made from one development,
@@ -663,9 +661,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     /// thumbnail — QuickLook's on a card's first pass, a camera's embedded one — is not a
     /// rendering and leaves this true.
     var renderingStale: Bool {
-        let currentSize = byteSize ?? -1
-        let currentMTime = Self.mtimeSeconds(contentModifiedAt)
-        return renderedSourceSize != currentSize || renderedSourceMTimeSeconds != currentMTime
+        !stampIsCurrent(size: renderedSourceSize, mtimeSeconds: renderedSourceMTimeSeconds)
     }
 
     /// True when the persisted content hash is missing, malformed, or does not match
@@ -673,13 +669,16 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     /// hashes (`.removableVolume`, see ADR 0018) must not be judged stale by this
     /// alone. Callers gate it behind `everyProduct`.
     var hashStale: Bool {
-        let currentSize = byteSize ?? -1
-        let currentMTime = Self.mtimeSeconds(contentModifiedAt)
-        return contentHash == nil
+        contentHash == nil
             || contentHashSourceSize == nil
             || contentHashSourceMTimeSeconds == nil
-            || contentHashSourceSize != currentSize
-            || contentHashSourceMTimeSeconds != currentMTime
+            || !stampIsCurrent(size: contentHashSourceSize, mtimeSeconds: contentHashSourceMTimeSeconds)
+    }
+
+    /// Whether a product's stamp names the file's current `(size, mtime-seconds)`: the one
+    /// staleness rule every product shares (ADR 0009).
+    private func stampIsCurrent(size: Int64?, mtimeSeconds: Int?) -> Bool {
+        size == (byteSize ?? -1) && mtimeSeconds == Self.mtimeSeconds(contentModifiedAt)
     }
 
     /// True when metadata is stale, or — only when the row is claimed for every product —
@@ -977,6 +976,9 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
     case catalogUnavailable
     case unsupportedCatalogSchema(CatalogSchemaCompatibility)
     case importOperationMissing(ActiveFileOperationKey)
+    /// A durable journal or settlement write SQLite refused because the disk is full
+    /// (`SQLITE_FULL`): the floor reached the hard way (ADR 0027).
+    case outOfSpace
 
     var errorDescription: String? {
         switch self {
@@ -997,6 +999,8 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
             problem.errorDescription
         case let .importOperationMissing(key):
             "The import journal operation \(key.rawValue) is no longer present."
+        case .outOfSpace:
+            "The disk is full."
         }
     }
 }

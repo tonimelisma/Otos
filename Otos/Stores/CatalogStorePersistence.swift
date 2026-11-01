@@ -171,6 +171,19 @@ extension CatalogStore {
         _ dbWriter: any DatabaseWriter,
         _ body: (Database) throws -> T
     ) throws -> T {
+        do {
+            return try writeWithFullSynchronous(dbWriter, body)
+        } catch let error as DatabaseError where error.resultCode == .SQLITE_FULL {
+            // Typed here, where the catalog's writes are, so an import stops on a full disk
+            // rather than failing entry after entry (ADR 0027).
+            throw CatalogStoreError.outOfSpace
+        }
+    }
+
+    private static func writeWithFullSynchronous<T>(
+        _ dbWriter: any DatabaseWriter,
+        _ body: (Database) throws -> T
+    ) throws -> T {
         try dbWriter.writeWithoutTransaction { db in
             try db.execute(sql: "PRAGMA synchronous = FULL")
             defer {
@@ -480,33 +493,18 @@ extension CatalogStore {
     /// rendering or digest, and a rendering-and-digest pass does not re-write its metadata.
     /// A provisional thumbnail replaces the shown thumbnail without stamping a rendering.
     static func writeEnrichmentOverlay(_ result: EnrichmentResult, libraryRootID: Int64, db: Database) throws {
+        let row = (rootID: libraryRootID, relativePath: result.id.relativePath)
         if let rendering = result.rendering {
-            try db.execute(
-                sql: """
-                UPDATE media_asset SET
-                    thumbnail_path = ?,
-                    preview_path = ?,
-                    rendered_revision = ?,
-                    rendered_source_size = ?,
-                    rendered_source_mtime = ?
-                WHERE library_root_id = ?
-                    AND relative_path = ?
-                """,
-                arguments: [
-                    rendering.thumbnailPath,
-                    rendering.previewPath,
-                    result.editRevision,
-                    result.sourceSize,
-                    result.sourceMTimeSeconds,
-                    libraryRootID,
-                    result.id.relativePath.rawValue,
-                ]
+            try writeRendering(
+                thumbnailPath: rendering.thumbnailPath,
+                previewPath: rendering.previewPath,
+                renderedRevision: result.editRevision,
+                stamp: (result.sourceSize, result.sourceMTimeSeconds),
+                row: row,
+                db: db
             )
         } else if let provisional = result.provisionalThumbnail {
-            try db.execute(
-                sql: "UPDATE media_asset SET thumbnail_path = ? WHERE library_root_id = ? AND relative_path = ?",
-                arguments: [provisional.finalRelativePath, libraryRootID, result.id.relativePath.rawValue]
-            )
+            try writeProvisionalThumbnail(provisional.finalRelativePath, row: row, db: db)
         }
         if let contentHash = result.contentHash {
             try db.execute(
@@ -528,23 +526,70 @@ extension CatalogStore {
             )
         }
         if let metadata = result.metadata {
-            try db.execute(
-                sql: """
-                UPDATE media_asset SET metadata_source_size = ?, metadata_source_mtime = ?
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
-                arguments: [result.sourceSize, result.sourceMTimeSeconds, libraryRootID, result.id.relativePath.rawValue]
-            )
-            try writeMetadataProjection(
-                metadata.metadata,
-                enrichedKind: metadata.kind,
-                enrichedFormat: metadata.format,
-                sourceMTimeSeconds: result.sourceMTimeSeconds,
-                libraryRootID: libraryRootID,
-                relativePath: result.id.relativePath,
-                db: db
-            )
+            try writeMetadata(metadata, stamp: (result.sourceSize, result.sourceMTimeSeconds), row: row, db: db)
         }
+    }
+
+    /// The row a product write targets.
+    typealias ProductRow = (rootID: Int64, relativePath: MediaRelativePath)
+    /// The `(size, mtime-seconds)` a product was made from, which its stamp records.
+    typealias ProductStamp = (size: Int64?, mtimeSeconds: Int?)
+
+    /// A rendering — thumbnail and preview, made together — with its stamp and the edit
+    /// revision it shows (ADR 0009, ADR 0035, ADR 0036).
+    private static func writeRendering(
+        thumbnailPath: String?,
+        previewPath: String?,
+        renderedRevision: Int64,
+        stamp: ProductStamp,
+        row: ProductRow,
+        db: Database
+    ) throws {
+        try db.execute(
+            sql: """
+            UPDATE media_asset SET
+                thumbnail_path = ?,
+                preview_path = ?,
+                rendered_revision = ?,
+                rendered_source_size = ?,
+                rendered_source_mtime = ?
+            WHERE library_root_id = ?
+                AND relative_path = ?
+            """,
+            arguments: [
+                thumbnailPath, previewPath, renderedRevision, stamp.size, stamp.mtimeSeconds,
+                row.rootID, row.relativePath.rawValue,
+            ]
+        )
+    }
+
+    /// A thumbnail that is not a rendering: it replaces the shown thumbnail and stamps
+    /// nothing, so the rendering stays owed.
+    private static func writeProvisionalThumbnail(_ thumbnailPath: String?, row: ProductRow, db: Database) throws {
+        try db.execute(
+            sql: "UPDATE media_asset SET thumbnail_path = ? WHERE library_root_id = ? AND relative_path = ?",
+            arguments: [thumbnailPath, row.rootID, row.relativePath.rawValue]
+        )
+    }
+
+    /// Metadata with its stamp, and every column derived from it.
+    private static func writeMetadata(_ metadata: EnrichedMetadata, stamp: ProductStamp, row: ProductRow, db: Database) throws {
+        try db.execute(
+            sql: """
+            UPDATE media_asset SET metadata_source_size = ?, metadata_source_mtime = ?
+            WHERE library_root_id = ? AND relative_path = ?
+            """,
+            arguments: [stamp.size, stamp.mtimeSeconds, row.rootID, row.relativePath.rawValue]
+        )
+        try writeMetadataProjection(
+            metadata.metadata,
+            enrichedKind: metadata.kind,
+            enrichedFormat: metadata.format,
+            sourceMTimeSeconds: stamp.mtimeSeconds,
+            libraryRootID: row.rootID,
+            relativePath: row.relativePath,
+            db: db
+        )
     }
 
     /// Writes a metadata record and every column derived from it: the stored record, the
@@ -610,58 +655,26 @@ extension CatalogStore {
     /// and its rendering, reused, made by the import, or the source's provisional thumbnail
     /// with no stamp. A product it does not get stays owed, for enrichment.
     static func writeLandedProducts(_ landed: LandedImport, db: Database) throws {
-        let destinationRootID = landed.destinationRootID
-        let destinationRelativePath = landed.operation.destinationRelativePath
-        let destinationByteSize = landed.byteSize
-        let destinationMTimeSeconds = Int(landed.contentModifiedAt.timeIntervalSince1970.rounded(.down))
+        let row = (rootID: landed.destinationRootID, relativePath: landed.operation.destinationRelativePath)
+        let stamp: ProductStamp = (landed.byteSize, Int(landed.contentModifiedAt.timeIntervalSince1970.rounded(.down)))
         if let rendering = landed.rendering {
             if rendering.stamped {
-                try db.execute(
-                    sql: """
-                    UPDATE media_asset SET
-                        thumbnail_path = ?,
-                        preview_path = ?,
-                        rendered_revision = ?,
-                        rendered_source_size = ?,
-                        rendered_source_mtime = ?
-                    WHERE library_root_id = ? AND relative_path = ?
-                    """,
-                    arguments: [
-                        rendering.thumbnailPath,
-                        rendering.previewPath,
-                        rendering.renderedRevision,
-                        destinationByteSize,
-                        destinationMTimeSeconds,
-                        destinationRootID,
-                        destinationRelativePath.rawValue,
-                    ]
+                try writeRendering(
+                    thumbnailPath: rendering.thumbnailPath,
+                    previewPath: rendering.previewPath,
+                    renderedRevision: rendering.renderedRevision,
+                    stamp: stamp,
+                    row: row,
+                    db: db
                 )
             } else {
-                try db.execute(
-                    sql: "UPDATE media_asset SET thumbnail_path = ? WHERE library_root_id = ? AND relative_path = ?",
-                    arguments: [rendering.thumbnailPath, destinationRootID, destinationRelativePath.rawValue]
-                )
+                try writeProvisionalThumbnail(rendering.thumbnailPath, row: row, db: db)
             }
         }
+        // Derived for the destination exactly as enrichment of the destination file would
+        // derive it.
         if let metadata = landed.metadata {
-            try db.execute(
-                sql: """
-                UPDATE media_asset SET metadata_source_size = ?, metadata_source_mtime = ?
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
-                arguments: [destinationByteSize, destinationMTimeSeconds, destinationRootID, destinationRelativePath.rawValue]
-            )
-            // Derived for the destination exactly as enrichment of the destination file
-            // would derive it.
-            try writeMetadataProjection(
-                metadata.metadata,
-                enrichedKind: metadata.kind,
-                enrichedFormat: metadata.format,
-                sourceMTimeSeconds: destinationMTimeSeconds,
-                libraryRootID: destinationRootID,
-                relativePath: destinationRelativePath,
-                db: db
-            )
+            try writeMetadata(metadata, stamp: stamp, row: row, db: db)
         }
     }
 

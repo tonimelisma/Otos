@@ -13,6 +13,26 @@ import Testing
 /// hazard this freeze exists to prevent from ever reaching a migration again).
 @Suite(.testDirectory)
 struct EnrichmentClaimIndexContractTests {
+    /// Catalogs migrated to v13 hold claim indexes created from this exact text, and
+    /// `INDEXED BY` matches a partial index by its text, so changing it without a
+    /// migration that recreates the indexes would fail every claim query in them.
+    @Test func theStalenessPredicatesKeepTheTextTheirIndexesWereCreatedWith() {
+        #expect(EnrichmentClaimGateway.metadataStalenessSQLPredicate() == """
+        metadata_source_size IS NULL
+           OR metadata_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(metadata_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(metadata_source_mtime, -1)
+        """)
+        #expect(EnrichmentClaimGateway.renderingStalenessSQLPredicate() == """
+        rendered_source_size IS NULL
+           OR rendered_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(rendered_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(rendered_source_mtime, -1)
+        """)
+    }
+
     @Test func broadIndexesImplyCurrentHashRequiredPredicate() async throws {
         let dbQueue = try await Self.migratedDatabase()
         let rootQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(

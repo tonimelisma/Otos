@@ -109,7 +109,7 @@ actor HandOffPreparer {
                     ])
                 }
             }
-            let outOfSpace = error as? MediaFileWriter.WriteError == .outOfSpace || FreeSpaceFloor.refusedForSpace(error)
+            let outOfSpace = MediaFileWriter.refusedForSpace(error)
             OtosLog.mediaIO.errorOperation("handOff.prepare", phase: "failed", fields: [
                 "id": item.id.relativePath.rawValue,
                 "cause": outOfSpace ? "outOfSpace" : "other",

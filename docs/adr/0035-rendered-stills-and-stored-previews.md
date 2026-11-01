@@ -66,10 +66,11 @@ and is never shown at full size except when zoomed to 100%.
   enrichment stamps of library stills, so the unchanged staleness predicate claims
   them again and enrichment renders both products, downloading cloud-only originals
   under the free-space floor (ENR-008). Card and camera rows are left stamped.
-- **An import renders the copy** whose source holds no current rendering — a card row its
-  rendering pass has not reached, a camera row — from the published copy, before it
-  settles, so the rendering is made while the copy's bytes are local (ADR 0009 §9). A
-  source rendering current for the copied bytes is copied with its preview instead.
+- **An import never renders.** A source rendering current for the copied bytes is copied
+  with its preview; a copy without one — a card row its rendering pass had not reached, a
+  camera row — settles with the source's thumbnail as a provisional one and is rendered
+  by enrichment straight after, ahead of other background work, while its bytes are local
+  (ADR 0009 §9).
 - **No re-render on OS updates.** A macOS update that changes RAW9's output does not
   re-render, because re-rendering means re-downloading the library. Products follow the
   file's `(size, mtime)` and, from the editing increments on, the edit recipe.
@@ -80,9 +81,8 @@ and is never shown at full size except when zoomed to 100%.
   the camera's look to RAW9's as enrichment reaches it. A card shows its RAWs in the
   camera's look until its rendering pass reaches them, with the loupe developing them on
   open; a newer thumbnail of the same asset replacing the painted one keeps the no-blank
-  rule (APP-015). An imported copy settles with its RAW9 rendering.
-- An import whose card has not finished its rendering pass develops each RAW still owed
-  during the import, about a second each on the one background RAW lane.
+  rule (APP-015). An imported copy settles with the card's rendering, or with its
+  provisional thumbnail until enrichment renders it.
 - About 6 GB of Application Support for previews, kept for the life of each photo
   (ADR 0008, ADR 0009: no eviction).
 - The backfill re-enriches every library still once: on this library, about 209 GB of
@@ -105,5 +105,7 @@ and is never shown at full size except when zoomed to 100%.
   import in 55–70 s instead of 6 s, and no `CIRAWFilter` option or concurrency made the
   development cheaper. Developing only its non-RAW stills there still held a 429-row card
   at 23–58 s against 4–15 s for metadata alone.
-- **Enriching an imported copy after it lands:** a cloud-synced library may evict the
-  copy first, and its rendering then costs a download.
+- **Rendering an imported copy during the import:** it holds the import on a development
+  of about a second per RAW, for a product the import does not need. A copy is rendered
+  first after it lands instead, long before a cloud-synced library can upload and evict
+  it.
