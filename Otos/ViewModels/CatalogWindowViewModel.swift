@@ -333,10 +333,10 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private let startsSourceMonitoring: Bool
     /// Backs grid/strip zoom persistence (`gridColumnCountDefaultsKey` /
     /// `stripTileEdgeDefaultsKey`) and, since it's the ViewModel's only injected
-    /// `UserDefaults` seam, also import preferences (`importPreferences`,
+    /// `PreferenceStore` seam, also import preferences (`importPreferences`,
     /// `ImportPreferencesStore`) — no default value, so a caller cannot reach the
     /// production `UserDefaults.standard` domain by omitting it (ADR 0020).
-    /// The ViewModel owns its `UserDefaults` instance for synchronous UI
+    /// The ViewModel owns its `PreferenceStore` instance for synchronous UI
     /// preferences; media-operation actors receive the same `PreferencesDomain`
     /// and each creates its own actor-owned instance.
     @ObservationIgnored let preferences: any PreferenceStore
