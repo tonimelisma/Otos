@@ -119,10 +119,9 @@ nonisolated struct MediaEnricher {
                     url: url,
                     sourceSize: sourceSize,
                     sourceMTimeSeconds: sourceMTimeSeconds,
-                    contentHash: contentHash,
+                    pass: .withDigest(contentHash),
                     thumbnailDirectory: thumbnailDirectory,
                     readinessChecker: readinessChecker,
-                    scope: scope,
                     recipe: recipe
                 )
             case .cancelled:
@@ -335,12 +334,33 @@ nonisolated struct MediaEnricher {
             url: url,
             sourceSize: sourceSize,
             sourceMTimeSeconds: sourceMTimeSeconds,
-            contentHash: nil,
+            pass: .cardFirstPass,
             thumbnailDirectory: thumbnailDirectory,
             readinessChecker: readinessChecker,
-            scope: .metadata,
             recipe: recipe
         )
+    }
+
+    /// Which of the two passes that parse a file is running: a card's first pass, which
+    /// reads no digest and is what an import waits on (ADR 0018), or a pass that has read
+    /// the file's digest.
+    private enum Pass {
+        case cardFirstPass
+        case withDigest(XXH3Digest128)
+
+        var scope: EnrichmentScope {
+            switch self {
+            case .cardFirstPass: .metadata
+            case .withDigest: .metadataAndHash
+            }
+        }
+
+        var contentHash: XXH3Digest128? {
+            switch self {
+            case .cardFirstPass: nil
+            case let .withDigest(digest): digest
+            }
+        }
     }
 
     /// Metadata parse, readiness re-check, and thumbnail generation — shared by the
@@ -351,10 +371,9 @@ nonisolated struct MediaEnricher {
         url: URL,
         sourceSize: Int64?,
         sourceMTimeSeconds: Int?,
-        contentHash: XXH3Digest128?,
+        pass: Pass,
         thumbnailDirectory: URL,
         readinessChecker: any EnrichmentReadinessChecking,
-        scope: EnrichmentScope,
         recipe: StoredEditRecipe?
     ) async -> EnrichmentOutcome {
         let result = MediaMetadataReader.read(url: url)
@@ -365,7 +384,7 @@ nonisolated struct MediaEnricher {
             return .notMaterialized
         }
         let rendered = await Self.renderStill(
-            id: id, url: url, recipe: recipe?.recipe ?? .neutral, scope: scope, directory: thumbnailDirectory
+            id: id, url: url, recipe: recipe?.recipe ?? .neutral, scope: pass.scope, directory: thumbnailDirectory
         )
         let generatedThumbnail: StagedDerivedImage? = if let rendered {
             rendered.thumbnail
@@ -382,7 +401,7 @@ nonisolated struct MediaEnricher {
                 thumbnailPath: nil,
                 sourceSize: sourceSize ?? -1,
                 sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
-                contentHash: contentHash,
+                contentHash: pass.contentHash,
                 generatedThumbnail: generatedThumbnail,
                 generatedPreview: rendered?.preview,
                 editRevision: recipe?.revision ?? 0
