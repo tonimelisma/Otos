@@ -217,6 +217,23 @@ struct BrowserPlaceTests {
         }
     }
 
+    /// Until the groups are first built nothing about duplicates is known: a selected
+    /// Duplicates row shows without a count, and there is nothing to move.
+    @Test func duplicatesNotYetBuiltClaimNoCount() {
+        let domain = PreferencesDomain.suite(UUID().uuidString)
+        BrowserPlace(descriptor: CatalogQueryDescriptor(scope: .duplicates), viewMode: .grid, focus: nil, selection: [])
+            .save(to: domain.makeDefaults())
+        let model = makeViewModel(domain)
+
+        model.applyState(loadedState(descriptor: CatalogQueryDescriptor(scope: .duplicates), ids: []))
+
+        #expect(model.state.duplicates == nil)
+        #expect(model.showsDuplicatesRow)
+        #expect(model.duplicatesCount == nil)
+        #expect(model.duplicatesTally == nil)
+        #expect(!model.canMoveMarkedDuplicatesToTrash)
+    }
+
     /// Once loaded, the rows follow the catalog: All Media with two fixed libraries.
     @Test func afterTheCatalogLoadsTheRowsFollowTheLibraries() {
         let domain = PreferencesDomain.suite(UUID().uuidString)

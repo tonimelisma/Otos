@@ -76,7 +76,6 @@ extension CatalogProjection {
             availableLibraryPaths: facts.availableLibraryPaths
         )
         async let filteredFixedAssetCount = filteredFixedAssetCount(facts, store: store)
-        async let duplicateCopies = store.duplicateCopies(availableLibraryPaths: facts.availableLibraryPaths)
         var (state, metrics) = try await windowState(
             from: facts,
             allAssetCount: allAssetCount,
@@ -84,17 +83,30 @@ extension CatalogProjection {
             filterOptions: filterOptions,
             filteredFixedAssetCount: filteredFixedAssetCount
         )
-        let duplicates = try await duplicateCopies
+        state.pendingIdentityRemaps = pendingIdentityRemaps
+        return (state, metrics)
+    }
+
+    /// Duplicate groups across the available fixed libraries (ADR 0042): identical copies
+    /// by digest, then versions of the same photo. The slow half of a publication — same
+    /// photo reads every still's capture facts and compares renders — so `pass` runs it
+    /// after the window state is out.
+    func buildDuplicates(
+        store: CatalogStore,
+        libraries: [CatalogLibraryState]
+    ) async throws -> CatalogDuplicatesState {
+        let signpost = OtosSignpost.performance.beginInterval("DuplicatesBuild")
+        defer { OtosSignpost.performance.endInterval("DuplicatesBuild", signpost) }
+        let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: libraries)
+        let duplicates = try await store.duplicateCopies(availableLibraryPaths: availableLibraryPaths)
         let identical = DuplicateGroupPolicy.groups(copies: duplicates.copies, keptPairs: duplicates.keptPairs)
         let samePhoto = try await samePhotoGroups(
             store: store,
-            availableLibraryPaths: facts.availableLibraryPaths,
+            availableLibraryPaths: availableLibraryPaths,
             excluding: Set(identical.flatMap(\.copies).map(\.id)),
             keptPairs: duplicates.keptPairs
         )
-        state.duplicates = Self.duplicatesState(groups: identical + samePhoto)
-        state.pendingIdentityRemaps = pendingIdentityRemaps
-        return (state, metrics)
+        return Self.duplicatesState(groups: identical + samePhoto)
     }
 
     /// Versions of the same photo (ADR 0042): candidates from stored signatures and capture

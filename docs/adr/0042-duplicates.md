@@ -20,9 +20,17 @@ visible: in an available fixed library, not waiting for or in the Trash, not a L
 movie (a member of its still's item, ADR 0041), with a digest current for its file's size
 and mtime. The Store reads the copies (`CatalogStore.duplicateCopies`, through
 `idx_media_asset_content_hash`). The keeper rule is a pure function
-(`DuplicateGroupPolicy`) that Projection runs off the MainActor on every publication.
+(`DuplicateGroupPolicy`) that Projection runs off the MainActor in every publication pass.
 Projection publishes the groups as `CatalogWindowState.duplicates` in every scope, so the
 sidebar's Duplicates row exists exactly while a group is active.
+
+**Detection never holds back the window.** Building the groups is the slow half of a pass:
+same-photo detection reads every still's capture facts and compares renders, about 1.4 s
+on the owner's 8,400-photo library (2026-11-01 trace). So each pass publishes the window
+state first, carrying the groups the last pass built, then builds the groups and publishes
+them in a second publication when they changed. `duplicates` is nil until the first build:
+the row has no count and the list draws nothing until then, rather than claiming "No
+duplicates".
 
 **Otos preselects only where the choice cannot lose anything.** A group gets a default
 keeper only when:

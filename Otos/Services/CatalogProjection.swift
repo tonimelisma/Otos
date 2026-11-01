@@ -17,6 +17,12 @@ import OSLog
 /// the doorbell directly; other store changes wait for `cadenceTask`, which rings it
 /// every `cadence` while the projection is behind.
 ///
+/// A pass publishes twice. The window state goes out first, carrying the duplicate groups
+/// the last pass built; then the groups are rebuilt (`buildDuplicates`, the slow half —
+/// same-photo detection reads every still's capture facts and compares renders) and go out
+/// in a second publication when they changed. So detection never holds back the sidebar or
+/// the grid, and the request is covered only once both halves have succeeded.
+///
 /// Nothing cancels a build that newer work supersedes: GRDB reads throw
 /// `CancellationError` in a cancelled task, so a cancelled build would hold errors, and the
 /// older build's result is simply covered by the next pass. Cancellation is teardown only
@@ -26,6 +32,8 @@ import OSLog
 actor CatalogProjection {
     typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryRequest) async throws
         -> CatalogWindowState
+    typealias DuplicatesBuilder = @Sendable (CatalogStore, [CatalogLibraryState]) async throws
+        -> CatalogDuplicatesState
 
     /// Whether the next pass must rebuild the full ordered-asset query. A detail-only
     /// change (enrichment that touched no ordering/scope column) reuses the last
@@ -46,6 +54,8 @@ actor CatalogProjection {
     /// ring the doorbell directly and never wait for it.
     private let cadence: Duration
     let stateBuilder: WindowStateBuilder?
+    /// Tests replace the duplicates build to hold it at its suspension; production builds them.
+    let duplicatesBuilder: DuplicatesBuilder?
 
     private var queryRequest: CatalogQueryRequest = .initial
     /// Distinguishes one projection's diagnostics from another's in a shared log.
@@ -65,6 +75,8 @@ actor CatalogProjection {
     private var loopTask: Task<Void, Never>?
     private var cadenceTask: Task<Void, Never>?
     private var lastPublishedState: CatalogWindowState?
+    /// The duplicate groups the last successful duplicates build produced; nil until one has.
+    private var duplicates: CatalogDuplicatesState?
     /// The last publication was the pre-load `.loadingCatalog` state. The next store
     /// change is the load itself (or something after it), so it publishes immediately
     /// rather than leaving the window blank for a cadence tick (APP-044).
@@ -91,10 +103,12 @@ actor CatalogProjection {
 
     init(
         cadence: Duration = .seconds(1),
-        stateBuilder: WindowStateBuilder? = nil
+        stateBuilder: WindowStateBuilder? = nil,
+        duplicatesBuilder: DuplicatesBuilder? = nil
     ) {
         self.cadence = cadence
         self.stateBuilder = stateBuilder
+        self.duplicatesBuilder = duplicatesBuilder
     }
 
     func states(
@@ -375,12 +389,62 @@ private extension CatalogProjection {
             return
         }
 
-        // Everything from here to the last line is synchronous: nothing can interleave
-        // between covering the request and publishing what covers it.
-        covered = startedFrom
-        let diagnostics = publish(completed, selectedRequest: selectedRequest)
-        ringIfBehind()
+        // The window goes out now, with the groups the last pass built.
+        var window = completed.state
+        window.duplicates = duplicates
+        let diagnostics = publish(
+            CatalogProjectionCompletedPublication(
+                state: window,
+                buildMetrics: completed.buildMetrics,
+                selectedDescriptor: completed.selectedDescriptor,
+                timing: completed.timing
+            ),
+            selectedRequest: selectedRequest
+        )
         await diagnostics.emit()
+        // An injected test builder derives no duplicates.
+        guard stateBuilder == nil else {
+            covered = startedFrom
+            ringIfBehind()
+            return
+        }
+
+        let built: CatalogDuplicatesState
+        do {
+            let roots = window.libraries + window.removableSources
+            if let duplicatesBuilder {
+                built = try await duplicatesBuilder(store, roots)
+            } else {
+                built = try await buildDuplicates(store: store, libraries: roots)
+            }
+            try Task.checkCancellation()
+        } catch is CancellationError {
+            return
+        } catch {
+            // As for the window: the work stays owed, and the window keeps the last groups.
+            pendingKind = max(pendingKind, kind)
+            OtosLog.catalog.errorOperation("projection.duplicates", phase: "failed", fields: [
+                "projection": diagnosticID,
+                "error": String(describing: error),
+            ])
+            return
+        }
+        // Synchronous from here: nothing interleaves between covering the request and
+        // publishing what covers it.
+        covered = startedFrom
+        publishDuplicates(built)
+        ringIfBehind()
+    }
+
+    /// Takes in freshly built groups and republishes the last state with them when they
+    /// differ from what it carries. Synchronous.
+    func publishDuplicates(_ built: CatalogDuplicatesState) {
+        duplicates = built
+        guard var state = lastPublishedState, state.duplicates != built else {
+            return
+        }
+        state.duplicates = built
+        yield(state)
     }
 
     /// Normalizes the selection the build resolved, compares against the last published
@@ -470,6 +534,7 @@ private extension CatalogProjection {
         covered = 0
         pendingKind = .none
         lastPublishedState = nil
+        duplicates = nil
         orderQueryCount = 0
     }
 }
