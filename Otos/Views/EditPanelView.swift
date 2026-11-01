@@ -213,7 +213,6 @@ struct EditPanelView: View {
                     formattedValue: facts.map { control.formatted(recipe, facts: $0) } ?? EditSliderRow.noValue,
                     value: control.sliderValue(in: recipe, facts: facts ?? .still),
                     neutral: control.sliderValue(in: control.reset(recipe), facts: facts ?? .still),
-                    step: control.keyboardStep(facts ?? .still),
                     range: control.sliderRange(facts ?? .still),
                     scaleLabels: control.scaleLabels(facts ?? .still),
                     isSelected: selectedControl == control,
@@ -286,7 +285,6 @@ struct EditPanelView: View {
             .help("Rotate Aspect")
             .accessibilityLabel("Rotate Aspect")
         }
-        .padding(.leading, EditSliderRow.labelInset)
     }
 
     private var cropToolHelp: String {
@@ -319,7 +317,6 @@ struct EditPanelView: View {
                 systemImage: "arrow.up.and.down.righttriangle.up.righttriangle.down"
             ) { cropActions.flip(false) }
         }
-        .padding(.leading, EditSliderRow.labelInset)
     }
 
     private func orientationButton(
@@ -350,7 +347,6 @@ struct EditPanelView: View {
         )
         .toggleStyle(.checkbox)
         .font(.body)
-        .padding(.leading, EditSliderRow.labelInset)
         .disabled(unavailableHelp != nil)
         .help(unavailableHelp ?? "Correct the lens's distortion and vignetting")
     }
@@ -372,7 +368,6 @@ struct EditPanelView: View {
             .accessibilityValue(isPickingNeutral ? "on" : "off")
         }
         .font(.body)
-        .padding(.leading, EditSliderRow.labelInset)
     }
 
     private var pickerHelp: String {
@@ -388,14 +383,8 @@ struct EditPanelView: View {
     }
 }
 
-/// One control, drawn as Photos draws its adjustments: a bar the width of the section with
-/// the control's name inside it on the left and its value on the right (DES-017), filled
-/// from the control's neutral point to its value and marked at the value.
-///
-/// Dragging anywhere on the bar moves the value by how far the pointer travels, as Photos'
-/// bars do, so a click never jumps it. With the bar focused, the arrow keys move it one
-/// keyboard step (the step Increase and Decrease Adjustment use). VoiceOver reads and
-/// adjusts it as a slider. Double-clicking the name resets the control.
+/// One control: its name and value on a line, the slider under them — the label-left,
+/// value-right relationship of DES-017 with the slider at full panel width.
 ///
 /// The value is a field (`hig-validation.md` F-15): it reads like the value, and clicking
 /// or tabbing into it lets the exact number be typed. Return or leaving the field enters it
@@ -406,19 +395,17 @@ private struct EditSliderRow: View {
     /// control's name, which a field shows as its placeholder when its text is empty.
     static let noValue = "—"
 
-    /// The bar's height: a regular control's (Photos' rows are the height of a button).
-    static let barHeight: CGFloat = 22
-    /// How far inside the bar its name starts. A section's other rows start their labels
-    /// here too, so one edge runs down every label in the section (DES-016).
-    static let labelInset: CGFloat = 7
+    /// The slider's track starts and ends this far inside its frame, where the knob's
+    /// center can reach (measured in the panel 2026-10-25: a 3364 K knob centered where
+    /// this inset places it).
+    static let trackInset: CGFloat = 10
 
     let title: String
     let formattedValue: String
     let value: Double
-    /// Where the control is neutral: the fill runs from here to the value.
+    /// Where the control is neutral. A control at its neutral value draws its name and
+    /// value in secondary color, as Lightroom dims an untouched slider.
     let neutral: Double
-    /// One arrow-key press.
-    let step: Double
     let range: ClosedRange<Double>
     /// Labels under a slider whose scale is not linear, at fractions of its travel.
     let scaleLabels: [(position: Double, text: String)]
@@ -432,160 +419,99 @@ private struct EditSliderRow: View {
     let enter: @MainActor (String) -> Bool
 
     @State private var entry = ""
-    @State private var dragStart: Double?
     @FocusState private var isEntering: Bool
-    @FocusState private var isFocused: Bool
-    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            bar
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                // Lightroom's gesture: double-clicking a control's name resets it.
+                Text(title)
+                    .fontWeight(isSelected ? .semibold : nil)
+                    .foregroundStyle(isNeutral ? .secondary : .primary)
+                    .onTapGesture(count: 2, perform: reset)
+                    .accessibilityHidden(true)
+                Spacer()
+                // Shows the value whenever it is not being typed, so it is never stale.
+                TextField("", text: Binding(get: { isEntering ? entry : formattedValue }, set: { entry = $0 }))
+                    .labelsHidden()
+                    .textFieldStyle(.plain)
+                    .multilineTextAlignment(.trailing)
+                    .monospacedDigit()
+                    .foregroundStyle(isNeutral ? .secondary : .primary)
+                    .frame(width: 72)
+                    .focused($isEntering)
+                    .onSubmit {
+                        commitEntry()
+                        isEntering = false
+                    }
+                    .onExitCommand {
+                        entry = formattedValue
+                        isEntering = false
+                    }
+                    .onChange(of: isEntering) { _, entering in
+                        setEntering(entering)
+                        if entering {
+                            entry = formattedValue
+                        } else {
+                            commitEntry()
+                        }
+                    }
+                    .accessibilityLabel("\(title) value")
+            }
+            .font(.body)
+            Slider(
+                value: Binding(get: { value }, set: { setValue($0) }),
+                in: range,
+                label: { Text(title) },
+                onEditingChanged: { setDragging($0) }
+            )
+            .labelsHidden()
+            // Lightroom's thin track and small knob: the controls pack closely enough that
+            // a section reads as one group.
+            .controlSize(.small)
+            // A value, not a selection: the accent stays for what is selected or acted on
+            // (DES-024), and a fill from the left edge would read as an amount on a slider
+            // whose neutral point is its middle.
+            .tint(Color.secondary)
+            .accessibilityValue(formattedValue)
+            .accessibilityAction(named: "Reset", reset)
             if !scaleLabels.isEmpty {
                 scale
             }
         }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        // The selected adjustment is marked like a selected row (DES-024): the accent, as a
+        // tint behind it, with its name in semibold so it reads without color (DES-029).
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+        )
+        .padding(.horizontal, -6)
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private var bar: some View {
-        GeometryReader { geometry in
-            let width = geometry.size.width
-            ZStack(alignment: .leading) {
-                well(width: width)
-                HStack {
-                    // Lightroom's gesture: double-clicking a control's name resets it. It is
-                    // the name, not the whole bar, so double-clicking the value selects it.
-                    Text(title)
-                        .fontWeight(isSelected ? .semibold : nil)
-                        .foregroundStyle(value == neutral ? .secondary : .primary)
-                        .onTapGesture(count: 2, perform: reset)
-                        .accessibilityHidden(true)
-                    Spacer()
-                    valueField
-                        .foregroundStyle(value == neutral ? .secondary : .primary)
-                }
-                .padding(.horizontal, Self.labelInset)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .overlay {
-                // The selected adjustment is marked like a selected row (DES-024): an
-                // accent border, with its name in semibold so it reads without color
-                // (DES-029). Keyboard focus draws the focus ring the same way.
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(Color.accentColor, lineWidth: isSelected || isFocused ? 2 : 0)
-                    .allowsHitTesting(false)
-            }
-            .contentShape(Rectangle())
-            .gesture(drag(width: width))
-        }
-        .frame(height: Self.barHeight)
-        .font(.body)
-    }
-
-    /// The well, the run from neutral to the value, and the value's mark. It is the slider
-    /// VoiceOver and the keyboard act on; the value field beside it stays its own element.
-    private func well(width: CGFloat) -> some View {
-        ZStack(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(.quaternary)
-            Rectangle()
-                .fill(.tertiary)
-                .frame(width: abs(x(of: value, in: width) - x(of: neutral, in: width)))
-                .offset(x: min(x(of: value, in: width), x(of: neutral, in: width)))
-            Rectangle()
-                .fill(isEnabled ? Color.primary : Color.secondary)
-                .frame(width: 2)
-                .offset(x: min(max(x(of: value, in: width) - 1, 0), width - 2))
-        }
-        .focusable()
-        .focusEffectDisabled()
-        .focused($isFocused)
-        .onKeyPress(.leftArrow) { nudge(-1) }
-        .onKeyPress(.rightArrow) { nudge(1) }
-        .accessibilityRepresentation {
-            Slider(value: Binding(get: { value }, set: { setValue($0) }), in: range) {
-                Text(title)
-            }
-            .accessibilityValue(formattedValue)
-            .accessibilityAction(named: "Reset", reset)
-        }
-    }
-
-    private var valueField: some View {
-        // Shows the value whenever it is not being typed, so it is never stale.
-        TextField("", text: Binding(get: { isEntering ? entry : formattedValue }, set: { entry = $0 }))
-            .labelsHidden()
-            .textFieldStyle(.plain)
-            .multilineTextAlignment(.trailing)
-            .monospacedDigit()
-            .frame(width: 72)
-            .focused($isEntering)
-            .onSubmit {
-                commitEntry()
-                isEntering = false
-            }
-            .onExitCommand {
-                entry = formattedValue
-                isEntering = false
-            }
-            .onChange(of: isEntering) { _, entering in
-                setEntering(entering)
-                if entering {
-                    entry = formattedValue
-                } else {
-                    commitEntry()
-                }
-            }
-            .accessibilityLabel("\(title) value")
-    }
-
-    /// Relative travel: the bar's width is the control's whole range.
-    private func drag(width: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 2)
-            .onChanged { gesture in
-                let start = dragStart ?? value
-                if dragStart == nil {
-                    dragStart = start
-                    setDragging(true)
-                }
-                let span = range.upperBound - range.lowerBound
-                let moved = start + Double(gesture.translation.width / max(width, 1)) * span
-                setValue(min(max(moved, range.lowerBound), range.upperBound))
-            }
-            .onEnded { _ in
-                dragStart = nil
-                setDragging(false)
-            }
-    }
-
-    private func nudge(_ direction: Double) -> KeyPress.Result {
-        guard isEnabled else { return .ignored }
-        setValue(min(max(value + direction * step, range.lowerBound), range.upperBound))
-        return .handled
-    }
-
-    private func x(of position: Double, in width: CGFloat) -> CGFloat {
-        let span = range.upperBound - range.lowerBound
-        guard span > 0 else { return 0 }
-        return CGFloat((min(max(position, range.lowerBound), range.upperBound) - range.lowerBound) / span) * width
-    }
-
-    /// Periodic labels under the bar (Sliders: label a non-linear scale), centered on the
-    /// value each names.
+    /// Periodic labels under the slider (Sliders: label a non-linear scale), centered on
+    /// the knob position each names.
     private var scale: some View {
         GeometryReader { geometry in
+            let travel = geometry.size.width - 2 * Self.trackInset
             ForEach(scaleLabels, id: \.text) { label in
                 Text(label.text)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                     .fixedSize()
-                    .position(x: geometry.size.width * label.position, y: geometry.size.height / 2)
+                    .position(x: Self.trackInset + travel * label.position, y: geometry.size.height / 2)
             }
         }
         .frame(height: 12)
         .accessibilityHidden(true)
+    }
+
+    private var isNeutral: Bool {
+        value == neutral
     }
 
     private func commitEntry() {

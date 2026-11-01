@@ -54,18 +54,12 @@ borderless `Reset` in secondary text (tertiary while there is nothing to reset),
 headings do not read as six push buttons, and for Crop, `Auto` before it in the same style.
 The controls are indented 16 pt under the heading, which puts them under its symbol.
 
-Each control is drawn as Photos draws its adjustments: a 22 pt bar the section's width with
-the control's name inside it on the left and its value on the right (DES-017), both 7 pt in.
-The bar is a quaternary well, filled in tertiary from the control's neutral point to its
-value, and marked at the value by a 2 pt line in the primary color. Dragging anywhere on the
-bar moves the value by how far the pointer travels, so a click never jumps it; with the bar
-focused, the left and right arrows move it one keyboard step. The fill and the mark are
-neutral colors, not the accent: a value is not a selection (DES-024), and most of these are
-neutral at their middle, where a fill from the left edge would read as an amount. A control
-at its neutral value draws its name and value in secondary color, as Lightroom dims an
-untouched slider, so what was changed stands out. The rows that are not bars (`White
-Balance`, `Rotate & Flip`, `Aspect`, `Lens Correction`) start their labels 7 pt in, on the
-bars' label edge (DES-016).
+Each control is drawn as Lightroom draws it: its name and value on one line, label left
+and value right (DES-017), over a small slider at the section's width. A slider's filled
+track is the neutral secondary color, not the accent: a slider is a value, not a selection
+(DES-024), and most sliders here are neutral at their middle, where a fill from the left
+edge would read as an amount. A control at its neutral value draws its name and value in
+secondary color, as Lightroom dims an untouched slider, so what was changed stands out.
 
 Spacing is 16 pt padding, 12 pt on either side of a section's hairline, 8 pt between a
 heading and its controls, and 4 pt between controls (DES-050).
