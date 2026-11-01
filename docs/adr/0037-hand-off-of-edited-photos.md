@@ -50,6 +50,11 @@ Measured (`2026-10-25-browser-multi-file-paste-and-drop.md`):
   A selection that needs nothing prepared acts with no bar. Cancel hands nothing over. A
   photo that cannot be prepared fails the hand-off with an alert, because handing over
   the rest would silently drop a photo the person chose.
+  The alert names the cause it knows: a write the hand-off folder's volume refused for
+  space says the disk is full (`HandOffPreparer.PrepareError.outOfSpace`, classified by the
+  error's typed chain through `FreeSpaceFloor.refusedForSpace`); any other failure says the
+  original may be unavailable. `MediaFileWriter` encodes in memory and then writes the
+  file, so the write's own error reaches the caller instead of Image I/O's bare failure.
 - **Drag cannot wait,** so its writer is chosen synchronously from the details the grid
   holds:
   - the original's URL;

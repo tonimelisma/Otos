@@ -271,26 +271,12 @@ nonisolated enum CameraByteFailure: Equatable, Sendable {
     case outOfSpace
     case other(String)
 
-    /// Classifies a download error by its typed chain, never by its wording:
-    /// Foundation's `NSFileWriteOutOfSpaceError` or a POSIX `ENOSPC` anywhere in
-    /// the underlying-error chain is out of space. An error that carries neither
-    /// is `other`, whatever it says — the shape ImageCaptureCore uses for a full
-    /// disk has not been observed, and this does not guess at it.
+    /// Classifies a download error by its typed chain (`FreeSpaceFloor.refusedForSpace`).
+    /// An error that carries no out-of-space cause is `other`, whatever it says — the
+    /// shape ImageCaptureCore uses for a full disk has not been observed, and this does not
+    /// guess at it.
     init(_ error: Error) {
-        self = Self.isOutOfSpace(error as NSError) ? .outOfSpace : .other(String(describing: error))
-    }
-
-    private static func isOutOfSpace(_ error: NSError) -> Bool {
-        if error.domain == NSCocoaErrorDomain, error.code == NSFileWriteOutOfSpaceError {
-            return true
-        }
-        if error.domain == NSPOSIXErrorDomain, error.code == Int(ENOSPC) {
-            return true
-        }
-        if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError {
-            return isOutOfSpace(underlying)
-        }
-        return false
+        self = FreeSpaceFloor.refusedForSpace(error) ? .outOfSpace : .other(String(describing: error))
     }
 }
 

@@ -107,14 +107,14 @@ extension CatalogWindowViewModel {
                     details = try await reader.details(for: request.ids)
                 } catch {
                     // The reader logged it; nothing is handed over for an unread target.
-                    self?.failHandOff(request, failed: request.ids.count)
+                    self?.failHandOff(request, failures: HandOffFailures(outOfSpace: 0, other: request.ids.count))
                     continue
                 }
                 let items = request.ids.map { EditedMediaItem(id: $0, detail: details[$0]) }
                 let pending = items.filter { $0.handOffForm != .original && preparer.readyURL(for: $0) == nil }.count
                 self?.beginHandOffProgress(request, total: pending)
                 var urls: [URL] = []
-                var failed = 0
+                var failures = HandOffFailures(outOfSpace: 0, other: 0)
                 var cancelled = false
                 for item in items {
                     if let through = self?.handOffCancelledThrough, through >= request.generation {
@@ -124,8 +124,10 @@ extension CatalogWindowViewModel {
                     let needed = item.handOffForm != .original && preparer.readyURL(for: item) == nil
                     do {
                         try await urls.append(preparer.prepare(item))
+                    } catch HandOffPreparer.PrepareError.outOfSpace {
+                        failures.outOfSpace += 1
                     } catch {
-                        failed += 1
+                        failures.other += 1
                     }
                     if needed {
                         self?.advanceHandOffProgress(request)
@@ -137,8 +139,8 @@ extension CatalogWindowViewModel {
                     OtosLog.ui.noticeOperation("handOff.cancel", phase: "applied", fields: [
                         "generation": "\(request.generation)",
                     ])
-                } else if failed > 0 {
-                    failHandOff(request, failed: failed)
+                } else if !failures.isEmpty {
+                    failHandOff(request, failures: failures)
                 } else {
                     completeHandOff(request, urls: urls)
                 }
@@ -169,13 +171,14 @@ extension CatalogWindowViewModel {
         }
     }
 
-    private func failHandOff(_ request: HandOffRequest, failed: Int) {
+    private func failHandOff(_ request: HandOffRequest, failures: HandOffFailures) {
         endHandOffProgress(request)
-        handOffAlertMessage = failed == 1
-            ? "One photo couldn’t be prepared, so nothing was handed over. Its original may be unavailable."
-            : "\(failed) photos couldn’t be prepared, so nothing was handed over. Their originals may be unavailable."
+        handOffAlertMessage = failures.alertMessage
         OtosLog.ui.errorOperation("handOff.complete", phase: "failed", fields: [
-            "failed": "\(failed)", "count": "\(request.ids.count)", "action": request.action.verb,
+            "failed": "\(failures.count)",
+            "outOfSpace": "\(failures.outOfSpace)",
+            "count": "\(request.ids.count)",
+            "action": request.action.verb,
         ])
     }
 
@@ -225,5 +228,37 @@ extension CatalogWindowViewModel {
             return HandOffPromise(item: item, preparer: preparer, reader: nil)
         }
         return HandOffPromise(item: nil, id: id, preparer: preparer, reader: tileDetailReader)
+    }
+}
+
+/// Why a hand-off's photos could not be prepared, counted by cause, and what the alert
+/// says about them: a full disk is named as one, never as an unavailable original.
+nonisolated struct HandOffFailures: Equatable, Sendable {
+    var outOfSpace: Int
+    var other: Int
+
+    var count: Int {
+        outOfSpace + other
+    }
+
+    var isEmpty: Bool {
+        outOfSpace == 0 && other == 0
+    }
+
+    var alertMessage: String {
+        let photos = { (count: Int) in count == 1 ? "one photo" : "\(count) photos" }
+        switch (outOfSpace, other) {
+        case (0, 1):
+            return "One photo couldn’t be prepared, so nothing was handed over. Its original may be unavailable."
+        case let (0, other):
+            return "\(other) photos couldn’t be prepared, so nothing was handed over. Their originals may be unavailable."
+        case let (outOfSpace, 0):
+            return "There isn’t enough disk space to prepare \(photos(outOfSpace)), so nothing was handed over. "
+                + "Free up space and try again."
+        case let (outOfSpace, other):
+            return "There isn’t enough disk space to prepare \(photos(outOfSpace)), and \(photos(other)) couldn’t be "
+                + "prepared because \(other == 1 ? "its original" : "their originals") may be unavailable. "
+                + "Nothing was handed over. Free up space and try again."
+        }
     }
 }

@@ -46,8 +46,10 @@ nonisolated enum HandOffForm: Equatable, Sendable {
 }
 
 actor HandOffPreparer {
-    enum PrepareError: Error {
+    enum PrepareError: Error, Equatable {
         case originalUnavailable
+        /// The volume holding the hand-off folder refused the write for space.
+        case outOfSpace
     }
 
     let directory: URL
@@ -76,13 +78,13 @@ actor HandOffPreparer {
         ) else {
             throw PrepareError.originalUnavailable
         }
-        try FileManager.default.createDirectory(
-            at: target.deletingLastPathComponent(), withIntermediateDirectories: true
-        )
         // Written beside the target and moved into place, so a reader never sees half a file.
         let staging = target.deletingLastPathComponent()
             .appending(path: ".\(UUID().uuidString).\(target.pathExtension)")
         do {
+            try FileManager.default.createDirectory(
+                at: target.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
             switch item.handOffForm {
             case .renderedStill:
                 let rendered = try await ImageRenderer.interactive.render(
@@ -107,10 +109,13 @@ actor HandOffPreparer {
                     ])
                 }
             }
+            let outOfSpace = error as? MediaFileWriter.WriteError == .outOfSpace || FreeSpaceFloor.refusedForSpace(error)
             OtosLog.mediaIO.errorOperation("handOff.prepare", phase: "failed", fields: [
-                "id": item.id.relativePath.rawValue, "error": String(describing: error),
+                "id": item.id.relativePath.rawValue,
+                "cause": outOfSpace ? "outOfSpace" : "other",
+                "error": String(describing: error),
             ])
-            throw error
+            throw outOfSpace ? PrepareError.outOfSpace : error
         }
         OtosLog.mediaIO.noticeOperation("handOff.prepare", phase: "finish", fields: [
             "id": item.id.relativePath.rawValue,
