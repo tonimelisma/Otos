@@ -1255,13 +1255,10 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// The All Media row: once the catalog has loaded, while two or more fixed libraries
-    /// exist; before it, while All Media is the row the user left.
+    /// The All Media row, while two or more fixed libraries exist. The sidebar draws no row
+    /// before the catalog has loaded: a lone row would read as the whole sidebar (APP-044).
     var showsAllMediaRow: Bool {
-        guard state.isCatalogLoaded else {
-            return SidebarSelectionPolicy.rowBeforeCatalogLoad(selection: sidebarSelection) == .allMedia
-        }
-        return SidebarSelectionPolicy.showsAllMedia(libraries: state.libraries)
+        state.isCatalogLoaded && SidebarSelectionPolicy.showsAllMedia(libraries: state.libraries)
     }
 
     func currentSelectionWasRemoved(in nextState: CatalogWindowState) -> Bool {

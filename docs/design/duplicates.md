@@ -43,9 +43,6 @@ A list of groups above a fixed-height bar (DES-018, DES-053).
 
 The list is every active group, always: a group found while the user looks joins at once.
 
-**Before the catalog loads.** The sidebar row is drawn without a count when Duplicates is
-where the user left off (APP-043); its count arrives with the catalog.
-
 ## Defaults
 
 Otos marks copies only in a group whose copies are identical, all in one library, with

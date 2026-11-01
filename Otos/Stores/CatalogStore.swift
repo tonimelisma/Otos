@@ -3504,17 +3504,14 @@ private extension CatalogStore {
         guard let thumbnailDirectory else {
             return
         }
-        let removedTemps = ThumbnailStore.deleteStagedTemporaryFiles(in: thumbnailDirectory)
-        guard removedTemps > 0 else {
+        let removed = ThumbnailStore.clearStaging(in: thumbnailDirectory)
+        guard removed > 0 else {
             return
         }
-        OtosLog.thumbnails.info(
-            "Staged thumbnail temp cleanup removed count=\(removedTemps, privacy: .public)"
-        )
         recordDiagnostic(
-            operation: "catalog.thumbnails.stagedTempCleanup",
-            phase: "finish",
-            fields: ["count": "\(removedTemps)"]
+            operation: "catalog.thumbnails.staging",
+            phase: "cleared",
+            fields: ["count": "\(removed)"]
         )
     }
 
