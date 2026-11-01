@@ -30,6 +30,12 @@ continue makes it write the step again, which on a full disk never ends — on 2
 import's workers logged copyfile's ENOSPC 1.26 million times in 30 s and never reached this
 stop. It is the backstop, not a second outcome.
 
+A volume that reports no capacity admits every entry, with `ENOSPC` as the only guard.
+The run's start line records the capacity and floor it began with (`unknown` when the
+volume did not answer), the first unanswered read says so once
+(`phase=capacityUnknown`), and each stop records the capacity it read, so whether the
+floor was guarding a run is in its log.
+
 Free space is never a property of a plan, never gates a control, and an import never
 observes it on a timer. `FreeSpaceFloor` is one constant and one check
 (`FreeSpaceFloor.admits`) with one home, used by the import executor, by Move to

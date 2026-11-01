@@ -311,6 +311,11 @@ actor MediaImportExecutor {
             "bytes": "\(totalBytes)",
             "files": "\(copyEntries.count)",
             "workers": "\(Self.workerCount)",
+            // What the floor reads before the first admission (ADR 0027), so a run's
+            // stop, or its absence, can be set against the space it started with.
+            "capacity": volumeCapacity(URL(fileURLWithPath: destination.rawValue, isDirectory: true))
+                .map { "\($0)" } ?? "unknown",
+            "floor": "\(FreeSpaceFloor.bytes)",
         ])
         let executionContext = EntryExecutionContext(
             plan: plan,
@@ -454,6 +459,7 @@ actor MediaImportExecutor {
             var inFlightBytes: Int64 = 0
             var inFlightByIndex: [Int: Int64] = [:]
             var spaceStop: SpaceStop?
+            var reportedUnknownCapacity = false
             /// The entry's bytes the plan knows, and how many of its files it has no size
             /// for. Unknown is not zero: such a file is admitted on the known bytes alone,
             /// with `ENOSPC` as the backstop — the same rule as a volume that reports no
@@ -472,6 +478,15 @@ actor MediaImportExecutor {
                 }
                 guard let capacity = self.volumeCapacity(destinationURL) else {
                     // The volume does not answer: admit, and let `ENOSPC` be the backstop.
+                    // Said once per run: the floor is not guarding this run.
+                    if !reportedUnknownCapacity {
+                        reportedUnknownCapacity = true
+                        OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "capacityUnknown", fields: [
+                            "run": context.runID,
+                            "batch": "\(context.batch.unixMilliseconds)",
+                            "index": "\(index)",
+                        ])
+                    }
                     return true
                 }
                 let (entryBytes, unknownCount) = plannedBytes(index)
@@ -559,12 +574,15 @@ actor MediaImportExecutor {
                     // never landed and the re-plan offers it again — so it is
                     // neither counted nor revealed; it ends admission.
                     if spaceStop == nil {
-                        spaceStop = SpaceStop(bytesFree: self.volumeCapacity(destinationURL))
+                        let capacity = self.volumeCapacity(destinationURL)
+                        spaceStop = SpaceStop(bytesFree: capacity)
                         OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "diskFloor", fields: [
                             "run": context.runID,
                             "batch": "\(context.batch.unixMilliseconds)",
                             "reason": "enospc",
                             "index": "\(result.index)",
+                            "capacity": capacity.map { "\($0)" } ?? "unknown",
+                            "floor": "\(FreeSpaceFloor.bytes)",
                         ])
                     }
                     byteProgress.finish(index: result.index, resolvedItem: false, publishedBytes: 0)
@@ -1269,6 +1287,8 @@ actor MediaImportExecutor {
         func logSkipped(reason: String, extra: [String: String] = [:]) {
             var fields = [
                 "batch": "\(context.batch.unixMilliseconds)",
+                "rootPath": sourceRoot.rawValue,
+                "relativePath": entry.source.relativePath.rawValue,
                 "bytes": "0",
                 "reason": reason,
                 "worker": "\(workerID)",
@@ -1669,8 +1689,14 @@ actor MediaImportExecutor {
             DiagnosticsTiming.milliseconds(from: request.copyStarted, to: settleFinished),
             1
         )
+        // Source and destination both: the copy lines are found by the card's path, and
+        // the landed copy's `enrichment.item` line by the library's.
         OtosLog.mediaIO.noticeOperation("mediaOperation.copy", phase: "finish", fields: [
             "batch": "\(request.batch.unixMilliseconds)",
+            "rootPath": request.operation.sourceRootPath.rawValue,
+            "relativePath": request.sourceRelativePath.rawValue,
+            "destinationRootPath": request.destinationRoot.rawValue,
+            "destinationRelativePath": request.destinationRelative.rawValue,
             "bytes": "\(settledByteSize)",
             "elapsedMs": "\(totalElapsedMs)",
             "mbps": throughputMBps(bytes: settledByteSize, elapsedMs: totalElapsedMs),
@@ -1678,6 +1704,8 @@ actor MediaImportExecutor {
         ])
         OtosLog.mediaIO.noticeOperation("mediaOperation.copy", phase: "timings", fields: [
             "batch": "\(request.batch.unixMilliseconds)",
+            "rootPath": request.operation.sourceRootPath.rawValue,
+            "relativePath": request.sourceRelativePath.rawValue,
             "publishMs": elapsedMilliseconds(from: request.copyFinished, to: publishFinished),
             "settleMs": elapsedMilliseconds(from: publishFinished, to: settleFinished),
             "hashMs": "\(elapsedMilliseconds(from: request.copyFinished, to: request.hashFinished))",
