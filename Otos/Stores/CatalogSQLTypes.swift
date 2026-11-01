@@ -22,29 +22,43 @@ nonisolated struct StoredAsset {
     var bestKind: MediaKind?
     var bestFormat: MediaFormatToken?
     var durationSeconds: Double?
-    var enrichedSourceSize: Int64?
-    var enrichedSourceMTimeSeconds: Int?
+    var metadataSourceSize: Int64?
+    var metadataSourceMTimeSeconds: Int?
+    var renderedSourceSize: Int64?
+    var renderedSourceMTimeSeconds: Int?
     var contentHash: XXH3Digest128?
     var contentHashSourceSize: Int64?
     var contentHashSourceMTimeSeconds: Int?
     var mediaChoice: MediaChoice = .default
 }
 
-/// Store-owned, one-settlement snapshot of rebuildable enrichment. It is never
-/// persisted as a second record and contains no source history, claims, or identity.
+/// Store-owned, one-settlement snapshot of a source row's products and the stamps that say
+/// which bytes each was made from. It is never persisted as a second record and contains no
+/// source history, claims, or identity.
 nonisolated struct ReusableEnrichmentOverlay: Equatable, Sendable {
-    /// The one stored timestamp truth. The capture instant the destination row sorts by
-    /// is projected from it at the write (`AssetMetadata.captureInstant`), rather than carried again
-    /// alongside it.
-    let metadata: AssetMetadata
-    let enrichedKind: MediaKind?
-    let enrichedFormat: MediaFormatToken?
-    /// The size and mtime the source's overlay was derived from (its enrichment stamps).
-    /// Reuse requires them to name the bytes the import copied.
-    let enrichedSourceSize: Int64?
-    let enrichedSourceMTimeSeconds: Int?
+    /// The one stored timestamp truth, with its kind and format. The capture instant the
+    /// destination row sorts by is projected from it at the write.
+    let metadata: EnrichedMetadata?
+    let metadataSourceSize: Int64?
+    let metadataSourceMTimeSeconds: Int?
+    let renderedSourceSize: Int64?
+    let renderedSourceMTimeSeconds: Int?
+    /// The edit revision the source's rendering was drawn with.
+    let renderedRevision: Int64
+    /// The source's saved edit, which the copy carries.
+    let recipe: StoredEditRecipe?
     let thumbnailPath: String?
     let previewPath: String?
+
+    /// Whether the metadata was read from the bytes `(size, mtime-seconds)` names.
+    func metadataCurrent(size: Int64, mtimeSeconds: Int) -> Bool {
+        metadata != nil && metadataSourceSize == size && metadataSourceMTimeSeconds == mtimeSeconds
+    }
+
+    /// Whether the rendering was made from the bytes `(size, mtime-seconds)` names.
+    func renderingCurrent(size: Int64, mtimeSeconds: Int) -> Bool {
+        renderedSourceSize == size && renderedSourceMTimeSeconds == mtimeSeconds
+    }
 }
 
 nonisolated struct StoredTileDetail {
@@ -58,8 +72,8 @@ nonisolated struct StoredTileDetail {
     var renderedRevision: Int64 = 0
     var bestKind: MediaKind?
     var durationSeconds: Double?
-    var enrichedSourceSize: Int64?
-    var enrichedSourceMTimeSeconds: Int?
+    var renderedSourceSize: Int64?
+    var renderedSourceMTimeSeconds: Int?
     var mediaChoice: MediaChoice = .default
 }
 

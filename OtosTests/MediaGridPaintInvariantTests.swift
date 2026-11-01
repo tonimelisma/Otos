@@ -26,8 +26,8 @@ extension AppKitWindowTests {
                 thumbnailPath: "test-\(visible.relativePath.rawValue)",
                 bestKind: .image,
                 durationSeconds: nil,
-                enrichedSourceSize: 64 * 48,
-                enrichedSourceMTimeSeconds: 1
+                renderedSourceSize: 64 * 48,
+                renderedSourceMTimeSeconds: 1
             )
             let other = harness.ids[1]
             let otherDetail = MediaTileDetail(
@@ -36,8 +36,8 @@ extension AppKitWindowTests {
                 thumbnailPath: "other.jpg",
                 bestKind: .image,
                 durationSeconds: nil,
-                enrichedSourceSize: 10,
-                enrichedSourceMTimeSeconds: 1
+                renderedSourceSize: 10,
+                renderedSourceMTimeSeconds: 1
             )
             harness.controller.mergeTileDetails(
                 [visible: refreshed, other: otherDetail],
@@ -219,8 +219,8 @@ private final class PaintInvariantHarness {
             thumbnailPath: "test-\(id.relativePath.rawValue)",
             bestKind: .image,
             durationSeconds: nil,
-            enrichedSourceSize: Int64(pixelSize.width * pixelSize.height),
-            enrichedSourceMTimeSeconds: 1
+            renderedSourceSize: Int64(pixelSize.width * pixelSize.height),
+            renderedSourceMTimeSeconds: 1
         )
         let key = MediaAssetTilePresentation.imageContentKey(detail)
         controller.mergeTileDetails([id: detail], reason: "test")

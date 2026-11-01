@@ -469,8 +469,8 @@ private final class GridSelectionTestHarness {
             thumbnailPath: thumbnailPath,
             bestKind: .image,
             durationSeconds: nil,
-            enrichedSourceSize: Int64(pixelSize.width * pixelSize.height),
-            enrichedSourceMTimeSeconds: 1
+            renderedSourceSize: Int64(pixelSize.width * pixelSize.height),
+            renderedSourceMTimeSeconds: 1
         )
         let key = MediaAssetTilePresentation.imageContentKey(detail)
         controller.mergeTileDetails([id: detail], reason: "test")

@@ -1456,8 +1456,9 @@ extension CatalogStore {
         }
     }
 
-    /// Clears the enrichment stamps of every photo — or the one named — whose saved edit
-    /// is newer than its thumbnail and preview, so enrichment claims it again.
+    /// Clears the rendering stamp of every photo — or the one named — whose saved edit is
+    /// newer than its thumbnail and preview, so enrichment claims it again for a rendering
+    /// alone: an edit changes neither the file's metadata nor its digest (ADR 0009).
     @discardableResult
     nonisolated static func releaseUnrenderedEdits(
         db: Database,
@@ -1467,14 +1468,14 @@ extension CatalogStore {
         if let rootID, let relativePath {
             try db.execute(
                 sql: """
-                UPDATE media_asset SET enriched_source_size = NULL, enriched_source_mtime = NULL
+                UPDATE media_asset SET rendered_source_size = NULL, rendered_source_mtime = NULL
                 WHERE library_root_id = ? AND relative_path = ? AND edit_revision <> rendered_revision
                 """,
                 arguments: [rootID, relativePath.rawValue]
             )
         } else {
             try db.execute(sql: """
-            UPDATE media_asset SET enriched_source_size = NULL, enriched_source_mtime = NULL
+            UPDATE media_asset SET rendered_source_size = NULL, rendered_source_mtime = NULL
             WHERE edit_revision <> rendered_revision
             """)
         }
@@ -1666,7 +1667,7 @@ extension CatalogStore {
             assetsByID: priorityAssetsByID,
             rootIDsByPath: rootIDsByPathBeforeWrite,
             isRootEnrichable: { [roots] path in roots[path]?.isEnrichable == true },
-            isHashRequired: { [roots] path in roots[path]?.root.isContentHashRequired == true }
+            claimsEveryProduct: { [roots] path in roots[path]?.root.claimsEveryProductTogether == true }
         )
         guard !eligibleClaims.isEmpty else {
             return DatabaseTimedValue(value: [], waitMs: 0, execMs: 0)
@@ -1674,21 +1675,21 @@ extension CatalogStore {
         let timedClaim = try await timedWrite(dbWriter) { db in
             var candidates: [ClaimedEnrichmentCandidate] = []
             candidates.reserveCapacity(min(limit, eligibleClaims.count))
-            for (asset, rootID, hashRequired) in eligibleClaims {
+            for (asset, rootID, everyProduct) in eligibleClaims {
                 guard candidates.count < limit else {
                     break
                 }
                 guard try EnrichmentClaimGateway.claimEnrichmentAsset(
                     libraryRootID: rootID,
                     relativePath: asset.relativePath,
-                    hashRequired: hashRequired,
+                    everyProduct: everyProduct,
                     db: db
                 ) else {
                     continue
                 }
                 candidates.append(ClaimedEnrichmentCandidate(
                     asset: asset,
-                    scope: EnrichmentScope(hashRequired: hashRequired, metadataStale: asset.metadataStale)
+                    scope: EnrichmentScope(everyProduct: everyProduct, asset: asset)
                 ))
             }
             return candidates
@@ -1718,46 +1719,47 @@ extension CatalogStore {
         -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]>
     {
         let prioritizedRootIDs = roots.enrichableRootIDsByRemovablePriority()
-        let (hashRequiredRootIDs, hashNotRequiredRootIDs) = roots.enrichableRootIDsByHashRequirement()
+        let (everyProductRootIDs, metadataFirstRootIDs) = roots.enrichableRootIDsByProductClaim()
         let cardRootIDs = roots.enrichableCardRootIDs()
         let dbWriter = try database()
         let timedStoredAssets = try await timedWrite(dbWriter) { db in
-            var storedAssets: [(asset: StoredAsset, hashRequired: Bool)] = []
-            // The fallback spans roots of mixed kinds (ADR 0018): a root hashed in its
-            // metadata pass (`.library`) is claimed with the broad predicate and index,
-            // the others (`.removableVolume`, `.deviceMTP`) with the metadata-only one.
-            // `INDEXED BY` forbids one statement across both, so partition by hash
-            // requirement within each priority tier: removable roots first (ENR-011),
-            // then a card's digest-only pass, then fixed libraries.
+            var storedAssets: [(asset: StoredAsset, everyProduct: Bool)] = []
+            // The fallback spans roots of mixed kinds (ADR 0018): a root claimed for every
+            // product at once (`.library`) uses the broad predicate and index, the others
+            // (`.removableVolume`, `.deviceMTP`) the metadata-only one. `INDEXED BY`
+            // forbids one statement across both, so partition by claim shape within each
+            // priority tier: removable roots first (ENR-011), then a card's
+            // rendering-and-digest pass, then fixed libraries.
             let removableRoots = Set(prioritizedRootIDs.removable)
             let fixedRoots = Set(prioritizedRootIDs.fixed)
-            // A card's digests come in a pass of their own, offered only once no row of that
-            // card still needs metadata or a thumbnail, so checksumming every byte never
-            // delays what the user is looking at. Claimed under the broad predicate, those
-            // rows' metadata is current, so their scope is the digest alone.
-            let cardsReadyToHash = try cardRootIDs.filter { rootID in
+            // A card's renderings and digests come in a pass of their own, offered only once
+            // no row of that card still needs metadata, so developing and checksumming
+            // every byte never delays the import (ADR 0009). Claimed under the broad
+            // predicate, those rows' metadata is current, so their scope is the rendering
+            // and the digest, made from one read.
+            let cardsReadyForProducts = try cardRootIDs.filter { rootID in
                 try !EnrichmentClaimGateway.hasRowsNeedingMetadata(rootID: rootID, db: db)
             }
-            let claimGroups: [(rootIDs: [Int64], hashRequired: Bool)] = [
-                (removableRoots.intersection(hashRequiredRootIDs).sorted(), true),
-                (removableRoots.intersection(hashNotRequiredRootIDs).sorted(), false),
-                (cardsReadyToHash, true),
-                (fixedRoots.intersection(hashRequiredRootIDs).sorted(), true),
-                (fixedRoots.intersection(hashNotRequiredRootIDs).sorted(), false),
+            let claimGroups: [(rootIDs: [Int64], everyProduct: Bool)] = [
+                (removableRoots.intersection(everyProductRootIDs).sorted(), true),
+                (removableRoots.intersection(metadataFirstRootIDs).sorted(), false),
+                (cardsReadyForProducts, true),
+                (fixedRoots.intersection(everyProductRootIDs).sorted(), true),
+                (fixedRoots.intersection(metadataFirstRootIDs).sorted(), false),
             ]
             for group in claimGroups where storedAssets.count < limit && !group.rootIDs.isEmpty {
                 let remaining = limit - storedAssets.count
                 let claimed = try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                     rootIDs: group.rootIDs,
                     limit: remaining,
-                    hashRequired: group.hashRequired,
+                    everyProduct: group.everyProduct,
                     db: db
                 )
-                storedAssets.append(contentsOf: claimed.map { (asset: $0, hashRequired: group.hashRequired) })
+                storedAssets.append(contentsOf: claimed.map { (asset: $0, everyProduct: group.everyProduct) })
             }
             return storedAssets
         }
-        // `hashRequired` here is the claim predicate the row was just claimed under
+        // `everyProduct` here is the claim predicate the row was just claimed under
         // (carried from the `claimGroups` entry above), not re-derived from current
         // root kind. A root's kind cannot change between the claim
         // above and this mapping since both run inside the same actor-isolated call, but
@@ -1772,7 +1774,7 @@ extension CatalogStore {
             let asset = mediaAsset(from: entry.asset, rootPath: rootPath)
             return ClaimedEnrichmentCandidate(
                 asset: asset,
-                scope: EnrichmentScope(hashRequired: entry.hashRequired, metadataStale: asset.metadataStale)
+                scope: EnrichmentScope(everyProduct: entry.everyProduct, asset: asset)
             )
         }
         let result = DatabaseTimedValue(
@@ -2172,8 +2174,14 @@ extension CatalogStore {
         if oldRow?.captureWallCompact != newRow?.captureWallCompact {
             outcome.namingChangedRoots.insert(result.id.libraryRootPath)
         }
-        outcome.replaceImage(oldPath: oldRow?.thumbnailPath, newPath: result.thumbnailPath)
-        outcome.replaceImage(oldPath: oldRow?.previewPath, newPath: result.previewPath)
+        // A product the result does not carry keeps the row's file: only a rendering
+        // replaces the preview, and a metadata-only result touches neither image.
+        if result.rendering != nil || result.provisionalThumbnail != nil {
+            outcome.replaceImage(oldPath: oldRow?.thumbnailPath, newPath: result.shownThumbnailPath)
+        }
+        if let rendering = result.rendering {
+            outcome.replaceImage(oldPath: oldRow?.previewPath, newPath: rendering.previewPath)
+        }
         outcome.appliedCount += 1
     }
 
@@ -2196,7 +2204,7 @@ extension CatalogStore {
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT a.library_root_id, a.relative_path, a.byte_size, a.enriched_source_mtime,
+                SELECT a.library_root_id, a.relative_path, a.byte_size, a.metadata_source_mtime,
                     (\(Self.predatesContentIdentifierSQL) AND m.camera_make = 'Apple') AS may_complete_live_photo
                 FROM media_asset a
                 JOIN asset_metadata m USING (library_root_id, relative_path)
@@ -2218,7 +2226,7 @@ extension CatalogStore {
                         relativePath: MediaRelativePath(rawValue: row["relative_path"])
                     ),
                     sourceSize: row["byte_size"],
-                    sourceMTimeSeconds: row["enriched_source_mtime"],
+                    sourceMTimeSeconds: row["metadata_source_mtime"],
                     mayCompleteLivePhoto: row["may_complete_live_photo"] ?? false
                 )
             }
@@ -2234,9 +2242,9 @@ extension CatalogStore {
 
     /// Hands rows whose bytes are not local back to enrichment, which downloads each once
     /// and derives everything from that one read — metadata, checksum, thumbnail and
-    /// preview — rather than a metadata read alone (ADR 0041). The row's enrichment
-    /// signature is cleared, the fact enrichment claims on: its stored products describe a
-    /// reading the current reader would extend. A row whose file changed or whose record
+    /// preview — rather than a metadata read alone (ADR 0041). The row's metadata and
+    /// rendering stamps are cleared, the facts enrichment claims on: its stored products
+    /// describe a reading the current reader would extend. A row whose file changed or whose record
     /// was re-read meanwhile is left alone. Returns how many rows were handed over.
     @discardableResult
     func requestEnrichmentDownload(_ candidates: [MetadataRefreshCandidate]) async throws -> Int {
@@ -2249,9 +2257,11 @@ extension CatalogStore {
                 guard let rootID = rootIDs[candidate.id.libraryRootPath] else { continue }
                 try db.execute(
                     sql: """
-                    UPDATE media_asset SET enriched_source_size = NULL, enriched_source_mtime = NULL
+                    UPDATE media_asset SET
+                        metadata_source_size = NULL, metadata_source_mtime = NULL,
+                        rendered_source_size = NULL, rendered_source_mtime = NULL
                     WHERE library_root_id = ? AND relative_path = ?
-                        AND byte_size IS ? AND enriched_source_size IS ? AND enriched_source_mtime IS ?
+                        AND byte_size IS ? AND metadata_source_size IS ? AND metadata_source_mtime IS ?
                         AND EXISTS (
                             SELECT 1 FROM asset_metadata m
                             WHERE m.library_root_id = media_asset.library_root_id
@@ -2308,7 +2318,7 @@ extension CatalogStore {
                     sql: """
                     SELECT 1 FROM media_asset a JOIN asset_metadata m USING (library_root_id, relative_path)
                     WHERE a.library_root_id = ? AND a.relative_path = ?
-                        AND a.byte_size IS ? AND a.enriched_source_size IS ? AND a.enriched_source_mtime IS ?
+                        AND a.byte_size IS ? AND a.metadata_source_size IS ? AND a.metadata_source_mtime IS ?
                         AND NOT (\(EnrichmentClaimGateway.metadataStalenessSQLPredicate()))
                         AND COALESCE(m.extraction_revision, 0) < \(Self.currentExtractionRevisionSQL)
                     """,
@@ -3658,8 +3668,10 @@ private extension CatalogStore {
             bestKind: storedAsset.bestKind,
             bestFormat: storedAsset.bestFormat,
             durationSeconds: storedAsset.durationSeconds,
-            enrichedSourceSize: storedAsset.enrichedSourceSize,
-            enrichedSourceMTimeSeconds: storedAsset.enrichedSourceMTimeSeconds,
+            metadataSourceSize: storedAsset.metadataSourceSize,
+            metadataSourceMTimeSeconds: storedAsset.metadataSourceMTimeSeconds,
+            renderedSourceSize: storedAsset.renderedSourceSize,
+            renderedSourceMTimeSeconds: storedAsset.renderedSourceMTimeSeconds,
             contentHash: storedAsset.contentHash,
             contentHashSourceSize: storedAsset.contentHashSourceSize,
             contentHashSourceMTimeSeconds: storedAsset.contentHashSourceMTimeSeconds,
@@ -3680,8 +3692,8 @@ private extension CatalogStore {
             renderedRevision: storedDetail.renderedRevision,
             bestKind: storedDetail.bestKind,
             durationSeconds: storedDetail.durationSeconds,
-            enrichedSourceSize: storedDetail.enrichedSourceSize,
-            enrichedSourceMTimeSeconds: storedDetail.enrichedSourceMTimeSeconds,
+            renderedSourceSize: storedDetail.renderedSourceSize,
+            renderedSourceMTimeSeconds: storedDetail.renderedSourceMTimeSeconds,
             mediaChoice: storedDetail.mediaChoice
         )
     }
@@ -5196,14 +5208,49 @@ extension CatalogStore {
         }
     }
 
+    /// What the source row holds current for the bytes `operation` copied (ADR 0009), so the
+    /// import makes only the rest from the published copy while it is local. A source that
+    /// is detached or has no row holds nothing.
+    func importSourceProducts(_ operation: ActiveFileOperation) async throws -> ImportSourceProducts {
+        guard let sourceRootID = roots[operation.sourceRootPath]?.rowID else {
+            return ImportSourceProducts(metadataCurrent: false, renderingCurrent: false, recipe: nil)
+        }
+        let overlay = try await database().read { db in
+            try Self.fetchReusableEnrichmentOverlay(
+                sourceRootID: sourceRootID,
+                sourceRelativePath: operation.sourceRelativePath,
+                db: db
+            )
+        }
+        guard let overlay else {
+            return ImportSourceProducts(metadataCurrent: false, renderingCurrent: false, recipe: nil)
+        }
+        let mtimeSeconds = MediaAsset.mtimeSeconds(operation.sourceModifiedAt)
+        return ImportSourceProducts(
+            metadataCurrent: overlay.metadataCurrent(size: operation.sourceByteSize, mtimeSeconds: mtimeSeconds),
+            renderingCurrent: overlay.renderingCurrent(size: operation.sourceByteSize, mtimeSeconds: mtimeSeconds),
+            recipe: overlay.recipe
+        )
+    }
+
+    /// Settles a published copy: its row, its companions, and each of its products (ADR
+    /// 0009). The copy is the source file, byte for byte, so each of the source's products
+    /// current for the bytes the import copied is the copy's — the same freshness rule
+    /// enrichment applies to every row. A product the source does not hold current is the
+    /// one `made` from the published copy, when the import made it; failing a rendering,
+    /// the source's thumbnail is carried as a provisional one. What the copy still lacks
+    /// stays owed, for enrichment.
     @discardableResult
     func settleImportedAsset(
         operation: ActiveFileOperation,
         byteSize: Int64,
         contentModifiedAt: Date,
-        companions: [MediaCompanion]
-    ) async throws -> ImportOverlayReuseResult {
+        companions: [MediaCompanion],
+        made: EnrichmentResult? = nil
+    ) async throws -> ImportProductsResult {
+        let madeImages = made?.stagedImages ?? []
         guard let rootRowID = roots[operation.destinationRootPath]?.rowID else {
+            discardStaged(madeImages)
             throw CatalogStoreError.catalogUnavailable
         }
         recordIndependentNamespaceMutation(
@@ -5212,167 +5259,177 @@ extension CatalogStore {
             fileAction: .upsert
         )
         let dbWriter = try database()
-        var reusableOverlay: ReusableEnrichmentOverlay?
-        var stagedThumbnail: StagedDerivedImage?
-        var stagedPreview: StagedDerivedImage?
-        var reuseResult = ImportOverlayReuseResult.notReused
-        if let sourceRootID = roots[operation.sourceRootPath]?.rowID {
-            if operation.contentHash == nil {
-                // The destination is a library row, which carries the copy's digest; a
-                // copy settled without one is enriched for it anyway, so reuse would only
-                // stamp products that enrichment then redoes.
-                reuseResult = ImportOverlayReuseResult(
-                    metadataCloned: false,
-                    thumbnailCopied: false,
-                    miss: .copyNotHashed
-                )
-            } else if let sourceOverlay = try await dbWriter.read({ db in
-                try Self.fetchReusableEnrichmentOverlay(
-                    sourceRootID: sourceRootID,
-                    sourceRelativePath: operation.sourceRelativePath,
-                    db: db
-                )
-            }) {
-                // The copy is the source file, byte for byte, so the source's overlay is
-                // the copy's whenever it is current for the bytes that were copied: its
-                // enrichment stamps name the size and mtime the import read. This is the
-                // same freshness rule enrichment applies to every row (ADR 0009), and it
-                // holds for a card exactly as for a library.
-                let sourceMTime = MediaAsset.mtimeSeconds(operation.sourceModifiedAt)
-                let sourceFactsCurrent = sourceOverlay.enrichedSourceSize != nil
-                    && sourceOverlay.enrichedSourceMTimeSeconds != nil
-                    && sourceOverlay.enrichedSourceSize == operation.sourceByteSize
-                    && sourceOverlay.enrichedSourceMTimeSeconds == sourceMTime
-                let destinationID = MediaAssetID(
-                    libraryRootPath: operation.destinationRootPath,
-                    relativePath: operation.destinationRelativePath
-                )
-                if sourceFactsCurrent,
-                   sourceOverlay.enrichedKind == .image || sourceOverlay.enrichedKind == .raw,
-                   sourceOverlay.previewPath == nil
-                {
-                    reuseResult = ImportOverlayReuseResult(
-                        metadataCloned: false,
-                        thumbnailCopied: false,
-                        miss: .missingPreview
-                    )
-                } else if sourceFactsCurrent {
-                    if let sourceThumbnail = sourceOverlay.thumbnailPath {
-                        if let thumbnailDirectory {
-                            do {
-                                stagedThumbnail = try ThumbnailStore.stageCopy(
-                                    sourceRelativeName: sourceThumbnail,
-                                    destinationRelativeName: ThumbnailStore.relativeName(for: destinationID),
-                                    in: thumbnailDirectory
-                                )
-                                if let sourcePreview = sourceOverlay.previewPath {
-                                    stagedPreview = try ThumbnailStore.stageCopy(
-                                        sourceRelativeName: sourcePreview,
-                                        destinationRelativeName: ThumbnailStore.previewRelativeName(for: destinationID),
-                                        in: thumbnailDirectory
-                                    )
-                                }
-                                reusableOverlay = sourceOverlay
-                            } catch {
-                                for staged in [stagedThumbnail, stagedPreview].compactMap(\.self) {
-                                    ThumbnailStore.discard(staged, in: thumbnailDirectory)
-                                }
-                                stagedThumbnail = nil
-                                stagedPreview = nil
-                                reuseResult = ImportOverlayReuseResult(
-                                    metadataCloned: false,
-                                    thumbnailCopied: false,
-                                    miss: .thumbnailCopyFailed
-                                )
-                            }
-                        } else {
-                            reuseResult = ImportOverlayReuseResult(
-                                metadataCloned: false,
-                                thumbnailCopied: false,
-                                miss: .missingThumbnail
-                            )
-                            reusableOverlay = nil
-                            stagedThumbnail = nil
-                            // In-memory catalogs intentionally have no reusable files.
-                        }
-                    } else {
-                        reusableOverlay = sourceOverlay
-                    }
-                } else {
-                    reuseResult = ImportOverlayReuseResult(
-                        metadataCloned: false,
-                        thumbnailCopied: false,
-                        miss: .staleSourceOverlay
+        let sourceRootID = roots[operation.sourceRootPath]?.rowID
+        var overlay: ReusableEnrichmentOverlay?
+        if let sourceRootID {
+            do {
+                overlay = try await dbWriter.read { db in
+                    try Self.fetchReusableEnrichmentOverlay(
+                        sourceRootID: sourceRootID,
+                        sourceRelativePath: operation.sourceRelativePath,
+                        db: db
                     )
                 }
-            } else {
-                reuseResult = .notReused
+            } catch {
+                discardStaged(madeImages)
+                throw error
             }
-        } else {
-            reuseResult = ImportOverlayReuseResult(
-                metadataCloned: false,
-                thumbnailCopied: false,
-                miss: .detachedSource
-            )
         }
-        var overlayToWrite = reusableOverlay
-        var thumbnailPathToWrite: String?
-        var previewPathToWrite: String?
+        let sourceMTime = MediaAsset.mtimeSeconds(operation.sourceModifiedAt)
+        let destinationID = MediaAssetID(
+            libraryRootPath: operation.destinationRootPath,
+            relativePath: operation.destinationRelativePath
+        )
+
+        var metadata: EnrichedMetadata?
+        var metadataOrigin = ImportProductOrigin.owed
+        if let overlay, overlay.metadataCurrent(size: operation.sourceByteSize, mtimeSeconds: sourceMTime) {
+            metadata = overlay.metadata
+            metadataOrigin = .reused
+        } else if let madeMetadata = made?.metadata {
+            metadata = madeMetadata
+            metadataOrigin = .made
+        }
+
+        // The rendering's images, staged for the copy: copies of the source's, or the ones
+        // the import made. `unused` collects what is staged but not written, to discard.
+        var rendering: StagedRendering?
+        var renderingOrigin = ImportProductOrigin.owed
+        var unused = madeImages
+        if let overlay, overlay.renderingCurrent(size: operation.sourceByteSize, mtimeSeconds: sourceMTime),
+           let copied = stageCopies(of: overlay, for: destinationID, preview: true)
+        {
+            rendering = StagedRendering(
+                thumbnail: copied.thumbnail, preview: copied.preview, stamped: true, renderedRevision: overlay.renderedRevision
+            )
+            renderingOrigin = .reused
+        }
+        if renderingOrigin == .owed, let made, let madeRendering = made.rendering {
+            rendering = StagedRendering(
+                thumbnail: madeRendering.generatedThumbnail,
+                preview: madeRendering.generatedPreview,
+                stamped: true,
+                renderedRevision: made.editRevision
+            )
+            renderingOrigin = .made
+            unused.removeAll { $0 == madeRendering.generatedThumbnail || $0 == madeRendering.generatedPreview }
+        }
+        if renderingOrigin == .owed, let overlay, overlay.thumbnailPath != nil,
+           let copied = stageCopies(of: overlay, for: destinationID, preview: false)
+        {
+            rendering = StagedRendering(thumbnail: copied.thumbnail, preview: nil, stamped: false, renderedRevision: 0)
+            renderingOrigin = .provisional
+        }
+        discardStaged(unused)
+
+        let directory = thumbnailDirectory
         try Self.writeWithJournalDurability(dbWriter) { db in
-            if let staged = stagedThumbnail, let thumbnailDirectory {
+            var landedRendering: LandedRendering?
+            if let rendering {
+                let staged = [rendering.thumbnail, rendering.preview].compactMap(\.self)
                 do {
-                    thumbnailPathToWrite = try ThumbnailStore.promote(staged, in: thumbnailDirectory)
-                    if let stagedPreview {
-                        previewPathToWrite = try ThumbnailStore.promote(stagedPreview, in: thumbnailDirectory)
+                    // Staged images exist only where the catalog has a derived-image
+                    // directory; a rendering with no images (nothing could be drawn) needs none.
+                    let promote: (StagedDerivedImage) throws -> String = { image in
+                        guard let directory else {
+                            throw CatalogStoreError.catalogUnavailable
+                        }
+                        return try ThumbnailStore.promote(image, in: directory)
                     }
-                    reuseResult = ImportOverlayReuseResult(
-                        metadataCloned: overlayToWrite != nil,
-                        thumbnailCopied: overlayToWrite?.thumbnailPath != nil,
-                        miss: nil
+                    let thumbnailPath = try rendering.thumbnail.map(promote)
+                    let previewPath = try rendering.preview.map(promote)
+                    landedRendering = LandedRendering(
+                        thumbnailPath: thumbnailPath,
+                        previewPath: previewPath,
+                        stamped: rendering.stamped,
+                        renderedRevision: rendering.renderedRevision
                     )
                 } catch {
-                    for image in [staged, stagedPreview].compactMap(\.self) {
-                        ThumbnailStore.discard(image, in: thumbnailDirectory)
+                    if let directory {
+                        for image in staged {
+                            ThumbnailStore.discard(image, in: directory)
+                        }
                     }
-                    overlayToWrite = nil
-                    stagedThumbnail = nil
-                    stagedPreview = nil
-                    thumbnailPathToWrite = nil
-                    previewPathToWrite = nil
-                    reuseResult = ImportOverlayReuseResult(
-                        metadataCloned: false,
-                        thumbnailCopied: false,
-                        miss: .thumbnailCopyFailed
-                    )
+                    OtosLog.thumbnails.errorOperation("mediaOperation.settle", phase: "renderingPromotionFailed", fields: [
+                        "destination": operation.destinationRelativePath.rawValue,
+                        "error": String(describing: error),
+                    ])
+                    renderingOrigin = .owed
                 }
-            } else if overlayToWrite != nil {
-                reuseResult = ImportOverlayReuseResult(metadataCloned: true, thumbnailCopied: false, miss: nil)
             }
             try Self.settleImportedAsset(LandedImport(
                 operation: operation,
                 destinationRootID: rootRowID,
-                sourceRootID: roots[operation.sourceRootPath]?.rowID,
+                sourceRootID: sourceRootID,
                 byteSize: byteSize,
                 contentModifiedAt: contentModifiedAt,
                 companions: companions,
-                reusableOverlay: overlayToWrite,
-                destinationThumbnailPath: thumbnailPathToWrite,
-                destinationPreviewPath: previewPathToWrite
+                metadata: metadata,
+                rendering: landedRendering
             ), db: db)
             try Self.deleteActiveFileOperation(key: operation.operationKey, db: db)
         }
         _ = bumpNamespaceRevision(for: operation.destinationRootPath)
         notifyCatalogChanged()
         requestReconcile()
-        OtosLog.catalog.notice(
-            "op=mediaOperation.settle phase=finish destination=\(operation.destinationRelativePath.rawValue, privacy: .public) batch=\(operation.importBatch.unixMilliseconds, privacy: .public)"
-        )
-        if reuseResult.metadataCloned {
-            OtosLog.catalog.notice(
-                "op=mediaOperation.settle phase=overlayReuse destination=\(operation.destinationRelativePath.rawValue, privacy: .public) overlaySource=reusedImport thumbnailCopied=\(reuseResult.thumbnailCopied, privacy: .public)"
-            )
+        OtosLog.catalog.noticeOperation("mediaOperation.settle", phase: "finish", fields: [
+            "destination": operation.destinationRelativePath.rawValue,
+            "batch": "\(operation.importBatch.unixMilliseconds)",
+            "metadata": metadataOrigin.rawValue,
+            "rendering": renderingOrigin.rawValue,
+        ])
+        return ImportProductsResult(metadata: metadataOrigin, rendering: renderingOrigin)
+    }
+
+    /// Stages copies of the source's thumbnail and, when `preview`, its preview under the
+    /// copy's names; nil when a copy fails, after discarding what it staged, or when there
+    /// are files to copy and no derived-image directory to copy them in.
+    private func stageCopies(
+        of overlay: ReusableEnrichmentOverlay,
+        for destinationID: MediaAssetID,
+        preview: Bool
+    ) -> (thumbnail: StagedDerivedImage?, preview: StagedDerivedImage?)? {
+        let sourcePreview = preview ? overlay.previewPath : nil
+        guard overlay.thumbnailPath != nil || sourcePreview != nil else {
+            return (nil, nil)
         }
-        return reuseResult
+        guard let thumbnailDirectory else {
+            return nil
+        }
+        var stagedThumbnail: StagedDerivedImage?
+        do {
+            stagedThumbnail = try overlay.thumbnailPath.map {
+                try ThumbnailStore.stageCopy(
+                    sourceRelativeName: $0,
+                    destinationRelativeName: ThumbnailStore.relativeName(for: destinationID),
+                    in: thumbnailDirectory
+                )
+            }
+            let stagedPreview = try sourcePreview.map {
+                try ThumbnailStore.stageCopy(
+                    sourceRelativeName: $0,
+                    destinationRelativeName: ThumbnailStore.previewRelativeName(for: destinationID),
+                    in: thumbnailDirectory
+                )
+            }
+            return (stagedThumbnail, stagedPreview)
+        } catch {
+            if let stagedThumbnail {
+                ThumbnailStore.discard(stagedThumbnail, in: thumbnailDirectory)
+            }
+            OtosLog.thumbnails.errorOperation("mediaOperation.settle", phase: "derivedImageCopyFailed", fields: [
+                "destination": destinationID.relativePath.rawValue,
+                "error": String(describing: error),
+            ])
+            return nil
+        }
+    }
+
+    private func discardStaged(_ images: [StagedDerivedImage]) {
+        guard let thumbnailDirectory else { return }
+        for image in images {
+            ThumbnailStore.discard(image, in: thumbnailDirectory)
+        }
     }
 
     func recordForeignOccupant(root: LibraryRootPath, relativePath: MediaRelativePath) async {

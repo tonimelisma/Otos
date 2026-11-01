@@ -58,12 +58,12 @@ struct CatalogStoreQueryPlanTests {
         let rootEnrichmentQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID1],
             limit: 4,
-            hashRequired: true
+            everyProduct: true
         ))
         let globalEnrichmentQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID1, rootID2],
             limit: 4,
-            hashRequired: true
+            everyProduct: true
         ))
 
         let plans = try await dbQueue.read { db in
@@ -164,7 +164,7 @@ struct CatalogStoreQueryPlanTests {
         let claimQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID],
             limit: 4,
-            hashRequired: true
+            everyProduct: true
         ))
 
         let legacyQuery = legacyNotInEnrichmentQuery(rootID: rootID, excludedCount: 50)
@@ -204,7 +204,7 @@ struct CatalogStoreQueryPlanTests {
             try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [rootID],
                 limit: 2,
-                hashRequired: true,
+                everyProduct: true,
                 db: db
             )
         }
@@ -242,12 +242,12 @@ struct CatalogStoreQueryPlanTests {
         let rootMetadataOnlyQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID1],
             limit: 4,
-            hashRequired: false
+            everyProduct: false
         ))
         let globalMetadataOnlyQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID1, rootID2],
             limit: 4,
-            hashRequired: false
+            everyProduct: false
         ))
 
         let plans = try await dbQueue.read { db in
@@ -281,7 +281,7 @@ struct CatalogStoreQueryPlanTests {
                 INSERT INTO media_asset (
                     library_root_id, relative_path, sort_key, name_sort_key, name,
                     content_type_identifier, byte_size, content_modified_at_unix,
-                    enriched_source_size, enriched_source_mtime
+                    metadata_source_size, metadata_source_mtime
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -294,7 +294,7 @@ struct CatalogStoreQueryPlanTests {
             try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [rootID],
                 limit: 4,
-                hashRequired: false,
+                everyProduct: false,
                 db: db
             )
         }
@@ -304,7 +304,7 @@ struct CatalogStoreQueryPlanTests {
             try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [rootID],
                 limit: 4,
-                hashRequired: true,
+                everyProduct: true,
                 db: db
             )
         }
@@ -513,11 +513,11 @@ private func legacyNotInEnrichmentQuery(rootID: Int64, excludedCount: Int) -> SQ
         FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
         WHERE library_root_id = ?
           AND (
-            enriched_source_size IS NULL
-            OR enriched_source_mtime IS NULL
-            OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
+            metadata_source_size IS NULL
+            OR metadata_source_mtime IS NULL
+            OR COALESCE(byte_size, -1) <> COALESCE(metadata_source_size, -1)
             OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
-               <> COALESCE(enriched_source_mtime, -1)
+               <> COALESCE(metadata_source_mtime, -1)
           )
           AND (library_root_id, relative_path) NOT IN (\(exclusionPlaceholders))
         ORDER BY sort_key, relative_path

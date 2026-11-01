@@ -147,27 +147,60 @@ nonisolated struct StagedDerivedImage: Equatable {
 /// work; the store stamps those so a file changed mid-enrichment is detected as stale.
 /// A generated thumbnail or preview may be staged, in which case `thumbnailPath` /
 /// `previewPath` is the final path to stamp only after Store promotes the staged file.
-/// What one enrichment of a claimed row reads and produces (ADR 0018). Decided by the
-/// Store at claim time from the row's staleness and the claim predicate it was claimed
-/// under, and carried to the enricher rather than re-derived.
-nonisolated enum EnrichmentScope: Equatable, Sendable {
-    /// Metadata, thumbnail and preview without a digest: a removable card's first pass,
-    /// so what the user looks at comes before a read of every byte.
-    case metadata
-    /// Metadata, thumbnail, preview and the digest from one materialized file.
-    case metadataAndHash
-    /// The digest alone: metadata and products are current. A card's second pass, and a
-    /// library row whose digest went stale while its metadata did not.
-    case hash
+/// The products one enrichment of a claimed row makes (ADR 0009, ADR 0018): the set of
+/// its stale products the claim covers. Decided by the Store at claim time from the row's
+/// stamps and the claim predicate it was claimed under, and carried to the enricher
+/// rather than re-derived.
+nonisolated struct EnrichmentScope: OptionSet, Hashable, Sendable {
+    let rawValue: Int
 
-    /// The scope for a row claimed under `hashRequired`'s predicate. A row whose metadata
-    /// is current was claimed for its digest only.
-    init(hashRequired: Bool, metadataStale: Bool) {
-        switch (hashRequired, metadataStale) {
-        case (false, _): self = .metadata
-        case (true, true): self = .metadataAndHash
-        case (true, false): self = .hash
+    /// Parsed metadata, kind, format and capture wall: what an import's naming waits on.
+    static let metadata = EnrichmentScope(rawValue: 1 << 0)
+    /// The thumbnail and preview from one development of the original (ADR 0035).
+    static let rendering = EnrichmentScope(rawValue: 1 << 1)
+    /// The XXH3 digest of every byte.
+    static let hash = EnrichmentScope(rawValue: 1 << 2)
+    /// A thumbnail that is not a rendering and is not stamped: QuickLook's in a card's
+    /// metadata pass, or a camera's embedded preview, shown until the rendering lands.
+    static let provisionalThumbnail = EnrichmentScope(rawValue: 1 << 3)
+
+    /// The scope for `asset` claimed under the every-product predicate (`everyProduct`)
+    /// or the metadata-only one. Every stale product of a row claimed for all of them is
+    /// made from one read, so a cloud-only original is downloaded once for all of them. A
+    /// row claimed for metadata alone whose rendering is owed also gets a provisional
+    /// thumbnail.
+    init(everyProduct: Bool, asset: MediaAsset) {
+        guard everyProduct else {
+            self = asset.renderingStale ? [.metadata, .provisionalThumbnail] : [.metadata]
+            return
         }
+        var scope: EnrichmentScope = []
+        if asset.metadataStale {
+            scope.insert(.metadata)
+        }
+        if asset.renderingStale {
+            scope.insert(.rendering)
+        }
+        if asset.hashStale {
+            scope.insert(.hash)
+        }
+        self = scope
+    }
+
+    init(rawValue: Int) {
+        self.rawValue = rawValue
+    }
+}
+
+nonisolated extension EnrichmentScope: CustomStringConvertible {
+    /// A stable, greppable name for logs: the products joined by `+`.
+    var description: String {
+        let names: [(EnrichmentScope, String)] = [
+            (.metadata, "metadata"), (.rendering, "rendering"), (.hash, "hash"),
+            (.provisionalThumbnail, "provisionalThumbnail"),
+        ]
+        let present = names.filter { contains($0.0) }.map(\.1)
+        return present.isEmpty ? "none" : present.joined(separator: "+")
     }
 }
 
@@ -180,26 +213,80 @@ nonisolated struct ContentHashResult: Equatable, Sendable {
     let sourceMTimeSeconds: Int?
 }
 
-nonisolated struct EnrichmentResult: Equatable {
-    let id: MediaAssetID
+/// Parsed metadata and what the catalog projects from it.
+nonisolated struct EnrichedMetadata: Equatable {
     let metadata: AssetMetadata
-    let enrichedKind: MediaKind?
-    let enrichedFormat: MediaFormatToken?
+    let kind: MediaKind?
+    let format: MediaFormatToken?
+}
+
+/// One rendering's products (ADR 0035): the 256 px thumbnail and, for a still the
+/// renderer read, the 2560 px preview. A video's QuickLook thumbnail is its rendering, and
+/// a still no renderer could read falls back to QuickLook's with no preview; either can be
+/// nil when nothing could be drawn, which is still a definitive outcome and is stamped.
+nonisolated struct EnrichedRendering: Equatable {
     let thumbnailPath: String?
     let generatedThumbnail: StagedDerivedImage?
-    /// The stored loupe preview (ADR 0035); nil for videos and for stills no renderer
-    /// could read, which then fall back to decoding the original.
+    /// nil for videos and for stills no renderer could read, which then fall back to
+    /// decoding the original.
     let previewPath: String?
     let generatedPreview: StagedDerivedImage?
-    /// The edit recipe revision the products were rendered with (0: unedited). The store
-    /// applies the result only while that revision is still current (ADR 0036).
+
+    init(
+        thumbnailPath: String? = nil,
+        generatedThumbnail: StagedDerivedImage? = nil,
+        previewPath: String? = nil,
+        generatedPreview: StagedDerivedImage? = nil
+    ) {
+        self.thumbnailPath = generatedThumbnail?.finalRelativePath ?? thumbnailPath
+        self.generatedThumbnail = generatedThumbnail
+        self.previewPath = generatedPreview?.finalRelativePath ?? previewPath
+        self.generatedPreview = generatedPreview
+    }
+}
+
+/// What one enrichment made for one row, each product present only when the scope
+/// covered it (ADR 0009). The store writes each present product with its own stamp, the
+/// `(sourceSize, sourceMTimeSeconds)` the bytes were read at, and leaves the others as
+/// they are.
+nonisolated struct EnrichmentResult: Equatable {
+    let id: MediaAssetID
+    let metadata: EnrichedMetadata?
+    let rendering: EnrichedRendering?
+    /// A thumbnail shown until the rendering lands; written without a stamp, and only
+    /// when the result carries no rendering.
+    let provisionalThumbnail: StagedDerivedImage?
+    /// The edit recipe revision the rendering was made with (0: unedited). The store
+    /// applies a rendering only while that revision is still current (ADR 0036).
     let editRevision: Int64
     let sourceSize: Int64?
     let sourceMTimeSeconds: Int?
-    /// Absent when the scope was `.metadata` (a card's first pass, ADR 0018). The store
-    /// then leaves the row's existing hash columns untouched rather than clearing them.
+    /// Absent when the scope did not cover the digest. The store then leaves the row's
+    /// existing hash columns untouched rather than clearing them.
     let contentHash: XXH3Digest128?
 
+    init(
+        id: MediaAssetID,
+        metadata: EnrichedMetadata?,
+        rendering: EnrichedRendering?,
+        provisionalThumbnail: StagedDerivedImage? = nil,
+        sourceSize: Int64?,
+        sourceMTimeSeconds: Int?,
+        contentHash: XXH3Digest128?,
+        editRevision: Int64 = 0
+    ) {
+        self.id = id
+        self.metadata = metadata
+        self.rendering = rendering
+        self.provisionalThumbnail = rendering == nil ? provisionalThumbnail : nil
+        self.editRevision = editRevision
+        self.sourceSize = sourceSize
+        self.sourceMTimeSeconds = sourceMTimeSeconds
+        self.contentHash = contentHash
+    }
+
+    /// A result carrying metadata and a rendering together, as a fixed library's
+    /// enrichment of a row whose every product was stale makes.
     init(
         id: MediaAssetID,
         metadata: AssetMetadata,
@@ -214,25 +301,33 @@ nonisolated struct EnrichmentResult: Equatable {
         generatedPreview: StagedDerivedImage? = nil,
         editRevision: Int64 = 0
     ) {
-        self.id = id
-        self.metadata = metadata
-        self.enrichedKind = enrichedKind
-        self.enrichedFormat = enrichedFormat
-        self.thumbnailPath = generatedThumbnail?.finalRelativePath ?? thumbnailPath
-        self.generatedThumbnail = generatedThumbnail
-        self.previewPath = generatedPreview?.finalRelativePath ?? previewPath
-        self.generatedPreview = generatedPreview
-        self.editRevision = editRevision
-        self.sourceSize = sourceSize
-        self.sourceMTimeSeconds = sourceMTimeSeconds
-        self.contentHash = contentHash
+        self.init(
+            id: id,
+            metadata: EnrichedMetadata(metadata: metadata, kind: enrichedKind, format: enrichedFormat),
+            rendering: EnrichedRendering(
+                thumbnailPath: thumbnailPath,
+                generatedThumbnail: generatedThumbnail,
+                previewPath: previewPath,
+                generatedPreview: generatedPreview
+            ),
+            sourceSize: sourceSize,
+            sourceMTimeSeconds: sourceMTimeSeconds,
+            contentHash: contentHash,
+            editRevision: editRevision
+        )
+    }
+
+    /// The thumbnail the row shows once this result is written: the rendering's, else the
+    /// provisional one; nil when this result leaves the row's thumbnail as it is.
+    var shownThumbnailPath: String? {
+        rendering?.thumbnailPath ?? provisionalThumbnail?.finalRelativePath
     }
 }
 
 nonisolated extension EnrichmentResult {
     /// Every staged file this result carries, for promotion or discard as one set.
     var stagedImages: [StagedDerivedImage] {
-        [generatedThumbnail, generatedPreview].compactMap(\.self)
+        [rendering?.generatedThumbnail, rendering?.generatedPreview, provisionalThumbnail].compactMap(\.self)
     }
 }
 

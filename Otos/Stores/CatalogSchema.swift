@@ -271,6 +271,42 @@ nonisolated enum CatalogSchema {
         "UPDATE asset_metadata SET extraction_revision = NULL WHERE family IN ('heif', 'jpeg', 'tiff')",
     ]
 
+    /// One freshness stamp per product (ADR 0009): metadata, the rendering (thumbnail and
+    /// preview, made from one development, ADR 0035), and the digest each name the
+    /// `(size, mtime)` they were made from, so each is stale on its own. The old
+    /// enrichment stamp certified metadata and rendering together; it becomes the metadata
+    /// stamp, and the rendering stamp starts as its copy. A card's or camera's still or RAW
+    /// without a preview was given QuickLook's or the camera's embedded thumbnail, not a
+    /// rendering, so it starts with none and is rendered again. The claim indexes are
+    /// created again from the current predicates.
+    static let productStampsMigrationIdentifier = "v13_product_stamps"
+
+    static var productStampsStatements: [String] {
+        [
+            "DROP INDEX \(EnrichmentClaimGateway.broadGlobalIndexName)",
+            "DROP INDEX \(EnrichmentClaimGateway.broadRootIndexName)",
+            "DROP INDEX \(EnrichmentClaimGateway.metadataOnlyGlobalIndexName)",
+            "DROP INDEX \(EnrichmentClaimGateway.metadataOnlyRootIndexName)",
+            "ALTER TABLE media_asset RENAME COLUMN enriched_source_size TO metadata_source_size",
+            "ALTER TABLE media_asset RENAME COLUMN enriched_source_mtime TO metadata_source_mtime",
+            "ALTER TABLE media_asset ADD COLUMN rendered_source_size INTEGER",
+            "ALTER TABLE media_asset ADD COLUMN rendered_source_mtime INTEGER",
+            """
+            UPDATE media_asset
+            SET rendered_source_size = metadata_source_size, rendered_source_mtime = metadata_source_mtime
+            WHERE NOT (
+                library_root_id IN (SELECT id FROM library_root WHERE kind <> 'library')
+                AND enriched_kind IN ('image', 'raw')
+                AND preview_path IS NULL
+            )
+            """,
+            claimIndex(EnrichmentClaimGateway.broadGlobalIndexName, global: true, everyProduct: true),
+            claimIndex(EnrichmentClaimGateway.broadRootIndexName, global: false, everyProduct: true),
+            claimIndex(EnrichmentClaimGateway.metadataOnlyGlobalIndexName, global: true, everyProduct: false),
+            claimIndex(EnrichmentClaimGateway.metadataOnlyRootIndexName, global: false, everyProduct: false),
+        ]
+    }
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (
@@ -406,13 +442,13 @@ nonisolated enum CatalogSchema {
         ON media_asset(import_batch_unix_ms, library_root_id, relative_path)
         WHERE import_batch_unix_ms IS NOT NULL
         """,
-        // Rows whose enrichment or content hash is missing or stale, newest first: the
-        // claim query walks these, so their names and predicates are the gateway's. The
-        // metadata-only pair serves roots that are not hashed.
-        claimIndex(EnrichmentClaimGateway.broadGlobalIndexName, global: true, hashRequired: true),
-        claimIndex(EnrichmentClaimGateway.broadRootIndexName, global: false, hashRequired: true),
-        claimIndex(EnrichmentClaimGateway.metadataOnlyGlobalIndexName, global: true, hashRequired: false),
-        claimIndex(EnrichmentClaimGateway.metadataOnlyRootIndexName, global: false, hashRequired: false),
+        // The claim indexes as v1 created them, over the one enrichment stamp v13 split.
+        // Their text is frozen here because it names columns v13 renames; v13 drops them
+        // and creates the current ones from the gateway's predicates.
+        v1ClaimIndex(EnrichmentClaimGateway.broadGlobalIndexName, global: true, broad: true),
+        v1ClaimIndex(EnrichmentClaimGateway.broadRootIndexName, global: false, broad: true),
+        v1ClaimIndex(EnrichmentClaimGateway.metadataOnlyGlobalIndexName, global: true, broad: false),
+        v1ClaimIndex(EnrichmentClaimGateway.metadataOnlyRootIndexName, global: false, broad: false),
         """
         CREATE INDEX idx_media_asset_relative_path_key
         ON media_asset(library_root_id, relative_path_key)
@@ -591,14 +627,46 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
-    private static func claimIndex(_ name: String, global: Bool, hashRequired: Bool) -> String {
+    /// A claim index over rows owing a product, newest first: the claim queries walk these
+    /// by name with `INDEXED BY`, so the `WHERE` text is the gateway's predicate verbatim.
+    static func claimIndex(_ name: String, global: Bool, everyProduct: Bool) -> String {
+        claimIndex(name, global: global, predicate: EnrichmentClaimGateway.stalenessSQLPredicate(everyProduct: everyProduct))
+    }
+
+    private static func v1ClaimIndex(_ name: String, global: Bool, broad: Bool) -> String {
+        let metadata = """
+        enriched_source_size IS NULL
+           OR enriched_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(enriched_source_mtime, -1)
+        """
+        let hash = """
+        content_hash_xxh3_128 IS NULL
+           OR length(content_hash_xxh3_128) <> 16
+           OR content_hash_source_size IS NULL
+           OR content_hash_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(content_hash_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(content_hash_source_mtime, -1)
+        """
+        let predicate = broad
+            ? """
+            \(metadata)
+               OR \(hash)
+            """
+            : metadata
+        return claimIndex(name, global: global, predicate: predicate)
+    }
+
+    private static func claimIndex(_ name: String, global: Bool, predicate: String) -> String {
         let columns = global
             ? "best_capture_unix DESC, library_root_id, relative_path"
             : "library_root_id, best_capture_unix DESC, relative_path"
         return """
         CREATE INDEX \(name)
         ON media_asset(\(columns))
-        WHERE \(EnrichmentClaimGateway.stalenessSQLPredicate(hashRequired: hashRequired))
+        WHERE \(predicate)
         """
     }
 }

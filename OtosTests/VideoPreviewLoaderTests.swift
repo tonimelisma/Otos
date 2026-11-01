@@ -17,11 +17,10 @@ struct VideoPreviewLoaderTests {
         MediaTileDetail(
             libraryRootPath: LibraryRootPath(rawValue: "/Library/Root"),
             relativePath: MediaRelativePath(rawValue: "v.mp4"),
+            byteSize: 1024,
             thumbnailPath: nil,
             bestKind: kind,
-            durationSeconds: 12,
-            enrichedSourceSize: 1024,
-            enrichedSourceMTimeSeconds: nil
+            durationSeconds: 12
         )
     }
 

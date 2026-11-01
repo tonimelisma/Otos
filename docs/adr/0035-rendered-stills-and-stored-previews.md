@@ -35,16 +35,18 @@ and is never shown at full size except when zoomed to 100%.
   size is read once, when its filter is made (`OpenedRAW`), and every scale factor and
   reported size comes from that value: under RAW9 the filter's `nativeSize` changes once
   a scale factor is set (research 2026-10-26-live-edit-latency).
-- **Two stored products per still,** made from one rendering during enrichment, while
-  the original's bytes are local, with one exception:
+- **Two stored products per still,** made from one rendering while the original's bytes
+  are local, and stamped together as the row's rendering (ADR 0009):
   - a 2560 px preview, 8-bit Display P3 HEIC, in `media_asset.preview_path`;
   - the 256 px grid thumbnail, drawn from that rendering.
 
-  The exception is a card's first pass (`EnrichmentScope.metadata`), the pass an import
-  waits on. There, an unedited RAW is not developed: it gets Quick Look's thumbnail, the
-  camera's embedded JPEG, and no preview. A RAW9 development costs about a second, and
-  neither a smaller output, draft mode, a shared context nor concurrency makes it cheaper
-  (research 2026-10-31-raw9-speed).
+  A card's metadata pass, the pass an import waits on, renders nothing: each row gets
+  Quick Look's thumbnail — for a RAW, the camera's embedded JPEG — as a provisional,
+  unstamped thumbnail. The card's renderings come in its later rendering-and-digest pass.
+  A RAW9 development costs about a second, and neither a smaller output, draft mode, a
+  shared context nor concurrency makes it cheaper (research 2026-10-31-raw9-speed); the
+  card's HEIF decodes took most of its readiness time when they were in the first pass
+  (research 2026-10-31-card-readiness-products).
 
   Videos keep their Quick Look thumbnail and get no preview. If the renderer cannot
   read a still, its thumbnail falls back to Quick Look and it gets no preview. Both
@@ -64,10 +66,10 @@ and is never shown at full size except when zoomed to 100%.
   enrichment stamps of library stills, so the unchanged staleness predicate claims
   them again and enrichment renders both products, downloading cloud-only originals
   under the free-space floor (ENR-008). Card and camera rows are left stamped.
-- **Import reuse** copies the preview with the thumbnail. A still or RAW whose source row
-  has no preview (a camera row enriched from byte ranges, or an unedited RAW from a card's
-  first pass) is a reuse miss, so the library copy is enriched from its own bytes and
-  gains one.
+- **An import renders the copy** whose source holds no current rendering — a card row its
+  rendering pass has not reached, a camera row — from the published copy, before it
+  settles, so the rendering is made while the copy's bytes are local (ADR 0009 §9). A
+  source rendering current for the copied bytes is copied with its preview instead.
 - **No re-render on OS updates.** A macOS update that changes RAW9's output does not
   re-render, because re-rendering means re-downloading the library. Products follow the
   file's `(size, mtime)` and, from the editing increments on, the edit recipe.
@@ -76,9 +78,11 @@ and is never shown at full size except when zoomed to 100%.
 
 - In a library, grid and loupe show the same rendering. Every library RAW changes from
   the camera's look to RAW9's as enrichment reaches it. A card shows its RAWs in the
-  camera's look, with the loupe developing them on open, and their imported copies change
-  to RAW9's once they are enriched; a newer thumbnail of the same asset replacing the
-  painted one keeps the no-blank rule (APP-015).
+  camera's look until its rendering pass reaches them, with the loupe developing them on
+  open; a newer thumbnail of the same asset replacing the painted one keeps the no-blank
+  rule (APP-015). An imported copy settles with its RAW9 rendering.
+- An import whose card has not finished its rendering pass develops each RAW still owed
+  during the import, about a second each on the one background RAW lane.
 - About 6 GB of Application Support for previews, kept for the life of each photo
   (ADR 0008, ADR 0009: no eviction).
 - The backfill re-enriches every library still once: on this library, about 209 GB of
@@ -97,6 +101,9 @@ and is never shown at full size except when zoomed to 100%.
 - **JPEG previews:** about twice the size of HEIC.
 - **A separate preview directory and store type:** every file mechanic is the
   thumbnail's already; only encoding and extension differ.
-- **Developing a card's RAWs in its first pass:** it made a card of 37 RAWs ready to
+- **Rendering a card's stills in its metadata pass:** it made a card of 37 RAWs ready to
   import in 55–70 s instead of 6 s, and no `CIRAWFilter` option or concurrency made the
-  development cheaper.
+  development cheaper. Developing only its non-RAW stills there still held a 429-row card
+  at 23–58 s against 4–15 s for metadata alone.
+- **Enriching an imported copy after it lands:** a cloud-synced library may evict the
+  copy first, and its rendering then costs a download.

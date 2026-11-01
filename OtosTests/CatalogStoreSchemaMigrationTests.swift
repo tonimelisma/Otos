@@ -171,6 +171,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.trashPathMigrationIdentifier,
             CatalogSchema.duplicatesMigrationIdentifier,
             CatalogSchema.renderSignatureMigrationIdentifier,
+            CatalogSchema.productStampsMigrationIdentifier,
         ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
@@ -255,6 +256,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.trashPathMigrationIdentifier,
             CatalogSchema.duplicatesMigrationIdentifier,
             CatalogSchema.renderSignatureMigrationIdentifier,
+            CatalogSchema.productStampsMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -343,6 +345,61 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(indexes.count == 4)
     }
 
+    /// ADR 0009: v13 turns the one enrichment stamp into the metadata stamp and gives every
+    /// row the rendering stamp it already had in effect — except a card's or camera's still
+    /// or RAW without a preview, whose thumbnail was QuickLook's or the camera's, not a
+    /// rendering, and which is rendered again.
+    @Test func theProductStampsMigrationStampsRenderingsExceptProvisionalOnes() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.renderSignatureMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (2, '/Volumes/Card', 'removableVolume')")
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (3, '/DeviceStaging/Cam', 'deviceMTP')")
+            struct Row13 {
+                let root: Int
+                let path: String
+                let kind: String
+                let preview: String?
+            }
+            let rows = [
+                Row13(root: 1, path: "lib.jpg", kind: "image", preview: nil),
+                Row13(root: 2, path: "card.arw", kind: "raw", preview: nil),
+                Row13(root: 2, path: "card.heif", kind: "image", preview: "card.heic"),
+                Row13(root: 2, path: "card.mov", kind: "video", preview: nil),
+                Row13(root: 3, path: "cam.jpg", kind: "image", preview: nil),
+            ]
+            for row in rows {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
+                        name_sort_key, kind, enriched_kind, preview_path, enriched_source_size, enriched_source_mtime)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 10, 20)
+                    """,
+                    arguments: [row.root, row.path, row.path, row.path, row.path, row.kind, row.kind, row.preview]
+                )
+            }
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
+
+        let (metadataStamped, rendered) = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try (
+                Set(String.fetchAll(db, sql: "SELECT relative_path FROM media_asset WHERE metadata_source_size = 10 AND metadata_source_mtime = 20")),
+                Set(String.fetchAll(db, sql: "SELECT relative_path FROM media_asset WHERE rendered_source_size = 10 AND rendered_source_mtime = 20"))
+            )
+        }
+        #expect(metadataStamped == ["lib.jpg", "card.arw", "card.heif", "card.mov", "cam.jpg"])
+        #expect(rendered == ["lib.jpg", "card.heif", "card.mov"])
+    }
+
     /// ADR 0035 backfill: the preview migration clears the enrichment stamps of library
     /// stills — so they re-enrich and gain a rendered thumbnail and preview — and leaves
     /// videos and card rows stamped.
@@ -380,7 +437,7 @@ struct CatalogStoreSchemaMigrationTests {
 
         let stamped = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Set(String.fetchAll(
-                db, sql: "SELECT relative_path FROM media_asset WHERE enriched_source_size IS NOT NULL"
+                db, sql: "SELECT relative_path FROM media_asset WHERE metadata_source_size IS NOT NULL"
             ))
         }
         #expect(stamped == ["clip.mov", "card.jpg"])
@@ -449,7 +506,7 @@ struct CatalogStoreSchemaMigrationTests {
 
         let stamped = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Set(String.fetchAll(
-                db, sql: "SELECT relative_path FROM media_asset WHERE enriched_source_size IS NOT NULL"
+                db, sql: "SELECT relative_path FROM media_asset WHERE metadata_source_size IS NOT NULL"
             ))
         }
         #expect(stamped == ["tagged.heic", "plain.jpg", "card.heif"])

@@ -52,7 +52,7 @@ final class VideoPreviewLoader {
             let result = await materializationRequester.materialize(
                 MaterializationCoordinator.Request(
                     id: id,
-                    sourceSize: detail?.enrichedSourceSize,
+                    sourceSize: detail?.byteSize,
                     isVideo: true,
                     priority: .interactive
                 )

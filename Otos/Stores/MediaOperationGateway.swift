@@ -20,11 +20,11 @@ nonisolated enum MediaOperationGateway {
             sql: """
             SELECT relative_path, kind, content_type_identifier, byte_size,
                    content_modified_at_unix, capture_wall_compact, capture_wall_precision,
-                   enriched_source_size, enriched_source_mtime,
+                   metadata_source_size, metadata_source_mtime,
                    NOT (\(settledPredicate)) AS naming_settled,
                    \(LivePhotoSQL.stillPath(ofMotion: "media_asset")) AS live_photo_still_path,
-                   (enriched_source_size IS NOT NULL
-                    AND enriched_source_mtime IS NOT NULL) AS enrichment_has_looked,
+                   (metadata_source_size IS NOT NULL
+                    AND metadata_source_mtime IS NOT NULL) AS enrichment_has_looked,
                    CASE WHEN NOT (\(EnrichmentClaimGateway.hashStalenessSQLPredicate()))
                         THEN content_hash_xxh3_128 END AS current_content_hash
             FROM media_asset
@@ -42,7 +42,7 @@ nonisolated enum MediaOperationGateway {
             // is a different one — "do we know enough to name this file?" — and must not
             // borrow that answer wholesale. They diverge on a state the domain admits:
             // an asset with no `content_modified_at_unix` can never satisfy the staleness
-            // predicate's `enriched_source_mtime` comparison, so it stays "stale" forever
+            // predicate's `metadata_source_mtime` comparison, so it stays "stale" forever
             // even after enrichment has supplied its capture wall. Deriving `.pending`
             // from that held such a source in `.waitingForMetadata` permanently.
             let captureWall: Int64? = row["capture_wall_compact"]

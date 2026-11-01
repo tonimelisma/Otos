@@ -47,8 +47,8 @@ This ADR owns:
   columns plus `metadata_extra_json`, decoded on demand, and is **never resident**
   in grid publication.
 - The only enrichment data fetched with visible `MediaTileDetail` rows: the
-  thumbnail path, generated best kind, video duration seconds, and the
-  `(size, mtime)` source stamps. The canonical content hash remains outside
+  thumbnail path, generated best kind, video duration seconds, and the rendering's
+  `(size, mtime)` stamp. The canonical content hash remains outside
   `MediaTileDetail` and grid publication. Generated best date and format remain
   hot query/filter facts but are not tile display facts.
 - Disjoint column ownership: the scan writes only fact columns, enrichment writes
@@ -56,9 +56,11 @@ This ADR owns:
   scan upserts preserve enrichment overlay, and a stale
   in-flight enrichment completion must revalidate the source signature in SQLite
   before it can stamp a row current.
-- Staleness is the `(size, mtime)` source signature for metadata products and the
-  canonical XXH3-128 hash; a missing, malformed, or signature-mismatched hash is
-  stale. mtime-only changes count.
+- Staleness is per product: the metadata, the rendering (thumbnail and preview) and
+  the canonical XXH3-128 hash each record the `(size, mtime)` source signature they
+  were made from, and each is stale on its own; a missing, malformed, or
+  signature-mismatched hash is stale. mtime-only changes count. One read of a file
+  makes every product its row owes.
 - Timestamp role facts are stored; SQLite's generated `best_capture_unix` value
   supplies Date sort and enrichment priority. Video duration is a hot scalar
   because the tile surface needs it for every visible video; other metadata
@@ -164,18 +166,34 @@ Adjacent decisions requiring separate ADRs or specs:
 5. **Disjoint column ownership; scan upserts preserve overlay.** The scan upsert
    writes only scan fact columns; enrichment writes only `asset_metadata`,
    timestamp role facts, enriched kind/format, `duration_seconds`,
-   `thumbnail_path`, the canonical hash, and the `(size, mtime)` stamps. A re-scan never clobbers
+   `thumbnail_path`, `preview_path`, the canonical hash, and the three `(size, mtime)`
+   stamps. A re-scan never clobbers
    metadata, duration, or the thumbnail within one record. An enrichment
    completion revalidates its source `(size, mtime)` in SQLite before writing and
    before promoting its staged thumbnail; stale overlay may remain visible as the
    best-known data, but stale work cannot mark a changed source current or replace
    the prior thumbnail file.
 
-6. **Staleness is the `(size, mtime)` source signature.** `needsEnrichment` is
-   true when the metadata stamps or canonical hash/signature are absent or differ
-   from the asset's current `(byteSize, contentModifiedAt-in-seconds)`; it depends only on the signature,
-   never on whether products exist, so a definitive-but-empty outcome (unsupported
-   file, icon-only thumbnail) still stamps and is not retried. mtime-only changes
+6. **Staleness is the `(size, mtime)` source signature, one per product.** Three
+   stamps name the bytes each product was made from: `metadata_source_size`/`mtime`
+   (metadata, kind, format, capture wall), `rendered_source_size`/`mtime` (the
+   thumbnail and preview, made from one development, ADR 0035), and
+   `content_hash_source_size`/`mtime` (the digest). Each product is stale when its
+   stamp is absent or differs from the asset's current `(byteSize,
+   contentModifiedAt-in-seconds)`; it depends only on the signature, never on whether
+   products exist, so a definitive-but-empty outcome (unsupported file, icon-only
+   thumbnail) still stamps and is not retried.
+
+   A claim covers every stale product of its row (`EnrichmentScope`, decided by the
+   Store), so one read — or one download of a cloud-only original — makes all of them,
+   and a result carries only the products its scope covered: the Store writes each
+   with its own stamp and leaves the rest. A card is claimed for metadata first, then
+   for its renderings and digests (ADR 0018). A thumbnail that is not a rendering —
+   QuickLook's in a card's metadata pass, a camera's embedded preview — is written
+   without a stamp, as a provisional thumbnail. An edit clears only the rendering stamp
+   (ADR 0036). The old single stamp certified metadata and rendering together, so
+   import readiness waited on the rendering and import reuse was all or nothing;
+   migration `v13_product_stamps` split it (`docs/research/2026-10-31-card-readiness-products.md`). mtime-only changes
    count, because a real edit can leave the size constant. The always-firing scan-
    completion notification (ARC-038 suppresses only the per-batch projection wake,
    not the scan-lifecycle wake) lets the coordinator re-evaluate staleness after
@@ -306,21 +324,22 @@ Adjacent decisions requiring separate ADRs or specs:
    diagnostic does not clear to unblocked while that demand still holds. Enrichment
    writes remain one timed transaction and one detail notification per batch.
 
-9. **Import settlement may reuse a validated source overlay.** After the published
-   destination facts and Plan-0060 XXH3-128 digest are available, `CatalogStore`
-   may read the source row's current `(size, mtime)` facts, enrichment stamps,
-   normalized metadata JSON, and app-owned thumbnail path. The copy is the source
-   file, byte for byte, so the source's overlay is eligible whenever its enrichment
-   stamps name the size and mtime the import copied, the same freshness rule every
-   row's overlay answers to. The reuse needs no digest: a card's own digest pass may
-   not have run yet (ADR 0018), and its overlay is as current for the copy as it is
-   for the card; where the card has a digest, the copy was already verified against it. Metadata and normalized facts are cloned
-   into the destination's independent filesystem-path identity; a source thumbnail
-   is copied into a separately staged destination thumbnail and promoted through
-   the same atomic thumbnail path used by ordinary enrichment. Missing, stale,
-   detached, or copy-failed source overlay never blocks import and leaves the
-   destination on the ordinary-enrichment path. Source and destination overlay
-   lifecycles are independent, and repeated journal recovery is idempotent.
+9. **Import publishes complete rows, product by product.** A cloud-synced library
+   uploads and then evicts an imported copy, so its products are made while its bytes
+   are local. After publication, the executor asks the Store which products the source
+   row holds current for the bytes the import copied (`importSourceProducts`) and runs
+   `MediaEnricher` on the published copy for the rest — its metadata, its rendering
+   with the source's edit. Settlement then takes each product separately: the source's,
+   when its stamp names the size and mtime the import copied (the copy is the source
+   file, byte for byte, the same freshness rule every row answers to); else the one the
+   import made; and, failing a rendering, the source's thumbnail as a provisional one.
+   The digest is the one the import computed from the staged copy. Reuse needs no
+   source digest: a card's own digest pass may not have run yet (ADR 0018), and where
+   it has, the copy was verified against it. Derived images are copied into separately
+   staged destination files and promoted through the same atomic path ordinary
+   enrichment uses. A product the copy still lacks stays owed for ordinary enrichment;
+   nothing blocks the import. Source and destination overlay lifecycles are
+   independent, and repeated journal recovery is idempotent.
 
 10. **Import publication and enrichment gates are durable safety boundaries.** The
     executor persists a complete `.readyToPublish` record (including the staging

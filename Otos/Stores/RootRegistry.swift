@@ -166,9 +166,10 @@ nonisolated struct RootRegistry {
             .sorted()
     }
 
-    /// Enrichable roots whose rows get a digest-only pass after their metadata (ADR 0018).
+    /// Enrichable roots whose rows get a rendering-and-digest pass after their metadata
+    /// (ADR 0009, ADR 0018).
     func enrichableCardRootIDs() -> [Int64] {
-        statesByPath.values.filter { $0.isEnrichable && $0.root.hashesCardAfterMetadata }.map(\.rowID).sorted()
+        statesByPath.values.filter { $0.isEnrichable && $0.root.producesAfterMetadata }.map(\.rowID).sorted()
     }
 
     func enrichableRootIDsByRemovablePriority() -> (removable: [Int64], fixed: [Int64]) {
@@ -184,21 +185,21 @@ nonisolated struct RootRegistry {
         return (removable.sorted(), fixed.sorted())
     }
 
-    /// Partitions enrichable roots by whether enrichment hashes them in the same pass as
-    /// their metadata (ADR 0018, `LibraryRoot.isContentHashRequired`). Orthogonal to
-    /// `enrichableRootIDsByRemovablePriority`, which partitions by claim *priority*. A card's
-    /// later digest-only pass is `enrichableCardRootIDs`.
-    func enrichableRootIDsByHashRequirement() -> (hashRequired: Set<Int64>, hashNotRequired: Set<Int64>) {
-        var hashRequired: Set<Int64> = []
-        var hashNotRequired: Set<Int64> = []
+    /// Partitions enrichable roots by whether enrichment claims their rows for every
+    /// product at once (ADR 0018, `LibraryRoot.claimsEveryProductTogether`) or for metadata
+    /// first. Orthogonal to `enrichableRootIDsByRemovablePriority`, which partitions by claim
+    /// *priority*. A card's later rendering-and-digest pass is `enrichableCardRootIDs`.
+    func enrichableRootIDsByProductClaim() -> (everyProduct: Set<Int64>, metadataFirst: Set<Int64>) {
+        var everyProduct: Set<Int64> = []
+        var metadataFirst: Set<Int64> = []
         for state in statesByPath.values where state.isEnrichable {
-            if state.root.isContentHashRequired {
-                hashRequired.insert(state.rowID)
+            if state.root.claimsEveryProductTogether {
+                everyProduct.insert(state.rowID)
             } else {
-                hashNotRequired.insert(state.rowID)
+                metadataFirst.insert(state.rowID)
             }
         }
-        return (hashRequired, hashNotRequired)
+        return (everyProduct, metadataFirst)
     }
 
     func validateNoOverlap(_ path: LibraryRootPath, ignoring existingRootRowID: Int64? = nil) throws {

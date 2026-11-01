@@ -291,11 +291,11 @@ nonisolated enum MediaAssetTilePresentation {
         contentRect.width >= 56 && contentRect.height >= 56
     }
 
-    /// Thumbnail path plus source stamp; badge updates do not change image identity.
+    /// Thumbnail path plus rendering stamp; badge updates do not change image identity.
     static func imageContentKey(_ detail: MediaTileDetail) -> String {
         let thumbnail = detail.thumbnailPath ?? ""
-        let size = detail.enrichedSourceSize ?? -1
-        let stamp = detail.enrichedSourceMTimeSeconds ?? -1
+        let size = detail.renderedSourceSize ?? -1
+        let stamp = detail.renderedSourceMTimeSeconds ?? -1
         // A saved edit re-renders the thumbnail under the same name; its revision is
         // what tells a tile the image changed (ADR 0036).
         return "\(thumbnail)#\(size)#\(stamp)#\(detail.renderedRevision)"

@@ -281,8 +281,8 @@ extension EnrichmentCoordinator {
             phase: "generated",
             id: id,
             fields: [
-                "hasThumbnail": "\(result.thumbnailPath != nil)",
-                "hasStagedThumbnail": "\(result.generatedThumbnail != nil)",
+                "hasThumbnail": "\(result.shownThumbnailPath != nil)",
+                "hasStagedThumbnail": "\((result.rendering?.generatedThumbnail ?? result.provisionalThumbnail) != nil)",
             ]
         )
         readyClaims[id] = nil

@@ -119,25 +119,18 @@ actor MediaImportExecutor {
     private let materializationRequester: MaterializationRequesting?
     private let cancelFlag = CancelFlag()
 
-    private struct OverlayReuseSummary: Sendable {
-        var metadataCloned = 0
-        var thumbnailCopied = 0
-        var misses: [String: Int] = [:]
+    /// Where the run's copies got each product, counted by origin (ADR 0009).
+    private struct ProductOriginSummary: Sendable {
+        var metadata: [ImportProductOrigin: Int] = [:]
+        var rendering: [ImportProductOrigin: Int] = [:]
 
-        mutating func record(_ result: ImportOverlayReuseResult) {
-            if result.metadataCloned {
-                metadataCloned += 1
-            }
-            if result.thumbnailCopied {
-                thumbnailCopied += 1
-            }
-            if let miss = result.miss {
-                misses[miss.rawValue, default: 0] += 1
-            }
+        mutating func record(_ result: ImportProductsResult) {
+            metadata[result.metadata, default: 0] += 1
+            rendering[result.rendering, default: 0] += 1
         }
 
-        var missDescription: String {
-            misses.keys.sorted().map { "\($0):\(misses[$0] ?? 0)" }.joined(separator: ",")
+        static func describe(_ counts: [ImportProductOrigin: Int]) -> String {
+            counts.map { "\($0.key.rawValue):\($0.value)" }.sorted().joined(separator: ",")
         }
     }
 
@@ -186,7 +179,7 @@ actor MediaImportExecutor {
         /// execution, so they are not included; they carry their own reveal
         /// via `MediaOperationPlan.attentionItems`.
         let incompleteItems: [MediaAssetID]
-        let overlayReuse: OverlayReuseSummary
+        let productOrigins: ProductOriginSummary
         /// Set when the run stopped at the disk floor — the first entry that
         /// would have breached it was never submitted (or a write refused for
         /// space first) and nothing after it was attempted. Entries already in
@@ -230,14 +223,21 @@ actor MediaImportExecutor {
     /// reader is `FreeSpaceFloor.availableBytes(onVolumeOf:)`.
     private let volumeCapacity: @Sendable (URL) -> Int64?
     private let transfer: VolumeTransfer
+    /// Makes each copy's products its source does not hold current, from the published
+    /// copy while its bytes are local (ADR 0009): a cloud-synced library may evict the copy
+    /// soon after it uploads. The production maker is `MediaEnricher.live` over the
+    /// catalog's derived-image directory; a catalog without one makes none.
+    private let productMaker: MediaEnricher?
 
     init(
         store: CatalogStore,
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,
         volumeCapacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:),
-        transfer: @escaping VolumeTransfer = CopyfileTransfer.copy
+        transfer: @escaping VolumeTransfer = CopyfileTransfer.copy,
+        productMaker: MediaEnricher? = nil
     ) {
+        self.productMaker = productMaker ?? store.thumbnailDirectory.map { MediaEnricher.live(thumbnailDirectory: $0) }
         self.store = store
         self.cameraImport = cameraImport
         self.materializationRequester = materializationRequester
@@ -362,7 +362,7 @@ actor MediaImportExecutor {
             ])
         }
         OtosLog.catalog.notice(
-            "op=mediaOperation.batch phase=overlayReuse run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) metadataCloned=\(entryTotals.overlayReuse.metadataCloned, privacy: .public) thumbnailCopied=\(entryTotals.overlayReuse.thumbnailCopied, privacy: .public) misses=\(entryTotals.overlayReuse.missDescription, privacy: .public)"
+            "op=mediaOperation.batch phase=products run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) metadata=\(ProductOriginSummary.describe(entryTotals.productOrigins.metadata), privacy: .public) rendering=\(ProductOriginSummary.describe(entryTotals.productOrigins.rendering), privacy: .public)"
         )
         OtosSignpost.mediaIO.endInterval("MediaImportBatch", batchSignpost)
         let elapsedMs = max(DiagnosticsTiming.milliseconds(from: started, to: .now), 1)
@@ -423,7 +423,7 @@ actor MediaImportExecutor {
         // The source paths whose bytes are proven in the library: each published
         // primary and the companions that were copied with it. Erase deletes no other.
         var erasableSourcePaths: Set<MediaRelativePath> = []
-        var overlayReuse = OverlayReuseSummary()
+        var productOrigins = ProductOriginSummary()
         var failureReasons: [EntryFailure] = []
         let copyEntries = context.plan.entries.filter {
             if case .copy = $0.disposition {
@@ -552,7 +552,7 @@ actor MediaImportExecutor {
                         incompleteItems.append(entry.source.id)
                     }
                     publishedBytes += bytes
-                    overlayReuse.record(reuseResult)
+                    productOrigins.record(reuseResult)
                     byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: bytes)
                 case .cancelled:
                     cancelFlag.cancel()
@@ -611,7 +611,7 @@ actor MediaImportExecutor {
                 failedCount: failedCount,
                 skippedForeignCount: skippedForeignCount,
                 incompleteItems: incompleteItems,
-                overlayReuse: overlayReuse,
+                productOrigins: productOrigins,
                 spaceStop: nil,
                 failureReasons: failureReasons,
                 eraseOutcome: eraseOutcome
@@ -623,7 +623,7 @@ actor MediaImportExecutor {
             failedCount: failedCount,
             skippedForeignCount: skippedForeignCount,
             incompleteItems: incompleteItems,
-            overlayReuse: overlayReuse,
+            productOrigins: productOrigins,
             spaceStop: spaceStop,
             failureReasons: failureReasons,
             eraseOutcome: landedOnlyOutcome(landed, context: context)
@@ -951,7 +951,7 @@ actor MediaImportExecutor {
         /// The primary is published, `bytes` long as it settled. `companionsNotCopied` are
         /// the source paths of companions that did not reach the library: they are not
         /// recorded, and their sources are never erased.
-        case published(ImportOverlayReuseResult, bytes: Int64, companionsNotCopied: [MediaRelativePath])
+        case published(ImportProductsResult, bytes: Int64, companionsNotCopied: [MediaRelativePath])
         case skippedForeign
         case cancelled
         case failed(EntryFailure)
@@ -1493,7 +1493,8 @@ actor MediaImportExecutor {
             workerID: workerID,
             copyStarted: started,
             copyFinished: copyFinished,
-            hashFinished: hashFinished
+            hashFinished: hashFinished,
+            productMaker: productMaker
         ))
         if case .published = outcome {
             // Honest `mediaOperation.copy phase=finish` (actual bytes written) is
@@ -1526,6 +1527,8 @@ actor MediaImportExecutor {
         let copyStarted: ContinuousClock.Instant
         let copyFinished: ContinuousClock.Instant
         let hashFinished: ContinuousClock.Instant
+        /// Makes the copy's products its source does not hold current; nil makes none.
+        let productMaker: MediaEnricher?
     }
 
     /// The publication handoff is one crash boundary: journal gate, exclusive rename,
@@ -1644,13 +1647,20 @@ actor MediaImportExecutor {
         }
 
         let companions = Self.publishCompanions(request)
-        var reuseResult = ImportOverlayReuseResult.notReused
+        let made = await Self.makeOwedProducts(
+            request,
+            operation: operation,
+            byteSize: settledByteSize,
+            modifiedAt: settledModified
+        )
+        var reuseResult = ImportProductsResult.owed
         do {
             reuseResult = try await request.store.settleImportedAsset(
                 operation: operation,
                 byteSize: settledByteSize,
                 contentModifiedAt: settledModified,
-                companions: companions.published
+                companions: companions.published,
+                made: made
             )
         } catch {
             OtosLog.catalog.errorOperation("mediaOperation.settle", phase: "failed", fields: [
@@ -1691,6 +1701,58 @@ actor MediaImportExecutor {
             bytes: settledByteSize,
             companionsNotCopied: request.companionsNotCopied + companions.notCopied
         )
+    }
+
+    /// Makes the products the copy's source does not hold current — its metadata, its
+    /// rendering — from the published copy, whose bytes are local now and may not be once
+    /// a cloud-synced library uploads and evicts it (ADR 0009). Nil when the source holds
+    /// every product, when there is no maker, or when making failed; settlement then
+    /// leaves what is missing owed, for enrichment.
+    private nonisolated static func makeOwedProducts(
+        _ request: PublishSettleRequest,
+        operation: ActiveFileOperation,
+        byteSize: Int64,
+        modifiedAt: Date
+    ) async -> EnrichmentResult? {
+        guard let maker = request.productMaker else {
+            return nil
+        }
+        let source: ImportSourceProducts
+        do {
+            source = try await request.store.importSourceProducts(operation)
+        } catch {
+            OtosLog.mediaIO.errorOperation("import.products", phase: "sourceUnreadable", fields: [
+                "destination": request.destinationRelative.rawValue,
+                "error": String(describing: error),
+            ])
+            return nil
+        }
+        let owed = source.owed
+        guard !owed.isEmpty else {
+            return nil
+        }
+        let started = ContinuousClock.now
+        let outcome = await maker.enrich(
+            MediaAssetID(libraryRootPath: request.destinationRoot, relativePath: request.destinationRelative),
+            .localFile(request.finalURL),
+            byteSize,
+            MediaAsset.mtimeSeconds(modifiedAt),
+            owed,
+            source.recipe
+        )
+        let made: EnrichmentResult? = if case let .complete(result) = outcome {
+            result
+        } else {
+            nil
+        }
+        OtosLog.mediaIO.noticeOperation("import.products", phase: made == nil ? "notMade" : "finish", fields: [
+            "batch": "\(request.batch.unixMilliseconds)",
+            "destination": request.destinationRelative.rawValue,
+            "owed": "\(owed)",
+            "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: started))",
+            "worker": "\(request.workerID)",
+        ])
+        return made
     }
 
     /// Publishes each staged companion beside the published primary. Only a companion

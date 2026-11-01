@@ -190,7 +190,7 @@ nonisolated enum CatalogQueryGateway {
                 sql: """
                 SELECT library_root_id, relative_path, name, content_type_identifier, byte_size,
                        created_at_unix, content_modified_at_unix,
-                       enriched_source_size, enriched_source_mtime,
+                       metadata_source_size, metadata_source_mtime, rendered_source_size, rendered_source_mtime,
                        content_hash_xxh3_128, content_hash_source_size, content_hash_source_mtime,
                        thumbnail_path,
                        duration_seconds,
@@ -229,7 +229,7 @@ nonisolated enum CatalogQueryGateway {
                 db,
                 sql: """
                 SELECT m.library_root_id, m.relative_path, m.byte_size,
-                       m.enriched_source_size, m.enriched_source_mtime, m.thumbnail_path, m.preview_path,
+                       m.rendered_source_size, m.rendered_source_mtime, m.thumbnail_path, m.preview_path,
                        m.duration_seconds, m.best_kind, m.media_choice,
                        m.edit_recipe_json, m.rendered_revision,
                        a.pixel_width, a.pixel_height, a.orientation
@@ -642,8 +642,10 @@ private nonisolated func storedAsset(from row: Row) -> StoredAsset {
         bestKind: bestKindRaw.flatMap(MediaKind.init(rawValue:)),
         bestFormat: bestFormatRaw.map(MediaFormatToken.init(rawValue:)),
         durationSeconds: row["duration_seconds"],
-        enrichedSourceSize: row["enriched_source_size"],
-        enrichedSourceMTimeSeconds: row["enriched_source_mtime"],
+        metadataSourceSize: row["metadata_source_size"],
+        metadataSourceMTimeSeconds: row["metadata_source_mtime"],
+        renderedSourceSize: row["rendered_source_size"],
+        renderedSourceMTimeSeconds: row["rendered_source_mtime"],
         contentHash: (row["content_hash_xxh3_128"] as Data?).flatMap(XXH3Digest128.init(data:)),
         contentHashSourceSize: row["content_hash_source_size"],
         contentHashSourceMTimeSeconds: row["content_hash_source_mtime"],
@@ -684,8 +686,8 @@ private nonisolated func storedTileDetail(from row: Row) throws -> StoredTileDet
         renderedRevision: row["rendered_revision"] ?? 0,
         bestKind: bestKindRaw.flatMap(MediaKind.init(rawValue:)),
         durationSeconds: row["duration_seconds"],
-        enrichedSourceSize: row["enriched_source_size"],
-        enrichedSourceMTimeSeconds: row["enriched_source_mtime"],
+        renderedSourceSize: row["rendered_source_size"],
+        renderedSourceMTimeSeconds: row["rendered_source_mtime"],
         mediaChoice: MediaChoice(rawValue: row["media_choice"] ?? "") ?? .default
     )
 }

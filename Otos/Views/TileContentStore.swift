@@ -207,8 +207,8 @@ final class TileContentStore {
                     thumbnailPath: moved.content.detail.thumbnailPath,
                     bestKind: moved.content.detail.bestKind,
                     durationSeconds: moved.content.detail.durationSeconds,
-                    enrichedSourceSize: moved.content.detail.enrichedSourceSize,
-                    enrichedSourceMTimeSeconds: moved.content.detail.enrichedSourceMTimeSeconds,
+                    renderedSourceSize: moved.content.detail.renderedSourceSize,
+                    renderedSourceMTimeSeconds: moved.content.detail.renderedSourceMTimeSeconds,
                     mediaChoice: moved.content.detail.mediaChoice
                 )
                 // Keep imageKey/image so the painted thumbnail survives the identity change.
