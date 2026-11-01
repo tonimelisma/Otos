@@ -278,38 +278,21 @@ nonisolated struct DuplicateKeptPair: Hashable, Sendable {
 }
 
 /// What the window holds while the user works through Duplicates (ADR 0042): the marks
-/// the user changed, which groups are on screen, and which summaries are open. Pure, so
-/// what the bar counts and what the act moves are one computation.
-///
-/// Groups found while the user is looking are held back (`heldCount`) until Show — so
-/// neither the count on the button nor the rows under the pointer move — and are taken
-/// in at once after the user's own act. Groups that resolve or vanish leave at once.
+/// the user changed and which summaries are open. Pure, so what the bar counts and what
+/// the act moves are one computation. Every active group is on screen: one found while the
+/// user looks joins the list at once, and one that resolves or vanishes leaves at once.
 nonisolated struct DuplicatesSession: Equatable, Sendable {
     /// Copies whose Keep the user set, overriding the group's default.
     var keepOverrides: [MediaAssetID: Bool] = [:]
-    /// The active groups on screen; nil until the list is first shown.
-    var shownGroupIDs: Set<DuplicateGroupID>?
     var expandedPairs: Set<DuplicateLibraryPair> = []
     var showsKept = false
 
-    /// The active groups to draw, in the published order, without held newcomers.
-    func shownActiveGroups(in state: CatalogDuplicatesState) -> [DuplicateGroup] {
-        guard let shown = shownGroupIDs else {
-            return state.activeGroups
+    /// Drops the marks of copies no group holds any more, so a copy that comes back — its
+    /// move undone, its library back online — starts from its group's default.
+    mutating func forgetMarks(absentFrom state: CatalogDuplicatesState) {
+        guard !keepOverrides.isEmpty else {
+            return
         }
-        return state.activeGroups.filter { shown.contains($0.id) }
-    }
-
-    func heldCount(in state: CatalogDuplicatesState) -> Int {
-        guard let shown = shownGroupIDs else {
-            return 0
-        }
-        return state.activeGroups.count { !shown.contains($0.id) }
-    }
-
-    /// Takes in every published group (first show, Show, or after the user's own act).
-    mutating func adoptAll(_ state: CatalogDuplicatesState) {
-        shownGroupIDs = Set(state.activeGroups.map(\.id))
         let live = Set(state.groups.flatMap(\.copies).map(\.id))
         keepOverrides = keepOverrides.filter { live.contains($0.key) }
     }
@@ -343,9 +326,9 @@ nonisolated struct DuplicatesSession: Equatable, Sendable {
         return group.copies.count { keeps($0.id, in: group) } > 1
     }
 
-    /// What the bar states and the act moves, over the groups on screen.
+    /// What the bar states and the act moves, over every active group.
     func tally(in state: CatalogDuplicatesState) -> DuplicatesTally {
-        let groups = shownActiveGroups(in: state)
+        let groups = state.activeGroups
         var moving: [MediaAssetID] = []
         var bytes: Int64 = 0
         var unknownSizes = 0
@@ -363,8 +346,7 @@ nonisolated struct DuplicatesSession: Equatable, Sendable {
             photosWithDuplicates: groups.count,
             itemsToMove: moving,
             bytesToMove: PartialByteCount(knownBytes: bytes, unknownCount: unknownSizes),
-            needingChoice: groups.count(where: needsChoice),
-            held: heldCount(in: state)
+            needingChoice: groups.count(where: needsChoice)
         )
     }
 }
@@ -374,7 +356,6 @@ nonisolated struct DuplicatesTally: Equatable, Sendable {
     let itemsToMove: [MediaAssetID]
     let bytesToMove: PartialByteCount
     let needingChoice: Int
-    let held: Int
 }
 
 /// Versions of the same photo (ADR 0042): different files of one capture — resized,

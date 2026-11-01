@@ -96,7 +96,7 @@ struct DuplicatesTests {
         #expect(!DuplicateGroupPolicy.hasCopySuffix("IMG_1.jpg"))
     }
 
-    @Test func theSessionNeverMovesEveryCopyAndCountsOnlyWhatIsOnScreen() throws {
+    @Test func theSessionNeverMovesEveryCopyAndCountsEveryActiveGroup() throws {
         let preselected = try Self.onlyGroup([Self.copy("a/IMG_1.jpg"), Self.copy("b/IMG_1 copy.jpg")])
         let waiting = try DuplicateGroupPolicy.group(
             id: .identical(#require(XXH3Digest128(data: Data(repeating: 2, count: 16)))),
@@ -105,9 +105,8 @@ struct DuplicatesTests {
         )
         let state = CatalogDuplicatesState(groups: [preselected, waiting])
         var session = DuplicatesSession()
-        session.adoptAll(state)
 
-        var tally = session.tally(in: state)
+        let tally = session.tally(in: state)
         #expect(tally.photosWithDuplicates == 2)
         #expect(tally.itemsToMove == [Self.copy("b/IMG_1 copy.jpg").copy.id])
         #expect(tally.needingChoice == 1)
@@ -120,23 +119,36 @@ struct DuplicatesTests {
         #expect(session.copiesToMove(in: preselected).isEmpty)
         session.keepOverrides[keeper] = nil
 
-        // A group found while the user looks is held back from the count and the act.
+        // A group found while the user looks joins the count and the act at once.
         let newcomer = try DuplicateGroupPolicy.group(
             id: .identical(#require(XXH3Digest128(data: Data(repeating: 3, count: 16)))),
             copies: [Self.copy("n/a.jpg").copy, Self.copy("n/a copy.jpg").copy],
             keptPairs: []
         )
         let grown = CatalogDuplicatesState(groups: [preselected, waiting, newcomer])
-        tally = session.tally(in: grown)
-        #expect(tally.held == 1)
-        #expect(tally.photosWithDuplicates == 2)
-        session.adoptAll(grown)
-        #expect(session.tally(in: grown).photosWithDuplicates == 3)
+        let grownTally = session.tally(in: grown)
+        #expect(grownTally.photosWithDuplicates == 3)
+        #expect(grownTally.itemsToMove == [Self.copy("b/IMG_1 copy.jpg").copy.id, Self.copy("n/a copy.jpg").copy.id])
+    }
+
+    @Test func aMarkIsForgottenOnceNoGroupHoldsItsCopy() throws {
+        let group = try Self.onlyGroup([Self.copy("a/IMG_1.jpg"), Self.copy("b/IMG_1 copy.jpg")])
+        let suffixed = Self.copy("b/IMG_1 copy.jpg").copy.id
+        var session = DuplicatesSession()
+        session.keepOverrides[suffixed] = true
+
+        session.forgetMarks(absentFrom: CatalogDuplicatesState(groups: [group]))
+        #expect(session.keepOverrides[suffixed] == true)
+
+        // The copy left — moved, its library offline — so when it returns it starts over.
+        session.forgetMarks(absentFrom: .empty)
+        #expect(session.keepOverrides.isEmpty)
+        #expect(!session.keeps(suffixed, in: group))
     }
 
     @Test func theBarNamesTheActAndKeepsItsTitleWhenDisabled() {
         let none = DuplicatesBarPresentation.map(DuplicatesTally(
-            photosWithDuplicates: 6, itemsToMove: [], bytesToMove: .zero, needingChoice: 6, held: 0
+            photosWithDuplicates: 6, itemsToMove: [], bytesToMove: .zero, needingChoice: 6
         ))
         #expect(none.primaryLine == "6 photos with duplicates")
         #expect(none.secondary == .reveal("6 need your choice"))
@@ -151,14 +163,22 @@ struct DuplicatesTests {
         for path in ["a.jpg", "Print/a.jpg", "b.jpg"] {
             try writeCatalogStoreFile(root.appending(path: path), contents: path == "b.jpg" ? "other" : "same")
         }
+        // Two empty files share the digest of no bytes; neither is a duplicate.
+        for path in ["empty.jpg", "Print/empty.avi"] {
+            try writeCatalogStoreFile(root.appending(path: path), contents: "")
+        }
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let library = try CatalogPath.normalizedDirectoryPath(for: root)
-        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 3 }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 5 }
         let media = try #require(await store.planningMedia(for: library))
         for facts in media {
-            let byte: UInt8 = facts.relativePath.rawValue == "b.jpg" ? 2 : 1
+            let byte: UInt8 = switch facts.relativePath.rawValue {
+            case "b.jpg": 2
+            case "empty.jpg", "Print/empty.avi": 3
+            default: 1
+            }
             _ = try await store.applyContentHash(ContentHashResult(
                 id: facts.id,
                 contentHash: #require(XXH3Digest128(data: Data(repeating: byte, count: 16))),

@@ -83,7 +83,10 @@ extension CatalogWindowViewModel {
             gridSelection = GridSelection(selection: selected, anchor: selection.first, base: selected)
         }
         let focus = place.focus.flatMap { present.contains($0) ? $0 : nil }
-        switch place.viewMode {
+        // A scope with one presentation — the Places map, the duplicates list — has no view
+        // mode to restore; a Duplicates group saved in Loupe reopens as the list.
+        let mode = canChangeViewMode ? place.viewMode : .grid
+        switch mode {
         case .grid:
             // The grid centers on the focus target, and the saved focus is the middle of
             // the viewport the user left, so centering on it puts the viewport back.

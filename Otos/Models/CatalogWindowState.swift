@@ -91,6 +91,12 @@ nonisolated struct CatalogWindowState: Equatable {
         mediaGrid.descriptor
     }
 
+    /// Whether the catalog's first load has applied; before it the window claims nothing
+    /// about the catalog (APP-044).
+    var isCatalogLoaded: Bool {
+        mediaEmptyState != .loadingCatalog
+    }
+
     /// What the window shows before the catalog has loaded: no title, no sources, no
     /// items, and no claim about whether media exists (APP-044).
     static let empty = CatalogWindowState(

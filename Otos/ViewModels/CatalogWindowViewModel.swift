@@ -1020,7 +1020,7 @@ extension CatalogWindowViewModel {
         // focus must already carry its new identity, or the prune below would drop it.
         applyPendingIdentityRemaps(nextState.pendingIdentityRemaps)
         applyMapState(previous: previousState, next: nextState)
-        applyDuplicatesState(previous: previousState, next: nextState)
+        applyDuplicatesState(nextState)
 
         // A new scope is a different collection, so the user's place in the old one means
         // nothing there. A filter or sort change narrows or reorders the same collection,
@@ -1253,6 +1253,15 @@ extension CatalogWindowViewModel {
         case let .failed(description):
             ejectAlertMessage = description
         }
+    }
+
+    /// The All Media row: once the catalog has loaded, while two or more fixed libraries
+    /// exist; before it, while All Media is the row the user left.
+    var showsAllMediaRow: Bool {
+        guard state.isCatalogLoaded else {
+            return SidebarSelectionPolicy.rowBeforeCatalogLoad(selection: sidebarSelection) == .allMedia
+        }
+        return SidebarSelectionPolicy.showsAllMedia(libraries: state.libraries)
     }
 
     func currentSelectionWasRemoved(in nextState: CatalogWindowState) -> Bool {

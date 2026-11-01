@@ -107,11 +107,10 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             SidebarView(
-                showsAllMedia: SidebarSelectionPolicy.showsAllMedia(libraries: viewModel.state.libraries),
-                showsPlaces: SidebarSelectionPolicy.showsPlaces(libraries: viewModel.state.libraries),
-                duplicatesCount: viewModel.showsDuplicatesRow
-                    ? viewModel.duplicatesSession.shownActiveGroups(in: viewModel.state.duplicates).count
-                    : nil,
+                showsAllMedia: viewModel.showsAllMediaRow,
+                showsPlaces: viewModel.showsPlacesRow,
+                showsDuplicates: viewModel.showsDuplicatesRow,
+                duplicatesCount: viewModel.duplicatesRowCount,
                 libraries: viewModel.state.libraries,
                 importBatches: viewModel.state.importBatches,
                 removableSources: viewModel.state.removableSources,

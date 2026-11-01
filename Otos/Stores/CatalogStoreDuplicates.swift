@@ -72,10 +72,13 @@ nonisolated enum DuplicatesGateway {
         }
     }
 
-    /// A row counts when it is visible and its digest is current for its file.
+    /// A row counts when it is visible, has content, and its digest is current for its
+    /// file. An empty file holds nothing to duplicate: every one shares the digest of no
+    /// bytes, so matching them would group unrelated broken files.
     private static func visibleCurrentPredicate(_ row: String) -> String {
         """
-        \(row).pending_trash_batch_unix_ms IS NULL
+        \(row).byte_size > 0
+          AND \(row).pending_trash_batch_unix_ms IS NULL
           AND \(row).trash_path IS NULL
           AND NOT \(LivePhotoSQL.isPairedMotion(row))
           AND \(row).content_hash_xxh3_128 IS NOT NULL
