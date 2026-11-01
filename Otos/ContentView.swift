@@ -45,7 +45,9 @@ struct ContentView: View {
                     isCropping: viewModel.isCropping,
                     canCrop: viewModel.canCrop,
                     aspect: viewModel.cropAspect,
-                    isLandscape: viewModel.cropAspectIsLandscape
+                    isLandscape: viewModel.cropAspectIsLandscape,
+                    isDrawingLine: viewModel.isDrawingStraightenLine,
+                    canSuggest: viewModel.canSuggestCrop
                 ),
                 setValue: viewModel.setEditValue,
                 setDragging: viewModel.setEditDragging,
@@ -57,7 +59,9 @@ struct ContentView: View {
                     rotateAspect: viewModel.rotateCropAspect,
                     turn: viewModel.turnPhoto(clockwise:),
                     flip: viewModel.flipPhoto(horizontally:),
-                    autoStraighten: viewModel.autoStraighten
+                    autoStraighten: viewModel.autoStraighten,
+                    toggleLine: viewModel.toggleStraightenLine,
+                    suggest: viewModel.suggestCrop
                 ),
                 setEntering: viewModel.setEnteringEditValue,
                 setLensCorrection: viewModel.setLensCorrection,
@@ -589,7 +593,9 @@ struct ContentView: View {
                             image: base.image,
                             crop: viewModel.editDraft.crop ?? .whole,
                             fractionRatio: viewModel.cropFractionRatio,
-                            setCrop: viewModel.setCrop
+                            setCrop: viewModel.setCrop,
+                            isDrawingLine: viewModel.isDrawingStraightenLine,
+                            straighten: viewModel.straighten(along:to:)
                         )
                     }
                     : nil,

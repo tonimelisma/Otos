@@ -14,16 +14,25 @@ import SwiftUI
 /// with Shift, and a key held down is saved as one step when it is released. Escape is the
 /// loupe's Escape. Shift during a handle drag keeps the crop's shape as it was when the
 /// drag began.
+///
+/// The straighten line (Lightroom Classic's Angle tool): while the panel's ruler is armed,
+/// or while ⌘ is held, a drag anywhere on the canvas draws a line instead of moving the
+/// crop, and letting go reports it; the view model turns the photo so it is level.
 struct CropEditorView: View {
     let image: CGImage
     let crop: EditCrop
     /// Width over height in fractions of the frame while the aspect is constrained.
     let fractionRatio: Double?
     let setCrop: @MainActor (EditCrop, Bool) -> Void
+    let isDrawingLine: Bool
+    let straighten: @MainActor (CGPoint, CGPoint) -> Void
     let escape: @MainActor () -> Void
 
     @State private var dragStart: EditCrop?
     @State private var shiftHeld = false
+    @State private var commandHeld = false
+    /// The line being drawn, from its start to the pointer.
+    @State private var line: (start: CGPoint, end: CGPoint)?
 
     private static let inset: CGFloat = 20
     private static let handleLength: CGFloat = 16
@@ -44,12 +53,16 @@ struct CropEditorView: View {
                 ForEach(CropHandle.allCases, id: \.self) { handle in
                     handleView(handle, cropRect: cropRect, frame: frame)
                 }
+                if isDrawingLine || commandHeld || line != nil {
+                    lineCanvas(size: proxy.size)
+                }
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
         }
         .background(CropKeyCatcher(nudge: nudge, release: { setCrop(crop, false) }, escape: escape))
-        .onModifierKeysChanged(mask: .shift) { _, keys in
+        .onModifierKeysChanged(mask: [.shift, .command]) { _, keys in
             shiftHeld = keys.contains(.shift)
+            commandHeld = keys.contains(.command)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Crop")
@@ -106,6 +119,43 @@ struct CropEditorView: View {
                 .stroke(Color.white, lineWidth: 1)
         }
         .allowsHitTesting(false)
+    }
+
+    /// The straighten line's layer: over the whole canvas, so the line can be drawn along a
+    /// horizon anywhere in the photo, even outside the crop. It is drawn white over a dark
+    /// outline, like the handles, so it reads on any photo.
+    private func lineCanvas(size: CGSize) -> some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+                .contentShape(Rectangle())
+                .frame(width: size.width, height: size.height)
+                .pointerStyle(.rectSelection)
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            line = (value.startLocation, value.location)
+                        }
+                        .onEnded { value in
+                            line = nil
+                            straighten(value.startLocation, value.location)
+                        }
+                )
+            if let line {
+                Path { path in
+                    path.move(to: line.start)
+                    path.addLine(to: line.end)
+                }
+                .stroke(Color.black.opacity(0.5), lineWidth: 3)
+                .overlay {
+                    Path { path in
+                        path.move(to: line.start)
+                        path.addLine(to: line.end)
+                    }
+                    .stroke(Color.white, lineWidth: 1)
+                }
+                .allowsHitTesting(false)
+            }
+        }
     }
 
     /// Dragging inside the crop moves it.

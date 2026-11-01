@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 @testable import OtosKit
 import Testing
@@ -236,6 +237,52 @@ struct CatalogWindowViewModelEditTests {
             #expect(!model.isCropping)
             #expect(model.editCropBase == nil)
             #expect(model.viewMode == .loupe)
+        }
+    }
+
+    /// A line drawn on the crop canvas straightens the photo along it as one step; the
+    /// ruler that armed it disarms.
+    @Test func aLineDrawnOnTheCanvasStraightensAlongIt() async throws {
+        try await withEditableLibrary(fileCount: 1) { library in
+            let id = library.ids[0]
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            model.selectAll()
+            model.toggleCropTool()
+            try await waitUntil { model.canEdit && model.editCropBase?.id == id }
+
+            model.toggleStraightenLine()
+            #expect(model.isDrawingStraightenLine)
+            model.straighten(along: .zero, to: CGPoint(x: 100, y: -100 * tan(4 * Double.pi / 180)))
+            #expect(!model.isDrawingStraightenLine)
+            try await waitUntil { model.hasSettledEdits }
+            let straighten = try #require(try await library.store.editRecipe(for: id)?.recipe.straighten)
+            #expect(abs(straighten - 4) < 0.051)
+            #expect(model.undoMenuState.undoTitle == "Undo Straighten")
+        }
+    }
+
+    /// A suggested crop is placed by the subject Vision finds in the frame the tool shows,
+    /// as one step.
+    @Test func aSuggestedCropHoldsTheSubject() async throws {
+        let center = CGPoint(x: 0.3, y: 0.35)
+        try await withEditableLibrary(fileCount: 1, write: { try writeSubjectJPEG(to: $0, center: center) }) { library in
+            let id = library.ids[0]
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            model.selectAll()
+            model.toggleCropTool()
+            try await waitUntil { model.canSuggestCrop && model.editCropBase?.id == id }
+
+            model.suggestCrop(.fitSubject)
+            try await waitUntil { model.hasSettledEdits }
+            let crop = try #require(try await library.store.editRecipe(for: id)?.recipe.crop)
+            #expect(crop.left < center.x && crop.right > center.x)
+            #expect(crop.top < center.y && crop.bottom > center.y)
+            #expect(crop.width < 0.6)
+            #expect(model.undoMenuState.undoTitle == "Undo Suggested Crop")
         }
     }
 

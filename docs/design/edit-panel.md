@@ -68,7 +68,7 @@ Sections, in order (Lightroom desktop's order, ADR 0036):
 
 | Section | Controls |
 | --- | --- |
-| Crop (a tool above the sections) | `Auto` in the heading; `Crop` / `Done` (Return while on); Straighten (−45.0…+45.0°, 0.1° steps, positive clockwise); `Rotate & Flip`: Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical (borderless icons, as Lightroom's); `Aspect`: its menu (Original, Custom, 1 × 1, 4 × 5, 5 × 7, 2 × 3, 4 × 3, 16 × 9) and Rotate Aspect |
+| Crop (a tool above the sections) | `Auto` in the heading; `Crop` / `Done` (Return while on) with the straighten line's ruler (`ruler`, a toggle drawn pressed while armed) at its trailing edge; Straighten (−45.0…+45.0°, 0.1° steps, positive clockwise); `Rotate & Flip`: Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical (borderless icons, as Lightroom's); `Aspect`: its menu (Original, Custom, 1 × 1, 4 × 5, 5 × 7, 2 × 3, 4 × 3, 16 × 9) and Rotate Aspect; `Suggested`: `Subject` and `Thirds` (small push buttons) |
 | Light | Exposure (−4.00…+4.00 stops, 0.05 steps), Contrast (−100…+100), Highlights (−100…+100), Shadows (−100…+100) |
 | Color | White Balance picker; Temperature (a RAW: 2000–50000 K, even in mireds, 50 K steps, shown `5600 K`; another still: −100…+100), Tint (a RAW: −150…+150; another still: −100…+100), Vibrance (−100…+100), Saturation (−100…+100) |
 | Effects | Vignette (−100…+100, negative darkens), Midpoint (0…100), Feather (0…100) |
@@ -138,6 +138,21 @@ the shape. The Aspect menu and Rotate Aspect are enabled only while the tool is 
 tool. The loupe then shows the cropped photo. Rotate Left (⌘[), Rotate Right (⌘]), Flip
 Horizontal and Flip Vertical (Photo menu, and the panel's buttons) work with the tool on
 or off; Straighten too.
+
+The straighten line is Lightroom Classic's Angle tool. With the tool on, ⌘-drag anywhere on
+the photo — or drag after arming the panel's ruler — draws a line, white over a dark
+outline like the handles, under a crosshair pointer. Letting go turns the photo so that line
+is level, or plumb when it was drawn nearer vertical than horizontal, as one `Straighten`
+step, and disarms the ruler. A drag shorter than 8 pt is a click and draws nothing.
+
+`Suggested` places a crop by the subject Vision finds in the frame the tool shows (objectness
+saliency, else attention saliency), keeping the chosen aspect or the frame's own when it is
+Custom. `Subject` is the smallest such crop that holds the subject with a 15% margin on each
+side; `Thirds` is the largest, with the subject's center on the rule-of-thirds point on its
+side of the frame. Each is one `Suggested Crop` step. Neither Photos nor Lightroom suggests
+crops, so the row follows the panel's own idiom: a label, then its acts. Both are enabled
+only while the tool shows the frame the photo is cropped from, so a turn, flip or straighten
+still rendering waits. Where Vision finds no subject, the crop is left as it is.
 
 ## Show Original and Revert to Original
 
