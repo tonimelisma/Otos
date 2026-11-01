@@ -140,7 +140,7 @@ struct ExportTests {
         }
     }
 
-    @Test func theFloorAndFailuresAreReportedAndACancelIsNot() {
+    @Test func theFloorAFullDiskAndFailuresAreReportedAndACancelIsNot() {
         let folder = URL(fileURLWithPath: "/Exports", isDirectory: true)
         let one = [folder.appending(path: "a.jpg")]
         let floor = CatalogWindowViewModel.exportReport(requested: 3, exported: one, failed: 0, stop: .belowFloor, folder: folder)
@@ -148,6 +148,9 @@ struct ExportTests {
         #expect(floor?.message == "Export stopped to keep 5 GB free on the disk.")
         let failed = CatalogWindowViewModel.exportReport(requested: 3, exported: one, failed: 2, stop: nil, folder: folder)
         #expect(failed?.message == "2 photos couldn’t be exported. Their originals may be unavailable.")
+        let full = CatalogWindowViewModel.exportReport(requested: 3, exported: one, failed: 0, stop: .outOfSpace, folder: folder)
+        #expect(full?.title == "Exported 1 of 3 Photos")
+        #expect(full?.message == "Export stopped because the disk is full. Free up space and export again.")
         #expect(CatalogWindowViewModel.exportReport(requested: 3, exported: one, failed: 0, stop: .cancelled, folder: folder) == nil)
         #expect(CatalogWindowViewModel.exportReport(requested: 1, exported: one, failed: 0, stop: nil, folder: folder) == nil)
     }

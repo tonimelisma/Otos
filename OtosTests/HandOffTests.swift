@@ -25,6 +25,54 @@ struct HandOffTests {
     /// The owner's acceptance case: several photos, some edited and some not, copied and
     /// pasted, arrive as one file per photo in display order — the edited one as its
     /// rendered JPEG, the others as their originals.
+    /// A full disk is classified by the error's typed chain — Foundation's out-of-space
+    /// code, a POSIX `ENOSPC` beneath another error, AVFoundation's `diskFull` — and never
+    /// by its wording.
+    @Test func aFullDiskIsRecognizedByItsErrorChain() {
+        let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC))
+        #expect(FreeSpaceFloor.refusedForSpace(NSError(domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError)))
+        #expect(FreeSpaceFloor.refusedForSpace(posix))
+        #expect(FreeSpaceFloor.refusedForSpace(NSError(
+            domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError, userInfo: [NSUnderlyingErrorKey: posix]
+        )))
+        #expect(!FreeSpaceFloor.refusedForSpace(NSError(
+            domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError,
+            userInfo: [NSLocalizedDescriptionKey: "The disk is full"]
+        )))
+        #expect(MediaFileWriter.isDiskFull(AVError(.diskFull)))
+        #expect(!MediaFileWriter.isDiskFull(AVError(.unknown)))
+    }
+
+    /// A hand-off that failed for space says so, and never blames the original for it.
+    @Test func aHandOffThatFailedForSpaceSaysSo() {
+        #expect(HandOffFailures(outOfSpace: 0, other: 1).alertMessage
+            == "One photo couldn’t be prepared, so nothing was handed over. Its original may be unavailable.")
+        #expect(HandOffFailures(outOfSpace: 1, other: 0).alertMessage
+            == "There isn’t enough disk space to prepare one photo, so nothing was handed over. Free up space and try again.")
+        #expect(HandOffFailures(outOfSpace: 2, other: 1).alertMessage
+            == "There isn’t enough disk space to prepare 2 photos, and one photo couldn’t be prepared because its "
+            + "original may be unavailable. Nothing was handed over. Free up space and try again.")
+    }
+
+    /// A write that fails for a reason other than space keeps that reason: writing into a
+    /// missing folder is not reported as a full disk.
+    @Test func aWriteThatFailsForAnotherReasonIsNotAFullDisk() async throws {
+        let image = try #require(CGContext(
+            data: nil, width: 4, height: 4, bitsPerComponent: 8, bytesPerRow: 16,
+            space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )?.makeImage())
+        let missing = try makeTestDirectory().appending(path: "absent/edit.jpg")
+        do {
+            try await MediaFileWriter.writeImage(
+                image, as: .jpeg, quality: 0.9, metadataOf: missing, removingLocation: false, to: missing
+            )
+            Issue.record("expected the write into a missing folder to fail")
+        } catch {
+            #expect(error as? MediaFileWriter.WriteError != .outOfSpace)
+            #expect(!FreeSpaceFloor.refusedForSpace(error))
+        }
+    }
+
     @Test func aMixedSelectionCopiesAsOneFilePerPhoto() async throws {
         try await withEditableLibrary(fileCount: 3) { library in
             let ids = library.ids

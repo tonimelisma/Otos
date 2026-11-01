@@ -29,6 +29,9 @@ nonisolated enum ExportOutcome: Equatable, Sendable {
     case belowFloor
     /// The destination folder is gone (deleted, or its disk ejected); the job stops.
     case folderUnavailable
+    /// A write was refused because its volume is out of space; the job stops, because
+    /// every later write would be refused too.
+    case outOfSpace
 }
 
 nonisolated enum MediaExporter {
@@ -95,6 +98,11 @@ nonisolated enum MediaExporter {
                 "folder": folder.path(percentEncoded: false),
             ])
             return .folderUnavailable
+        } catch where error as? MediaFileWriter.WriteError == .outOfSpace || FreeSpaceFloor.refusedForSpace(error) {
+            OtosLog.mediaIO.errorOperation("export.item", phase: "outOfSpace", fields: [
+                "id": item.id.relativePath.rawValue, "error": String(describing: error),
+            ])
+            return .outOfSpace
         } catch {
             OtosLog.mediaIO.errorOperation("export.item", phase: "failed", fields: [
                 "id": item.id.relativePath.rawValue, "error": String(describing: error),

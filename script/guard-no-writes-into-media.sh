@@ -9,6 +9,9 @@ ALLOWLIST=(
   "Otos/Services/MediaExporter.swift"
   # Hand-off files live in Application Support's HandOff folder (ADR 0037).
   "Otos/Services/HandOffPreparer.swift"
+  # Writes only the staging URL its two callers pass: the hand-off's Application Support
+  # file and export's system scratch file (ADR 0037, ADR 0038).
+  "Otos/Services/MediaFileWriter.swift"
   # These writers target Otos-owned thumbnails, staging, device imports, or provider materialization.
   "Otos/Services/ThumbnailStore.swift" "Otos/Services/DeviceStagingRegistry.swift"
   # Owns the device-staging cache layout, so every path it deletes it also constructs.

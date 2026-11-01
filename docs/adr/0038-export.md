@@ -53,9 +53,11 @@ of the user-initiated file operations AGENTS.md lists, beside import and reorgan
   them in display order behind a bottom status bar (`Exporting 3 photos`, M of N, Cancel;
   the hand-off's bar, DES-094). Rendering runs on `ImageRenderer.background`, so a long
   export does not hold the interactive lane that loupe zoom and hand-offs use.
-- **Outcomes.** A photo that cannot be exported does not stop the others. The floor and a
-  folder that went away stop the job, because every later photo would meet the same
-  wall. Cancel stops before the next photo. When an export did not do everything it was
+- **Outcomes.** A photo that cannot be exported does not stop the others. The floor, a
+  write its volume refused for space (`MediaFileWriter.WriteError.outOfSpace`, classified
+  by `FreeSpaceFloor.refusedForSpace`, never by wording), and a folder that went away stop
+  the job, because every later photo would meet the same wall; the alert names the full
+  disk rather than the originals. Cancel stops before the next photo. When an export did not do everything it was
   asked, an alert says so (`Exported 4 of 10 Photos`, with why) and offers Show in Finder
   for the files it wrote. A complete or cancelled export shows nothing more.
 - **Into a library.** A library folder is allowed. The scanner catalogs the exported

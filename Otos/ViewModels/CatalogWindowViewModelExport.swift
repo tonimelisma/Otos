@@ -170,6 +170,9 @@ extension CatalogWindowViewModel {
                     case .folderUnavailable:
                         stop = .folderUnavailable
                         break items
+                    case .outOfSpace:
+                        stop = .outOfSpace
+                        break items
                     }
                     self?.advanceExportProgress(request)
                 }
@@ -235,6 +238,12 @@ extension CatalogWindowViewModel {
                 message: "Export stopped to keep 5 GB free on the disk.",
                 exported: exported
             )
+        case .outOfSpace:
+            return ExportReport(
+                title: exported.isEmpty ? "Couldn’t Export" : title,
+                message: "Export stopped because the disk is full. Free up space and export again.",
+                exported: exported
+            )
         case nil:
             guard failed > 0 else { return nil }
             let photos = failed == 1 ? "One photo couldn’t be exported. Its original" : "\(failed) photos couldn’t be exported. Their originals"
@@ -248,4 +257,6 @@ nonisolated enum ExportStop: Equatable, Sendable {
     case cancelled
     case belowFloor
     case folderUnavailable
+    /// A write was refused for space (the disk filled faster than the floor check saw).
+    case outOfSpace
 }

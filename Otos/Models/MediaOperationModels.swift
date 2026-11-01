@@ -255,6 +255,24 @@ nonisolated enum FreeSpaceFloor {
         }
         return available - committed - bytes >= Self.bytes
     }
+
+    /// Whether a write failed because its volume was out of space — the floor reached the
+    /// hard way. Classified by the error's typed chain, never by its wording: Foundation's
+    /// `NSFileWriteOutOfSpaceError` or a POSIX `ENOSPC` anywhere in the underlying-error
+    /// chain. An error that carries neither is not, whatever it says.
+    static func refusedForSpace(_ error: Error) -> Bool {
+        let error = error as NSError
+        if error.domain == NSCocoaErrorDomain, error.code == NSFileWriteOutOfSpaceError {
+            return true
+        }
+        if error.domain == NSPOSIXErrorDomain, error.code == Int(ENOSPC) {
+            return true
+        }
+        if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError {
+            return refusedForSpace(underlying)
+        }
+        return false
+    }
 }
 
 /// Causes of an import failure a user can act on (DES-035/DES-039 forbid

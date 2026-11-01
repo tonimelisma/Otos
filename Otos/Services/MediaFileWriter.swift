@@ -12,12 +12,14 @@ import UniformTypeIdentifiers
 ///   cropped or scaled, so orientation and pixel size are reset rather than copied;
 /// - a video's range, copied without re-encoding, its metadata kept.
 ///
-/// Location can be removed from either.
+/// Location can be removed from either. A write its volume refused for space throws
+/// `outOfSpace`, so a caller can say so rather than name some other cause.
 nonisolated enum MediaFileWriter {
-    enum WriteError: Error {
+    enum WriteError: Error, Equatable {
         case unsupportedType
         case encodeFailed
         case exportUnavailable
+        case outOfSpace
     }
 
     @concurrent
@@ -54,12 +56,21 @@ nonisolated enum MediaFileWriter {
             exif.removeValue(forKey: kCGImagePropertyExifPixelYDimension)
             properties[kCGImagePropertyExifDictionary] = exif
         }
-        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, type.identifier as CFString, 1, nil) else {
+        // Encoded into memory and then written, so the two can fail apart: Image I/O
+        // reports only that a destination did not finalize, while the file write throws
+        // the volume's own error (`ENOSPC` on a full disk).
+        let encoded = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(encoded as CFMutableData, type.identifier as CFString, 1, nil) else {
             throw WriteError.encodeFailed
         }
         CGImageDestinationAddImage(destination, image, properties as CFDictionary)
         guard CGImageDestinationFinalize(destination) else {
             throw WriteError.encodeFailed
+        }
+        do {
+            try (encoded as Data).write(to: url)
+        } catch {
+            throw FreeSpaceFloor.refusedForSpace(error) ? WriteError.outOfSpace : error
         }
     }
 
@@ -79,6 +90,19 @@ nonisolated enum MediaFileWriter {
         if removingLocation {
             session.metadataItemFilter = .forSharing()
         }
-        try await session.export(to: url, as: .mov)
+        do {
+            try await session.export(to: url, as: .mov)
+        } catch {
+            throw Self.isDiskFull(error) ? WriteError.outOfSpace : error
+        }
+    }
+
+    /// AVFoundation reports a full disk as its own `diskFull` code, or with a file-system
+    /// cause in the error's chain.
+    static func isDiskFull(_ error: Error) -> Bool {
+        if let error = error as? AVError, error.code == .diskFull {
+            return true
+        }
+        return FreeSpaceFloor.refusedForSpace(error)
     }
 }
