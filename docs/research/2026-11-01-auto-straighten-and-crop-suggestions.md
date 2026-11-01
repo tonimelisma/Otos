@@ -64,11 +64,19 @@ Findings:
   | Window selfie | −9.1° | +2.6° |
 
   Gravity agrees with what the photos show.
-- **Sign:** straighten = `atan2(−x, −y)` less the hold, so a positive straighten turns
-  clockwise. Confirmed on **one** photo, where a bed post leans the way the gravity
-  reading predicts (9° from gravity against about 12° visible, with downward pitch adding
-  perspective). One data point is not enough; the sign and frame need a fixture test with
-  a known iPhone capture.
+- **Sign: not established.**
+  - Under Core Motion's axes (+x toward the right of the screen), a phone rolled clockwise
+    reads x = sin θ, so straighten = `atan2(x, −y)` less the hold.
+  - Exiftool documents +x toward the left edge. Its own source (Apple.pm) notes that its
+    directions differ from Apple's documentation.
+  - Casual photos cannot settle it:
+    - The one photo first taken as confirmation, a bed post, is a front-camera selfie, which
+      iOS saves mirrored by default, so its sign is flipped.
+    - The back-camera candidates (a dentist's room, a hammock, a bedroom) lean symmetrically,
+      because the phone was pointed down. Their lines show perspective, not roll.
+  - Settling it needs a controlled capture: the back and front cameras each held about 10°
+    clockwise, then counterclockwise, against a plumb line. The front camera must be checked
+    with mirroring both on and off. The captures become MediaMetadata's fixtures.
 - **Other cameras:**
   - The Sony ILCE-6700 files carry no level reading. Neither do the Ray-Ban Meta files.
   - Olympus/OM System, Panasonic and Canon write a roll angle from their electronic level;
@@ -144,7 +152,8 @@ Findings:
    upright.
    - On the photos tested it was right where Vision was wrong, it costs no pixel analysis,
      and it is what the camera knew.
-   - Before it ships, its sign and frame need a fixture test with a known capture.
+   - Before it ships, its sign and frame need a fixture test with a known capture (section 2):
+     the sign is not yet established, and front-camera mirroring flips it.
 2. **Pixels second.**
    - Vision's horizon stays only as the fallback for photos with no level reading, because it
      misreads photos without a horizon.
