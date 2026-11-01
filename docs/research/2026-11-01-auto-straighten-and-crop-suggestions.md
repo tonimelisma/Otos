@@ -64,19 +64,28 @@ Findings:
   | Window selfie | −9.1° | +2.6° |
 
   Gravity agrees with what the photos show.
-- **Sign: not established.**
-  - Under Core Motion's axes (+x toward the right of the screen), a phone rolled clockwise
-    reads x = sin θ, so straighten = `atan2(x, −y)` less the hold.
-  - Exiftool documents +x toward the left edge. Its own source (Apple.pm) notes that its
-    directions differ from Apple's documentation.
-  - Casual photos cannot settle it:
-    - The one photo first taken as confirmation, a bed post, is a front-camera selfie, which
-      iOS saves mirrored by default, so its sign is flipped.
-    - The back-camera candidates (a dentist's room, a hammock, a bedroom) lean symmetrically,
-      because the phone was pointed down. Their lines show perspective, not roll.
-  - Settling it needs a controlled capture: the back and front cameras each held about 10°
-    clockwise, then counterclockwise, against a plumb line. The front camera must be checked
-    with mirroring both on and off. The captures become MediaMetadata's fixtures.
+- **Sign: calibrated by a controlled capture.** On 2026-11-01 four iPhone 18 Pro photos of a
+  plumb door frame were taken: back camera rolled each way, then front camera each way, all
+  held upright. Each photo's needed turn was measured from the frame's lean and compared
+  with its gravity reading, roll = `atan2(x, −y)` less the hold.
+
+  | Camera | Needed turn (frame lean) | `atan2(x, −y)` less hold | Agreement |
+  | --- | --- | --- | --- |
+  | Back | ≈ −14° (top leans right) | −15.8° | same sign |
+  | Back | positive (top leans left) | +17.0° | same sign |
+  | Front | +10.9° (measured at 1000 px) | −11.2° | opposite sign, same size |
+  | Front | ≈ −25° (top leans right) | +27.4° | opposite sign |
+
+  - **Back camera:** straighten = `atan2(x, −y)` less the hold. This is Core Motion's
+    convention (+x toward the right of the screen). Exiftool's "+x toward the left edge" is
+    the misleading one.
+  - **Front camera:** the sign is reversed. iOS saves front-camera photos mirrored by default
+    ("Mirror Front Camera"), and the file records no tag saying whether mirroring was on, so
+    a front-camera photo's sign is not knowable from its metadata.
+  - **Not covered:** a phone held landscape (hold ±90°). All four calibration shots were held
+    upright.
+  - **Earlier evidence that misled:** a bed-post selfie (front camera, so mirrored), and
+    back-camera photos pointed downward, whose lines showed perspective rather than roll.
 - **Other cameras:**
   - The Sony ILCE-6700 files carry no level reading. Neither do the Ray-Ban Meta files.
   - Olympus/OM System, Panasonic and Canon write a roll angle from their electronic level;
@@ -152,8 +161,9 @@ Findings:
    upright.
    - On the photos tested it was right where Vision was wrong, it costs no pixel analysis,
      and it is what the camera knew.
-   - Before it ships, its sign and frame need a fixture test with a known capture (section 2):
-     the sign is not yet established, and front-camera mirroring flips it.
+   - Back camera only: its sign is calibrated (section 2). A front-camera photo's sign
+     depends on a mirroring setting the file does not record, so it falls back to the
+     pixels. The landscape hold still needs a calibration shot.
 2. **Pixels second.**
    - Vision's horizon stays only as the fallback for photos with no level reading, because it
      misreads photos without a horizon.
