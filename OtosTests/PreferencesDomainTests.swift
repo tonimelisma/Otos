@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 /// The single `PreferencesDomain` value is the only way to
-/// select a `UserDefaults` domain. Every construction site requires it; there is
+/// select a preference domain. Every construction site requires it; there is
 /// no default that can silently select `.standard`. This suite proves that a
 /// temporary domain persists and isolates, and that reconstructing actors from the
 /// same domain observes the same persisted state while a distinct control suite
@@ -53,7 +53,7 @@ struct PreferencesDomainTests {
         #expect(second.importPreferences.importSidecarFiles == true)
         #expect(second.importPreferences.deleteSourceAfterImport == true)
 
-        // Direct UserDefaults read proves the suite was written.
+        // A direct read of the domain's store proves the suite was written.
         let tempDefaults = temp.makeDefaults()
         #expect(tempDefaults.integer(forKey: "mediaGridColumnCount") == 9)
         #expect(tempDefaults.object(forKey: CatalogWindowViewModel.stripTileEdgeDefaultsKey) as? Double == 150)
@@ -82,7 +82,7 @@ struct PreferencesDomainTests {
         let storeB = CatalogStore(location: .inMemory)
         let coordinatorB = MediaOperationCoordinator(store: storeB, preferencesDomain: temp)
         let loadedB = await coordinatorB.allDestinations()
-        // The persisted file should contain the mapping; check via UserDefaults directly.
+        // The domain's store holds the mapping; read it directly.
         let tempDefaults = temp.makeDefaults()
         let legacy = tempDefaults.dictionary(forKey: "import.destinationBySource") as? [String: String]
         #expect(legacy?[sourcePath.rawValue] == destPath.rawValue)
