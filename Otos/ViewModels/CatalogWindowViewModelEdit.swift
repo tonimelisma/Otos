@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import MediaMetadata
 import OSLog
 
 /// Edit panel intents guide
@@ -103,7 +104,7 @@ nonisolated enum EditLaneCommand: Sendable {
     /// The white balance picker was clicked at `point`, a fraction of the photo as shown
     /// (edited with `shown`) from its top-left corner.
     case pickNeutral(id: MediaAssetID, point: CGPoint, shown: EditRecipe, sourceSize: Int64?)
-    /// The Crop section's Auto: level the horizon of the photo as `shown` turns and flips it.
+    /// The Crop section's Auto: level the photo as `shown` turns and flips it.
     case autoStraighten(id: MediaAssetID, shown: EditRecipe, sourceSize: Int64?)
     /// The crop tool's Suggested menu: place `suggestion` by the subject of `frame`, the
     /// photo edited with everything but its crop as `shown`, keeping `pixelRatio`.
@@ -124,12 +125,19 @@ nonisolated enum SubjectReading: Equatable, Sendable {
     case none
 }
 
-/// What reading a photo's horizon found.
-nonisolated enum HorizonReading: Equatable, Sendable {
-    /// The straighten, in degrees clockwise, that levels it.
-    case level(Double)
-    /// Vision found no horizon: the photo is left as it is.
+/// What Auto straighten found to level a photo by.
+nonisolated enum LevelReading: Equatable, Sendable {
+    /// The straighten, in degrees clockwise, that levels it, and what said so.
+    case level(Double, LevelSource)
+    /// Neither the camera's level nor a horizon was found: the photo is left as it is.
     case none
+}
+
+/// Where a level came from, best first: the camera's own gravity reading at capture, as
+/// MediaMetadata reports it, then the horizon Vision finds in the pixels (ADR 0036).
+nonisolated enum LevelSource: String, Equatable, Sendable {
+    case gravity
+    case horizon
 }
 
 extension CatalogWindowViewModel {
@@ -523,7 +531,7 @@ extension CatalogWindowViewModel {
                     }
                     continue
                 case let .autoStraighten(id, shown, sourceSize):
-                    if let reading = await pipeline.horizon(id, shown: shown, sourceSize: sourceSize) {
+                    if let reading = await pipeline.level(id, shown: shown, sourceSize: sourceSize) {
                         self?.applyAutoStraighten(id: id, shown: shown, reading)
                     }
                     continue
@@ -812,28 +820,41 @@ nonisolated struct EditPipeline: Sendable {
         }
     }
 
-    /// The straighten that levels the photo's horizon, or nil when the photo cannot be read.
+    /// The straighten that levels the photo as `shown` turns and flips it, or nil when the
+    /// photo cannot be read. The camera's gravity reading comes first: it is the camera's
+    /// own level and needs no scene to read. A turn of the picture keeps a level level and a
+    /// flip mirrors it, so the reading is reversed for each flip `shown` makes. Without one,
+    /// the horizon Vision finds in the pixels.
     @concurrent
-    func horizon(_ id: MediaAssetID, shown: EditRecipe, sourceSize: Int64?) async -> HorizonReading? {
+    func level(_ id: MediaAssetID, shown: EditRecipe, sourceSize: Int64?) async -> LevelReading? {
         guard await MaterializationCoordinator.makeLocal(id, sourceSize: sourceSize, via: materialization) else {
             return nil
         }
         let start = ContinuousClock.now
+        if let turn = MediaMetadataReader.read(url: id.fileURL).levelingTurnDegrees {
+            let degrees = shown.flipHorizontal == shown.flipVertical ? turn : -turn
+            Self.logLevel(id, source: LevelSource.gravity.rawValue, degrees: degrees, start: start)
+            return .level(degrees, .gravity)
+        }
         do {
             let degrees = try await renderer.horizonStraighten(id.fileURL, shown: shown)
-            OtosLog.rendering.noticeOperation("render.horizon", phase: "finish", fields: [
-                "id": id.relativePath.rawValue,
-                "found": "\(degrees != nil)",
-                "degrees": degrees.map { String(format: "%.2f", $0) } ?? "none",
-                "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
-            ])
-            return degrees.map(HorizonReading.level) ?? HorizonReading.none
+            Self.logLevel(id, source: degrees == nil ? "none" : LevelSource.horizon.rawValue, degrees: degrees, start: start)
+            return degrees.map { .level($0, .horizon) } ?? LevelReading.none
         } catch {
-            OtosLog.rendering.errorOperation("render.horizon", phase: "failed", fields: [
+            OtosLog.rendering.errorOperation("render.level", phase: "failed", fields: [
                 "id": id.relativePath.rawValue, "error": String(describing: error),
             ])
             return nil
         }
+    }
+
+    private static func logLevel(_ id: MediaAssetID, source: String, degrees: Double?, start: ContinuousClock.Instant) {
+        OtosLog.rendering.noticeOperation("render.level", phase: "finish", fields: [
+            "id": id.relativePath.rawValue,
+            "source": source,
+            "degrees": degrees.map { String(format: "%.2f", $0) } ?? "none",
+            "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
     }
 
     /// Where the subject of the crop frame is, or nil when Vision cannot read it. A

@@ -289,6 +289,56 @@ func writeHorizonJPEG(to url: URL, risingBy degrees: Double) throws {
     try #require(CGImageDestinationFinalize(destination))
 }
 
+/// `writeHorizonJPEG`'s photo as an iPhone writes it: an Exif segment naming the lens and
+/// carrying the Apple MakerNote's gravity reading at capture (`AccelerationVector`, tag
+/// `0x0008`, in g in the device's frame), placed straight after the JPEG's start marker.
+func writeLeveledJPEG(
+    to url: URL,
+    risingBy degrees: Double,
+    gravity: (x: Double, y: Double, z: Double),
+    lensModel: String
+) throws {
+    try writeHorizonJPEG(to: url, risingBy: degrees)
+    let jpeg = try Data(contentsOf: url)
+    try #require(jpeg.prefix(2) == Data([0xFF, 0xD8]))
+    let segment = appleGravityExifSegment(gravity: gravity, lensModel: lensModel)
+    try (jpeg.prefix(2) + segment + jpeg.dropFirst(2)).write(to: url)
+}
+
+/// A big-endian APP1 Exif segment: IFD0 points at an Exif IFD holding `LensModel` and an
+/// Apple MakerNote, whose own IFD holds the gravity reading as three signed rationals, its
+/// offset counted from the MakerNote's start.
+private func appleGravityExifSegment(gravity: (x: Double, y: Double, z: Double), lensModel: String) -> Data {
+    func be16(_ value: UInt16) -> Data {
+        Data([UInt8(value >> 8), UInt8(value & 0xFF)])
+    }
+    func be32(_ value: UInt32) -> Data {
+        Data([UInt8(value >> 24), UInt8((value >> 16) & 0xFF), UInt8((value >> 8) & 0xFF), UInt8(value & 0xFF)])
+    }
+    var vector = Data()
+    for component in [gravity.x, gravity.y, gravity.z] {
+        vector += be32(UInt32(bitPattern: Int32((component * 1_000_000).rounded()))) + be32(1_000_000)
+    }
+    let noteHeaderLength = 14, noteIFDLength = 2 + 12 + 4
+    var note = Data("Apple iOS".utf8) + Data([0, 0, 1]) + Data("MM".utf8)
+    note += be16(1) + be16(0x0008) + be16(10) + be32(3) + be32(UInt32(noteHeaderLength + noteIFDLength))
+    note += be32(0) + vector
+
+    let lens = Data(lensModel.utf8) + Data([0])
+    let exifIFDOffset: UInt32 = 8 + 2 + 12 + 4
+    let exifIFDLength: UInt32 = 2 + 2 * 12 + 4
+    let lensOffset = exifIFDOffset + exifIFDLength
+    let noteOffset = lensOffset + UInt32(lens.count)
+    var tiff = Data("MM".utf8) + be16(42) + be32(8)
+    tiff += be16(1) + be16(0x8769) + be16(4) + be32(1) + be32(exifIFDOffset) + be32(0)
+    tiff += be16(2)
+    tiff += be16(0x927C) + be16(7) + be32(UInt32(note.count)) + be32(noteOffset)
+    tiff += be16(0xA434) + be16(2) + be32(UInt32(lens.count)) + be32(lensOffset)
+    tiff += be32(0) + lens + note
+    let app1 = Data("Exif".utf8) + Data([0, 0]) + tiff
+    return Data([0xFF, 0xE1]) + be16(UInt16(app1.count + 2)) + app1
+}
+
 /// A 1200 × 800 photo of one subject: a red disk a fifth of the height across, centered at
 /// `center` (fractions from the top-left corner), on a plain gray ground.
 func writeSubjectJPEG(to url: URL, center: CGPoint) throws {

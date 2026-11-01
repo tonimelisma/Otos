@@ -36,13 +36,16 @@ MediaMetadata 0.7.0 adds what a consumer needs to stop re-deriving:
 - PNG, WebP and GIF as families of their own, read from their headers (0.8.0);
 - `CaptureTimestamps(entries:)`, the inverse of `entries` (0.8.1).
 - `contentIdentifier`, Apple's Live Photo pairing identifier (0.8.2; ADR 0041).
+- `levelingTurnDegrees`, the turn that levels a picture from the camera's gravity reading,
+  and the rule for when that reading means nothing (0.9.1; ADR 0036).
 
 ## Decision
 
 **What MediaMetadata owns:** every fact read from a file's bytes, and every rule about
 what those facts mean. That covers:
 - format family and kind;
-- orientation semantics and display geometry (`PixelGeometry`, `Orientation.swapsDimensions`);
+- orientation semantics and display geometry (`PixelGeometry`, `Orientation.swapsDimensions`),
+  and the camera's level at capture;
 - the list of timestamp roles and location sources;
 - which role names a file (`wallClockPrecedence`) and which orders it (`instantPrecedence`);
 - codec identity;

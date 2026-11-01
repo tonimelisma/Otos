@@ -166,13 +166,13 @@ struct EditPanelView: View {
                 Spacer()
                 if section == .crop {
                     // Photos' Auto sits in the heading beside its section's undo; here it
-                    // levels the horizon (Lightroom's Crop Auto).
+                    // levels the photo (Lightroom's Crop Auto).
                     Button("Auto", action: cropActions.autoStraighten)
                         .buttonStyle(.borderless)
                         .controlSize(.small)
                         .foregroundStyle(unavailableHelp == nil ? .secondary : .tertiary)
                         .disabled(unavailableHelp != nil)
-                        .help(unavailableHelp ?? "Straighten the horizon automatically")
+                        .help(unavailableHelp ?? "Straighten the photo automatically")
                 }
                 // Quiet beside the heading: a text button, so a column of section headings
                 // does not read as a column of push buttons.
@@ -593,7 +593,7 @@ struct EditPanelCropActions {
     let turn: @MainActor (Bool) -> Void
     /// Horizontally when true.
     let flip: @MainActor (Bool) -> Void
-    /// Levels the horizon (the Crop section's Auto).
+    /// Levels the photo (the Crop section's Auto).
     let autoStraighten: @MainActor () -> Void
     /// Arms or disarms the straighten line.
     let toggleLine: @MainActor () -> Void
