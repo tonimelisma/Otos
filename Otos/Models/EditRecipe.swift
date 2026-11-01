@@ -570,6 +570,18 @@ nonisolated enum EditSection: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// The SF Symbol beside the heading, as Photos marks each of its Adjust sections.
+    var symbol: String {
+        switch self {
+        case .crop: "crop"
+        case .light: "sun.max"
+        case .color: "paintpalette"
+        case .effects: "circle.dashed"
+        case .detail: "triangle.lefthalf.filled"
+        case .optics: "camera.aperture"
+        }
+    }
+
     var controls: [EditControl] {
         EditControl.allCases.filter { $0.section == self }
     }

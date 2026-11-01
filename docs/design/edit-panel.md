@@ -26,36 +26,55 @@ and compare panes follow a drag live; a grid tile updates when the drag ends.
 
 | String | Level |
 | --- | --- |
-| File name / `No Selection` | L1 (`title3`, semibold, middle-truncated) |
+| File name / `No Selection` | L1 (`title2`, semibold, middle-truncated) |
 | Histogram | a picture, no text (DES-100) |
 | `Revert to Original`, the Show Original toggle's tooltip | L2 (`body`, small control) |
 | A RAW temperature's scale labels (`2500`, `4000`, `10000`) | L3 (`footnote`, secondary) |
-| Section heading (`Crop`, `Light`, `Color`) | `.headline` group heading (DES-003) |
-| Control name, control value field, `Reset`, `Crop` / `Done`, `Aspect` and its titles | L2 (`body`); values `.monospacedDigit()` (DES-005) |
+| Section heading (`Crop`, `Light`, `Color`) | `.title3`, regular, beside the section's symbol |
+| Control name, control value field, `Auto`, `Reset`, `Crop` / `Done`, `White Balance`, `Rotate & Flip`, `Aspect` and its titles | L2 (`body`); values `.monospacedDigit()` (DES-005) |
+| A control's name and value while it is at its neutral value | L2 in secondary color |
 
-Three sizes, two weights (DES-004).
+Four sizes, two weights (DES-004's edit panel deviation): the file name, the section
+headings, the controls, and a RAW temperature's scale labels. Photos' section titles are
+larger than its controls' names, so a section reads before its controls; the file name
+above them stays the largest.
 
 ## Zones and height
 
-A header zone, then one zone per section in Lightroom desktop's order. The header is the
-file name, the histogram (64 pt, DES-100) and a row with the Show Original toggle
-(`square.split.2x1`, drawn pressed while on, DES-097's idiom) on the left and `Revert to
-Original` on the right, 8 pt apart. Each section is a heading row (title on the left, a
-quiet borderless `Reset` in secondary text on the right, so six headings do not read as
-six push buttons) over its controls. Each control is its name
-and value on one line, label left and value right (DES-017), over a slider at the full
-panel width. Spacing is 16 pt padding, 20 pt between the title and the section, 12 pt
-between controls, and 4 pt between a control's line and its slider (DES-050).
+A header zone, then one zone per section in Lightroom desktop's order, laid out as Photos
+lays out its Adjust list. The header is the file name, the histogram (64 pt, DES-100) and a
+row with the Show Original toggle (`square.split.2x1`, drawn pressed while on, DES-097's
+idiom) on the left and `Revert to Original` on the right, 8 pt apart.
 
-A slider's filled track is the neutral secondary color, not the accent. A slider is a value,
-not a selection (DES-024), and most sliders here are neutral at their middle, where a fill
-from the left edge would read as an amount.
+A hairline sits above each section, so where one ends and the next begins reads without
+counting whitespace. Each section is a heading row over its controls: the disclosure
+triangle, the section's symbol (`crop`, `sun.max`, `paintpalette`, `circle.dashed`,
+`triangle.lefthalf.filled`, `camera.aperture`) and its title on the left; on the right a quiet
+borderless `Reset` in secondary text (tertiary while there is nothing to reset), so six
+headings do not read as six push buttons, and for Crop, `Auto` before it in the same style.
+The controls are indented 16 pt under the heading, which puts them under its symbol.
+
+Each control is drawn as Photos draws its adjustments: a 22 pt bar the section's width with
+the control's name inside it on the left and its value on the right (DES-017), both 7 pt in.
+The bar is a quaternary well, filled in tertiary from the control's neutral point to its
+value, and marked at the value by a 2 pt line in the primary color. Dragging anywhere on the
+bar moves the value by how far the pointer travels, so a click never jumps it; with the bar
+focused, the left and right arrows move it one keyboard step. The fill and the mark are
+neutral colors, not the accent: a value is not a selection (DES-024), and most of these are
+neutral at their middle, where a fill from the left edge would read as an amount. A control
+at its neutral value draws its name and value in secondary color, as Lightroom dims an
+untouched slider, so what was changed stands out. The rows that are not bars (`White
+Balance`, `Rotate & Flip`, `Aspect`, `Lens Correction`) start their labels 7 pt in, on the
+bars' label edge (DES-016).
+
+Spacing is 16 pt padding, 12 pt on either side of a section's hairline, 8 pt between a
+heading and its controls, and 4 pt between controls (DES-050).
 
 Sections, in order (Lightroom desktop's order, ADR 0036):
 
 | Section | Controls |
 | --- | --- |
-| Crop (a tool above the sections) | `Crop` / `Done` (Return while on), Aspect menu (Original, Custom, 1 × 1, 4 × 5, 5 × 7, 2 × 3, 4 × 3, 16 × 9), Rotate Aspect; Straighten (−45.0…+45.0°, 0.1° steps, positive clockwise); Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical (icon buttons) |
+| Crop (a tool above the sections) | `Auto` in the heading; `Crop` / `Done` (Return while on); Straighten (−45.0…+45.0°, 0.1° steps, positive clockwise); `Rotate & Flip`: Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical (borderless icons, as Lightroom's); `Aspect`: its menu (Original, Custom, 1 × 1, 4 × 5, 5 × 7, 2 × 3, 4 × 3, 16 × 9) and Rotate Aspect |
 | Light | Exposure (−4.00…+4.00 stops, 0.05 steps), Contrast (−100…+100), Highlights (−100…+100), Shadows (−100…+100) |
 | Color | White Balance picker; Temperature (a RAW: 2000–50000 K, even in mireds, 50 K steps, shown `5600 K`; another still: −100…+100), Tint (a RAW: −150…+150; another still: −100…+100), Vibrance (−100…+100), Saturation (−100…+100) |
 | Effects | Vignette (−100…+100, negative darkens), Midpoint (0…100), Feather (0…100) |
@@ -79,7 +98,9 @@ point` elsewhere.
 Each section heading is a disclosure triangle with the section's name: pointing in from
 the leading edge while folded, down while open (Disclosure controls). Sections start open.
 Which ones a person folds is remembered across launches. A folded section keeps its Reset
-in the heading. The crop tool's section stays open while the tool is on. Folding fades the
+in the heading. The crop tool's section stays open while the tool is on; its heading keeps
+its full contrast then, because the section in use must not read as unavailable. Folding
+fades the
 section's controls in or out (0.25 s, 0.15 s under Reduce Motion; DES-070, DES-075).
 
 ## Values can be typed

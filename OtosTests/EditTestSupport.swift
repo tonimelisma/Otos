@@ -256,3 +256,35 @@ func writeSplitJPEG(
 func meanColor(_ image: CGImage, in rect: CGRect) throws -> MeanColor {
     try meanColor(#require(image.cropping(to: rect)))
 }
+
+/// A 1200 × 800 landscape: sky over sea, split by a horizon through the center that rises
+/// to the right by `degrees` as the photo is shown.
+func writeHorizonJPEG(to url: URL, risingBy degrees: Double) throws {
+    let width = 1200.0, height = 800.0
+    let context = try #require(CGContext(
+        data: nil,
+        width: Int(width),
+        height: Int(height),
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ))
+    context.setFillColor(CGColor(srgbRed: 0.55, green: 0.72, blue: 0.92, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    // Core Graphics is y-up, so a line rising to the right has a positive slope here too.
+    let slope = tan(degrees * .pi / 180)
+    let left = height / 2 - slope * width / 2, right = height / 2 + slope * width / 2
+    context.setFillColor(CGColor(srgbRed: 0.08, green: 0.22, blue: 0.36, alpha: 1))
+    context.beginPath()
+    context.move(to: CGPoint(x: 0, y: 0))
+    context.addLine(to: CGPoint(x: 0, y: left))
+    context.addLine(to: CGPoint(x: width, y: right))
+    context.addLine(to: CGPoint(x: width, y: 0))
+    context.closePath()
+    context.fillPath()
+    let image = try #require(context.makeImage())
+    let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, "public.jpeg" as CFString, 1, nil))
+    CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
+    try #require(CGImageDestinationFinalize(destination))
+}

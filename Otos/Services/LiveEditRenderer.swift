@@ -2,6 +2,7 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import Foundation
 import OSLog
+import Vision
 
 /// Live edit renderer guide
 ///
@@ -126,6 +127,31 @@ actor LiveEditRenderer {
             let sample = try sampledColor(image, at: location)
             return try relativeWhiteBalanceNeutralizing(sample)
         }
+    }
+
+    /// The straighten, in degrees clockwise, that levels the horizon Vision finds in the
+    /// photo as `shown` turns and flips it, or nil when Vision finds no horizon. The photo
+    /// is read with `shown`'s turns and flips but no straighten and no crop, so the angle
+    /// replaces the current straighten rather than adding to it, and a crop cannot hide
+    /// the horizon. It is developed at the size `shown` already uses, so reading it never
+    /// decodes the photo again.
+    func horizonStraighten(_ url: URL, shown: EditRecipe) throws -> Double? {
+        var level = shown
+        level.straighten = 0
+        level.crop = nil
+        let image = try ImageRenderer.bitmap(
+            ImageRenderer.applyingGeometry(level, developedImage(url, recipe: shown)),
+            context: context
+        )
+        let request = VNDetectHorizonRequest()
+        try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        guard let horizon = request.results?.first else {
+            return nil
+        }
+        // Vision reports the turn that levels the photo, counterclockwise in its y-up space
+        // (measured: a horizon rising 6° to the right reads −5.9°); the recipe's straighten
+        // turns clockwise, so it is that angle negated.
+        return -Double(horizon.angle) * 180 / .pi
     }
 
     /// Lets go of the open photo, when editing moves to another photo or ends.

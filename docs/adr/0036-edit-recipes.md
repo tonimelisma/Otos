@@ -79,6 +79,14 @@ open takes 20–180 ms per change. Opening it again for every change takes about
     - `CIStraightenFilter` does the same visibly, but its scale is not exposed. The
       explicit transform can be inverted, which the white balance picker needs to find
       the developed pixel under a click on a turned, straightened or cropped photo.
+  - Auto straighten reads the horizon with Vision's `VNDetectHorizonRequest`, on the
+    live renderer's open photo developed with the recipe's turns and flips but no
+    straighten or crop, so its angle replaces the straighten instead of adding to it.
+    Vision reports the counterclockwise turn that levels the photo; the recipe's
+    straighten is that negated. Vision states no confidence, so a photo it finds no
+    horizon in is left as it is. Rejected: `CIImage.autoAdjustmentFilters` with `.level`,
+    whose documentation names neither the filter it returns nor an angle the recipe
+    could store.
   - A crop is developed from a frame large enough for the crop itself to reach the
     requested size: the RAW scale factor or the decode size is divided by the crop's
     share of the frame's long edge. A cropped preview therefore stays 2560 px, and the

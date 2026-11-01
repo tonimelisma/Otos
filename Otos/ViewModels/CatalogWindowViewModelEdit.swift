@@ -103,6 +103,16 @@ nonisolated enum EditLaneCommand: Sendable {
     /// The white balance picker was clicked at `point`, a fraction of the photo as shown
     /// (edited with `shown`) from its top-left corner.
     case pickNeutral(id: MediaAssetID, point: CGPoint, shown: EditRecipe, sourceSize: Int64?)
+    /// The Crop section's Auto: level the horizon of the photo as `shown` turns and flips it.
+    case autoStraighten(id: MediaAssetID, shown: EditRecipe, sourceSize: Int64?)
+}
+
+/// What reading a photo's horizon found.
+nonisolated enum HorizonReading: Equatable, Sendable {
+    /// The straighten, in degrees clockwise, that levels it.
+    case level(Double)
+    /// Vision found no horizon: the photo is left as it is.
+    case none
 }
 
 extension CatalogWindowViewModel {
@@ -364,7 +374,7 @@ extension CatalogWindowViewModel {
         )
     }
 
-    private func commitPendingEdit() {
+    func commitPendingEdit() {
         guard editTarget != nil, editDraft != editSavedRecipe else { return }
         commitEdit(actionName: editDraggingControl?.title ?? "Edit")
         editDraggingControl = nil
@@ -493,6 +503,11 @@ extension CatalogWindowViewModel {
                         id, at: point, shown: shown, sourceSize: sourceSize
                     ) {
                         self?.applyPickedWhiteBalance(id: id, whiteBalance)
+                    }
+                    continue
+                case let .autoStraighten(id, shown, sourceSize):
+                    if let reading = await pipeline.horizon(id, shown: shown, sourceSize: sourceSize) {
+                        self?.applyAutoStraighten(id: id, shown: shown, reading)
                     }
                     continue
                 case let .save(save):
@@ -767,6 +782,30 @@ nonisolated struct EditPipeline: Sendable {
             return try await renderer.neutralWhiteBalance(id.fileURL, at: point, shown: shown)
         } catch {
             OtosLog.rendering.errorOperation("render.neutralPick", phase: "failed", fields: [
+                "id": id.relativePath.rawValue, "error": String(describing: error),
+            ])
+            return nil
+        }
+    }
+
+    /// The straighten that levels the photo's horizon, or nil when the photo cannot be read.
+    @concurrent
+    func horizon(_ id: MediaAssetID, shown: EditRecipe, sourceSize: Int64?) async -> HorizonReading? {
+        guard await MaterializationCoordinator.makeLocal(id, sourceSize: sourceSize, via: materialization) else {
+            return nil
+        }
+        let start = ContinuousClock.now
+        do {
+            let degrees = try await renderer.horizonStraighten(id.fileURL, shown: shown)
+            OtosLog.rendering.noticeOperation("render.horizon", phase: "finish", fields: [
+                "id": id.relativePath.rawValue,
+                "found": "\(degrees != nil)",
+                "degrees": degrees.map { String(format: "%.2f", $0) } ?? "none",
+                "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+            ])
+            return degrees.map(HorizonReading.level) ?? HorizonReading.none
+        } catch {
+            OtosLog.rendering.errorOperation("render.horizon", phase: "failed", fields: [
                 "id": id.relativePath.rawValue, "error": String(describing: error),
             ])
             return nil
