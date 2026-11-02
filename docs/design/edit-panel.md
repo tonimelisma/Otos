@@ -169,9 +169,14 @@ step, and disarms the ruler. A drag shorter than 8 pt is a click and draws nothi
 
 `Suggested` places a crop by the subject Vision finds in the frame the tool shows (objectness
 saliency, else attention saliency), keeping the chosen aspect or the frame's own when it is
-Custom. `Subject` is the smallest such crop that holds the subject with a 15% margin on each
-side; `Thirds` is the largest, with the subject's center on the rule-of-thirds point on its
-side of the frame. Each is one `Suggested Crop` step. Neither Photos nor Lightroom suggests
+Custom.
+- **`Subject`** is the smallest such crop that holds the subject with a margin of up to 15% on
+  each side. The margin goes only where the frame has room, so a subject that fills the frame
+  or touches an edge is still cropped in.
+- **`Thirds`** is the largest such crop whose rule-of-thirds point (where the crop grid's
+  lines cross) lands on the subject's center, on the subject's side of the frame. It is
+  smaller than the whole frame whenever the center is not already on a third, since only
+  a smaller crop can move the center there. Each is one `Suggested Crop` step. Neither Photos nor Lightroom suggests
 crops, so the row follows the panel's own idiom: a label, then its acts. Both are enabled
 only while the tool shows the frame the photo is cropped from, so a turn, flip or straighten
 still rendering waits. Where Vision finds no subject, the crop is left as it is.

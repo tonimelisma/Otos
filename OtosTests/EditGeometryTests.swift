@@ -214,14 +214,39 @@ struct EditGeometryTests {
         #expect(fit.top <= subject.minY && fit.bottom >= subject.maxY)
         #expect(abs(fit.height - 0.15 * 1.3) < 0.001)
 
+        // The largest square whose upper-left thirds point is the subject's center: the
+        // center's distance from the top edge caps it at 0.825 of the height.
         let square = CropSuggestion.subjectOnThirds.crop(subject: subject, frame: frame, pixelRatio: 1)
         #expect(abs(square.width * 1200 - square.height * 800) < 0.001)
-        #expect(square.height == 1)
-        // Wide enough to place: the subject's center sits on the left third.
+        #expect(abs(square.height - 0.825) < 0.001)
         #expect(abs(square.left + square.width / 3 - subject.midX) < 0.001)
+        #expect(abs(square.top + square.height / 3 - subject.midY) < 0.001)
 
         // A subject bigger than any crop of the aspect gets the largest crop there is.
         let huge = CropSuggestion.fitSubject.crop(subject: CGRect(x: 0, y: 0, width: 1, height: 1), frame: frame, pixelRatio: 1)
         #expect(abs(huge.height - 1) < 0.001)
+    }
+
+    /// A subject that fills most of the frame and touches its top edge, as Vision reads a
+    /// child at a table (1024 × 682): Subject keeps the margin only where there is room and
+    /// still crops in, and Thirds still moves the subject onto a third. Clamping either to
+    /// the frame would leave the whole photo, which is what both did.
+    @Test func aFrameFillingSubjectIsStillCroppedIn() {
+        let frame = CGSize(width: 1024, height: 682)
+        let subject = CGRect(x: 0.444, y: 0, width: 0.553, height: 0.786)
+
+        let fit = CropSuggestion.fitSubject.crop(subject: subject, frame: frame, pixelRatio: nil)
+        #expect(!fit.isWhole)
+        #expect(fit.width < 0.95)
+        // The subject touches the top edge, so the crop's top is 0 up to rounding.
+        let tolerance = 1e-9
+        #expect(fit.left <= subject.minX + tolerance && fit.right >= subject.maxX - tolerance)
+        #expect(fit.top <= subject.minY + tolerance && fit.bottom >= subject.maxY - tolerance)
+
+        let thirds = CropSuggestion.subjectOnThirds.crop(subject: subject, frame: frame, pixelRatio: nil)
+        #expect(!thirds.isWhole)
+        #expect(abs(thirds.width * 1024 / (thirds.height * 682) - 1024.0 / 682) < 0.001)
+        #expect(abs(thirds.left + thirds.width * 2 / 3 - subject.midX) < 0.001)
+        #expect(abs(thirds.top + thirds.height / 3 - subject.midY) < 0.001)
     }
 }
