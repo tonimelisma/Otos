@@ -11,10 +11,7 @@ import Testing
 
 struct OtosTests {
     @Test func mediaFixturesArePresent() {
-        let fixtureDirectory = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appending(path: "Fixtures", directoryHint: .isDirectory)
-            .appending(path: "Media", directoryHint: .isDirectory)
+        let fixtureDirectory = SourceTree.mediaFixtures
 
         let expectedFiles = [
             "jpeg-exif-offset-date.jpg",

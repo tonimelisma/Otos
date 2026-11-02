@@ -61,6 +61,7 @@ rewrite an ADR when the decision changes; never append increment history.
 | [0032](adr/0032-owner-state-requests-and-intent-ordering.md) | Owner state changes only in synchronous code, a request is a revision counter nothing clears, an error is never a fact, intents travel in one ordered stream, and blocking work leaves the actor by a named mechanism. |
 | [0033](adr/0033-time-is-never-a-stand-in-for-a-fact.md) | Time never stands in for a fact that can be known; every wait on time is tagged deadline, backoff, schedule, measurement, poll, or a cadence citing its measurement, and `script/time-guard.sh` checks it. |
 | [0031](adr/0031-browser-place-restored-on-relaunch.md) | The browser place (query, view mode, selection, position) is saved once at quit and restored at launch, checked against the loaded catalog. |
+| [0044](adr/0044-verification-builds-share-compile-results.md) | Verification builds share one compilation cache across worktrees through prefix mapping; tests take the checkout from `OTOS_SOURCE_ROOT`; gates run in one pass; `check.sh --only` is iteration feedback, not evidence. |
 
 ## Research
 
@@ -75,6 +76,7 @@ Non-authoritative: they record what we learned, not current behavior.
 - [research/2026-08-19-source-file-disposition-prior-art.md](research/2026-08-19-source-file-disposition-prior-art.md)
 - [research/2026-09-04-grid-day-header-pinning-and-scroll-edge-effect.md](research/2026-09-04-grid-day-header-pinning-and-scroll-edge-effect.md)
 - [research/2026-10-05-parallel-checks-and-live-reattach.md](research/2026-10-05-parallel-checks-and-live-reattach.md)
+- [research/2026-11-01-build-and-check-speed.md](research/2026-11-01-build-and-check-speed.md)
 
 ## Plans and roadmap
 

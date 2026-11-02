@@ -96,9 +96,7 @@ struct ExportTests {
     /// original carries, and keeping it keeps it.
     @Test func aVideoExportsItsTrimAndCanDropLocation() async throws {
         let directory = try makeTestDirectory()
-        let fixture = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appending(path: "Fixtures/Media/mov-no-embedded-capture-date.mov")
+        let fixture = SourceTree.mediaFixtures.appending(path: "mov-no-embedded-capture-date.mov")
         let placed = directory.appending(path: "clip.mov")
         try await writeLocatedCopy(of: fixture, to: placed)
         #expect(try await hasLocation(placed))

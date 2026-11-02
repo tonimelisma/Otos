@@ -153,9 +153,7 @@ struct HandOffTests {
 
     @Test func aTrimmedVideoIsHandedOverAsItsRange() async throws {
         let directory = try makeTestDirectory()
-        let fixture = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appending(path: "Fixtures/Media/mov-no-embedded-capture-date.mov")
+        let fixture = SourceTree.mediaFixtures.appending(path: "mov-no-embedded-capture-date.mov")
         let output = directory.appending(path: "trimmed.mov")
 
         try await MediaFileWriter.writeVideo(

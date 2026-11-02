@@ -84,16 +84,17 @@ check_domain_nouns() {
   while IFS= read -r file; do
     [[ -z "$file" ]] && continue
     local rel="${file#"$root/"}"
+    # Two greps per file select the lines holding both a string literal and a
+    # domain noun; only those few candidates reach the per-line comment and
+    # allowlist tests. The `N:` prefix grep -n adds can match neither pattern.
     while IFS= read -r line; do
       [[ -z "$line" ]] && continue
       content="${line#*:}"
       trimmed="${content#"${content%%[![:space:]]*}"}"
       [[ "$trimmed" == //* ]] && continue
       is_domain_noun_string_allowlisted "$content" && continue
-      if printf '%s\n' "$content" | grep -qE '"[^"]*"' && printf '%s\n' "$content" | grep -qiE "$DOMAIN_NOUNS"; then
-        echo "FAIL: DES-035/DES-039 domain noun in user-facing string: $rel:$line" >&2; return 1
-      fi
-    done < <(grep -n '.' "$file" || true)
+      echo "FAIL: DES-035/DES-039 domain noun in user-facing string: $rel:$line" >&2; return 1
+    done < <(grep -nE '"[^"]*"' "$file" | grep -iE "$DOMAIN_NOUNS" || true)
   done < <(user_facing_string_roots "$root")
 }
 

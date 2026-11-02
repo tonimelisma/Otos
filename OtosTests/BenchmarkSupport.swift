@@ -21,10 +21,7 @@ enum Benchmark {
 
     /// Where results go: `build/benchmarks/results.ndjson` in the checkout these tests were
     /// built from, which `bench.sh` reads after the run.
-    static let resultsFile: URL = .init(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: "build/benchmarks/results.ndjson")
+    static let resultsFile = SourceTree.root.appending(path: "build/benchmarks/results.ndjson")
 
     struct Result: Encodable {
         let name: String

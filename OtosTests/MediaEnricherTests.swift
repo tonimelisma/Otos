@@ -28,9 +28,7 @@ struct MediaEnricherTests {
     }
 
     private var fixtureDirectory: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appending(path: "Fixtures/Media", directoryHint: .isDirectory)
+        SourceTree.mediaFixtures
     }
 
     @Test func enrichesJpegFixtureWithMetadataThumbnailAndTimestampFacts() async throws {

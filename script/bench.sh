@@ -40,6 +40,7 @@ run() {
   source "$ROOT_DIR/script/lib/xcode.sh"
   source "$ROOT_DIR/script/lib/run-context.sh"
   otos_require_full_xcode
+  otos_build_settings "$ROOT_DIR"
   local log_file
   log_file="$(otos_log_file "$ROOT_DIR" bench bench)"
   rm -f "$RESULTS_FILE"
@@ -50,7 +51,7 @@ run() {
     -configuration Debug \
     -destination "platform=macOS" \
     -derivedDataPath "$ROOT_DIR/build/DerivedData" \
-    build-for-testing > "$log_file" 2>&1 || {
+    build-for-testing "${OTOS_BUILD_SETTINGS[@]}" > "$log_file" 2>&1 || {
     echo "op=bench phase=failed reason=build log=$log_file" >&2
     exit 1
   }
@@ -63,6 +64,7 @@ run() {
     -configuration Debug \
     -destination "platform=macOS" \
     -derivedDataPath "$ROOT_DIR/build/DerivedData" \
+    -enableCodeCoverage NO \
     test-without-building \
     -only-testing:OtosTests/BenchmarkTests \
     OTOS_BENCHMARK=1 >> "$log_file" 2>&1 || {

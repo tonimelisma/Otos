@@ -259,9 +259,7 @@ struct OriginalsReadOnlyTests {
             directoryHint: .isDirectory
         )
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let fixture = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appending(path: "Fixtures/Media/\(fixtureName)")
+        let fixture = SourceTree.mediaFixtures.appending(path: fixtureName)
         try FileManager.default.copyItem(at: fixture, to: root.appending(path: fileName))
         return root
     }
