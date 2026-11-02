@@ -12,9 +12,10 @@ import OSLog
 // and its queue are the ordinary ones.
 
 extension CatalogWindowViewModel {
-    /// Whether the detail pane is the duplicates list.
+    /// Whether the detail pane is the duplicates list. Read from the published scope
+    /// for the reason `showsPlacesMap` gives: the pane shows `state`, not the intent.
     var showsDuplicatesList: Bool {
-        sidebarSelection == .duplicates
+        state.resolvedSidebarSelection == .duplicates
     }
 
     /// Whether Back to Duplicates applies: the browser shows one group under Duplicates.
