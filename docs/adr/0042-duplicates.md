@@ -35,23 +35,31 @@ to paint, queued behind a 1.5 s same-photo build (2026-11-01 log). `duplicates` 
 until the first build: the row has no count and the list draws nothing until then, rather
 than claiming "No duplicates".
 
-**Otos preselects only where the choice cannot lose anything.** A group gets a default
-keeper only when:
+**Every group has a default, and no default loses work** (owner, 2026-11-01, Plan 0111).
+The copies to keep are chosen and the rest marked; the user can change any mark.
 
-- its copies are identical;
-- every copy is in one library;
-- at most one copy carries authored work (curation other than Not Rated, an edit, or
-  companions).
-
-That copy is kept. Failing that, the keeper is chosen in this order:
-
-1. the copy whose name has no Finder or browser copy suffix (` copy`, ` copy 2`, ` (1)`);
-2. then the earliest birth time;
-3. then path order.
-
-Every other group waits: `spansLibraries` when its copies are in more than one library,
-and `differingAuthoredWork` when more than one copy carries work. Groups spanning exactly
-two libraries are summarized per library pair, with Keep Both Libraries.
+- **Each library keeps its own copy.** Nothing across libraries is preselected, so a group
+  whose copies span libraries keeps the best copy in each. Groups spanning exactly two
+  libraries are summarized per library pair, with Keep Both Libraries and `Keep Only
+  <Library>`, which marks every copy the pair holds in the other library.
+- **Work is carried, not chosen between.** When the act moves a copy whose curation or edit
+  the kept copy lacks, the kept copy takes it (`DuplicatesSession.carries`). The Store
+  writes the carry in the transaction that hides the moved copy, only where the kept copy
+  still lacks the work, and records what it replaced under the command's batch; Undo of
+  that Move to Trash puts it back for every moved copy that came back. Companion files are
+  another app's files and never move onto another copy.
+- **Only work that cannot be combined waits:** two edited copies, two with companions, or
+  two different choices, within one library. Those groups have no default and say
+  `Choose a copy to keep`.
+- **The best copy is kept**, in this order:
+  1. a copy with companion files, since they cannot move;
+  2. for versions of the same photo, the camera original (it names its capture), then the
+     most pixels, then the largest file;
+  3. an edited copy, then one with a choice, so the common case carries nothing;
+  4. the name without a Finder or browser copy suffix (` copy`, ` copy 2`, ` (1)`);
+  5. the earliest birth time;
+  6. path order.
+- **Keep Only This Copy** keeps a row's copy and marks the rest of its group.
 
 **The one durable fact is Keep All Copies,** remembered per pair of paths in
 `duplicate_kept_pair` (schema v11). It is overlay on both copies:
@@ -91,7 +99,8 @@ file, not a copy of another.
 | Alternative | Why rejected |
 | --- | --- |
 | A duplicate-group table with IDs | A second identity for facts the digests already state; it would go stale with every scan. |
-| Preselect across libraries by sidebar order | Empties a mirror library in one unread bulk act (review finding 1). |
+| Preselect across libraries by sidebar order | Empties a mirror library in one unread bulk act (review finding 1). A library goes only when the user names it in `Keep Only <Library>`. |
+| Let groups with authored work, or versions of the same photo, wait without a default | Nothing in the act's count until the user decides each group; competitors default every group (Photos, Lightroom web, PhotoSweeper, Mylio). Carrying the work makes a default safe (owner, 2026-11-01). |
 | Persist per-copy marks | A decision in progress, not a fact about the files; it would outlive the groups it described. |
 | Hold groups found mid-visit behind `N more found · Show` | A second answer to "which groups exist", besides the published state. It snapshotted the catalog before its first load at launch and hid every group behind `0 photos · 164 more found`. The owner wants the list to show every duplicate, always (2026-11-01). |
 | Return as the bulk act's key | Return opens a group; a bulk move must not be one keystroke from a list. |
@@ -131,8 +140,8 @@ captures by capture metadata (`SamePhotoPolicy`):
 Other rules:
 - A RAW is never grouped with a processed file.
 - Copies already in an identical group are left to that group.
-- Same-photo groups are never preselected (`DuplicateGroupWait.samePhoto`). Keep All Copies
-  sets them aside by the same per-pair memory.
+- Same-photo groups keep the camera original by the keeper rule above. Keep All Copies sets
+  them aside by the same per-pair memory.
 - Candidates are blocked by kind, display aspect and whole-second instant, so a library is
   never compared all against all. Pairs are proposed from column facts alone, read as
   pairing facts only (`SamePhotoCandidate`). The copy a group lists, the grayscale

@@ -34,7 +34,8 @@ struct SamePhotoTests {
         subsecond: String? = nil,
         model: String? = "ILCE-6700",
         burst: String? = nil,
-        hash: UInt64 = 0xF0F0
+        hash: UInt64 = 0xF0F0,
+        width: Int = 4000
     ) -> Still {
         let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path))
         return Still(
@@ -52,8 +53,8 @@ struct SamePhotoTests {
                 libraryDisplayName: "Photos",
                 byteSize: 1000,
                 createdAt: nil,
-                pixelWidth: 4000,
-                pixelHeight: 3000,
+                pixelWidth: width,
+                pixelHeight: width * 3 / 4,
                 mediaChoice: .notRated,
                 isEdited: false,
                 hasCompanions: false
@@ -67,6 +68,13 @@ struct SamePhotoTests {
         _ stills: [Still],
         signatures: [String: [UInt8]]
     ) -> [Set<String>] {
+        builtGroups(stills, signatures: signatures).map { Set($0.copies.map(\.id.relativePath.rawValue)) }
+    }
+
+    private static func builtGroups(
+        _ stills: [Still],
+        signatures: [String: [UInt8]]
+    ) -> [DuplicateGroup] {
         let details = Dictionary(uniqueKeysWithValues: stills.compactMap { still in
             signatures[still.candidate.id.relativePath.rawValue].flatMap { gray in
                 RenderSignature(differenceHash: still.candidate.differenceHash, gray: gray).map { signature in
@@ -84,7 +92,28 @@ struct SamePhotoTests {
         })
         let pairs = SamePhotoPolicy.candidatePairs(stills.map(\.candidate), excluding: [])
         return SamePhotoPolicy.groups(pairs: pairs, details: details)
-            .map { Set($0.copies.map(\.id.relativePath.rawValue)) }
+    }
+
+    /// The camera's own file is kept, even against a stripped copy with more pixels; among
+    /// originals, the one with the most pixels.
+    @Test func theCameraOriginalWithTheMostPixelsIsKept() throws {
+        let stripped = try #require(Self.builtGroups([
+            Self.still("IMG_1.HEIC", subsecond: "387", width: 1600),
+            Self.still("Upscaled/IMG_1.jpg", instant: nil, width: 4000),
+        ], signatures: [
+            "IMG_1.HEIC": Self.gray(90),
+            "Upscaled/IMG_1.jpg": Self.gray(90, noise: [0: 92]),
+        ]).first)
+        #expect(stripped.defaultKeep.map { Set($0.map(\.relativePath.rawValue)) } == ["IMG_1.HEIC"])
+
+        let originals = try #require(Self.builtGroups([
+            Self.still("Small/IMG_1.HEIC", subsecond: "387", width: 1600),
+            Self.still("IMG_1.HEIC", subsecond: "387", width: 4000),
+        ], signatures: [
+            "Small/IMG_1.HEIC": Self.gray(90, noise: [3: 91]),
+            "IMG_1.HEIC": Self.gray(90),
+        ]).first)
+        #expect(originals.defaultKeep.map { Set($0.map(\.relativePath.rawValue)) } == ["IMG_1.HEIC"])
     }
 
     @Test func burstFramesNeverGroupEvenWithIdenticalPixels() {

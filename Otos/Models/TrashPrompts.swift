@@ -56,6 +56,9 @@ nonisolated struct LargeTrashDownloadPrompt: Equatable, Sendable {
     /// What the download weighs. Sizes the catalog does not know are not counted, so the
     /// title states the known part as a lower bound when there are any.
     let bytes: PartialByteCount
+    /// The authored work a duplicates move carries onto kept copies, moved with the items
+    /// once the user answers (ADR 0042).
+    var carries: [DuplicateCarry] = []
 
     /// Whether a command needing `bytes` of downloads must ask first: when what is known of
     /// it is already over the threshold. A download the catalog cannot size proceeds on its

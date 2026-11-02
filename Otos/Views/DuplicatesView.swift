@@ -158,7 +158,9 @@ struct DuplicatesActions {
     let keep: @MainActor (MediaAssetID) -> Void
     let moveToTrash: @MainActor (MediaAssetID) -> Void
     let keepAll: @MainActor (DuplicateGroup) -> Void
+    let keepOnly: @MainActor (MediaAssetID) -> Void
     let keepBothLibraries: @MainActor (DuplicateLibraryPair) -> Void
+    let keepOnlyLibrary: @MainActor (LibraryRootPath, DuplicateLibraryPair) -> Void
     let togglePair: @MainActor (DuplicateLibraryPair) -> Void
     let toggleKept: @MainActor () -> Void
     let openGroup: @MainActor () -> Void
@@ -171,10 +173,14 @@ private struct DuplicateGroupHeader: View {
     let actions: DuplicatesActions
 
     private var title: String {
-        switch group.id {
-        case .identical: "Identical · \(group.copies.count) copies"
-        case .samePhoto: "Same photo · \(group.copies.count) versions"
+        isSamePhoto ? "Same photo · \(group.copies.count) versions" : "Identical · \(group.copies.count) copies"
+    }
+
+    private var isSamePhoto: Bool {
+        if case .samePhoto = group.id {
+            return true
         }
+        return false
     }
 
     var body: some View {
@@ -182,8 +188,9 @@ private struct DuplicateGroupHeader: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.headline)
+                // Only copies whose work cannot be combined wait for a choice.
                 if group.defaultKeep == nil {
-                    Text(group.wait == .samePhoto ? "Choose the version to keep" : "Choose a copy to keep")
+                    Text(isSamePhoto ? "Choose the version to keep" : "Choose a copy to keep")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -226,6 +233,19 @@ private struct DuplicateLibraryPairRow: View {
             Text("\(names.0) and \(names.1) share \(groups.count) \(groups.count == 1 ? "photo" : "photos")")
                 .font(.body)
             Spacer(minLength: 0)
+            // Each library keeps its own copies by default; one library's copies go only
+            // when the user names the library to keep.
+            Menu("Keep Only") {
+                Button(names.0) {
+                    actions.keepOnlyLibrary(pair.first, pair)
+                }
+                Button(names.1) {
+                    actions.keepOnlyLibrary(pair.second, pair)
+                }
+            }
+            .menuStyle(.button)
+            .fixedSize()
+            .controlSize(.small)
             Button("Keep Both Libraries") {
                 actions.keepBothLibraries(pair)
             }
@@ -333,7 +353,11 @@ private struct DuplicateCopyRow: View {
         .padding(.vertical, 2)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(([location, copy.name, keeps ? "kept" : "moves to Trash"] + marks).joined(separator: ", "))
+        .contextMenu {
+            Button("Keep Only This Copy") { actions.keepOnly(copy.id) }
+        }
         .accessibilityAction(named: "Keep This Copy") { actions.keep(copy.id) }
+        .accessibilityAction(named: "Keep Only This Copy") { actions.keepOnly(copy.id) }
         .accessibilityAction(named: "Move This Copy to Trash") { actions.moveToTrash(copy.id) }
     }
 }

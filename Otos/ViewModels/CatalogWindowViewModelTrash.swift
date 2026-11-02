@@ -28,7 +28,7 @@ import OSLog
 /// lossless stream so the queue sees them in the order the user acted.
 nonisolated enum TrashIntent: Sendable {
     case undo(batch: MediaTrashBatchID, ids: [MediaAssetID])
-    case redo(batch: MediaTrashBatchID, ids: [MediaAssetID])
+    case redo(batch: MediaTrashBatchID, ids: [MediaAssetID], carries: [DuplicateCarry])
     case deleteImmediately([MediaAssetID])
     case restore([MediaAssetID])
     case keepWaitingForSpace([MediaAssetID])
@@ -64,12 +64,12 @@ extension CatalogWindowViewModel {
     /// The one Move to Trash path for a known set of items: the current targets, or the
     /// copies Duplicates marked (ADR 0042). Asks the large-download question when it
     /// applies (APP-045), then hides the items behind one undoable command.
-    func moveMediaToTrash(_ ids: [MediaAssetID]) {
+    func moveMediaToTrash(_ ids: [MediaAssetID], carrying carries: [DuplicateCarry] = []) {
         guard mediaTrashTask == nil, !ids.isEmpty else {
             return
         }
         guard asksBeforeLargeTrashDownload else {
-            performMoveToTrash(ids)
+            performMoveToTrash(ids, carrying: carries)
             return
         }
         // Sizing runs on `MediaTrashCoordinator`, an actor, not the MainActor; `mediaTrashTask` keeps a second
@@ -86,18 +86,18 @@ extension CatalogWindowViewModel {
                 // a prompt. The move goes ahead on its own safeguards: the free-space floor
                 // and a failed download both stop and ask the user.
                 OtosLog.ui.notice("op=mediaTrash.prompt phase=sizeUnknown count=\(ids.count, privacy: .public)")
-                performMoveToTrash(ids)
+                performMoveToTrash(ids, carrying: carries)
                 return
             }
             if LargeTrashDownloadPrompt.asks(bytes: bytes, preference: asksBeforeLargeTrashDownload) {
-                largeTrashDownloadPrompt = LargeTrashDownloadPrompt(ids: ids, bytes: bytes)
+                largeTrashDownloadPrompt = LargeTrashDownloadPrompt(ids: ids, bytes: bytes, carries: carries)
                 OtosLog.ui.noticeOperation("mediaTrash.prompt", phase: "shown", fields: [
                     "count": "\(ids.count)",
                     "knownBytes": "\(bytes.knownBytes)",
                     "unknownSizeCount": "\(bytes.unknownCount)",
                 ])
             } else {
-                performMoveToTrash(ids)
+                performMoveToTrash(ids, carrying: carries)
             }
         }
     }
@@ -107,7 +107,7 @@ extension CatalogWindowViewModel {
         guard let prompt = largeTrashDownloadPrompt else { return }
         largeTrashDownloadPrompt = nil
         OtosLog.ui.notice("op=mediaTrash.prompt phase=confirmed count=\(prompt.ids.count, privacy: .public)")
-        performMoveToTrash(prompt.ids)
+        performMoveToTrash(prompt.ids, carrying: prompt.carries)
     }
 
     func cancelLargeTrashDownload() {
@@ -125,7 +125,7 @@ extension CatalogWindowViewModel {
         OtosLog.ui.notice("op=mediaTrash.prompt phase=\(asks ? "enabled" : "suppressed", privacy: .public)")
     }
 
-    private func performMoveToTrash(_ ids: [MediaAssetID]) {
+    private func performMoveToTrash(_ ids: [MediaAssetID], carrying carries: [DuplicateCarry]) {
         guard mediaTrashTask == nil, !ids.isEmpty else {
             return
         }
@@ -145,7 +145,7 @@ extension CatalogWindowViewModel {
             let batch = MediaTrashBatchID()
             let hidden: [MediaAssetID]
             do {
-                hidden = try await store.markPendingTrash(ids, batch: batch)
+                hidden = try await store.markPendingTrash(ids, batch: batch, carrying: carries)
             } catch {
                 // Nothing was hidden or queued: the items stay where they are, with no
                 // undo for a move that did not happen.
@@ -168,7 +168,7 @@ extension CatalogWindowViewModel {
                 """
             )
             if !hidden.isEmpty {
-                registerTrashUndo(batch: batch, ids: hidden)
+                registerTrashUndo(batch: batch, ids: hidden, carries: carries)
             }
             navigateAfterHiding(Set(hidden), context: context)
             mediaTrashTask = nil
@@ -179,11 +179,11 @@ extension CatalogWindowViewModel {
 
     static let moveToTrashActionName = "Move to Trash"
 
-    private func registerTrashUndo(batch: MediaTrashBatchID, ids: [MediaAssetID]) {
+    private func registerTrashUndo(batch: MediaTrashBatchID, ids: [MediaAssetID], carries: [DuplicateCarry]) {
         // Explicit group: registration happens after a Store await, outside any event.
         windowUndoManager.beginUndoGrouping()
         windowUndoManager.registerUndo(withTarget: self) { model in
-            model.undoMoveToTrash(batch: batch, ids: ids)
+            model.undoMoveToTrash(batch: batch, ids: ids, carries: carries)
         }
         windowUndoManager.setActionName(Self.moveToTrashActionName)
         windowUndoManager.endUndoGrouping()
@@ -191,10 +191,11 @@ extension CatalogWindowViewModel {
     }
 
     /// Runs inside `UndoManager.undo()`: files redo synchronously, then asks the queue
-    /// to withdraw or put back the command's items.
-    private func undoMoveToTrash(batch: MediaTrashBatchID, ids: [MediaAssetID]) {
+    /// to withdraw or put back the command's items, and the Store to take back what the
+    /// command carried onto kept copies.
+    private func undoMoveToTrash(batch: MediaTrashBatchID, ids: [MediaAssetID], carries: [DuplicateCarry]) {
         windowUndoManager.registerUndo(withTarget: self) { model in
-            model.redoMoveToTrash(ids: ids)
+            model.redoMoveToTrash(ids: ids, carries: carries)
         }
         windowUndoManager.setActionName(Self.moveToTrashActionName)
         OtosLog.ui.notice("op=trash.undo phase=start count=\(ids.count, privacy: .public)")
@@ -220,15 +221,15 @@ extension CatalogWindowViewModel {
 
     /// Runs inside `UndoManager.redo()`: files undo synchronously under a new command
     /// identity, then hides the items again for the queue.
-    private func redoMoveToTrash(ids: [MediaAssetID]) {
+    private func redoMoveToTrash(ids: [MediaAssetID], carries: [DuplicateCarry]) {
         let batch = MediaTrashBatchID()
         windowUndoManager.registerUndo(withTarget: self) { model in
-            model.undoMoveToTrash(batch: batch, ids: ids)
+            model.undoMoveToTrash(batch: batch, ids: ids, carries: carries)
         }
         windowUndoManager.setActionName(Self.moveToTrashActionName)
         OtosLog.ui.notice("op=trash.redo phase=start count=\(ids.count, privacy: .public)")
         // Command: ordered after the undo it follows.
-        submitTrashIntent(.redo(batch: batch, ids: ids))
+        submitTrashIntent(.redo(batch: batch, ids: ids, carries: carries))
     }
 
     private func submitTrashIntent(_ intent: TrashIntent) {
@@ -261,10 +262,20 @@ extension CatalogWindowViewModel {
                 switch intent {
                 case let .undo(batch, ids):
                     let outcome = await coordinator.undo(batch: batch, ids: ids)
-                    self?.finishTrashUndo(outcome)
-                case let .redo(batch, ids):
                     do {
-                        _ = try await store.markPendingTrash(ids, batch: batch)
+                        try await store.revertCarriedWork(batch: batch, restored: Set(outcome.restored))
+                    } catch {
+                        // The kept copies keep what was carried; the moved copies, back,
+                        // hold their own work as well, so nothing is lost.
+                        OtosLog.ui.errorOperation("trash.undo", phase: "carryRevertFailed", fields: [
+                            "batch": "\(batch.unixMilliseconds)",
+                            "error": String(describing: error),
+                        ])
+                    }
+                    self?.finishTrashUndo(outcome)
+                case let .redo(batch, ids, carries):
+                    do {
+                        _ = try await store.markPendingTrash(ids, batch: batch, carrying: carries)
                         coordinator.kick()
                     } catch {
                         // Nothing was re-hidden; the items stay where they are.

@@ -335,6 +335,10 @@ public struct OtosApp: App {
                     catalogViewModel.keepSelectedDuplicateCopies()
                 }
                 .disabled(!catalogViewModel.canKeepSelectedDuplicateCopies)
+                Button("Keep Only This Copy") {
+                    catalogViewModel.keepOnlySelectedDuplicateCopy()
+                }
+                .disabled(!catalogViewModel.canKeepOnlySelectedDuplicateCopy)
                 Button("Move This Copy to Trash") {
                     catalogViewModel.markSelectedDuplicateCopiesForTrash()
                 }
