@@ -208,7 +208,13 @@ struct EditGeometryTests {
         let frame = CGSize(width: 1200, height: 800)
         let subject = CGRect(x: 0.2, y: 0.2, width: 0.1, height: 0.15)
 
-        let fit = CropSuggestion.fitSubject.crop(subject: subject, frame: frame, pixelRatio: nil)
+        // Custom: the subject and its margin, whatever shape that is.
+        let free = CropSuggestion.fitSubject.crop(subject: subject, frame: frame, pixelRatio: nil)
+        #expect(abs(free.left - 0.185) < 0.001 && abs(free.width - 0.13) < 0.001)
+        #expect(abs(free.top - 0.1775) < 0.001 && abs(free.height - 0.195) < 0.001)
+
+        // A fixed aspect grows the short side to it.
+        let fit = CropSuggestion.fitSubject.crop(subject: subject, frame: frame, pixelRatio: 1.5)
         #expect(abs(fit.width * 1200 / (fit.height * 800) - 1.5) < 0.001)
         #expect(fit.left <= subject.minX && fit.right >= subject.maxX)
         #expect(fit.top <= subject.minY && fit.bottom >= subject.maxY)
@@ -243,10 +249,17 @@ struct EditGeometryTests {
         #expect(fit.left <= subject.minX + tolerance && fit.right >= subject.maxX - tolerance)
         #expect(fit.top <= subject.minY + tolerance && fit.bottom >= subject.maxY - tolerance)
 
+        // Custom: each axis reaches as far as the frame lets the thirds point land.
         let thirds = CropSuggestion.subjectOnThirds.crop(subject: subject, frame: frame, pixelRatio: nil)
         #expect(!thirds.isWhole)
-        #expect(abs(thirds.width * 1024 / (thirds.height * 682) - 1024.0 / 682) < 0.001)
         #expect(abs(thirds.left + thirds.width * 2 / 3 - subject.midX) < 0.001)
         #expect(abs(thirds.top + thirds.height / 3 - subject.midY) < 0.001)
+        #expect(abs(thirds.right - 1) < 0.001 && abs(thirds.bottom - 1) < 0.001)
+
+        // Original: the same, shrunk to the photo's shape.
+        let original = CropSuggestion.subjectOnThirds.crop(subject: subject, frame: frame, pixelRatio: 1024.0 / 682)
+        #expect(abs(original.width * 1024 / (original.height * 682) - 1024.0 / 682) < 0.001)
+        #expect(abs(original.left + original.width * 2 / 3 - subject.midX) < 0.001)
+        #expect(abs(original.top + original.height / 3 - subject.midY) < 0.001)
     }
 }

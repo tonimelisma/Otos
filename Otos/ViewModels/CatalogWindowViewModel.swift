@@ -240,7 +240,7 @@ final class CatalogWindowViewModel {
     /// The photo edited with everything but its crop, which the crop tool draws over.
     var editCropBase: EditLivePreview?
     /// The crop tool's aspect choice and which way it stands; tool state, not saved.
-    var cropAspect = CropAspect.original
+    var cropAspect = CropAspect.free
     /// Which way the constrained aspect stands, once Rotate Aspect has said so; nil follows
     /// the crop's own shape (`cropAspectIsLandscape`), decided only once the frame is known.
     var cropAspectLandscapeChoice: Bool?

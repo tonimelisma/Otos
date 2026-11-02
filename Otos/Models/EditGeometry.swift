@@ -145,12 +145,12 @@ nonisolated enum CropSuggestion: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// The crop, in fractions of a frame of `frame` pixels, for a subject at `subject` (fractions
-    /// of the frame from its top-left corner), keeping `pixelRatio` (width over height in pixels)
-    /// or the frame's own when nil.
+    /// The crop, in fractions of a frame of `frame` pixels, for a subject at `subject`
+    /// (fractions of the frame from its top-left corner). With `pixelRatio` (width over height
+    /// in pixels) the crop keeps that shape; nil is Custom, and the crop takes whatever shape
+    /// the subject calls for.
     func crop(subject: CGRect, frame: CGSize, pixelRatio: Double?) -> EditCrop {
         guard frame.width > 0, frame.height > 0 else { return .whole }
-        let ratio = pixelRatio ?? Double(frame.width / frame.height)
         switch self {
         case .fitSubject:
             // The margin goes only where the frame has room: a subject at an edge keeps none
@@ -160,6 +160,11 @@ nonisolated enum CropSuggestion: String, CaseIterable, Identifiable, Sendable {
                 dx: -subject.width * Self.subjectMargin,
                 dy: -subject.height * Self.subjectMargin
             ).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+            guard let ratio = pixelRatio else {
+                return EditCrop(
+                    left: margined.minX, top: margined.minY, width: margined.width, height: margined.height
+                ).clamped
+            }
             let center = CGPoint(x: margined.midX, y: margined.midY)
             let largest = EditCrop.largest(pixelRatio: ratio, frame: frame, around: center)
             // In pixels, grown on one axis to the aspect.
@@ -181,18 +186,22 @@ nonisolated enum CropSuggestion: String, CaseIterable, Identifiable, Sendable {
                 height: fractionHeight
             ).clamped
         case .subjectOnThirds:
-            // The largest crop of the aspect whose thirds point lands on the subject's center:
-            // on each axis the crop can reach only as far as the frame's edge on either side of
-            // that point. The largest crop of the aspect alone is often the whole frame, which
-            // cannot move the subject anywhere.
+            // The largest crop whose thirds point lands on the subject's center: on each axis
+            // the crop can reach only as far as the frame's edge on either side of that point.
+            // Custom takes the most each axis allows; a fixed aspect shrinks to the tighter.
             let center = CGPoint(x: subject.midX, y: subject.midY)
             let thirdX = center.x < 0.5 ? 1.0 / 3 : 2.0 / 3
             let thirdY = center.y < 0.5 ? 1.0 / 3 : 2.0 / 3
-            let maxWidth = min(center.x / thirdX, (1 - center.x) / (1 - thirdX))
-            let maxHeight = min(center.y / thirdY, (1 - center.y) / (1 - thirdY))
-            let largest = EditCrop.largest(pixelRatio: ratio, frame: frame, around: center)
-            let scale = min(1, maxWidth / largest.width, maxHeight / largest.height)
-            let width = largest.width * scale, height = largest.height * scale
+            let maxWidth = min(1, center.x / thirdX, (1 - center.x) / (1 - thirdX))
+            let maxHeight = min(1, center.y / thirdY, (1 - center.y) / (1 - thirdY))
+            let width: Double, height: Double
+            if let ratio = pixelRatio {
+                let largest = EditCrop.largest(pixelRatio: ratio, frame: frame, around: center)
+                let scale = min(1, maxWidth / largest.width, maxHeight / largest.height)
+                (width, height) = (largest.width * scale, largest.height * scale)
+            } else {
+                (width, height) = (maxWidth, maxHeight)
+            }
             return EditCrop(
                 left: center.x - thirdX * width,
                 top: center.y - thirdY * height,
