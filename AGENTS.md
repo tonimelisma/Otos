@@ -474,9 +474,17 @@ primary checkout on `main` and include its `op=install` line in the DoD report.
 It quits a running installed Otos only when no import or reorganization is in
 flight, and relaunches it; a `phase=pending` result is reported, not retried
 around (ADR 0030).
-Such an increment then runs `script/bench.sh run` from the primary checkout on `main`, so
-every app-changing commit on `main` has a benchmark record. The DoD report includes each
-case's instructions and its change from the previous record (`script/bench.sh history`).
+Such an increment also compares benchmarks before it merges (ADR 0043). This happens on
+the final PR commit, with `main` merged in and the tree clean, after `script/check.sh`
+passes:
+
+1. Run `script/bench.sh run`, then `script/bench.sh compare`, both in the background.
+2. If `compare` exits 3, a case retired more than 2% more instructions than its base.
+   Stop before merging and show the user the comparison table. Merge only with the
+   user's explicit permission in chat, and quote that permission in the DoD report.
+3. Either way, include the comparison table in the DoD report.
+4. After the merge and install, run `script/bench.sh run` from the primary checkout on
+   `main`, so the next increment's base has a record.
 
 Verification is **agent-owned**: never require the user to launch the app, operate
 the UI, or inspect visuals as a condition of DoD. Run every check available to the
