@@ -104,3 +104,29 @@ once at the proven camera; the rerun settled with both stacks 14 pt inside the e
   <https://developer.apple.com/documentation/MapKit/decluttering-a-map-with-mapkit-annotation-clustering>
 - Apple Developer Forums, SwiftUI Map Annotation Clustering:
   <https://developer.apple.com/forums/thread/684811>
+
+## Photos' Places, observed in the app (2026-11-01)
+
+Driven in Photos on macOS 27 with a 16-photo library, all in the San Francisco Bay Area,
+to settle what its help page leaves open
+(<https://support.apple.com/guide/photos/pht4c00b8ddc/mac>, which says only "Double-click a
+thumbnail to zoom in" and "click Grid to see thumbnails of photos grouped by location").
+
+- Single click on a stack: nothing visible changes.
+- Double-click on a stack: the map zooms in one step about it. Never opens photos.
+- Grid: the photos in the area the map shows. With the only stack panned off-screen,
+  Grid was empty; with it on screen, Grid showed all 16. Sections are runs of photos at
+  one reverse-geocoded place, headed by place name and date (`Danville · Jul 1`,
+  `Lafayette Reservoir · Jul 3`), each with a disclosure to that place.
+- Map returns to the map as it was.
+- Strings in `IPXPlace.loctable` also name `Show All Photos` / `Show Photo` and
+  `Nearby Photos`; where `Show All Photos` appears was not found in this pass.
+
+Lightroom Classic's equivalent is the Map module's location filter, `Visible on Map`, which
+narrows the filmstrip to the photos inside the current map view
+(<https://www.peachpit.com/articles/article.aspx?p=1930495>).
+
+Conclusion: the field shows an area's photos at whatever zoom the user stopped at. Otos
+adopts that through its own view-mode picker (ADR 0040), with day sections rather than
+place-name sections, since it does not reverse-geocode.
+

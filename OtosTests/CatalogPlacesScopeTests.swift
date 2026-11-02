@@ -3,8 +3,8 @@ import Foundation
 import Testing
 
 /// The Places scopes (ADR 0040): `.places` is every located item in the fixed
-/// libraries with its coordinate read alongside the order, `.place` the items at
-/// exactly one coordinate, and every scoped read — order, counts, filter options —
+/// libraries with its coordinate read alongside the order, `.mapArea` the items in one
+/// latitude/longitude box, and every scoped read — order, counts, filter options —
 /// agrees about both. Store answers *what the scope holds*; `CatalogWindowPolicy`
 /// turns that into *what the window says*, tested at its own boundary below.
 @Suite(.testDirectory)
@@ -12,7 +12,7 @@ struct CatalogPlacesScopeTests {
     private static let helsinki = PlaceCoordinate(latitude: 60.17, longitude: 24.94)
     private static let sydney = PlaceCoordinate(latitude: -33.87, longitude: 151.21)
 
-    @Test func placesHoldsLocatedItemsWithCoordinatesAndPlaceHoldsOneCoordinate() async throws {
+    @Test func placesHoldsLocatedItemsWithCoordinatesAndAnAreaHoldsWhatLiesInIt() async throws {
         let temp = try makeTestDirectory()
         defer { try? FileManager.default.removeItem(at: temp) }
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -66,7 +66,17 @@ struct CatalogPlacesScopeTests {
             availableLibraryPaths: available
         )
         let helsinkiOnly = try await store.orderedAssetIDs(
-            for: CatalogQueryDescriptor(scope: .place(Self.helsinki)),
+            for: CatalogQueryDescriptor(scope: .mapArea(.point(Self.helsinki))),
+            availableLibraryPaths: available
+        )
+        // Northern Europe: Helsinki in, Sydney out.
+        let europe = try await store.orderedAssetIDs(
+            for: CatalogQueryDescriptor(scope: .mapArea(MapArea(south: 50, north: 70, west: 0, east: 40))),
+            availableLibraryPaths: available
+        )
+        // A box across the antimeridian, from 150° east to 170° west: Sydney in.
+        let pacific = try await store.orderedAssetIDs(
+            for: CatalogQueryDescriptor(scope: .mapArea(MapArea(south: -40, north: -20, west: 150, east: -170))),
             availableLibraryPaths: available
         )
         let allMedia = try await store.orderedAssetIDs(
@@ -80,16 +90,18 @@ struct CatalogPlacesScopeTests {
             availableLibraryPaths: available
         )
         let placesOptions = try await store.filterOptions(for: .places, availableLibraryPaths: available)
-        let placeOptions = try await store.filterOptions(for: .place(Self.helsinki), availableLibraryPaths: available)
+        let placeOptions = try await store.filterOptions(for: .mapArea(.point(Self.helsinki)), availableLibraryPaths: available)
         await store.shutdown()
 
         // Located items only, newest first, each with its coordinate beside it.
         #expect(places.ids.map(\.relativePath.rawValue) == ["helsinki-new.jpg", "sydney.mp4", "helsinki-old.jpg"])
         #expect(places.coordinates == [Self.helsinki, Self.sydney, Self.helsinki])
         #expect(places.dayBuckets.count == places.ids.count)
-        // One place is exactly one coordinate.
+        // A box of no extent is exactly one coordinate; a box holds what lies in it.
         #expect(helsinkiOnly.ids.map(\.relativePath.rawValue) == ["helsinki-new.jpg", "helsinki-old.jpg"])
         #expect(helsinkiOnly.coordinates == [Self.helsinki, Self.helsinki])
+        #expect(europe.ids.map(\.relativePath.rawValue) == ["helsinki-new.jpg", "helsinki-old.jpg"])
+        #expect(pacific.ids.map(\.relativePath.rawValue) == ["sydney.mp4"])
         // A scope without a location requirement carries no coordinates.
         #expect(allMedia.ids.count == 4)
         #expect(allMedia.coordinates.isEmpty)
@@ -107,15 +119,15 @@ struct CatalogPlacesScopeTests {
         #expect(CatalogWindowPolicy.resolvedSidebarSelection(.places, libraries: [pictures], removableSources: []) == .places)
         #expect(
             CatalogWindowPolicy.resolvedSidebarSelection(
-                .place(Self.helsinki),
+                .mapArea(.point(Self.helsinki)),
                 libraries: [pictures],
                 removableSources: [card]
-            ) == .place(Self.helsinki)
+            ) == .mapArea(.point(Self.helsinki))
         )
         // No fixed library: nothing to map, so the default applies (the card here).
         #expect(CatalogWindowPolicy.resolvedSidebarSelection(.places, libraries: [], removableSources: [card]) == .library(card.path))
         #expect(CatalogWindowPolicy.title(for: .places, libraries: [pictures]) == "Places")
-        #expect(CatalogWindowPolicy.title(for: .place(Self.helsinki), libraries: [pictures]) == "Places")
+        #expect(CatalogWindowPolicy.title(for: .mapArea(.point(Self.helsinki)), libraries: [pictures]) == "Places")
     }
 
     @Test func mapStatePairsScopedIDsWithCoordinatesAndCountsWhatIsLeftOff() {

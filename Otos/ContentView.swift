@@ -217,9 +217,9 @@ struct ContentView: View {
             }
         }
         .toolbar {
-            // Back to Map, while the grid shows one place under the Places map (ADR 0040).
+            // Back to Map, while the browser shows an area under the Places map (ADR 0040).
             // A different scope is a different surface, so the item exists only there.
-            if viewModel.showsPlaceLeaf {
+            if viewModel.showsMapAreaLeaf {
                 ToolbarItem(placement: .navigation) {
                     Button {
                         viewModel.returnToPlaces()
@@ -242,10 +242,10 @@ struct ContentView: View {
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 ViewModePicker(
-                    viewMode: viewModel.viewMode,
+                    viewMode: viewModel.showsPlacesMap ? nil : viewModel.viewMode,
                     setViewMode: viewModel.setViewMode
                 )
-                // The map has one presentation (DES-053: disabled, never removed).
+                // The duplicates list has one presentation (DES-053: disabled, never removed).
                 .disabled(!viewModel.canChangeViewMode)
                 CatalogFilterControl(
                     descriptor: viewModel.queryDescriptor,

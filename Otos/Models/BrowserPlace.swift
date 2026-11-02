@@ -56,12 +56,16 @@ private nonisolated extension BrowserPlace {
     /// persistence conformances and this file is the whole schema.
     nonisolated struct Record: Codable {
         nonisolated struct Scope: Codable {
-            /// `allMedia`, `places`, `place`, `library`, `importBatch`, or `allImports`.
+            /// `allMedia`, `places`, `mapArea`, `duplicates`, `library`, `importBatch`, or
+            /// `allImports`.
             var kind: String
             var path: String?
             var batchUnixMilliseconds: Int64?
-            var latitude: Double?
-            var longitude: Double?
+            /// A `mapArea`'s box, in degrees.
+            var south: Double?
+            var north: Double?
+            var west: Double?
+            var east: Double?
         }
 
         nonisolated struct Asset: Codable {
@@ -122,9 +126,9 @@ private nonisolated extension BrowserPlace {
             .places
         case "duplicates":
             .duplicates
-        case "place":
-            if let latitude = scope.latitude, let longitude = scope.longitude {
-                .place(PlaceCoordinate(latitude: latitude, longitude: longitude))
+        case "mapArea":
+            if let south = scope.south, let north = scope.north, let west = scope.west, let east = scope.east {
+                .mapArea(MapArea(south: south, north: north, west: west, east: east))
             } else {
                 nil
             }
@@ -170,8 +174,8 @@ private nonisolated extension BrowserPlace.Record {
             Scope(kind: "allMedia")
         case .places:
             Scope(kind: "places")
-        case let .place(coordinate):
-            Scope(kind: "place", latitude: coordinate.latitude, longitude: coordinate.longitude)
+        case let .mapArea(area):
+            Scope(kind: "mapArea", south: area.south, north: area.north, west: area.west, east: area.east)
         case .duplicates, .duplicateGroup:
             // A group is named by its digest, which is never written out (ADR 0018); the
             // window reopens on the list it was reached from.

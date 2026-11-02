@@ -56,7 +56,7 @@ nonisolated enum CatalogWindowPolicy {
                     removableSources: removableSources
                 )
             }
-        case .places, .place, .duplicates, .duplicateGroup:
+        case .places, .mapArea, .duplicates, .duplicateGroup:
             // Places and Duplicates exist with the fixed libraries they span; a leaf under
             // either goes with it. Each resolves to the default once the last fixed
             // library is removed.
@@ -135,7 +135,7 @@ nonisolated enum CatalogWindowPolicy {
                 return false
             }
             switch sidebarSelection {
-            case .allMedia, .places, .place, .importBatch, .allImports, .duplicates, .duplicateGroup:
+            case .allMedia, .places, .mapArea, .importBatch, .allImports, .duplicates, .duplicateGroup:
                 // These scopes span the fixed libraries. Batch and location *membership*
                 // are applied by Store.orderedAssetIDs; this pass only re-applies the
                 // root-kind rule, which also holds for IDs carried over from a reused
@@ -191,7 +191,7 @@ nonisolated enum CatalogWindowPolicy {
         switch sidebarSelection {
         case .allMedia:
             "All Media"
-        case .places, .place:
+        case .places, .mapArea:
             "Places"
         case .duplicates, .duplicateGroup:
             "Duplicates"
@@ -226,7 +226,7 @@ nonisolated enum CatalogWindowPolicy {
                 return .checkingLibraries
             }
             return allAssetCount == 0 ? .noMedia : .noAvailableMedia
-        case .places, .place:
+        case .places, .mapArea:
             // The map spans the fixed libraries too. An empty map with reachable
             // libraries means no item carries a location — enrichment may still be
             // finding them — never that there is no media.

@@ -122,7 +122,7 @@ struct CatalogStoreQueryPlanTests {
             descriptor: .default,
             scope: CatalogScopePredicate(
                 rootIDs: [rootID1, rootID2],
-                location: .at(PlaceCoordinate(latitude: 60.17, longitude: 24.94))
+                location: .within(MapArea(south: 60, north: 61, west: 24, east: 25))
             )
         ))
 
