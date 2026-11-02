@@ -311,6 +311,14 @@ with `script/logs.sh stream [Category]` (live) or
 `script/profile.sh "<Template>" 10s` and `script/profile-export.sh <trace>`.
 See `docs/adr/0015-observability.md`.
 
+Benchmarks are `script/bench.sh run`: it runs the opt-in cases in
+`OtosTests/BenchmarkTests.swift` on a generated catalog and, on a clean tree, records
+the results on HEAD as git notes. `script/bench.sh history [case]` reads them back,
+newest first, with each change in instructions. Compare instructions, not
+milliseconds: instructions hold within about 1% under the parallel load that moves
+wall time several-fold. Run it in the background like `check.sh`. A hot path that
+performance work touches gets a case (ADR 0043).
+
 Dev builds (scripts, Xcode ▸ Run) are `net.melisma.Otos.dev` with their own
 Application Support data; `/Applications/Otos.app` is the installed
 `net.melisma.Otos`, built by `script/install.sh` (ADR 0030). The installed app is
@@ -466,6 +474,9 @@ primary checkout on `main` and include its `op=install` line in the DoD report.
 It quits a running installed Otos only when no import or reorganization is in
 flight, and relaunches it; a `phase=pending` result is reported, not retried
 around (ADR 0030).
+Such an increment then runs `script/bench.sh run` from the primary checkout on `main`, so
+every app-changing commit on `main` has a benchmark record. The DoD report includes each
+case's instructions and its change from the previous record (`script/bench.sh history`).
 
 Verification is **agent-owned**: never require the user to launch the app, operate
 the UI, or inspect visuals as a condition of DoD. Run every check available to the

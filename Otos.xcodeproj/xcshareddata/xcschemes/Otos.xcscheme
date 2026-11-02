@@ -69,6 +69,11 @@
             value = "$(OTOS_SCALE_TEST)"
             isEnabled = "YES">
          </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "OTOS_BENCHMARK"
+            value = "$(OTOS_BENCHMARK)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
       </EnvironmentVariables>
    </LaunchAction>
    <ProfileAction
