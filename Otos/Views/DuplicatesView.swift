@@ -144,6 +144,9 @@ struct DuplicatesView: View {
             copy: copy,
             keeps: session.keeps(copy.id, in: group),
             canMoveToTrash: session.canMoveToTrash(copy.id, in: group),
+            // Versions of one photo are told apart by their pixels: a thumbnail at the stored
+            // thumbnail's own size. Identical copies are told apart by where they live.
+            thumbnailEdge: group.id.isSamePhoto ? DuplicateThumbnail.versionEdge : DuplicateThumbnail.copyEdge,
             tileContentStore: tileContentStore,
             thumbnailDirectory: thumbnailDirectory,
             detailReader: detailReader,
@@ -164,6 +167,7 @@ struct DuplicatesActions {
     let togglePair: @MainActor (DuplicateLibraryPair) -> Void
     let toggleKept: @MainActor () -> Void
     let openGroup: @MainActor () -> Void
+    let compareGroup: @MainActor (DuplicateGroup) -> Void
     let moveMarked: @MainActor () -> Void
     let revealNeedingChoice: @MainActor () -> Void
 }
@@ -177,10 +181,7 @@ private struct DuplicateGroupHeader: View {
     }
 
     private var isSamePhoto: Bool {
-        if case .samePhoto = group.id {
-            return true
-        }
-        return false
+        group.id.isSamePhoto
     }
 
     var body: some View {
@@ -198,6 +199,12 @@ private struct DuplicateGroupHeader: View {
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 0)
+            if isSamePhoto, !group.isKept {
+                Button("Compare") {
+                    actions.compareGroup(group)
+                }
+                .controlSize(.small)
+            }
             if !group.isKept {
                 Button("Keep All") {
                     actions.keepAll(group)
@@ -258,6 +265,7 @@ private struct DuplicateCopyRow: View {
     let copy: DuplicateCopy
     let keeps: Bool
     let canMoveToTrash: Bool
+    let thumbnailEdge: CGFloat
     let tileContentStore: TileContentStore?
     let thumbnailDirectory: URL?
     let detailReader: MediaTileDetailReader?
@@ -300,6 +308,7 @@ private struct DuplicateCopyRow: View {
         HStack(spacing: 12) {
             DuplicateThumbnail(
                 id: copy.id,
+                edge: thumbnailEdge,
                 tileContentStore: tileContentStore,
                 thumbnailDirectory: thumbnailDirectory,
                 detailReader: detailReader
@@ -362,16 +371,20 @@ private struct DuplicateCopyRow: View {
     }
 }
 
-/// A 48 pt thumbnail, aspect-fit (DES-060A), following the grid's no-blank rule: a
-/// placeholder only before this copy's thumbnail has ever decoded.
+/// An aspect-fit thumbnail (DES-060A), following the grid's no-blank rule: a placeholder
+/// only before this copy's thumbnail has ever decoded.
 private struct DuplicateThumbnail: View {
+    /// An identical copy's: the row leads with where it lives, not with the picture.
+    static let copyEdge: CGFloat = 48
+    /// A version of the same photo's: the stored 256 px thumbnail at 2×.
+    static let versionEdge: CGFloat = 128
+
     let id: MediaAssetID
+    let edge: CGFloat
     let tileContentStore: TileContentStore?
     let thumbnailDirectory: URL?
     let detailReader: MediaTileDetailReader?
     @State private var image: CGImage?
-
-    private static let edge: CGFloat = 48
 
     var body: some View {
         ZStack {
@@ -384,7 +397,7 @@ private struct DuplicateThumbnail: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .frame(width: Self.edge, height: Self.edge)
+        .frame(width: edge, height: edge)
         .task(id: id) {
             await load()
         }

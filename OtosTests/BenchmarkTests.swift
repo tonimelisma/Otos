@@ -30,8 +30,8 @@ struct BenchmarkTests {
         // A whole duplicates build, as `DuplicatesProjection` runs it after a catalog change.
         try await Benchmark.measure("duplicates.build") {
             let built = try await DuplicatesProjection.build(store: store, libraries: libraries)
-            #expect(built.groups.contains { $0.id.kindName == "samePhoto" })
-            #expect(built.groups.contains { $0.id.kindName == "identical" })
+            #expect(built.groups.contains { $0.id.isSamePhoto })
+            #expect(built.groups.contains { !$0.id.isSamePhoto })
         }
 
         // Its pure pairing step alone: every still without capture metadata tested against

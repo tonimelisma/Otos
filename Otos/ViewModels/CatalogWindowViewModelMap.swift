@@ -35,10 +35,13 @@ extension CatalogWindowViewModel {
         state.isCatalogLoaded && SidebarSelectionPolicy.showsPlaces(libraries: state.libraries)
     }
 
-    /// The map has one presentation, so the view-mode picker and ⌘1/2/3 are disabled
-    /// while it shows (DES-053: disabled, never removed).
+    /// Whether the chosen scope has view modes. The Places map and the duplicates list have
+    /// one presentation each, so the picker and ⌘1/2/3 are disabled there (DES-053:
+    /// disabled, never removed). Read from the intent, unlike `showsPlacesMap`: opening a
+    /// group or a place in Compare or Loupe changes the scope and then the mode, before
+    /// Projection publishes the scope.
     var canChangeViewMode: Bool {
-        !showsPlacesMap && !showsDuplicatesList
+        sidebarSelection != .places && sidebarSelection != .duplicates
     }
 
     /// Whether Back to Map applies: the grid shows one place under the map.

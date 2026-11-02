@@ -17,6 +17,15 @@ nonisolated enum DuplicateGroupID: Hashable, Sendable {
     /// Members in `duplicateOrderKey` order.
     case samePhoto([MediaAssetID])
 
+    /// Versions of one photo are told apart by their pixels; identical copies, by where they
+    /// live.
+    var isSamePhoto: Bool {
+        if case .samePhoto = self {
+            return true
+        }
+        return false
+    }
+
     /// No digest is logged (ADR 0018); logs name a group by its first copy's path.
     var kindName: String {
         switch self {

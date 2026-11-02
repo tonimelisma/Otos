@@ -24,9 +24,13 @@ A list of groups above a fixed-height bar (DES-018, DES-053).
     of one capture (resized, re-encoded, metadata stripped), which are never preselected;
   - `.subheadline`: `Choose a copy to keep` when it waits (`Choose the version to keep`
     for same photo);
-  - a trailing `Keep All`.
+  - a trailing `Keep All`, and before it, for same photo, `Compare`: the group's first two
+    versions side by side in Compare, the group as the filmstrip. Versions sit in rows,
+    not side by side in the list, because rows are the selection.
 - **Each copy** is a row:
-  - a 48 pt aspect-fit thumbnail;
+  - an aspect-fit thumbnail: 48 pt for an identical copy, which its location tells apart;
+    128 pt for a version of the same photo, which only its pixels tell apart (the stored
+    256 px thumbnail at 2×);
   - the location first, at L2 (`Photos ▸ 2024/Holiday`) — it is what tells identical
     copies apart;
   - then filename · dimensions · size, at L3;
