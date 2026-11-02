@@ -1,6 +1,7 @@
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import Foundation
+import MediaMetadata
 import OSLog
 import Vision
 
@@ -63,7 +64,7 @@ actor LiveEditRenderer {
         var source: Source
         /// The original's oriented full-resolution size.
         let nativeSize: CGSize
-        let facts: EditPhotoFacts
+        var facts: EditPhotoFacts
     }
 
     private let queue = DispatchSerialQueue(label: "net.melisma.Otos.render.edit", qos: .userInitiated)
@@ -240,7 +241,7 @@ actor LiveEditRenderer {
         context.clearCaches()
         let longEdge = ThumbnailStore.previewMaxPixelSize
         let still = try ImageRenderer.StillSource.read(url)
-        let photo: OpenPhoto
+        var photo: OpenPhoto
         if ImageRenderer.isRAW(url) {
             let opened = try ImageRenderer.openRAW(still, outputLongEdge: longEdge, recipe: .neutral)
             photo = OpenPhoto(
@@ -263,6 +264,7 @@ actor LiveEditRenderer {
                 facts: .still
             )
         }
+        photo.facts.cameraLevel = MediaMetadataReader.read(url: url).levelingTurnDegrees
         open = photo
         return photo
     }

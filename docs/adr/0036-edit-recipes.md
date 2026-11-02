@@ -79,24 +79,27 @@ open takes 20–180 ms per change. Opening it again for every change takes about
     - `CIStraightenFilter` does the same visibly, but its scale is not exposed. The
       explicit transform can be inverted, which the white balance picker needs to find
       the developed pixel under a click on a turned, straightened or cropped photo.
-  - Auto straighten sets the straighten outright rather than adding to it. It reads two
-    sources, best first, and its log names the one used (`render.level source=`):
-    - **The camera's level.** MediaMetadata's `levelingTurnDegrees` is the camera's own
-      gravity reading at capture, read from the original Auto already has local. It needs
-      no scene to read, so it is right on photos with no horizon. The library decides
-      when the reading means nothing: a front-camera photo, or a camera pointed near
-      straight up or down. A quarter turn of the picture keeps a level level, and each
-      flip reverses it, so the reading is negated when the recipe flips the photo once.
-    - **The horizon.** Otherwise Vision's `VNDetectHorizonRequest` reads the live
-      renderer's open photo, developed with the recipe's turns and flips but no straighten
-      or crop. Vision reports the counterclockwise turn that levels the photo; the
-      straighten is that negated. Vision states no confidence, so a photo it finds no
-      horizon in is left as it is.
+  - Levelling sets the straighten outright rather than adding to it. There are two levels,
+    each the person's explicit choice and named by its source, with no `Auto` that picks
+    between them:
+    - **Camera.** MediaMetadata's `levelingTurnDegrees` is the camera's own gravity reading
+      at capture. It is read when the photo opens, from the same original as the panel's
+      other facts (`EditPhotoFacts.cameraLevel`), so the button is enabled only when there
+      is a reading. The library decides when a reading means nothing: a front-camera
+      photo, or a camera pointed near straight up or down. A quarter turn of the picture
+      keeps a level level and each flip reverses it, so the reading is negated when the
+      recipe flips the photo once. The reading is not stored in the catalog, because nothing
+      else reads it.
+    - **Horizon.** Vision's `VNDetectHorizonRequest` reads the live renderer's open photo,
+      developed with the recipe's turns and flips but no straighten or crop. Vision reports
+      the counterclockwise turn that levels the photo; the straighten is that negated.
+      Vision always reports confidence 1.0, and on photos without a horizon it returns
+      confident wrong tilts that nothing can filter. So it is never applied without being
+      asked for, and its tooltip warns that a photo without a horizon may come out tilted.
 
+    Rejected: a single `Auto` that falls back from the camera to the horizon. A fallback
+    that cannot tell its wrong answers from its right ones fabricates a fix.
     Measurements are in `docs/research/2026-11-01-auto-straighten-and-crop-suggestions.md`.
-    The camera's level is read from the original, not the catalog, as the panel's other
-    photo facts are. It is not stored: nothing else reads it, and storing it would mean
-    re-reading every iPhone record for a field Auto reads directly.
 
     Rejected: `CIImage.autoAdjustmentFilters` with `.level`, whose documentation names
     neither the filter it returns nor an angle the recipe could store.

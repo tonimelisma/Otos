@@ -185,11 +185,14 @@ Findings:
      it falls back to the pixels.
    - Built: MediaMetadata 0.9.1 reports iPhone gravity. Other makers' roll tags wait for
      sample files to calibrate against.
-2. **Pixels second.**
-   - Vision's horizon stays only as the fallback for photos with no level reading, because it
-     misreads photos without a horizon.
-   - Replacing it with GeoCalib is the evidence-backed upgrade. Per the measure-first rule,
-     that decision waits for a labelled comparison on Otos's own photos.
+2. **Pixels only on request.**
+   - Vision's horizon can't be a silent fallback. It reports confidence 1.0 every time and
+     misreads photos without a horizon, so its wrong answers can't be filtered out.
+   - Built (owner's decision, 2026-11-01): `Level ▸ Camera` and `Level ▸ Horizon` are
+     separate buttons. Horizon warns that a photo without a horizon may come out tilted.
+   - GeoCalib, which reports its own uncertainty, is the evidence-backed way to bring back an
+     automatic fallback. It is on the roadmap, to be measured first against the gravity
+     readings on Otos's own photos.
 3. **Do not reimplement Upright** (Adobe patents).
 
 **Crop suggestions:**

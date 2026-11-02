@@ -164,16 +164,6 @@ struct EditPanelView: View {
                 .accessibilityAddTraits(.isHeader)
                 .help(open ? "Hide \(section.title)" : "Show \(section.title)")
                 Spacer()
-                if section == .crop {
-                    // Photos' Auto sits in the heading beside its section's undo; here it
-                    // levels the photo (Lightroom's Crop Auto).
-                    Button("Auto", action: cropActions.autoStraighten)
-                        .buttonStyle(.borderless)
-                        .controlSize(.small)
-                        .foregroundStyle(unavailableHelp == nil ? .secondary : .tertiary)
-                        .disabled(unavailableHelp != nil)
-                        .help(unavailableHelp ?? "Straighten the photo automatically")
-                }
                 // Quiet beside the heading: a text button, so a column of section headings
                 // does not read as a column of push buttons.
                 let resetDisabled = unavailableHelp != nil || section.isNeutral(in: recipe)
@@ -196,58 +186,79 @@ struct EditPanelView: View {
         }
     }
 
+    @ViewBuilder
     private func sectionControls(_ section: EditSection) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if section == .crop {
-                HStack {
-                    cropTool
-                    Spacer()
-                    straightenLineTool
+        if section == .crop {
+            cropControls
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                if section == .color {
+                    whiteBalancePicker
+                }
+                if section == .optics {
+                    lensCorrectionToggle
+                }
+                ForEach(section.controls.filter { $0.isAvailable(facts ?? .still) }) { control in
+                    sliderRow(control)
                 }
             }
-            if section == .color {
-                whiteBalancePicker
+        }
+    }
+
+    /// Crop is one tool with three jobs, so its rows stand in three groups a step apart —
+    /// straightening, turning, framing — inside the one section, as Lightroom Classic's
+    /// Crop & Straighten panel groups Aspect and Angle (DES-092). The row labels name the
+    /// groups; no sub-headings.
+    private var cropControls: some View {
+        VStack(alignment: .leading, spacing: Self.cropGroupSpacing) {
+            cropTool
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(EditSection.crop.controls) { control in
+                    sliderRow(control)
+                }
+                levelRow
             }
-            if section == .optics {
-                lensCorrectionToggle
-            }
-            ForEach(section.controls.filter { $0.isAvailable(facts ?? .still) }) { control in
-                EditSliderRow(
-                    title: control.title,
-                    formattedValue: facts.map { control.formatted(recipe, facts: $0) } ?? EditSliderRow.noValue,
-                    value: control.sliderValue(in: recipe, facts: facts ?? .still),
-                    neutral: control.sliderValue(in: control.reset(recipe), facts: facts ?? .still),
-                    range: control.sliderRange(facts ?? .still),
-                    scaleLabels: control.scaleLabels(facts ?? .still),
-                    isSelected: selectedControl == control,
-                    reset: { resetControl(control) },
-                    setValue: { setValue($0, control) },
-                    setDragging: { setDragging($0, control) },
-                    setEntering: setEntering,
-                    enter: { text in
-                        guard let facts, let position = control.position(fromEntered: text, facts: facts) else {
-                            return false
-                        }
-                        setValue(position, control)
-                        return true
-                    }
-                )
-                .disabled(unavailableHelp != nil)
-                .help(unavailableHelp ?? "")
-                .id(control.id)
-            }
-            if section == .crop {
-                orientationButtons
+            orientationButtons
+            VStack(alignment: .leading, spacing: 4) {
                 aspectRow
                 suggestionsRow
             }
         }
     }
 
+    private func sliderRow(_ control: EditControl) -> some View {
+        EditSliderRow(
+            title: control.title,
+            formattedValue: facts.map { control.formatted(recipe, facts: $0) } ?? EditSliderRow.noValue,
+            value: control.sliderValue(in: recipe, facts: facts ?? .still),
+            neutral: control.sliderValue(in: control.reset(recipe), facts: facts ?? .still),
+            range: control.sliderRange(facts ?? .still),
+            scaleLabels: control.scaleLabels(facts ?? .still),
+            isSelected: selectedControl == control,
+            reset: { resetControl(control) },
+            setValue: { setValue($0, control) },
+            setDragging: { setDragging($0, control) },
+            setEntering: setEntering,
+            enter: { text in
+                guard let facts, let position = control.position(fromEntered: text, facts: facts) else {
+                    return false
+                }
+                setValue(position, control)
+                return true
+            }
+        )
+        .disabled(unavailableHelp != nil)
+        .help(unavailableHelp ?? "")
+        .id(control.id)
+    }
+
     /// The disclosure triangle's column, and the indent that puts a section's controls
     /// under its symbol (DES-050 steps).
     static let disclosureWidth: CGFloat = 12
     static let contentIndent: CGFloat = 16
+    /// The gap between Crop's groups: wider than a row's, narrower than a section's hairline
+    /// and heading, so the groups read as parts of one section (DES-050 steps).
+    static let cropGroupSpacing: CGFloat = 12
 
     /// The crop tool's switch: Done while it is on, which Return answers.
     private var cropTool: some View {
@@ -292,20 +303,43 @@ struct EditPanelView: View {
         }
     }
 
+    /// The three ways to level the photo, each named by what it levels by: the camera's
+    /// own reading, the horizon in the picture, or a line drawn on it (Lightroom names its
+    /// level corrections the same way). The label-left row is Suggested's (DES-017).
+    private var levelRow: some View {
+        HStack(spacing: 4) {
+            Text("Level")
+                .font(.body)
+                .fixedSize()
+                .foregroundStyle(unavailableHelp == nil ? .primary : .secondary)
+            Spacer()
+            Button("Camera", action: cropActions.levelToCamera)
+                .controlSize(.small)
+                .disabled(!crop.canLevelToCamera)
+                .help(unavailableHelp ?? (crop.canLevelToCamera
+                        ? "Level the photo by the camera's own level reading"
+                        : "The camera recorded no level for this photo"))
+            Button("Horizon", action: cropActions.levelToHorizon)
+                .controlSize(.small)
+                .disabled(unavailableHelp != nil)
+                .help(unavailableHelp
+                    ?? "Level the horizon in the picture. A photo without a horizon may come out tilted.")
+            straightenLineTool
+        }
+    }
+
     /// Lightroom Classic's Angle tool: armed, the next drag on the canvas draws a line the
-    /// photo is leveled along. Drawn pressed while armed (DES-097's idiom); ⌘-drag on the
-    /// canvas does the same without arming it.
+    /// photo is leveled along, turning the crop tool on if it is off. Drawn pressed while
+    /// armed (DES-097's idiom); ⌘-drag on the canvas does the same without arming it.
     private var straightenLineTool: some View {
         Toggle(isOn: Binding(get: { crop.isDrawingLine }, set: { _ in cropActions.toggleLine() })) {
             Image(systemName: "ruler")
         }
         .toggleStyle(.button)
         .controlSize(.small)
-        .disabled(unavailableHelp != nil || !crop.isCropping)
-        .help(crop.isCropping
-            ? "Draw along a line that should be level (or ⌘-drag on the photo)"
-            : "Start cropping to straighten along a line")
-        .accessibilityLabel("Straighten Along a Line")
+        .disabled(unavailableHelp != nil || !(crop.canCrop || crop.isCropping))
+        .help(unavailableHelp ?? "Draw along a line that should be level (or ⌘-drag on the photo while cropping)")
+        .accessibilityLabel("Level Along a Line")
     }
 
     /// Crops placed by the photo's subject, each one step, keeping the chosen aspect.
@@ -582,6 +616,8 @@ struct EditPanelCropState {
     var isDrawingLine = false
     /// The tool shows the frame the draft crops, so a suggestion can be read from it.
     var canSuggest = false
+    /// The opened photo carries a camera level reading.
+    var canLevelToCamera = false
 }
 
 /// The crop tool's intents, as the panel calls them.
@@ -593,8 +629,10 @@ struct EditPanelCropActions {
     let turn: @MainActor (Bool) -> Void
     /// Horizontally when true.
     let flip: @MainActor (Bool) -> Void
-    /// Levels the photo (the Crop section's Auto).
-    let autoStraighten: @MainActor () -> Void
+    /// Level ▸ Camera: by the camera's own level reading.
+    let levelToCamera: @MainActor () -> Void
+    /// Level ▸ Horizon: by the horizon Vision finds.
+    let levelToHorizon: @MainActor () -> Void
     /// Arms or disarms the straighten line.
     let toggleLine: @MainActor () -> Void
     let suggest: @MainActor (CropSuggestion) -> Void
