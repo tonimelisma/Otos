@@ -129,4 +129,3 @@ narrows the filmstrip to the photos inside the current map view
 Conclusion: the field shows an area's photos at whatever zoom the user stopped at. Otos
 adopts that through its own view-mode picker (ADR 0040), with day sections rather than
 place-name sections, since it does not reverse-geocode.
-
