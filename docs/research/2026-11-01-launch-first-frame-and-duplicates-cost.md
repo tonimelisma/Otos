@@ -35,6 +35,23 @@ Changes (ADR 0042, "The groups have their own owner"):
 - Pairs are proposed once, with the hash checked first.
 - The render comparison uses vDSP.
 
+All builds below found the same groups: 164 groups, 54 same-photo, 375 copies, 1,651
+pairs, 2,462 stills detailed. Timings are from the installed app's `duplicates.groups
+phase=built` log lines, read from the owner's library.
+
+| Build | Candidates ms | Details ms | Compare ms | Total ms |
+|---|---|---|---|---|
+| Before (inside each window pass) | — | — | — | ~1,500–2,500 apart, back to back |
+| #552: own owner, details only for pairs | 420–475 | 280–306 | 51–55 | 814–1,061 |
+| #555: pairing facts only, cursor read, cached detail statement | 151–248 | 157–256 | 55–60 | 496–552 |
+
+The candidate SQL alone runs in 31 ms (14,914 rows, `sqlite3`), so what remains of the
+candidate phase is Swift work in a Debug build:
+- building an asset identity for each still;
+- about 690,000 hash tests for stills without capture metadata.
+
+What remains of the details phase is decoding 2,462 metadata records.
+
 ## The window's first frame
 
 Evidence: a Time Profiler trace of a dev build's launch (`xctrace record --launch`, 8 s).
