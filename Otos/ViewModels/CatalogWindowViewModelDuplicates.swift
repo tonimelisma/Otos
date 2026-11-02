@@ -5,9 +5,9 @@ import OSLog
 //
 // Projection publishes the groups on `CatalogWindowState.duplicates` in every scope; this
 // file owns what is specific to working through them: the user's Keep marks and open
-// summaries (`DuplicatesSession`), and the intents — Keep This Copy, Move This Copy to
-// Trash, Keep All Copies, Keep Both Libraries, Move Marked Items to Trash, and opening a
-// group. Menu items, buttons and VoiceOver actions all call these. Moving copies goes
+// summaries (`DuplicatesSession`), and the intents — Keep This Copy, Keep Only This Copy,
+// Move This Copy to Trash, Keep All Copies, Keep Both Libraries, Keep Only <Library>, Move
+// Marked Items to Trash, and opening a group. Menu items, buttons and VoiceOver actions all call these. Moving copies goes
 // through `moveMediaToTrash`, the one Move to Trash path, so its undo, its download question
 // and its queue are the ordinary ones.
 
@@ -75,7 +75,9 @@ extension CatalogWindowViewModel {
             keep: { [weak self] id in self?.setDuplicateKeep(true, for: [id]) },
             moveToTrash: { [weak self] id in self?.setDuplicateKeep(false, for: [id]) },
             keepAll: { [weak self] group in self?.keepAllDuplicateCopies([group]) },
+            keepOnly: { [weak self] id in self?.keepOnlyDuplicateCopy(id) },
             keepBothLibraries: { [weak self] pair in self?.keepBothLibraries(pair) },
+            keepOnlyLibrary: { [weak self] library, pair in self?.keepOnlyLibrary(library, of: pair) },
             togglePair: { [weak self] pair in self?.toggleDuplicateLibraryPair(pair) },
             toggleKept: { [weak self] in self?.duplicatesSession.showsKept.toggle() },
             openGroup: { [weak self] in self?.openSelectedDuplicateGroup() },
@@ -87,6 +89,43 @@ extension CatalogWindowViewModel {
     /// Photo ▸ Keep This Copy: the selected copies are kept.
     func keepSelectedDuplicateCopies() {
         setDuplicateKeep(true, for: orderedSelectedAssetIDs)
+    }
+
+    /// Photo ▸ Keep Only This Copy: the selected copy is kept and every other copy of its
+    /// group marked to move.
+    func keepOnlySelectedDuplicateCopy() {
+        guard let id = orderedSelectedAssetIDs.first else {
+            return
+        }
+        keepOnlyDuplicateCopy(id)
+    }
+
+    var canKeepOnlySelectedDuplicateCopy: Bool {
+        showsDuplicatesList && orderedSelectedAssetIDs.count == 1
+            && orderedSelectedAssetIDs.first.flatMap(duplicateGroup(containing:)).map { !$0.isKept } == true
+    }
+
+    func keepOnlyDuplicateCopy(_ id: MediaAssetID) {
+        guard let group = duplicateGroup(containing: id), !group.isKept else {
+            return
+        }
+        duplicatesSession.keepOnly(id, in: group)
+        OtosLog.ui.noticeOperation("duplicates.mark", phase: "keepOnly", fields: [
+            "copies": "\(group.copies.count)", "kind": group.id.kindName,
+        ])
+    }
+
+    /// A library pair's Keep Only <Library>: every copy the pair's groups hold in the other
+    /// library is marked to move; the act moves them, under its ordinary count.
+    func keepOnlyLibrary(_ library: LibraryRootPath, of pair: DuplicateLibraryPair) {
+        let groups = state.duplicates?.activeGroups.filter { $0.libraryPair == pair } ?? []
+        guard !groups.isEmpty else {
+            return
+        }
+        duplicatesSession.keepOnly(library, in: groups)
+        OtosLog.ui.noticeOperation("duplicates.mark", phase: "keepOnlyLibrary", fields: [
+            "groups": "\(groups.count)",
+        ])
     }
 
     /// Photo ▸ Move This Copy to Trash: the selected copies are marked to move. A group
@@ -161,13 +200,15 @@ extension CatalogWindowViewModel {
     }
 
     /// The bar's act: every marked copy moves to the Trash, through the one Move to Trash
-    /// path.
+    /// path, carrying its curation and edit onto the kept copy that lacks them.
     func moveMarkedDuplicatesToTrash() {
-        guard let ids = duplicatesTally?.itemsToMove, !ids.isEmpty, mediaTrashTask == nil else {
+        guard let tally = duplicatesTally, !tally.itemsToMove.isEmpty, mediaTrashTask == nil else {
             return
         }
-        OtosLog.ui.noticeOperation("duplicates.move", phase: "start", fields: ["count": "\(ids.count)"])
-        moveMediaToTrash(ids)
+        OtosLog.ui.noticeOperation("duplicates.move", phase: "start", fields: [
+            "count": "\(tally.itemsToMove.count)", "carries": "\(tally.carries.count)",
+        ])
+        moveMediaToTrash(tally.itemsToMove, carrying: tally.carries)
     }
 
     var canMoveMarkedDuplicatesToTrash: Bool {

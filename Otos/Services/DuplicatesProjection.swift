@@ -157,8 +157,7 @@ extension DuplicatesProjection {
             "groups": "\(groups.count)",
             "kept": "\(state.keptGroups.count)",
             "preselected": "\(groups.count { !$0.isKept && $0.defaultKeep != nil })",
-            "waitSpansLibraries": "\(groups.count { $0.wait == .spansLibraries })",
-            "waitAuthoredWork": "\(groups.count { $0.wait == .differingAuthoredWork })",
+            "waiting": "\(groups.count { !$0.isKept && $0.defaultKeep == nil })",
             "samePhoto": "\(samePhoto.count)",
             "stills": "\(candidates.count)",
             "pairs": "\(pairs.count)",
@@ -190,25 +189,6 @@ extension DuplicatesProjection {
         details: [MediaAssetID: SamePhotoDetail],
         keptPairs: Set<DuplicateKeptPair>
     ) async -> [DuplicateGroup] {
-        SamePhotoPolicy.groups(pairs: pairs, details: details).map { group in
-            let ids = group.copies.map(\.id)
-            var everyPairKept = true
-            for (index, left) in ids.enumerated() {
-                for right in ids[(index + 1)...] where !keptPairs.contains(DuplicateKeptPair(left, right)) {
-                    everyPairKept = false
-                }
-            }
-            guard everyPairKept else {
-                return group
-            }
-            return DuplicateGroup(
-                id: group.id,
-                copies: group.copies,
-                defaultKeep: Set(ids),
-                wait: nil,
-                isKept: true,
-                libraryPair: group.libraryPair
-            )
-        }
+        SamePhotoPolicy.groups(pairs: pairs, details: details, keptPairs: keptPairs)
     }
 }

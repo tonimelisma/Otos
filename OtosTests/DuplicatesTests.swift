@@ -42,7 +42,6 @@ struct DuplicatesTests {
     @Test func aCopySuffixLosesToTheOriginalName() throws {
         let group = try Self.onlyGroup([Self.copy("a/IMG_1 copy.jpg", born: 50), Self.copy("b/IMG_1.jpg", born: 90)])
         #expect(group.defaultKeep == [Self.copy("b/IMG_1.jpg").copy.id])
-        #expect(group.wait == nil)
         #expect(group.copies.first?.name == "IMG_1.jpg")
     }
 
@@ -59,17 +58,53 @@ struct DuplicatesTests {
         #expect(group.defaultKeep == [Self.copy("IMG_1 copy.jpg").copy.id])
     }
 
-    @Test func twoCopiesWithAuthoredWorkWait() throws {
+    @Test func workOnTwoCopiesIsCarriedOntoTheCopyKept() throws {
+        let liked = Self.copy("a.jpg", choice: .liked).copy.id
+        let edited = Self.copy("b.jpg", edited: true).copy.id
         let group = try Self.onlyGroup([Self.copy("a.jpg", choice: .liked), Self.copy("b.jpg", edited: true)])
-        #expect(group.defaultKeep == nil)
-        #expect(group.wait == .differingAuthoredWork)
+        #expect(group.defaultKeep == [edited])
+        #expect(DuplicatesSession().carries(in: group) == [DuplicateCarry(from: liked, to: edited, work: .choice)])
     }
 
-    @Test func nothingAcrossLibrariesIsPreselected() throws {
-        let group = try Self.onlyGroup([Self.copy("IMG_1.jpg"), Self.copy("IMG_1.jpg", in: Self.backup)])
-        #expect(group.defaultKeep == nil)
-        #expect(group.wait == .spansLibraries)
-        #expect(group.libraryPair == DuplicateLibraryPair(Self.photos, Self.backup))
+    @Test func onlyWorkThatCannotBeCombinedWaits() throws {
+        let twoEdits = try Self.onlyGroup([Self.copy("a.jpg", edited: true), Self.copy("b.jpg", edited: true)])
+        #expect(twoEdits.defaultKeep == nil)
+        let twoSidecars = try Self.onlyGroup([Self.copy("a.jpg", companions: true), Self.copy("b.jpg", companions: true)])
+        #expect(twoSidecars.defaultKeep == nil)
+        let twoChoices = try Self.onlyGroup([Self.copy("a.jpg", choice: .liked), Self.copy("b.jpg", choice: .disliked)])
+        #expect(twoChoices.defaultKeep == nil)
+        let oneChoice = try Self.onlyGroup([Self.copy("a.jpg", choice: .liked), Self.copy("b.jpg", choice: .liked)])
+        #expect(oneChoice.defaultKeep == [Self.copy("a.jpg").copy.id])
+    }
+
+    @Test func eachLibraryKeepsItsOwnCopy() throws {
+        let pair = try Self.onlyGroup([Self.copy("IMG_1.jpg"), Self.copy("IMG_1.jpg", in: Self.backup)])
+        #expect(pair.defaultKeep == [Self.copy("IMG_1.jpg").copy.id, Self.copy("IMG_1.jpg", in: Self.backup).copy.id])
+        #expect(pair.libraryPair == DuplicateLibraryPair(Self.photos, Self.backup))
+
+        // A second copy inside one library is still marked.
+        let extra = try Self.onlyGroup([
+            Self.copy("IMG_1.jpg"),
+            Self.copy("IMG_1 copy.jpg"),
+            Self.copy("IMG_1.jpg", in: Self.backup),
+        ])
+        #expect(DuplicatesSession().copiesToMove(in: extra) == [Self.copy("IMG_1 copy.jpg").copy.id])
+    }
+
+    @Test func keepOnlyMarksTheRestOfTheGroupOrTheOtherLibrary() throws {
+        let group = try Self.onlyGroup([
+            Self.copy("IMG_1.jpg"),
+            Self.copy("IMG_1 copy.jpg"),
+            Self.copy("IMG_1.jpg", in: Self.backup),
+        ])
+        let suffixed = Self.copy("IMG_1 copy.jpg").copy.id
+        var session = DuplicatesSession()
+        session.keepOnly(suffixed, in: group)
+        #expect(Set(session.copiesToMove(in: group)) == [Self.copy("IMG_1.jpg").copy.id, Self.copy("IMG_1.jpg", in: Self.backup).copy.id])
+
+        var byLibrary = DuplicatesSession()
+        byLibrary.keepOnly(Self.photos, in: [group])
+        #expect(Set(byLibrary.copiesToMove(in: group)) == [suffixed, Self.copy("IMG_1.jpg", in: Self.backup).copy.id])
     }
 
     @Test func keptCopiesAreSetAsideAndALaterCopyIsTheOnlyOneOffered() throws {
@@ -100,7 +135,7 @@ struct DuplicatesTests {
         let preselected = try Self.onlyGroup([Self.copy("a/IMG_1.jpg"), Self.copy("b/IMG_1 copy.jpg")])
         let waiting = try DuplicateGroupPolicy.group(
             id: .identical(#require(XXH3Digest128(data: Data(repeating: 2, count: 16)))),
-            copies: [Self.copy("x.jpg").copy, Self.copy("x.jpg", in: Self.backup).copy],
+            copies: [Self.copy("x.jpg", edited: true).copy, Self.copy("y.jpg", edited: true).copy],
             keptPairs: []
         )
         let state = CatalogDuplicatesState(groups: [preselected, waiting])
@@ -199,6 +234,47 @@ struct DuplicatesTests {
         // A copy waiting for the Trash makes no one else a duplicate.
         _ = try await store.markPendingTrash([ids[0]], batch: MediaTrashBatchID())
         #expect(try await store.duplicateCopies(availableLibraryPaths: [library]).copies.isEmpty)
+        await store.shutdown()
+    }
+
+    /// The act carries a moved copy's choice and edit onto the kept copy in the hiding write,
+    /// and undo — once the moved copy is back — takes them back off.
+    @Test func movingACopyCarriesItsWorkOntoTheKeptCopyAndUndoTakesItBack() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root.appending(path: "Print"), withIntermediateDirectories: true)
+        for path in ["a.jpg", "Print/a.jpg"] {
+            try writeCatalogStoreFile(root.appending(path: path), contents: "same")
+        }
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let library = try CatalogPath.normalizedDirectoryPath(for: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
+        let moved = MediaAssetID(libraryRootPath: library, relativePath: MediaRelativePath(rawValue: "a.jpg"))
+        let kept = MediaAssetID(libraryRootPath: library, relativePath: MediaRelativePath(rawValue: "Print/a.jpg"))
+        var recipe = EditRecipe.neutral
+        recipe.exposure = 0.5
+        _ = try await store.setMediaChoice(.liked, for: [moved])
+        _ = try await store.setEditRecipe(recipe, for: moved)
+
+        let batch = MediaTrashBatchID()
+        let hidden = try await store.markPendingTrash([moved], batch: batch, carrying: [
+            DuplicateCarry(from: moved, to: kept, work: .choice),
+            DuplicateCarry(from: moved, to: kept, work: .edit),
+        ])
+        #expect(hidden == [moved])
+        #expect(try await store.mediaAssets(for: [kept])[kept]?.mediaChoice == .liked)
+        #expect(try await store.editRecipe(for: kept)?.recipe == recipe)
+
+        // The moved copy came back: what was carried comes off the kept copy.
+        _ = try await store.clearPendingTrash([moved])
+        try await store.revertCarriedWork(batch: batch, restored: [moved])
+        #expect(try await store.mediaAssets(for: [kept])[kept]?.mediaChoice == .notRated)
+        #expect(try await store.editRecipe(for: kept) == nil)
+        // The moved copy still holds its own.
+        #expect(try await store.mediaAssets(for: [moved])[moved]?.mediaChoice == .liked)
+        #expect(try await store.editRecipe(for: moved)?.recipe == recipe)
         await store.shutdown()
     }
 }

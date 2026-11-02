@@ -4,9 +4,9 @@ import Foundation
 //
 // A duplicate group is a projection over facts the catalog already holds — content
 // digests (ADR 0018) and the overlay each copy carries — never a stored identity. The
-// Store reads the copies; `DuplicateGroupPolicy` decides, purely, which copy each group
-// would keep by default and which groups wait for the user; Projection publishes the
-// result as `CatalogDuplicatesState`. The only durable fact the feature adds is the
+// Store reads the copies; `DuplicateGroupPolicy` decides, purely, which copies each group
+// keeps by default — every group has a default unless its copies hold work that cannot be
+// combined; Projection publishes the result as `CatalogDuplicatesState`. The only durable fact the feature adds is the
 // user's "Keep All Copies" — remembered per pair of paths, overlay with the copies'
 // own lifecycle.
 
@@ -64,16 +64,6 @@ nonisolated struct DuplicateCopy: Equatable, Sendable, Identifiable {
     }
 }
 
-/// Why a group waits for the user instead of offering a default.
-nonisolated enum DuplicateGroupWait: Equatable, Sendable {
-    /// Its copies live in more than one library; nothing across libraries is preselected.
-    case spansLibraries
-    /// More than one copy carries authored work — edits, companions, or different choices.
-    case differingAuthoredWork
-    /// Versions of one photo, not identical files: which to keep is the user's to judge.
-    case samePhoto
-}
-
 /// Two libraries that share identical items, summarized as one row before their groups.
 nonisolated struct DuplicateLibraryPair: Hashable, Sendable {
     let first: LibraryRootPath
@@ -95,9 +85,9 @@ nonisolated struct DuplicateGroup: Equatable, Sendable, Identifiable {
     /// The copies, in display order: kept copies first, then by library and path.
     let copies: [DuplicateCopy]
     /// The copies the group keeps by default; every other copy is marked to move to the
-    /// Trash. `nil` when the group waits for the user.
+    /// Trash. `nil` when the group waits for the user: its copies hold work that cannot be
+    /// combined onto one (`DuplicateGroupPolicy.workConflicts`).
     let defaultKeep: Set<MediaAssetID>?
-    let wait: DuplicateGroupWait?
     /// The user kept every copy (Keep All Copies): listed under Kept, counted nowhere else.
     let isKept: Bool
     /// The two libraries this group spans, when it spans exactly two.
@@ -127,12 +117,20 @@ nonisolated struct DuplicateCopyFacts: Equatable, Sendable {
     let digest: XXH3Digest128
 }
 
-/// The keeper rule (ADR 0042). Pure: facts in, groups out.
+/// The keeper rule (ADR 0042). Pure: facts in, groups out. Every group has a default:
 ///
-/// A default is offered only where it cannot lose anything: identical bytes, every copy
-/// in one library, and at most one copy carrying authored work — that copy is kept.
-/// Otherwise the kept copy is the one whose name has no Finder or browser copy suffix,
-/// then the earliest birth time, then path order. Every other group waits.
+/// - **Each library keeps its own copy.** Nothing across libraries is preselected, so a group
+///   whose copies span libraries keeps the best copy in each; the library pair row offers
+///   `Keep Only <Library>`.
+/// - **Work is carried, not chosen between.** The act moves a copy's curation or edit onto
+///   the kept copy when the kept copy lacks it (`DuplicatesSession.carries`), so the copy
+///   kept need not be the one holding the work. A library's copies wait only when their
+///   work cannot be combined: two edits, two sets of companion files, two different choices.
+/// - **The best copy is kept**, in this order: one with companion files (another app's work,
+///   which never moves); for versions of the same photo, the camera original, then the most
+///   pixels, then the largest file; an edited copy, then one with a choice; a name without a
+///   Finder or browser copy suffix; the earliest birth time; path order.
+/// - **Copies the user kept together stay kept**, and a later copy is the one offered.
 nonisolated enum DuplicateGroupPolicy {
     static func groups(
         copies: [DuplicateCopyFacts],
@@ -154,17 +152,19 @@ nonisolated enum DuplicateGroupPolicy {
         }
     }
 
+    /// One group from its copies. `originals` are the copies that name their capture — for
+    /// versions of the same photo, the camera's own file is the one to keep.
     static func group(
         id: DuplicateGroupID,
         copies unordered: [DuplicateCopy],
-        keptPairs: Set<DuplicateKeptPair>
+        keptPairs: Set<DuplicateKeptPair>,
+        originals: Set<MediaAssetID> = []
     ) -> DuplicateGroup {
         let copies = unordered.sorted { $0.id.duplicateOrderKey < $1.id.duplicateOrderKey }
         let ids = copies.map(\.id)
-        let libraries = Set(ids.map(\.libraryRootPath))
+        let libraries = Set(ids.map(\.libraryRootPath)).sorted { $0.rawValue < $1.rawValue }
         let libraryPair: DuplicateLibraryPair? = libraries.count == 2
-            ? DuplicateLibraryPair(libraries.sorted { $0.rawValue < $1.rawValue }[0],
-                                   libraries.sorted { $0.rawValue < $1.rawValue }[1])
+            ? DuplicateLibraryPair(libraries[0], libraries[1])
             : nil
 
         var keptTogether: Set<MediaAssetID> = []
@@ -184,73 +184,104 @@ nonisolated enum DuplicateGroupPolicy {
                 id: id,
                 copies: copies,
                 defaultKeep: Set(ids),
-                wait: nil,
                 isKept: true,
                 libraryPair: libraryPair
             )
         }
 
-        let decision = defaultKeep(copies: copies, keptTogether: keptTogether, libraries: libraries)
+        let keep = defaultKeep(copies: copies, keptTogether: keptTogether, originals: originals)
         let ordered = copies.sorted { left, right in
-            let leftKept = decision.keep?.contains(left.id) ?? false
-            let rightKept = decision.keep?.contains(right.id) ?? false
+            let leftKept = keep?.contains(left.id) ?? false
+            let rightKept = keep?.contains(right.id) ?? false
             if leftKept != rightKept {
                 return leftKept
+            }
+            if leftKept {
+                return isBetterKeeper(left, than: right, originals: originals)
             }
             return left.id.duplicateOrderKey < right.id.duplicateOrderKey
         }
         return DuplicateGroup(
             id: id,
             copies: ordered,
-            defaultKeep: decision.keep,
-            wait: decision.wait,
+            defaultKeep: keep,
             isKept: false,
             libraryPair: libraryPair
         )
     }
 
+    /// Whether these copies hold work Otos cannot combine onto one copy: two edits, two sets
+    /// of companion files, or two different choices.
+    static func workConflicts(_ copies: [DuplicateCopy]) -> Bool {
+        copies.count(where: \.isEdited) > 1
+            || copies.count(where: \.hasCompanions) > 1
+            || Set(copies.map(\.mediaChoice).filter { $0 != .notRated }).count > 1
+    }
+
+    /// Each library keeps its copies kept together, else its best copy; nil when a library's
+    /// copies hold work that cannot be combined.
     private static func defaultKeep(
         copies: [DuplicateCopy],
         keptTogether: Set<MediaAssetID>,
-        libraries: Set<LibraryRootPath>
-    ) -> (keep: Set<MediaAssetID>?, wait: DuplicateGroupWait?) {
-        guard libraries.count == 1 else {
-            return (nil, .spansLibraries)
-        }
-        let authored = copies.filter(\.carriesAuthoredWork)
-        // A later copy of copies the user kept together: keep those, offer only the new one
-        // — unless the new one carries work of its own.
-        if !keptTogether.isEmpty {
-            let newcomers = copies.filter { !keptTogether.contains($0.id) }
-            guard newcomers.allSatisfy({ !$0.carriesAuthoredWork }) else {
-                return (nil, .differingAuthoredWork)
+        originals: Set<MediaAssetID>
+    ) -> Set<MediaAssetID>? {
+        var keep: Set<MediaAssetID> = []
+        for members in Dictionary(grouping: copies, by: \.id.libraryRootPath).values {
+            guard !workConflicts(members) else {
+                return nil
             }
-            return (keptTogether, nil)
-        }
-        if authored.count > 1 {
-            return (nil, .differingAuthoredWork)
-        }
-        if let only = authored.first {
-            return ([only.id], nil)
-        }
-        let keeper = copies.min { left, right in
-            let leftSuffixed = hasCopySuffix(left.name)
-            let rightSuffixed = hasCopySuffix(right.name)
-            if leftSuffixed != rightSuffixed {
-                return !leftSuffixed
-            }
-            switch (left.createdAt, right.createdAt) {
-            case let (leftDate?, rightDate?) where leftDate != rightDate:
-                return leftDate < rightDate
-            case (.some, nil):
-                return true
-            case (nil, .some):
-                return false
-            default:
-                return left.id.duplicateOrderKey < right.id.duplicateOrderKey
+            let together = members.filter { keptTogether.contains($0.id) }
+            if !together.isEmpty {
+                keep.formUnion(together.map(\.id))
+            } else if let best = members.min(by: { isBetterKeeper($0, than: $1, originals: originals) }) {
+                keep.insert(best.id)
             }
         }
-        return (keeper.map { [$0.id] }, nil)
+        return keep
+    }
+
+    /// The keeper order: companion files, then (for versions of one photo) the original,
+    /// the most pixels and the largest file, then an edit, a choice, a plain name, the
+    /// earliest birth time and path order.
+    static func isBetterKeeper(_ left: DuplicateCopy, than right: DuplicateCopy, originals: Set<MediaAssetID>) -> Bool {
+        if left.hasCompanions != right.hasCompanions {
+            return left.hasCompanions
+        }
+        let leftOriginal = originals.contains(left.id)
+        if leftOriginal != originals.contains(right.id) {
+            return leftOriginal
+        }
+        if !originals.isEmpty {
+            let leftPixels = (left.pixelWidth ?? 0) * (left.pixelHeight ?? 0)
+            let rightPixels = (right.pixelWidth ?? 0) * (right.pixelHeight ?? 0)
+            if leftPixels != rightPixels {
+                return leftPixels > rightPixels
+            }
+            if left.byteSize != right.byteSize {
+                return (left.byteSize ?? 0) > (right.byteSize ?? 0)
+            }
+        }
+        if left.isEdited != right.isEdited {
+            return left.isEdited
+        }
+        let leftChose = left.mediaChoice != .notRated
+        if leftChose != (right.mediaChoice != .notRated) {
+            return leftChose
+        }
+        let leftSuffixed = hasCopySuffix(left.name)
+        if leftSuffixed != hasCopySuffix(right.name) {
+            return !leftSuffixed
+        }
+        switch (left.createdAt, right.createdAt) {
+        case let (leftDate?, rightDate?) where leftDate != rightDate:
+            return leftDate < rightDate
+        case (.some, nil):
+            return true
+        case (nil, .some):
+            return false
+        default:
+            return left.id.duplicateOrderKey < right.id.duplicateOrderKey
+        }
     }
 
     /// A name Finder (` copy`, ` copy 2`) or a browser download (` (1)`) gives a second
@@ -297,6 +328,23 @@ nonisolated struct DuplicatesSession: Equatable, Sendable {
         keepOverrides = keepOverrides.filter { live.contains($0.key) }
     }
 
+    /// Keep Only This Copy: this copy is kept and every other copy of its group marked.
+    mutating func keepOnly(_ copy: MediaAssetID, in group: DuplicateGroup) {
+        for other in group.copies {
+            keepOverrides[other.id] = other.id == copy
+        }
+    }
+
+    /// A library pair's Keep Only: every copy the pair's groups hold in the other library is
+    /// marked, and each group's copies in this library keep their own marks and defaults.
+    mutating func keepOnly(_ library: LibraryRootPath, in groups: [DuplicateGroup]) {
+        for group in groups where group.copies.contains(where: { $0.id.libraryRootPath == library }) {
+            for copy in group.copies where copy.id.libraryRootPath != library {
+                keepOverrides[copy.id] = false
+            }
+        }
+    }
+
     /// Whether this copy is kept: the user's mark, else the group's default, else kept
     /// (a waiting group marks nothing).
     func keeps(_ copy: MediaAssetID, in group: DuplicateGroup) -> Bool {
@@ -311,6 +359,34 @@ nonisolated struct DuplicatesSession: Equatable, Sendable {
     func copiesToMove(in group: DuplicateGroup) -> [MediaAssetID] {
         let moving = group.copies.map(\.id).filter { !keeps($0, in: group) }
         return moving.count < group.copies.count ? moving : []
+    }
+
+    /// The authored work the act carries onto a kept copy: a moved copy's choice when the
+    /// kept copy has none, and its edit when the kept copy has none. The kept copy is the
+    /// first kept in the moved copy's library, else the group's first kept copy. The Store
+    /// re-reads both copies when it writes, so a carry only ever fills what is missing.
+    func carries(in group: DuplicateGroup) -> [DuplicateCarry] {
+        let moving = Set(copiesToMove(in: group))
+        guard !moving.isEmpty else {
+            return []
+        }
+        let kept = group.copies.filter { !moving.contains($0.id) }
+        var carries: [DuplicateCarry] = []
+        var choiceFilled: Set<MediaAssetID> = []
+        var editFilled: Set<MediaAssetID> = []
+        for copy in group.copies where moving.contains(copy.id) {
+            guard let target = kept.first(where: { $0.id.libraryRootPath == copy.id.libraryRootPath }) ?? kept.first
+            else {
+                continue
+            }
+            if copy.mediaChoice != .notRated, target.mediaChoice == .notRated, choiceFilled.insert(target.id).inserted {
+                carries.append(DuplicateCarry(from: copy.id, to: target.id, work: .choice))
+            }
+            if copy.isEdited, !target.isEdited, editFilled.insert(target.id).inserted {
+                carries.append(DuplicateCarry(from: copy.id, to: target.id, work: .edit))
+            }
+        }
+        return carries
     }
 
     /// A waiting group the user has not touched.
@@ -330,9 +406,11 @@ nonisolated struct DuplicatesSession: Equatable, Sendable {
     func tally(in state: CatalogDuplicatesState) -> DuplicatesTally {
         let groups = state.activeGroups
         var moving: [MediaAssetID] = []
+        var carried: [DuplicateCarry] = []
         var bytes: Int64 = 0
         var unknownSizes = 0
         for group in groups {
+            carried += carries(in: group)
             for id in copiesToMove(in: group) {
                 moving.append(id)
                 if let size = group.copies.first(where: { $0.id == id })?.byteSize {
@@ -345,6 +423,7 @@ nonisolated struct DuplicatesSession: Equatable, Sendable {
         return DuplicatesTally(
             photosWithDuplicates: groups.count,
             itemsToMove: moving,
+            carries: carried,
             bytesToMove: PartialByteCount(knownBytes: bytes, unknownCount: unknownSizes),
             needingChoice: groups.count(where: needsChoice)
         )
@@ -354,12 +433,43 @@ nonisolated struct DuplicatesSession: Equatable, Sendable {
 nonisolated struct DuplicatesTally: Equatable, Sendable {
     let photosWithDuplicates: Int
     let itemsToMove: [MediaAssetID]
+    /// The work the act carries onto kept copies as it moves `itemsToMove`.
+    var carries: [DuplicateCarry] = []
     let bytesToMove: PartialByteCount
     let needingChoice: Int
 }
 
+/// What a carry wrote over on a kept copy, so the command's undo restores it.
+nonisolated struct DuplicateCarryRecord: Equatable, Sendable {
+    enum Previous: Equatable, Sendable {
+        case choice(MediaChoice)
+        /// The kept copy's edit recipe JSON before the carry; nil when it had none.
+        case edit(String?)
+    }
+
+    let from: MediaAssetID
+    let to: MediaAssetID
+    let previous: Previous
+}
+
+/// One piece of authored work the duplicates act moves from a copy going to the Trash onto a
+/// kept copy of the same picture (ADR 0042).
+nonisolated struct DuplicateCarry: Hashable, Sendable {
+    enum Work: Hashable, Sendable {
+        /// The curation choice (`media_choice`).
+        case choice
+        /// The edit recipe.
+        case edit
+    }
+
+    let from: MediaAssetID
+    let to: MediaAssetID
+    let work: Work
+}
+
 /// Versions of the same photo (ADR 0042): different files of one capture — resized,
-/// re-encoded, metadata stripped — proven by their thumbnails, never preselected.
+/// re-encoded, metadata stripped — proven by their thumbnails. The camera original with the
+/// most pixels is kept by default (`DuplicateGroupPolicy`).
 ///
 /// The question is "are these the same capture?", not "do these look alike?", and three
 /// gates keep separate captures — bursts, brackets — apart:
@@ -456,7 +566,8 @@ nonisolated enum SamePhotoPolicy {
     /// on every file without capture metadata, then copies joined through any confirmed pair.
     static func groups(
         pairs: [SamePhotoPair],
-        details: [MediaAssetID: SamePhotoDetail]
+        details: [MediaAssetID: SamePhotoDetail],
+        keptPairs: Set<DuplicateKeptPair> = []
     ) -> [DuplicateGroup] {
         var confirmed: [(SamePhotoCandidate, SamePhotoCandidate, Double)] = []
         for pair in pairs {
@@ -508,16 +619,14 @@ nonisolated enum SamePhotoPolicy {
             }
         }
         let members = Dictionary(grouping: copies.keys, by: root)
+        let originals = Set(pairs.flatMap { [$0.left, $0.right] }.filter(\.hasCaptureMetadata).map(\.id))
         return members.values.filter { $0.count > 1 }.map { ids in
             let ordered = ids.sorted { $0.duplicateOrderKey < $1.duplicateOrderKey }
-            let libraries = Set(ordered.map(\.libraryRootPath)).sorted { $0.rawValue < $1.rawValue }
-            return DuplicateGroup(
+            return DuplicateGroupPolicy.group(
                 id: .samePhoto(ordered),
                 copies: ordered.compactMap { copies[$0] },
-                defaultKeep: nil,
-                wait: .samePhoto,
-                isKept: false,
-                libraryPair: libraries.count == 2 ? DuplicateLibraryPair(libraries[0], libraries[1]) : nil
+                keptPairs: keptPairs,
+                originals: originals.intersection(ordered)
             )
         }
     }

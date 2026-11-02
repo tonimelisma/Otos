@@ -39,7 +39,7 @@ A list of groups above a fixed-height bar (DES-018, DES-053).
   - L1, as above.
   - One L3 clause:
     - `312 items marked · 4.2 GB` (file sizes, the trash bar's convention); or
-    - `6 need your choice` with `Show`.
+    - `6 need your choice` with `Show`, for groups whose work cannot be combined.
 - **Act:** `Move 312 Items to Trash`, a plain bordered button with no Return equivalent.
   Disabled, it reads `Move Marked Items to Trash`, with the reason in its tooltip.
 
@@ -47,10 +47,17 @@ The list is every active group, always: a group found while the user looks joins
 
 ## Defaults
 
-Otos marks copies only in a group whose copies are identical, all in one library, with
-at most one copy carrying curation, an edit or a sidecar. That copy is kept. Failing
-that, the keeper is the copy without a ` copy` / ` (1)` suffix, then the earliest-born,
-then path order. Everything else waits, with nothing marked.
+Every group has a default (ADR 0042, Plan 0111):
+
+- **Each library keeps its own copy.** A group spanning libraries keeps the best copy in
+  each; its library pair row offers `Keep Only <Library>` beside `Keep Both Libraries`.
+- **The best copy is kept:** one with sidecar files; for same photo, the camera original,
+  then the most pixels, then the largest file; an edited copy, then one with a choice; the
+  name without a ` copy` / ` (1)` suffix; the earliest-born; path order.
+- **Work moves with the act.** A moved copy's choice or edit goes onto the kept copy that
+  lacks it, and Undo takes it back.
+- **Only work that cannot be combined waits** — two edits, two sets of sidecars, two
+  different choices — with nothing marked and `Choose a copy to keep`.
 
 ## Keyboard and VoiceOver
 
@@ -58,6 +65,7 @@ Rows are the selection. The state control is not a Tab stop.
 
 **Commands.** These act on the selected rows:
 - **Photo ▸ Keep This Copy**
+- **Keep Only This Copy** (also the row's context menu)
 - **Move This Copy to Trash**
 - **Keep All Copies**
 - **Move Marked Items to Trash**

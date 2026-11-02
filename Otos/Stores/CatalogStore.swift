@@ -261,6 +261,10 @@ actor CatalogStore {
     /// claims offer them before any other row (ADR 0009 §9). Runtime only: after a
     /// relaunch they wait in the ordinary order.
     private var landedAwaitingProducts: [MediaAssetID] = []
+    /// What each duplicates Move to Trash carried onto kept copies, by its batch, so the
+    /// command's undo puts back exactly what the kept copies held (ADR 0042). In memory:
+    /// it lives as long as the undo stack that names the batch.
+    private var carriedWorkByBatch: [MediaTrashBatchID: [DuplicateCarryRecord]] = [:]
     private var changeContinuations: [UUID: AsyncStream<CatalogStoreChange>.Continuation] = [:]
     private var planningChangeContinuations: [UUID: AsyncStream<RootPlanningChange>.Continuation] = [:]
     private var changeDeliveries: [UUID: DeliveryCount] = [:]
@@ -1066,22 +1070,78 @@ extension CatalogStore {
     /// Hides the requested items behind one pending Move to Trash. Only existing,
     /// non-device rows that are not already pending are marked; the returned IDs are
     /// exactly the rows this call hid, in request order.
+    /// Hides the items behind a pending Move to Trash. `carrying` is the authored work the
+    /// duplicates act moves onto kept copies (ADR 0042): it is written in the same
+    /// transaction, only for copies this call hid, and only where the kept copy lacks that
+    /// work — so a move that hides nothing carries nothing. What it wrote is recorded under
+    /// the batch for `revertCarriedWork`.
     func markPendingTrash(
         _ ids: [MediaAssetID],
-        batch: MediaTrashBatchID
+        batch: MediaTrashBatchID,
+        carrying carries: [DuplicateCarry] = []
     ) async throws -> [MediaAssetID] {
-        try await setPendingTrash(ids, batch: batch, operation: "mark")
+        try await setPendingTrash(ids, batch: batch, carrying: carries, operation: "mark")
+    }
+
+    /// Undo of a duplicates Move to Trash: puts back what the batch carried onto kept copies,
+    /// for the moved copies that came back. Work carried from a copy still in the Trash stays
+    /// on the kept copy, since its source is not back to hold it.
+    func revertCarriedWork(batch: MediaTrashBatchID, restored: Set<MediaAssetID>) async throws {
+        guard let records = carriedWorkByBatch[batch] else {
+            return
+        }
+        let reverting = records.filter { restored.contains($0.from) }
+        guard !reverting.isEmpty else {
+            carriedWorkByBatch[batch] = nil
+            return
+        }
+        let rootIDs = roots.rowIDSnapshot()
+        let reverted = try await database().write { db in
+            var reverted = 0
+            for record in reverting {
+                guard let rootID = rootIDs[record.to.libraryRootPath] else {
+                    continue
+                }
+                switch record.previous {
+                case let .choice(previous):
+                    try db.execute(
+                        sql: "UPDATE media_asset SET media_choice = ? WHERE library_root_id = ? AND relative_path = ?",
+                        arguments: [previous.rawValue, rootID, record.to.relativePath.rawValue]
+                    )
+                    reverted += db.changesCount
+                case let .edit(previousJSON):
+                    reverted += try Self.replaceEditRecipe(
+                        json: previousJSON,
+                        rootID: rootID,
+                        relativePath: record.to.relativePath.rawValue,
+                        db: db
+                    ) ? 1 : 0
+                }
+            }
+            return reverted
+        }
+        // Forgotten only once written: a failed write leaves the record for a retry.
+        carriedWorkByBatch[batch] = nil
+        if reverted > 0 {
+            notifyCatalogChanged()
+        }
+        OtosLog.catalog.noticeOperation("catalog.duplicateCarry", phase: "reverted", fields: [
+            "batch": "\(batch.unixMilliseconds)",
+            "records": "\(records.count)",
+            "reverted": "\(reverted)",
+        ])
     }
 
     /// Ends a pending Move to Trash without moving anything: the items reappear.
     /// Returns exactly the rows this call un-hid.
     func clearPendingTrash(_ ids: [MediaAssetID]) async throws -> [MediaAssetID] {
-        try await setPendingTrash(ids, batch: nil, operation: "clear")
+        try await setPendingTrash(ids, batch: nil, carrying: [], operation: "clear")
     }
 
     private func setPendingTrash(
         _ ids: [MediaAssetID],
         batch: MediaTrashBatchID?,
+        carrying carries: [DuplicateCarry],
         operation: String
     ) async throws -> [MediaAssetID] {
         var seen = Set<MediaAssetID>()
@@ -1095,8 +1155,9 @@ extension CatalogStore {
         guard !eligible.isEmpty else {
             return []
         }
+        let rootIDs = roots.rowIDSnapshot()
         let dbWriter = try database()
-        let changed = try await dbWriter.write { db in
+        let (changed, carried) = try await dbWriter.write { db in
             var changed: [MediaAssetID] = []
             for (id, rootID) in eligible {
                 // Mark touches only visible rows; clear touches only pending ones whose file
@@ -1115,7 +1176,14 @@ extension CatalogStore {
                     changed.append(id)
                 }
             }
-            return changed
+            let hidden = Set(changed)
+            let carried = try carries.filter { hidden.contains($0.from) && !hidden.contains($0.to) }.compactMap { carry in
+                try Self.carryWork(carry, rootIDs: rootIDs, db: db)
+            }
+            return (changed, carried)
+        }
+        if let batch, !carried.isEmpty {
+            carriedWorkByBatch[batch] = carried
         }
         if !changed.isEmpty {
             notifyCatalogChanged()
@@ -1127,9 +1195,55 @@ extension CatalogStore {
                 "batch": batch.map { "\($0.unixMilliseconds)" } ?? "none",
                 "requested": "\(requested.count)",
                 "changed": "\(changed.count)",
+                "carried": "\(carried.count)",
             ]
         )
         return changed
+    }
+
+    /// Writes one carry inside the hiding transaction when the kept copy still lacks the work
+    /// and the moved copy still holds it; returns what the kept copy held before.
+    private nonisolated static func carryWork(
+        _ carry: DuplicateCarry,
+        rootIDs: [LibraryRootPath: Int64],
+        db: Database
+    ) throws -> DuplicateCarryRecord? {
+        guard let fromRoot = rootIDs[carry.from.libraryRootPath], let toRoot = rootIDs[carry.to.libraryRootPath],
+              let from = try Row.fetchOne(
+                  db,
+                  sql: "SELECT media_choice, edit_recipe_json FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                  arguments: [fromRoot, carry.from.relativePath.rawValue]
+              ),
+              let to = try Row.fetchOne(
+                  db,
+                  sql: "SELECT media_choice, edit_recipe_json FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                  arguments: [toRoot, carry.to.relativePath.rawValue]
+              )
+        else {
+            return nil
+        }
+        switch carry.work {
+        case .choice:
+            let moved = MediaChoice(rawValue: from["media_choice"] ?? "") ?? .default
+            let kept = MediaChoice(rawValue: to["media_choice"] ?? "") ?? .default
+            guard moved != .notRated, kept == .notRated else {
+                return nil
+            }
+            try db.execute(
+                sql: "UPDATE media_asset SET media_choice = ? WHERE library_root_id = ? AND relative_path = ?",
+                arguments: [moved.rawValue, toRoot, carry.to.relativePath.rawValue]
+            )
+            return DuplicateCarryRecord(from: carry.from, to: carry.to, previous: .choice(kept))
+        case .edit:
+            guard let movedJSON = from["edit_recipe_json"] as String?, (to["edit_recipe_json"] as String?) == nil else {
+                return nil
+            }
+            guard try replaceEditRecipe(json: movedJSON, rootID: toRoot, relativePath: carry.to.relativePath.rawValue, db: db)
+            else {
+                return nil
+            }
+            return DuplicateCarryRecord(from: carry.from, to: carry.to, previous: .edit(nil))
+        }
     }
 
     /// Re-catalogs an item undo moved back from the Trash. Its row never left the catalog
@@ -1341,15 +1455,13 @@ extension CatalogStore {
             let modified: Double? = row["content_modified_at_unix"]
             let isVideo = (row["best_kind"] as String?) == MediaKind.video.rawValue
             let revision = (previous?.revision ?? 0) + 1
-            // A video's products do not carry its edit, so they are current as soon as it is
-            // saved; otherwise enrichment would download the video again to re-render them.
-            try db.execute(
-                sql: """
-                UPDATE media_asset SET edit_recipe_json = ?, edit_revision = ?,
-                    rendered_revision = CASE WHEN ? THEN ? ELSE rendered_revision END
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
-                arguments: [json, revision, isVideo, revision, rootID, id.relativePath.rawValue]
+            try Self.writeEditRecipe(
+                json: json,
+                revision: revision,
+                isVideo: isVideo,
+                rootID: rootID,
+                relativePath: id.relativePath.rawValue,
+                db: db
             )
             return EditRecipeMutationResult(
                 exists: true,
@@ -1489,6 +1601,57 @@ extension CatalogStore {
 
     /// The recipe as `edit_recipe_json` stores it: sorted-key JSON, so one recipe always
     /// encodes to the same text.
+    /// Saves `json` (nil: no edit) as a photo's edit under the given revision. A video's
+    /// products do not carry its edit, so they are current as soon as it is saved;
+    /// otherwise enrichment would download the video again to re-render them.
+    nonisolated static func writeEditRecipe(
+        json: String?,
+        revision: Int64,
+        isVideo: Bool,
+        rootID: Int64,
+        relativePath: String,
+        db: Database
+    ) throws {
+        try db.execute(
+            sql: """
+            UPDATE media_asset SET edit_recipe_json = ?, edit_revision = ?,
+                rendered_revision = CASE WHEN ? THEN ? ELSE rendered_revision END
+            WHERE library_root_id = ? AND relative_path = ?
+            """,
+            arguments: [json, revision, isVideo, revision, rootID, relativePath]
+        )
+    }
+
+    /// Replaces a photo's edit with `json` (nil: no edit) under its next revision, inside a
+    /// write. Returns false when the row is gone or already holds exactly that edit.
+    nonisolated static func replaceEditRecipe(
+        json: String?,
+        rootID: Int64,
+        relativePath: String,
+        db: Database
+    ) throws -> Bool {
+        guard let row = try Row.fetchOne(
+            db,
+            sql: """
+            SELECT edit_recipe_json, edit_revision, best_kind FROM media_asset
+            WHERE library_root_id = ? AND relative_path = ?
+            """,
+            arguments: [rootID, relativePath]
+        ), (row["edit_recipe_json"] as String?) != json else {
+            return false
+        }
+        let revision: Int64 = row["edit_revision"]
+        try writeEditRecipe(
+            json: json,
+            revision: revision + 1,
+            isVideo: (row["best_kind"] as String?) == MediaKind.video.rawValue,
+            rootID: rootID,
+            relativePath: relativePath,
+            db: db
+        )
+        return true
+    }
+
     nonisolated static func editRecipeJSON(_ recipe: EditRecipe) throws -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
