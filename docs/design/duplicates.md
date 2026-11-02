@@ -1,8 +1,10 @@
 # Duplicates
 
 The surface for clearing extra copies of photos and videos the libraries already hold
-(ADR 0042). Reached from the **Duplicates** row at the end of the sidebar, which exists
-while any group is active and stays while selected.
+(ADR 0042). Reached from the **Duplicates** row under **Utilities**, the last section of
+the sidebar — the header Photos gives its own Duplicates row. The row exists while any
+group is active and stays while selected; it is last so that its arrival pushes no row
+under the pointer.
 
 ## L1 primary fact
 
