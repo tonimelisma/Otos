@@ -163,10 +163,10 @@ struct EditGeometryTests {
         #expect(abs(flipped.temperature) <= 2)
     }
 
-    /// Auto straighten levels a horizon that rises to the right with a clockwise turn of
+    /// Level ▸ Horizon levels a horizon that rises to the right with a clockwise turn of
     /// the same angle, and reads the photo as it is turned: the same horizon on a photo
     /// flipped horizontally falls to the right, so it levels the other way.
-    @Test func autoStraightenLevelsTheHorizonAsThePhotoIsShown() async throws {
+    @Test func theHorizonIsReadAsThePhotoIsShown() async throws {
         let url = try makeTestDirectory().appending(path: "horizon.jpg")
         try writeHorizonJPEG(to: url, risingBy: 6)
         let renderer = LiveEditRenderer()

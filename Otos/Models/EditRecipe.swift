@@ -472,6 +472,11 @@ nonisolated struct EditPhotoFacts: Equatable, Sendable {
     /// For a RAW with a lens profile, whether its decoder corrects the lens by default; nil
     /// when the photo cannot be corrected.
     var lensCorrectionDefault: Bool?
+    /// The straighten, in degrees clockwise, that levels the upright original by the
+    /// camera's own gravity reading at capture, as MediaMetadata reports it; nil when the
+    /// file carries none it can trust (a front camera, a camera pointed up or down, any
+    /// camera without a level sensor). Level ▸ Camera is available only with one.
+    var cameraLevel: Double?
 
     static let still = EditPhotoFacts(isRAW: false, asShotTemperature: nil, asShotTint: nil)
 }

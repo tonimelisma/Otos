@@ -31,7 +31,7 @@ and compare panes follow a drag live; a grid tile updates when the drag ends.
 | `Revert to Original`, the Show Original toggle's tooltip | L2 (`body`, small control) |
 | A RAW temperature's scale labels (`2500`, `4000`, `10000`) | L3 (`footnote`, secondary) |
 | Section heading (`Crop`, `Light`, `Color`) | `.title3`, regular, beside the section's symbol |
-| Control name, control value field, `Auto`, `Reset`, `Crop` / `Done`, `White Balance`, `Rotate & Flip`, `Aspect` and its titles | L2 (`body`); values `.monospacedDigit()` (DES-005) |
+| Control name, control value field, `Reset`, `Crop` / `Done`, `White Balance`, `Level` and its `Camera` / `Horizon`, `Rotate & Flip`, `Aspect` and its titles | L2 (`body`); values `.monospacedDigit()` (DES-005) |
 | A control's name and value while it is at its neutral value | L2 in secondary color |
 
 Four sizes, two weights (DES-004's edit panel deviation): the file name, the section
@@ -51,8 +51,18 @@ counting whitespace. Each section is a heading row over its controls: the disclo
 triangle, the section's symbol (`crop`, `sun.max`, `paintpalette`, `circle.dashed`,
 `triangle.lefthalf.filled`, `camera.aperture`) and its title on the left; on the right a quiet
 borderless `Reset` in secondary text (tertiary while there is nothing to reset), so six
-headings do not read as six push buttons, and for Crop, `Auto` before it in the same style.
+headings do not read as six push buttons.
 The controls are indented 16 pt under the heading, which puts them under its symbol.
+
+Crop's rows stand in three groups 12 pt apart (rows are 4 pt apart), so the section reads as
+one tool with three jobs and not as a list:
+- **straightening:** Straighten and Level;
+- **turning:** Rotate & Flip;
+- **framing:** Aspect and Suggested.
+
+The row labels name the groups, with no sub-headings. This follows Lightroom Classic's Crop &
+Straighten panel, one tool with labelled groups, rather than splitting straighten into a
+section of its own. Straightening rescales the crop, so the two are one geometry.
 
 Each control is drawn as Lightroom draws it: its name and value on one line, label left
 and value right (DES-017), over a small slider at the section's width. A slider's filled
@@ -68,7 +78,7 @@ Sections, in order (Lightroom desktop's order, ADR 0036):
 
 | Section | Controls |
 | --- | --- |
-| Crop (a tool above the sections) | `Auto` in the heading; `Crop` / `Done` (Return while on) with the straighten line's ruler (`ruler`, a toggle drawn pressed while armed) at its trailing edge; Straighten (−45.0…+45.0°, 0.1° steps, positive clockwise); `Rotate & Flip`: Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical (borderless icons, as Lightroom's); `Aspect`: its menu (Original, Custom, 1 × 1, 4 × 5, 5 × 7, 2 × 3, 4 × 3, 16 × 9) and Rotate Aspect; `Suggested`: `Subject` and `Thirds` (small push buttons) |
+| Crop (a tool above the sections) | `Crop` / `Done` (Return while on); Straighten (−45.0…+45.0°, 0.1° steps, positive clockwise); `Level`: `Camera` and `Horizon` (small push buttons) and the straighten line's ruler (`ruler`, a toggle drawn pressed while armed); `Rotate & Flip`: Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical (borderless icons, as Lightroom's); `Aspect`: its menu (Original, Custom, 1 × 1, 4 × 5, 5 × 7, 2 × 3, 4 × 3, 16 × 9) and Rotate Aspect; `Suggested`: `Subject` and `Thirds` (small push buttons) |
 | Light | Exposure (−4.00…+4.00 stops, 0.05 steps), Contrast (−100…+100), Highlights (−100…+100), Shadows (−100…+100) |
 | Color | White Balance picker; Temperature (a RAW: 2000–50000 K, even in mireds, 50 K steps, shown `5600 K`; another still: −100…+100), Tint (a RAW: −150…+150; another still: −100…+100), Vibrance (−100…+100), Saturation (−100…+100) |
 | Effects | Vignette (−100…+100, negative darkens), Midpoint (0…100), Feather (0…100) |
@@ -139,8 +149,20 @@ tool. The loupe then shows the cropped photo. Rotate Left (⌘[), Rotate Right (
 Horizontal and Flip Vertical (Photo menu, and the panel's buttons) work with the tool on
 or off; Straighten too.
 
-The straighten line is Lightroom Classic's Angle tool. With the tool on, ⌘-drag anywhere on
-the photo — or drag after arming the panel's ruler — draws a line, white over a dark
+`Level` names each way of levelling by what it levels by, as Lightroom names its level
+corrections (Upright's `Level`, `Vertical`). A lone `Auto` would hide which one it is.
+- **`Camera`** straightens by the camera's own gravity reading at capture, as one
+  `Level to Camera` step. It is enabled only when the opened photo carries a reading
+  MediaMetadata trusts: an iPhone back camera held within about 45° of level. Otherwise its
+  tooltip says the camera recorded no level for this photo.
+- **`Horizon`** straightens by the horizon Vision finds in the picture, as one
+  `Level to Horizon` step. Its tooltip warns that a photo without a horizon may come out
+  tilted: Vision states no confidence and reads tilts into photos with no horizon, so it is
+  offered only as the person's choice. Where it finds none, the photo is left as it is.
+- **The ruler** is the third way.
+
+The straighten line is Lightroom Classic's Angle tool. ⌘-drag anywhere on the photo with the
+tool on, or drag after arming the ruler (which turns the tool on), draws a line, white over a dark
 outline like the handles, under a crosshair pointer. Letting go turns the photo so that line
 is level, or plumb when it was drawn nearer vertical than horizontal, as one `Straighten`
 step, and disarms the ruler. A drag shorter than 8 pt is a click and draws nothing.

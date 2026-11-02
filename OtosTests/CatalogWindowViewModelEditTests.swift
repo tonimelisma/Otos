@@ -349,8 +349,8 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
-    /// The Crop section's Auto levels the horizon as one undo step, and Undo puts it back.
-    @Test func autoStraightenLevelsTheHorizonAsOneUndoStep() async throws {
+    /// Level ▸ Horizon levels the horizon as one undo step, and Undo puts it back.
+    @Test func levelToHorizonIsOneUndoStep() async throws {
         try await withEditableLibrary(fileCount: 1, write: { try writeHorizonJPEG(to: $0, risingBy: 6) }) { library in
             let id = library.ids[0]
             let model = makeEditModel(store: library.store, ids: library.ids)
@@ -360,11 +360,11 @@ struct CatalogWindowViewModelEditTests {
             model.selectAll()
             try await waitUntil { model.canEdit }
 
-            model.autoStraighten()
+            model.levelToHorizon()
             try await waitUntil { model.hasSettledEdits }
             let straighten = try #require(try await library.store.editRecipe(for: id)?.recipe.straighten)
             #expect(abs(straighten - 6) < 1)
-            #expect(model.undoMenuState.undoTitle == "Undo Auto Straighten")
+            #expect(model.undoMenuState.undoTitle == "Undo Level to Horizon")
 
             model.undoLastChange()
             try await waitUntil { model.hasSettledEdits }
@@ -372,9 +372,9 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
-    /// An iPhone back camera's gravity reading levels the photo ahead of the horizon in its
-    /// pixels, and is mirrored on a photo shown flipped.
-    @Test func autoStraightenTakesTheCamerasLevelBeforeTheHorizon() async throws {
+    /// Level ▸ Camera straightens by the iPhone back camera's gravity reading, not by the
+    /// horizon in the pixels, as one undo step; on a photo shown flipped it is mirrored.
+    @Test func levelToCameraUsesTheCamerasReadingAndMirrorsItWhenFlipped() async throws {
         // Gravity 3° counterclockwise of straight down the screen: a −3° turn levels it.
         let tilt = 3 * Double.pi / 180
         let write: (URL) throws -> Void = {
@@ -391,16 +391,18 @@ struct CatalogWindowViewModelEditTests {
             model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.canEdit }
+            #expect(model.canLevelToCamera)
 
-            model.autoStraighten()
+            model.levelToCamera()
             try await waitUntil { model.hasSettledEdits }
             let plain = try #require(try await library.store.editRecipe(for: id)?.recipe.straighten)
             #expect(abs(plain + 3) < 0.05)
+            #expect(model.undoMenuState.undoTitle == "Undo Level to Camera")
 
             model.undoLastChange()
             try await waitUntil { model.hasSettledEdits }
             model.flipPhoto(horizontally: true)
-            model.autoStraighten()
+            model.levelToCamera()
             try await waitUntil { model.hasSettledEdits }
             let flipped = try #require(try await library.store.editRecipe(for: id)?.recipe)
             #expect(flipped.flipHorizontal)
@@ -409,8 +411,8 @@ struct CatalogWindowViewModelEditTests {
     }
 
     /// A front-camera photo's gravity reading says nothing about how it is shown, since iOS
-    /// may have mirrored it: Auto levels its horizon instead.
-    @Test func aFrontCameraPhotoIsLeveledByItsHorizon() async throws {
+    /// may have mirrored it: Camera is unavailable and does nothing, and Horizon still works.
+    @Test func aPhotoWithoutATrustedReadingCannotBeLeveledToTheCamera() async throws {
         let tilt = 3 * Double.pi / 180
         let write: (URL) throws -> Void = {
             try writeLeveledJPEG(
@@ -426,17 +428,38 @@ struct CatalogWindowViewModelEditTests {
             model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.canEdit }
+            #expect(!model.canLevelToCamera)
 
-            model.autoStraighten()
+            model.levelToCamera()
+            #expect(model.editDraft.straighten == 0)
+
+            model.levelToHorizon()
             try await waitUntil { model.hasSettledEdits }
             let straighten = try #require(try await library.store.editRecipe(for: id)?.recipe.straighten)
             #expect(abs(straighten - 6) < 1)
         }
     }
 
+    /// The ruler draws on the crop canvas, so arming it with the tool off turns the tool on.
+    @Test func theRulerTurnsTheCropToolOn() async throws {
+        try await withEditableLibrary(fileCount: 1) { library in
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            model.toggleInspector(.edit)
+            model.selectAll()
+            try await waitUntil { model.canEdit }
+
+            model.toggleStraightenLine()
+
+            #expect(model.isCropping)
+            #expect(model.isDrawingStraightenLine)
+        }
+    }
+
     /// A reading taken before the photo was turned is measured in another frame, and one
-    /// that found no level has nothing to apply: either leaves the photo as it is.
-    @Test func aStaleOrEmptyLevelReadingChangesNothing() async throws {
+    /// that found no horizon has nothing to apply: either leaves the photo as it is.
+    @Test func aStaleOrEmptyHorizonReadingChangesNothing() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
             let model = makeEditModel(store: library.store, ids: library.ids)
@@ -446,11 +469,11 @@ struct CatalogWindowViewModelEditTests {
             model.selectAll()
             try await waitUntil { model.canEdit }
 
-            model.applyAutoStraighten(id: id, shown: EditRecipe(quarterTurns: 1), .level(5, .gravity))
-            model.applyAutoStraighten(id: id, shown: model.editDraft, .none)
+            model.applyHorizonLevel(id: id, shown: EditRecipe(quarterTurns: 1), .level(5))
+            model.applyHorizonLevel(id: id, shown: model.editDraft, .none)
 
             #expect(model.editDraft.straighten == 0)
-            #expect(model.undoMenuState.undoTitle != "Undo Auto Straighten")
+            #expect(model.undoMenuState.undoTitle != "Undo Level to Horizon")
         }
     }
 

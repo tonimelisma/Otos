@@ -197,6 +197,16 @@ P0/P1 items through Import Into User Libraries are now largely shipped; current 
   command from the grid).
 - Satellite imagery as a toggle; a filmstrip under the map.
 
+## Levelling (beyond ADR 0036)
+
+- Other makers' level sensors in MediaMetadata: Olympus/OM System, Panasonic and Canon write
+  a roll angle from their electronic level, and DJI drones write gimbal roll in XMP. Each
+  needs sample files to calibrate its sign before Level ▸ Camera can use it.
+- GeoCalib (Apache-2.0 code, CC-BY-4.0 weights) as a level that reports its own uncertainty.
+  Measure it first against the camera gravity readings on a few hundred local iPhone
+  photos, which are free ground truth. Adopt it only if its uncertainty separates right
+  answers from wrong ones. It would need a Core ML conversion and a dependency ADR.
+
 ## Never Building
 
 The owner ruled these out (2026-10-31); they are not ideas to revisit.

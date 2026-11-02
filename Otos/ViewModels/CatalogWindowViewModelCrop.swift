@@ -131,51 +131,87 @@ extension CatalogWindowViewModel {
         commitEdit(actionName: horizontally ? "Flip Horizontal" : "Flip Vertical")
     }
 
-    /// The Crop section's Auto: straightens the photo level, as one undo step — by the
-    /// camera's gravity reading at capture where the original carries one, else by the
-    /// horizon Vision finds in it. Where neither is found, the photo is left as it is.
-    func autoStraighten() {
-        guard canEdit, let target = editTarget, editPhotoFacts != nil else { return }
+    /// Level ▸ Camera: straightens the photo by the camera's own gravity reading at
+    /// capture, as one `Level to Camera` step. The reading levels the upright original; a
+    /// quarter turn keeps a level level and each flip mirrors it.
+    func levelToCamera() {
+        guard canLevelToCamera, let target = editTarget, let facts = editPhotoFacts,
+              let reading = facts.cameraLevel
+        else { return }
         commitPendingEdit()
-        submittedEditCommandCount += 1
-        editCommandContinuation.yield(.autoStraighten(id: target.id, shown: editDraft, sourceSize: target.sourceSize))
-        OtosLog.ui.noticeOperation("edit.autoStraighten", phase: "requested", fields: [
-            "id": target.id.relativePath.rawValue,
-        ])
-    }
-
-    /// A level reading landed. It is applied only to the photo it was read from, still
-    /// turned and flipped as it was read, since the angle is measured in that frame.
-    func applyAutoStraighten(id: MediaAssetID, shown: EditRecipe, _ reading: LevelReading) {
-        guard editTarget?.id == id, let facts = editPhotoFacts,
-              editDraft.quarterTurns == shown.quarterTurns,
-              editDraft.flipHorizontal == shown.flipHorizontal,
-              editDraft.flipVertical == shown.flipVertical
-        else {
-            OtosLog.ui.noticeOperation("edit.autoStraighten", phase: "stale", fields: ["id": id.relativePath.rawValue])
-            return
-        }
-        guard case let .level(degrees, source) = reading else {
-            OtosLog.ui.noticeOperation("edit.autoStraighten", phase: "noLevel", fields: ["id": id.relativePath.rawValue])
-            return
-        }
+        let degrees = editDraft.flipHorizontal == editDraft.flipVertical ? reading : -reading
         let next = EditControl.straighten.applying(degrees, to: editDraft, facts: facts)
-        OtosLog.ui.noticeOperation("edit.autoStraighten", phase: "applied", fields: [
-            "id": id.relativePath.rawValue,
-            "source": source.rawValue,
+        OtosLog.ui.noticeOperation("edit.level", phase: "applied", fields: [
+            "id": target.id.relativePath.rawValue,
+            "source": "camera",
             "degrees": String(format: "%.1f", next.straighten),
             "changed": "\(next != editDraft)",
         ])
         guard next != editDraft else { return }
         editDraft = next
         requestLiveEditRender()
-        commitEdit(actionName: "Auto Straighten")
+        commitEdit(actionName: "Level to Camera")
+    }
+
+    /// The opened photo carries a gravity reading Level ▸ Camera can use.
+    var canLevelToCamera: Bool {
+        canEdit && editPhotoFacts?.cameraLevel != nil
+    }
+
+    /// Level ▸ Horizon: straightens the photo so the horizon Vision finds in it is level, as
+    /// one `Level to Horizon` step. Where Vision finds none, the photo is left as it is.
+    /// Vision states no confidence and reads tilts into photos with no horizon, so this is
+    /// the person's choice, never a default (ADR 0036).
+    func levelToHorizon() {
+        guard canEdit, let target = editTarget else { return }
+        commitPendingEdit()
+        submittedEditCommandCount += 1
+        editCommandContinuation.yield(.levelToHorizon(id: target.id, shown: editDraft, sourceSize: target.sourceSize))
+        OtosLog.ui.noticeOperation("edit.level", phase: "requested", fields: [
+            "id": target.id.relativePath.rawValue, "source": "horizon",
+        ])
+    }
+
+    /// A horizon reading landed. It is applied only to the photo it was read from, still
+    /// turned and flipped as it was read, since the angle is measured in that frame.
+    func applyHorizonLevel(id: MediaAssetID, shown: EditRecipe, _ reading: HorizonReading) {
+        guard editTarget?.id == id, let facts = editPhotoFacts,
+              editDraft.quarterTurns == shown.quarterTurns,
+              editDraft.flipHorizontal == shown.flipHorizontal,
+              editDraft.flipVertical == shown.flipVertical
+        else {
+            OtosLog.ui.noticeOperation("edit.level", phase: "stale", fields: [
+                "id": id.relativePath.rawValue, "source": "horizon",
+            ])
+            return
+        }
+        guard case let .level(degrees) = reading else {
+            OtosLog.ui.noticeOperation("edit.level", phase: "noHorizon", fields: ["id": id.relativePath.rawValue])
+            return
+        }
+        let next = EditControl.straighten.applying(degrees, to: editDraft, facts: facts)
+        OtosLog.ui.noticeOperation("edit.level", phase: "applied", fields: [
+            "id": id.relativePath.rawValue,
+            "source": "horizon",
+            "degrees": String(format: "%.1f", next.straighten),
+            "changed": "\(next != editDraft)",
+        ])
+        guard next != editDraft else { return }
+        editDraft = next
+        requestLiveEditRender()
+        commitEdit(actionName: "Level to Horizon")
     }
 
     /// The crop tool's straighten line (Lightroom Classic's Angle tool): armed by the
-    /// panel's ruler button, or held with ⌘ during a drag on the canvas.
+    /// panel's ruler button, or held with ⌘ during a drag on the canvas. A line is drawn on
+    /// the crop canvas, so arming it with the tool off turns the tool on first.
     func toggleStraightenLine() {
-        guard isCropping, canEdit else { return }
+        guard canEdit else { return }
+        guard isCropping else {
+            toggleCropTool()
+            isDrawingStraightenLine = isCropping
+            return
+        }
         isDrawingStraightenLine.toggle()
     }
 
