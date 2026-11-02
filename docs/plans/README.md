@@ -3,6 +3,18 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
+Plan 0111 (every duplicate group has a default) is complete in two increments and was
+removed at closure. It opened 2026-11-01, when the owner compared Duplicates with Photos,
+Lightroom Classic 15.4, Lightroom on the web, PhotoSweeper, Gemini 2 and Mylio and asked
+for a default in every group. Its decisions live in ADR 0042 ("Every group has a default,
+and no default loses work"), DES-107, APP-060 and APP-061. **Owner decisions.** Every group
+has a default; a moved copy's curation and edit are carried onto the kept copy and undo
+takes them back; only work that cannot be combined waits; same-photo groups keep the
+camera original with the most pixels; across libraries each library keeps its own copy and
+`Keep Only <Library>` names the one to keep; Keep Only This Copy; same-photo versions show
+large thumbnails and `Compare` opens two side by side — in rows, not side by side in the
+list, because the list's rows are the selection.
+
 Plan 0110 (one freshness stamp per product) is
 complete in one increment and was removed at closure. It opened 2026-10-31, when a card's
 readiness was shown to wait on thumbnails and previews the import planner never reads,

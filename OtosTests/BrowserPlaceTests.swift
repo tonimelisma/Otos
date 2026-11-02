@@ -200,6 +200,37 @@ struct BrowserPlaceTests {
         #expect(model.pendingPlaceRestore == nil)
     }
 
+    /// A same-photo group's Compare opens its first two versions side by side, whatever the
+    /// group's size, before Projection has published the group's scope; Return on a larger
+    /// group opens Loupe.
+    @Test func comparingAVersionGroupOpensItsFirstTwoSideBySide() {
+        let domain = PreferencesDomain.suite(UUID().uuidString)
+        let ids = makeIDs(3)
+        let model = makeViewModel(domain)
+        let copies = ids.map { id in
+            DuplicateCopy(
+                id: id, libraryDisplayName: "Pictures", byteSize: 1, createdAt: nil, pixelWidth: 4,
+                pixelHeight: 3, mediaChoice: .notRated, isEdited: false, hasCompanions: false
+            )
+        }
+        let group = DuplicateGroupPolicy.group(id: .samePhoto(ids), copies: copies, keptPairs: [], originals: [ids[0]])
+        var state = loadedState(descriptor: CatalogQueryDescriptor(scope: .duplicates), ids: ids)
+        state.duplicates = CatalogDuplicatesState(groups: [group])
+        model.applyState(state)
+
+        model.compareDuplicateGroup(group)
+
+        #expect(model.sidebarSelection == .duplicateGroup(group.id))
+        #expect(model.viewMode == .compare)
+        #expect(model.gridSelection.selection == Set(group.copies.prefix(2).map(\.id)))
+
+        model.returnToDuplicates()
+        model.applyState(state)
+        model.setDuplicatesSelection([ids[2]])
+        model.openSelectedDuplicateGroup()
+        #expect(model.viewMode == .loupe)
+    }
+
     /// Before the catalog loads, the sidebar draws no row at all — not even the one the user
     /// left, whose lone presence would read as the whole sidebar (APP-044).
     @Test func beforeTheCatalogLoadsTheSidebarDrawsNoRow() {

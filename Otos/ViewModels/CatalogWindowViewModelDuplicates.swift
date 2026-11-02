@@ -81,6 +81,7 @@ extension CatalogWindowViewModel {
             togglePair: { [weak self] pair in self?.toggleDuplicateLibraryPair(pair) },
             toggleKept: { [weak self] in self?.duplicatesSession.showsKept.toggle() },
             openGroup: { [weak self] in self?.openSelectedDuplicateGroup() },
+            compareGroup: { [weak self] group in self?.compareDuplicateGroup(group) },
             moveMarked: { [weak self] in self?.moveMarkedDuplicatesToTrash() },
             revealNeedingChoice: { [weak self] in self?.revealDuplicateGroupNeedingChoice() }
         )
@@ -241,9 +242,19 @@ extension CatalogWindowViewModel {
         guard let group = selectedDuplicateGroups().first else {
             return
         }
+        openDuplicateGroup(group, mode: group.copies.count == 2 ? .compare : .loupe)
+    }
+
+    /// A same-photo group's Compare: versions are told apart by their pixels, so its first
+    /// two — the kept version and the next — side by side, the group as the filmstrip.
+    func compareDuplicateGroup(_ group: DuplicateGroup) {
+        openDuplicateGroup(group, mode: .compare)
+    }
+
+    private func openDuplicateGroup(_ group: DuplicateGroup, mode: BrowserViewMode) {
         let ids = group.copies.map(\.id)
         OtosLog.ui.noticeOperation("duplicates.group", phase: "open", fields: [
-            "copies": "\(ids.count)", "kind": group.id.kindName,
+            "copies": "\(ids.count)", "kind": group.id.kindName, "mode": mode.rawValue,
         ])
         userHasChosenSource = true
         setQueryDescriptor(CatalogQueryDescriptor(
@@ -252,7 +263,7 @@ extension CatalogWindowViewModel {
             sort: queryDescriptor.sort
         ))
         selectAssets(Array(ids.prefix(2)))
-        setViewMode(ids.count == 2 ? .compare : .loupe)
+        setViewMode(mode)
     }
 
     /// Back to Duplicates from a group.
