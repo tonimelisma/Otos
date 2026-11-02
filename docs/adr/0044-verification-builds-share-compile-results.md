@@ -109,7 +109,7 @@ the cost, and caching removes it.
 - Debug info and `#filePath` in check builds carry `/^worktree` paths. These builds are
   never debugged; `script/install.sh` and `script/build_and_run.sh` keep their own
   settings and real paths.
-- Turning coverage off lowers the instructions every benchmark case retires, once.
-  `script/bench.sh compare` fails only on increases.
+- The benchmark build takes the same settings. Measured against `main` on 2026-11-01,
+  every benchmark case retired within 0.5% of its base instructions.
 - `OTOS_SOURCE_ROOT` is also set when Xcode launches the app from the scheme; the app
   never reads it.
