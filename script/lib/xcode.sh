@@ -48,13 +48,20 @@ EOF
 # mapping makes those cache keys independent of where the worktree lives: the
 # worktree root becomes /^worktree in every compile job, including the package
 # targets, whose own project directory (mapped by the *_PROJECT_PREFIX_MAPPING
-# settings) does not contain the compiler's working directory. The store is
-# Xcode's own default location, safe for concurrent builds, and Xcode prunes it.
+# settings) does not contain the compiler's working directory. The store is the
+# one Xcode's own builds use with the default DerivedData; concurrent builds share
+# it by design, and Xcode prunes it. The *_OTHER_PREFIX_MAPPINGS values are
+# space-separated lists, so a checkout path holding a space would silently split
+# into a wrong mapping; it is refused instead.
 #
 # Code coverage is on by default for Debug test builds in Xcode 27 and nothing
 # reads it; index-while-building feeds only an IDE, and these builds have none.
 otos_build_settings() {
   local root="$1"
+  if [[ "$root" == *" "* ]]; then
+    echo "op=build.settings phase=refused reason=spaceInCheckoutPath root=$root" >&2
+    exit 1
+  fi
   OTOS_BUILD_SETTINGS=(
     COMPILATION_CACHE_ENABLE_CACHING=YES
     "COMPILATION_CACHE_CAS_PATH=$HOME/Library/Developer/Xcode/DerivedData/CompilationCache.noindex"
