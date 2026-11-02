@@ -107,9 +107,12 @@ struct CatalogWindowViewModelMapTests {
         #expect(model.queryDescriptor.scope == .place(Self.helsinki))
         #expect(model.sidebarSelection.sidebarRow == .places)
         #expect(model.showsPlaceLeaf)
+        // Until the place is published the pane still holds Places' items, so it stays
+        // the map; a grid mounted now would draw all of Places and diff down to the place.
+        #expect(model.showsPlacesMap)
+        model.applyState(windowState(model, scope: .place(Self.helsinki), ids: [id("a.jpg")]))
         #expect(!model.showsPlacesMap)
         #expect(model.canChangeViewMode)
-        model.applyState(windowState(model, scope: .place(Self.helsinki), ids: [id("a.jpg")]))
         #expect(model.mapClusters.isEmpty)
 
         let revisionBeforeReturn = model.mapCameraRequest?.revision ?? 0

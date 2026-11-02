@@ -19,8 +19,15 @@ import OSLog
 
 extension CatalogWindowViewModel {
     /// Whether the detail pane is the Places map rather than a view mode of the grid.
+    ///
+    /// Read from the published scope, not from `sidebarSelection`: the pane's content
+    /// is `state`, and the intent runs ahead of it until Projection publishes. Deciding
+    /// the presentation from the intent mounted the grid over the previous scope's
+    /// items — entering a place from the map drew all of Places, scrolled to the focus
+    /// inside them, then diffed down to the place. The map stays until the place
+    /// arrives, as every scope keeps its old content until the new one is ready.
     var showsPlacesMap: Bool {
-        sidebarSelection == .places
+        state.resolvedSidebarSelection == .places
     }
 
     /// The Places row, while a fixed library exists, once the catalog has loaded (APP-044).
