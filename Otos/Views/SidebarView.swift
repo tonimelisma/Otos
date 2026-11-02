@@ -115,10 +115,11 @@ struct SidebarView: View {
                 }
             }
 
-            // Last, so its arrival pushes no row under the pointer (ADR 0042). Its count
-            // is the bar's L1 unit: photos with duplicates.
+            // Last, so its arrival pushes no row under the pointer (ADR 0042), under the
+            // header Photos gives the same row. Its count is the bar's L1 unit: photos
+            // with duplicates.
             if showsDuplicates {
-                Section {
+                Section("Utilities") {
                     SidebarRow(systemImage: "square.on.square", title: "Duplicates") {
                         if let duplicatesCount {
                             Text("\(duplicatesCount)")
