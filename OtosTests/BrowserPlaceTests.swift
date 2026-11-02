@@ -33,7 +33,7 @@ struct BrowserPlaceTests {
         let scopes: [SidebarSelection] = [
             .allMedia,
             .places,
-            .place(PlaceCoordinate(latitude: 60.17, longitude: 24.94)),
+            .mapArea(MapArea(south: 60.1, north: 60.2, west: 24.9, east: 25)),
             .allImports,
             .library(pictures),
             .importBatch(ImportBatchID(unixMilliseconds: 1_790_000_000_000)),

@@ -76,9 +76,15 @@ extension CatalogWindowViewModel {
     }
 
     func setViewMode(_ mode: BrowserViewMode) {
-        // Places has one presentation, the map (ADR 0040); the picker and ⌘1/2/3 are
-        // disabled there and a stray call changes nothing.
+        // The duplicates list has one presentation (ADR 0042); the picker and ⌘1/2/3 are
+        // disabled there, and on the map before it has reported a viewport, and a stray
+        // call changes nothing.
         guard canChangeViewMode else {
+            return
+        }
+        // On the map a mode opens the area the map shows (ADR 0040).
+        if sidebarSelection == .places {
+            openVisibleMapArea(mode: mode)
             return
         }
         switch mode {
@@ -89,6 +95,21 @@ extension CatalogWindowViewModel {
         case .compare:
             enterCompare()
         }
+    }
+
+    /// A mode chosen together with a scope that has not published yet — an area of the
+    /// map. Its focus or pair cannot be chosen from items not yet known, so the mode is set
+    /// now and they settle when the scope arrives (`reconcileFocusAfterGridChange`, scope
+    /// changed), from the selection the opening intent chose.
+    func enterModeForOpeningScope(_ mode: BrowserViewMode) {
+        guard mode != .grid else {
+            exitToGrid()
+            return
+        }
+        comparePair = .empty
+        lastReplacedComparePane = nil
+        viewMode = mode
+        OtosLog.ui.notice("op=viewMode.set mode=\(mode.rawValue, privacy: .public) pending=scope")
     }
 
     /// Enter loupe on `id` (double-click), or on the selection's active item / first
@@ -227,7 +248,9 @@ extension CatalogWindowViewModel {
             return
         case .loupe:
             if scopeChanged {
-                let first = ordered.first
+                // The selection the opening intent chose (`scopeEntrySelection`), else the
+                // first item.
+                let first = ordered.first(where: gridSelection.selection.contains) ?? ordered.first
                 setFocus(first)
                 if let focus = first {
                     gridSelection = gridSelection.plainClick(focus)
@@ -248,7 +271,7 @@ extension CatalogWindowViewModel {
             }
         case .compare:
             if scopeChanged {
-                let pair = ComparePairPolicy.entry(selection: .empty, orderedIDs: ordered)
+                let pair = ComparePairPolicy.entry(selection: gridSelection, orderedIDs: ordered)
                 lastReplacedComparePane = .right
                 activeComparePane = .right
                 applyComparePair(pair, orderedIDs: ordered)

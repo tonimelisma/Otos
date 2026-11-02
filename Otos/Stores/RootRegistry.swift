@@ -101,10 +101,10 @@ nonisolated struct RootRegistry {
                 rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
                 location: .located
             )
-        case let .place(coordinate):
+        case let .mapArea(area):
             return CatalogScopePredicate(
                 rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
-                location: .at(coordinate)
+                location: .within(area)
             )
         case .duplicates:
             return CatalogScopePredicate(

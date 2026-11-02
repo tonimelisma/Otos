@@ -166,6 +166,28 @@ nonisolated enum MapClusterPolicy {
         MapBounds(originX: viewport.originX, originY: viewport.originY, width: viewport.width, height: viewport.height)
     }
 
+    /// The box of the earth the viewport shows: what Grid, Loupe and Compare open on the
+    /// map. Web Mercator maps longitude to x and latitude to y monotonically, so the
+    /// viewport's rect is exactly a latitude/longitude box. A rect past the world's
+    /// right edge (MapKit reports x beyond one world width when the map shows the
+    /// antimeridian) is a box that crosses it; a rect a world wide or wider is every
+    /// longitude.
+    static func area(of viewport: MapViewport) -> MapArea {
+        let world = worldMapPoints
+        let top = min(max(viewport.originY, 0), world)
+        let bottom = min(max(viewport.originY + viewport.height, 0), world)
+        let north = MKMapPoint(x: 0, y: top).coordinate.latitude
+        let south = MKMapPoint(x: 0, y: bottom).coordinate.latitude
+        guard viewport.width < world else {
+            return MapArea(south: south, north: north, west: -180, east: 180)
+        }
+        let left = viewport.originX - (viewport.originX / world).rounded(.down) * world
+        let right = left + viewport.width
+        let west = MKMapPoint(x: left, y: 0).coordinate.longitude
+        let east = MKMapPoint(x: right > world ? right - world : right, y: 0).coordinate.longitude
+        return MapArea(south: south, north: north, west: west, east: east)
+    }
+
     /// Whether `bounds` holds the coordinate, within `tolerance` map points of its edges
     /// (a stack on the very edge counts as shown); what a fit promises.
     static func contains(_ coordinate: PlaceCoordinate, in bounds: MapBounds, tolerance: Double = 0) -> Bool {

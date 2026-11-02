@@ -3,9 +3,10 @@ import Foundation
 // Map model guide
 //
 // Value types for the Places map (ADR 0040). `PlaceCoordinate` is the stored primary
-// location of an asset, exactly as `asset_metadata.primary_latitude/longitude` hold it;
-// equality is exact, which is what makes "the items at this location" a precise scope
-// (`SidebarSelection.place`). `CatalogMapState` is Projection's answer for the `.places`
+// location of an asset, exactly as `asset_metadata.primary_latitude/longitude` hold it.
+// `MapArea` is a latitude/longitude box, the scope of the grid under the map
+// (`SidebarSelection.mapArea`): the visible map, or one coordinate as a box of no extent,
+// whose bounds compare exactly with the stored values. `CatalogMapState` is Projection's answer for the `.places`
 // scope — every located item in display order plus how many items in scope have no
 // location — and `MapPlaceCluster` is what the ViewModel's cluster pass turns it into
 // for one viewport. None of these carry MapKit types: the view converts at its edge.
@@ -17,6 +18,44 @@ nonisolated struct PlaceCoordinate: Hashable, Sendable {
 
     var diagnosticDescription: String {
         "\(latitude),\(longitude)"
+    }
+}
+
+/// A box of the map in degrees: the items whose primary location lies in it, edges
+/// included. Bounds are the stored values' own doubles, so a box of no extent around a
+/// stored coordinate holds exactly the items at that coordinate. `west > east` means the
+/// box crosses the antimeridian.
+nonisolated struct MapArea: Hashable, Sendable {
+    let south: Double
+    let north: Double
+    let west: Double
+    let east: Double
+
+    /// The items at exactly one coordinate.
+    static func point(_ coordinate: PlaceCoordinate) -> MapArea {
+        MapArea(
+            south: coordinate.latitude,
+            north: coordinate.latitude,
+            west: coordinate.longitude,
+            east: coordinate.longitude
+        )
+    }
+
+    var crossesAntimeridian: Bool {
+        west > east
+    }
+
+    func contains(_ coordinate: PlaceCoordinate) -> Bool {
+        guard coordinate.latitude >= south, coordinate.latitude <= north else {
+            return false
+        }
+        return crossesAntimeridian
+            ? coordinate.longitude >= west || coordinate.longitude <= east
+            : coordinate.longitude >= west && coordinate.longitude <= east
+    }
+
+    var diagnosticDescription: String {
+        "\(south),\(west)..\(north),\(east)"
     }
 }
 

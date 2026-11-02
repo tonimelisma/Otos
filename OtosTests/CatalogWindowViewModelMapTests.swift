@@ -49,7 +49,8 @@ struct CatalogWindowViewModelMapTests {
         let region = MapClusterPolicy.region(of: request.bounds)
         #expect(abs(region.centerLatitude - Self.helsinki.latitude) < 0.001)
         #expect(MapClusterPolicy.contains(Self.helsinki, in: request.bounds))
-        // A mode change on the map is refused rather than acted on.
+        // Before the map reports where it is there is no area to open: a mode change is
+        // refused rather than acted on.
         model.setViewMode(.loupe)
         #expect(model.viewMode == .grid)
     }
@@ -93,7 +94,7 @@ struct CatalogWindowViewModelMapTests {
     }
 
     @MainActor
-    @Test func activatingAnExactStackOpensThePlaceAndBackReturnsToTheSameMap() async throws {
+    @Test func activatingAnExactStackOpensItsCoordinateAndBackReturnsToTheSameMap() async throws {
         let model = makeViewModel()
         model.startMapClustering()
         model.selectSidebar(.places)
@@ -104,13 +105,14 @@ struct CatalogWindowViewModelMapTests {
 
         model.activateMapCluster(clusters[0])
 
-        #expect(model.queryDescriptor.scope == .place(Self.helsinki))
+        #expect(model.queryDescriptor.scope == .mapArea(.point(Self.helsinki)))
         #expect(model.sidebarSelection.sidebarRow == .places)
-        #expect(model.showsPlaceLeaf)
-        // Until the place is published the pane still holds Places' items, so it stays
-        // the map; a grid mounted now would draw all of Places and diff down to the place.
+        #expect(model.showsMapAreaLeaf)
+        #expect(model.viewMode == .grid)
+        // Until the area is published the pane still holds Places' items, so it stays
+        // the map; a grid mounted now would draw all of Places and diff down to the area.
         #expect(model.showsPlacesMap)
-        model.applyState(windowState(model, scope: .place(Self.helsinki), ids: [id("a.jpg")]))
+        model.applyState(windowState(model, scope: .mapArea(.point(Self.helsinki)), ids: [id("a.jpg")]))
         #expect(!model.showsPlacesMap)
         #expect(model.canChangeViewMode)
         #expect(model.mapClusters.isEmpty)
@@ -193,6 +195,97 @@ struct CatalogWindowViewModelMapTests {
         #expect(model.mapCameraRequest?.revision == refit.revision)
     }
 
+    /// Loupe on the map (⌘2, the picker, the View menu): the area the map shows, starting
+    /// on the stack the user clicked, not on the area's first item.
+    @MainActor
+    @Test func loupeOnTheMapOpensTheVisibleAreaOnTheClickedStack() {
+        let model = makeViewModel()
+        model.startMapClustering()
+        model.selectSidebar(.places)
+        let tallinn = PlaceCoordinate(latitude: 59.44, longitude: 24.75)
+        let located = [
+            LocatedAsset(id: id("near.jpg"), coordinate: PlaceCoordinate(latitude: 60.171, longitude: 24.941)),
+            LocatedAsset(id: id("stack.jpg"), coordinate: Self.helsinki),
+            LocatedAsset(id: id("tallinn.jpg"), coordinate: tallinn),
+        ]
+        model.applyState(windowState(
+            model,
+            scope: .places,
+            ids: located.map(\.id),
+            map: CatalogMapState(located: located, unlocatedCount: 0)
+        ))
+        #expect(!model.canChangeViewMode)
+        model.mapViewportChanged(cityViewport())
+        #expect(model.canChangeViewMode)
+        // A stack click selected these: one in view, one across the gulf.
+        model.selectAssets([id("stack.jpg"), id("tallinn.jpg")])
+
+        model.setViewMode(.loupe)
+
+        let area = MapClusterPolicy.area(of: cityViewport())
+        #expect(model.queryDescriptor.scope == .mapArea(area))
+        #expect(area.contains(Self.helsinki))
+        #expect(!area.contains(tallinn))
+        #expect(model.sidebarSelection.sidebarRow == .places)
+        #expect(model.viewMode == .loupe)
+        // The map stays until the area publishes, and a late Places state — the answer to
+        // the query before this one — does not undo the chosen mode.
+        #expect(model.showsPlacesMap)
+        model.applyState(windowState(
+            model,
+            scope: .places,
+            ids: located.map(\.id),
+            map: CatalogMapState(located: located, unlocatedCount: 0),
+            generation: model.queryGeneration - 1
+        ))
+        #expect(model.viewMode == .loupe)
+
+        model.applyState(windowState(model, scope: .mapArea(area), ids: [id("near.jpg"), id("stack.jpg")]))
+
+        #expect(!model.showsPlacesMap)
+        #expect(model.showsMapAreaLeaf)
+        #expect(model.viewMode == .loupe)
+        #expect(model.focusedAssetID == id("stack.jpg"))
+        #expect(model.gridSelection.selection == [id("stack.jpg")])
+    }
+
+    /// Grid on the map with nothing selected: the visible area as the grid, nothing
+    /// selected; Back returns to the map, which resets the mode to the map's own.
+    @MainActor
+    @Test func gridOnTheMapOpensTheVisibleAreaAndBackReturnsToTheMap() {
+        let model = makeViewModel()
+        model.startMapClustering()
+        model.selectSidebar(.places)
+        let located = [LocatedAsset(id: id("a.jpg"), coordinate: Self.helsinki)]
+        let placesState = windowState(
+            model,
+            scope: .places,
+            ids: [id("a.jpg")],
+            map: CatalogMapState(located: located, unlocatedCount: 0)
+        )
+        model.applyState(placesState)
+        model.mapViewportChanged(cityViewport())
+
+        model.setViewMode(.grid)
+        let area = MapClusterPolicy.area(of: cityViewport())
+        #expect(model.queryDescriptor.scope == .mapArea(area))
+        model.applyState(windowState(model, scope: .mapArea(area), ids: [id("a.jpg")]))
+        #expect(model.viewMode == .grid)
+        #expect(model.gridSelection.selection.isEmpty)
+
+        model.setViewMode(.compare)
+        #expect(model.viewMode == .compare)
+        model.returnToPlaces()
+        model.applyState(windowState(
+            model,
+            scope: .places,
+            ids: [id("a.jpg")],
+            map: CatalogMapState(located: located, unlocatedCount: 0)
+        ))
+        #expect(model.showsPlacesMap)
+        #expect(model.viewMode == .grid)
+    }
+
     // MARK: - Fixtures
 
     /// Not started: only the cluster lane runs. A started model's own projection loop
@@ -218,7 +311,8 @@ struct CatalogWindowViewModelMapTests {
         _ model: CatalogWindowViewModel,
         scope: SidebarSelection,
         ids: [MediaAssetID],
-        map: CatalogMapState? = nil
+        map: CatalogMapState? = nil,
+        generation: UInt64? = nil
     ) -> CatalogWindowState {
         CatalogWindowState(
             title: CatalogWindowPolicy.title(for: scope, libraries: [pictures]),
@@ -237,7 +331,7 @@ struct CatalogWindowViewModelMapTests {
             mediaEmptyState: ids.isEmpty ? .noLocatedMedia : .noMedia,
             deviceConnectionBanner: nil,
             map: map,
-            queryGeneration: model.queryGeneration
+            queryGeneration: generation ?? model.queryGeneration
         )
     }
 

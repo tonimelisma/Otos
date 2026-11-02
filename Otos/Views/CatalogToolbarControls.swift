@@ -266,29 +266,35 @@ struct ToolbarSegmentedControl: NSViewRepresentable {
 }
 
 /// Segmented Grid / Loupe / Compare control. All three call the same ViewModel
-/// `setViewMode` intent as the View menu (⌘1 / ⌘2 / ⌘3).
+/// `setViewMode` intent as the View menu (⌘1 / ⌘2 / ⌘3). `viewMode` is nil while the
+/// Places map shows: the map is not one of the modes, so no segment is selected, and
+/// choosing one opens the area the map shows in it.
 struct ViewModePicker: View {
-    let viewMode: BrowserViewMode
+    let viewMode: BrowserViewMode?
     let setViewMode: (BrowserViewMode) -> Void
 
     var body: some View {
         Picker("View Mode", selection: modeBinding) {
             ForEach(BrowserViewMode.allCases) { mode in
                 Image(systemName: mode.systemImage)
-                    .tag(mode)
+                    .tag(BrowserViewMode?.some(mode))
                     .help(mode.help)
             }
         }
         .pickerStyle(.segmented)
         .labelsHidden()
-        .help(viewMode.help)
+        .help(viewMode?.help ?? "View Mode")
         .accessibilityLabel("View Mode")
     }
 
-    private var modeBinding: Binding<BrowserViewMode> {
+    private var modeBinding: Binding<BrowserViewMode?> {
         Binding(
             get: { viewMode },
-            set: { setViewMode($0) }
+            set: { mode in
+                if let mode {
+                    setViewMode(mode)
+                }
+            }
         )
     }
 }

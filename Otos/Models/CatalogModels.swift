@@ -875,8 +875,9 @@ nonisolated struct CatalogMediaGridState: Equatable {
 /// answers a different question.
 ///
 /// `.places` is every located item across the fixed libraries, presented as a map
-/// (ADR 0040). `.place` is the leaf under it — the items at exactly one coordinate —
-/// presented as the ordinary grid; the sidebar keeps the Places row highlighted for it.
+/// (ADR 0040). `.mapArea` is the leaf under it — the items in one box of the map, the
+/// area the map showed or one stack's coordinate — presented in the ordinary view modes;
+/// the sidebar keeps the Places row highlighted for it.
 ///
 /// `.duplicates` is every copy in a duplicate group across the fixed libraries,
 /// presented as the duplicates list (ADR 0042); `.duplicateGroup` is the leaf under it —
@@ -884,18 +885,18 @@ nonisolated struct CatalogMediaGridState: Equatable {
 nonisolated enum SidebarSelection: Hashable {
     case allMedia
     case places
-    case place(PlaceCoordinate)
+    case mapArea(MapArea)
     case duplicates
     case duplicateGroup(DuplicateGroupID)
     case library(LibraryRootPath)
     case importBatch(ImportBatchID)
     case allImports
 
-    /// The row the sidebar highlights for this scope: `.place` has no row of its own and
+    /// The row the sidebar highlights for this scope: `.mapArea` has no row of its own and
     /// highlights Places, the row it was reached from.
     var sidebarRow: SidebarSelection {
         switch self {
-        case .place: .places
+        case .mapArea: .places
         case .duplicateGroup: .duplicates
         default: self
         }
@@ -907,8 +908,8 @@ nonisolated enum SidebarSelection: Hashable {
             "allMedia"
         case .places:
             "places"
-        case let .place(coordinate):
-            "place:\(coordinate.diagnosticDescription)"
+        case let .mapArea(area):
+            "mapArea:\(area.diagnosticDescription)"
         case .duplicates:
             "duplicates"
         case let .duplicateGroup(group):

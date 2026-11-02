@@ -100,8 +100,8 @@ nonisolated struct CatalogScopePredicate: Equatable {
         case any
         /// The row has a primary location: the Places map.
         case located
-        /// The row's primary location is exactly this: one place under the map.
-        case at(PlaceCoordinate)
+        /// The row's primary location lies in this box: the grid under the map.
+        case within(MapArea)
     }
 
     /// Catalog roots the scope admits, ascending. Already narrowed to the kinds and

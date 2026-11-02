@@ -80,13 +80,14 @@ struct FileMaterializationTests {
     @Test func providerUnavailableShortCircuitsAfterTwoConsecutiveProbes() async {
         let url = URL(fileURLWithPath: "/tmp/otos-provider-unavailable-\(UUID().uuidString).jpg")
         // Simulate dataless that never materializes and provider probe returns
-        // providerUnavailable twice consecutively — poll should exit early with
-        // .providerUnavailable, not wait for the 120s timeout.
+        // providerUnavailable twice consecutively. No deadline: the two refusals are the
+        // only way the wait can end, so the outcome cannot depend on how fast the machine
+        // is — a wall-clock bound here once returned `.timedOut` under a parallel build.
         let result = await FileMaterialization.materialize(
             url,
             persistence: FileMaterialization.Persistence(
                 failsFastOnProviderUnavailable: true,
-                deadline: .seconds(10),
+                deadline: nil,
                 requestRetryInterval: .milliseconds(20)
             ),
             providers: FileMaterializationProviders(
@@ -196,9 +197,10 @@ struct FileMaterializationTests {
     @Test func backgroundMaterializationStillShortCircuitsOnTheSameInput() async {
         let result = await FileMaterialization.materialize(
             URL(fileURLWithPath: "/tmp/slow-provider.arw"),
+            // No deadline: the refusals alone end the wait (see the test above).
             persistence: FileMaterialization.Persistence(
                 failsFastOnProviderUnavailable: true,
-                deadline: .seconds(10),
+                deadline: nil,
                 requestRetryInterval: .milliseconds(1)
             ),
             providers: FileMaterializationProviders(
