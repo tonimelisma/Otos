@@ -305,7 +305,12 @@ verification (requirements-authority + lint + build + test), and prints a heartb
 every 60 s carrying elapsed time and the running test count. Do not invoke
 `script/verify.sh`, `script/test.sh` or `script/build.sh` directly:
 `script/hooks/guard-long-checks.sh` denies it, because those skip the gates and
-emit no heartbeat, which is how a hung run is mistaken for a slow one. Read logs
+emit no heartbeat, which is how a hung run is mistaken for a slow one. While
+iterating on one area, `script/check.sh --only <Suite>` (repeatable) runs the same
+gates and build but only the named test suites; it prints `evidence=no` and never
+counts as verification. Check builds share one compilation cache across worktrees,
+with source paths mapped to `/^worktree` (ADR 0044): a test never locates a file
+through `#filePath`, it reads the checkout from `SourceTree.root`. Read logs
 with `script/logs.sh stream [Category]` (live) or
 `script/logs.sh show --last 10m` (post-hoc ndjson); profile with
 `script/profile.sh "<Template>" 10s` and `script/profile-export.sh <trace>`.
@@ -327,9 +332,12 @@ read its logs with `script/logs.sh` — `.info`/`.debug` persist for it.
 
 ### Supervising long checks
 
-`script/check.sh` takes roughly 4 minutes to build plus 3 to run the suite. It runs
-the seconds-long gates itself, first, so a formatting nit never costs a full
-build-and-test cycle.
+`script/check.sh` takes about two minutes: under a minute to build when the shared
+compilation cache holds a nearby tree, and about a minute to run the suite. The first
+build after a toolchain or build-setting change fills the cache at clean-build cost. An edit
+rebuilds its whole module, not just the edited file (ADR 0044): about a minute for
+OtosKit, two when the edit reaches the test target. It runs the seconds-long gates
+itself, first, so a formatting nit never costs a build.
 
 **A long check is watched, not awaited.** Waiting on process completion alone does
 not work: a hung process never completes, so it never reports, and the wait is
@@ -369,8 +377,12 @@ same `build/DerivedData` is itself a cause of the deadlock above. Confirm with `
 that nothing survives before starting the next run.
 
 Verification evidence must come from the run that measured the **final** tree. A
-green run followed by any edit — including a refactor or a comment — no longer
-proves anything; re-run and say which run the evidence is from.
+green run followed by any edit the build or tests can see — source, tests, scripts,
+project, config, including a refactor or a comment — no longer proves anything;
+re-run and say which run the evidence is from. An edit confined to Markdown under
+`docs/` or to these instructions cannot change what the build and tests measured:
+after a green run, it needs only `script/requirements-authority-check.sh`,
+`script/check-doc-citations.sh` and `script/ci-text-hygiene.sh check`.
 
 ## Documentation
 

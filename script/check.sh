@@ -95,7 +95,9 @@ it sample the parked threads, dump the parked tests' async backtraces, kill its
 children and exit non-zero. A quiet log is never enough — one long test can log
 nothing while working, and killing on silence is a timeout, not detection.
 
-Normal total is about 7 minutes: ~4 to build, ~3 to run the suite.
+Normal total is about 2 minutes: under 1 to build from the shared compilation
+cache, about 1 to run the suite. A build the cache cannot serve (new toolchain or
+build settings) costs a clean build, a few minutes.
 Verification evidence counts ONLY from a run that measured the final tree —
 edit anything, even a comment, and this result no longer proves it.
 ────────────────────────────────────────────────────────────────────────

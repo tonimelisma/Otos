@@ -126,7 +126,7 @@ MSG
     cat >&2 <<'MSG'
 Denied: script/check.sh must run with run_in_background: true.
 
-It takes about 7 minutes, which exceeds the foreground timeout — and a foreground
+It runs for minutes, longer than a foreground command should wait — and a foreground
 run that is auto-backgrounded leaves you waiting on a completion event that a hung
 process never sends. Re-issue with run_in_background: true, then read the tail of
 its log every 60 seconds.

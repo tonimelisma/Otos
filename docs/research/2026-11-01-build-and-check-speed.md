@@ -150,7 +150,24 @@ of the nine suites touched here ran 49 tests.
 
 ## Before and after
 
-PAIRED_RESULTS
+`script/check.sh`, whole run, in two fresh worktrees at different paths. B is `main`
+before this change; C is this change. Pairs ran back to back at load 35–180. Every run
+passed 1,354 tests.
+
+| Run | Before (B) | After (C) |
+| --- | --- | --- |
+| Fresh worktree, first check | 254 s | 127 s |
+| Re-check after a one-line function-body edit in `CatalogStore.swift` | 188 s | 128 s |
+
+C's first fresh run took 131 s with the store only partly filled (219 task-seconds of
+Swift compilation still ran); the 127 s run is with the store holding this tree. In the
+after runs the build takes under a minute and the suite 33–72 s, so the suite is now
+about half of a check. The edit re-check gains less than the fresh run: the 109 s
+authority check left the critical path, and the edit now rebuilds all of OtosKit
+(75 task-seconds) instead of one file.
+
+A scoped run (`--only`, nine suites, 49 tests, after an edit that rebuilt the whole
+test target) took 125 s, almost all of it the test-target rebuild.
 
 ## Sources
 
