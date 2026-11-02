@@ -46,13 +46,18 @@ Map view mode.
   location". Removable sources are excluded, as in All Media. The row exists as soon as
   one fixed library exists, located items or not, so it can be found and the sidebar
   never reflows as enrichment finds coordinates.
-- `SidebarSelection.place(PlaceCoordinate)` is the leaf: the items whose primary
-  location is exactly one coordinate. It is not a sidebar row; the sidebar keeps Places
-  highlighted for it (`sidebarRow`). It is presented as the ordinary grid, so Loupe and
-  Compare work there unchanged, and a Back to Map toolbar item returns to the map at the
-  viewport the user left.
+- `SidebarSelection.mapArea(MapArea)` is the leaf: the items whose primary location
+  lies in one latitude/longitude box, edges included. The map opens it two ways: the
+  view-mode picker and ⌘1 / ⌘2 / ⌘3 open the box the viewport shows in that mode (Web
+  Mercator keeps longitude in x and latitude in y, so the viewport's rect is exactly a
+  box; a box past the antimeridian has `west > east`), and double-click on a stack whose
+  members share one coordinate opens that coordinate as a box of no extent, whose bounds
+  are the stored values' own doubles. It is not a sidebar row; the sidebar keeps Places
+  highlighted for it (`sidebarRow`). It is presented in the ordinary view modes, and a
+  Back to Map toolbar item returns to the map at the viewport the user left. This is
+  Photos' Grid, reached through Otos's own picker rather than a fourth control.
 - **The scope predicate carries the location dimension.** `CatalogScopePredicate`
-  gains `LocationConstraint` (`.any`, `.located`, `.at(coordinate)`), resolved only by
+  gains `LocationConstraint` (`.any`, `.located`, `.within(area)`), resolved only by
   `RootRegistry.scopePredicate`, so order, counts and filter options cannot disagree
   about what Places holds — the same guarantee ADR 0010 gave the import-batch
   dimension. A scope that requires a location joins `asset_metadata` and the ordered-ID
@@ -82,12 +87,16 @@ Map view mode.
   clamps a camera past its zoom-out, and a fit whose own viewport leaves an item
   outside is asked once more without margin, grown to the camera the map proved it can
   show, then left. Cameras requested: fit all located items on entry
-  and on a filter change, the last viewport on return from a place, a quarter-span zoom
+  and on a filter change, the last viewport on return from an area, a quarter-span zoom
   on a stack that can still split, a step on View ▸ Zoom In / Out.
-- **The map has one presentation.** While Places shows, the view-mode picker and ⌘1 /
-  ⌘2 / ⌘3 are disabled, never hidden (DES-053), `setViewMode` refuses, and a loupe or
-  compare left open elsewhere exits to grid on entry. The zoom control and View ▸ Zoom
-  In / Out drive the map.
+- **The map is not a view mode; the modes open its area.** While the map shows, the
+  view-mode picker selects no segment, and choosing one — or ⌘1 / ⌘2 / ⌘3 — opens the
+  visible area in that mode. The selection a stack click made carries into the area as
+  far as it lies inside, through `scopeEntrySelection`, so Loupe and Compare start on
+  it once the area publishes; until then the pane is still the map (the pane follows the
+  published scope). Before the map's first viewport there is no area, so the picker is
+  disabled, never hidden (DES-053). A loupe or compare left open elsewhere exits to grid
+  on entering Places. The zoom control and View ▸ Zoom In / Out drive the map.
 - **Thumbnails follow the grid's rule.** A stack's identity is its representative, so a
   camera change that keeps the same front photo keeps the view and its painted
   thumbnail; decode is off the main actor through the grid's own loader, and the
@@ -114,6 +123,24 @@ Failure mode: the user cannot predict which of two maps they are looking at.
 
 Rejected for the reason above; this ADR's decision replaced it before any code was
 written.
+
+### Only one coordinate opens as a grid
+
+The first build opened a grid only from a stack whose members shared one coordinate,
+and zoomed every other stack by at most a quarter of the viewport.
+
+Cons: photos taken a few meters apart never share a coordinate, so reaching them took
+one double-click per zoom step — the owner counted seventeen (2026-11-01). Photos, Mylio
+and Lightroom Classic's Visible on Map filter all show an area's photos at whatever
+zoom the user stopped at.
+
+### Photos' Map / Grid toggle as its own control
+
+Pros: Photos' exact chrome.
+
+Cons: a second segmented control beside the view-mode picker, both choosing what the
+detail pane shows; Grid would be a fourth way to say what the picker's Grid says.
+Otos's picker and Back to Map already carry both halves of the toggle.
 
 ### Clustering in Projection
 

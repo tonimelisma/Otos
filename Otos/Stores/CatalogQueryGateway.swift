@@ -560,11 +560,16 @@ private nonisolated func scopeClause(
         join = locationJoin
         predicate += "\n  AND asset_metadata.primary_latitude IS NOT NULL"
         predicate += "\n  AND asset_metadata.primary_longitude IS NOT NULL"
-    case let .at(coordinate):
+    case let .within(area):
         join = locationJoin
-        arguments.append(coordinate.latitude)
-        arguments.append(coordinate.longitude)
-        predicate += "\n  AND asset_metadata.primary_latitude = ?\n  AND asset_metadata.primary_longitude = ?"
+        arguments.append(area.south)
+        arguments.append(area.north)
+        arguments.append(area.west)
+        arguments.append(area.east)
+        // A box across the antimeridian holds longitudes east of `west` or west of `east`.
+        let longitude = area.crossesAntimeridian ? "OR" : "AND"
+        predicate += "\n  AND asset_metadata.primary_latitude BETWEEN ? AND ?"
+        predicate += "\n  AND (asset_metadata.primary_longitude >= ? \(longitude) asset_metadata.primary_longitude <= ?)"
     }
     return (join, predicate, arguments)
 }

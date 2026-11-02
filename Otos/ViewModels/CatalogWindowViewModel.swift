@@ -439,6 +439,11 @@ final class CatalogWindowViewModel {
     /// `restoreBrowserPlaceIfReady()`. Any other query drops it: once the user (or the
     /// launch default) has gone somewhere else, an old place would be a surprise jump.
     @ObservationIgnored var pendingPlaceRestore: BrowserPlace?
+    /// The selection an intent chose for the scope it opened — a stack clicked on the map
+    /// before opening its area — kept for the query generation that opens it. When
+    /// that scope publishes, its survivors become the selection instead of the scope
+    /// change clearing it, so Loupe and Compare start on them. A newer query drops it.
+    @ObservationIgnored var scopeEntrySelection: (generation: UInt64, ids: [MediaAssetID])?
     /// The grid's middle visible item from the newest viewport report — what quit saves
     /// as the grid's place, because the grid centers on it when it comes back.
     @ObservationIgnored var gridViewportCenterID: MediaAssetID?
@@ -811,6 +816,7 @@ extension CatalogWindowViewModel {
             pendingPlaceRestore = nil
             OtosLog.ui.notice("op=browserPlace.restore phase=dropped reason=queryChanged")
         }
+        scopeEntrySelection = nil
         let scopeChanged = descriptor.scope != queryDescriptor.scope
         queryGeneration &+= 1
         queryDescriptor = descriptor
@@ -1029,7 +1035,7 @@ extension CatalogWindowViewModel {
         let scopeChanged = previousState.mediaGrid.descriptor.scope != nextState.mediaGrid.descriptor.scope
         let orderChanged = previousState.mediaGrid.orderedAssetIDs != nextState.mediaGrid.orderedAssetIDs
         if scopeChanged {
-            clearGridSelection(reason: "scopeChange")
+            applyScopeEntrySelection(nextState)
         } else if orderChanged {
             gridSelection = gridSelection.selection.isEmpty
                 ? .empty
@@ -1268,7 +1274,7 @@ extension CatalogWindowViewModel {
                 && !nextState.removableSources.contains { $0.path == path }
         case let .importBatch(batchID):
             !nextState.importBatches.contains { $0.batchID == batchID }
-        case .places, .place:
+        case .places, .mapArea:
             !SidebarSelectionPolicy.showsPlaces(libraries: nextState.libraries)
         case let .duplicateGroup(group):
             // The group is gone — resolved, or its copies moved — so its leaf is too. Groups

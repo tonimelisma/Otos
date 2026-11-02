@@ -219,4 +219,60 @@ struct MapClusterPolicyTests {
         #expect(MapClusterPolicy.accessibilityLabel(for: stack) == "2 items, 60.17 north, 24.94 east")
         #expect(MapClusterPolicy.accessibilityLabel(for: single) == "1 item, 33.87 south, 70.65 west")
     }
+
+    // MARK: - The area a viewport shows
+
+    /// Web Mercator keeps longitude in x and latitude in y, so the box is the viewport's
+    /// own edges: the city in it, the next city out.
+    @Test func aViewportsAreaIsTheBoxItShows() {
+        let helsinki = PlaceCoordinate(latitude: 60.17, longitude: 24.94)
+        let region = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: helsinki.latitude, longitude: helsinki.longitude),
+            latitudinalMeters: 20000,
+            longitudinalMeters: 20000
+        )
+        let area = MapClusterPolicy.area(of: viewport(region))
+
+        #expect(area.contains(helsinki))
+        #expect(!area.contains(PlaceCoordinate(latitude: 59.44, longitude: 24.75)))
+        #expect(abs(area.north - (helsinki.latitude + region.span.latitudeDelta / 2)) < 0.001)
+        #expect(abs(area.west - (helsinki.longitude - region.span.longitudeDelta / 2)) < 0.001)
+        #expect(!area.crossesAntimeridian)
+    }
+
+    /// MapKit reports a view of the Pacific with x past one world width: the box crosses
+    /// the antimeridian and holds both sides of it.
+    @Test func aViewportAcrossTheAntimeridianHoldsBothSides() {
+        let world = MapClusterPolicy.worldMapPoints
+        let fiji = MKMapPoint(CLLocationCoordinate2D(latitude: -17.7, longitude: 178.0))
+        let viewport = MapViewport(
+            originX: fiji.x,
+            originY: fiji.y - world / 64,
+            width: world / 32,
+            height: world / 32,
+            viewWidth: 800,
+            viewHeight: 800
+        )
+        let area = MapClusterPolicy.area(of: viewport)
+
+        #expect(area.crossesAntimeridian)
+        #expect(area.contains(PlaceCoordinate(latitude: -17.7, longitude: 179.9)))
+        #expect(area.contains(PlaceCoordinate(latitude: -17.7, longitude: -179.9)))
+        #expect(!area.contains(PlaceCoordinate(latitude: -17.7, longitude: 170)))
+    }
+
+    /// A viewport a world wide or wider shows every longitude.
+    @Test func aWorldWideViewportHoldsEveryLongitude() {
+        let world = MapClusterPolicy.worldMapPoints
+        let viewport = MapViewport(
+            originX: -world / 4, originY: 0, width: world * 1.5, height: world,
+            viewWidth: 1200, viewHeight: 800
+        )
+        let area = MapClusterPolicy.area(of: viewport)
+
+        #expect(area.west == -180)
+        #expect(area.east == 180)
+        #expect(area.contains(PlaceCoordinate(latitude: 0, longitude: 179.9)))
+        #expect(area.contains(PlaceCoordinate(latitude: 60, longitude: -120)))
+    }
 }

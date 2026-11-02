@@ -1,7 +1,7 @@
 # Places — Spec
 
-The Places scope: a sidebar row whose detail is a map of thumbnail stacks, and the
-grid of one place under it. Cites `docs/design/design-system.md` by ID; rules are not
+The Places scope: a sidebar row whose detail is a map of thumbnail stacks, and an
+area of the map under it in the ordinary view modes. Cites `docs/design/design-system.md` by ID; rules are not
 restated. Decision record: `docs/adr/0040-places-scope-and-map-clustering.md`.
 
 Owner: `Otos/Views/PlacesMapView.swift`. Content: `CatalogMapState`
@@ -10,18 +10,22 @@ Owner: `Otos/Views/PlacesMapView.swift`. Content: `CatalogMapState`
 
 ## Reference
 
-Photos' Places (macOS): a `Places` row, thumbnail stacks with a count on the map, a
-Map / Satellite / Grid toggle, double-click to zoom, `Nearby Photos` on a photo. Otos
-takes the row, the stacks, the double-click and the names; it drops Satellite and
-Grid as toggles (a stack opens its place as the ordinary grid instead) and adds
-nothing of its own. Terms are Apple's: *location*, never *GPS* or *geotag*.
+Photos' Places (macOS 27, observed 2026-11-01): a `Places` row, thumbnail stacks with a
+count on the map, double-click to zoom, and a Map / Satellite / Grid toggle whose Grid
+shows the photos in the area the map shows, in sections by place name and date
+(`docs/research/2026-10-31-map-views-in-photo-managers.md`). Otos takes the row, the
+stacks, the double-click and Grid's meaning, but not its control: Otos's own view-mode
+picker plays Grid's part (and Loupe and Compare with it) and `Back to Map` plays Map's,
+so the toolbar gains nothing. It drops Satellite, keeps its day sections (place-name
+sections need reverse geocoding, which Otos does not do) and adds nothing of its own.
+Terms are Apple's: *location*, never *GPS* or *geotag*.
 
 ## Terminology
 
 | Term | Means | Not |
 | --- | --- | --- |
 | **Places** | The sidebar row and its scope: every located item in the fixed libraries. | "Map" (a presentation, not a place to go) |
-| **Place** | The items at exactly one coordinate, opened from a stack. | a region, a city, a pin |
+| **Area** | The items in one box of the map: the area the map showed, or one stack's coordinate. Not named in the UI. | a region, a city, a pin |
 | **Stack** | One thumbnail on the map standing for the items in one cluster cell. | "pin", "marker", "annotation" |
 | **Located** | Has a stored primary location. | "geotagged" |
 
@@ -29,18 +33,24 @@ nothing of its own. Terms are Apple's: *location*, never *GPS* or *geotag*.
 
 `Places`, SF Symbol `map`, directly under `All Media` and above the Libraries section,
 as a top-level row like All Media. Present whenever one fixed library exists. No
-trailing count, because library rows carry none. While a place is open the row stays
-highlighted: the place has no row of its own.
+trailing count, because library rows carry none. While an area is open the row stays
+highlighted: the area has no row of its own.
 
 ## Toolbar while the map shows
 
-The view-mode picker is disabled (DES-053: disabled, never removed); the filter, sort
-and zoom controls keep working — filter narrows the map, sort decides which photo
+The view-mode picker shows no segment selected, because the map is not one of the modes.
+Choosing one (or ⌘1 / ⌘2 / ⌘3, or the View menu) opens the area the map shows in that
+mode: Grid, Loupe or Compare over the photos located inside it. Loupe and Compare start
+on the stack the user clicked, as far as it lies inside the area; with none selected,
+on the area's first photos. The map stays on screen until the area is ready. The picker
+is disabled (DES-053) only before the map has first reported where it is. The filter,
+sort and zoom controls keep working: filter narrows the map, sort decides which photo
 fronts a stack, zoom steps the camera. The trailing per-item controls act on the
 selection a stack click made.
 
-While a place is open, a `Back to Map` item (`chevron.left`) sits at the leading edge
-of the toolbar and the picker is enabled again: the place is the ordinary grid.
+While an area is open, a `Back to Map` item (`chevron.left`) sits at the leading edge
+of the toolbar and returns to the map as it was left; the browser there is the
+ordinary one.
 
 ## The bar — L1 and L3
 
@@ -65,7 +75,7 @@ library shot on two continents (more than 180° of longitude) does not wrap (a s
 point gets a 2 km square). MapKit refuses a camera past its zoom-out (about 153° of
 longitude at a 1232 pt map), so when the viewport that follows a fit leaves an item
 outside, the fit is asked once more without margin but grown to the camera the map
-just showed, and left there if it still misses. On a filter change, re-fit; on return from a place, the viewport
+just showed, and left there if it still misses. On a filter change, re-fit; on return from an area, the viewport
 the user left; ⌘= / ⌘− halve or double the span about the center. A flight is 0.25 s
 ease-out (DES-070), a snap under Reduce Motion (DES-075).
 
@@ -88,7 +98,7 @@ gutter). Only cells touching the viewport, padded by one cell, are drawn.
 | --- | --- |
 | Click | The stack's members become the selection. |
 | Double-click, members at several coordinates | The camera zooms into the stack: its extent, never wider than a quarter of the viewport. |
-| Double-click, members at one coordinate | The place opens as the grid. |
+| Double-click, members at one coordinate | That coordinate opens as the grid, since no zoom can split it. |
 
 VoiceOver names a stack by what distinguishes it (DES-082): `12 items, 60.17 north,
 24.94 east`; a single item `1 item, …`. A stack is a button; a selected stack carries
@@ -108,9 +118,9 @@ when the first item is located.
 
 ## Keyboard
 
-Tab reaches the toolbar and the zoom stepper; ⌘= / ⌘− zoom; ⌘1 / ⌘2 / ⌘3 are disabled.
-Stacks are not keyboard-focusable; the keyboard path to the photos is a grid (a place,
-or any other scope). This is a stated limit, not an oversight.
+Tab reaches the toolbar and the zoom stepper; ⌘= / ⌘− zoom; ⌘1 / ⌘2 / ⌘3 open the
+area the map shows. Stacks are not keyboard-focusable; the keyboard path to the photos
+is ⌘1, which puts them in a grid. This is a stated limit, not an oversight.
 
 ## Verification
 

@@ -6,8 +6,8 @@ import OSLog
 // The `.places` scope is published like every other scope — Projection delivers the
 // located items in display order on `CatalogWindowState.map` — and this file owns what
 // is specific to drawing them as a map: the viewport the map reports, the camera the
-// map is asked to adopt, the stacks for that viewport, and the two navigation intents
-// (into a place, back to the map).
+// map is asked to adopt, the stacks for that viewport, and the navigation intents
+// (into an area of the map in a view mode, back to the map).
 //
 // Clustering runs on its own lane, not in Projection, because its second input is the
 // viewport, which changes with every pan and zoom and is window state rather than
@@ -35,18 +35,23 @@ extension CatalogWindowViewModel {
         state.isCatalogLoaded && SidebarSelectionPolicy.showsPlaces(libraries: state.libraries)
     }
 
-    /// Whether the chosen scope has view modes. The Places map and the duplicates list have
-    /// one presentation each, so the picker and ⌘1/2/3 are disabled there (DES-053:
-    /// disabled, never removed). Read from the intent, unlike `showsPlacesMap`: opening a
-    /// group or a place in Compare or Loupe changes the scope and then the mode, before
-    /// Projection publishes the scope.
+    /// Whether the picker and ⌘1/2/3 act. The duplicates list has one presentation, so
+    /// they are disabled there (DES-053: disabled, never removed). On the map they open the
+    /// area it shows (`openVisibleMapArea`), so they wait for the map to be on screen and
+    /// to have reported where it is; a viewport kept from an earlier visit is not one.
+    /// Read from the intent, unlike `showsPlacesMap`: opening a group or an area in Compare
+    /// or Loupe changes the scope and then the mode, before Projection publishes the scope.
     var canChangeViewMode: Bool {
-        sidebarSelection != .places && sidebarSelection != .duplicates
+        switch sidebarSelection {
+        case .duplicates: false
+        case .places: showsPlacesMap && mapViewport != nil
+        default: true
+        }
     }
 
-    /// Whether Back to Map applies: the grid shows one place under the map.
-    var showsPlaceLeaf: Bool {
-        if case .place = sidebarSelection {
+    /// Whether Back to Map applies: the browser shows an area under the map.
+    var showsMapAreaLeaf: Bool {
+        if case .mapArea = sidebarSelection {
             return true
         }
         return false
@@ -119,8 +124,10 @@ extension CatalogWindowViewModel {
             return
         }
         // The map is the scope's one presentation: a loupe or compare left open in
-        // another scope has nothing to show here.
-        if viewMode != .grid {
+        // another scope has nothing to show here. Not while an area is already chosen: a
+        // mode just entered for it waits for that area to publish, and this state is the
+        // map it was chosen from.
+        if viewMode != .grid, queryDescriptor.scope == .places {
             exitToGrid()
         }
         let entered = previous.resolvedSidebarSelection != .places || previous.map == nil
@@ -214,10 +221,11 @@ extension CatalogWindowViewModel {
     }
 
     /// Double-click: a stack that can still be split zooms the map into it; a stack
-    /// whose members share one coordinate opens that place as a grid.
+    /// whose members share one coordinate, which no zoom can split, opens that coordinate
+    /// as the grid.
     func activateMapCluster(_ cluster: MapPlaceCluster) {
         if cluster.isExactPlace {
-            enterPlace(cluster.coordinate)
+            openMapArea(.point(cluster.coordinate), mode: .grid, reason: "stack")
             return
         }
         guard let viewport = mapViewport, let map = state.map else {
@@ -239,26 +247,47 @@ extension CatalogWindowViewModel {
         requestMapCamera(MapClusterPolicy.scaledBounds(of: viewport, by: factor), reason: "step")
     }
 
-    /// The items at exactly one coordinate, as the ordinary grid. Not a sidebar row:
-    /// the sidebar keeps Places highlighted (`SidebarSelection.sidebarRow`).
-    func enterPlace(_ coordinate: PlaceCoordinate) {
+    /// Grid, Loupe or Compare on the map — the picker, ⌘1/2/3 and the View menu alike:
+    /// the area the map shows, in that mode.
+    func openVisibleMapArea(mode: BrowserViewMode) {
+        guard showsPlacesMap, let viewport = mapViewport else {
+            return
+        }
+        openMapArea(MapClusterPolicy.area(of: viewport), mode: mode, reason: "visible")
+    }
+
+    /// The items in one box of the map, in a view mode. Not a sidebar row: the sidebar
+    /// keeps Places highlighted (`SidebarSelection.sidebarRow`). The selection made on the
+    /// map — a clicked stack — carries into the area as far as it lies inside it, so Loupe
+    /// and Compare start on it; with none, they start on the area's first items. The mode
+    /// is set now and its focus settles when the area publishes, because the pane keeps
+    /// showing the map until then (`showsPlacesMap`).
+    func openMapArea(_ area: MapArea, mode: BrowserViewMode, reason: String) {
+        let located = state.map?.located ?? []
+        let selected = gridSelection.selection
+        let entry = located.filter { selected.contains($0.id) && area.contains($0.coordinate) }.map(\.id)
         userHasChosenSource = true
-        OtosLog.ui.noticeOperation("map.place", phase: "enter", fields: [
-            "coordinate": coordinate.diagnosticDescription,
+        OtosLog.ui.noticeOperation("map.area", phase: "enter", fields: [
+            "area": area.diagnosticDescription,
+            "mode": mode.rawValue,
+            "reason": reason,
+            "entrySelection": "\(entry.count)",
         ])
         setQueryDescriptor(CatalogQueryDescriptor(
-            scope: .place(coordinate),
+            scope: .mapArea(area),
             filter: queryDescriptor.filter,
             sort: queryDescriptor.sort
         ))
+        scopeEntrySelection = (queryGeneration, entry)
+        enterModeForOpeningScope(mode)
     }
 
-    /// Back to Map from a place; the map returns to the viewport it was left at.
+    /// Back to Map from an area; the map returns to the viewport it was left at.
     func returnToPlaces() {
-        guard showsPlaceLeaf else {
+        guard showsMapAreaLeaf else {
             return
         }
-        OtosLog.ui.noticeOperation("map.place", phase: "return")
+        OtosLog.ui.noticeOperation("map.area", phase: "return")
         setQueryDescriptor(CatalogQueryDescriptor(
             scope: .places,
             filter: queryDescriptor.filter,
