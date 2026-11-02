@@ -19,9 +19,10 @@ struct SamePhotoTests {
     }
 
     /// A still as the rule sees it: its column facts, and the details read for a proposed
-    /// pair — the render, the sub-seconds and the burst identifier.
+    /// pair — the copy, the render, the sub-seconds and the burst identifier.
     private struct Still {
         let candidate: SamePhotoCandidate
+        let copy: DuplicateCopy
         let subsecond: String?
         let burst: String?
     }
@@ -35,25 +36,27 @@ struct SamePhotoTests {
         burst: String? = nil,
         hash: UInt64 = 0xF0F0
     ) -> Still {
-        Still(
+        let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path))
+        return Still(
             candidate: SamePhotoCandidate(
-                copy: DuplicateCopy(
-                    id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path)),
-                    libraryDisplayName: "Photos",
-                    byteSize: 1000,
-                    createdAt: nil,
-                    pixelWidth: 4000,
-                    pixelHeight: 3000,
-                    mediaChoice: .notRated,
-                    isEdited: false,
-                    hasCompanions: false
-                ),
+                id: id,
                 isRaw: raw,
                 captureInstant: instant,
                 cameraModel: instant == nil ? nil : model,
                 serialNumber: nil,
                 aspectRatio: 4.0 / 3.0,
                 differenceHash: hash
+            ),
+            copy: DuplicateCopy(
+                id: id,
+                libraryDisplayName: "Photos",
+                byteSize: 1000,
+                createdAt: nil,
+                pixelWidth: 4000,
+                pixelHeight: 3000,
+                mediaChoice: .notRated,
+                isEdited: false,
+                hasCompanions: false
             ),
             subsecond: subsecond,
             burst: burst
@@ -65,11 +68,16 @@ struct SamePhotoTests {
         signatures: [String: [UInt8]]
     ) -> [Set<String>] {
         let details = Dictionary(uniqueKeysWithValues: stills.compactMap { still in
-            signatures[still.candidate.copy.id.relativePath.rawValue].flatMap { gray in
+            signatures[still.candidate.id.relativePath.rawValue].flatMap { gray in
                 RenderSignature(differenceHash: still.candidate.differenceHash, gray: gray).map { signature in
                     (
-                        still.candidate.copy.id,
-                        SamePhotoDetail(signature: signature, fractionalSecondDigits: still.subsecond, burstIdentifier: still.burst)
+                        still.candidate.id,
+                        SamePhotoDetail(
+                            copy: still.copy,
+                            signature: signature,
+                            fractionalSecondDigits: still.subsecond,
+                            burstIdentifier: still.burst
+                        )
                     )
                 }
             }
@@ -207,7 +215,17 @@ struct SamePhotoTests {
             RenderSignatureResult(id: id, source: candidate.source, signature: signature),
         ]) == 1)
         #expect(try await store.renderSignatureCandidates(limit: 10).isEmpty)
-        #expect(try await store.samePhotoDetails(for: [id])[id]?.signature == signature)
+
+        // The still is offered for pairing by its column facts, and its detail carries the
+        // signature and the copy a group would list.
+        let paired = try await store.samePhotoCandidates(availableLibraryPaths: [id.libraryRootPath])
+        #expect(paired.map(\.id) == [id])
+        #expect(paired.first?.differenceHash == 42)
+        let detail = try #require(try await store.samePhotoDetails(for: [id])[id])
+        #expect(detail.signature == signature)
+        #expect(detail.copy.id == id)
+        #expect(detail.copy.libraryDisplayName == "Pictures")
+        #expect(detail.copy.byteSize == scanned.testAssets.first?.byteSize)
         await store.shutdown()
     }
 }

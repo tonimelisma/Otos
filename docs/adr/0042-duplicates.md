@@ -134,11 +134,13 @@ Other rules:
 - Same-photo groups are never preselected (`DuplicateGroupWait.samePhoto`). Keep All Copies
   sets them aside by the same per-pair memory.
 - Candidates are blocked by kind, display aspect and whole-second instant, so a library is
-  never compared all against all. Pairs are proposed from column facts alone. The
-  grayscale render, the sub-seconds and the burst identifier — the last two live in the
-  stored metadata record — are read only for the stills a proposed pair names
-  (`SamePhotoDetail`). Decoding every still's record was most of a build: on 2026-11-01
-  the owner's library had 14,164 stills, of which 2,548 were in a proposed pair.
+  never compared all against all. Pairs are proposed from column facts alone, read as
+  pairing facts only (`SamePhotoCandidate`). The copy a group lists, the grayscale
+  render, the sub-seconds and the burst identifier — the last two live in the stored
+  metadata record — are read only for the stills a proposed pair names
+  (`SamePhotoDetail`). Building every still's copy and decoding every record was most of
+  a build: on 2026-11-01 the owner's library had 14,201 stills, of which 2,462 were in a
+  proposed pair.
 
 `RenderSignatureRefresher` is the one producer of signatures:
 - It reads stored thumbnails only, so it never opens an original or downloads one.
