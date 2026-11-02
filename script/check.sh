@@ -19,6 +19,25 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HEARTBEAT_SECONDS="${OTOS_CHECK_HEARTBEAT_SECONDS:-60}"
 
+# `--only <Suite>` (repeatable) runs every gate and the full build but only the
+# named test suites: feedback while iterating on one area. It is never
+# verification evidence — the final tree still needs a run with no arguments.
+OTOS_ONLY_TESTING=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --only)
+      [[ -n "${2:-}" ]] || { echo "usage: script/check.sh [--only <TestSuite>]..." >&2; exit 2; }
+      OTOS_ONLY_TESTING="${OTOS_ONLY_TESTING:+$OTOS_ONLY_TESTING }OtosTests/${2#OtosTests/}"
+      shift 2
+      ;;
+    *)
+      echo "usage: script/check.sh [--only <TestSuite>]..." >&2
+      exit 2
+      ;;
+  esac
+done
+export OTOS_ONLY_TESTING
+
 # Killing this script must not strand its children. Terminating the parent alone
 # leaves `test.sh` and `xcodebuild` orphaned at PPID 1, and an orphan competing
 # against the same build/DerivedData is itself a cause of the suite deadlock this
@@ -84,6 +103,9 @@ MSG
 }
 
 banner
+if [[ -n "$OTOS_ONLY_TESTING" ]]; then
+  echo "op=check.scope tests=\"$OTOS_ONLY_TESTING\" evidence=no — a scoped run; the final tree needs script/check.sh with no arguments"
+fi
 
 # ── Stage 1: the seconds-long gates, first, so a nit never costs a build ──────
 echo "op=check.stage phase=start stage=fast-gates"
@@ -285,7 +307,9 @@ verify_status=$?
 cat "$VERIFY_LOG"
 rm -f "$VERIFY_LOG" "$CPU_LEDGER"
 
-if [[ "$verify_status" == "0" ]]; then
+if [[ "$verify_status" == "0" && -n "$OTOS_ONLY_TESTING" ]]; then
+  echo "check: PASSED (scoped to $OTOS_ONLY_TESTING) — iteration feedback, NOT verification evidence"
+elif [[ "$verify_status" == "0" ]]; then
   echo "check: PASSED — evidence is valid only for the tree as it stands right now"
 else
   echo "check: FAILED — read the stage line above; do not re-run until it is fixed" >&2

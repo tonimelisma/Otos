@@ -10,6 +10,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/script/lib/xcode.sh"
 
 otos_require_full_xcode
+otos_build_settings "$ROOT_DIR"
 
 /usr/bin/xcodebuild \
   -project "$ROOT_DIR/Otos.xcodeproj" \
@@ -17,4 +18,5 @@ otos_require_full_xcode
   -configuration Debug \
   -destination "platform=macOS" \
   -derivedDataPath "$ROOT_DIR/build/DerivedData" \
-  build-for-testing
+  -showBuildTimingSummary \
+  build-for-testing "${OTOS_BUILD_SETTINGS[@]}"

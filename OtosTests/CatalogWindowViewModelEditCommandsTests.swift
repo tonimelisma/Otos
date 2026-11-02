@@ -85,9 +85,7 @@ struct CatalogWindowViewModelEditCommandsTests {
     }
 
     @Test func revertToOriginalUntrimsTheVideoInTheLoupe() async throws {
-        let fixture = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appending(path: "Fixtures/Media/mov-no-embedded-capture-date.mov")
+        let fixture = SourceTree.mediaFixtures.appending(path: "mov-no-embedded-capture-date.mov")
         try await withEditableLibrary(fileCount: 1, fileExtension: "mov", write: { url in
             try FileManager.default.copyItem(at: fixture, to: url)
         }) { library in

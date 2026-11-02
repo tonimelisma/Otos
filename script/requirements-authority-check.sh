@@ -2,274 +2,185 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEFAULT_REQUIREMENTS="$ROOT_DIR/docs/requirements.md"
-DEFAULT_ROADMAP="$ROOT_DIR/docs/product/roadmap.md"
-
-fail() {
-  echo "requirements authority check failed: $1" >&2
-  exit 1
-}
-
-# No allowlist — every row is validated. The gate must stay green without bypass.
-ALLOWLIST=()
-ALLOWLIST_MAX_COUNT=0
-
-is_allowlisted() {
-  local id="$1"
-  for a in "${ALLOWLIST[@]:-}"; do
-    [[ "$a" == "$id" ]] && return 0
-  done
-  return 1
-}
-
-check_swift_test_body() {
-  local test_file="$1"
-  local test_name="$2"
-  local requirement_id="$3"
-
-  python3 - "$test_file" "$test_name" "$requirement_id" <<'PY'
+# The whole check is one Python pass over docs/requirements.md, reading each cited
+# file once. A process per row or per citation would be thousands of spawns, and
+# this gate runs before every build in script/check.sh. `self-test` below drives
+# this function as a black box against seeded fixtures.
+check_root() {
+  python3 - "$1" <<'PY'
+import os
 import re
 import sys
+from collections import Counter
 
-path, name, requirement_id = sys.argv[1:]
-source = open(path, encoding="utf-8").read()
-declaration = re.search(r"\bfunc\s+" + re.escape(name) + r"\s*\([^)]*\)[^{]*\{", source)
-if declaration is None:
-    print(f"requirements authority check failed: requirement {requirement_id} names missing Swift test {path}#{name}", file=sys.stderr)
+root = sys.argv[1]
+requirements = os.path.join(root, "docs/requirements.md")
+roadmap = os.path.join(root, "docs/product/roadmap.md")
+
+
+def fail(message):
+    print(f"requirements authority check failed: {message}", file=sys.stderr)
     raise SystemExit(1)
 
-opening = source.find("{", declaration.start(), declaration.end())
-depth = 0
-closing = None
-for index in range(opening, len(source)):
-    if source[index] == "{":
-        depth += 1
-    elif source[index] == "}":
-        depth -= 1
-        if depth == 0:
-            closing = index
-            break
-if closing is None:
-    print(f"requirements authority check failed: requirement {requirement_id} has unterminated Swift test {path}#{name}", file=sys.stderr)
-    raise SystemExit(1)
 
-body = source[opening + 1:closing]
-body_without_tautology = re.sub(r"#expect\s*\(\s*true\b[^\n]*\)", "", body)
-if not any(token in body_without_tautology for token in ("#expect(", "#require(", "Issue.record(")) and re.search(
-    r"\b(?:assert[A-Za-z_]*|waitFor[A-Za-z_]*|verify[A-Za-z_]*)\s*\(",
-    body_without_tautology,
-) is None:
-    print(
-        f"requirements authority check failed: requirement {requirement_id} cites a Swift test with no failing assertion {path}#{name}",
-        file=sys.stderr,
-    )
-    raise SystemExit(1)
-PY
-}
+def strip_spaces(text):
+    return text.strip(" ")
 
-check_root() {
-  local root="$1"
-  local requirements="$root/docs/requirements.md"
-  local roadmap="$root/docs/product/roadmap.md"
-  local shared_proofs_file
-  shared_proofs_file="$(mktemp)"
 
-  if [[ ! -f "$requirements" ]]; then
-    fail "missing docs/requirements.md"
-  fi
+def report_matches(lines, pattern):
+    """grep -n: print every matching line, report whether any matched."""
+    matched = False
+    for number, line in enumerate(lines, start=1):
+        if re.search(pattern, line):
+            print(f"{number}:{line}")
+            matched = True
+    return matched
 
-  if grep -nE '\|[[:space:]]*Proposed[[:space:]]*\|' "$requirements"; then
-    fail "docs/requirements.md must not contain Proposed requirement rows"
-  fi
 
-  if grep -n '`Proposed`' "$requirements"; then
-    fail "docs/requirements.md must not define Proposed as a requirement status"
-  fi
+if not os.path.isfile(requirements):
+    fail("missing docs/requirements.md")
 
-  if grep -n '^## Future Rows' "$requirements"; then
-    fail "docs/requirements.md must not contain a future-row backlog section"
-  fi
+lines = open(requirements, encoding="utf-8").read().splitlines()
 
-  if grep -nE '\|[[:space:]]*(Process|Tooling|Testing)[[:space:]]*\|' "$requirements"; then
-    fail "docs/requirements.md must not contain Process/Tooling/Testing type columns (process rules live in AGENTS.md)"
-  fi
+if report_matches(lines, r"\|\s*Proposed\s*\|"):
+    fail("docs/requirements.md must not contain Proposed requirement rows")
+if report_matches(lines, r"`Proposed`"):
+    fail("docs/requirements.md must not define Proposed as a requirement status")
+if report_matches(lines, r"^## Future Rows"):
+    fail("docs/requirements.md must not contain a future-row backlog section")
+if report_matches(lines, r"\|\s*(Process|Tooling|Testing)\s*\|"):
+    fail("docs/requirements.md must not contain Process/Tooling/Testing type columns (process rules live in AGENTS.md)")
+if os.path.isfile(roadmap) and report_matches(open(roadmap, encoding="utf-8").read().splitlines(), r"^Requirement IDs:"):
+    fail("docs/product/roadmap.md must not assign requirement IDs to unimplemented planning items")
 
-  if [[ -f "$roadmap" ]] && grep -n '^Requirement IDs:' "$roadmap"; then
-    fail "docs/product/roadmap.md must not assign requirement IDs to unimplemented planning items"
-  fi
+rows = [line for line in lines if line.startswith("|")]
 
-  if (( ${#ALLOWLIST[@]} > ALLOWLIST_MAX_COUNT )); then
-    fail "requirements allowlist grew to ${#ALLOWLIST[@]} rows (maximum ${ALLOWLIST_MAX_COUNT})"
-  fi
+# Literal pipes inside cells must be escaped. Table rows are pipe-delimited with
+# exactly 7 fields (leading empty + 5 columns + trailing empty). Any extra pipe
+# inside a cell without escaping breaks the field count and fails here.
+for line in rows:
+    fields = len(line.split("|"))
+    if fields != 7:
+        fail(f"requirement row has {fields} pipe-delimited fields, expected 7 (literal pipes inside cells must be escaped): {line}")
 
-  # Literal pipes inside cells must be escaped. Table rows are pipe-delimited with
-  # exactly 7 fields (leading empty + 5 columns + trailing empty). Any extra pipe
-  # inside a cell without escaping breaks the field count and fails here.
-  # Check all markdown table rows for structural health.
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    nf=$(printf '%s\n' "$line" | awk -F'|' '{print NF}')
-    if [[ "$nf" != "7" ]]; then
-      fail "requirement row has $nf pipe-delimited fields, expected 7 (literal pipes inside cells must be escaped): $line"
-    fi
-  done < <(grep -E '^\|' "$requirements" || true)
+sources = {}
 
-  # Check each requirement row — portable awk, no BSD/GNU sed alternation.
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    id=$(printf '%s\n' "$line" | awk -F'|' '{gsub(/^ *| *$/,"",$2); print $2}')
-    # Skip header and separator rows
-    if [[ "$id" == "ID" ]] || [[ "$id" == "---" ]]; then
-      continue
-    fi
-    if [[ -z "$id" ]]; then
-      fail "requirement row missing ID: $line"
-    fi
-    if ! [[ "$id" =~ ^(ARC|APP|ENR|MED)-[0-9]+[A-Z]*$ ]]; then
-      fail "requirement row has unrecognized ID '$id': $line"
-    fi
-    if is_allowlisted "$id"; then
-      continue
-    fi
-    req=$(printf '%s\n' "$line" | awk -F'|' '{gsub(/^ *| *$/,"",$3); print $3}')
-    acc=$(printf '%s\n' "$line" | awk -F'|' '{gsub(/^ *| *$/,"",$4); print $4}')
-    tested=$(printf '%s\n' "$line" | awk -F'|' '{gsub(/^ *| *$/,"",$6); print $6}')
-    if printf '%s\n' "$req $acc" | grep -qE 'animatingDifferences|NSAnimationContext|PRAGMA|COALESCE|INDEXED BY|plan [0-9]{4}|n ≥|k='; then
-      fail "requirement $id contains implementation token"
-    fi
-    if printf '%s\n' "$line" | grep -qE '[0-9]+ms|[0-9]+ ms'; then
-      fail "requirement $id contains bare timing constant"
-    fi
-    if printf '%s\n' "$tested" | grep -q "manual:"; then
-      fail "requirement $id uses manual: verification (not machine-checked)"
-    fi
-    if [[ "$tested" == "—" ]] || [[ -z "$tested" ]]; then
-      fail "requirement $id has no Tested by path"
-    fi
+
+def source_of(path):
+    if path not in sources:
+        try:
+            sources[path] = open(path, encoding="utf-8").read()
+        except OSError:
+            sources[path] = None
+    return sources[path]
+
+
+def check_swift_test_body(path, name, token, requirement_id):
+    source = source_of(path)
+    declaration = None if source is None else re.search(r"\bfunc\s+" + re.escape(name) + r"\s*\([^)]*\)[^{]*\{", source)
+    if declaration is None:
+        fail(f"requirement {requirement_id} names missing Swift test {token}")
+    opening = source.find("{", declaration.start(), declaration.end())
+    depth = 0
+    closing = None
+    for index in range(opening, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                closing = index
+                break
+    if closing is None:
+        fail(f"requirement {requirement_id} has unterminated Swift test {path}#{name}")
+    body = re.sub(r"#expect\s*\(\s*true\b[^\n]*\)", "", source[opening + 1:closing])
+    if not any(token in body for token in ("#expect(", "#require(", "Issue.record(")) and re.search(
+        r"\b(?:assert[A-Za-z_]*|waitFor[A-Za-z_]*|verify[A-Za-z_]*)\s*\(", body
+    ) is None:
+        fail(f"requirement {requirement_id} cites a Swift test with no failing assertion {path}#{name}")
+
+
+shared_proofs = Counter()
+for line in rows:
+    cells = line.split("|")
+    requirement_id = strip_spaces(cells[1])
+    if requirement_id in ("ID", "---"):
+        continue
+    if not requirement_id:
+        fail(f"requirement row missing ID: {line}")
+    if not re.fullmatch(r"(ARC|APP|ENR|MED)-[0-9]+[A-Z]*", requirement_id):
+        fail(f"requirement row has unrecognized ID '{requirement_id}': {line}")
+    requirement, acceptance, tested = strip_spaces(cells[2]), strip_spaces(cells[3]), strip_spaces(cells[5])
+
+    if re.search(r"animatingDifferences|NSAnimationContext|PRAGMA|COALESCE|INDEXED BY|plan [0-9]{4}|n ≥|k=", f"{requirement} {acceptance}"):
+        fail(f"requirement {requirement_id} contains implementation token")
+    if re.search(r"[0-9]+ms|[0-9]+ ms", line):
+        fail(f"requirement {requirement_id} contains bare timing constant")
+    if "manual:" in tested:
+        fail(f"requirement {requirement_id} uses manual: verification (not machine-checked)")
+    if tested in ("—", ""):
+        fail(f"requirement {requirement_id} has no Tested by path")
 
     # Verification-cell grammar:
     # - executable proof: backticked `path#symbol` entries
     # - honest debt: `unverified: <specific clause and reason>`
     # `manual:` is already rejected above. At least one of the two valid forms must be present.
-    has_unverified=0
-    if printf '%s\n' "$tested" | grep -q "unverified:"; then
-      # Require non-empty reason after colon
-      if ! printf '%s\n' "$tested" | grep -qE 'unverified:[[:space:]]*[^[:space:]]+'; then
-        fail "requirement $id has malformed unverified: entry (must be 'unverified: <specific clause and reason>'): $tested"
-      fi
-      has_unverified=1
-    fi
+    has_unverified = False
+    if "unverified:" in tested:
+        if not re.search(r"unverified:\s*\S+", tested):
+            fail(f"requirement {requirement_id} has malformed unverified: entry (must be 'unverified: <specific clause and reason>'): {tested}")
+        has_unverified = True
+    has_valid_proof = False
+    for inner in re.findall(r"`([^`]+)`", tested):
+        if "#" in inner:
+            has_valid_proof = True
+        elif inner.startswith("unverified:"):
+            has_unverified = True
+        else:
+            fail(f"requirement {requirement_id} has invalid verification grammar (backtick entries must be path#symbol): {tested}")
+    if not has_valid_proof and not has_unverified:
+        fail(f"requirement {requirement_id} Tested by has invalid verification grammar (must contain path#symbol or unverified: <reason>): {tested}")
 
-    # Extract backtick tokens and validate each contains '#'
-    # Find all `...` occurrences
-    backtick_tokens=$(printf '%s\n' "$tested" | grep -oE '`[^`]+`' || true)
-    has_valid_proof=0
-    invalid_backtick=0
-    if [[ -n "$backtick_tokens" ]]; then
-      while IFS= read -r token; do
-        [[ -z "$token" ]] && continue
-        inner="${token#\`}"
-        inner="${inner%\`}"
-        if [[ "$inner" == *"#"* ]]; then
-          has_valid_proof=1
-        else
-          # Backtick without # is not a valid proof; treat as invalid grammar unless it's unverified inside backticks
-          if [[ "$inner" == unverified:* ]]; then
-            has_unverified=1
-          else
-            invalid_backtick=1
-          fi
-        fi
-      done <<< "$backtick_tokens"
-      if [[ "$invalid_backtick" -ne 0 ]]; then
-        fail "requirement $id has invalid verification grammar (backtick entries must be path#symbol): $tested"
-      fi
-    fi
+    # For each proof token, verify the file and symbol exist. Existence only, plus
+    # a Swift test's body must be able to fail.
+    for token in re.findall(r"`([^`]+#[^`]+)`", tested):
+        test_path, test_name = (strip_spaces(part) for part in token.split("#", 1))
+        test_file = os.path.join(root, test_path)
+        if test_path.endswith(".swift"):
+            check_swift_test_body(test_file, test_name, token, requirement_id)
+            shared_proofs[token] += 1
+        elif test_path.endswith(".sh"):
+            source = source_of(test_file)
+            if source is None or test_name not in source:
+                fail(f"requirement {requirement_id} names missing script self-test {token}")
+        else:
+            fail(f"requirement {requirement_id} names unsupported test file {test_path}")
 
-    if [[ "$has_valid_proof" -eq 0 ]] && [[ "$has_unverified" -eq 0 ]]; then
-      fail "requirement $id Tested by has invalid verification grammar (must contain path#symbol or unverified: <reason>): $tested"
-    fi
+for token, count in sorted(shared_proofs.items()):
+    if count > 6:
+        print(f"requirements authority warning: proof {token} is cited by {count} rows", file=sys.stderr)
 
-    # For each valid proof token, verify file/symbol exists. Do not claim semantics, only existence.
-    named_tests=$(printf '%s\n' "$tested" | grep -oE '`[^`]+#[^`]+`' || true)
-    if [[ -n "$named_tests" ]]; then
-      while IFS= read -r token; do
-        [[ -z "$token" ]] && continue
-        token="${token#\`}"
-        token="${token%\`}"
-        test_path="${token%%#*}"
-        test_name="${token#*#}"
-        # Trim whitespace
-        test_path=$(printf '%s\n' "$test_path" | awk '{gsub(/^ *| *$/,"",$0); print}')
-        test_name=$(printf '%s\n' "$test_name" | awk '{gsub(/^ *| *$/,"",$0); print}')
-        test_file="$root/$test_path"
-        if [[ "$test_path" == *.swift ]]; then
-          if ! grep -Eq "func[[:space:]]+$test_name[[:space:]]*\\(" "$test_file" 2>/dev/null; then
-            fail "requirement $id names missing Swift test $token"
-          fi
-          check_swift_test_body "$test_file" "$test_name" "$id" || return 1
-          printf '%s\n' "$token" >> "$shared_proofs_file"
-        elif [[ "$test_path" == *.sh ]]; then
-          if ! grep -Fq "$test_name" "$test_file" 2>/dev/null; then
-            fail "requirement $id names missing script self-test $token"
-          fi
-        else
-          fail "requirement $id names unsupported test file $test_path"
-        fi
-      done <<< "$named_tests"
-    fi
-  done < <(grep -E '^\|' "$requirements" || true)
+# Every backtick path in Implemented-in / Tested-by cells must exist on disk.
+# Traceability only — validates that cited paths are real files, not that they prove semantics.
+missing = False
+for line in rows:
+    if line.startswith("| ID |") or line.startswith("| ---"):
+        continue
+    cells = line.split("|")
+    for cell in cells[4:6]:
+        for token in re.findall(r"`([^`]+)`", cell):
+            path = token.split("#", 1)[0]
+            if path.startswith(("manual:", "unverified:")) or "*" in path:
+                continue
+            path = strip_spaces(path)
+            if path and not os.path.exists(os.path.join(root, path)):
+                print(f"missing path cited in requirements.md: {path}", file=sys.stderr)
+                missing = True
+if missing:
+    fail("one or more Implemented-in / Tested-by paths do not exist on disk")
 
-  if [[ -s "$shared_proofs_file" ]]; then
-    while read -r count token; do
-      if (( count > 6 )); then
-        echo "requirements authority warning: proof $token is cited by $count rows" >&2
-      fi
-    done < <(sort "$shared_proofs_file" | uniq -c)
-  fi
-  rm -f "$shared_proofs_file"
-
-  # Every backtick path in Implemented-in / Tested-by cells must exist on disk.
-  # Traceability only — validates that cited paths are real files, not that they prove semantics.
-  missing=0
-  while IFS= read -r path; do
-    [[ -z "$path" ]] && continue
-    path="${path%%#*}"
-    case "$path" in
-      manual:*) continue ;;
-      unverified:*) continue ;;
-      *\**) continue ;;
-    esac
-    # Trim
-    path=$(printf '%s\n' "$path" | awk '{gsub(/^ *| *$/,"",$0); print}')
-    [[ -z "$path" ]] && continue
-    if [[ ! -e "$root/$path" ]]; then
-      echo "missing path cited in requirements.md: $path" >&2
-      missing=1
-    fi
-  done < <(
-    awk '
-      /^\| ID \|/ { next }
-      /^\| ---/ { next }
-      /^\|/ {
-        n = split($0, cols, "|")
-        for (i = 5; i <= 6; i++) {
-          cell = cols[i]
-          while (match(cell, /`[^`]+`/)) {
-            token = substr(cell, RSTART+1, RLENGTH-2)
-            print token
-            cell = substr(cell, RSTART+RLENGTH)
-          }
-        }
-      }
-    ' "$requirements"
-  )
-
-  if [[ "$missing" -ne 0 ]]; then
-    fail "one or more Implemented-in / Tested-by paths do not exist on disk"
-  fi
-
-  echo "requirements authority check: clean"
+print("requirements authority check: clean")
+PY
 }
 
 self_test() {

@@ -142,13 +142,9 @@ struct TrashStatusBarRenderingTests {
         ("waiting-download", .init(pendingCount: 1, movedCount: 0, bytesToDownload: 0, attention: .waitingForDownload)),
     ]
 
-    /// `<checkout>/build/DesignEvidence/trash-status-bar`, found from this file's own
-    /// location in `<checkout>/OtosTests/`.
-    private static func evidenceDirectory(filePath: String = #filePath) -> URL {
-        URL(filePath: filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appending(path: "build/DesignEvidence/trash-status-bar", directoryHint: .isDirectory)
+    /// `<checkout>/build/DesignEvidence/trash-status-bar`.
+    private static func evidenceDirectory() -> URL {
+        SourceTree.root.appending(path: "build/DesignEvidence/trash-status-bar", directoryHint: .isDirectory)
     }
 
     @Test func everyStateRendersAtOneHeight() throws {

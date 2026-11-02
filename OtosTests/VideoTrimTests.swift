@@ -9,9 +9,7 @@ import Testing
 @MainActor
 struct VideoTrimTests {
     private var fixture: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appending(path: "Fixtures/Media/mov-no-embedded-capture-date.mov")
+        SourceTree.mediaFixtures.appending(path: "mov-no-embedded-capture-date.mov")
     }
 
     @Test func thePlayerPlaysTheTrimAndReportsItBack() {

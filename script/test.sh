@@ -20,9 +20,13 @@ echo "Capturing test output to $LOG_FILE"
 # entry substitutes `$(OTOS_SCALE_TEST)`, which only resolves when passed as a
 # trailing build-setting-style argument here, not as an inherited env var.
 #
+# OTOS_ONLY_TESTING narrows the run to space-separated `OtosTests/<Suite>`
+# identifiers (script/check.sh --only). A narrowed run is iteration feedback, not
+# verification evidence.
+#
 # macOS ships bash 3.2, where `"${ARR[@]}"` on a zero-element array is an unbound
-# -variable error under `set -u` — branch on the two invocations rather than rely
-# on an always-safe empty-array expansion idiom.
+# -variable error under `set -u`; the argument array therefore always starts
+# non-empty and only grows.
 TEST_HOST_FOOTPRINT_LIMIT_MB="${OTOS_TEST_HOST_FOOTPRINT_LIMIT_MB:-2048}"
 
 test_host_descendants() {
@@ -91,24 +95,24 @@ run_tests_with_footprint_guard() {
   local monitor_file
   monitor_file="$(mktemp)"
 
+  local args=(
+    -project "$ROOT_DIR/Otos.xcodeproj"
+    -scheme Otos
+    -configuration Debug
+    -destination "platform=macOS"
+    -derivedDataPath "$ROOT_DIR/build/DerivedData"
+    -enableCodeCoverage NO
+    test-without-building
+  )
+  local identifier
+  for identifier in ${OTOS_ONLY_TESTING:-}; do
+    args+=("-only-testing:$identifier")
+  done
   if [[ -n "${OTOS_SCALE_TEST:-}" ]]; then
     echo "OTOS_SCALE_TEST set: including the on-disk projection scale test."
-    /usr/bin/xcodebuild \
-      -project "$ROOT_DIR/Otos.xcodeproj" \
-      -scheme Otos \
-      -configuration Debug \
-      -destination "platform=macOS" \
-      -derivedDataPath "$ROOT_DIR/build/DerivedData" \
-      test-without-building "OTOS_SCALE_TEST=$OTOS_SCALE_TEST" > "$LOG_FILE" 2>&1 &
-  else
-    /usr/bin/xcodebuild \
-      -project "$ROOT_DIR/Otos.xcodeproj" \
-      -scheme Otos \
-      -configuration Debug \
-      -destination "platform=macOS" \
-      -derivedDataPath "$ROOT_DIR/build/DerivedData" \
-      test-without-building > "$LOG_FILE" 2>&1 &
+    args+=("OTOS_SCALE_TEST=$OTOS_SCALE_TEST")
   fi
+  /usr/bin/xcodebuild "${args[@]}" > "$LOG_FILE" 2>&1 &
   local xcodebuild_pid="$!"
   monitor_test_host_footprint "$xcodebuild_pid" "$monitor_file" &
   local monitor_pid="$!"
