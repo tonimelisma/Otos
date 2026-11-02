@@ -168,8 +168,9 @@ is level, or plumb when it was drawn nearer vertical than horizontal, as one `St
 step, and disarms the ruler. A drag shorter than 8 pt is a click and draws nothing.
 
 `Suggested` places a crop by the subject Vision finds in the frame the tool shows (objectness
-saliency, else attention saliency), keeping the chosen aspect or the frame's own when it is
-Custom.
+saliency, else attention saliency). Vision reports only a rectangle around the subject; each
+button turns it into a crop. Under Custom, the tool's starting aspect, the crop takes whatever
+shape the subject calls for. Under a chosen aspect it keeps that shape.
 - **`Subject`** is the smallest such crop that holds the subject with a margin of up to 15% on
   each side. The margin goes only where the frame has room, so a subject that fills the frame
   or touches an edge is still cropped in.

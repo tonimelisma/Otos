@@ -306,10 +306,10 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
-    /// C pressed before the photo has opened (the panel opens with it) must not decide the
-    /// aspect's orientation from an unknown frame: a portrait photo's Original aspect stays
-    /// portrait once its size is known, instead of snapping a drag to a landscape crop.
-    @Test func cropBeforeThePhotoOpensKeepsAPortraitPhotosAspectPortrait() async throws {
+    /// The crop tool starts with Custom, even when C is pressed before the photo has opened;
+    /// Original chosen once it opens stands as the photo does, portrait here, never a
+    /// landscape guess from an unknown frame.
+    @Test func cropStartsCustomAndOriginalStandsAsThePhotoDoes() async throws {
         try await withEditableLibrary(fileCount: 1, fileExtension: "heic", write: writeRotatedHEIC) { library in
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
@@ -318,7 +318,9 @@ struct CatalogWindowViewModelEditTests {
 
             model.toggleCropTool()
             #expect(model.isCropping)
+            #expect(model.cropAspect == .free)
             try await waitUntil { model.canEdit }
+            model.setCropAspect(.original)
 
             let ratio = try #require(model.cropPixelRatio)
             #expect(abs(ratio - 64.0 / 96.0) < 0.001)

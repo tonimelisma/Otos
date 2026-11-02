@@ -33,9 +33,11 @@ extension CatalogWindowViewModel {
         guard viewMode == .loupe, targetIDs(.current).count == 1 else { return }
         isPickingNeutral = false
         isCropping = true
-        cropAspect = .original
-        // The photo may still be opening, so its frame is unknown here; the aspect follows
-        // the crop's shape once it is known rather than guessing one now.
+        // Custom: a crop is free to take whatever shape suits the photo, and a suggested
+        // crop with it. A fixed shape is the person's choice from the Aspect menu.
+        cropAspect = .free
+        // The photo may still be opening, so its frame is unknown here; a constrained
+        // aspect follows the crop's shape once it is known rather than guessing one now.
         cropAspectLandscapeChoice = nil
         requestLiveEditRender()
         OtosLog.ui.noticeOperation("edit.crop", phase: "started")
