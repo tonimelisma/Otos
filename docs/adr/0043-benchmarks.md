@@ -1,4 +1,4 @@
-# ADR 0043: Benchmarks are opt-in, count instructions, and are recorded per commit
+# ADR 0043: Benchmarks are opt-in, count instructions, are recorded per commit, and are compared before merge
 
 - Status: Accepted
 - Last updated: 2026-11-01
@@ -61,6 +61,16 @@ The tooling found:
 - **History is read with `script/bench.sh history [case]`.** It lists the records, newest
   first, with each case's change in instructions from the previous record on the same
   machine.
+- **An app-changing PR is compared with its base before it merges.**
+  `script/bench.sh compare` sets the PR's record against its merge base with `origin/main`,
+  measuring the base first in a detached checkout when it has none.
+  - A case that retired **more than 2% more instructions** than the base is flagged. The
+    owner decides whether it merges.
+  - A smaller change is only reported.
+  - 2% is four times the run-to-run variation measured on unchanged code (about ±0.5%).
+    It catches a real regression without flagging noise.
+  - The owner chose permission over an automatic block. Some regressions are the price
+    of a feature, and that trade is a product decision.
 - **A dirty tree records nothing.** A run on uncommitted changes prints its results only,
   because no commit is what it measured.
 
@@ -73,6 +83,8 @@ The tooling found:
   project whose owner code is reached through the test target. Adopting it would mean
   restructuring the build or benchmarking copies of the code, plus a third-party
   dependency.
+- **An automatic block above the threshold.** A regression can be the right trade for a
+  feature. The owner asked to be shown it and to decide, not to have it refused.
 - **Wall-time budgets in `check.sh`.** A budget measured under parallel load either fails
   on load or is set so loose it catches nothing (ADR 0033).
 - **A results file committed to the tree.** Every run would be a commit, and the file
@@ -80,9 +92,11 @@ The tooling found:
 
 ## Consequences
 
-- A slower path shows up as a jump in `bench.sh history`, against the commit that caused
-  it. Nothing fails automatically: reading the history is part of performance work, not
-  a gate.
+- A regression of more than 2% stops an app-changing PR before merge, until the owner
+  says whether it ships. Smaller drifts show in `bench.sh history`, against the commit
+  that caused each one.
+- Each app-changing PR costs one benchmark run before merge and one on `main` after it.
+  A base without a record costs one more run, in a fresh checkout.
 - Numbers compare only on one machine and configuration. The record carries both, and
   `history` compares within a machine.
 - Notes stay in the local clone unless pushed (`git push origin refs/notes/benchmarks`).
