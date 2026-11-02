@@ -98,6 +98,56 @@ struct CatalogProjectionEmptyStateTests {
         await store.shutdown()
     }
 
+    /// The groups are a fact about the whole catalog, so a change of scope neither waits for
+    /// their build nor starts one: with the build parked at its suspension, choosing a
+    /// library publishes it; released, the groups are built exactly once.
+    @Test func aScopeChangeNeitherWaitsForNorRebuildsDuplicates() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try "jpeg".write(to: root.appending(path: "a.jpg"), atomically: true, encoding: .utf8)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+
+        let gate = ArrivalGate()
+        let projection = CatalogProjection(cadence: .milliseconds(10), duplicatesBuilder: { _, _ in
+            await gate.arrive()
+            return .empty
+        })
+        let recorder = EmptyStateRecorder()
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer {
+            recordingTask.cancel()
+        }
+
+        await gate.waitForArrivals(1)
+        await projection.updateSidebarSelection(.library(rootPath))
+        let chosen = await recorder.waitForState { states in
+            states.contains { $0.resolvedSidebarSelection == .library(rootPath) }
+        }
+        #expect(chosen.last?.duplicates == nil)
+
+        await gate.open()
+        _ = await recorder.waitForState { states in
+            states.contains { $0.duplicates != nil }
+        }
+        try await waitUntil {
+            let windowSettled = await projection.isQuiescent
+            let duplicatesSettled = await projection.duplicatesAreQuiescent
+            return windowSettled && duplicatesSettled
+        }
+        #expect(await gate.arrivalCount == 1)
+        await store.shutdown()
+    }
+
     /// Before the catalog's first load nothing is known, so nothing is claimed: no
     /// "No Media", no title (APP-044). A catalog that really is empty says so once loaded.
     @Test func beforeTheCatalogLoadsNoEmptinessIsClaimed() async throws {

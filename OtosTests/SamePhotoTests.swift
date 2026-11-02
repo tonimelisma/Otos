@@ -18,7 +18,15 @@ struct SamePhotoTests {
         return pixels
     }
 
-    private static func candidate(
+    /// A still as the rule sees it: its column facts, and the details read for a proposed
+    /// pair — the render, the sub-seconds and the burst identifier.
+    private struct Still {
+        let candidate: SamePhotoCandidate
+        let subsecond: String?
+        let burst: String?
+    }
+
+    private static func still(
         _ path: String,
         raw: Bool = false,
         instant: Double? = 1000,
@@ -26,61 +34,69 @@ struct SamePhotoTests {
         model: String? = "ILCE-6700",
         burst: String? = nil,
         hash: UInt64 = 0xF0F0
-    ) -> SamePhotoCandidate {
-        SamePhotoCandidate(
-            copy: DuplicateCopy(
-                id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path)),
-                libraryDisplayName: "Photos",
-                byteSize: 1000,
-                createdAt: nil,
-                pixelWidth: 4000,
-                pixelHeight: 3000,
-                mediaChoice: .notRated,
-                isEdited: false,
-                hasCompanions: false
+    ) -> Still {
+        Still(
+            candidate: SamePhotoCandidate(
+                copy: DuplicateCopy(
+                    id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path)),
+                    libraryDisplayName: "Photos",
+                    byteSize: 1000,
+                    createdAt: nil,
+                    pixelWidth: 4000,
+                    pixelHeight: 3000,
+                    mediaChoice: .notRated,
+                    isEdited: false,
+                    hasCompanions: false
+                ),
+                isRaw: raw,
+                captureInstant: instant,
+                cameraModel: instant == nil ? nil : model,
+                serialNumber: nil,
+                aspectRatio: 4.0 / 3.0,
+                differenceHash: hash
             ),
-            isRaw: raw,
-            captureInstant: instant,
-            fractionalSecondDigits: subsecond,
-            cameraModel: instant == nil ? nil : model,
-            serialNumber: nil,
-            burstIdentifier: burst,
-            aspectRatio: 4.0 / 3.0,
-            differenceHash: hash
+            subsecond: subsecond,
+            burst: burst
         )
     }
 
     private static func groups(
-        _ candidates: [SamePhotoCandidate],
+        _ stills: [Still],
         signatures: [String: [UInt8]]
     ) -> [Set<String>] {
-        let byID = Dictionary(uniqueKeysWithValues: candidates.compactMap { candidate in
-            signatures[candidate.copy.id.relativePath.rawValue].flatMap { gray in
-                RenderSignature(differenceHash: candidate.differenceHash, gray: gray).map { (candidate.copy.id, $0) }
+        let details = Dictionary(uniqueKeysWithValues: stills.compactMap { still in
+            signatures[still.candidate.copy.id.relativePath.rawValue].flatMap { gray in
+                RenderSignature(differenceHash: still.candidate.differenceHash, gray: gray).map { signature in
+                    (
+                        still.candidate.copy.id,
+                        SamePhotoDetail(signature: signature, fractionalSecondDigits: still.subsecond, burstIdentifier: still.burst)
+                    )
+                }
             }
         })
-        return SamePhotoPolicy.groups(candidates: candidates, signatures: byID, excluding: [])
+        let pairs = SamePhotoPolicy.candidatePairs(stills.map(\.candidate), excluding: [])
+        return SamePhotoPolicy.groups(pairs: pairs, details: details)
             .map { Set($0.copies.map(\.id.relativePath.rawValue)) }
     }
 
     @Test func burstFramesNeverGroupEvenWithIdenticalPixels() {
         let frames = [
-            Self.candidate("DSC_1.ARW", raw: true, subsecond: "123"),
-            Self.candidate("DSC_2.ARW", raw: true, subsecond: "707"),
+            Self.still("DSC_1.ARW", raw: true, subsecond: "123"),
+            Self.still("DSC_2.ARW", raw: true, subsecond: "707"),
         ]
         #expect(Self.groups(frames, signatures: ["DSC_1.ARW": Self.gray(90), "DSC_2.ARW": Self.gray(90)]).isEmpty)
 
         let iPhoneBurst = [
-            Self.candidate("IMG_1.HEIC", burst: "A"),
-            Self.candidate("IMG_2.HEIC", burst: "B"),
+            Self.still("IMG_1.HEIC", burst: "A"),
+            Self.still("IMG_2.HEIC", burst: "B"),
         ]
         #expect(Self.groups(iPhoneBurst, signatures: ["IMG_1.HEIC": Self.gray(90), "IMG_2.HEIC": Self.gray(90)]).isEmpty)
     }
 
     @Test func aResizedStrippedCopyGroupsWithItsSource() {
         let candidates = [
-            Self.candidate("IMG_1.HEIC", subsecond: "387"),
-            Self.candidate("WhatsApp/IMG-1.jpg", instant: nil),
+            Self.still("IMG_1.HEIC", subsecond: "387"),
+            Self.still("WhatsApp/IMG-1.jpg", instant: nil),
         ]
         let found = Self.groups(candidates, signatures: [
             "IMG_1.HEIC": Self.gray(90),
@@ -91,9 +107,9 @@ struct SamePhotoTests {
 
     @Test func aStrippedCopyEquallyCloseToTwoFramesJoinsNeither() {
         let candidates = [
-            Self.candidate("DSC_1.JPG", subsecond: "123"),
-            Self.candidate("DSC_2.JPG", subsecond: "707"),
-            Self.candidate("Downloads/photo.jpg", instant: nil),
+            Self.still("DSC_1.JPG", subsecond: "123"),
+            Self.still("DSC_2.JPG", subsecond: "707"),
+            Self.still("Downloads/photo.jpg", instant: nil),
         ]
         let found = Self.groups(candidates, signatures: [
             "DSC_1.JPG": Self.gray(90),
@@ -105,18 +121,18 @@ struct SamePhotoTests {
 
     @Test func aRawAndAProcessedFileNeverGroup() {
         let candidates = [
-            Self.candidate("DSC_1.ARW", raw: true, subsecond: "123"),
-            Self.candidate("DSC_1.JPG", subsecond: "123"),
+            Self.still("DSC_1.ARW", raw: true, subsecond: "123"),
+            Self.still("DSC_1.JPG", subsecond: "123"),
         ]
         #expect(Self.groups(candidates, signatures: ["DSC_1.ARW": Self.gray(90), "DSC_1.JPG": Self.gray(90)]).isEmpty)
     }
 
     @Test func farHashesAreNotEvenCompared() {
         let candidates = [
-            Self.candidate("a.jpg", subsecond: "1", hash: 0),
-            Self.candidate("b.jpg", subsecond: "1", hash: UInt64.max),
+            Self.still("a.jpg", subsecond: "1", hash: 0),
+            Self.still("b.jpg", subsecond: "1", hash: UInt64.max),
         ]
-        #expect(SamePhotoPolicy.candidatePairs(candidates, excluding: []).isEmpty)
+        #expect(SamePhotoPolicy.candidatePairs(candidates.map(\.candidate), excluding: []).isEmpty)
     }
 
     @Test func aSignatureOfOneImageMatchesItself() throws {
@@ -135,6 +151,16 @@ struct SamePhotoTests {
         #expect(signature.hammingDistance(to: signature) == 0)
         // A left-to-right gradient brightens at nearly every step of the 9 × 8 hash.
         #expect(signature.differenceHash.nonzeroBitCount > 48)
+    }
+
+    @Test func theMeanDifferenceIsTheExactAverageOfPixelDifferences() throws {
+        let black = try #require(RenderSignature(differenceHash: 0, gray: Self.gray(0)))
+        let white = try #require(RenderSignature(differenceHash: 0, gray: Self.gray(255)))
+        #expect(black.meanDifference(to: white) == 255)
+        let base = try #require(RenderSignature(differenceHash: 0, gray: Self.gray(90)))
+        let bumped = try #require(RenderSignature(differenceHash: 0, gray: Self.gray(90, noise: [0: 93, 9: 89])))
+        #expect(base.meanDifference(to: bumped) == 4.0 / 1024)
+        #expect(bumped.meanDifference(to: base) == 4.0 / 1024)
     }
 
     @Test func subsecondDigitsRoundTripThroughTheStoredRecord() {
@@ -181,7 +207,7 @@ struct SamePhotoTests {
             RenderSignatureResult(id: id, source: candidate.source, signature: signature),
         ]) == 1)
         #expect(try await store.renderSignatureCandidates(limit: 10).isEmpty)
-        #expect(try await store.renderSignatures(for: [id])[id] == signature)
+        #expect(try await store.samePhotoDetails(for: [id])[id]?.signature == signature)
         await store.shutdown()
     }
 }

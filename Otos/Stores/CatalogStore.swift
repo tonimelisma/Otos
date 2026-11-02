@@ -5950,8 +5950,9 @@ extension CatalogStore {
         return written
     }
 
-    /// Visible stills with a current render signature, with the facts the same-photo rule
-    /// compares. Grayscale renders are read separately, only for confirmed candidates.
+    /// Visible stills with a current render signature, with the column facts the same-photo
+    /// rule proposes pairs from. Renders and record facts are read separately, only for the
+    /// stills a proposed pair names (`samePhotoDetails`).
     func samePhotoCandidates(availableLibraryPaths: Set<LibraryRootPath>) async throws -> [SamePhotoCandidate] {
         let libraries = roots.values.filter { $0.root.kind == .library && availableLibraryPaths.contains($0.path) }
         guard !libraries.isEmpty else {
@@ -5967,16 +5968,25 @@ extension CatalogStore {
         }
     }
 
-    /// The stored render signatures of these rows.
-    func renderSignatures(for ids: [MediaAssetID]) async throws -> [MediaAssetID: RenderSignature] {
+    /// The details of these stills that confirm or reject a proposed pair: the render
+    /// signature and the capture facts kept in the metadata record. A still without a
+    /// stored signature has no detail; a record that does not decode leaves its two facts
+    /// unknown, which the rule treats as unknown (ADR 0039).
+    func samePhotoDetails(for ids: [MediaAssetID]) async throws -> [MediaAssetID: SamePhotoDetail] {
         let rowIDs = roots.rowIDSnapshot()
         return try await database().read { db in
-            var signatures: [MediaAssetID: RenderSignature] = [:]
+            var details: [MediaAssetID: SamePhotoDetail] = [:]
             for id in ids {
                 guard let rootID = rowIDs[id.libraryRootPath],
                       let row = try Row.fetchOne(
                           db,
-                          sql: "SELECT render_dhash, render_gray FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                          sql: """
+                          SELECT a.render_dhash, a.render_gray, m.metadata_extra_json
+                          FROM media_asset a
+                          LEFT JOIN asset_metadata m
+                            ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
+                          WHERE a.library_root_id = ? AND a.relative_path = ?
+                          """,
                           arguments: [rootID, id.relativePath.rawValue]
                       ),
                       let hash = row["render_dhash"] as Int64?,
@@ -5985,9 +5995,24 @@ extension CatalogStore {
                 else {
                     continue
                 }
-                signatures[id] = signature
+                let metadata: AssetMetadata? = (row["metadata_extra_json"] as String?).flatMap { json in
+                    do {
+                        return try Self.decodeMetadataExtraJSON(json)
+                    } catch {
+                        OtosLog.catalog.errorOperation("duplicates.samePhoto", phase: "metadataUndecodable", fields: [
+                            "relativePath": id.relativePath.rawValue,
+                        ])
+                        return nil
+                    }
+                }
+                let original = metadata?.timestamps.first { $0.role == CaptureTimestamps.Role.original.rawValue }
+                details[id] = SamePhotoDetail(
+                    signature: signature,
+                    fractionalSecondDigits: original?.fractionalSecondDigits,
+                    burstIdentifier: metadata?.burstIdentifier
+                )
             }
-            return signatures
+            return details
         }
     }
 }
