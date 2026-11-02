@@ -1,3 +1,4 @@
+import Accelerate
 import CoreGraphics
 import Foundation
 
@@ -47,12 +48,13 @@ nonisolated struct RenderSignature: Equatable, Sendable {
         (differenceHash ^ other.differenceHash).nonzeroBitCount
     }
 
+    /// The mean absolute difference of the two grayscale renders, on 0–255. Run on every
+    /// proposed pair, so it is vectorized. It is exact: every partial sum is an integer
+    /// below 1024 × 255, which a `Float` holds without rounding.
     func meanDifference(to other: RenderSignature) -> Double {
-        var total = 0
-        for index in gray.indices {
-            total += abs(Int(gray[index]) - Int(other.gray[index]))
-        }
-        return Double(total) / Double(gray.count)
+        let left = vDSP.integerToFloatingPoint(gray, floatingPointType: Float.self)
+        let right = vDSP.integerToFloatingPoint(other.gray, floatingPointType: Float.self)
+        return Double(vDSP.sumOfMagnitudes(vDSP.subtract(left, right))) / Double(gray.count)
     }
 
     private static func grayPixels(_ image: CGImage, width: Int, height: Int) -> [UInt8]? {

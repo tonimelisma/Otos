@@ -376,83 +376,93 @@ nonisolated struct DuplicatesTally: Equatable, Sendable {
 /// A RAW is never grouped with a processed file, and copies already in an identical group
 /// are left to that group.
 nonisolated enum SamePhotoPolicy {
-    /// Pairs worth comparing pixels for: same kind, same display aspect, a near hash, and
-    /// gate 1. Blocked by aspect and instant, so a library is never compared all against all.
+    /// Pairs worth reading details for: same kind, same display aspect, a near hash, and the
+    /// column half of gate 1. Blocked by aspect and instant, so a library is never compared
+    /// all against all.
     static func candidatePairs(
         _ candidates: [SamePhotoCandidate],
         excluding excluded: Set<MediaAssetID>
-    ) -> [(SamePhotoCandidate, SamePhotoCandidate)] {
+    ) -> [SamePhotoPair] {
         let eligible = candidates.filter { !excluded.contains($0.copy.id) && $0.aspectRatio != nil }
         let buckets = Dictionary(grouping: eligible) { candidate in
             AspectBucket(isRaw: candidate.isRaw, aspect: Int(((candidate.aspectRatio ?? 0) * 100).rounded()))
         }
-        var pairs: [(SamePhotoCandidate, SamePhotoCandidate)] = []
+        var pairs: [SamePhotoPair] = []
         for members in buckets.values where members.count > 1 {
             let byInstant = Dictionary(grouping: members.filter(\.hasCaptureMetadata)) { $0.captureInstant ?? 0 }
             let stripped = members.filter { !$0.hasCaptureMetadata }
             for group in byInstant.values {
                 for (index, left) in group.enumerated() {
                     for right in group[(index + 1)...] where isCandidate(left, right) {
-                        pairs.append((left, right))
+                        pairs.append(SamePhotoPair(left: left, right: right))
                     }
                 }
             }
             for (index, copy) in stripped.enumerated() {
                 for other in members where other.hasCaptureMetadata && isCandidate(copy, other) {
-                    pairs.append((copy, other))
+                    pairs.append(SamePhotoPair(left: copy, right: other))
                 }
                 for other in stripped[(index + 1)...] where isCandidate(copy, other) {
-                    pairs.append((copy, other))
+                    pairs.append(SamePhotoPair(left: copy, right: other))
                 }
             }
         }
         return pairs
     }
 
+    /// The column checks, the hash first: a file without capture metadata is tested against
+    /// every member of its aspect bucket, so the cheapest rejection runs first.
     static func isCandidate(_ left: SamePhotoCandidate, _ right: SamePhotoCandidate) -> Bool {
-        guard left.isRaw == right.isRaw,
+        guard (left.differenceHash ^ right.differenceHash).nonzeroBitCount <= RenderSignature.candidateHammingDistance,
+              left.isRaw == right.isRaw,
               let leftAspect = left.aspectRatio, let rightAspect = right.aspectRatio,
-              abs(log(leftAspect / rightAspect)) < 0.01,
-              (left.differenceHash ^ right.differenceHash).nonzeroBitCount <= RenderSignature.candidateHammingDistance
+              abs(log(leftAspect / rightAspect)) < 0.01
         else {
             return false
         }
         guard left.hasCaptureMetadata, right.hasCaptureMetadata else {
             return true
         }
-        func agree(_ first: String?, _ second: String?) -> Bool {
-            guard let first, let second else { return true }
-            return first == second
-        }
         return left.cameraModel == right.cameraModel
             && left.captureInstant == right.captureInstant
-            && agree(left.fractionalSecondDigits, right.fractionalSecondDigits)
             && agree(left.serialNumber, right.serialNumber)
+    }
+
+    /// The record half of gate 1: where both files carry them, the sub-seconds and the burst
+    /// identifier agree.
+    static func recordsAgree(_ left: SamePhotoDetail, _ right: SamePhotoDetail) -> Bool {
+        agree(left.fractionalSecondDigits, right.fractionalSecondDigits)
             && agree(left.burstIdentifier, right.burstIdentifier)
     }
 
-    /// Groups from confirmed pairs: gate 2 on every pair, gate 3 on every file without
-    /// capture metadata, then copies joined through any confirmed pair.
+    private static func agree(_ first: String?, _ second: String?) -> Bool {
+        guard let first, let second else { return true }
+        return first == second
+    }
+
+    /// Groups from proposed pairs: the record half of gate 1 and gate 2 on every pair, gate 3
+    /// on every file without capture metadata, then copies joined through any confirmed pair.
     static func groups(
-        candidates: [SamePhotoCandidate],
-        signatures: [MediaAssetID: RenderSignature],
-        excluding excluded: Set<MediaAssetID>
+        pairs: [SamePhotoPair],
+        details: [MediaAssetID: SamePhotoDetail]
     ) -> [DuplicateGroup] {
-        let pairs = candidatePairs(candidates, excluding: excluded)
         var confirmed: [(SamePhotoCandidate, SamePhotoCandidate, Double)] = []
-        for (left, right) in pairs {
-            guard let leftSignature = signatures[left.copy.id], let rightSignature = signatures[right.copy.id] else {
+        for pair in pairs {
+            guard let leftDetail = details[pair.left.copy.id], let rightDetail = details[pair.right.copy.id] else {
                 continue
             }
-            let difference = leftSignature.meanDifference(to: rightSignature)
+            if pair.left.hasCaptureMetadata, pair.right.hasCaptureMetadata, !recordsAgree(leftDetail, rightDetail) {
+                continue
+            }
+            let difference = leftDetail.signature.meanDifference(to: rightDetail.signature)
             if difference < RenderSignature.confirmedMeanDifference {
-                confirmed.append((left, right, difference))
+                confirmed.append((pair.left, pair.right, difference))
             }
         }
         // Gate 3: a file without capture metadata keeps only an edge to the one original
         // clearly closest; if two originals are about as close, it keeps none.
         var dropped: Set<Int> = []
-        let strippedIDs = Set(candidates.filter { !$0.hasCaptureMetadata }.map(\.copy.id))
+        let strippedIDs = Set(pairs.flatMap { [$0.left, $0.right] }.filter { !$0.hasCaptureMetadata }.map(\.copy.id))
         for strippedID in strippedIDs {
             let edges = confirmed.enumerated().compactMap { index, edge -> (Int, Double)? in
                 let other = edge.0.copy.id == strippedID ? edge.1 : (edge.1.copy.id == strippedID ? edge.0 : nil)
@@ -504,4 +514,10 @@ nonisolated enum SamePhotoPolicy {
         let isRaw: Bool
         let aspect: Int
     }
+}
+
+/// Two stills the column facts propose as one capture, before their details are read.
+nonisolated struct SamePhotoPair: Equatable, Sendable {
+    let left: SamePhotoCandidate
+    let right: SamePhotoCandidate
 }

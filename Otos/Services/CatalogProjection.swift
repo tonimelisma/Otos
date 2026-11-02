@@ -17,11 +17,12 @@ import OSLog
 /// the doorbell directly; other store changes wait for `cadenceTask`, which rings it
 /// every `cadence` while the projection is behind.
 ///
-/// A pass publishes twice. The window state goes out first, carrying the duplicate groups
-/// the last pass built; then the groups are rebuilt (`buildDuplicates`, the slow half —
-/// same-photo detection reads every still's capture facts and compares renders) and go out
-/// in a second publication when they changed. So detection never holds back the sidebar or
-/// the grid, and the request is covered only once both halves have succeeded.
+/// The duplicate groups have their own owner, `DuplicatesProjection`, with its own loop. A
+/// pass publishes the window with the groups last built and, when it took up a catalog
+/// change (`duplicatesRequested`), asks that owner for a build; it never waits for one.
+/// Built groups come back on `duplicatesTask` and go out by republishing the last state
+/// with them. So detection never holds back the sidebar or the grid, and a change of scope,
+/// filter or sort never rebuilds the groups, which do not depend on it.
 ///
 /// Nothing cancels a build that newer work supersedes: GRDB reads throw
 /// `CancellationError` in a cancelled task, so a cancelled build would hold errors, and the
@@ -32,8 +33,6 @@ import OSLog
 actor CatalogProjection {
     typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryRequest) async throws
         -> CatalogWindowState
-    typealias DuplicatesBuilder = @Sendable (CatalogStore, [CatalogLibraryState]) async throws
-        -> CatalogDuplicatesState
 
     /// Whether the next pass must rebuild the full ordered-asset query. A detail-only
     /// change (enrichment that touched no ordering/scope column) reuses the last
@@ -55,7 +54,7 @@ actor CatalogProjection {
     private let cadence: Duration
     let stateBuilder: WindowStateBuilder?
     /// Tests replace the duplicates build to hold it at its suspension; production builds them.
-    let duplicatesBuilder: DuplicatesBuilder?
+    let duplicatesBuilder: DuplicatesProjection.Builder?
 
     private var queryRequest: CatalogQueryRequest = .initial
     /// Distinguishes one projection's diagnostics from another's in a shared log.
@@ -77,6 +76,12 @@ actor CatalogProjection {
     private var lastPublishedState: CatalogWindowState?
     /// The duplicate groups the last successful duplicates build produced; nil until one has.
     private var duplicates: CatalogDuplicatesState?
+    private var duplicatesProjection: DuplicatesProjection?
+    private var duplicatesTask: Task<Void, Never>?
+    /// Bumped by every catalog change and by a new subscription: the groups may differ.
+    private var duplicatesRequested: UInt64 = 0
+    /// The `duplicatesRequested` value last passed on to `duplicatesProjection`.
+    private var duplicatesForwarded: UInt64 = 0
     /// The last publication was the pre-load `.loadingCatalog` state. The next store
     /// change is the load itself (or something after it), so it publishes immediately
     /// rather than leaving the window blank for a cadence tick (APP-044).
@@ -96,6 +101,14 @@ actor CatalogProjection {
         requested == covered && runningPasses == 0
     }
 
+    /// Whether the duplicates owner has built every request it was given. With `isQuiescent`,
+    /// lets a test wait for the groups to settle.
+    var duplicatesAreQuiescent: Bool {
+        get async {
+            await duplicatesProjection?.isQuiescent ?? true
+        }
+    }
+
     /// Whether any consumer still holds a stream. Teardown happens when the last one ends.
     var hasSubscribers: Bool {
         !continuations.isEmpty
@@ -104,7 +117,7 @@ actor CatalogProjection {
     init(
         cadence: Duration = .seconds(1),
         stateBuilder: WindowStateBuilder? = nil,
-        duplicatesBuilder: DuplicatesBuilder? = nil
+        duplicatesBuilder: DuplicatesProjection.Builder? = nil
     ) {
         self.cadence = cadence
         self.stateBuilder = stateBuilder
@@ -243,11 +256,29 @@ private extension CatalogProjection {
             }
         }
 
+        // A new subscription knows no groups yet, so its first loaded pass asks for them.
+        let duplicatesProjection = DuplicatesProjection(store: store, builder: duplicatesBuilder)
+        self.duplicatesProjection = duplicatesProjection
+        duplicatesRequested &+= 1
+        duplicatesTask = Task { [weak self, duplicatesProjection] in
+            await duplicatesProjection.start()
+            for await built in duplicatesProjection.builds {
+                guard let self else {
+                    return
+                }
+                await publishDuplicates(built)
+            }
+        }
+
         // The cadence task is the one that notices the owner is gone, so it also ends the
-        // doorbell on every exit: `loopTask` waits on the doorbell indefinitely, and a
-        // wait nothing can end keeps `store` alive through its closure.
-        cadenceTask = Task { [weak self, continuation] in
-            defer { continuation.finish() }
+        // doorbell and the duplicates owner on every exit: `loopTask` and `duplicatesTask`
+        // wait indefinitely, and a wait nothing can end keeps `store` alive through its
+        // closure.
+        cadenceTask = Task { [weak self, continuation, duplicatesProjection] in
+            defer {
+                continuation.finish()
+                duplicatesProjection.stop()
+            }
             while !Task.isCancelled {
                 do {
                     // time: cadence docs/research/grid-reorder-cadence-and-appkit-diffable-apply.md
@@ -289,6 +320,7 @@ private extension CatalogProjection {
             }
         }
         detailRefreshGeneration &+= 1
+        duplicatesRequested &+= 1
         if case .assetsDetailChanged = change {
             requestPublication(.detailOnly, ringNow: false)
         } else {
@@ -306,6 +338,7 @@ private extension CatalogProjection {
         runningPasses += 1
         defer { runningPasses -= 1 }
         let startedFrom = requested
+        let duplicatesStartedFrom = duplicatesRequested
         let kind = pendingKind
         pendingKind = .none
         let selectedRequest = queryRequest
@@ -389,7 +422,7 @@ private extension CatalogProjection {
             return
         }
 
-        // The window goes out now, with the groups the last pass built.
+        // The window goes out now, with the groups last built.
         var window = completed.state
         window.duplicates = duplicates
         let diagnostics = publish(
@@ -402,38 +435,22 @@ private extension CatalogProjection {
             selectedRequest: selectedRequest
         )
         await diagnostics.emit()
-        // An injected test builder derives no duplicates.
-        guard stateBuilder == nil else {
-            covered = startedFrom
-            ringIfBehind()
+        // A cancelled pass is a teardown: the counters and the duplicates owner it would
+        // touch now belong to no subscription, or to the next one.
+        guard !Task.isCancelled else {
             return
         }
-
-        let built: CatalogDuplicatesState
-        do {
-            let roots = window.libraries + window.removableSources
-            if let duplicatesBuilder {
-                built = try await duplicatesBuilder(store, roots)
-            } else {
-                built = try await buildDuplicates(store: store, libraries: roots)
-            }
-            try Task.checkCancellation()
-        } catch is CancellationError {
-            return
-        } catch {
-            // As for the window: the work stays owed, and the window keeps the last groups.
-            pendingKind = max(pendingKind, kind)
-            OtosLog.catalog.errorOperation("projection.duplicates", phase: "failed", fields: [
-                "projection": diagnosticID,
-                "error": String(describing: error),
-            ])
-            return
-        }
-        // Synchronous from here: nothing interleaves between covering the request and
-        // publishing what covers it.
         covered = startedFrom
-        publishDuplicates(built)
         ringIfBehind()
+        // An injected test builder derives no duplicates. Otherwise a pass that took up a
+        // catalog change asks for a build, and does not wait for it.
+        guard stateBuilder == nil, duplicatesStartedFrom != duplicatesForwarded,
+              let duplicatesProjection
+        else {
+            return
+        }
+        duplicatesForwarded = duplicatesStartedFrom
+        await duplicatesProjection.request()
     }
 
     /// Takes in freshly built groups and republishes the last state with them when they
@@ -522,6 +539,12 @@ private extension CatalogProjection {
         guard continuations.isEmpty else {
             return
         }
+        duplicatesProjection?.stop()
+        duplicatesProjection = nil
+        duplicatesTask?.cancel()
+        duplicatesTask = nil
+        duplicatesRequested = 0
+        duplicatesForwarded = 0
         changeTask?.cancel()
         changeTask = nil
         loopTask?.cancel()

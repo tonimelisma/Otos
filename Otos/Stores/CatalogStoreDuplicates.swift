@@ -185,16 +185,16 @@ nonisolated struct RenderSignatureResult: Equatable, Sendable {
     let signature: RenderSignature?
 }
 
-/// One still the same-photo rule compares, with the capture facts that tell captures apart.
+/// One still the same-photo rule compares, with the capture facts every still's row
+/// carries in columns. The finer facts and the pixels are read only for proposed pairs
+/// (`SamePhotoDetail`).
 nonisolated struct SamePhotoCandidate: Equatable, Sendable {
     let copy: DuplicateCopy
     let isRaw: Bool
     /// Whole-second capture instant, from the library's selection.
     let captureInstant: Double?
-    let fractionalSecondDigits: String?
     let cameraModel: String?
     let serialNumber: String?
-    let burstIdentifier: String?
     /// Display width over height, from stored geometry.
     let aspectRatio: Double?
     let differenceHash: UInt64
@@ -205,6 +205,16 @@ nonisolated struct SamePhotoCandidate: Equatable, Sendable {
     }
 }
 
+/// What confirms or rejects a proposed pair: the still's grayscale render, and the capture
+/// facts that live in its stored metadata record rather than in a column. Read only for the
+/// stills a proposed pair names, because decoding every still's record is most of the cost
+/// of reading the library's candidates.
+nonisolated struct SamePhotoDetail: Equatable, Sendable {
+    let signature: RenderSignature
+    let fractionalSecondDigits: String?
+    let burstIdentifier: String?
+}
+
 nonisolated extension DuplicatesGateway {
     struct SamePhotoRow {
         let copy: CopyRow
@@ -213,7 +223,6 @@ nonisolated extension DuplicatesGateway {
         let cameraModel: String?
         let serialNumber: String?
         let orientation: Int?
-        let metadataJSON: String?
         let differenceHash: Int64
 
         func candidate(
@@ -223,19 +232,6 @@ nonisolated extension DuplicatesGateway {
             guard let copied = copy.copy(pathsByRowID: pathsByRowID, namesByPath: namesByPath) else {
                 return nil
             }
-            // The stored record is the library's own report (ADR 0039); a record that does
-            // not decode leaves these two unknown, which the rule treats as unknown.
-            let metadata: AssetMetadata? = metadataJSON.flatMap { json in
-                do {
-                    return try CatalogStore.decodeMetadataExtraJSON(json)
-                } catch {
-                    OtosLog.catalog.errorOperation("duplicates.samePhoto", phase: "metadataUndecodable", fields: [
-                        "relativePath": copied.id.relativePath.rawValue,
-                    ])
-                    return nil
-                }
-            }
-            let original = metadata?.timestamps.first { $0.role == CaptureTimestamps.Role.original.rawValue }
             let width = copied.pixelWidth.map(Double.init)
             let height = copied.pixelHeight.map(Double.init)
             // Orientations 5–8 turn the raster a quarter, so display width is stored height.
@@ -249,10 +245,8 @@ nonisolated extension DuplicatesGateway {
                 copy: copied,
                 isRaw: kind == "raw",
                 captureInstant: captureInstant,
-                fractionalSecondDigits: original?.fractionalSecondDigits,
                 cameraModel: cameraModel,
                 serialNumber: serialNumber,
-                burstIdentifier: metadata?.burstIdentifier,
                 aspectRatio: aspect,
                 differenceHash: UInt64(bitPattern: differenceHash)
             )
@@ -268,7 +262,6 @@ nonisolated extension DuplicatesGateway {
                    a.media_choice, a.edit_recipe_json IS NOT NULL AS edited, a.kind, a.capture_instant_unix,
                    a.render_dhash,
                    m.pixel_width, m.pixel_height, m.orientation, m.camera_model, m.serial_number,
-                   m.metadata_extra_json,
                    EXISTS(
                        SELECT 1 FROM media_companion c
                        WHERE c.library_root_id = a.library_root_id AND c.primary_relative_path = a.relative_path
@@ -304,7 +297,6 @@ nonisolated extension DuplicatesGateway {
                 cameraModel: row["camera_model"],
                 serialNumber: row["serial_number"],
                 orientation: row["orientation"],
-                metadataJSON: row["metadata_extra_json"],
                 differenceHash: row["render_dhash"]
             )
         }

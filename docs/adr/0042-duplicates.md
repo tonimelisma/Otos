@@ -20,17 +20,20 @@ visible: in an available fixed library, not waiting for or in the Trash, not a L
 movie (a member of its still's item, ADR 0041), with a digest current for its file's size
 and mtime. The Store reads the copies (`CatalogStore.duplicateCopies`, through
 `idx_media_asset_content_hash`). The keeper rule is a pure function
-(`DuplicateGroupPolicy`) that Projection runs off the MainActor in every publication pass.
-Projection publishes the groups as `CatalogWindowState.duplicates` in every scope, so the
-sidebar's Duplicates row exists exactly while a group is active.
+(`DuplicateGroupPolicy`) that `DuplicatesProjection` runs off the MainActor. Projection
+publishes the groups as `CatalogWindowState.duplicates` in every scope, so the sidebar's
+Duplicates row exists exactly while a group is active.
 
-**Detection never holds back the window.** Building the groups is the slow half of a pass:
-same-photo detection reads every still's capture facts and compares renders, about 1.4 s
-on the owner's 8,400-photo library (2026-11-01 trace). So each pass publishes the window
-state first, carrying the groups the last pass built, then builds the groups and publishes
-them in a second publication when they changed. `duplicates` is nil until the first build:
-the row has no count and the list draws nothing until then, rather than claiming "No
-duplicates".
+**The groups have their own owner.** They are a fact about the whole catalog, not about
+what the window shows, so `DuplicatesProjection` owns them with its own loop (ADR 0032).
+`CatalogProjection` asks it for a build after a publication that took up a catalog change,
+so builds follow catalog changes no faster than the window's cadence for them, and a
+change of scope, filter or sort never starts one. The window never waits for a build: it
+publishes with the groups last built, and a build whose groups changed republishes it.
+When the build ran inside each window pass, choosing a card in the sidebar took 1,995 ms
+to paint, queued behind a 1.5 s same-photo build (2026-11-01 log). `duplicates` is nil
+until the first build: the row has no count and the list draws nothing until then, rather
+than claiming "No duplicates".
 
 **Otos preselects only where the choice cannot lose anything.** A group gets a default
 keeper only when:
@@ -131,7 +134,11 @@ Other rules:
 - Same-photo groups are never preselected (`DuplicateGroupWait.samePhoto`). Keep All Copies
   sets them aside by the same per-pair memory.
 - Candidates are blocked by kind, display aspect and whole-second instant, so a library is
-  never compared all against all. Grayscale renders are read only for proposed pairs.
+  never compared all against all. Pairs are proposed from column facts alone. The
+  grayscale render, the sub-seconds and the burst identifier — the last two live in the
+  stored metadata record — are read only for the stills a proposed pair names
+  (`SamePhotoDetail`). Decoding every still's record was most of a build: on 2026-11-01
+  the owner's library had 14,164 stills, of which 2,548 were in a proposed pair.
 
 `RenderSignatureRefresher` is the one producer of signatures:
 - It reads stored thumbnails only, so it never opens an original or downloads one.
