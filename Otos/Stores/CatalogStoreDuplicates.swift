@@ -185,11 +185,11 @@ nonisolated struct RenderSignatureResult: Equatable, Sendable {
     let signature: RenderSignature?
 }
 
-/// One still the same-photo rule compares, with the capture facts every still's row
-/// carries in columns. The finer facts and the pixels are read only for proposed pairs
-/// (`SamePhotoDetail`).
+/// One still the same-photo rule compares, with only the column facts pairs are proposed
+/// from. Everything else about it — the copy the list shows, the render, the record facts —
+/// is read only for the stills a proposed pair names (`SamePhotoDetail`).
 nonisolated struct SamePhotoCandidate: Equatable, Sendable {
-    let copy: DuplicateCopy
+    let id: MediaAssetID
     let isRaw: Bool
     /// Whole-second capture instant, from the library's selection.
     let captureInstant: Double?
@@ -205,67 +205,31 @@ nonisolated struct SamePhotoCandidate: Equatable, Sendable {
     }
 }
 
-/// What confirms or rejects a proposed pair: the still's grayscale render, and the capture
-/// facts that live in its stored metadata record rather than in a column. Read only for the
-/// stills a proposed pair names, because decoding every still's record is most of the cost
-/// of reading the library's candidates.
+/// A still in a proposed pair: the copy a group lists, the grayscale render that confirms
+/// or rejects the pair, and the capture facts that live in its stored metadata record rather
+/// than in a column. Read only for these stills: building every still's copy and decoding
+/// every record was most of a build.
 nonisolated struct SamePhotoDetail: Equatable, Sendable {
+    let copy: DuplicateCopy
     let signature: RenderSignature
     let fractionalSecondDigits: String?
     let burstIdentifier: String?
 }
 
 nonisolated extension DuplicatesGateway {
-    struct SamePhotoRow {
-        let copy: CopyRow
-        let kind: String?
-        let captureInstant: Double?
-        let cameraModel: String?
-        let serialNumber: String?
-        let orientation: Int?
-        let differenceHash: Int64
-
-        func candidate(
-            pathsByRowID: [Int64: LibraryRootPath],
-            namesByPath: [LibraryRootPath: String]
-        ) -> SamePhotoCandidate? {
-            guard let copied = copy.copy(pathsByRowID: pathsByRowID, namesByPath: namesByPath) else {
-                return nil
-            }
-            let width = copied.pixelWidth.map(Double.init)
-            let height = copied.pixelHeight.map(Double.init)
-            // Orientations 5–8 turn the raster a quarter, so display width is stored height.
-            let quarterTurned = (5 ... 8).contains(orientation ?? 1)
-            let aspect: Double? = if let width, let height, width > 0, height > 0 {
-                quarterTurned ? height / width : width / height
-            } else {
-                nil
-            }
-            return SamePhotoCandidate(
-                copy: copied,
-                isRaw: kind == "raw",
-                captureInstant: captureInstant,
-                cameraModel: cameraModel,
-                serialNumber: serialNumber,
-                aspectRatio: aspect,
-                differenceHash: UInt64(bitPattern: differenceHash)
-            )
-        }
-    }
-
-    static func fetchSamePhotoCandidates(rootIDs: [Int64], db: Database) throws -> [SamePhotoRow] {
+    /// Visible stills with a current render signature, as pairing facts. The read walks a
+    /// cursor rather than copying every row, because it covers every still in the libraries.
+    static func fetchSamePhotoCandidates(
+        rootIDs: [Int64],
+        pathsByRowID: [Int64: LibraryRootPath],
+        db: Database
+    ) throws -> [SamePhotoCandidate] {
         let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
-        let rows = try Row.fetchAll(
+        let rows = try Row.fetchCursor(
             db,
             sql: """
-            SELECT a.library_root_id, a.relative_path, a.content_hash_xxh3_128, a.byte_size, a.created_at_unix,
-                   a.media_choice, a.edit_recipe_json IS NOT NULL AS edited, a.kind, a.capture_instant_unix,
-                   a.render_dhash,
-                   m.pixel_width, m.pixel_height, m.orientation, m.camera_model, m.serial_number,
-                   EXISTS(
-                       SELECT 1 FROM media_companion c
-                       WHERE c.library_root_id = a.library_root_id AND c.primary_relative_path = a.relative_path
-                   ) AS has_companions
+            SELECT a.library_root_id, a.relative_path, a.kind, a.capture_instant_unix, a.render_dhash,
+                   m.pixel_width, m.pixel_height, m.orientation, m.camera_model, m.serial_number
             FROM media_asset a
             LEFT JOIN asset_metadata m
               ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
@@ -278,27 +242,93 @@ nonisolated extension DuplicatesGateway {
             """,
             arguments: StatementArguments(rootIDs)
         )
-        return rows.map { row in
-            SamePhotoRow(
-                copy: CopyRow(
-                    rootID: row["library_root_id"],
-                    relativePath: row["relative_path"],
-                    digest: nil,
-                    byteSize: row["byte_size"],
-                    createdAt: row["created_at_unix"],
-                    mediaChoice: row["media_choice"],
-                    isEdited: row["edited"],
-                    pixelWidth: row["pixel_width"],
-                    pixelHeight: row["pixel_height"],
-                    hasCompanions: row["has_companions"]
-                ),
-                kind: row["kind"],
+        var candidates: [SamePhotoCandidate] = []
+        while let row = try rows.next() {
+            guard let root = pathsByRowID[row["library_root_id"]] else {
+                continue
+            }
+            let width: Double? = row["pixel_width"]
+            let height: Double? = row["pixel_height"]
+            // Orientations 5–8 turn the raster a quarter, so display width is stored height.
+            let quarterTurned = (5 ... 8).contains(row["orientation"] as Int? ?? 1)
+            let aspect: Double? = if let width, let height, width > 0, height > 0 {
+                quarterTurned ? height / width : width / height
+            } else {
+                nil
+            }
+            let kind: String? = row["kind"]
+            let hash: Int64 = row["render_dhash"]
+            candidates.append(SamePhotoCandidate(
+                id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"])),
+                isRaw: kind == "raw",
                 captureInstant: row["capture_instant_unix"],
                 cameraModel: row["camera_model"],
                 serialNumber: row["serial_number"],
-                orientation: row["orientation"],
-                differenceHash: row["render_dhash"]
-            )
+                aspectRatio: aspect,
+                differenceHash: UInt64(bitPattern: hash)
+            ))
         }
+        return candidates
+    }
+
+    /// The details of one still in a proposed pair, run once per still through a cached
+    /// statement. Nil when the still has no stored signature any more.
+    static func fetchSamePhotoDetail(
+        rootID: Int64,
+        id: MediaAssetID,
+        libraryDisplayName: String,
+        db: Database
+    ) throws -> SamePhotoDetail? {
+        let statement = try db.cachedStatement(sql: """
+        SELECT a.byte_size, a.created_at_unix, a.media_choice, a.edit_recipe_json IS NOT NULL AS edited,
+               a.render_dhash, a.render_gray,
+               m.pixel_width, m.pixel_height, m.metadata_extra_json,
+               EXISTS(
+                   SELECT 1 FROM media_companion c
+                   WHERE c.library_root_id = a.library_root_id AND c.primary_relative_path = a.relative_path
+               ) AS has_companions
+        FROM media_asset a
+        LEFT JOIN asset_metadata m
+          ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
+        WHERE a.library_root_id = ? AND a.relative_path = ?
+        """)
+        guard let row = try Row.fetchOne(statement, arguments: [rootID, id.relativePath.rawValue]),
+              let hash = row["render_dhash"] as Int64?,
+              let gray = row["render_gray"] as Data?,
+              let signature = RenderSignature(differenceHash: UInt64(bitPattern: hash), gray: Array(gray))
+        else {
+            return nil
+        }
+        // The stored record is the library's own report (ADR 0039); a record that does not
+        // decode leaves its two facts unknown, which the rule treats as unknown.
+        let metadata: AssetMetadata? = (row["metadata_extra_json"] as String?).flatMap { json in
+            do {
+                return try CatalogStore.decodeMetadataExtraJSON(json)
+            } catch {
+                OtosLog.catalog.errorOperation("duplicates.samePhoto", phase: "metadataUndecodable", fields: [
+                    "relativePath": id.relativePath.rawValue,
+                ])
+                return nil
+            }
+        }
+        let original = metadata?.timestamps.first { $0.role == CaptureTimestamps.Role.original.rawValue }
+        let mediaChoice: String? = row["media_choice"]
+        let createdAt: Double? = row["created_at_unix"]
+        return SamePhotoDetail(
+            copy: DuplicateCopy(
+                id: id,
+                libraryDisplayName: libraryDisplayName,
+                byteSize: row["byte_size"],
+                createdAt: createdAt.map(Date.init(timeIntervalSince1970:)),
+                pixelWidth: row["pixel_width"],
+                pixelHeight: row["pixel_height"],
+                mediaChoice: mediaChoice.flatMap(MediaChoice.init(rawValue:)) ?? .default,
+                isEdited: row["edited"],
+                hasCompanions: row["has_companions"]
+            ),
+            signature: signature,
+            fractionalSecondDigits: original?.fractionalSecondDigits,
+            burstIdentifier: metadata?.burstIdentifier
+        )
     }
 }

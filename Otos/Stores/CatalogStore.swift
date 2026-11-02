@@ -5959,58 +5959,31 @@ extension CatalogStore {
             return []
         }
         let rootIDs = libraries.map(\.rowID).sorted()
-        let pathsByRowID = roots.pathsByRowID
-        let namesByPath = Dictionary(uniqueKeysWithValues: libraries.map { ($0.path, $0.root.displayName) })
+        let pathsByRowID = Dictionary(uniqueKeysWithValues: libraries.map { ($0.rowID, $0.path) })
         return try await database().read { db in
-            try DuplicatesGateway.fetchSamePhotoCandidates(rootIDs: rootIDs, db: db).compactMap { row in
-                row.candidate(pathsByRowID: pathsByRowID, namesByPath: namesByPath)
-            }
+            try DuplicatesGateway.fetchSamePhotoCandidates(rootIDs: rootIDs, pathsByRowID: pathsByRowID, db: db)
         }
     }
 
-    /// The details of these stills that confirm or reject a proposed pair: the render
-    /// signature and the capture facts kept in the metadata record. A still without a
-    /// stored signature has no detail; a record that does not decode leaves its two facts
-    /// unknown, which the rule treats as unknown (ADR 0039).
+    /// The details of these stills, which are in proposed pairs: the copy a group lists,
+    /// the render signature, and the capture facts kept in the metadata record. A still
+    /// whose library is gone or that has no stored signature has no detail.
     func samePhotoDetails(for ids: [MediaAssetID]) async throws -> [MediaAssetID: SamePhotoDetail] {
-        let rowIDs = roots.rowIDSnapshot()
+        let libraries = Dictionary(uniqueKeysWithValues: roots.values.map { ($0.path, (rowID: $0.rowID, name: $0.root.displayName)) })
         return try await database().read { db in
             var details: [MediaAssetID: SamePhotoDetail] = [:]
             for id in ids {
-                guard let rootID = rowIDs[id.libraryRootPath],
-                      let row = try Row.fetchOne(
-                          db,
-                          sql: """
-                          SELECT a.render_dhash, a.render_gray, m.metadata_extra_json
-                          FROM media_asset a
-                          LEFT JOIN asset_metadata m
-                            ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
-                          WHERE a.library_root_id = ? AND a.relative_path = ?
-                          """,
-                          arguments: [rootID, id.relativePath.rawValue]
-                      ),
-                      let hash = row["render_dhash"] as Int64?,
-                      let gray = row["render_gray"] as Data?,
-                      let signature = RenderSignature(differenceHash: UInt64(bitPattern: hash), gray: Array(gray))
+                guard let library = libraries[id.libraryRootPath],
+                      let detail = try DuplicatesGateway.fetchSamePhotoDetail(
+                          rootID: library.rowID,
+                          id: id,
+                          libraryDisplayName: library.name,
+                          db: db
+                      )
                 else {
                     continue
                 }
-                let metadata: AssetMetadata? = (row["metadata_extra_json"] as String?).flatMap { json in
-                    do {
-                        return try Self.decodeMetadataExtraJSON(json)
-                    } catch {
-                        OtosLog.catalog.errorOperation("duplicates.samePhoto", phase: "metadataUndecodable", fields: [
-                            "relativePath": id.relativePath.rawValue,
-                        ])
-                        return nil
-                    }
-                }
-                let original = metadata?.timestamps.first { $0.role == CaptureTimestamps.Role.original.rawValue }
-                details[id] = SamePhotoDetail(
-                    signature: signature,
-                    fractionalSecondDigits: original?.fractionalSecondDigits,
-                    burstIdentifier: metadata?.burstIdentifier
-                )
+                details[id] = detail
             }
             return details
         }

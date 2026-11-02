@@ -142,7 +142,7 @@ extension DuplicatesProjection {
         let candidatesMs = DiagnosticsTiming.milliseconds(since: candidatesStart)
 
         let detailsStart = ContinuousClock.now
-        let involved = Array(Set(pairs.flatMap { [$0.left.copy.id, $0.right.copy.id] }))
+        let involved = Array(Set(pairs.flatMap { [$0.left.id, $0.right.id] }))
         let details = pairs.isEmpty ? [:] : try await store.samePhotoDetails(for: involved)
         let detailsMs = DiagnosticsTiming.milliseconds(since: detailsStart)
 

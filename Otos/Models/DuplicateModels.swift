@@ -379,41 +379,53 @@ nonisolated enum SamePhotoPolicy {
     /// Pairs worth reading details for: same kind, same display aspect, a near hash, and the
     /// column half of gate 1. Blocked by aspect and instant, so a library is never compared
     /// all against all.
+    ///
+    /// A file without capture metadata is tested against every member of its aspect bucket —
+    /// hundreds of thousands of tests on a real library — so those loops walk indices and
+    /// test the hash from a flat array before they touch a candidate.
     static func candidatePairs(
         _ candidates: [SamePhotoCandidate],
         excluding excluded: Set<MediaAssetID>
     ) -> [SamePhotoPair] {
-        let eligible = candidates.filter { !excluded.contains($0.copy.id) && $0.aspectRatio != nil }
+        let eligible = candidates.filter { !excluded.contains($0.id) && $0.aspectRatio != nil }
         let buckets = Dictionary(grouping: eligible) { candidate in
             AspectBucket(isRaw: candidate.isRaw, aspect: Int(((candidate.aspectRatio ?? 0) * 100).rounded()))
         }
         var pairs: [SamePhotoPair] = []
         for members in buckets.values where members.count > 1 {
-            let byInstant = Dictionary(grouping: members.filter(\.hasCaptureMetadata)) { $0.captureInstant ?? 0 }
-            let stripped = members.filter { !$0.hasCaptureMetadata }
-            for group in byInstant.values {
-                for (index, left) in group.enumerated() {
-                    for right in group[(index + 1)...] where isCandidate(left, right) {
-                        pairs.append(SamePhotoPair(left: left, right: right))
+            let hashes = members.map(\.differenceHash)
+            let captured = members.indices.filter { members[$0].hasCaptureMetadata }
+            let stripped = members.indices.filter { !members[$0].hasCaptureMetadata }
+            for group in Dictionary(grouping: captured, by: { members[$0].captureInstant ?? 0 }).values {
+                for (position, left) in group.enumerated() {
+                    for right in group[(position + 1)...] where isCandidate(members[left], members[right]) {
+                        pairs.append(SamePhotoPair(left: members[left], right: members[right]))
                     }
                 }
             }
-            for (index, copy) in stripped.enumerated() {
-                for other in members where other.hasCaptureMetadata && isCandidate(copy, other) {
-                    pairs.append(SamePhotoPair(left: copy, right: other))
+            for (position, left) in stripped.enumerated() {
+                let hash = hashes[left]
+                for right in captured where isNear(hash, hashes[right]) && isCandidate(members[left], members[right]) {
+                    pairs.append(SamePhotoPair(left: members[left], right: members[right]))
                 }
-                for other in stripped[(index + 1)...] where isCandidate(copy, other) {
-                    pairs.append(SamePhotoPair(left: copy, right: other))
+                for right in stripped[(position + 1)...]
+                    where isNear(hash, hashes[right]) && isCandidate(members[left], members[right])
+                {
+                    pairs.append(SamePhotoPair(left: members[left], right: members[right]))
                 }
             }
         }
         return pairs
     }
 
+    private static func isNear(_ left: UInt64, _ right: UInt64) -> Bool {
+        (left ^ right).nonzeroBitCount <= RenderSignature.candidateHammingDistance
+    }
+
     /// The column checks, the hash first: a file without capture metadata is tested against
     /// every member of its aspect bucket, so the cheapest rejection runs first.
     static func isCandidate(_ left: SamePhotoCandidate, _ right: SamePhotoCandidate) -> Bool {
-        guard (left.differenceHash ^ right.differenceHash).nonzeroBitCount <= RenderSignature.candidateHammingDistance,
+        guard isNear(left.differenceHash, right.differenceHash),
               left.isRaw == right.isRaw,
               let leftAspect = left.aspectRatio, let rightAspect = right.aspectRatio,
               abs(log(leftAspect / rightAspect)) < 0.01
@@ -448,7 +460,7 @@ nonisolated enum SamePhotoPolicy {
     ) -> [DuplicateGroup] {
         var confirmed: [(SamePhotoCandidate, SamePhotoCandidate, Double)] = []
         for pair in pairs {
-            guard let leftDetail = details[pair.left.copy.id], let rightDetail = details[pair.right.copy.id] else {
+            guard let leftDetail = details[pair.left.id], let rightDetail = details[pair.right.id] else {
                 continue
             }
             if pair.left.hasCaptureMetadata, pair.right.hasCaptureMetadata, !recordsAgree(leftDetail, rightDetail) {
@@ -462,10 +474,10 @@ nonisolated enum SamePhotoPolicy {
         // Gate 3: a file without capture metadata keeps only an edge to the one original
         // clearly closest; if two originals are about as close, it keeps none.
         var dropped: Set<Int> = []
-        let strippedIDs = Set(pairs.flatMap { [$0.left, $0.right] }.filter { !$0.hasCaptureMetadata }.map(\.copy.id))
+        let strippedIDs = Set(pairs.flatMap { [$0.left, $0.right] }.filter { !$0.hasCaptureMetadata }.map(\.id))
         for strippedID in strippedIDs {
             let edges = confirmed.enumerated().compactMap { index, edge -> (Int, Double)? in
-                let other = edge.0.copy.id == strippedID ? edge.1 : (edge.1.copy.id == strippedID ? edge.0 : nil)
+                let other = edge.0.id == strippedID ? edge.1 : (edge.1.id == strippedID ? edge.0 : nil)
                 guard let other, other.hasCaptureMetadata else { return nil }
                 return (index, edge.2)
             }.sorted { $0.1 < $1.1 }
@@ -485,10 +497,10 @@ nonisolated enum SamePhotoPolicy {
         }
         var copies: [MediaAssetID: DuplicateCopy] = [:]
         for (index, edge) in confirmed.enumerated() where !dropped.contains(index) {
-            copies[edge.0.copy.id] = edge.0.copy
-            copies[edge.1.copy.id] = edge.1.copy
-            let left = root(edge.0.copy.id)
-            let right = root(edge.1.copy.id)
+            copies[edge.0.id] = details[edge.0.id]?.copy
+            copies[edge.1.id] = details[edge.1.id]?.copy
+            let left = root(edge.0.id)
+            let right = root(edge.1.id)
             parent[left] = parent[left] ?? left
             parent[right] = parent[right] ?? right
             if left != right {
