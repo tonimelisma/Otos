@@ -271,7 +271,9 @@ nonisolated enum DuplicateGroupPolicy {
         keptPairs: Set<DuplicateKeptPair>,
         originals: Set<MediaAssetID> = []
     ) -> DuplicateGroup {
-        let copies = unordered.sorted { $0.id.duplicateOrderKey < $1.id.duplicateOrderKey }
+        let rule = KeeperRule(comparesPixels: id.isSamePhoto, originals: originals)
+        let ranked = unordered.map { Ranked($0, rule: rule) }.sorted { $0.orderKey < $1.orderKey }
+        let copies = ranked.map(\.copy)
         let ids = copies.map(\.id)
         let libraries = Set(ids.map(\.libraryRootPath)).sorted { $0.rawValue < $1.rawValue }
         let libraryPair: DuplicateLibraryPair? = libraries.count == 2
@@ -296,22 +298,21 @@ nonisolated enum DuplicateGroupPolicy {
             )
         }
 
-        let rule = KeeperRule(comparesPixels: id.isSamePhoto, originals: originals)
-        let `default` = defaultKeep(copies: copies, keptTogether: keptTogether, rule: rule)
+        let `default` = defaultKeep(ranked: ranked, keptTogether: keptTogether)
         let keep = `default`.keep
-        let ordered = copies.sorted { left, right in
-            let leftKept = keep?.contains(left.id) ?? false
-            let rightKept = keep?.contains(right.id) ?? false
+        let ordered = ranked.sorted { left, right in
+            let leftKept = keep?.contains(left.copy.id) ?? false
+            let rightKept = keep?.contains(right.copy.id) ?? false
             if leftKept != rightKept {
                 return leftKept
             }
             if leftKept {
-                return isBetterKeeper(left, than: right, rule: rule)
+                return compare(left, right).leftWins
             }
-            return left.id.duplicateOrderKey < right.id.duplicateOrderKey
+            return left.orderKey < right.orderKey
         }
         return DuplicateGroup(
-            id: id, copies: ordered, default: `default`, libraryPair: libraryPair, cameraOriginals: originals
+            id: id, copies: ordered.map(\.copy), default: `default`, libraryPair: libraryPair, cameraOriginals: originals
         )
     }
 
@@ -335,25 +336,24 @@ nonisolated enum DuplicateGroupPolicy {
     /// group across libraries; within one library it is the criterion that separated the
     /// kept copy from the copy it beat last — the rule that was needed.
     private static func defaultKeep(
-        copies: [DuplicateCopy],
-        keptTogether: Set<MediaAssetID>,
-        rule: KeeperRule
+        ranked: [Ranked],
+        keptTogether: Set<MediaAssetID>
     ) -> DuplicateDefault {
         var keep: Set<MediaAssetID> = []
         var decidingCriterion: DuplicateKeeperCriterion = .pathOrder
-        let byLibrary = Dictionary(grouping: copies, by: \.id.libraryRootPath)
+        let byLibrary = Dictionary(grouping: ranked, by: \.copy.id.libraryRootPath)
         for (library, members) in byLibrary.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
-            if let kind = workConflict(members) {
+            if let kind = workConflict(members.map(\.copy)) {
                 return .waits(DuplicateWorkConflict(kind: kind, library: library))
             }
-            let together = members.filter { keptTogether.contains($0.id) }
+            let together = members.filter { keptTogether.contains($0.copy.id) }
             if !together.isEmpty {
-                keep.formUnion(together.map(\.id))
-            } else if let best = members.min(by: { isBetterKeeper($0, than: $1, rule: rule) }) {
-                keep.insert(best.id)
+                keep.formUnion(together.map(\.copy.id))
+            } else if let best = members.min(by: { compare($0, $1).leftWins }) {
+                keep.insert(best.copy.id)
                 decidingCriterion = members
-                    .filter { $0.id != best.id }
-                    .map { compare(best, $0, rule: rule).criterion }
+                    .filter { $0.copy.id != best.copy.id }
+                    .map { compare(best, $0).criterion }
                     .max() ?? .pathOrder
             }
         }
@@ -369,62 +369,69 @@ nonisolated enum DuplicateGroupPolicy {
         let originals: Set<MediaAssetID>
     }
 
-    /// The keeper order: companion files, then (for versions of one photo) the original,
-    /// the most pixels and the largest file, then an edit, a choice, a plain name, the
-    /// earliest birth time and path order.
-    static func isBetterKeeper(_ left: DuplicateCopy, than right: DuplicateCopy, rule: KeeperRule) -> Bool {
-        compare(left, right, rule: rule).leftWins
+    /// A copy with the facts the keeper rule compares, derived once per group, so a build
+    /// never re-derives a name, a suffix or a key per comparison.
+    struct Ranked {
+        let copy: DuplicateCopy
+        let orderKey: String
+        let isOriginal: Bool
+        /// Pixels and bytes when the rule ranks them, else zero on every copy.
+        let pixels: Int
+        let bytes: Int64
+        let suffixed: Bool
+        /// The birth time at whole seconds: the rows show seconds at most, so the rule never
+        /// separates two copies the rows show as born at the same instant.
+        let bornSecond: Double?
+
+        init(_ copy: DuplicateCopy, rule: KeeperRule) {
+            self.copy = copy
+            orderKey = copy.id.duplicateOrderKey
+            isOriginal = rule.originals.contains(copy.id)
+            pixels = rule.comparesPixels ? (copy.pixelWidth ?? 0) * (copy.pixelHeight ?? 0) : 0
+            bytes = rule.comparesPixels ? copy.byteSize ?? 0 : 0
+            suffixed = DuplicateGroupPolicy.hasCopySuffix(copy.name)
+            bornSecond = copy.createdAt?.timeIntervalSince1970.rounded(.down)
+        }
     }
 
-    /// The first criterion that tells two copies apart, and which copy it favours.
-    static func compare(
-        _ left: DuplicateCopy,
-        _ right: DuplicateCopy,
-        rule: KeeperRule
-    ) -> (criterion: DuplicateKeeperCriterion, leftWins: Bool) {
-        if left.hasCompanions != right.hasCompanions {
-            return (.companions, left.hasCompanions)
+    /// The keeper order: companion files, then (for versions of one photo) the original,
+    /// the most pixels and the largest file in bytes, then an edit, a choice, a plain name,
+    /// the earliest birth time and path order. Returns the first criterion that tells two
+    /// copies apart, and which copy it favours.
+    static func compare(_ left: Ranked, _ right: Ranked) -> (criterion: DuplicateKeeperCriterion, leftWins: Bool) {
+        if left.copy.hasCompanions != right.copy.hasCompanions {
+            return (.companions, left.copy.hasCompanions)
         }
-        let leftOriginal = rule.originals.contains(left.id)
-        if leftOriginal != rule.originals.contains(right.id) {
-            return (.cameraOriginal, leftOriginal)
+        if left.isOriginal != right.isOriginal {
+            return (.cameraOriginal, left.isOriginal)
         }
-        if rule.comparesPixels {
-            let leftPixels = (left.pixelWidth ?? 0) * (left.pixelHeight ?? 0)
-            let rightPixels = (right.pixelWidth ?? 0) * (right.pixelHeight ?? 0)
-            if leftPixels != rightPixels {
-                return (.mostPixels, leftPixels > rightPixels)
-            }
-            // Exact bytes: the rows show sizes at whatever precision tells them apart, so
-            // the rule and the rows always agree.
-            if left.byteSize != right.byteSize {
-                return (.largestFile, (left.byteSize ?? 0) > (right.byteSize ?? 0))
-            }
+        if left.pixels != right.pixels {
+            return (.mostPixels, left.pixels > right.pixels)
         }
-        if left.isEdited != right.isEdited {
-            return (.edited, left.isEdited)
+        // Exact bytes: the rows show sizes at whatever precision tells them apart, so the
+        // rule and the rows always agree.
+        if left.bytes != right.bytes {
+            return (.largestFile, left.bytes > right.bytes)
         }
-        let leftChose = left.mediaChoice != .notRated
-        if leftChose != (right.mediaChoice != .notRated) {
+        if left.copy.isEdited != right.copy.isEdited {
+            return (.edited, left.copy.isEdited)
+        }
+        let leftChose = left.copy.mediaChoice != .notRated
+        if leftChose != (right.copy.mediaChoice != .notRated) {
             return (.rated, leftChose)
         }
-        let leftSuffixed = hasCopySuffix(left.name)
-        if leftSuffixed != hasCopySuffix(right.name) {
-            return (.originalName, !leftSuffixed)
+        if left.suffixed != right.suffixed {
+            return (.originalName, !left.suffixed)
         }
-        // Whole seconds: the rows show seconds at most, so the rule never separates two
-        // copies the rows show as born at the same instant.
-        let leftBorn = left.createdAt?.timeIntervalSince1970.rounded(.down)
-        let rightBorn = right.createdAt?.timeIntervalSince1970.rounded(.down)
-        switch (leftBorn, rightBorn) {
-        case let (leftDate?, rightDate?) where leftDate != rightDate:
-            return (.earliestBirth, leftDate < rightDate)
+        switch (left.bornSecond, right.bornSecond) {
+        case let (leftBorn?, rightBorn?) where leftBorn != rightBorn:
+            return (.earliestBirth, leftBorn < rightBorn)
         case (.some, nil):
             return (.earliestBirth, true)
         case (nil, .some):
             return (.earliestBirth, false)
         default:
-            return (.pathOrder, left.id.duplicateOrderKey < right.id.duplicateOrderKey)
+            return (.pathOrder, left.orderKey < right.orderKey)
         }
     }
 
