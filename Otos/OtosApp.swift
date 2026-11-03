@@ -339,7 +339,7 @@ public struct OtosApp: App {
                     catalogViewModel.keepOnlySelectedDuplicateCopy()
                 }
                 .disabled(!catalogViewModel.canKeepOnlySelectedDuplicateCopy)
-                Button("Move This Copy to Trash") {
+                Button("Don't Keep This Copy") {
                     catalogViewModel.markSelectedDuplicateCopiesForTrash()
                 }
                 .disabled(!catalogViewModel.canMarkSelectedDuplicateCopiesForTrash)
@@ -347,7 +347,11 @@ public struct OtosApp: App {
                     catalogViewModel.keepAllDuplicateCopies()
                 }
                 .disabled(!catalogViewModel.canKeepAllSelectedDuplicateCopies)
-                Button("Move Marked Items to Trash") {
+                Button("Review Again") {
+                    catalogViewModel.reviewKeptDuplicateGroups()
+                }
+                .disabled(!catalogViewModel.canReviewSelectedDuplicateGroups)
+                Button("Move Extra Copies to Trash") {
                     catalogViewModel.moveMarkedDuplicatesToTrash()
                 }
                 .disabled(!catalogViewModel.canMoveMarkedDuplicatesToTrash)

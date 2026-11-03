@@ -78,12 +78,31 @@ struct SmokeLibrarySelectionTests {
         #expect(SmokeLibrarySelection.resolve(requested: .places, among: []) == .noFixedLibrary(registered: []))
     }
 
-    /// The capture seam waits on a published fact: stacks for the map, items for a grid.
+    /// `duplicates` selects the Duplicates list once a group is active (ADR 0042); until
+    /// then the seam keeps following, since groups arrive as digests do.
+    @Test func duplicatesRequestSelectsTheListOnceAGroupIsActive() {
+        #expect(SmokeLibrarySelection.configuredRequest(environment: [
+            SmokeLibrarySelection.environmentVariable: "duplicates",
+        ]) == .duplicates)
+        #expect(SmokeLibrarySelection.resolve(requested: .duplicates, among: []) == .noDuplicatesYet)
+        #expect(SmokeLibrarySelection.resolve(
+            requested: .duplicates, among: [], activeDuplicateGroups: 2
+        ) == .select(.duplicates))
+    }
+
+    /// The capture seam waits on a published fact: stacks for the map, groups for the
+    /// duplicates list, items for a grid.
     @Test func captureIsReadyOnTheFirstStacksOrTheFirstItems() {
         #expect(!SmokeWindowCapture.isReady(showsPlacesMap: true, clusterCount: 0, gridCount: 10))
         #expect(SmokeWindowCapture.isReady(showsPlacesMap: true, clusterCount: 1, gridCount: 0))
         #expect(!SmokeWindowCapture.isReady(showsPlacesMap: false, clusterCount: 0, gridCount: 0))
         #expect(SmokeWindowCapture.isReady(showsPlacesMap: false, clusterCount: 0, gridCount: 3))
+        #expect(!SmokeWindowCapture.isReady(
+            showsPlacesMap: false, clusterCount: 0, showsDuplicates: true, duplicateGroupCount: 0, gridCount: 3
+        ))
+        #expect(SmokeWindowCapture.isReady(
+            showsPlacesMap: false, clusterCount: 0, showsDuplicates: true, duplicateGroupCount: 1, gridCount: 0
+        ))
     }
 
     @Test func configuredRootPathIgnoresMissingOrEmptyEnvironment() {

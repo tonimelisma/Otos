@@ -29,10 +29,25 @@
         /// readiness fact, and MapKit's SwiftUI `Map` reports neither, so this is the one
         /// wait nothing can replace (ADR 0033, `time: measurement`). Default 0.
         static let settleVariable = "OTOS_SMOKE_CAPTURE_SETTLE_SECONDS"
+        /// `0` to `1`: how far down every scroll view in the window is scrolled before the
+        /// capture, so a design pass can see a list past its first screen. Default 0.
+        static let scrollVariable = "OTOS_SMOKE_CAPTURE_SCROLL_FRACTION"
 
         /// Whether the window has something worth capturing for the requested selection.
-        static func isReady(showsPlacesMap: Bool, clusterCount: Int, gridCount: Int) -> Bool {
-            showsPlacesMap ? clusterCount > 0 : gridCount > 0
+        static func isReady(
+            showsPlacesMap: Bool,
+            clusterCount: Int,
+            showsDuplicates: Bool = false,
+            duplicateGroupCount: Int = 0,
+            gridCount: Int
+        ) -> Bool {
+            if showsPlacesMap {
+                return clusterCount > 0
+            }
+            if showsDuplicates {
+                return duplicateGroupCount > 0
+            }
+            return gridCount > 0
         }
 
         @MainActor
@@ -56,6 +71,7 @@
                 NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
             }
             let settleSeconds = environment[settleVariable].flatMap(Double.init) ?? 0
+            let scrollFraction = environment[scrollVariable].flatMap(Double.init) ?? 0
             OtosLog.app.notice(
                 "op=smoke.capture phase=start path=\(path, privacy: .public) settleSeconds=\(settleSeconds, privacy: .public)"
             )
@@ -64,6 +80,8 @@
                     isReady(
                         showsPlacesMap: $0.showsPlacesMap,
                         clusterCount: $0.mapClusters.count,
+                        showsDuplicates: $0.showsDuplicatesList,
+                        duplicateGroupCount: $0.state.duplicates?.groups.count ?? 0,
                         gridCount: $0.state.mediaGrid.orderedAssetIDs.count
                     )
                 }
@@ -80,6 +98,10 @@
                     // shows it lays out on the next pass. Yield once so the capture draws
                     // that pass, not the one before it.
                     await Task.yield()
+                    if scrollFraction > 0 {
+                        scrollEveryScrollView(to: scrollFraction)
+                        await Task.yield()
+                    }
                     if settleSeconds > 0 {
                         // time: measurement — tiles and thumbnails report no arrival.
                         try? await Task.sleep(for: .seconds(settleSeconds))
@@ -87,6 +109,25 @@
                     capture(to: path)
                     return
                 }
+            }
+        }
+
+        /// Scrolls every scroll view in the main window to the given fraction of its
+        /// range, so a capture can show a list past its first screen.
+        @MainActor
+        private static func scrollEveryScrollView(to fraction: Double) {
+            guard let view = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })?.contentView else {
+                return
+            }
+            var pending = [view]
+            while let next = pending.popLast() {
+                if let scrollView = next as? NSScrollView, let document = scrollView.documentView {
+                    let visible = scrollView.contentView.bounds.height
+                    let maxY = max(0, document.bounds.height - visible)
+                    scrollView.contentView.scroll(to: NSPoint(x: 0, y: maxY * fraction))
+                    scrollView.reflectScrolledClipView(scrollView.contentView)
+                }
+                pending.append(contentsOf: next.subviews)
             }
         }
 

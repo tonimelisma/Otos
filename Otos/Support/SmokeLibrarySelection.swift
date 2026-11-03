@@ -23,18 +23,22 @@
     /// and never against elapsed time.
     nonisolated enum SmokeLibrarySelection {
         static let environmentVariable = "OTOS_SMOKE_SELECT_ROOT"
-        /// The one non-path value: the Places map (ADR 0040), which has no root to name.
+        /// The non-path values: the Places map (ADR 0040) and the Duplicates list (ADR 0042),
+        /// which have no root to name.
         static let placesValue = "places"
+        static let duplicatesValue = "duplicates"
 
         /// What the environment asked the window to show.
         enum Request: Equatable {
             case root(LibraryRootPath)
             case places
+            case duplicates
 
             var diagnosticDescription: String {
                 switch self {
                 case let .root(path): path.rawValue
                 case .places: SmokeLibrarySelection.placesValue
+                case .duplicates: SmokeLibrarySelection.duplicatesValue
                 }
             }
         }
@@ -46,6 +50,9 @@
             case notRegistered(requested: LibraryRootPath, registered: [LibraryRootPath])
             /// Places was asked for, but no fixed library exists to map.
             case noFixedLibrary(registered: [LibraryRootPath])
+            /// Duplicates was asked for, but the groups are not built yet or none is active;
+            /// the seam keeps following, since groups arrive as digests do.
+            case noDuplicatesYet
         }
 
         /// The request: `places`, or a root normalized the same way `CatalogStore`
@@ -63,6 +70,9 @@
             if rawValue == placesValue {
                 return .places
             }
+            if rawValue == duplicatesValue {
+                return .duplicates
+            }
             let url = URL(fileURLWithPath: NSString(string: rawValue).expandingTildeInPath, isDirectory: true)
             return (try? CatalogPath.normalizedDirectoryPath(for: url)).map(Request.root)
         }
@@ -72,7 +82,8 @@
         /// treats them; Places needs one fixed library, exactly as its row does.
         static func resolve(
             requested: Request,
-            among sources: [CatalogLibraryState]
+            among sources: [CatalogLibraryState],
+            activeDuplicateGroups: Int = 0
         ) -> Resolution {
             let registered = sources.map(\.path).sorted { $0.rawValue < $1.rawValue }
             switch requested {
@@ -86,6 +97,8 @@
                     return .select(.places)
                 }
                 return .noFixedLibrary(registered: registered)
+            case .duplicates:
+                return activeDuplicateGroups > 0 ? .select(.duplicates) : .noDuplicatesYet
             }
         }
 
@@ -98,7 +111,11 @@
             guard state.mediaEmptyState != .loadingCatalog else {
                 return nil
             }
-            return resolve(requested: requested, among: state.libraries + state.removableSources)
+            return resolve(
+                requested: requested,
+                among: state.libraries + state.removableSources,
+                activeDuplicateGroups: state.duplicates?.activeGroups.count ?? 0
+            )
         }
 
         /// Applies the ordinary selection intent once the requested root is published.
@@ -145,7 +162,7 @@
                         OtosLog.app.error(
                             "op=smoke.select phase=report outcome=notRegistered requestedPath=\(requested.diagnosticDescription, privacy: .public) registeredRoots=[\(names, privacy: .public)] hint=a smoke run never adds a root; pass one that is already registered, or places with a fixed library registered"
                         )
-                    case .notRegistered, .noFixedLibrary:
+                    case .notRegistered, .noFixedLibrary, .noDuplicatesYet:
                         continue
                     }
                 }
