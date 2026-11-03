@@ -612,6 +612,7 @@ struct ImportExecutionProgressTests {
         let plan = try await waitForReadyPlan(coordinator, source: source)
 
         let collector = ProgressCollector()
+        let started = ContinuousClock.now
         let result = await MediaImportExecutor(store: store).execute(
             plan: plan,
             batch: ImportBatchID(),
@@ -622,6 +623,7 @@ struct ImportExecutionProgressTests {
         ) { progress in
             collector.record(progress)
         }
+        let observed = ContinuousClock.now - started
 
         guard case .completed = result else {
             Issue.record("Expected completed execution, got \(result)")
@@ -638,16 +640,20 @@ struct ImportExecutionProgressTests {
             #expect(snapshot.completedBytes <= expectedBytes)
             previousBytes = snapshot.completedBytes
             // The time base state E needs for "about N seconds left"
-            // (import-bar.md, DES-032): monotonic, and near zero at the run's
-            // first snapshot rather than carrying over from some other clock.
+            // (import-bar.md, DES-032): monotonic, and counted from the run's own
+            // start rather than carried over from some other clock.
             #expect(snapshot.elapsedMs >= previousElapsedMs)
             previousElapsedMs = snapshot.elapsedMs
         }
         #expect(snapshots.last?.completedCount == 12)
         #expect(snapshots.last?.completedBytes == expectedBytes)
+        // No snapshot can claim more time than the run took while this test watched it: a
+        // time base carried over from another clock would. (A fixed bound would only
+        // measure how loaded the machine is.)
+        let observedMs = Int(observed.components.seconds * 1000 + observed.components.attoseconds / 1_000_000_000_000_000)
         #expect(
-            (snapshots.first?.elapsedMs ?? .max) < 2000,
-            "First snapshot should be near run start, not carried over"
+            (snapshots.last?.elapsedMs ?? .max) <= observedMs,
+            "Elapsed time is counted from the run's start, not carried over"
         )
         let sourceAfter = try FilesystemTreeSnapshot.capture(root: sourceURL)
         #expect(sourceAfter == sourceBefore)

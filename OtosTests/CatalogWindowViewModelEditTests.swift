@@ -263,29 +263,6 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
-    /// A suggested crop is placed by the subject Vision finds in the frame the tool shows,
-    /// as one step.
-    @Test func aSuggestedCropHoldsTheSubject() async throws {
-        let center = CGPoint(x: 0.3, y: 0.35)
-        try await withEditableLibrary(fileCount: 1, write: { try writeSubjectJPEG(to: $0, center: center) }) { library in
-            let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
-            model.selectAll()
-            model.toggleCropTool()
-            try await waitUntil { model.canSuggestCrop && model.editCropBase?.id == id }
-
-            model.suggestCrop(.fitSubject)
-            try await waitUntil { model.hasSettledEdits }
-            let crop = try #require(try await library.store.editRecipe(for: id)?.recipe.crop)
-            #expect(crop.left < center.x && crop.right > center.x)
-            #expect(crop.top < center.y && crop.bottom > center.y)
-            #expect(crop.width < 0.6)
-            #expect(model.undoMenuState.undoTitle == "Undo Suggested Crop")
-        }
-    }
-
     /// Crop geometry takes the photo's upright size from the decode it is edited from,
     /// never from the catalog row: a HEIF turned by its `irot` property can be cataloged
     /// with its stored landscape size while it shows upright.
@@ -351,32 +328,9 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
-    /// Level ▸ Horizon levels the horizon as one undo step, and Undo puts it back.
-    @Test func levelToHorizonIsOneUndoStep() async throws {
-        try await withEditableLibrary(fileCount: 1, write: { try writeHorizonJPEG(to: $0, risingBy: 6) }) { library in
-            let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
-            model.toggleInspector(.edit)
-            model.selectAll()
-            try await waitUntil { model.canEdit }
-
-            model.levelToHorizon()
-            try await waitUntil { model.hasSettledEdits }
-            let straighten = try #require(try await library.store.editRecipe(for: id)?.recipe.straighten)
-            #expect(abs(straighten - 6) < 1)
-            #expect(model.undoMenuState.undoTitle == "Undo Level to Horizon")
-
-            model.undoLastChange()
-            try await waitUntil { model.hasSettledEdits }
-            #expect(try await library.store.editRecipe(for: id)?.recipe.straighten == 0)
-        }
-    }
-
-    /// Level ▸ Camera straightens by the iPhone back camera's gravity reading, not by the
-    /// horizon in the pixels, as one undo step; on a photo shown flipped it is mirrored.
-    @Test func levelToCameraUsesTheCamerasReadingAndMirrorsItWhenFlipped() async throws {
+    /// Level ▸ Auto straightens by an iPhone back camera's gravity reading, as one undo step,
+    /// mirrored on a photo shown flipped; the reading is known as the photo opens.
+    @Test func autoStraightenUsesTheCamerasReadingAndMirrorsItWhenFlipped() async throws {
         // Gravity 3° counterclockwise of straight down the screen: a −3° turn levels it.
         let tilt = 3 * Double.pi / 180
         let write: (URL) throws -> Void = {
@@ -390,21 +344,22 @@ struct CatalogWindowViewModelEditTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
+            defer { model.editAnalysisTask?.cancel() }
             model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.canEdit }
-            #expect(model.canLevelToCamera)
+            #expect(model.autoStraightenState == .available(.gravity))
 
-            model.levelToCamera()
+            model.autoStraighten()
             try await waitUntil { model.hasSettledEdits }
             let plain = try #require(try await library.store.editRecipe(for: id)?.recipe.straighten)
             #expect(abs(plain + 3) < 0.05)
-            #expect(model.undoMenuState.undoTitle == "Undo Level to Camera")
+            #expect(model.undoMenuState.undoTitle == "Undo Auto Straighten")
 
             model.undoLastChange()
             try await waitUntil { model.hasSettledEdits }
             model.flipPhoto(horizontally: true)
-            model.levelToCamera()
+            model.autoStraighten()
             try await waitUntil { model.hasSettledEdits }
             let flipped = try #require(try await library.store.editRecipe(for: id)?.recipe)
             #expect(flipped.flipHorizontal)
@@ -413,8 +368,8 @@ struct CatalogWindowViewModelEditTests {
     }
 
     /// A front-camera photo's gravity reading says nothing about how it is shown, since iOS
-    /// may have mirrored it: Camera is unavailable and does nothing, and Horizon still works.
-    @Test func aPhotoWithoutATrustedReadingCannotBeLeveledToTheCamera() async throws {
+    /// may have mirrored it: Auto straighten never uses it, and reads the pixels instead.
+    @Test func aFrontCameraReadingIsNeverTheLevel() async throws {
         let tilt = 3 * Double.pi / 180
         let write: (URL) throws -> Void = {
             try writeLeveledJPEG(
@@ -423,22 +378,45 @@ struct CatalogWindowViewModelEditTests {
             )
         }
         try await withEditableLibrary(fileCount: 1, write: write) { library in
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            defer { model.editAnalysisTask?.cancel() }
+            model.toggleInspector(.edit)
+            model.selectAll()
+            try await waitUntil { model.canEdit && model.autoStraightenState != .reading }
+
+            #expect(model.autoStraightenState != .available(.gravity))
+        }
+    }
+
+    /// Suggested ▸ Crop applies the crop read for the frame the draft shows, as one undo
+    /// step; once the frame turns, that reading no longer applies until the new frame is read.
+    @Test func autoCropAppliesTheReadingForTheFrameAsShown() async throws {
+        try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
+            defer { model.editAnalysisTask?.cancel() }
             model.toggleInspector(.edit)
             model.selectAll()
-            try await waitUntil { model.canEdit }
-            #expect(!model.canLevelToCamera)
+            try await waitUntil { model.canEdit && model.autoCropState != .reading }
 
-            model.levelToCamera()
-            #expect(model.editDraft.straighten == 0)
-
-            model.levelToHorizon()
+            // Whatever FocalNet read for this frame, the button applies the reading it holds.
+            let suggested = EditCrop(left: 0.1, top: 0.05, width: 0.7, height: 0.8)
+            model.editAutoCrop = AutoCropReading(id: id, frame: model.editDraft.uncropped, crop: suggested)
+            #expect(model.autoCropState == .available(nil))
+            model.autoCrop()
             try await waitUntil { model.hasSettledEdits }
-            let straighten = try #require(try await library.store.editRecipe(for: id)?.recipe.straighten)
-            #expect(abs(straighten - 6) < 1)
+            #expect(try await library.store.editRecipe(for: id)?.recipe.crop == suggested)
+            #expect(model.undoMenuState.undoTitle == "Undo Auto Crop")
+
+            model.editAutoCrop = AutoCropReading(id: id, frame: model.editDraft.uncropped, crop: suggested)
+            model.turnPhoto(clockwise: true)
+            #expect(model.autoCropState == .reading)
+            try await waitUntil { model.autoCropState != .reading }
+            #expect(model.editAutoCrop?.frame.quarterTurns == 1)
         }
     }
 
@@ -456,26 +434,6 @@ struct CatalogWindowViewModelEditTests {
 
             #expect(model.isCropping)
             #expect(model.isDrawingStraightenLine)
-        }
-    }
-
-    /// A reading taken before the photo was turned is measured in another frame, and one
-    /// that found no horizon has nothing to apply: either leaves the photo as it is.
-    @Test func aStaleOrEmptyHorizonReadingChangesNothing() async throws {
-        try await withEditableLibrary(fileCount: 1) { library in
-            let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
-            model.toggleInspector(.edit)
-            model.selectAll()
-            try await waitUntil { model.canEdit }
-
-            model.applyHorizonLevel(id: id, shown: EditRecipe(quarterTurns: 1), .level(5))
-            model.applyHorizonLevel(id: id, shown: model.editDraft, .none)
-
-            #expect(model.editDraft.straighten == 0)
-            #expect(model.undoMenuState.undoTitle != "Undo Level to Horizon")
         }
     }
 

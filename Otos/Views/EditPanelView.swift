@@ -303,9 +303,10 @@ struct EditPanelView: View {
         }
     }
 
-    /// The three ways to level the photo, each named by what it levels by: the camera's
-    /// own reading, the horizon in the picture, or a line drawn on it (Lightroom names its
-    /// level corrections the same way). The label-left row is Suggested's (DES-017).
+    /// The two ways to level the photo: Auto, by its level reading (the camera's gravity
+    /// reading, else GeoCalib's), and a line drawn on it. Auto is unavailable while the photo is
+    /// read and when no reading is trusted, its tooltip saying which (DES-038). The label-left
+    /// row is Suggested's (DES-017).
     private var levelRow: some View {
         HStack(spacing: 4) {
             Text("Level")
@@ -313,17 +314,16 @@ struct EditPanelView: View {
                 .fixedSize()
                 .foregroundStyle(unavailableHelp == nil ? .primary : .secondary)
             Spacer()
-            Button("Camera", action: cropActions.levelToCamera)
+            Button("Auto", action: cropActions.autoStraighten)
                 .controlSize(.small)
-                .disabled(!crop.canLevelToCamera)
-                .help(unavailableHelp ?? (crop.canLevelToCamera
-                        ? "Level the photo by the camera's own level reading"
-                        : "The camera recorded no level for this photo"))
-            Button("Horizon", action: cropActions.levelToHorizon)
-                .controlSize(.small)
-                .disabled(unavailableHelp != nil)
-                .help(unavailableHelp
-                    ?? "Level the horizon in the picture. A photo without a horizon may come out tilted.")
+                .disabled(unavailableHelp != nil || !crop.autoStraighten.isAvailable)
+                .help(unavailableHelp ?? crop.autoStraighten.help(
+                    available: crop.autoStraighten.source == .gravity
+                        ? "Straighten by the camera's level reading"
+                        : "Straighten by the level read from the photo",
+                    reading: "Reading the photo's level",
+                    none: "No reliable level for this photo"
+                ))
             straightenLineTool
         }
     }
@@ -342,20 +342,23 @@ struct EditPanelView: View {
         .accessibilityLabel("Level Along a Line")
     }
 
-    /// Crops placed by the photo's subject, each one step, keeping the chosen aspect.
+    /// The crop FocalNet suggests for the frame as saved, one step; unavailable while the
+    /// frame is read and when FocalNet keeps it whole, its tooltip saying which (DES-038).
     private var suggestionsRow: some View {
         HStack(spacing: 4) {
             Text("Suggested")
                 .font(.body)
-                .foregroundStyle(crop.isCropping ? .primary : .secondary)
+                .foregroundStyle(unavailableHelp == nil ? .primary : .secondary)
                 .fixedSize()
             Spacer()
-            ForEach(CropSuggestion.allCases) { suggestion in
-                Button(suggestion.shortTitle) { cropActions.suggest(suggestion) }
-                    .controlSize(.small)
-                    .disabled(!crop.canSuggest)
-                    .help(crop.isCropping ? suggestion.help : "Start cropping to use a suggested crop")
-            }
+            Button("Crop", action: cropActions.autoCrop)
+                .controlSize(.small)
+                .disabled(unavailableHelp != nil || !crop.autoCrop.isAvailable)
+                .help(unavailableHelp ?? crop.autoCrop.help(
+                    available: "Apply the suggested crop",
+                    reading: "Reading the photo for a crop",
+                    none: "No crop to suggest for this photo"
+                ))
         }
     }
 
@@ -614,10 +617,41 @@ struct EditPanelCropState {
     let isLandscape: Bool
     /// The straighten line is armed.
     var isDrawingLine = false
-    /// The tool shows the frame the draft crops, so a suggestion can be read from it.
-    var canSuggest = false
-    /// The opened photo carries a camera level reading.
-    var canLevelToCamera = false
+    var autoStraighten = EditAutoState.reading
+    var autoCrop = EditAutoState.reading
+}
+
+/// An Auto button as the panel shows it: still reading the photo, available, or not
+/// available because no reading is trusted.
+enum EditAutoState: Equatable {
+    case reading
+    /// Available; for Auto straighten, what the level was read from.
+    case available(AutoLevelSource?)
+    case none
+
+    var isAvailable: Bool {
+        if case .available = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    var source: AutoLevelSource? {
+        if case let .available(source) = self {
+            source
+        } else {
+            nil
+        }
+    }
+
+    func help(available: String, reading: String, none: String) -> String {
+        switch self {
+        case .available: available
+        case .reading: reading
+        case .none: none
+        }
+    }
 }
 
 /// The crop tool's intents, as the panel calls them.
@@ -629,11 +663,10 @@ struct EditPanelCropActions {
     let turn: @MainActor (Bool) -> Void
     /// Horizontally when true.
     let flip: @MainActor (Bool) -> Void
-    /// Level ▸ Camera: by the camera's own level reading.
-    let levelToCamera: @MainActor () -> Void
-    /// Level ▸ Horizon: by the horizon Vision finds.
-    let levelToHorizon: @MainActor () -> Void
+    /// Level ▸ Auto.
+    let autoStraighten: @MainActor () -> Void
     /// Arms or disarms the straighten line.
     let toggleLine: @MainActor () -> Void
-    let suggest: @MainActor (CropSuggestion) -> Void
+    /// Suggested ▸ Crop.
+    let autoCrop: @MainActor () -> Void
 }

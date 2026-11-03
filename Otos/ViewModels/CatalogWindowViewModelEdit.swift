@@ -12,7 +12,7 @@ import OSLog
 /// as editing needs its bytes — and its facts (`EditPhotoFacts`: RAW or not, a RAW's
 /// as-shot white balance) are published. The controls act only once they are known.
 ///
-/// Two lanes, each one consumer:
+/// Three lanes, each one consumer:
 /// - **Live render** (`editRenderStream`, newest-wins): opens the photo and renders the
 ///   draft on `LiveEditRenderer`, which keeps the photo open between renders. A render is
 ///   shown only while its photo is still the target and no newer render has been shown,
@@ -28,6 +28,12 @@ import OSLog
 ///   instead, which renders with the saved recipe too, so the grid never keeps an edit's
 ///   old thumbnail. A neutral pick asks the open photo for the white balance that makes
 ///   the clicked point gray and saves it as one step.
+/// - **Analysis** (`editAnalysisStream`, newest-wins): reads the photo for Auto straighten and
+///   Auto crop (ADR 0045) when it opens and whenever the saved edit moves the frame. Auto
+///   straighten is the camera's gravity reading when the file has one (known as the photo
+///   opens), else GeoCalib's roll when it is confident; Auto crop is FocalNet's crop of the
+///   frame as saved. A reading is published only for the photo and frame it was read from;
+///   a failed read publishes nothing and the buttons stay unavailable.
 ///
 /// Undo and redo enqueue the same command through the same lane, so they order after any
 /// save still in flight, and file their own inverse synchronously at fire time
@@ -103,33 +109,58 @@ nonisolated enum EditLaneCommand: Sendable {
     /// The white balance picker was clicked at `point`, a fraction of the photo as shown
     /// (edited with `shown`) from its top-left corner.
     case pickNeutral(id: MediaAssetID, point: CGPoint, shown: EditRecipe, sourceSize: Int64?)
-    /// Level ▸ Horizon: level the horizon of the photo as `shown` turns and flips it.
-    case levelToHorizon(id: MediaAssetID, shown: EditRecipe, sourceSize: Int64?)
-    /// The crop tool's Suggested menu: place `suggestion` by the subject of `frame`, the
-    /// photo edited with everything but its crop as `shown`, keeping `pixelRatio`.
-    case suggestCrop(
-        id: MediaAssetID,
-        frame: CGImage,
-        shown: EditRecipe,
-        suggestion: CropSuggestion,
-        pixelRatio: Double?
-    )
 }
 
-/// What reading the crop frame's subject found.
-nonisolated enum SubjectReading: Equatable, Sendable {
-    /// The subject, in fractions of the frame from its top-left corner.
-    case found(CGRect)
-    /// Vision found no subject: the crop is left as it is.
-    case none
+/// What Auto straighten can do for the photo the panel edits.
+nonisolated struct AutoLevelReading: Equatable, Sendable {
+    enum Level: Equatable, Sendable {
+        /// The straighten, degrees clockwise, that levels the upright, unflipped photo.
+        case degrees(Double, source: AutoLevelSource)
+        /// No reading Otos trusts: the button is unavailable.
+        case none
+    }
+
+    let id: MediaAssetID
+    let level: Level
 }
 
-/// What reading a photo's horizon found.
-nonisolated enum HorizonReading: Equatable, Sendable {
-    /// The straighten, in degrees clockwise, that levels it.
-    case level(Double)
-    /// Vision found no horizon: the photo is left as it is.
-    case none
+nonisolated extension AutoLevelReading.Level {
+    /// The degrees as logs write them, or `none`.
+    var logValue: String {
+        if case let .degrees(degrees, _) = self {
+            return String(format: "%.2f", degrees)
+        }
+        return "none"
+    }
+}
+
+/// What a level was read from: the camera's own gravity reading, or GeoCalib's reading of the
+/// pixels.
+nonisolated enum AutoLevelSource: String, Equatable, Sendable {
+    case gravity
+    case scene
+}
+
+/// The suggested crop of the photo as `frame` turns, flips and straightens it; nil when
+/// FocalNet would keep that frame whole.
+nonisolated struct AutoCropReading: Equatable, Sendable {
+    let id: MediaAssetID
+    let frame: EditRecipe
+    let crop: EditCrop?
+}
+
+/// A request to read the photo: the crop of `frame`, and its level when that is not known.
+nonisolated struct EditAnalysisRequest: Equatable, Sendable {
+    let id: MediaAssetID
+    let frame: EditRecipe
+    let sourceSize: Int64?
+    let needsLevel: Bool
+}
+
+/// What one analysis read. A nil part failed or was not asked for, and publishes nothing.
+nonisolated struct EditAnalysis: Sendable {
+    let crop: EditCrop??
+    let level: AutoLevelReading.Level?
 }
 
 extension CatalogWindowViewModel {
@@ -279,6 +310,9 @@ extension CatalogWindowViewModel {
             let saved = detail.editRecipe ?? .neutral
             editTarget = EditTarget(id: id, sourceSize: detail.byteSize)
             editPhotoFacts = nil
+            editAutoLevel = nil
+            editAutoCrop = nil
+            editAnalysisRequested = nil
             editOriginalPixelSize = nil
             isPickingNeutral = false
             endShowingOriginal()
@@ -304,6 +338,9 @@ extension CatalogWindowViewModel {
         endCropping()
         editTarget = nil
         editPhotoFacts = nil
+        editAutoLevel = nil
+        editAutoCrop = nil
+        editAnalysisRequested = nil
         editOriginalPixelSize = nil
         isPickingNeutral = false
         endShowingOriginal()
@@ -454,10 +491,56 @@ extension CatalogWindowViewModel {
             store: store,
             renderer: liveEditRenderer,
             materialization: materializationCoordinator,
-            directory: store.thumbnailDirectory
+            directory: store.thumbnailDirectory,
+            analyzer: EditAnalyzer()
         )
         startLiveEditRendering(pipeline)
         startEditSaving(pipeline)
+        startEditAnalysis(pipeline)
+    }
+
+    private func startEditAnalysis(_ pipeline: EditPipeline) {
+        editAnalysisTask = Task { [weak self, editAnalysisStream, pipeline] in
+            for await request in editAnalysisStream {
+                guard !Task.isCancelled else { break }
+                let analysis = await pipeline.analyze(request)
+                self?.publishEditAnalysis(request, analysis)
+            }
+        }
+    }
+
+    /// Asks for a reading of the photo as saved, unless the same one was already asked for.
+    /// The crop is read for the saved frame; the level once per photo.
+    func requestEditAnalysis() {
+        guard let target = editTarget, editPhotoFacts != nil else { return }
+        let request = EditAnalysisRequest(
+            id: target.id,
+            frame: editSavedRecipe.uncropped,
+            sourceSize: target.sourceSize,
+            needsLevel: editAutoLevel?.id != target.id
+        )
+        guard request != editAnalysisRequested else { return }
+        editAnalysisRequested = request
+        editAnalysisContinuation.yield(request)
+        OtosLog.ui.debugOperation("edit.analysis", phase: "requested", fields: [
+            "id": target.id.relativePath.rawValue, "needsLevel": "\(request.needsLevel)",
+        ])
+    }
+
+    /// A reading landed. Each part is kept only for the photo it was read from; the crop only
+    /// while the saved frame is still the one it was read for.
+    private func publishEditAnalysis(_ request: EditAnalysisRequest, _ analysis: EditAnalysis) {
+        guard editTarget?.id == request.id else { return }
+        if let level = analysis.level, editAutoLevel?.id != request.id {
+            editAutoLevel = AutoLevelReading(id: request.id, level: level)
+        }
+        if let crop = analysis.crop, Self.sameFrame(request.frame, editSavedRecipe) {
+            editAutoCrop = AutoCropReading(id: request.id, frame: request.frame, crop: crop)
+        }
+        if analysis.level == nil && request.needsLevel || analysis.crop == nil {
+            // A failed part asks again on the next change, not in a loop.
+            editAnalysisRequested = nil
+        }
     }
 
     private func startLiveEditRendering(_ pipeline: EditPipeline) {
@@ -522,18 +605,6 @@ extension CatalogWindowViewModel {
                         self?.applyPickedWhiteBalance(id: id, whiteBalance)
                     }
                     continue
-                case let .levelToHorizon(id, shown, sourceSize):
-                    if let reading = await pipeline.horizon(id, shown: shown, sourceSize: sourceSize) {
-                        self?.applyHorizonLevel(id: id, shown: shown, reading)
-                    }
-                    continue
-                case let .suggestCrop(id, frame, shown, suggestion, pixelRatio):
-                    if let subject = await pipeline.subject(id, of: frame) {
-                        self?.applySuggestedCrop(
-                            id: id, shown: shown, suggestion: suggestion, pixelRatio: pixelRatio, subject: subject
-                        )
-                    }
-                    continue
                 case let .save(save):
                     command = save
                 }
@@ -561,6 +632,10 @@ extension CatalogWindowViewModel {
         else { return }
         editPhotoFacts = opened.facts
         editOriginalPixelSize = opened.pixelSize
+        if let degrees = opened.facts.cameraLevel, editAutoLevel?.id != id {
+            editAutoLevel = AutoLevelReading(id: id, level: .degrees(degrees, source: .gravity))
+        }
+        requestEditAnalysis()
         OtosLog.ui.debugOperation("edit.target", phase: "opened", fields: [
             "id": id.relativePath.rawValue, "raw": "\(opened.facts.isRAW)",
             "width": "\(Int(opened.pixelSize.width))", "height": "\(Int(opened.pixelSize.height))",
@@ -688,6 +763,7 @@ nonisolated struct EditPipeline: Sendable {
     let renderer: LiveEditRenderer
     let materialization: MaterializationCoordinator?
     let directory: URL?
+    let analyzer: EditAnalyzer
 
     /// Saves the command's recipe. A failed save is logged and returns nil; the panel's
     /// values stay as the user left them.
@@ -812,52 +888,53 @@ nonisolated struct EditPipeline: Sendable {
         }
     }
 
-    /// The straighten that levels the horizon Vision finds in the photo as `shown` turns
-    /// and flips it, or nil when the photo cannot be read.
+    /// Reads the photo for Auto crop and, when asked, Auto straighten: FocalNet on the frame as
+    /// saved, GeoCalib on the upright, unedited photo, trusted only when confident.
     @concurrent
-    func horizon(_ id: MediaAssetID, shown: EditRecipe, sourceSize: Int64?) async -> HorizonReading? {
-        guard await MaterializationCoordinator.makeLocal(id, sourceSize: sourceSize, via: materialization) else {
-            return nil
-        }
-        let start = ContinuousClock.now
+    func analyze(_ request: EditAnalysisRequest) async -> EditAnalysis {
+        guard await MaterializationCoordinator.makeLocal(request.id, sourceSize: request.sourceSize, via: materialization)
+        else { return EditAnalysis(crop: nil, level: nil) }
+        let url = request.id.fileURL
+        let path = request.id.relativePath.rawValue
+        var crop: EditCrop??
+        let cropStart = ContinuousClock.now
         do {
-            let degrees = try await renderer.horizonStraighten(id.fileURL, shown: shown)
-            OtosLog.rendering.noticeOperation("render.horizon", phase: "finish", fields: [
-                "id": id.relativePath.rawValue,
-                "found": "\(degrees != nil)",
-                "degrees": degrees.map { String(format: "%.2f", $0) } ?? "none",
-                "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+            let frame = try await renderer.analysisImage(url, recipe: request.frame)
+            let suggested = try await analyzer.crop(of: frame)
+            crop = .some(suggested)
+            OtosLog.rendering.noticeOperation("edit.autoCrop", phase: "read", fields: [
+                "id": path,
+                "crop": suggested.map { String(format: "%.3f,%.3f,%.3f,%.3f", $0.left, $0.top, $0.width, $0.height) } ?? "none",
+                "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: cropStart))",
             ])
-            return degrees.map(HorizonReading.level) ?? HorizonReading.none
         } catch {
-            OtosLog.rendering.errorOperation("render.horizon", phase: "failed", fields: [
-                "id": id.relativePath.rawValue, "error": String(describing: error),
+            OtosLog.rendering.errorOperation("edit.autoCrop", phase: "failed", fields: [
+                "id": path, "error": String(describing: error),
             ])
-            return nil
         }
-    }
-
-    /// Where the subject of the crop frame is, or nil when Vision cannot read it. A
-    /// frame Vision finds no subject in reads as `.none`.
-    @concurrent
-    func subject(_ id: MediaAssetID, of frame: CGImage) async -> SubjectReading? {
-        let start = ContinuousClock.now
+        guard request.needsLevel else { return EditAnalysis(crop: crop, level: nil) }
+        var level: AutoLevelReading.Level?
+        let levelStart = ContinuousClock.now
         do {
-            let subject = try LiveEditRenderer.salientSubject(in: frame)
-            OtosLog.rendering.noticeOperation("render.cropSubject", phase: "finish", fields: [
-                "id": id.relativePath.rawValue,
-                "found": "\(subject != nil)",
-                "subject": subject.map { String(format: "%.3f,%.3f,%.3f,%.3f", $0.minX, $0.minY, $0.width, $0.height) }
-                    ?? "none",
-                "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+            let photo = try await renderer.analysisImage(url, recipe: .neutral)
+            if let reading = try await analyzer.roll(of: photo),
+               reading.uncertainty <= AutoLevelModel.maximumUncertainty
+            {
+                level = .degrees(reading.roll * 180 / .pi, source: .scene)
+            } else {
+                level = AutoLevelReading.Level.none
+            }
+            OtosLog.rendering.noticeOperation("edit.autoLevel", phase: "read", fields: [
+                "id": path,
+                "level": level?.logValue ?? "none",
+                "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: levelStart))",
             ])
-            return subject.map(SubjectReading.found) ?? SubjectReading.none
         } catch {
-            OtosLog.rendering.errorOperation("render.cropSubject", phase: "failed", fields: [
-                "id": id.relativePath.rawValue, "error": String(describing: error),
+            OtosLog.rendering.errorOperation("edit.autoLevel", phase: "failed", fields: [
+                "id": path, "error": String(describing: error),
             ])
-            return nil
         }
+        return EditAnalysis(crop: crop, level: level)
     }
 
     private func handToEnrichment(_ id: MediaAssetID) async {
@@ -868,5 +945,55 @@ nonisolated struct EditPipeline: Sendable {
                 "id": id.relativePath.rawValue, "error": String(describing: error),
             ])
         }
+    }
+}
+
+/// The two models Auto crop and Auto straighten read with (ADR 0045), loaded on first use and
+/// owned here, one per window. Loading reads 79 MB of weights and every prediction blocks, so the
+/// actor runs on its own serial queue rather than the shared pool (ADR 0032 rule 6), and the
+/// models never leave it.
+actor EditAnalyzer {
+    private let queue = DispatchSerialQueue(label: "net.melisma.Otos.edit.analysis", qos: .userInitiated)
+    private var crop: AutoCropModel?
+    private var level: AutoLevelModel?
+
+    nonisolated var unownedExecutor: UnownedSerialExecutor {
+        queue.asUnownedSerialExecutor()
+    }
+
+    /// FocalNet's suggested crop of `image`, or nil when it would keep it whole.
+    func crop(of image: CGImage) throws -> EditCrop? {
+        try cropModel().crop(of: image)
+    }
+
+    /// GeoCalib's roll of `image` and its uncertainty, radians.
+    func roll(of image: CGImage) throws -> (roll: Double, uncertainty: Double)? {
+        try levelModel().roll(of: image)
+    }
+
+    private func cropModel() throws -> AutoCropModel {
+        if let crop {
+            return crop
+        }
+        let start = ContinuousClock.now
+        let model = try AutoCropModel(bundle: Bundle(for: CatalogWindowViewModel.self))
+        crop = model
+        OtosLog.rendering.noticeOperation("edit.analysisModel", phase: "loaded", fields: [
+            "model": "FocalNet", "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
+        return model
+    }
+
+    private func levelModel() throws -> AutoLevelModel {
+        if let level {
+            return level
+        }
+        let start = ContinuousClock.now
+        let model = try AutoLevelModel(bundle: Bundle(for: CatalogWindowViewModel.self))
+        level = model
+        OtosLog.rendering.noticeOperation("edit.analysisModel", phase: "loaded", fields: [
+            "model": "GeoCalib", "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
+        return model
     }
 }

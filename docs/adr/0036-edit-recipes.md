@@ -79,37 +79,15 @@ open takes 20–180 ms per change. Opening it again for every change takes about
     - `CIStraightenFilter` does the same visibly, but its scale is not exposed. The
       explicit transform can be inverted, which the white balance picker needs to find
       the developed pixel under a click on a turned, straightened or cropped photo.
-  - Levelling sets the straighten outright rather than adding to it. There are two levels,
-    each the person's explicit choice and named by its source, with no `Auto` that picks
-    between them:
-    - **Camera.** MediaMetadata's `levelingTurnDegrees` is the camera's own gravity reading
-      at capture. It is read when the photo opens, from the same original as the panel's
-      other facts (`EditPhotoFacts.cameraLevel`), so the button is enabled only when there
-      is a reading. The library decides when a reading means nothing: a front-camera
-      photo, or a camera pointed near straight up or down. A quarter turn of the picture
-      keeps a level level and each flip reverses it, so the reading is negated when the
-      recipe flips the photo once. The reading is not stored in the catalog, because nothing
-      else reads it.
-    - **Horizon.** Vision's `VNDetectHorizonRequest` reads the live renderer's open photo,
-      developed with the recipe's turns and flips but no straighten or crop. Vision reports
-      the counterclockwise turn that levels the photo; the straighten is that negated.
-      Vision always reports confidence 1.0, and on photos without a horizon it returns
-      confident wrong tilts that nothing can filter. So it is never applied without being
-      asked for, and its tooltip warns that a photo without a horizon may come out tilted.
+  - Auto straighten and Auto crop are tool intents that write the same recipe fields as a
+    drag: a straighten and a crop. ADR 0045 owns what they read with:
+    - Auto straighten: the camera's gravity reading, else a confident GeoCalib roll.
+    - Auto crop: FocalNet's crop of the frame as saved.
 
-    Rejected: a single `Auto` that falls back from the camera to the horizon. A fallback
-    that cannot tell its wrong answers from its right ones fabricates a fix.
-    Measurements are in `docs/research/2026-11-01-auto-straighten-and-crop-suggestions.md`.
-
-    Rejected: `CIImage.autoAdjustmentFilters` with `.level`, whose documentation names
-    neither the filter it returns nor an angle the recipe could store.
-  - The straighten line and suggested crops are tool intents that write the same recipe
-    fields as a drag: a straighten and a crop. The line's turn is pure geometry on the
-    canvas (`StraightenLine`). A suggestion reads the subject with Vision's objectness
-    saliency (attention saliency when it finds no object) from the crop tool's own frame
-    image, which is already the photo edited with everything but its crop, so its
-    fractions are the crop's; `CropSuggestion` places the crop from them. No suggestion
-    is stored: what is saved is the crop it produced.
+    Both set their field outright rather than adding to it. A level reading levels the upright,
+    unflipped photo, so it is negated when the recipe flips the photo once. Nothing is stored
+    but the straighten or crop it produced.
+  - The straighten line's turn is pure geometry on the canvas (`StraightenLine`).
   - A crop is developed from a frame large enough for the crop itself to reach the
     requested size: the RAW scale factor or the decode size is divided by the crop's
     share of the frame's long edge. A cropped preview therefore stays 2560 px, and the
