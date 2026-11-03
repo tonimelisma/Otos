@@ -1,2 +1,2 @@
 # Core ML packages are binary: git must not diff, merge or whitespace-check their contents.
-*.mlpackage/** binary
+**/*.mlpackage/** binary

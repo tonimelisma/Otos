@@ -293,7 +293,6 @@
 				Services/PerspectiveFieldSolver.swift,
 				Resources/Licenses/FocalNet-LICENSE.txt,
 				Resources/Licenses/GeoCalib-LICENSE.txt,
-				Resources/Licenses/GeoCalib-LICENSE-WEIGHTS.txt,
 				Resources/Licenses/README.md,
 			);
 			target = 3B44EB5D2FCEBA57007E4158 /* Otos */;
@@ -506,7 +505,6 @@
 				Services/PerspectiveFieldSolver.swift,
 				Resources/Licenses/FocalNet-LICENSE.txt,
 				Resources/Licenses/GeoCalib-LICENSE.txt,
-				Resources/Licenses/GeoCalib-LICENSE-WEIGHTS.txt,
 				Resources/Licenses/README.md,
 			);
 			target = 5980D4726503709D9D7F52EB /* OtosXXH3 */;

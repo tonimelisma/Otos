@@ -10,6 +10,6 @@ Otos ships two converted models (ADR 0045):
   Marc Pollefeys, ECCV 2024 (https://github.com/cvg/GeoCalib), converted to Core ML at half
   precision with fixed NMF starting bases. Code: Apache License 2.0, `GeoCalib-LICENSE.txt`.
   Weights: © 2024 ETH Zurich, Creative Commons Attribution 4.0 International,
-  `GeoCalib-LICENSE-WEIGHTS.txt`. The conversion changes the weights' precision and is a
+  https://creativecommons.org/licenses/by/4.0/legalcode. The conversion changes the weights' precision and is a
   modification under that licence. `Otos/Services/PerspectiveFieldSolver.swift` ports
   GeoCalib's Levenberg–Marquardt solver.
