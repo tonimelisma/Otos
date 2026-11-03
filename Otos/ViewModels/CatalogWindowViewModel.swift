@@ -244,8 +244,17 @@ final class CatalogWindowViewModel {
     /// Which way the constrained aspect stands, once Rotate Aspect has said so; nil follows
     /// the crop's own shape (`cropAspectIsLandscape`), decided only once the frame is known.
     var cropAspectLandscapeChoice: Bool?
+    /// What Auto straighten would do for the photo the panel edits; nil until it is known.
+    var editAutoLevel: AutoLevelReading?
+    /// The suggested crop of the frame last read; nil until one is known.
+    var editAutoCrop: AutoCropReading?
     @ObservationIgnored var isDraggingCrop = false
-    @ObservationIgnored var editSavedRecipe = EditRecipe.neutral
+    /// The saved edit. Every change to it can move the frame the suggested crop was read
+    /// from, so it asks for a new reading (`requestEditAnalysis`).
+    @ObservationIgnored var editSavedRecipe = EditRecipe.neutral {
+        didSet { requestEditAnalysis() }
+    }
+
     @ObservationIgnored var editDraggingControl: EditControl?
     @ObservationIgnored var editTargetTask: Task<Void, Never>?
     /// The photo `editTargetTask` is reading, while it runs.
@@ -260,6 +269,13 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let editCommandStream: AsyncStream<EditLaneCommand>
     @ObservationIgnored let editCommandContinuation: AsyncStream<EditLaneCommand>.Continuation
     @ObservationIgnored var editCommandTask: Task<Void, Never>?
+    /// Readings of the photo for Auto straighten and Auto crop: newest-wins, since only the
+    /// current frame's matters.
+    @ObservationIgnored let editAnalysisStream: AsyncStream<EditAnalysisRequest>
+    @ObservationIgnored let editAnalysisContinuation: AsyncStream<EditAnalysisRequest>.Continuation
+    @ObservationIgnored var editAnalysisTask: Task<Void, Never>?
+    /// The reading last asked for, so an unchanged frame is not read again.
+    @ObservationIgnored var editAnalysisRequested: EditAnalysisRequest?
     /// Submitted and fully handled edit commands — saved, rendered and applied, or
     /// refused — so a caller can wait for an edit to settle without guessing a duration.
     @ObservationIgnored var submittedEditCommandCount = 0
@@ -529,6 +545,9 @@ final class CatalogWindowViewModel {
         let (editCommandStream, editCommandContinuation) = AsyncStream<EditLaneCommand>.makeStream(
             bufferingPolicy: .unbounded
         )
+        let (editAnalysisStream, editAnalysisContinuation) = AsyncStream<EditAnalysisRequest>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
         // Every hand-off is handed over, in order.
         let (handOffStream, handOffContinuation) = AsyncStream<HandOffRequest>.makeStream(bufferingPolicy: .unbounded)
         let (exportStream, exportContinuation) = AsyncStream<ExportRequest>.makeStream(bufferingPolicy: .unbounded)
@@ -642,6 +661,8 @@ final class CatalogWindowViewModel {
         self.editRenderContinuation = editRenderContinuation
         self.editCommandStream = editCommandStream
         self.editCommandContinuation = editCommandContinuation
+        self.editAnalysisStream = editAnalysisStream
+        self.editAnalysisContinuation = editAnalysisContinuation
         self.handOffStream = handOffStream
         self.handOffContinuation = handOffContinuation
         self.exportStream = exportStream
@@ -672,6 +693,7 @@ final class CatalogWindowViewModel {
         editTargetTask?.cancel()
         editRenderTask?.cancel()
         editCommandTask?.cancel()
+        editAnalysisTask?.cancel()
         handOffTask?.cancel()
         exportTask?.cancel()
         mediaTrashTask?.cancel()
@@ -709,6 +731,7 @@ final class CatalogWindowViewModel {
         mediaChoiceContinuation.finish()
         editRenderContinuation.finish()
         editCommandContinuation.finish()
+        editAnalysisContinuation.finish()
         handOffContinuation.finish()
         exportContinuation.finish()
         viewportContinuation.finish()

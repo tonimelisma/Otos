@@ -31,7 +31,7 @@ and compare panes follow a drag live; a grid tile updates when the drag ends.
 | `Revert to Original`, the Show Original toggle's tooltip | L2 (`body`, small control) |
 | A RAW temperature's scale labels (`2500`, `4000`, `10000`) | L3 (`footnote`, secondary) |
 | Section heading (`Crop`, `Light`, `Color`) | `.title3`, regular, beside the section's symbol |
-| Control name, control value field, `Reset`, `Crop` / `Done`, `White Balance`, `Level` and its `Camera` / `Horizon`, `Rotate & Flip`, `Aspect` and its titles | L2 (`body`); values `.monospacedDigit()` (DES-005) |
+| Control name, control value field, `Reset`, `Crop` / `Done`, `White Balance`, `Level` and its `Auto`, `Suggested` and its `Crop`, `Rotate & Flip`, `Aspect` and its titles | L2 (`body`); values `.monospacedDigit()` (DES-005) |
 | A control's name and value while it is at its neutral value | L2 in secondary color |
 
 Four sizes, two weights (DES-004's edit panel deviation): the file name, the section
@@ -78,7 +78,7 @@ Sections, in order (Lightroom desktop's order, ADR 0036):
 
 | Section | Controls |
 | --- | --- |
-| Crop (a tool above the sections) | `Crop` / `Done` (Return while on); Straighten (−45.0…+45.0°, 0.1° steps, positive clockwise); `Level`: `Camera` and `Horizon` (small push buttons) and the straighten line's ruler (`ruler`, a toggle drawn pressed while armed); `Rotate & Flip`: Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical (borderless icons, as Lightroom's); `Aspect`: its menu (Original, Custom, 1 × 1, 4 × 5, 5 × 7, 2 × 3, 4 × 3, 16 × 9) and Rotate Aspect; `Suggested`: `Subject` and `Thirds` (small push buttons) |
+| Crop (a tool above the sections) | `Crop` / `Done` (Return while on); Straighten (−45.0…+45.0°, 0.1° steps, positive clockwise); `Level`: `Auto` (a small push button) and the straighten line's ruler (`ruler`, a toggle drawn pressed while armed); `Rotate & Flip`: Rotate Left, Rotate Right, Flip Horizontal, Flip Vertical (borderless icons, as Lightroom's); `Aspect`: its menu (Original, Custom, 1 × 1, 4 × 5, 5 × 7, 2 × 3, 4 × 3, 16 × 9) and Rotate Aspect; `Suggested`: `Crop` (a small push button) |
 | Light | Exposure (−4.00…+4.00 stops, 0.05 steps), Contrast (−100…+100), Highlights (−100…+100), Shadows (−100…+100) |
 | Color | White Balance picker; Temperature (a RAW: 2000–50000 K, even in mireds, 50 K steps, shown `5600 K`; another still: −100…+100), Tint (a RAW: −150…+150; another still: −100…+100), Vibrance (−100…+100), Saturation (−100…+100) |
 | Effects | Vignette (−100…+100, negative darkens), Midpoint (0…100), Feather (0…100) |
@@ -149,17 +149,12 @@ tool. The loupe then shows the cropped photo. Rotate Left (⌘[), Rotate Right (
 Horizontal and Flip Vertical (Photo menu, and the panel's buttons) work with the tool on
 or off; Straighten too.
 
-`Level` names each way of levelling by what it levels by, as Lightroom names its level
-corrections (Upright's `Level`, `Vertical`). A lone `Auto` would hide which one it is.
-- **`Camera`** straightens by the camera's own gravity reading at capture, as one
-  `Level to Camera` step. It is enabled only when the opened photo carries a reading
-  MediaMetadata trusts: an iPhone back camera held within about 45° of level. Otherwise its
-  tooltip says the camera recorded no level for this photo.
-- **`Horizon`** straightens by the horizon Vision finds in the picture, as one
-  `Level to Horizon` step. Its tooltip warns that a photo without a horizon may come out
-  tilted: Vision states no confidence and reads tilts into photos with no horizon, so it is
-  offered only as the person's choice. Where it finds none, the photo is left as it is.
-- **The ruler** is the third way.
+`Level ▸ Auto` straightens the photo by its level reading, as one `Auto Straighten` step: the
+camera's gravity reading when the file has one, else GeoCalib's reading of the pixels when it is
+confident (ADR 0045). It is available only once the photo has been read and a level is trusted.
+Its tooltip says which reading it uses, `Reading the photo's level` while it reads, and
+`No reliable level for this photo` when nothing is trusted, so a wrong tilt is never offered as a
+fix. The ruler is the other way.
 
 The straighten line is Lightroom Classic's Angle tool. ⌘-drag anywhere on the photo with the
 tool on, or drag after arming the ruler (which turns the tool on), draws a line, white over a dark
@@ -167,20 +162,13 @@ outline like the handles, under a crosshair pointer. Letting go turns the photo 
 is level, or plumb when it was drawn nearer vertical than horizontal, as one `Straighten`
 step, and disarms the ruler. A drag shorter than 8 pt is a click and draws nothing.
 
-`Suggested` places a crop by the subject Vision finds in the frame the tool shows (objectness
-saliency, else attention saliency). Vision reports only a rectangle around the subject; each
-button turns it into a crop. Under Custom, the tool's starting aspect, the crop takes whatever
-shape the subject calls for. Under a chosen aspect it keeps that shape.
-- **`Subject`** is the smallest such crop that holds the subject with a margin of up to 15% on
-  each side. The margin goes only where the frame has room, so a subject that fills the frame
-  or touches an edge is still cropped in.
-- **`Thirds`** is the largest such crop whose rule-of-thirds point (where the crop grid's
-  lines cross) lands on the subject's center, on the subject's side of the frame. It is
-  smaller than the whole frame whenever the center is not already on a third, since only
-  a smaller crop can move the center there. Each is one `Suggested Crop` step. Neither Photos nor Lightroom suggests
-crops, so the row follows the panel's own idiom: a label, then its acts. Both are enabled
-only while the tool shows the frame the photo is cropped from, so a turn, flip or straighten
-still rendering waits. Where Vision finds no subject, the crop is left as it is.
+`Suggested ▸ Crop` applies the crop FocalNet suggests for the frame as saved, in whatever shape
+suits the photo, as one `Auto Crop` step (ADR 0045). The frame is read when the photo opens and
+again when a turn, flip or straighten changes it. The button is available only once that frame
+has been read and FocalNet suggests a crop. Its tooltip says `Reading the photo for a crop`
+while it reads and `No crop to suggest for this photo` when FocalNet keeps the photo whole,
+which is most photos. Neither Photos nor Lightroom suggests crops, so the row follows the
+panel's own idiom: a label, then its act. It works with the crop tool on or off.
 
 ## Show Original and Revert to Original
 

@@ -47,8 +47,8 @@ struct ContentView: View {
                     aspect: viewModel.cropAspect,
                     isLandscape: viewModel.cropAspectIsLandscape,
                     isDrawingLine: viewModel.isDrawingStraightenLine,
-                    canSuggest: viewModel.canSuggestCrop,
-                    canLevelToCamera: viewModel.canLevelToCamera
+                    autoStraighten: viewModel.autoStraightenState,
+                    autoCrop: viewModel.autoCropState
                 ),
                 setValue: viewModel.setEditValue,
                 setDragging: viewModel.setEditDragging,
@@ -60,10 +60,9 @@ struct ContentView: View {
                     rotateAspect: viewModel.rotateCropAspect,
                     turn: viewModel.turnPhoto(clockwise:),
                     flip: viewModel.flipPhoto(horizontally:),
-                    levelToCamera: viewModel.levelToCamera,
-                    levelToHorizon: viewModel.levelToHorizon,
+                    autoStraighten: viewModel.autoStraighten,
                     toggleLine: viewModel.toggleStraightenLine,
-                    suggest: viewModel.suggestCrop
+                    autoCrop: viewModel.autoCrop
                 ),
                 setEntering: viewModel.setEnteringEditValue,
                 setLensCorrection: viewModel.setLensCorrection,

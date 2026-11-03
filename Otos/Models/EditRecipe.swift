@@ -203,6 +203,15 @@ nonisolated struct EditCrop: Codable, Equatable, Hashable, Sendable {
         top + height
     }
 
+    /// Intersection over union with `other`: 1 for the same crop, 0 for crops that do not meet.
+    func overlap(with other: EditCrop) -> Double {
+        let width = max(0, min(right, other.right) - max(left, other.left))
+        let height = max(0, min(bottom, other.bottom) - max(top, other.top))
+        let intersection = width * height
+        let union = self.width * self.height + other.width * other.height - intersection
+        return union > 0 ? intersection / union : 0
+    }
+
     /// The crop's center, in the same fractions.
     var center: CGPoint {
         CGPoint(x: left + width / 2, y: top + height / 2)

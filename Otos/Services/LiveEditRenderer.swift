@@ -3,7 +3,6 @@ import CoreImage.CIFilterBuiltins
 import Foundation
 import MediaMetadata
 import OSLog
-import Vision
 
 /// Live edit renderer guide
 ///
@@ -130,48 +129,10 @@ actor LiveEditRenderer {
         }
     }
 
-    /// The straighten, in degrees clockwise, that levels the horizon Vision finds in the
-    /// photo as `shown` turns and flips it, or nil when Vision finds no horizon. The photo
-    /// is read with `shown`'s turns and flips but no straighten and no crop, so the angle
-    /// replaces the current straighten rather than adding to it, and a crop cannot hide
-    /// the horizon. It is developed at the size `shown` already uses, so reading it never
-    /// decodes the photo again.
-    func horizonStraighten(_ url: URL, shown: EditRecipe) throws -> Double? {
-        var level = shown
-        level.straighten = 0
-        level.crop = nil
-        let image = try ImageRenderer.bitmap(
-            ImageRenderer.applyingGeometry(level, developedImage(url, recipe: shown)),
-            context: context
-        )
-        let request = VNDetectHorizonRequest()
-        try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
-        guard let horizon = request.results?.first else {
-            return nil
-        }
-        // Vision reports the turn that levels the photo, counterclockwise in its y-up space
-        // (measured: a horizon rising 6° to the right reads −5.9°); the recipe's straighten
-        // turns clockwise, so it is that angle negated.
-        return -Double(horizon.angle) * 180 / .pi
-    }
-
-    /// Where the subject of `image` is, in fractions of it from its top-left corner: the
-    /// union of the objects Vision's objectness saliency finds, or of the regions its
-    /// attention saliency finds when it finds no object; nil when it finds neither. Pure
-    /// image analysis on the caller's executor — it touches none of the renderer's state.
-    nonisolated static func salientSubject(in image: CGImage) throws -> CGRect? {
-        let handler = VNImageRequestHandler(cgImage: image, options: [:])
-        let objectness = VNGenerateObjectnessBasedSaliencyImageRequest()
-        let attention = VNGenerateAttentionBasedSaliencyImageRequest()
-        try handler.perform([objectness, attention])
-        let boxes = (objectness.results?.first?.salientObjects ?? []).map(\.boundingBox)
-        let found = boxes.isEmpty ? (attention.results?.first?.salientObjects ?? []).map(\.boundingBox) : boxes
-        guard let first = found.first else {
-            return nil
-        }
-        let union = found.dropFirst().reduce(first) { $0.union($1) }
-        // Vision's boxes are normalized with a bottom-left origin.
-        return CGRect(x: union.minX, y: 1 - union.maxY, width: union.width, height: union.height)
+    /// The photo developed with `recipe` at the size it is already developed at, as Auto crop
+    /// and Auto straighten read it (ADR 0045): the frame as saved, or the unedited photo.
+    func analysisImage(_ url: URL, recipe: EditRecipe) throws -> CGImage {
+        try ImageRenderer.bitmap(developed(url, recipe: recipe), context: context)
     }
 
     /// Lets go of the open photo, when editing moves to another photo or ends.

@@ -133,75 +133,66 @@ extension CatalogWindowViewModel {
         commitEdit(actionName: horizontally ? "Flip Horizontal" : "Flip Vertical")
     }
 
-    /// Level ▸ Camera: straightens the photo by the camera's own gravity reading at
-    /// capture, as one `Level to Camera` step. The reading levels the upright original; a
-    /// quarter turn keeps a level level and each flip mirrors it.
-    func levelToCamera() {
-        guard canLevelToCamera, let target = editTarget, let facts = editPhotoFacts,
-              let reading = facts.cameraLevel
+    /// Level ▸ Auto: straightens the photo by its level reading, as one `Auto Straighten`
+    /// step — the camera's gravity reading when the file has one, else GeoCalib's (ADR 0045).
+    /// The reading levels the upright, unflipped photo; a quarter turn keeps a level level and
+    /// each flip mirrors it.
+    func autoStraighten() {
+        guard canEdit, let target = editTarget, let facts = editPhotoFacts,
+              let reading = editAutoLevel, reading.id == target.id,
+              case let .degrees(degrees, source) = reading.level
         else { return }
         commitPendingEdit()
-        let degrees = editDraft.flipHorizontal == editDraft.flipVertical ? reading : -reading
-        let next = EditControl.straighten.applying(degrees, to: editDraft, facts: facts)
-        OtosLog.ui.noticeOperation("edit.level", phase: "applied", fields: [
+        let shown = editDraft.flipHorizontal == editDraft.flipVertical ? degrees : -degrees
+        let next = EditControl.straighten.applying(shown, to: editDraft, facts: facts)
+        OtosLog.ui.noticeOperation("edit.autoLevel", phase: "applied", fields: [
             "id": target.id.relativePath.rawValue,
-            "source": "camera",
+            "source": source.rawValue,
             "degrees": String(format: "%.1f", next.straighten),
             "changed": "\(next != editDraft)",
         ])
         guard next != editDraft else { return }
         editDraft = next
         requestLiveEditRender()
-        commitEdit(actionName: "Level to Camera")
+        commitEdit(actionName: "Auto Straighten")
     }
 
-    /// The opened photo carries a gravity reading Level ▸ Camera can use.
-    var canLevelToCamera: Bool {
-        canEdit && editPhotoFacts?.cameraLevel != nil
-    }
-
-    /// Level ▸ Horizon: straightens the photo so the horizon Vision finds in it is level, as
-    /// one `Level to Horizon` step. Where Vision finds none, the photo is left as it is.
-    /// Vision states no confidence and reads tilts into photos with no horizon, so this is
-    /// the person's choice, never a default (ADR 0036).
-    func levelToHorizon() {
-        guard canEdit, let target = editTarget else { return }
-        commitPendingEdit()
-        submittedEditCommandCount += 1
-        editCommandContinuation.yield(.levelToHorizon(id: target.id, shown: editDraft, sourceSize: target.sourceSize))
-        OtosLog.ui.noticeOperation("edit.level", phase: "requested", fields: [
-            "id": target.id.relativePath.rawValue, "source": "horizon",
-        ])
-    }
-
-    /// A horizon reading landed. It is applied only to the photo it was read from, still
-    /// turned and flipped as it was read, since the angle is measured in that frame.
-    func applyHorizonLevel(id: MediaAssetID, shown: EditRecipe, _ reading: HorizonReading) {
-        guard editTarget?.id == id, let facts = editPhotoFacts,
-              editDraft.quarterTurns == shown.quarterTurns,
-              editDraft.flipHorizontal == shown.flipHorizontal,
-              editDraft.flipVertical == shown.flipVertical
-        else {
-            OtosLog.ui.noticeOperation("edit.level", phase: "stale", fields: [
-                "id": id.relativePath.rawValue, "source": "horizon",
-            ])
-            return
+    /// Level ▸ Auto as the panel shows it.
+    var autoStraightenState: EditAutoState {
+        guard canEdit, let target = editTarget else { return .reading }
+        guard let reading = editAutoLevel, reading.id == target.id else { return .reading }
+        switch reading.level {
+        case let .degrees(_, source): return .available(source)
+        case .none: return .none
         }
-        guard case let .level(degrees) = reading else {
-            OtosLog.ui.noticeOperation("edit.level", phase: "noHorizon", fields: ["id": id.relativePath.rawValue])
-            return
-        }
-        let next = EditControl.straighten.applying(degrees, to: editDraft, facts: facts)
-        OtosLog.ui.noticeOperation("edit.level", phase: "applied", fields: [
-            "id": id.relativePath.rawValue,
-            "source": "horizon",
-            "degrees": String(format: "%.1f", next.straighten),
-            "changed": "\(next != editDraft)",
+    }
+
+    /// Suggested ▸ Crop: the crop FocalNet suggests for the frame as saved, as one `Auto Crop`
+    /// step (ADR 0045). A crop the person is dragging is saved first, so the suggestion
+    /// replaces a saved crop, never an unsaved one.
+    func autoCrop() {
+        guard canEdit, let target = editTarget, let reading = editAutoCrop, reading.id == target.id,
+              let crop = reading.crop, Self.sameFrame(reading.frame, editDraft)
+        else { return }
+        commitPendingCrop()
+        guard editDraft.crop != crop else { return }
+        editDraft.crop = crop
+        OtosLog.ui.noticeOperation("edit.autoCrop", phase: "applied", fields: [
+            "id": target.id.relativePath.rawValue,
+            "crop": String(format: "%.3f,%.3f,%.3f,%.3f", crop.left, crop.top, crop.width, crop.height),
         ])
-        guard next != editDraft else { return }
-        editDraft = next
         requestLiveEditRender()
-        commitEdit(actionName: "Level to Horizon")
+        commitEdit(actionName: "Auto Crop")
+    }
+
+    /// Suggested ▸ Crop as the panel shows it: available only for the frame the draft shows,
+    /// once the saved frame has been read and FocalNet suggested a crop for it.
+    var autoCropState: EditAutoState {
+        guard canEdit, let target = editTarget,
+              let reading = editAutoCrop, reading.id == target.id,
+              Self.sameFrame(reading.frame, editDraft)
+        else { return .reading }
+        return reading.crop == nil ? .none : .available(nil)
     }
 
     /// The crop tool's straighten line (Lightroom Classic's Angle tool): armed by the
@@ -239,62 +230,10 @@ extension CatalogWindowViewModel {
         commitEdit(actionName: "Straighten")
     }
 
-    /// The crop tool's Suggested menu: places `suggestion` by the subject Vision finds in the
-    /// frame the tool shows, keeping the chosen aspect.
-    func suggestCrop(_ suggestion: CropSuggestion) {
-        guard canSuggestCrop, let target = editTarget, let base = editCropBase else {
-            return
-        }
-        commitPendingCrop()
-        submittedEditCommandCount += 1
-        editCommandContinuation.yield(.suggestCrop(
-            id: target.id, frame: base.image, shown: base.recipe, suggestion: suggestion, pixelRatio: cropPixelRatio
-        ))
-        OtosLog.ui.noticeOperation("edit.suggestCrop", phase: "requested", fields: [
-            "id": target.id.relativePath.rawValue, "suggestion": suggestion.rawValue,
-        ])
-    }
-
-    /// The tool shows the frame the draft crops: a suggestion is read from that picture, so
-    /// it waits while a turn, flip or straighten is still rendering.
-    var canSuggestCrop: Bool {
-        guard isCropping, canEdit, let base = editCropBase, base.id == editTarget?.id else { return false }
-        return Self.sameFrame(base.recipe, editDraft)
-    }
-
     /// Whether two recipes frame the photo alike: the crop is a rectangle of that frame.
     static func sameFrame(_ lhs: EditRecipe, _ rhs: EditRecipe) -> Bool {
         lhs.quarterTurns == rhs.quarterTurns && lhs.flipHorizontal == rhs.flipHorizontal
             && lhs.flipVertical == rhs.flipVertical && lhs.straighten == rhs.straighten
-    }
-
-    /// A subject reading landed. It is applied only while the tool still shows the same
-    /// frame — the same photo, turned, flipped and straightened as it was read — since the
-    /// subject is placed in that frame.
-    func applySuggestedCrop(
-        id: MediaAssetID,
-        shown: EditRecipe,
-        suggestion: CropSuggestion,
-        pixelRatio: Double?,
-        subject reading: SubjectReading
-    ) {
-        guard isCropping, editTarget?.id == id, let frame = cropFrameSize, Self.sameFrame(shown, editDraft) else {
-            OtosLog.ui.noticeOperation("edit.suggestCrop", phase: "stale", fields: ["id": id.relativePath.rawValue])
-            return
-        }
-        guard case let .found(subject) = reading else {
-            OtosLog.ui.noticeOperation("edit.suggestCrop", phase: "noSubject", fields: ["id": id.relativePath.rawValue])
-            return
-        }
-        let crop = suggestion.crop(subject: subject, frame: frame, pixelRatio: pixelRatio)
-        let next = crop.isWhole ? nil : crop
-        OtosLog.ui.noticeOperation("edit.suggestCrop", phase: "applied", fields: [
-            "id": id.relativePath.rawValue, "suggestion": suggestion.rawValue,
-            "crop": String(format: "%.3f,%.3f,%.3f,%.3f", crop.left, crop.top, crop.width, crop.height),
-        ])
-        guard next != editDraft.crop else { return }
-        editDraft.crop = next
-        commitEdit(actionName: "Suggested Crop")
     }
 
     /// A crop render landed: shown while it is for the photo being cropped and newer than

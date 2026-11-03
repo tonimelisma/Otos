@@ -185,20 +185,88 @@ Findings:
      it falls back to the pixels.
    - Built: MediaMetadata 0.9.1 reports iPhone gravity. Other makers' roll tags wait for
      sample files to calibrate against.
-2. **Pixels only on request.**
-   - Vision's horizon can't be a silent fallback. It reports confidence 1.0 every time and
-     misreads photos without a horizon, so its wrong answers can't be filtered out.
-   - Built (owner's decision, 2026-11-01): `Level ▸ Camera` and `Level ▸ Horizon` are
-     separate buttons. Horizon warns that a photo without a horizon may come out tilted.
-   - GeoCalib, which reports its own uncertainty, is the evidence-backed way to bring back an
-     automatic fallback. It is on the roadmap, to be measured first against the gravity
-     readings on Otos's own photos.
+2. **Pixels only when confident.** Vision's horizon reports confidence 1.0 on every answer, so its
+   wrong answers can't be filtered out. GeoCalib reports an uncertainty that tracks its error
+   (section 5), so it is the fallback when the file has no gravity reading, used only when it
+   is confident. Built (ADR 0045).
 3. **Do not reimplement Upright** (Adobe patents).
 
 **Crop suggestions:**
-1. The current two heuristics are in the weakest published class.
-2. The evidence points to GAIC-style ranked candidates, blocked on its weights' licence.
+1. The first two heuristics (Subject, Thirds) were in the weakest published class, and the
+   owner judged them unproven; they are gone.
+2. FocalNet (MIT, 19 MB), a small ranker trained on human crop ratings, is the one built
+   (ADR 0045). GAIC's weights stay unlicensed (above), and FrameLite is too large (section 5).
 3. Neither Apple's aesthetics score nor a vision-language model is a substitute.
+
+## 5. Measured: models for the shipped Auto crop and Auto straighten (2026-11-02)
+
+**Crop models on public benchmarks** (this Mac, M1 Pro):
+- **Data:**
+  - FCDB: 301 of the 345 test photos are still on Flickr, each with one human crop.
+  - GAICD: the 500 test photos of the journal version, about 90 candidate crops each, scored by
+    human raters.
+- **Checking the harness:** FocalNet's published GAICD ranking reproduced to three decimals (rank
+  correlation 0.7646, top-5 43.7%, top-10 64.6%).
+- **FCDB, overlap with the human crop** (the field's IoU):
+  - no crop 0.643;
+  - FocalNet's own choice 0.653;
+  - FocalNet's best-scored crop at 90% of the frame or tighter 0.687;
+  - FrameLite 0.717, against its paper's 0.712.
+- **GAICD (150 photos with a fixed seed), share within IoU 0.85 of a top-5 human crop:**
+  - FrameLite 89%;
+  - FocalNet's own choice 7%;
+  - no crop 0%.
+- **Cost:**
+  - FrameLite (Qwen3.5-0.8B fine-tune): 1.9 GB and 8 s a photo here. Ruled out by the owner.
+  - FocalNet: 19 MB and 0.1 s.
+- **Licences:** FocalNet MIT; FrameLite Apache-2.0; ProCrop non-commercial and no-derivatives,
+  and unreleased.
+
+**Crops on the owner's photos, blind:**
+- **40 varied local photos,** each crop rated 1–5:
+  - uncropped averaged 3.97;
+  - FocalNet 4.03, but it kept 28 of 33 essentially whole;
+  - FrameLite 3.70, better than uncropped on 13 and worse on 19.
+  - The owner: tight crops are fine as suggestions, since the button is optional.
+- **A/B on 10 photos FocalNet did crop**, drawn from 300 random local photos: the owner judged
+  them good crops.
+- **How often it crops:** FocalNet cropped 45 of the 300 (15%).
+
+**GeoCalib against calibrated gravity:**
+- **Photos:** 114 local iPhone back-camera photos whose gravity reading is the truth (section 2).
+- **Vision's horizon, when it answers (52%):** median error 3.27°, 34% within 2°, 22 off by more
+  than 5°.
+- **GeoCalib, every photo:** median 1.11°, 72% within 2°, 18 off by more than 5°.
+- **GeoCalib, uncertainty at most 3° (61% of photos):** median 0.71°, 93% within 2°, none off by
+  more than 5°. Its uncertainty and its real error correlate (rank 0.6).
+- **Direction:** right on 34 of the 39 photos tilted 2° or more.
+- **Licences:** code Apache-2.0, weights CC-BY-4.0.
+
+**Conversion to Core ML, each checked against the reference:**
+- **FocalNet at full precision:** identical to its ONNX model on all 500 GAICD photos (largest
+  score difference 1e-5, the same top candidate on every photo). Half precision changed the top
+  candidate on 3.6%.
+- **GeoCalib's network:**
+  - Core ML cannot size its upsampling from a flexible input, so it is converted per shape:
+    short side 320, long side 320/416/480/544/640, both ways up, merged into one multi-function
+    package sharing the weights.
+  - The fields match PyTorch to 3.5e-6.
+  - Its NMF block draws random starting bases on every forward pass; fixed to one seeded tensor,
+    accuracy is unchanged (61% coverage, 0.71° median).
+  - Half precision changed nothing measurable (0.69°) and fits GitHub's 100 MB file limit
+    (58 MB of weights).
+- **The Swift port of GeoCalib's solver:** against GeoCalib's own solver on the same fields for
+  all 114 photos, roll differs by a median 0.0006° (largest 0.057°), with the same step count and
+  the same confident-or-not decision on every photo.
+- **End to end in Swift:**
+  - Level: the same decision as the reference on 112 of 114, the same accuracy.
+  - Crop: the same decision on 294 of 300; identical crops on all 44 both crop. The 6 others are
+    borderline photos where Core Graphics and PIL resize slightly differently.
+- **Compute units:**
+  - On the GPU, eight concurrent predictions (as parallel tests run) deadlocked inside MPSGraph,
+    every thread parked on its lock.
+  - The Neural Engine refuses a function name on a multi-function model.
+  - The CPU gives the same results at about the same speed: ~0.1 s a crop, ~0.35 s a level.
 
 ## Sources
 
@@ -234,3 +302,7 @@ Findings:
 
 **Metadata**
 - exiftool Apple tags (`AccelerationVector`): https://exiftool.org/TagNames/Apple.html
+- FocalNet: https://huggingface.co/appwrite/focalnet · https://github.com/appwrite/focalnet
+- FrameLite: https://huggingface.co/zlab-sjtu/FrameLite · https://github.com/JianzeLi-114/FrameLite
+- GeoCalib: https://github.com/cvg/GeoCalib (Veicht, Sarlin, Lindenberger, Pollefeys, ECCV 2024)
+- FCDB: https://github.com/yiling-chen/flickr-cropping-dataset

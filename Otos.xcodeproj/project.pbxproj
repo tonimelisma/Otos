@@ -287,6 +287,14 @@
 				Views/SidebarView.swift,
 				Views/TileContentStore.swift,
 				Views/TrashStatusBar.swift,
+				Resources/FocalNet.mlpackage,
+				Resources/GeoCalib.mlpackage,
+				Services/AutoCropModel.swift,
+				Services/AutoLevelModel.swift,
+				Services/PerspectiveFieldSolver.swift,
+				Resources/Licenses/FocalNet-LICENSE.txt,
+				Resources/Licenses/GeoCalib-LICENSE.txt,
+				Resources/Licenses/README.md,
 			);
 			target = 3B44EB5D2FCEBA57007E4158 /* Otos */;
 		};
@@ -492,6 +500,14 @@
 				Views/SidebarView.swift,
 				Views/TileContentStore.swift,
 				Views/TrashStatusBar.swift,
+				Resources/FocalNet.mlpackage,
+				Resources/GeoCalib.mlpackage,
+				Services/AutoCropModel.swift,
+				Services/AutoLevelModel.swift,
+				Services/PerspectiveFieldSolver.swift,
+				Resources/Licenses/FocalNet-LICENSE.txt,
+				Resources/Licenses/GeoCalib-LICENSE.txt,
+				Resources/Licenses/README.md,
 			);
 			target = 5980D4726503709D9D7F52EB /* OtosXXH3 */;
 		};
@@ -1084,6 +1100,7 @@
 		67F5CCED5788A6E30A1FA978 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				COREML_CODEGEN_LANGUAGE = None;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -1125,6 +1142,7 @@
 		73CC37077153A56763ADCAB3 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				COREML_CODEGEN_LANGUAGE = None;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
