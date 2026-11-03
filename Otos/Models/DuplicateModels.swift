@@ -219,10 +219,11 @@ nonisolated struct CatalogDuplicatesState: Equatable, Sendable {
     static let empty = CatalogDuplicatesState(groups: [])
 
     init(groups: [DuplicateGroup]) {
-        // One key per group, then one sort: a comparator that re-derived the date and the
-        // order key per comparison was a measurable share of a build.
-        let keyed = groups.map { (key: DuplicateGroup.ListKey($0), group: $0) }
-        self.groups = keyed.sorted { $0.key < $1.key }.map(\.group)
+        // One key per group and a sort of indices, so no group struct moves per comparison:
+        // a comparator that re-derived the keys was a measurable share of a build.
+        let keys = groups.map(DuplicateGroup.ListKey.init)
+        let order = groups.indices.sorted { keys[$0] < keys[$1] }
+        self.groups = order.map { groups[$0] }
     }
 
     /// Groups that still need something: not kept.

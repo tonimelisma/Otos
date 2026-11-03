@@ -298,16 +298,23 @@ nonisolated extension DuplicatesGateway {
           ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
         WHERE a.library_root_id = ? AND a.relative_path = ?
         """)
+        // Columns by position: this statement runs once per still in a proposed pair, and
+        // a lookup by name per column was a measurable share of a build (ADR 0043).
+        enum Column {
+            static let bestKind = 0, bestCapture = 1, byteSize = 2, createdAt = 3, mediaChoice = 4, edited = 5
+            static let renderHash = 6, renderGray = 7, pixelWidth = 8, pixelHeight = 9, metadataExtra = 10
+            static let hasCompanions = 11
+        }
         guard let row = try Row.fetchOne(statement, arguments: [rootID, id.relativePath.rawValue]),
-              let hash = row["render_dhash"] as Int64?,
-              let gray = row["render_gray"] as Data?,
+              let hash = row[Column.renderHash] as Int64?,
+              let gray = row[Column.renderGray] as Data?,
               let signature = RenderSignature(differenceHash: UInt64(bitPattern: hash), gray: Array(gray))
         else {
             return nil
         }
         // The stored record is the library's own report (ADR 0039); a record that does not
         // decode leaves its two facts unknown, which the rule treats as unknown.
-        let metadata: AssetMetadata? = (row["metadata_extra_json"] as String?).flatMap { json in
+        let metadata: AssetMetadata? = (row[Column.metadataExtra] as String?).flatMap { json in
             do {
                 return try CatalogStore.decodeMetadataExtraJSON(json)
             } catch {
@@ -318,23 +325,23 @@ nonisolated extension DuplicatesGateway {
             }
         }
         let original = metadata?.timestamps.first { $0.role == CaptureTimestamps.Role.original.rawValue }
-        let mediaChoice: String? = row["media_choice"]
-        let createdAt: Double? = row["created_at_unix"]
-        let kind: String? = row["best_kind"]
-        let captureDate: Double? = row["best_capture_unix"]
+        let mediaChoice: String? = row[Column.mediaChoice]
+        let createdAt: Double? = row[Column.createdAt]
+        let kind: String? = row[Column.bestKind]
+        let captureDate: Double? = row[Column.bestCapture]
         return SamePhotoDetail(
             copy: DuplicateCopy(
                 id: id,
                 libraryDisplayName: libraryDisplayName,
                 kind: kind.flatMap(MediaKind.init(rawValue:)),
                 captureDate: captureDate.map(Date.init(timeIntervalSince1970:)),
-                byteSize: row["byte_size"],
+                byteSize: row[Column.byteSize],
                 createdAt: createdAt.map(Date.init(timeIntervalSince1970:)),
-                pixelWidth: row["pixel_width"],
-                pixelHeight: row["pixel_height"],
+                pixelWidth: row[Column.pixelWidth],
+                pixelHeight: row[Column.pixelHeight],
                 mediaChoice: mediaChoice.flatMap(MediaChoice.init(rawValue:)) ?? .default,
-                isEdited: row["edited"],
-                hasCompanions: row["has_companions"]
+                isEdited: row[Column.edited],
+                hasCompanions: row[Column.hasCompanions]
             ),
             signature: signature,
             fractionalSecondDigits: original?.fractionalSecondDigits,
