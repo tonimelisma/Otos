@@ -135,6 +135,11 @@ struct DuplicatesTests {
         #expect(!DuplicateGroupPolicy.hasCopySuffix("DSC_0001.ARW"))
         #expect(!DuplicateGroupPolicy.hasCopySuffix("Beach 2.jpg"))
         #expect(!DuplicateGroupPolicy.hasCopySuffix("IMG_1.jpg"))
+        // A whole relative path: only its last component is read, and a leading dot is no
+        // extension.
+        #expect(DuplicateGroupPolicy.hasCopySuffix("2024/Holiday/IMG_1 copy.jpg"))
+        #expect(!DuplicateGroupPolicy.hasCopySuffix("2024 copy/IMG_1.jpg"))
+        #expect(DuplicateGroupPolicy.hasCopySuffix(".hidden copy"))
     }
 
     @Test func theSessionNeverMovesEveryCopyAndCountsEveryActiveGroup() throws {

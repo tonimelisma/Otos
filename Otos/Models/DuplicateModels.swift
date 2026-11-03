@@ -182,20 +182,31 @@ nonisolated struct DuplicateGroup: Equatable, Sendable, Identifiable {
     /// Display order: files of one photo first — the groups that need eyes — then identical
     /// copies, each newest first by capture date, the grid's order, undated groups last,
     /// then by the first copy's path so the order is total.
+    struct ListKey: Comparable {
+        let identical: Bool
+        /// Negated seconds, so newest sorts first; undated groups after every dated one.
+        let newestFirst: Double
+        let orderKey: String
+
+        init(_ group: DuplicateGroup) {
+            identical = !group.id.isSamePhoto
+            newestFirst = group.captureDate.map { -$0.timeIntervalSince1970 } ?? .greatestFiniteMagnitude
+            orderKey = group.copies.first?.id.duplicateOrderKey ?? ""
+        }
+
+        static func < (lhs: Self, rhs: Self) -> Bool {
+            if lhs.identical != rhs.identical {
+                return !lhs.identical
+            }
+            if lhs.newestFirst != rhs.newestFirst {
+                return lhs.newestFirst < rhs.newestFirst
+            }
+            return lhs.orderKey < rhs.orderKey
+        }
+    }
+
     static func precedesInList(_ left: DuplicateGroup, _ right: DuplicateGroup) -> Bool {
-        if left.id.isSamePhoto != right.id.isSamePhoto {
-            return left.id.isSamePhoto
-        }
-        return switch (left.captureDate, right.captureDate) {
-        case let (leftDate?, rightDate?) where leftDate != rightDate:
-            leftDate > rightDate
-        case (.some, nil):
-            true
-        case (nil, .some):
-            false
-        default:
-            (left.copies.first?.id.duplicateOrderKey ?? "") < (right.copies.first?.id.duplicateOrderKey ?? "")
-        }
+        ListKey(left) < ListKey(right)
     }
 }
 
@@ -208,7 +219,10 @@ nonisolated struct CatalogDuplicatesState: Equatable, Sendable {
     static let empty = CatalogDuplicatesState(groups: [])
 
     init(groups: [DuplicateGroup]) {
-        self.groups = groups.sorted(by: DuplicateGroup.precedesInList)
+        // One key per group, then one sort: a comparator that re-derived the date and the
+        // order key per comparison was a measurable share of a build.
+        let keyed = groups.map { (key: DuplicateGroup.ListKey($0), group: $0) }
+        self.groups = keyed.sorted { $0.key < $1.key }.map(\.group)
     }
 
     /// Groups that still need something: not kept.
@@ -265,15 +279,20 @@ nonisolated enum DuplicateGroupPolicy {
 
     /// One group from its copies. `originals` are the copies that name their capture — for
     /// versions of the same photo, the camera's own file is the one to keep.
+    ///
+    /// A build assembles every group, so this derives each copy's ranking facts once, as
+    /// scalars beside an index, and never copies a `DuplicateCopy` per comparison.
     static func group(
         id: DuplicateGroupID,
         copies unordered: [DuplicateCopy],
         keptPairs: Set<DuplicateKeptPair>,
         originals: Set<MediaAssetID> = []
     ) -> DuplicateGroup {
+        let unorderedKeys = unordered.map(\.id.duplicateOrderKey)
+        let order = unordered.indices.sorted { unorderedKeys[$0] < unorderedKeys[$1] }
+        let copies = order.map { unordered[$0] }
         let rule = KeeperRule(comparesPixels: id.isSamePhoto, originals: originals)
-        let ranked = unordered.map { Ranked($0, rule: rule) }.sorted { $0.orderKey < $1.orderKey }
-        let copies = ranked.map(\.copy)
+        let facts = order.map { Facts(unordered[$0], orderKey: unorderedKeys[$0], rule: rule) }
         let ids = copies.map(\.id)
         let libraries = Set(ids.map(\.libraryRootPath)).sorted { $0.rawValue < $1.rawValue }
         let libraryPair: DuplicateLibraryPair? = libraries.count == 2
@@ -298,21 +317,22 @@ nonisolated enum DuplicateGroupPolicy {
             )
         }
 
-        let `default` = defaultKeep(ranked: ranked, keptTogether: keptTogether)
+        let `default` = defaultKeep(copies: copies, facts: facts, keptTogether: keptTogether)
         let keep = `default`.keep
-        let ordered = ranked.sorted { left, right in
-            let leftKept = keep?.contains(left.copy.id) ?? false
-            let rightKept = keep?.contains(right.copy.id) ?? false
+        let ordered = copies.indices.sorted { left, right in
+            let leftKept = keep?.contains(copies[left].id) ?? false
+            let rightKept = keep?.contains(copies[right].id) ?? false
             if leftKept != rightKept {
                 return leftKept
             }
             if leftKept {
-                return compare(left, right).leftWins
+                return compare(left, right, copies: copies, facts: facts).leftWins
             }
-            return left.orderKey < right.orderKey
+            return left < right
         }
         return DuplicateGroup(
-            id: id, copies: ordered.map(\.copy), default: `default`, libraryPair: libraryPair, cameraOriginals: originals
+            id: id, copies: ordered.map { copies[$0] }, default: `default`, libraryPair: libraryPair,
+            cameraOriginals: originals
         )
     }
 
@@ -336,28 +356,31 @@ nonisolated enum DuplicateGroupPolicy {
     /// group across libraries; within one library it is the criterion that separated the
     /// kept copy from the copy it beat last — the rule that was needed.
     private static func defaultKeep(
-        ranked: [Ranked],
+        copies: [DuplicateCopy],
+        facts: [Facts],
         keptTogether: Set<MediaAssetID>
     ) -> DuplicateDefault {
         var keep: Set<MediaAssetID> = []
-        var decidingCriterion: DuplicateKeeperCriterion = .pathOrder
-        let byLibrary = Dictionary(grouping: ranked, by: \.copy.id.libraryRootPath)
+        var decidingCriterion: DuplicateKeeperCriterion?
+        let byLibrary = Dictionary(grouping: copies.indices, by: { copies[$0].id.libraryRootPath })
         for (library, members) in byLibrary.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
-            if let kind = workConflict(members.map(\.copy)) {
+            if let kind = workConflict(members.map { copies[$0] }) {
                 return .waits(DuplicateWorkConflict(kind: kind, library: library))
             }
-            let together = members.filter { keptTogether.contains($0.copy.id) }
+            let together = members.filter { keptTogether.contains(copies[$0].id) }
             if !together.isEmpty {
-                keep.formUnion(together.map(\.copy.id))
-            } else if let best = members.min(by: { compare($0, $1).leftWins }) {
-                keep.insert(best.copy.id)
-                decidingCriterion = members
-                    .filter { $0.copy.id != best.copy.id }
-                    .map { compare(best, $0).criterion }
-                    .max() ?? .pathOrder
+                keep.formUnion(together.map { copies[$0].id })
+            } else if let best = members.min(by: { compare($0, $1, copies: copies, facts: facts).leftWins }) {
+                keep.insert(copies[best].id)
+                for other in members where other != best {
+                    let criterion = compare(best, other, copies: copies, facts: facts).criterion
+                    decidingCriterion = max(decidingCriterion ?? criterion, criterion)
+                }
             }
         }
-        let reason: DuplicateDefault.Reason = byLibrary.count > 1 ? .eachLibrary : .criterion(decidingCriterion)
+        let reason: DuplicateDefault.Reason = byLibrary.count > 1
+            ? .eachLibrary
+            : .criterion(decidingCriterion ?? .pathOrder)
         return .keep(keep, reason: reason)
     }
 
@@ -369,10 +392,9 @@ nonisolated enum DuplicateGroupPolicy {
         let originals: Set<MediaAssetID>
     }
 
-    /// A copy with the facts the keeper rule compares, derived once per group, so a build
-    /// never re-derives a name, a suffix or a key per comparison.
-    struct Ranked {
-        let copy: DuplicateCopy
+    /// A copy's ranking facts, derived once per group: scalars only, beside the copies
+    /// array, so a comparison copies no strings.
+    struct Facts {
         let orderKey: String
         let isOriginal: Bool
         /// Pixels and bytes when the rule ranks them, else zero on every copy.
@@ -383,13 +405,12 @@ nonisolated enum DuplicateGroupPolicy {
         /// separates two copies the rows show as born at the same instant.
         let bornSecond: Double?
 
-        init(_ copy: DuplicateCopy, rule: KeeperRule) {
-            self.copy = copy
-            orderKey = copy.id.duplicateOrderKey
+        init(_ copy: DuplicateCopy, orderKey: String, rule: KeeperRule) {
+            self.orderKey = orderKey
             isOriginal = rule.originals.contains(copy.id)
             pixels = rule.comparesPixels ? (copy.pixelWidth ?? 0) * (copy.pixelHeight ?? 0) : 0
             bytes = rule.comparesPixels ? copy.byteSize ?? 0 : 0
-            suffixed = DuplicateGroupPolicy.hasCopySuffix(copy.name)
+            suffixed = DuplicateGroupPolicy.hasCopySuffix(copy.id.relativePath.rawValue)
             bornSecond = copy.createdAt?.timeIntervalSince1970.rounded(.down)
         }
     }
@@ -398,32 +419,37 @@ nonisolated enum DuplicateGroupPolicy {
     /// the most pixels and the largest file in bytes, then an edit, a choice, a plain name,
     /// the earliest birth time and path order. Returns the first criterion that tells two
     /// copies apart, and which copy it favours.
-    static func compare(_ left: Ranked, _ right: Ranked) -> (criterion: DuplicateKeeperCriterion, leftWins: Bool) {
-        if left.copy.hasCompanions != right.copy.hasCompanions {
-            return (.companions, left.copy.hasCompanions)
+    static func compare(
+        _ left: Int,
+        _ right: Int,
+        copies: [DuplicateCopy],
+        facts: [Facts]
+    ) -> (criterion: DuplicateKeeperCriterion, leftWins: Bool) {
+        if copies[left].hasCompanions != copies[right].hasCompanions {
+            return (.companions, copies[left].hasCompanions)
         }
-        if left.isOriginal != right.isOriginal {
-            return (.cameraOriginal, left.isOriginal)
+        if facts[left].isOriginal != facts[right].isOriginal {
+            return (.cameraOriginal, facts[left].isOriginal)
         }
-        if left.pixels != right.pixels {
-            return (.mostPixels, left.pixels > right.pixels)
+        if facts[left].pixels != facts[right].pixels {
+            return (.mostPixels, facts[left].pixels > facts[right].pixels)
         }
         // Exact bytes: the rows show sizes at whatever precision tells them apart, so the
         // rule and the rows always agree.
-        if left.bytes != right.bytes {
-            return (.largestFile, left.bytes > right.bytes)
+        if facts[left].bytes != facts[right].bytes {
+            return (.largestFile, facts[left].bytes > facts[right].bytes)
         }
-        if left.copy.isEdited != right.copy.isEdited {
-            return (.edited, left.copy.isEdited)
+        if copies[left].isEdited != copies[right].isEdited {
+            return (.edited, copies[left].isEdited)
         }
-        let leftChose = left.copy.mediaChoice != .notRated
-        if leftChose != (right.copy.mediaChoice != .notRated) {
+        let leftChose = copies[left].mediaChoice != .notRated
+        if leftChose != (copies[right].mediaChoice != .notRated) {
             return (.rated, leftChose)
         }
-        if left.suffixed != right.suffixed {
-            return (.originalName, !left.suffixed)
+        if facts[left].suffixed != facts[right].suffixed {
+            return (.originalName, !facts[left].suffixed)
         }
-        switch (left.bornSecond, right.bornSecond) {
+        switch (facts[left].bornSecond, facts[right].bornSecond) {
         case let (leftBorn?, rightBorn?) where leftBorn != rightBorn:
             return (.earliestBirth, leftBorn < rightBorn)
         case (.some, nil):
@@ -431,33 +457,48 @@ nonisolated enum DuplicateGroupPolicy {
         case (nil, .some):
             return (.earliestBirth, false)
         default:
-            return (.pathOrder, left.orderKey < right.orderKey)
+            return (.pathOrder, facts[left].orderKey < facts[right].orderKey)
         }
     }
 
     /// A name Finder (` copy`, ` copy 2`), a browser download (` (1)`) or Otos's own import
-    /// (`_001`, the collision suffix of ARC-050) gives a second copy of a file. Plain
-    /// string scans, not a regular expression: the keeper rule asks this for every pair of
-    /// copies in every group of a build.
-    static func hasCopySuffix(_ name: String) -> Bool {
-        let stem = MediaRelativePath(rawValue: name).stem
-        if stem.hasSuffix(" copy") {
+    /// (`_001`, the collision suffix of ARC-050) gives a second copy of a file. A byte
+    /// scan over the path's last component, from its end: a build asks this for every copy
+    /// of every group.
+    static func hasCopySuffix(_ path: String) -> Bool {
+        let utf8 = path.utf8
+        guard var end = utf8.lastIndex(where: { $0 != UInt8(ascii: "/") }) else {
+            return false
+        }
+        end = utf8.index(after: end)
+        let slash = utf8[..<end].lastIndex(of: UInt8(ascii: "/"))
+        let nameStart = slash.map { utf8.index(after: $0) } ?? utf8.startIndex
+        // The stem: before the last dot, unless the dot leads the name.
+        let name = utf8[nameStart ..< end]
+        let stemEnd = name.lastIndex(of: UInt8(ascii: ".")).flatMap { $0 == name.startIndex ? nil : $0 } ?? name.endIndex
+        let stem = name[name.startIndex ..< stemEnd]
+        func endsWith(_ slice: some Collection<UInt8>, _ text: String) -> Bool {
+            let suffix = Array(text.utf8)
+            guard slice.count >= suffix.count else { return false }
+            return slice.suffix(suffix.count).elementsEqual(suffix)
+        }
+        if endsWith(stem, " copy") {
             return true
         }
-        let trailingDigits = stem.reversed().prefix { $0.isASCII && $0.isNumber }.count
-        if trailingDigits > 0 {
-            let head = stem.dropLast(trailingDigits)
-            if head.hasSuffix(" copy ") {
+        let digitCount = stem.reversed().prefix { $0 >= UInt8(ascii: "0") && $0 <= UInt8(ascii: "9") }.count
+        if digitCount > 0 {
+            let head = stem.dropLast(digitCount)
+            if endsWith(head, " copy ") {
                 return true
             }
-            if trailingDigits == 3, head.hasSuffix("_") {
+            if digitCount == 3, endsWith(head, "_") {
                 return true
             }
         }
-        if stem.hasSuffix(")") {
+        if stem.last == UInt8(ascii: ")") {
             let inner = stem.dropLast()
-            let innerDigits = inner.reversed().prefix { $0.isASCII && $0.isNumber }.count
-            if innerDigits > 0, inner.dropLast(innerDigits).hasSuffix(" (") {
+            let innerDigits = inner.reversed().prefix { $0 >= UInt8(ascii: "0") && $0 <= UInt8(ascii: "9") }.count
+            if innerDigits > 0, endsWith(inner.dropLast(innerDigits), " (") {
                 return true
             }
         }
