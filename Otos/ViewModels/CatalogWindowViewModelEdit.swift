@@ -988,12 +988,9 @@ actor EditAnalyzer {
         if let level {
             return level
         }
-        let start = ContinuousClock.now
+        // Its shape functions load as photos need them, and log their own load times.
         let model = try AutoLevelModel(bundle: Bundle(for: CatalogWindowViewModel.self))
         level = model
-        OtosLog.rendering.noticeOperation("edit.analysisModel", phase: "loaded", fields: [
-            "model": "GeoCalib", "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
-        ])
         return model
     }
 }

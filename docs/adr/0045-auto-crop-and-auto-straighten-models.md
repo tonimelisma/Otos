@@ -45,6 +45,11 @@ exists only for iPhone back-camera photos.
 - **Lane:** one newest-wins analysis lane owns the reads (`editAnalysisStream`).
 - **Engine:** both models run through Core ML on the CPU, owned by one `EditAnalyzer` per window
   that loads them on first use.
+- **Loading:** Core ML specializes a model for the Mac on its first load and caches the result.
+  - FocalNet: 0.2 s the first time, then 8 ms.
+  - GeoCalib: each shape function loads the first time a photo of that shape is read, about
+    1.8 s and 58 MB of cache cold on an M1 Pro, then 7 ms. Loading all nine shapes up front cost
+    15 s and 525 MB for shapes most libraries never use.
 
 **The models ship converted, in the repository:**
 - **`FocalNet.mlpackage`**, 18 MB, at full precision:
