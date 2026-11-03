@@ -213,12 +213,14 @@ struct DuplicatesTests {
         // After the act, its receipt with Undo while the act is the window's last change.
         let moved = DuplicatesBarPresentation.map(
             DuplicatesTally(itemsWithDuplicates: 0, noun: .items, itemsToMove: [], bytesToMove: .zero, needingChoice: 0),
-            receipt: DuplicatesReceipt(movedCount: 2, bytes: PartialByteCount(knownBytes: 14_900_000_000, unknownCount: 0)),
+            receipt: DuplicatesReceipt(
+                batch: MediaTrashBatchID(), movedCount: 2, bytes: PartialByteCount(knownBytes: 14_900_000_000, unknownCount: 0)
+            ),
             canUndoMove: true
         )
         #expect(moved.primaryLine == "No duplicates")
         #expect(moved.middle == .receipt(
-            line: "2 extra copies · 14.9 GB moved to the Trash",
+            line: "2 extra copies moved to the Trash · 14.9 GB",
             detail: "Empty the Trash in Finder to free the space",
             canUndo: true
         ))

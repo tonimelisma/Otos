@@ -23,8 +23,8 @@ shown once can be trusted. Everything below follows from it.
 ## Zones
 
 A list of groups above a fixed-height bar (DES-018, DES-053). Before the groups are first
-built the pane draws nothing (APP-044); with no group it draws `No duplicates` as an empty
-state over the bar. The window shows no `Filtered` subtitle here: the list ignores the
+built the pane draws nothing (APP-044); with no group the bar carries the L1 `No
+duplicates` and the list area says why: `Nothing Otos has checked is stored twice.` The window shows no `Filtered` subtitle here: the list ignores the
 filter.
 
 **List.** Files of one photo first — the groups that need eyes — then identical copies,
@@ -114,19 +114,21 @@ begins 8 pt below its top edge rather than at the platform inset.
     moves to the Trash with it` always, since those files never carry. Every row of a
     group takes the group's shape: when any row has an L3, all have the line, so the
     checkboxes sit at one pitch and nothing reflows when a mark changes.
-  - trailing, at one width in every state (DES-053): the `Keep` checkbox whose own title
-    is its meaning — control and consequence as one control, so clicking the words
-    toggles too — a symbol and a word (DES-029): `Stays` with `checkmark.circle` when
-    checked, `Moves to Trash` with `trash` when not, both in label colour (a grey `Stays`
-    read as switched off). VoiceOver reads the row, not the box, and the box is not a Tab
-    stop: rows are the selection. In a pair,
+  - trailing, at one width in every state (DES-053): the `Keep` checkbox with its title
+    shown — the box names the setting, which never changes with its state (HIG Toggles),
+    so a user from a tool where the box means *delete* cannot read an unchecked box as
+    "not marked" — then, 12 pt after it, the consequence as a symbol and a word (DES-029):
+    `Stays` with `checkmark.circle` when checked, `Moves to Trash` with `trash` when not,
+    both in label colour (a grey `Stays` read as switched off). VoiceOver reads the row,
+    not the box, and the box is not a Tab stop: rows are the selection. In a pair,
     unchecking the kept copy keeps the other — one click swaps the keeper, since a group
     always keeps one and there is only one other. With three or more copies the last
     checked box is disabled, tooltip `A group always keeps one copy.`. A copy of a waiting
     group offers `Keep This Copy`, a `.small` button that keeps it and marks the rest (Keep
     Only This Copy), so the first click means keep, never un-keep — such a row has no
     checkbox.
-  - Return or Space on a selected row, and double-click on any row, open that row's group.
+  - Return or Space on a selected row, and double-click on a row's picture, name or space
+    (not its controls), open that row's group.
   - Context menu: `Keep This Copy`, `Don't Keep This Copy`, `Keep Only This Copy`, then
     `Move to Trash Now` — the ordinary act on this one copy, now, for a user who wants to
     try one before the bar's act; "Now" because it acts where the fate word only states.
@@ -136,7 +138,7 @@ begins 8 pt below its top edge rather than at the platform inset.
 | Zone | Content |
 | --- | --- |
 | What | L1, as above, over one L3 clause: `178 extra copies to move · 53.2 GB` — the count the button repeats, so the two numbers on the bar are seen to be one, and the bytes it does not carry (file sizes, the trash bar's convention; `at least 53.2 GB` when some sizes are unknown); blank space while nothing moves. |
-| Middle, behind a hairline | One of three, never blank: the **receipt** of the last act, `178 extra copies · 53.2 GB moved to the Trash` with `Undo` while that act is the window's last change, over `Empty the Trash in Finder to free the space`, until a mark changes or the user leaves the list; else the **choices**, `6 photos need your choice` with `Show`, while any group waits (Show selects the first); else the **legend**, `Checked copies stay. Unchecked copies go to the Trash; Undo brings them back.` — the sentence a first visit needs, since the act asks nothing. |
+| Middle, behind a hairline | One of three, never blank: the **receipt** of the last Move to Trash from the list, `178 extra copies moved to the Trash · 53.2 GB`, written once the Store has hidden the copies (never on the click: the download question may be declined), counting what was hidden, with `Undo` while that act is the window's last change, over `Empty the Trash in Finder to free the space`, until that act is undone, a mark changes, a later move replaces it, or the user leaves the list; else the **choices**, `6 photos need your choice` with `Show`, while any group waits (Show selects the first); else the **legend**, `Checked copies stay. Unchecked copies go to the Trash; Undo brings them back.` — the sentence a first visit needs, since the act asks nothing. |
 | Act | `Move 178 Extra Copies to Trash`, a plain bordered button with no Return equivalent (DES-052's deviation), tooltip `Moves the extra copies to the Trash. Edit ▸ Undo, or the Trash, puts them back.` Disabled, it reads `Move Extra Copies to Trash`, tooltip `Uncheck Keep on a copy, or choose a copy to keep in a group that waits.` No confirmation (DES-076, HIG Alerts): the act is undoable and the Trash recoverable, and the receipt says what happened. |
 
 ## The decision line
@@ -203,15 +205,16 @@ Lightroom's Loupe toggle.
 - **Return** and **Space** open the selected group in Compare (two copies) or Loupe, with
   the group as the filmstrip (Space is Lightroom's Loupe toggle). **Back to Duplicates**
   returns.
-- **⌘⌫** (Photo ▸ Move to Trash) moves the selected groups' extra copies — the rows that
-  read `Moves to Trash` — and never a kept one, so Select All then ⌘⌫ is the bar's act for
-  what is selected, not the loss of every copy. A kept copy moves now only by its row's
+- **⌘⌫** (Photo ▸ Move to Trash) moves the selected rows that read `Moves to Trash` —
+  never a kept one, and never a row that was not selected — so Select All then ⌘⌫ is the
+  bar's act for what is selected, not the loss of every copy. A kept copy moves now only by its row's
   `Move to Trash Now`.
 
 **VoiceOver.**
-- A group header is a header and leads with what tells one group from the next (DES-082):
-  `Captured Aug 2, 2026 at 12:56 AM, 2 identical videos, 3840 by 2160, 134 MB, Camera Roll,
-  folder 2026/08, Keeping the older file`.
+- A card is a header and leads with what tells one group from the next (DES-082):
+  `Captured Aug 2, 2026 at 12:56 AM, 2 identical videos, 134 MB each, MP4, 3840 by 2160,
+  Camera Roll, folder 2026/08, Keeping the older file`. The pair row's chevron reads `Show
+  the shared items` / `Hide the shared items`.
 - A row is one element reading what differs, then its fate, then its facts:
   `20260802_005635.mp4, moves to Trash, File created Aug 2, 2026 at 12:56 AM`
   (`stays` for a kept copy); a waiting row reads `waiting for your choice`.
@@ -220,6 +223,8 @@ Lightroom's Loupe toggle.
 
 ## Undo
 
-- **Move to Trash** is the ordinary `Undo Move to Trash`.
+- **Move to Trash** is the ordinary `Undo Move to Trash`, from Edit ▸ Undo or the
+  receipt's `Undo`; on this list it selects the copies it brings back, whose groups
+  rejoin at their dates (HIG Undo: show the result).
 - **Keep All Copies**, **Keep Both Libraries** and **Review Again** are undoable by their
   own names. Undo selects the group it brings back.

@@ -65,9 +65,11 @@ extension CatalogWindowViewModel {
     }
 
     /// Whether the bar's receipt may offer Undo: the window's last change is a Move to
-    /// Trash, so Undo takes back the act the receipt reports and nothing else.
+    /// Trash — read from the published undo state, the one owner of that fact — and any
+    /// later move from the list has replaced the receipt, so Undo takes back the act the
+    /// receipt reports and nothing else.
     var canUndoDuplicatesMove: Bool {
-        windowUndoManager.canUndo && windowUndoManager.undoActionName == Self.moveToTrashActionName
+        undoMenuState.canUndo && undoMenuState.undoTitle == "Undo \(Self.moveToTrashActionName)"
     }
 
     // MARK: - Intents
@@ -176,9 +178,10 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// What ⌘⌫ and Photo ▸ Move to Trash move on this list: the extra copies of the
-    /// selected groups — never a kept copy, so Select All then ⌘⌫ clears the extras and
-    /// nothing else. A copy is moved now, kept or not, only by its row's Move to Trash Now.
+    /// What ⌘⌫ and Photo ▸ Move to Trash move on this list: the selected rows that are
+    /// extra copies — never a kept one, and never a row that was not selected — so Select
+    /// All then ⌘⌫ clears the extras and nothing else. A copy is moved now, kept or not,
+    /// only by its row's Move to Trash Now.
     func selectedDuplicatesToMove() -> (ids: [MediaAssetID], carries: [DuplicateCarry]) {
         var ids: [MediaAssetID] = []
         var carries: [DuplicateCarry] = []
@@ -258,7 +261,7 @@ extension CatalogWindowViewModel {
         OtosLog.ui.noticeOperation("duplicates.move", phase: "start", fields: [
             "count": "\(tally.itemsToMove.count)", "carries": "\(tally.carries.count)",
         ])
-        duplicatesSession.receipt = DuplicatesReceipt(movedCount: tally.itemsToMove.count, bytes: tally.bytesToMove)
+        // The receipt is written once the Store has hidden the copies (`performMoveToTrash`).
         moveMediaToTrash(tally.itemsToMove, carrying: tally.carries)
     }
 

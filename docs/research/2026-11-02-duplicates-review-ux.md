@@ -284,6 +284,10 @@ The same three reviewers on fresh captures. Findings taken, and the design's ans
 | Groups that need eyes were interleaved with groups that do not. | Files of one photo list first, identical copies after, each newest first. |
 | Dark pictures vanished on the dark backdrop; the platform's list inset left a band above the first card; the card-to-row gap exceeded the row pitch. | A hairline edge on the picture; an 8 pt top margin; the card's bottom padding removed. |
 | `178 extra copies` and the button's count still needed reconciling. | `178 extra copies to move · 53.2 GB`. |
+| The receipt was written on the click, before the Store had hidden anything — a declined download question or a failed mark left the bar reporting a move that never happened — and it outlived its own undo, whose gate matched any Move to Trash. | The receipt is written where the hidden copies are known, from them, named by its batch; undoing that batch ends it; a later move from the list replaces it; the Undo gate reads the published undo state. |
+| Undo of the bar's act restored copies out of view. | On the list, undo selects the copies it brings back (HIG Undo). |
+| A checkbox whose title flipped with its state, beside `Moves to Trash`, could be read by a user of the category's other tools — where the box means *delete* — as "not marked". | The box's title is `Keep`, shown and constant; the consequence follows it. |
+| The list's seam hairline composed over the window colour; a double-click on the checkbox could toggle twice and open the group; the picture's square corners showed outside its rounded edge. | A `content` backdrop; the double-click gesture on the row's picture, name and space only; the picture clipped to its radius. |
 
 Taken under advisement, not changed: a confirmation dialog (both personas now accept
 Undo and the receipt); sort by size and group-jump keys (the toolbar's and the key map's

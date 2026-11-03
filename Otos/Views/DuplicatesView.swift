@@ -42,6 +42,8 @@ struct DuplicatesView: View {
                 actions: actions
             )
         }
+        // The seam's hairline composes over `content`, never over the window colour.
+        .background(DesignPalette.content(for: colorScheme))
     }
 
     private var pairs: [(pair: DuplicateLibraryPair, groups: [DuplicateGroup])] {
@@ -344,7 +346,7 @@ private struct DuplicateCopyRow: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
-    private static let fateWidth: CGFloat = 164
+    private static let fateWidth: CGFloat = 212
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -378,17 +380,22 @@ private struct DuplicateCopyRow: View {
                         .truncationMode(.tail)
                 }
             }
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                actions.openGroupContaining(row.id)
+            }
             Spacer(minLength: 8)
+                .contentShape(Rectangle())
+                // Double-click on the row's picture, name or space opens the group of the
+                // row clicked, as Return opens the selection's (HIG Lists) — not on its
+                // controls, where a second click would toggle twice.
+                .onTapGesture(count: 2) {
+                    actions.openGroupContaining(row.id)
+                }
             fate
                 .frame(width: Self.fateWidth, alignment: .leading)
         }
         .padding(.vertical, 2)
-        .contentShape(Rectangle())
-        // Double-click opens the group of the row clicked, as Return opens the selection's
-        // (HIG Lists).
-        .onTapGesture(count: 2) {
-            actions.openGroupContaining(row.id)
-        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(row.accessibilityLabel)
         .contextMenu {
@@ -412,24 +419,25 @@ private struct DuplicateCopyRow: View {
     private var fate: some View {
         switch row.fate {
         case .stays, .movesToTrash:
-            // The words are the checkbox's own title, so clicking them toggles too.
-            Toggle(isOn: Binding(
-                get: { row.fate == .stays },
-                set: { keep in keep ? actions.keep(row.id) : actions.unkeep(row.id) }
-            )) {
+            // The box names the setting, `Keep`, which never changes with its state (HIG
+            // Toggles); the words after it name the consequence.
+            HStack(spacing: 12) {
+                Toggle("Keep", isOn: Binding(
+                    get: { row.fate == .stays },
+                    set: { keep in keep ? actions.keep(row.id) : actions.unkeep(row.id) }
+                ))
+                .toggleStyle(.checkbox)
+                .focusable(false)
+                .disabled(row.fate == .stays && !row.canUnkeep)
+                .modifier(DuplicateKeepHelp(shown: row.fate == .stays && !row.canUnkeep))
                 if row.fate == .stays {
                     Label("Stays", systemImage: "checkmark.circle")
                 } else {
                     Label("Moves to Trash", systemImage: "trash")
                 }
             }
-            .toggleStyle(.checkbox)
             .font(.body)
             .foregroundStyle(DesignPalette.label(for: colorScheme))
-            .focusable(false)
-            .disabled(row.fate == .stays && !row.canUnkeep)
-            .modifier(DuplicateKeepHelp(shown: row.fate == .stays && !row.canUnkeep))
-            .accessibilityLabel("Keep")
         case .choice:
             Button("Keep This Copy") {
                 actions.keepOnly(row.id)
@@ -477,7 +485,10 @@ private struct DuplicateThumbnail: View {
     /// The picture's drawn size, aspect-fit in the well.
     private func fittedSize(of image: CGImage) -> CGSize {
         let scale = min(width / CGFloat(max(image.width, 1)), height / CGFloat(max(image.height, 1)))
-        return CGSize(width: (CGFloat(image.width) * scale).rounded(), height: (CGFloat(image.height) * scale).rounded())
+        return CGSize(
+            width: (CGFloat(image.width) * scale).rounded(),
+            height: (CGFloat(image.height) * scale).rounded()
+        )
     }
 
     var body: some View {
@@ -487,6 +498,7 @@ private struct DuplicateThumbnail: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: width, maxHeight: height, alignment: .leading)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
             } else {
                 Image(systemName: MediaAssetTilePresentation.placeholderIconSystemName(
                     for: kind, thumbnailUnavailable: unavailable

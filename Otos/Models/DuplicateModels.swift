@@ -639,8 +639,11 @@ nonisolated struct DuplicatesTally: Equatable, Sendable {
     let needingChoice: Int
 }
 
-/// What the bar's act moved, for its receipt: the count and the bytes it counted.
+/// What the last Move to Trash from the list hid, for the bar's receipt: written once the
+/// Store has hidden the copies, never before; named by its batch, so undoing that batch
+/// ends it and a later move replaces it.
 nonisolated struct DuplicatesReceipt: Equatable, Sendable {
+    let batch: MediaTrashBatchID
     let movedCount: Int
     let bytes: PartialByteCount
 }

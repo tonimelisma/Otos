@@ -54,9 +54,9 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
         let middle: Middle = if let receipt {
             .receipt(
                 line: [
-                    "\(receipt.movedCount) extra \(receipt.movedCount == 1 ? "copy" : "copies")",
+                    "\(receipt.movedCount) extra \(receipt.movedCount == 1 ? "copy" : "copies") moved to the Trash",
                     ImportBarByteFormat.phrase(receipt.bytes),
-                ].compactMap(\.self).joined(separator: " · ") + " moved to the Trash",
+                ].compactMap(\.self).joined(separator: " · "),
                 detail: "Empty the Trash in Finder to free the space",
                 canUndo: canUndoMove
             )
@@ -274,7 +274,8 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
         let spansLibraries = Set(group.copies.map(\.id.libraryRootPath)).count > 1
         switch group.default {
         case .kept:
-            return "You kept every \(copyNoun)"
+            // Unreachable: a kept group's card has no decision line (`map` returns first).
+            return "Kept every \(copyNoun)"
         case let .waits(conflict):
             if session.hasChosen(in: group) {
                 return keptCount == 1 ? "Keeping the \(copyNoun) you chose" : "Keeping the \(plural) you chose"

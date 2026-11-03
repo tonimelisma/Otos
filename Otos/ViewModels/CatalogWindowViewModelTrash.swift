@@ -146,6 +146,10 @@ extension CatalogWindowViewModel {
         startMediaTrash()
         let coordinator = mediaTrashCoordinator
         OtosLog.ui.notice("op=trash.move phase=start count=\(ids.count, privacy: .public)")
+        // The duplicates bar's receipt reports what this command hid, with the sizes the
+        // list showed: read before the await, since the groups leave the published state
+        // once their copies are hidden (ADR 0042).
+        let receiptSizes = showsDuplicatesList ? duplicateSizes(for: ids) : nil
         // Single in flight by construction (`mediaTrashTask` gates every start): a second
         // Move to Trash waits for this Store mark rather than racing it.
         mediaTrashTask = Task { [weak self, store = catalogStore, coordinator] in
@@ -176,10 +180,29 @@ extension CatalogWindowViewModel {
             )
             if !hidden.isEmpty {
                 registerTrashUndo(batch: batch, ids: hidden, carries: carries)
+                if let receiptSizes {
+                    duplicatesSession.receipt = DuplicatesReceipt(
+                        batch: batch,
+                        movedCount: hidden.count,
+                        bytes: receiptSizes.total(for: hidden)
+                    )
+                }
             }
             navigateAfterHiding(Set(hidden), context: context)
             mediaTrashTask = nil
         }
+    }
+
+    /// The sizes the duplicates list showed for these copies, for the receipt.
+    private func duplicateSizes(for ids: [MediaAssetID]) -> DuplicateSizes {
+        var sizes: [MediaAssetID: Int64?] = [:]
+        let wanted = Set(ids)
+        for group in state.duplicates?.groups ?? [] {
+            for copy in group.copies where wanted.contains(copy.id) {
+                sizes[copy.id] = copy.byteSize
+            }
+        }
+        return DuplicateSizes(sizes: sizes)
     }
 
     // MARK: - Undo
@@ -205,6 +228,10 @@ extension CatalogWindowViewModel {
             model.redoMoveToTrash(ids: ids, carries: carries)
         }
         windowUndoManager.setActionName(Self.moveToTrashActionName)
+        // The receipt reported this batch; undone, there is nothing to report.
+        if duplicatesSession.receipt?.batch == batch {
+            duplicatesSession.receipt = nil
+        }
         OtosLog.ui.notice("op=trash.undo phase=start count=\(ids.count, privacy: .public)")
         // Command: ordered with a following redo, which re-marks the same items.
         submitTrashIntent(.undo(batch: batch, ids: ids))
@@ -223,6 +250,11 @@ extension CatalogWindowViewModel {
             trashAlertMessage = outcome.failed.count == 1
                 ? TrashAlertCopy.putBackFailedOne
                 : TrashAlertCopy.putBackFailedMany
+        }
+        // Undo shows its result (HIG): on the duplicates list the restored copies' groups
+        // rejoin at their dates, so they are selected to be found.
+        if showsDuplicatesList, !outcome.restored.isEmpty {
+            selectAssets(outcome.restored)
         }
     }
 
@@ -461,4 +493,23 @@ struct TrashNavigationContext {
     /// The display order when the command was issued: the frame of reference for
     /// where navigation lands once the targets are hidden.
     let orderedIDs: [MediaAssetID]
+}
+
+/// The sizes the duplicates list showed for the copies a command set out to hide, read
+/// before the Store hid them.
+nonisolated struct DuplicateSizes: Sendable {
+    let sizes: [MediaAssetID: Int64?]
+
+    func total(for ids: [MediaAssetID]) -> PartialByteCount {
+        var known: Int64 = 0
+        var unknown = 0
+        for id in ids {
+            if let size = sizes[id], let size {
+                known += size
+            } else {
+                unknown += 1
+            }
+        }
+        return PartialByteCount(knownBytes: known, unknownCount: unknown)
+    }
 }
