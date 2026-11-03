@@ -20,9 +20,16 @@ import Foundation
 ///
 /// A roll is trusted only when its uncertainty is at most 3° (ADR 0045): on 114 iPhone photos with
 /// calibrated gravity, that kept 61% of them, 93% within 2° and none off by more than 5°.
-/// Owned by `EditAnalyzer`, which runs it on its own serial queue.
-nonisolated struct AutoLevelModel {
-    private let functions: [Shape: MLModel]
+/// Each shape's function is loaded the first time a photo of that shape is read. Core ML
+/// specializes a function for this Mac on its first load (about 1.8 s and 58 MB of cache each on
+/// an M1 Pro; 7 ms once cached), so loading all nine at once cost 15 s and 525 MB for shapes most
+/// libraries never use.
+///
+/// Owned by `EditAnalyzer`, which runs it on its own serial queue; its cache of loaded functions
+/// is that actor's state.
+final nonisolated class AutoLevelModel {
+    private let url: URL
+    private var functions: [Shape: MLModel] = [:]
 
     struct Shape: Hashable {
         let height: Int
@@ -39,23 +46,32 @@ nonisolated struct AutoLevelModel {
         guard let url = bundle.url(forResource: "GeoCalib", withExtension: "mlmodelc") else {
             throw CocoaError(.fileNoSuchFile)
         }
-        var functions: [Shape: MLModel] = [:]
-        for long in Self.longSides {
-            for shape in Set([Shape(height: Self.shortSide, width: long), Shape(height: long, width: Self.shortSide)]) {
-                let configuration = MLModelConfiguration()
-                configuration.computeUnits = Self.computeUnits
-                configuration.functionName = "h\(shape.height)w\(shape.width)"
-                functions[shape] = try MLModel(contentsOf: url, configuration: configuration)
-            }
+        self.url = url
+    }
+
+    /// The network for one converted shape, loaded on first use.
+    private func function(for shape: Shape) throws -> MLModel {
+        if let model = functions[shape] {
+            return model
         }
-        self.functions = functions
+        let start = ContinuousClock.now
+        let configuration = MLModelConfiguration()
+        configuration.computeUnits = Self.computeUnits
+        configuration.functionName = "h\(shape.height)w\(shape.width)"
+        let model = try MLModel(contentsOf: url, configuration: configuration)
+        functions[shape] = model
+        OtosLog.rendering.noticeOperation("edit.analysisModel", phase: "loaded", fields: [
+            "model": "GeoCalib", "shape": "\(shape.width)x\(shape.height)",
+            "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
+        return model
     }
 
     /// GeoCalib's roll of the photo and its uncertainty, both in radians; positive is the
     /// clockwise straighten that levels it.
     func roll(of image: CGImage) throws -> (roll: Double, uncertainty: Double)? {
         let geometry = Self.geometry(width: image.width, height: image.height)
-        guard let model = functions[geometry.shape] else { return nil }
+        let model = try function(for: geometry.shape)
         let resized = try ModelImage.rgb(image, width: geometry.resized.width, height: geometry.resized.height)
         let height = geometry.shape.height, width = geometry.shape.width
         let input = try MLMultiArray(shape: [1, 3, NSNumber(value: height), NSNumber(value: width)], dataType: .float32)

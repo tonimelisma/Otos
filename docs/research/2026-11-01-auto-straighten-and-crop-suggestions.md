@@ -267,6 +267,11 @@ Findings:
     every thread parked on its lock.
   - The Neural Engine refuses a function name on a multi-function model.
   - The CPU gives the same results at about the same speed: ~0.1 s a crop, ~0.35 s a level.
+- **Loading:** Core ML specializes a model on its first load and caches the result per app.
+  - FocalNet: 229 ms cold, 8 ms warm.
+  - GeoCalib: all nine shape functions cost 15 s cold and 525 MB of cache. One function costs
+    about 1.8 s and 58 MB cold, and 7 ms warm. So Otos loads a function only when a photo of
+    that shape is read.
 
 ## Sources
 
