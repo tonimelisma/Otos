@@ -259,6 +259,24 @@ extension EnrichmentCoordinator {
         )
     }
 
+    private func releaseClaims(_ ids: [MediaAssetID], visibleID: MediaAssetID) async {
+        do {
+            try await store.releaseEnrichmentClaims(ids)
+        } catch {
+            await recordVisibleThumbnailLifecycle(
+                phase: "claimReleaseFailed",
+                id: visibleID,
+                fields: ["error": String(describing: error)]
+            )
+            OtosLog.metadata.error(
+                """
+                Enrichment claim release failed count=\(ids.count, privacy: .public) \
+                error=\(String(describing: error), privacy: .public)
+                """
+            )
+        }
+    }
+
     private func recordCompletedEnrichment(_ result: EnrichmentResult, id: MediaAssetID) async {
         await recordVisibleThumbnailLifecycle(
             phase: "generated",
