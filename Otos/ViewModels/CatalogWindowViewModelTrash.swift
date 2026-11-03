@@ -41,7 +41,9 @@ extension CatalogWindowViewModel {
         guard mediaTrashTask == nil else {
             return false
         }
-        let ids = targetIDs(.current)
+        // On the duplicates list the targets are the selected groups' extra copies, never
+        // a kept one (ADR 0042).
+        let ids = showsDuplicatesList ? selectedDuplicatesToMove().ids : targetIDs(.current)
         guard !ids.isEmpty else {
             return false
         }
@@ -58,7 +60,12 @@ extension CatalogWindowViewModel {
         guard canMoveTargetedMediaToTrash else {
             return
         }
-        moveMediaToTrash(targetIDs(.current))
+        if showsDuplicatesList {
+            let targets = selectedDuplicatesToMove()
+            moveMediaToTrash(targets.ids, carrying: targets.carries)
+        } else {
+            moveMediaToTrash(targetIDs(.current))
+        }
     }
 
     /// The one Move to Trash path for a known set of items: the current targets, or the

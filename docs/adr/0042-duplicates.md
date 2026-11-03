@@ -53,13 +53,23 @@ The copies to keep are chosen and the rest marked; the user can change any mark.
   `Choose a copy to keep`.
 - **The best copy is kept**, in this order:
   1. a copy with companion files, since they cannot move;
-  2. for versions of the same photo, the camera original (it names its capture), then the
-     most pixels, then the largest file;
+  2. for versions of the same photo, whether or not they name their capture, the camera
+     original (it names its capture), then the most pixels, then the largest file in
+     bytes — the list shows sizes at whatever precision tells the files apart;
   3. an edited copy, then one with a choice, so the common case carries nothing;
-  4. the name without a Finder or browser copy suffix (` copy`, ` copy 2`, ` (1)`);
+  4. the name without a Finder, browser or import copy suffix (` copy`, ` copy 2`, ` (1)`, and
+     `_001`, the collision suffix Otos's own import gives a second copy, ARC-050);
   5. the earliest birth time;
   6. path order.
-- **Keep Only This Copy** keeps a row's copy and marks the rest of its group.
+- **Keep Only This Copy** keeps a row's copy and marks the rest of its group. A waiting
+  group's rows offer it as `Keep This Copy`, so the first click on such a group means
+  keep.
+- **The default says why.** `DuplicateDefault` records the criterion that separated the
+  kept copy from the copy it beat last (birth times compared at whole seconds, the
+  precision the list shows), that each library keeps its own, or which work conflicts and
+  in which library; the list states it in words, computed, never stored
+  (`docs/design/duplicates.md`). Groups are listed versions first, then identical copies,
+  each newest first by the kept copy's capture date.
 
 **The one durable fact is Keep All Copies,** remembered per pair of paths in
 `duplicate_kept_pair` (schema v11). It is overlay on both copies:
@@ -68,18 +78,25 @@ The copies to keep are chosen and the rest marked; the user can change any mark.
 - `ON DELETE CASCADE` ends it with either copy's proven deletion or its library's
   removal.
 
-A group whose every pair is kept is listed under Kept and counted nowhere else. A later
-copy of copies kept together is the only one offered as extra. Keep All is undoable,
-delivered on one ordered intent stream (ADR 0032 rule 5).
+A group whose every pair is kept stays in its place in the list as one quiet card, `Kept
+both copies`, and is counted nowhere; a card that vanished on Keep Both read as a deletion.
+A later copy of copies kept together is the only one offered as extra. Keep All is
+undoable, delivered on one ordered intent stream (ADR 0032 rule 5); Review Again forgets a
+kept group's pairs on the same stream, undoable by its own name, so a kept group is never a
+dismissal without a way back.
 
 **Marks are window state.** The user's Keep / Move marks live in `DuplicatesSession`, owned
 by the view model; a mark is forgotten once no group holds its copy. The list always shows
 every active group: one found while the user looks joins at once, and one that resolves or
 vanishes leaves at once. The act moves exactly the marked copies the bar counts, through the
 one Move to Trash path (`moveMediaToTrash`): its download question
-(APP-045), its queue, and its undo are the ordinary ones. A group always keeps one copy:
-the mark refuses the last kept copy, and ⌘⌫ on a kept row is the ordinary Move to Trash,
-after which the group re-derives without it.
+(APP-045), its queue, and its undo are the ordinary ones; the bar then shows the act's
+receipt with Undo until a mark changes or the user leaves the list. A group always keeps
+one copy: the mark refuses the last kept copy of three or more, and in a pair unkeeping
+the kept copy keeps the other. On the list, ⌘⌫ (the ordinary Move to Trash) moves the
+selected groups' extra copies and never a kept one, so Select All then ⌘⌫ cannot empty a
+group; a row's `Move to Trash Now` moves that one copy, kept or not, after which the group
+re-derives without it.
 
 **Scopes.** `.duplicates` is every copy in a group, presented as the duplicates list, so the
 list's rows are the ordinary media selection — Photo commands, ⌘⌫ and Undo's reveal read
@@ -104,6 +121,8 @@ file, not a copy of another.
 | Persist per-copy marks | A decision in progress, not a fact about the files; it would outlive the groups it described. |
 | Hold groups found mid-visit behind `N more found · Show` | A second answer to "which groups exist", besides the published state. It snapshotted the catalog before its first load at launch and hid every group behind `0 photos · 164 more found`. The owner wants the list to show every duplicate, always (2026-11-01). |
 | Return as the bulk act's key | Return opens a group; a bulk move must not be one keystroke from a list. |
+| A confirmation before the bulk act | Photos confirms a merge, which is not undoable; this act is the ordinary Move to Trash, undoable and recoverable, and the HIG reserves alerts for uncommon acts that cannot be undone (DES-076). |
+| A checkbox meaning "move to Trash", the category's convention | The kept set is what the rule explains and what a group must never empty; a positive mark reassures where a destructive one warns. |
 | Single-letter shortcuts for Keep and Move | P, U and X already mean curation choices; one key never means two things. |
 
 ## Consequences

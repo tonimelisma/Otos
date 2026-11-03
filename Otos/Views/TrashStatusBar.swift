@@ -81,7 +81,7 @@ struct TrashStatusBar: View {
     var body: some View {
         HStack(alignment: .center, spacing: 28) {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+                HStack(spacing: 7) {
                     if presentation.badge == .attention {
                         Image(systemName: "exclamationmark.circle.fill")
                             .foregroundStyle(.orange)

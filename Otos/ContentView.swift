@@ -135,8 +135,11 @@ struct ContentView: View {
                     detailContent
                         // An active filter names itself under the title, so a scope that
                         // looks short is never mistaken for the whole of it (DES-029:
-                        // never the filter glyph's color alone).
-                        .navigationSubtitle(viewModel.queryDescriptor.filter.isActive ? "Filtered" : "")
+                        // never the filter glyph's color alone). The duplicates list
+                        // ignores the filter, so it never claims to be filtered.
+                        .navigationSubtitle(
+                            viewModel.queryDescriptor.filter.isActive && !viewModel.showsDuplicatesList ? "Filtered" : ""
+                        )
                 }
                 if let presentation = viewModel.selectedImportPresentation {
                     ImportPlanFooter(
@@ -492,6 +495,7 @@ struct ContentView: View {
                 DuplicatesView(
                     duplicates: duplicates,
                     session: viewModel.duplicatesSession,
+                    canUndoMove: viewModel.canUndoDuplicatesMove,
                     selection: Binding(
                         get: { viewModel.gridSelection.selection },
                         set: { viewModel.setDuplicatesSelection($0) }

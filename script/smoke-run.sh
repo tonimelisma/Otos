@@ -24,10 +24,11 @@ are never guessable, so pass the root explicitly, every time.
 `places` selects the Places map (ADR 0040), which needs a registered fixed library.
 
 Environment:
-  OTOS_SMOKE_SELECT_ROOT       an already-registered root (or places), if not an argument
+  OTOS_SMOKE_SELECT_ROOT       an already-registered root, places, or duplicates, if not an argument
   OTOS_SMOKE_CAPTURE_PATH      with --verify: write the window's own rendering to this
                                PNG once it shows the selection, then quit
   OTOS_SMOKE_APPEARANCE        light|dark: the app's appearance for that capture
+  OTOS_SMOKE_CAPTURE_SCROLL_FRACTION 0..1: scroll the window's lists this far down before the capture
   OTOS_SMOKE_CAPTURE_SETTLE_SECONDS  seconds to let map tiles and thumbnails land
                                before the capture (MapKit reports neither; default 0)
   OTOS_SMOKE_SETTLE_SECONDS    seconds to wait before jank scrolling (default: 10)
@@ -73,10 +74,11 @@ are never guessable, so pass the root explicitly, every time.
 `places` selects the Places map (ADR 0040), which needs a registered fixed library.
 
 Environment:
-  OTOS_SMOKE_SELECT_ROOT       an already-registered root (or places), if not an argument
+  OTOS_SMOKE_SELECT_ROOT       an already-registered root, places, or duplicates, if not an argument
   OTOS_SMOKE_CAPTURE_PATH      with --verify: write the window's own rendering to this
                                PNG once it shows the selection, then quit
   OTOS_SMOKE_APPEARANCE        light|dark: the app's appearance for that capture
+  OTOS_SMOKE_CAPTURE_SCROLL_FRACTION 0..1: scroll the window's lists this far down before the capture
   OTOS_SMOKE_CAPTURE_SETTLE_SECONDS  seconds to let map tiles and thumbnails land
                                before the capture (MapKit reports neither; default 0)
   OTOS_SMOKE_SETTLE_SECONDS    seconds to wait before jank scrolling (default: 10)

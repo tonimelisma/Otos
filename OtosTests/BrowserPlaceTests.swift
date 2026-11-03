@@ -209,8 +209,8 @@ struct BrowserPlaceTests {
         let model = makeViewModel(domain)
         let copies = ids.map { id in
             DuplicateCopy(
-                id: id, libraryDisplayName: "Pictures", byteSize: 1, createdAt: nil, pixelWidth: 4,
-                pixelHeight: 3, mediaChoice: .notRated, isEdited: false, hasCompanions: false
+                id: id, libraryDisplayName: "Pictures", kind: .image, captureDate: nil, byteSize: 1, createdAt: nil,
+                pixelWidth: 4, pixelHeight: 3, mediaChoice: .notRated, isEdited: false, hasCompanions: false
             )
         }
         let group = DuplicateGroupPolicy.group(id: .samePhoto(ids), copies: copies, keptPairs: [], originals: [ids[0]])
@@ -229,6 +229,40 @@ struct BrowserPlaceTests {
         model.setDuplicatesSelection([ids[2]])
         model.openSelectedDuplicateGroup()
         #expect(model.viewMode == .loupe)
+    }
+
+    /// ⌘⌫ on the list moves the selected groups' extra copies and never a kept one, so
+    /// Select All then ⌘⌫ cannot empty a group (ADR 0042); double-click opens the group of
+    /// the row clicked, whatever the selection holds.
+    @Test func commandBackspaceOnTheListMovesOnlyTheSelectedExtras() throws {
+        let domain = PreferencesDomain.suite(UUID().uuidString)
+        let ids = makeIDs(3)
+        let model = makeViewModel(domain)
+        let copies = ids.enumerated().map { index, id in
+            DuplicateCopy(
+                id: id, libraryDisplayName: "Pictures", kind: .image, captureDate: nil, byteSize: 1,
+                createdAt: Date(timeIntervalSince1970: Double(index)), pixelWidth: 4, pixelHeight: 3,
+                mediaChoice: .notRated, isEdited: false, hasCompanions: false
+            )
+        }
+        let digest = try #require(XXH3Digest128(data: Data(repeating: 7, count: 16)))
+        let group = DuplicateGroupPolicy.group(id: .identical(digest), copies: copies, keptPairs: [])
+        var state = loadedState(descriptor: CatalogQueryDescriptor(scope: .duplicates), ids: ids)
+        state.duplicates = CatalogDuplicatesState(groups: [group])
+        model.applyState(state)
+
+        model.setDuplicatesSelection(Set(ids))
+        let targets = model.selectedDuplicatesToMove()
+        #expect(Set(targets.ids) == Set(ids.dropFirst()))
+        #expect(!targets.ids.contains(ids[0]))
+        #expect(model.canMoveTargetedMediaToTrash)
+
+        model.setDuplicatesSelection([ids[0]])
+        #expect(model.selectedDuplicatesToMove().ids.isEmpty)
+        #expect(!model.canMoveTargetedMediaToTrash)
+
+        model.openDuplicateGroup(containing: ids[2])
+        #expect(model.sidebarSelection == .duplicateGroup(group.id))
     }
 
     /// Before the catalog loads, the sidebar draws no row at all — not even the one the user
