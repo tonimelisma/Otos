@@ -258,7 +258,9 @@ nonisolated enum DuplicateGroupPolicy {
                 keptPairs: keptPairs
             ))
         }
-        return groups.sorted(by: DuplicateGroup.precedesInList)
+        // Unordered: `CatalogDuplicatesState` orders the groups once, identical and
+        // versions together.
+        return groups
     }
 
     /// One group from its copies. `originals` are the copies that name their capture — for
@@ -427,10 +429,32 @@ nonisolated enum DuplicateGroupPolicy {
     }
 
     /// A name Finder (` copy`, ` copy 2`), a browser download (` (1)`) or Otos's own import
-    /// (`_001`, the collision suffix of ARC-050) gives a second copy of a file.
+    /// (`_001`, the collision suffix of ARC-050) gives a second copy of a file. Plain
+    /// string scans, not a regular expression: the keeper rule asks this for every pair of
+    /// copies in every group of a build.
     static func hasCopySuffix(_ name: String) -> Bool {
-        let stem = (name as NSString).deletingPathExtension
-        return stem.range(of: #"( copy( \d+)?| \(\d+\)|_\d{3})$"#, options: .regularExpression) != nil
+        let stem = MediaRelativePath(rawValue: name).stem
+        if stem.hasSuffix(" copy") {
+            return true
+        }
+        let trailingDigits = stem.reversed().prefix { $0.isASCII && $0.isNumber }.count
+        if trailingDigits > 0 {
+            let head = stem.dropLast(trailingDigits)
+            if head.hasSuffix(" copy ") {
+                return true
+            }
+            if trailingDigits == 3, head.hasSuffix("_") {
+                return true
+            }
+        }
+        if stem.hasSuffix(")") {
+            let inner = stem.dropLast()
+            let innerDigits = inner.reversed().prefix { $0.isASCII && $0.isNumber }.count
+            if innerDigits > 0, inner.dropLast(innerDigits).hasSuffix(" (") {
+                return true
+            }
+        }
+        return false
     }
 }
 
