@@ -222,7 +222,10 @@ Adjacent decisions requiring separate ADRs or specs:
    and batched writes. Ready capacity, physical-transfer capacity, and SQLite
    claim ownership are independent: a dataless claim becomes a bounded
    materialization demand without occupying a ready slot, and a completed result
-   releases ready capacity while retaining its Store claim until apply. It does
+   releases ready capacity while retaining its Store claim until apply; the apply's
+   own transaction releases it, so the change notification that write sends never
+   finds the row still claimed. The coordinator subscribes to Store changes before
+   its first pass, so no notification its own work causes goes unheard. It does
    not schedule physical provider transfers. `MaterializationCoordinator` is the
    sole owner of deliberate transfers requested by preview, device staging, or
    enrichment. Readiness admission is routed through an injectable

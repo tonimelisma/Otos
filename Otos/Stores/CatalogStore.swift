@@ -2193,6 +2193,9 @@ extension CatalogStore {
     }
 
     /// Applies a batch of completed enrichments in one transaction and one notification.
+    /// The transaction also releases every row's enrichment claim, so the notification
+    /// never reaches a claimant before the rows it settled are claimable again; a failed
+    /// write rolls back and releases the claims on its own.
     /// Batching mirrors `recordScannedBatch`: a per-asset transaction across a whole
     /// library would crawl, and a notification per asset would re-sort the catalog in
     /// Projection per completion. Enrichment writes only enrichment columns/fields,
@@ -2254,7 +2257,6 @@ extension CatalogStore {
             // `best_format` change is structural and keeps the full rebuild.
             notifyCatalogChanged(writeOutcome.structureChanged ? .catalogChanged : .assetsDetailChanged)
         }
-        await releaseEnrichmentClaimsAfterBatch(resultIDs)
         if writeOutcome.promotionFailed {
             return .writeFailed
         }
@@ -2300,6 +2302,13 @@ extension CatalogStore {
                     db: db
                 )
             }
+            // Released in the write that settles the rows, so no change notification can
+            // reach a claimant while a row it is due to claim still reads as claimed.
+            try EnrichmentClaimGateway.releaseEnrichmentClaims(
+                ids: results.map(\.id),
+                rootIDsByPath: rootIDsByPath,
+                db: db
+            )
             return outcome
         }
         var outcome = timedOutcome.value

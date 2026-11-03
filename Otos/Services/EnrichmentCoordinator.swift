@@ -245,17 +245,27 @@ actor EnrichmentCoordinator {
 }
 
 extension EnrichmentCoordinator {
-    func start() {
+    /// Returns once the coordinator hears every later Store change. The subscription comes
+    /// before the first pass: an apply that pass starts notifies only those already
+    /// subscribed, and a lost notification leaves follow-up work (a card's rendering pass
+    /// after its metadata) unclaimed until some unrelated change.
+    func start() async {
+        guard supervisor == nil else {
+            return
+        }
+        let changes = await store.changeNotifications()
+        // A concurrent `start()` may have won while this one subscribed; its stream is
+        // dropped here, which ends that subscription.
         guard supervisor == nil else {
             return
         }
         OtosLog.metadata.info("Enrichment coordinator started")
         changeConsumer = Task { [weak self] in
-            guard let store = self?.store else {
-                return
-            }
-            for await _ in await store.changeNotifications() {
-                await self?.markDirtyAndSignal()
+            for await _ in changes {
+                guard let self else {
+                    return
+                }
+                await markDirtyAndSignal()
             }
         }
         supervisor = Task { await self.runLoop() }

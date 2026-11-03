@@ -952,6 +952,41 @@ struct EnrichmentCoordinatorTests {
         await materializer.shutdown()
     }
 
+    /// `start()` returns subscribed: a Store change committed the moment it returns wakes
+    /// the coordinator, with no other signal to fall back on. The first pass found an empty
+    /// catalog, so only the change notification can bring the new row to the enricher.
+    @Test func aChangeCommittedAsStartReturnsWakesTheCoordinator() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["a.jpg"]))
+        try await store.start(scansSavedLibraries: false)
+        let recorder = ScopeRecorder()
+        let digest = try #require(XXH3Digest128(data: Data(repeating: 7, count: 16)))
+        let enricher = MediaEnricher { id, _, size, mtime, scope, _ in
+            await recorder.record(name: id.relativePath.rawValue, scope: scope)
+            return .complete(EnrichmentResult(
+                id: id,
+                metadata: EnrichedMetadata(metadata: AssetMetadata(), kind: nil, format: nil),
+                rendering: EnrichedRendering(thumbnailPath: "t.jpg"),
+                sourceSize: size,
+                sourceMTimeSeconds: mtime,
+                contentHash: digest
+            ))
+        }
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: enricher,
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+        )
+
+        await coordinator.start()
+        try await store.addLibrary(url: root)
+
+        try await recorder.waitFor(name: "a.jpg", count: 1)
+        await coordinator.shutdown()
+    }
+
     /// `EnrichWork.scope` is the value the Store's claim decided
     /// (`ClaimedEnrichmentCandidate.scope`), not one the coordinator re-derives from its own
     /// notion of root kind — a second owner of the same fact, able to disagree. A library

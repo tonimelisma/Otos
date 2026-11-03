@@ -5,8 +5,8 @@ import OSLog
 ///
 /// Worker tasks return here after byte-reading or materialization. The actor then
 /// updates only scheduler state, records bounded visible-thumbnail lifecycle
-/// diagnostics, batches Store writes, and releases process-local SQLite claims on
-/// success, retryable failure, or shutdown.
+/// diagnostics, batches Store writes (each apply releases its rows' SQLite claims), and
+/// releases the claims of work that ends without an apply: retryable failure or shutdown.
 extension EnrichmentCoordinator {
     func finishEnrich(_ work: EnrichWork, _ outcome: EnrichmentOutcome) async {
         defer { resumeDrainedWaiters() }
@@ -213,12 +213,13 @@ extension EnrichmentCoordinator {
             "op=catalog.enrichment.coordinator phase=flush count=\(batch.count, privacy: .public) outcome=\(String(describing: outcome), privacy: .public)"
         )
         await recordVisibleThumbnailBatchOutcome(outcome, batchCount: batch.count, ids: diagnosedBatchIDs)
-        let claimedIDs = batchIDs.filter { pendingApplyClaimIDs.remove($0) != nil }
-        for id in batchIDs {
-            readyClaims[id] = nil
-        }
-        if let visibleID = claimedIDs.first, !claimedIDs.isEmpty {
-            await releaseClaims(claimedIDs, visibleID: visibleID)
+        // The apply released each row's Store claim, whatever its outcome. `readyClaims`
+        // is not touched: these rows left it before they were queued, and once the apply
+        // released them a pass during the write may have claimed one again — that entry
+        // is the new claim's. A row with a newer result queued keeps its pending claim.
+        let stillPending = Set(pendingApply.map(\.id))
+        for id in batchIDs where !stillPending.contains(id) {
+            pendingApplyClaimIDs.remove(id)
         }
         handleApplyOutcome(outcome, batchCount: batch.count)
         // Cleared only now, with no await before the reschedule: results that arrived
@@ -256,24 +257,6 @@ extension EnrichmentCoordinator {
         OtosLog.metadata.notice(
             "op=catalog.thumbnails.visibleLifecycle phase=\(phase, privacy: .public) \(otosLogFields(diagnosticFields), privacy: .public)"
         )
-    }
-
-    private func releaseClaims(_ ids: [MediaAssetID], visibleID: MediaAssetID) async {
-        do {
-            try await store.releaseEnrichmentClaims(ids)
-        } catch {
-            await recordVisibleThumbnailLifecycle(
-                phase: "claimReleaseFailed",
-                id: visibleID,
-                fields: ["error": String(describing: error)]
-            )
-            OtosLog.metadata.error(
-                """
-                Enrichment claim release failed count=\(ids.count, privacy: .public) \
-                error=\(String(describing: error), privacy: .public)
-                """
-            )
-        }
     }
 
     private func recordCompletedEnrichment(_ result: EnrichmentResult, id: MediaAssetID) async {
