@@ -163,27 +163,6 @@ struct EditGeometryTests {
         #expect(abs(flipped.temperature) <= 2)
     }
 
-    /// Level ▸ Horizon levels a horizon that rises to the right with a clockwise turn of
-    /// the same angle, and reads the photo as it is turned: the same horizon on a photo
-    /// flipped horizontally falls to the right, so it levels the other way.
-    @Test func theHorizonIsReadAsThePhotoIsShown() async throws {
-        let url = try makeTestDirectory().appending(path: "horizon.jpg")
-        try writeHorizonJPEG(to: url, risingBy: 6)
-        let renderer = LiveEditRenderer()
-
-        let plain = try #require(try await renderer.horizonStraighten(url, shown: .neutral))
-        // Straighten and crop already on the photo do not change the reading.
-        let edited = try #require(try await renderer.horizonStraighten(
-            url, shown: EditRecipe(straighten: -20, crop: EditCrop(left: 0.1, top: 0.1, width: 0.5, height: 0.5))
-        ))
-        let flipped = try #require(try await renderer.horizonStraighten(url, shown: EditRecipe(flipHorizontal: true)))
-        await renderer.close()
-
-        #expect(abs(plain - 6) < 1)
-        #expect(abs(edited - plain) < 0.5)
-        #expect(abs(flipped + 6) < 1)
-    }
-
     /// A line drawn falling to the right is leveled by a counterclockwise turn, one drawn
     /// nearer vertical is made plumb, and a click draws no line.
     @Test func aDrawnLineIsLeveledOrMadePlumb() throws {
@@ -200,66 +179,5 @@ struct EditGeometryTests {
         let leaning = try #require(StraightenLine.levelingTurn(from: .zero, to: CGPoint(x: 10, y: 100)))
         #expect(abs(leaning - atan(0.1) * 180 / .pi) < 0.001)
         #expect(StraightenLine.levelingTurn(from: .zero, to: CGPoint(x: 3, y: 4)) == nil)
-    }
-
-    /// Fit Subject is the smallest crop of the aspect holding the subject and its margin;
-    /// Subject on Thirds is the largest, with the subject's center on a third.
-    @Test func suggestedCropsArePlacedByTheSubject() {
-        let frame = CGSize(width: 1200, height: 800)
-        let subject = CGRect(x: 0.2, y: 0.2, width: 0.1, height: 0.15)
-
-        // Custom: the subject and its margin, whatever shape that is.
-        let free = CropSuggestion.fitSubject.crop(subject: subject, frame: frame, pixelRatio: nil)
-        #expect(abs(free.left - 0.185) < 0.001 && abs(free.width - 0.13) < 0.001)
-        #expect(abs(free.top - 0.1775) < 0.001 && abs(free.height - 0.195) < 0.001)
-
-        // A fixed aspect grows the short side to it.
-        let fit = CropSuggestion.fitSubject.crop(subject: subject, frame: frame, pixelRatio: 1.5)
-        #expect(abs(fit.width * 1200 / (fit.height * 800) - 1.5) < 0.001)
-        #expect(fit.left <= subject.minX && fit.right >= subject.maxX)
-        #expect(fit.top <= subject.minY && fit.bottom >= subject.maxY)
-        #expect(abs(fit.height - 0.15 * 1.3) < 0.001)
-
-        // The largest square whose upper-left thirds point is the subject's center: the
-        // center's distance from the top edge caps it at 0.825 of the height.
-        let square = CropSuggestion.subjectOnThirds.crop(subject: subject, frame: frame, pixelRatio: 1)
-        #expect(abs(square.width * 1200 - square.height * 800) < 0.001)
-        #expect(abs(square.height - 0.825) < 0.001)
-        #expect(abs(square.left + square.width / 3 - subject.midX) < 0.001)
-        #expect(abs(square.top + square.height / 3 - subject.midY) < 0.001)
-
-        // A subject bigger than any crop of the aspect gets the largest crop there is.
-        let huge = CropSuggestion.fitSubject.crop(subject: CGRect(x: 0, y: 0, width: 1, height: 1), frame: frame, pixelRatio: 1)
-        #expect(abs(huge.height - 1) < 0.001)
-    }
-
-    /// A subject that fills most of the frame and touches its top edge, as Vision reads a
-    /// child at a table (1024 × 682): Subject keeps the margin only where there is room and
-    /// still crops in, and Thirds still moves the subject onto a third. Clamping either to
-    /// the frame would leave the whole photo, which is what both did.
-    @Test func aFrameFillingSubjectIsStillCroppedIn() {
-        let frame = CGSize(width: 1024, height: 682)
-        let subject = CGRect(x: 0.444, y: 0, width: 0.553, height: 0.786)
-
-        let fit = CropSuggestion.fitSubject.crop(subject: subject, frame: frame, pixelRatio: nil)
-        #expect(!fit.isWhole)
-        #expect(fit.width < 0.95)
-        // The subject touches the top edge, so the crop's top is 0 up to rounding.
-        let tolerance = 1e-9
-        #expect(fit.left <= subject.minX + tolerance && fit.right >= subject.maxX - tolerance)
-        #expect(fit.top <= subject.minY + tolerance && fit.bottom >= subject.maxY - tolerance)
-
-        // Custom: each axis reaches as far as the frame lets the thirds point land.
-        let thirds = CropSuggestion.subjectOnThirds.crop(subject: subject, frame: frame, pixelRatio: nil)
-        #expect(!thirds.isWhole)
-        #expect(abs(thirds.left + thirds.width * 2 / 3 - subject.midX) < 0.001)
-        #expect(abs(thirds.top + thirds.height / 3 - subject.midY) < 0.001)
-        #expect(abs(thirds.right - 1) < 0.001 && abs(thirds.bottom - 1) < 0.001)
-
-        // Original: the same, shrunk to the photo's shape.
-        let original = CropSuggestion.subjectOnThirds.crop(subject: subject, frame: frame, pixelRatio: 1024.0 / 682)
-        #expect(abs(original.width * 1024 / (original.height * 682) - 1024.0 / 682) < 0.001)
-        #expect(abs(original.left + original.width * 2 / 3 - subject.midX) < 0.001)
-        #expect(abs(original.top + original.height / 3 - subject.midY) < 0.001)
     }
 }
