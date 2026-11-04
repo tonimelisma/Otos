@@ -899,7 +899,10 @@ nonisolated struct EditPipeline: Sendable {
         var crop: EditCrop??
         let cropStart = ContinuousClock.now
         do {
-            let frame = try await renderer.analysisImage(url, recipe: request.frame)
+            guard let frame = try await renderer.analysisImage(url, recipe: request.frame) else {
+                Self.logAnalysisSkipped(path)
+                return EditAnalysis(crop: nil, level: nil)
+            }
             let modelStart = ContinuousClock.now
             let suggested = try await analyzer.crop(of: frame)
             crop = .some(suggested)
@@ -920,7 +923,10 @@ nonisolated struct EditPipeline: Sendable {
         var level: AutoLevelReading.Level?
         let levelStart = ContinuousClock.now
         do {
-            let photo = try await renderer.analysisImage(url, recipe: .neutral)
+            guard let photo = try await renderer.analysisImage(url, recipe: .neutral) else {
+                Self.logAnalysisSkipped(path)
+                return EditAnalysis(crop: crop, level: nil)
+            }
             let modelStart = ContinuousClock.now
             if let reading = try await analyzer.roll(of: photo),
                reading.uncertainty <= AutoLevelModel.maximumUncertainty
@@ -943,6 +949,14 @@ nonisolated struct EditPipeline: Sendable {
             ])
         }
         return EditAnalysis(crop: crop, level: level)
+    }
+
+    /// The photo was left before its read: nothing is developed, and the reading it would have
+    /// given belongs to no photo on screen.
+    private static func logAnalysisSkipped(_ path: String) {
+        OtosLog.rendering.noticeOperation("edit.analysis", phase: "skipped", fields: [
+            "id": path, "reason": "photoLeft",
+        ])
     }
 
     private func handToEnrichment(_ id: MediaAssetID) async {

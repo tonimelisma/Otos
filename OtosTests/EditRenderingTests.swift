@@ -92,6 +92,27 @@ struct EditRenderingTests {
         #expect(abs(color.blue - color.green) < 0.02)
     }
 
+    /// Auto crop and Auto straighten read only the photo being edited: a read for one the user
+    /// has left develops nothing, and the open photo still reads.
+    @Test func anAnalysisReadForAPhotoNoLongerOpenDevelopsNothing() async throws {
+        let directory = try makeTestDirectory()
+        let left = directory.appending(path: "left.jpg"), shown = directory.appending(path: "shown.jpg")
+        try writeSolidJPEG(to: left)
+        try writeGradientJPEG(to: shown)
+        let renderer = LiveEditRenderer()
+
+        _ = try await renderer.open(left)
+        _ = try await renderer.open(shown)
+        let stale = try await renderer.analysisImage(left, recipe: .neutral)
+        let current = try await renderer.analysisImage(shown, recipe: .neutral)
+        await renderer.close()
+        let closed = try await renderer.analysisImage(shown, recipe: .neutral)
+
+        #expect(stale == nil)
+        #expect(current != nil)
+        #expect(closed == nil)
+    }
+
     /// Effects: a negative vignette darkens the corners and a positive one lightens them,
     /// leaving the center alone.
     @Test func theVignetteDarkensOrLightensTheCornersOnly() async throws {

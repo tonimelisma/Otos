@@ -131,8 +131,13 @@ actor LiveEditRenderer {
 
     /// The photo developed with `recipe` at the size it is already developed at, as Auto crop
     /// and Auto straighten read it (ADR 0045): the frame as saved, or the unedited photo.
-    func analysisImage(_ url: URL, recipe: EditRecipe) throws -> CGImage {
-        try ImageRenderer.bitmap(developed(url, recipe: recipe), context: context)
+    ///
+    /// Nil when `url` is no longer the open photo. A read for a photo the user has left never
+    /// reopens it: that would develop it again, a second for a RAW, and push out the photo
+    /// being edited, which its next render would then develop again too.
+    func analysisImage(_ url: URL, recipe: EditRecipe) throws -> CGImage? {
+        guard open?.url == url else { return nil }
+        return try ImageRenderer.bitmap(developed(url, recipe: recipe), context: context)
     }
 
     /// Lets go of the open photo, when editing moves to another photo or ends.
