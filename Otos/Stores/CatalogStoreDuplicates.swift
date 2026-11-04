@@ -248,28 +248,34 @@ nonisolated extension DuplicatesGateway {
             """,
             arguments: StatementArguments(rootIDs)
         )
+        // Columns by position: this read covers every still, and a lookup by name per column
+        // was a measurable share of a build (ADR 0043).
+        enum Column {
+            static let rootID = 0, relativePath = 1, kind = 2, captureInstant = 3, renderHash = 4
+            static let pixelWidth = 5, pixelHeight = 6, orientation = 7, cameraModel = 8, serialNumber = 9
+        }
         var candidates: [SamePhotoCandidate] = []
         while let row = try rows.next() {
-            guard let root = pathsByRowID[row["library_root_id"]] else {
+            guard let root = pathsByRowID[row[Column.rootID]] else {
                 continue
             }
-            let width: Double? = row["pixel_width"]
-            let height: Double? = row["pixel_height"]
+            let width: Double? = row[Column.pixelWidth]
+            let height: Double? = row[Column.pixelHeight]
             // Orientations 5–8 turn the raster a quarter, so display width is stored height.
-            let quarterTurned = (5 ... 8).contains(row["orientation"] as Int? ?? 1)
+            let quarterTurned = (5 ... 8).contains(row[Column.orientation] as Int? ?? 1)
             let aspect: Double? = if let width, let height, width > 0, height > 0 {
                 quarterTurned ? height / width : width / height
             } else {
                 nil
             }
-            let kind: String? = row["kind"]
-            let hash: Int64 = row["render_dhash"]
+            let kind: String? = row[Column.kind]
+            let hash: Int64 = row[Column.renderHash]
             candidates.append(SamePhotoCandidate(
-                id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"])),
+                id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[Column.relativePath])),
                 isRaw: kind == "raw",
-                captureInstant: row["capture_instant_unix"],
-                cameraModel: row["camera_model"],
-                serialNumber: row["serial_number"],
+                captureInstant: row[Column.captureInstant],
+                cameraModel: row[Column.cameraModel],
+                serialNumber: row[Column.serialNumber],
                 aspectRatio: aspect,
                 differenceHash: UInt64(bitPattern: hash)
             ))
