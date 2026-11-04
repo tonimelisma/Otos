@@ -87,7 +87,7 @@ final nonisolated class AutoLevelModel {
         let output = try model.prediction(from: MLDictionaryFeatureProvider(dictionary: ["image": MLFeatureValue(multiArray: input)]))
         func values(_ name: String) throws -> [Float] {
             guard let array = output.featureValue(for: name)?.multiArrayValue else { throw CocoaError(.coderReadCorrupt) }
-            return (0 ..< array.count).map { array[$0].floatValue }
+            return ModelOutput.floats(array)
         }
         let fields = try PerspectiveFieldSolver.Fields(
             width: width, height: height,

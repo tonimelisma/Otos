@@ -56,6 +56,7 @@ nonisolated enum PerspectiveFieldSolver {
         guard pixels > 0, fields.up.count == 2 * pixels, fields.upConfidence.count == pixels,
               fields.latitude.count == pixels, fields.latitudeConfidence.count == pixels
         else { return nil }
+        let prepared = Prepared(fields)
         let height = Double(fields.height)
         var state = State(
             gravity: SIMD3(0, -1, 0),
@@ -67,7 +68,7 @@ nonisolated enum PerspectiveFieldSolver {
         var previousCost = 0.0
         var steps = maximumSteps
         for step in 0 ..< maximumSteps {
-            let system = normalEquations(fields, state, parameters: .tangentLogFocal)
+            let system = normalEquations(prepared, state, parameters: .tangentLogFocal)
             if step == 0 {
                 previousCost = system.cost
             }
@@ -76,7 +77,7 @@ nonisolated enum PerspectiveFieldSolver {
                 gravity: plus(state.gravity, delta: SIMD2(delta.x, delta.y)),
                 focal: min(max(exp(log(state.focal) + delta.z), focalRange.minimum), focalRange.maximum)
             )
-            let cost = normalEquations(fields, state, parameters: .none).cost
+            let cost = normalEquations(prepared, state, parameters: .none).cost
             damping = min(max(damping * (cost > previousCost ? 10 : 0.1), 1e-6), 1e2)
             if abs(cost - previousCost) <= tolerance + tolerance * abs(previousCost) {
                 steps = step + 1
@@ -84,7 +85,7 @@ nonisolated enum PerspectiveFieldSolver {
             }
             previousCost = cost
         }
-        let final = normalEquations(fields, state, parameters: .rollPitchFocal)
+        let final = normalEquations(prepared, state, parameters: .rollPitchFocal)
         guard let covariance = inverse(final.hessian), covariance[0][0] >= 0 else { return nil }
         let angles = rollPitch(state.gravity)
         return Solution(
@@ -119,96 +120,140 @@ nonisolated enum PerspectiveFieldSolver {
         var hessian = [[Double]](repeating: [0, 0, 0], count: 3)
     }
 
-    /// The Huber cost of a squared residual, and its weight, at GeoCalib's scale.
-    private static func huber(_ squared: Double) -> (cost: Double, weight: Double) {
-        let scale2 = lossScale * lossScale
-        let x = squared / scale2
-        if x <= 1 {
-            return (x * scale2, 1)
+    /// The fields as the solve reads them on every step: in `Double`, the latitude already as
+    /// its sine, which is what the residual compares.
+    private struct Prepared {
+        let width: Int
+        let height: Int
+        let upX: [Double]
+        let upY: [Double]
+        let upConfidence: [Double]
+        let sinLatitude: [Double]
+        let latitudeConfidence: [Double]
+
+        init(_ fields: Fields) {
+            let pixels = fields.width * fields.height
+            width = fields.width
+            height = fields.height
+            upX = fields.up[0 ..< pixels].map(Double.init)
+            upY = fields.up[pixels ..< 2 * pixels].map(Double.init)
+            upConfidence = fields.upConfidence.map(Double.init)
+            sinLatitude = fields.latitude.map { sin(Double($0)) }
+            latitudeConfidence = fields.latitudeConfidence.map(Double.init)
         }
-        let root = (x + 1e-8).squareRoot()
-        return ((2 * root - 1) * scale2, max(Double(Float.ulpOfOne), 1 / root))
     }
 
-    private static func normalEquations(_ fields: Fields, _ state: State, parameters: Parameters) -> NormalEquations {
+    /// The cost, gradient and Hessian over every pixel. Written as scalar arithmetic over
+    /// unsafe buffers, with no per-pixel allocation, closure or generic call: the installed app
+    /// is a Debug build, where those made each solve take seconds rather than a tenth of one.
+    private static func normalEquations(_ fields: Prepared, _ state: State, parameters: Parameters) -> NormalEquations {
         let width = fields.width, height = fields.height, pixels = width * height
-        let g = state.gravity, f = state.focal
+        let gx = state.gravity.x, gy = state.gravity.y, gz = state.gravity.z, f = state.focal
         let cx = Double(width) / 2, cy = Double(height) / 2
         // How gravity's three components move with the two parameters that steer it.
-        let gravityBasis: (SIMD3<Double>, SIMD3<Double>) = switch parameters {
-        case .tangentLogFocal: tangentBasis(g)
-        case .rollPitchFocal: rollPitchBasis(g)
+        let basis: (SIMD3<Double>, SIMD3<Double>) = switch parameters {
+        case .tangentLogFocal: tangentBasis(state.gravity)
+        case .rollPitchFocal: rollPitchBasis(state.gravity)
         case .none: (.zero, .zero)
         }
+        let a0 = basis.0.x, a1 = basis.0.y, a2 = basis.0.z
+        let b0 = basis.1.x, b1 = basis.1.y, b2 = basis.1.z
         // d(normalized coordinate)/d(focal parameter) is −u for the log focal, −u/f in pixels.
         let focalScale = parameters == .rollPitchFocal ? 1 / f : 1.0
-        var result = NormalEquations()
+        let wantsJacobian = parameters != .none
+        let scale2 = lossScale * lossScale
+        let minimumWeight = Double(Float.ulpOfOne)
+
         var upCost = 0.0, latitudeCost = 0.0
-        for y in 0 ..< height {
-            let v = (Double(y) - cy) / f
-            for x in 0 ..< width {
-                let index = y * width + x
-                let u = (Double(x) - cx) / f
+        var g0 = 0.0, g1 = 0.0, g2 = 0.0
+        var h00 = 0.0, h01 = 0.0, h02 = 0.0, h11 = 0.0, h12 = 0.0, h22 = 0.0
+        fields.upX.withUnsafeBufferPointer { upX in
+            fields.upY.withUnsafeBufferPointer { upY in
+                fields.upConfidence.withUnsafeBufferPointer { upConfidence in
+                    fields.sinLatitude.withUnsafeBufferPointer { sinLatitude in
+                        fields.latitudeConfidence.withUnsafeBufferPointer { latitudeConfidence in
+                            // `while`, not `for in`, and explicit comparisons, not `min`/`max`: an
+                            // unoptimized build calls a generic iterator and generic comparisons
+                            // for those on every pixel.
+                            var y = 0
+                            while y < height {
+                                let v = (Double(y) - cy) / f
+                                var x = 0
+                                while x < width {
+                                    let index = y * width + x
+                                    let u = (Double(x) - cx) / f
+                                    x += 1
 
-                // Up: the projected gravity (gx − gz·u, gy − gz·v), normalized.
-                let px = g.x - g.z * u, py = g.y - g.z * v
-                let length = max((px * px + py * py).squareRoot(), 1e-12)
-                let nx = px / length, ny = py / length
-                let rx = Double(fields.up[index]) - nx
-                let ry = Double(fields.up[pixels + index]) - ny
-                let upLoss = huber(rx * rx + ry * ry)
-                let upConfidence = Double(fields.upConfidence[index])
-                upCost += upLoss.cost * upConfidence
+                                    // Up: the projected gravity (gx − gz·u, gy − gz·v), normalized.
+                                    let px = gx - gz * u, py = gy - gz * v
+                                    let rawLength = (px * px + py * py).squareRoot()
+                                    let length = rawLength > 1e-12 ? rawLength : 1e-12
+                                    let nx = px / length, ny = py / length
+                                    let rx = upX[index] - nx, ry = upY[index] - ny
+                                    // Huber at scale 0.01: the squared residual itself up to the scale, linear beyond it.
+                                    let upScaled = (rx * rx + ry * ry) / scale2
+                                    let upRoot = (upScaled + 1e-8).squareRoot()
+                                    let upLoss = upScaled <= 1 ? upScaled * scale2 : (2 * upRoot - 1) * scale2
+                                    let upLossWeight = upScaled <= 1 ? 1 : (1 / upRoot > minimumWeight ? 1 / upRoot : minimumWeight)
+                                    upCost += upLoss * upConfidence[index]
 
-                // Latitude: sin is the unit ray's dot product with gravity.
-                let rayLength = (u * u + v * v + 1).squareRoot()
-                let ray = SIMD3(u, v, 1) / rayLength
-                let predicted = min(max((ray * g).sum(), -1 + 1e-6), 1 - 1e-6)
-                let latitudeResidual = sin(Double(fields.latitude[index])) - predicted
-                let latitudeLoss = huber(latitudeResidual * latitudeResidual)
-                let latitudeConfidence = Double(fields.latitudeConfidence[index])
-                latitudeCost += latitudeLoss.cost * latitudeConfidence
+                                    // Latitude: sin is the unit ray's dot product with gravity.
+                                    let rayLength = (u * u + v * v + 1).squareRoot()
+                                    let ru = u / rayLength, rv = v / rayLength, rw = 1 / rayLength
+                                    let dot = ru * gx + rv * gy + rw * gz
+                                    let predicted = dot < -1 + 1e-6 ? -1 + 1e-6 : (dot > 1 - 1e-6 ? 1 - 1e-6 : dot)
+                                    let lr = sinLatitude[index] - predicted
+                                    let latScaled = lr * lr / scale2
+                                    let latRoot = (latScaled + 1e-8).squareRoot()
+                                    let latLoss = latScaled <= 1 ? latScaled * scale2 : (2 * latRoot - 1) * scale2
+                                    let latLossWeight = latScaled <= 1 ? 1 : (1 / latRoot > minimumWeight ? 1 / latRoot : minimumWeight)
+                                    latitudeCost += latLoss * latitudeConfidence[index]
 
-                guard parameters != .none else { continue }
+                                    guard wantsJacobian else { continue }
 
-                /// d(unit up)/d(p) = (I − n nᵀ) / |p|.
-                func upJacobian(_ dp: SIMD2<Double>) -> SIMD2<Double> {
-                    let dot = nx * dp.x + ny * dp.y
-                    return SIMD2((dp.x - nx * dot) / length, (dp.y - ny * dot) / length)
-                }
-                /// d(p)/d(gravity) = [[1, 0, −u], [0, 1, −v]].
-                func projected(_ dg: SIMD3<Double>) -> SIMD2<Double> {
-                    SIMD2(dg.x - dg.z * u, dg.y - dg.z * v)
-                }
-                // d(u, v)/d(focal parameter) = −(u, v)·focalScale, so d(p) = gz·(u, v)·focalScale.
-                let upColumns = [
-                    upJacobian(projected(gravityBasis.0)),
-                    upJacobian(projected(gravityBasis.1)),
-                    upJacobian(SIMD2(g.z * u, g.z * v) * focalScale),
-                ]
-                // d(unit ray)/d(focal parameter): the ray (u, v, 1) moves by (−u, −v, 0)·focalScale.
-                let dRay = SIMD3(-u, -v, 0) * focalScale
-                let dUnitRay = (dRay - ray * (ray * dRay).sum()) / rayLength
-                let latitudeColumns = SIMD3(
-                    (ray * gravityBasis.0).sum(),
-                    (ray * gravityBasis.1).sum(),
-                    (dUnitRay * g).sum()
-                )
+                                    // d(p)/d(gravity) = [[1, 0, −u], [0, 1, −v]]; d(p)/d(focal) = gz·(u, v)·focalScale.
+                                    // d(unit up)/d(p) = (I − n nᵀ) / |p|.
+                                    let dp0x = a0 - a2 * u, dp0y = a1 - a2 * v
+                                    let dp1x = b0 - b2 * u, dp1y = b1 - b2 * v
+                                    let dp2x = gz * u * focalScale, dp2y = gz * v * focalScale
+                                    let d0 = nx * dp0x + ny * dp0y, d1 = nx * dp1x + ny * dp1y, d2 = nx * dp2x + ny * dp2y
+                                    let j0x = (dp0x - nx * d0) / length, j0y = (dp0y - ny * d0) / length
+                                    let j1x = (dp1x - nx * d1) / length, j1y = (dp1y - ny * d1) / length
+                                    let j2x = (dp2x - nx * d2) / length, j2y = (dp2y - ny * d2) / length
 
-                let upWeight = upLoss.weight * upConfidence
-                let latitudeWeight = latitudeLoss.weight * latitudeConfidence
-                for row in 0 ..< 3 {
-                    result.gradient[row] += upWeight * (upColumns[row].x * rx + upColumns[row].y * ry)
-                    result.gradient[row] += latitudeWeight * latitudeColumns[row] * latitudeResidual
-                    for column in 0 ..< 3 {
-                        result.hessian[row][column] += upWeight * (upColumns[row].x * upColumns[column].x
-                            + upColumns[row].y * upColumns[column].y)
-                        result.hessian[row][column] += latitudeWeight * latitudeColumns[row] * latitudeColumns[column]
+                                    // d(unit ray)/d(focal parameter): the ray (u, v, 1) moves by (−u, −v, 0)·focalScale.
+                                    let du = -u * focalScale, dv = -v * focalScale
+                                    let along = ru * du + rv * dv
+                                    let dru = (du - ru * along) / rayLength
+                                    let drv = (dv - rv * along) / rayLength
+                                    let drw = (-rw * along) / rayLength
+                                    let l0 = ru * a0 + rv * a1 + rw * a2
+                                    let l1 = ru * b0 + rv * b1 + rw * b2
+                                    let l2 = dru * gx + drv * gy + drw * gz
+
+                                    let wu = upLossWeight * upConfidence[index]
+                                    let wl = latLossWeight * latitudeConfidence[index]
+                                    g0 += wu * (j0x * rx + j0y * ry) + wl * l0 * lr
+                                    g1 += wu * (j1x * rx + j1y * ry) + wl * l1 * lr
+                                    g2 += wu * (j2x * rx + j2y * ry) + wl * l2 * lr
+                                    h00 += wu * (j0x * j0x + j0y * j0y) + wl * l0 * l0
+                                    h01 += wu * (j0x * j1x + j0y * j1y) + wl * l0 * l1
+                                    h02 += wu * (j0x * j2x + j0y * j2y) + wl * l0 * l2
+                                    h11 += wu * (j1x * j1x + j1y * j1y) + wl * l1 * l1
+                                    h12 += wu * (j1x * j2x + j1y * j2y) + wl * l1 * l2
+                                    h22 += wu * (j2x * j2x + j2y * j2y) + wl * l2 * l2
+                                }
+                                y += 1
+                            }
+                        }
                     }
                 }
             }
         }
+        var result = NormalEquations()
         result.cost = (upCost + latitudeCost) / Double(pixels)
+        result.gradient = SIMD3(g0, g1, g2)
+        result.hessian = [[h00, h01, h02], [h01, h11, h12], [h02, h12, h22]]
         return result
     }
 
