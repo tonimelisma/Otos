@@ -900,11 +900,15 @@ nonisolated struct EditPipeline: Sendable {
         let cropStart = ContinuousClock.now
         do {
             let frame = try await renderer.analysisImage(url, recipe: request.frame)
+            let modelStart = ContinuousClock.now
             let suggested = try await analyzer.crop(of: frame)
             crop = .some(suggested)
             OtosLog.rendering.noticeOperation("edit.autoCrop", phase: "read", fields: [
                 "id": path,
                 "crop": suggested.map { String(format: "%.3f,%.3f,%.3f,%.3f", $0.left, $0.top, $0.width, $0.height) } ?? "none",
+                "image": "\(frame.width)x\(frame.height)",
+                "renderMs": "\(DiagnosticsTiming.milliseconds(from: cropStart, to: modelStart))",
+                "modelMs": "\(DiagnosticsTiming.milliseconds(since: modelStart))",
                 "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: cropStart))",
             ])
         } catch {
@@ -917,6 +921,7 @@ nonisolated struct EditPipeline: Sendable {
         let levelStart = ContinuousClock.now
         do {
             let photo = try await renderer.analysisImage(url, recipe: .neutral)
+            let modelStart = ContinuousClock.now
             if let reading = try await analyzer.roll(of: photo),
                reading.uncertainty <= AutoLevelModel.maximumUncertainty
             {
@@ -927,6 +932,9 @@ nonisolated struct EditPipeline: Sendable {
             OtosLog.rendering.noticeOperation("edit.autoLevel", phase: "read", fields: [
                 "id": path,
                 "level": level?.logValue ?? "none",
+                "image": "\(photo.width)x\(photo.height)",
+                "renderMs": "\(DiagnosticsTiming.milliseconds(from: levelStart, to: modelStart))",
+                "modelMs": "\(DiagnosticsTiming.milliseconds(since: modelStart))",
                 "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: levelStart))",
             ])
         } catch {

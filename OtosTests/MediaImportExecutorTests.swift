@@ -650,7 +650,7 @@ struct ImportExecutionProgressTests {
         // No snapshot can claim more time than the run took while this test watched it: a
         // time base carried over from another clock would. (A fixed bound would only
         // measure how loaded the machine is.)
-        let observedMs = Int(observed.components.seconds * 1000 + observed.components.attoseconds / 1_000_000_000_000_000)
+        let observedMs = DiagnosticsTiming.milliseconds(observed)
         #expect(
             (snapshots.last?.elapsedMs ?? .max) <= observedMs,
             "Elapsed time is counted from the run's start, not carried over"
