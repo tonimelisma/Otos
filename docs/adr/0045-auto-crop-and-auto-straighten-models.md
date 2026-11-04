@@ -43,6 +43,9 @@ exists only for iPhone back-camera photos.
 - **Timing:** both are read when the photo opens in the panel, so a button is available only once
   there is something to apply, and its tooltip says when there is not (DES-038).
 - **Lane:** one newest-wins analysis lane owns the reads (`editAnalysisStream`).
+  The reads develop only the photo the renderer has open. A read for a photo the user has
+  already left develops nothing, because reopening a RAW costs about a second and pushes out the
+  photo being edited.
 - **Engine:** both models run through Core ML on the CPU, owned by one `EditAnalyzer` per window
   that loads them on first use.
 - **Debug speed:** the installed app is a Debug build (ADR 0030), so the per-pixel Swift around
