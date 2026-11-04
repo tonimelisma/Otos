@@ -14,7 +14,7 @@ struct AutoEditModelTests {
     /// roll to a hundredth of a degree, confidently enough for Auto straighten to use it.
     @Test func theSolverRecoversTheCameraThatDrewTheFields() throws {
         let roll = 5 * Double.pi / 180, pitch = 12 * Double.pi / 180, focal = 380.0
-        let fields = perspectiveFields(width: 104, height: 80, roll: roll, pitch: pitch, focal: focal)
+        let fields = PerspectiveFieldSolver.Fields.camera(width: 104, height: 80, roll: roll, pitch: pitch, focal: focal)
 
         let solution = try #require(PerspectiveFieldSolver.solve(fields))
 
@@ -26,7 +26,7 @@ struct AutoEditModelTests {
 
     /// Fields with no confidence anywhere constrain nothing: there is no roll to report.
     @Test func fieldsWithoutConfidenceGiveNoRoll() {
-        var fields = perspectiveFields(width: 64, height: 64, roll: 0.1, pitch: 0, focal: 200)
+        var fields = PerspectiveFieldSolver.Fields.camera(width: 64, height: 64, roll: 0.1, pitch: 0, focal: 200)
         fields = PerspectiveFieldSolver.Fields(
             width: fields.width, height: fields.height, up: fields.up,
             upConfidence: Array(repeating: 0, count: fields.upConfidence.count),
@@ -96,14 +96,12 @@ struct AutoEditModelTests {
         #expect(first?.roll == second?.roll)
         #expect(first?.uncertainty == second?.uncertainty)
     }
+}
 
-    // MARK: - Fixtures
-
+extension PerspectiveFieldSolver.Fields {
     /// GeoCalib's perspective fields of a pinhole camera with the given roll, pitch and focal
     /// length, every pixel fully confident.
-    private func perspectiveFields(width: Int, height: Int, roll: Double, pitch: Double, focal: Double)
-        -> PerspectiveFieldSolver.Fields
-    {
+    static func camera(width: Int, height: Int, roll: Double, pitch: Double, focal: Double) -> Self {
         let gravity = SIMD3(-sin(roll) * cos(pitch), -cos(roll) * cos(pitch), sin(pitch))
         var upX: [Float] = [], upY: [Float] = [], latitude: [Float] = []
         for y in 0 ..< height {
@@ -119,7 +117,7 @@ struct AutoEditModelTests {
             }
         }
         let ones = [Float](repeating: 1, count: width * height)
-        return PerspectiveFieldSolver.Fields(
+        return Self(
             width: width, height: height, up: upX + upY, upConfidence: ones,
             latitude: latitude, latitudeConfidence: ones
         )
