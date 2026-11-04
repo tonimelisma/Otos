@@ -830,15 +830,40 @@ nonisolated enum SamePhotoPolicy {
                     }
                 }
             }
-            for (position, left) in stripped.enumerated() {
-                let hash = hashes[left]
-                for right in captured where isNear(hash, hashes[right]) && isCandidate(members[left], members[right]) {
-                    pairs.append(SamePhotoPair(left: members[left], right: members[right]))
-                }
-                for right in stripped[(position + 1)...]
-                    where isNear(hash, hashes[right]) && isCandidate(members[left], members[right])
-                {
-                    pairs.append(SamePhotoPair(left: members[left], right: members[right]))
+            // The installed app is a Debug build (ADR 0030): these loops run hundreds of
+            // thousands of times, so they read the hashes from unsafe buffers and test the
+            // distance inline before they touch a candidate.
+            let capturedHashes = captured.map { hashes[$0] }
+            let strippedHashes = stripped.map { hashes[$0] }
+            let limit = RenderSignature.candidateHammingDistance
+            capturedHashes.withUnsafeBufferPointer { capturedHash in
+                strippedHashes.withUnsafeBufferPointer { strippedHash in
+                    var position = 0
+                    while position < strippedHash.count {
+                        let hash = strippedHash[position]
+                        let left = stripped[position]
+                        var other = 0
+                        while other < capturedHash.count {
+                            if (hash ^ capturedHash[other]).nonzeroBitCount <= limit {
+                                let right = captured[other]
+                                if isCandidate(members[left], members[right]) {
+                                    pairs.append(SamePhotoPair(left: members[left], right: members[right]))
+                                }
+                            }
+                            other += 1
+                        }
+                        other = position + 1
+                        while other < strippedHash.count {
+                            if (hash ^ strippedHash[other]).nonzeroBitCount <= limit {
+                                let right = stripped[other]
+                                if isCandidate(members[left], members[right]) {
+                                    pairs.append(SamePhotoPair(left: members[left], right: members[right]))
+                                }
+                            }
+                            other += 1
+                        }
+                        position += 1
+                    }
                 }
             }
         }
@@ -901,14 +926,19 @@ nonisolated enum SamePhotoPolicy {
         }
         // Gate 3: a file without capture metadata keeps only an edge to the one original
         // clearly closest; if two originals are about as close, it keeps none.
+        // Each file's edges to originals are collected in one walk over the confirmed pairs,
+        // in pair order, so a file is never tested against every pair.
         var dropped: Set<Int> = []
-        let strippedIDs = Set(pairs.flatMap { [$0.left, $0.right] }.filter { !$0.hasCaptureMetadata }.map(\.id))
-        for strippedID in strippedIDs {
-            let edges = confirmed.enumerated().compactMap { index, edge -> (Int, Double)? in
-                let other = edge.0.id == strippedID ? edge.1 : (edge.1.id == strippedID ? edge.0 : nil)
-                guard let other, other.hasCaptureMetadata else { return nil }
-                return (index, edge.2)
-            }.sorted { $0.1 < $1.1 }
+        var edgesToOriginals: [MediaAssetID: [(Int, Double)]] = [:]
+        for (index, edge) in confirmed.enumerated() {
+            if !edge.0.hasCaptureMetadata, edge.1.hasCaptureMetadata {
+                edgesToOriginals[edge.0.id, default: []].append((index, edge.2))
+            } else if !edge.1.hasCaptureMetadata, edge.0.hasCaptureMetadata {
+                edgesToOriginals[edge.1.id, default: []].append((index, edge.2))
+            }
+        }
+        for unsorted in edgesToOriginals.values {
+            let edges = unsorted.sorted { $0.1 < $1.1 }
             guard edges.count > 1 else { continue }
             let clearlyCloser = edges[1].1 >= edges[0].1 * 2 + 0.5
             for (position, edge) in edges.enumerated() where !clearlyCloser || position > 0 {

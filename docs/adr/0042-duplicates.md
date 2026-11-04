@@ -169,6 +169,12 @@ Other rules:
   (`SamePhotoDetail`). Building every still's copy and decoding every record was most of
   a build: on 2026-11-01 the owner's library had 14,201 stills, of which 2,462 were in a
   proposed pair.
+- The build is written for the Debug build the app is installed as (ADR 0030), where every
+  collection call costs. A still without capture metadata is tested against its aspect
+  bucket in loops over unsafe buffers of hashes. Gate 3 collects each such file's edges in
+  one walk over the confirmed pairs instead of walking every pair for every file. The
+  candidates read takes its columns by position. On the benchmark library (ADR 0043) this
+  took a build from 7.5 G to 4.3 G instructions, the pairing step from 2.0 G to 0.46 G.
 
 `RenderSignatureRefresher` is the one producer of signatures:
 - It reads stored thumbnails only, so it never opens an original or downloads one.
