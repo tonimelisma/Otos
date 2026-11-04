@@ -62,9 +62,9 @@ nonisolated struct AutoCropModel {
                 importance = output.importance
             }
         }
-        let map = Self.restore(importance, letterbox: letterbox)
+        let map = ImportanceMap(Self.restore(importance, letterbox: letterbox))
         let retention = candidates.map {
-            Self.retention(of: Self.pixelBox($0, width: image.width, height: image.height), in: map, width: image.width, height: image.height)
+            map.retention(of: Self.pixelBox($0, width: image.width, height: image.height), width: image.width, height: image.height)
         }
         guard let best = Self.select(scores: scores, retention: retention) else { return nil }
         let box = candidates[best]
@@ -192,9 +192,8 @@ nonisolated struct AutoCropModel {
         guard let scoreArray = output.featureValue(for: "crop_scores")?.multiArrayValue,
               let importanceArray = output.featureValue(for: "importance")?.multiArrayValue
         else { throw CocoaError(.coderReadCorrupt) }
-        let scores = (0 ..< boxes.count).map { scoreArray[$0].doubleValue }
-        let cells = Self.mapSize * Self.mapSize
-        let importance = (0 ..< cells).map { importanceArray[$0].floatValue }
+        let scores = ModelOutput.floats(scoreArray).prefix(boxes.count).map(Double.init)
+        let importance = ModelOutput.floats(importanceArray)
         return (scores, importance)
     }
 
@@ -245,27 +244,83 @@ nonisolated struct AutoCropModel {
         let bottom = max(top + 1, min(height, Int(box[3] * Double(height) + 0.5)))
         return PixelBox(left: left, top: top, width: right - left, height: bottom - top)
     }
+}
 
-    /// The share of the map's importance inside a pixel box (`score_crop`).
-    static func retention(of box: PixelBox, in map: [Double], width: Int, height: Int) -> Double {
-        let grid = mapSize
-        let values = map.map { $0.isFinite && $0 > 0 ? $0 : 0 }
-        let total = values.reduce(0, +)
-        guard total > 0 else { return 0 }
-        let cellWidth = Double(width) / Double(grid), cellHeight = Double(height) / Double(grid)
-        let wx = (0 ..< grid).map { i in
-            max(0, min(Double(i + 1) * cellWidth, Double(box.left + box.width)) - max(Double(i) * cellWidth, Double(box.left))) / cellWidth
-        }
-        let wy = (0 ..< grid).map { j in
-            max(0, min(Double(j + 1) * cellHeight, Double(box.top + box.height)) - max(Double(j) * cellHeight, Double(box.top))) / cellHeight
-        }
-        var kept = 0.0
-        for j in 0 ..< grid where wy[j] > 0 {
-            for i in 0 ..< grid where wx[i] > 0 {
-                kept += wy[j] * values[j * grid + i] * wx[i]
+/// FocalNet's importance over the photo, 64 × 64 cells, for `score_crop`'s question: what share
+/// of it does a crop keep? The map is constant within each cell, so the importance in any box is
+/// exact from a summed-area table: four lookups a candidate instead of a pass over the map, which
+/// in the Debug build the installed app runs was most of a second per photo.
+nonisolated struct ImportanceMap {
+    private let grid = AutoCropModel.mapSize
+    /// `table[j * (grid + 1) + i]`: the importance in cells above row `j` and left of column `i`.
+    private let table: [Double]
+    private let total: Double
+
+    init(_ map: [Double]) {
+        let grid = AutoCropModel.mapSize, stride = grid + 1
+        var table = [Double](repeating: 0, count: stride * stride)
+        for j in 0 ..< grid {
+            var row = 0.0
+            for i in 0 ..< grid {
+                let value = map[j * grid + i]
+                row += value.isFinite && value > 0 ? value : 0
+                table[(j + 1) * stride + i + 1] = table[j * stride + i + 1] + row
             }
         }
+        self.table = table
+        total = table[stride * stride - 1]
+    }
+
+    /// The share of the importance inside a pixel box of a photo `width × height` pixels.
+    func retention(of box: AutoCropModel.PixelBox, width: Int, height: Int) -> Double {
+        guard total > 0 else { return 0 }
+        let cellWidth = Double(width) / Double(grid), cellHeight = Double(height) / Double(grid)
+        let x0 = Double(box.left) / cellWidth, x1 = Double(box.left + box.width) / cellWidth
+        let y0 = Double(box.top) / cellHeight, y1 = Double(box.top + box.height) / cellHeight
+        let kept = integral(x1, y1) - integral(x0, y1) - integral(x1, y0) + integral(x0, y0)
         return min(max(kept / total, 0), 1)
+    }
+
+    /// The importance in [0, x) × [0, y), in cell units: bilinear within a cell, since the map
+    /// is constant there.
+    private func integral(_ x: Double, _ y: Double) -> Double {
+        let x = min(max(x, 0), Double(grid)), y = min(max(y, 0), Double(grid))
+        let i = min(Int(x), grid - 1), j = min(Int(y), grid - 1)
+        let fx = x - Double(i), fy = y - Double(j), stride = grid + 1
+        let c00 = table[j * stride + i], c01 = table[j * stride + i + 1]
+        let c10 = table[(j + 1) * stride + i], c11 = table[(j + 1) * stride + i + 1]
+        return c00 + fx * (c01 - c00) + fy * (c10 - c00) + fx * fy * (c11 - c01 - c10 + c00)
+    }
+}
+
+/// A model output's values in order, read from its memory rather than one boxed `NSNumber` at
+/// a time, which in a Debug build cost hundreds of milliseconds for GeoCalib's five fields.
+nonisolated enum ModelOutput {
+    static func floats(_ array: MLMultiArray) -> [Float] {
+        let count = array.count
+        guard isContiguous(array) else {
+            return (0 ..< count).map { array[$0].floatValue }
+        }
+        switch array.dataType {
+        case .float32:
+            return array.withUnsafeBufferPointer(ofType: Float.self) { Array($0.prefix(count)) }
+        case .float16:
+            return array.withUnsafeBufferPointer(ofType: Float16.self) { $0.prefix(count).map(Float.init) }
+        case .double:
+            return array.withUnsafeBufferPointer(ofType: Double.self) { $0.prefix(count).map(Float.init) }
+        default:
+            return (0 ..< count).map { array[$0].floatValue }
+        }
+    }
+
+    /// Whether the elements lie in row-major order with no padding, so the buffer is the values.
+    private static func isContiguous(_ array: MLMultiArray) -> Bool {
+        var expected = 1
+        for (size, stride) in zip(array.shape.map(\.intValue), array.strides.map(\.intValue)).reversed() {
+            guard stride == expected || size == 1 else { return false }
+            expected *= size
+        }
+        return true
     }
 }
 

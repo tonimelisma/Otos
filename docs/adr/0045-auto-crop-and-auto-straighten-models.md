@@ -45,6 +45,11 @@ exists only for iPhone back-camera photos.
 - **Lane:** one newest-wins analysis lane owns the reads (`editAnalysisStream`).
 - **Engine:** both models run through Core ML on the CPU, owned by one `EditAnalyzer` per window
   that loads them on first use.
+- **Debug speed:** the installed app is a Debug build (ADR 0030), so the per-pixel Swift around
+  the models is written for an unoptimized compiler. That means scalar loops over unsafe buffers,
+  a summed-area table for crop retention, and model outputs read from memory. On four photos this
+  cut the reads from about 1 s (crop) and 4 s (level) to 0.16 s and 0.5–0.65 s, with identical
+  results.
 - **Loading:** Core ML specializes a model for the Mac on its first load and caches the result.
   - FocalNet: 0.2 s the first time, then 8 ms.
   - GeoCalib: each shape function loads the first time a photo of that shape is read, about
