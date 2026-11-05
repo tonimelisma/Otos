@@ -78,12 +78,6 @@ layout. The linear layout term remains: about 20–40 ms today, about 150–200 
 library spanning 1,500–2,000 days. Removing that would mean a different layout model,
 which is out of scope (the owner rejected replacing tried and true AppKit parts for it).
 
-## In-app result
-
-Recorded after the change, from the installed app's own
-`op=ui.mediaGrid.structuralApply` lines and `mainThreadStall` faults: see the PR for
-this change (`perf/off-main-grid-snapshot`).
-
 ## Sources
 
 - macOS 27.2 SDK: `AppKit.framework/Headers/NSDiffableDataSource.h` and
