@@ -219,7 +219,6 @@ nonisolated struct SamePhotoDetail: Equatable, Sendable {
     let copy: DuplicateCopy
     let signature: RenderSignature
     let fractionalSecondDigits: String?
-    let burstIdentifier: String?
 }
 
 nonisolated extension DuplicatesGateway {
@@ -350,8 +349,7 @@ nonisolated extension DuplicatesGateway {
                 hasCompanions: row[Column.hasCompanions]
             ),
             signature: signature,
-            fractionalSecondDigits: original?.fractionalSecondDigits,
-            burstIdentifier: metadata?.burstIdentifier
+            fractionalSecondDigits: original?.fractionalSecondDigits
         )
     }
 }
