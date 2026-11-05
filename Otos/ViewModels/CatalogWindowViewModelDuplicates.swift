@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import OSLog
 
@@ -74,17 +75,20 @@ extension CatalogWindowViewModel {
 
     // MARK: - Intents
 
-    /// The list's row selection, which is the ordinary media selection: Photo commands,
-    /// ⌘⌫ and Undo's reveal all read it.
-    func setDuplicatesSelection(_ ids: Set<MediaAssetID>) {
-        let ordered = state.mediaGrid.orderedAssetIDs.filter(ids.contains)
-        gridSelection = GridSelection(selection: ids, anchor: ordered.first, base: ids)
-        setFocus(ordered.first)
+    /// A click or arrow key on a tile, through the grid's click intent: the list's
+    /// selection is the ordinary media selection, which Photo commands, ⌘⌫ and Undo's
+    /// reveal all read, ranged over the list's own order of copies.
+    func selectDuplicateCopy(_ hit: MediaAssetID?, modifiers: NSEvent.ModifierFlags, orderedIDs: [MediaAssetID]) {
+        applyGridClick(hit: hit, modifiers: modifiers, orderedIDs: orderedIDs)
+        setFocus(hit)
     }
 
     /// The intents the passive list calls.
     var duplicatesActions: DuplicatesActions {
         DuplicatesActions(
+            select: { [weak self] hit, modifiers, order in
+                self?.selectDuplicateCopy(hit, modifiers: modifiers, orderedIDs: order)
+            },
             keep: { [weak self] id in self?.setDuplicateKeep(true, for: [id]) },
             unkeep: { [weak self] id in self?.setDuplicateKeep(false, for: [id]) },
             keepAll: { [weak self] group in self?.keepAllDuplicateCopies([group]) },

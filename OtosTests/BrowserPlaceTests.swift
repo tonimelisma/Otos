@@ -226,7 +226,7 @@ struct BrowserPlaceTests {
 
         model.returnToDuplicates()
         model.applyState(state)
-        model.setDuplicatesSelection([ids[2]])
+        model.selectDuplicateCopy(ids[2], modifiers: [], orderedIDs: ids)
         model.openSelectedDuplicateGroup()
         #expect(model.viewMode == .loupe)
     }
@@ -251,13 +251,14 @@ struct BrowserPlaceTests {
         state.duplicates = CatalogDuplicatesState(groups: [group])
         model.applyState(state)
 
-        model.setDuplicatesSelection(Set(ids))
+        model.selectDuplicateCopy(ids[0], modifiers: [], orderedIDs: ids)
+        model.selectDuplicateCopy(ids[2], modifiers: .shift, orderedIDs: ids)
         let targets = model.selectedDuplicatesToMove()
         #expect(Set(targets.ids) == Set(ids.dropFirst()))
         #expect(!targets.ids.contains(ids[0]))
         #expect(model.canMoveTargetedMediaToTrash)
 
-        model.setDuplicatesSelection([ids[0]])
+        model.selectDuplicateCopy(ids[0], modifiers: [], orderedIDs: ids)
         #expect(model.selectedDuplicatesToMove().ids.isEmpty)
         #expect(!model.canMoveTargetedMediaToTrash)
 

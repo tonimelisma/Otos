@@ -495,10 +495,7 @@ struct ContentView: View {
                     duplicates: duplicates,
                     session: viewModel.duplicatesSession,
                     canUndoMove: viewModel.canUndoDuplicatesMove,
-                    selection: Binding(
-                        get: { viewModel.gridSelection.selection },
-                        set: { viewModel.setDuplicatesSelection($0) }
-                    ),
+                    selection: viewModel.gridSelection.selection,
                     tileContentStore: viewModel.tileContentStore,
                     thumbnailDirectory: viewModel.thumbnailDirectory,
                     detailReader: viewModel.tileDetailReader,

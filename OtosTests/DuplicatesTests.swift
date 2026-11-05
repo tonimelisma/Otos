@@ -241,15 +241,14 @@ struct DuplicatesTests {
         #expect(DuplicateItemNoun.covering([]) == .items)
     }
 
-    /// The header says what the copies share, the rows say what differs: the deepest folder
-    /// every copy is in or under goes in the header, and each row names the rest.
-    @Test func theHeaderNamesWhatTheCopiesShareAndTheRowsWhatDiffers() throws {
+    /// The header says what the copies share, the tiles say what differs: the deepest folder
+    /// every copy is in or under goes in the header, and each tile names the rest.
+    @Test func theHeaderNamesWhatTheCopiesShareAndTheTilesWhatDiffers() throws {
         let twins = try Self.onlyGroup([Self.copy("2026/08/a.mp4", kind: .video), Self.copy("2026/08/b.mp4", kind: .video)])
         let card = DuplicateGroupPresentation.map(twins, session: DuplicatesSession())
         #expect(card.title == "2 identical videos")
         #expect(card.sharedFacts?.hasSuffix("1 KB each · MP4 · 4032 × 3024 · Photos ▸ 2026/08") == true)
-        #expect(card.rows.map(\.primary) == ["a.mp4", "b.mp4"])
-        #expect(card.headerThumbnail == twins.copies.first?.id)
+        #expect(card.tiles.map(\.primary) == ["a.mp4", "b.mp4"])
         #expect(!card.showsCompare)
         #expect(card.keepAllTitle == "Keep Both Copies")
 
@@ -258,13 +257,13 @@ struct DuplicatesTests {
         ])
         let nestedCard = DuplicateGroupPresentation.map(nested, session: DuplicatesSession())
         #expect(nestedCard.sharedFacts?.hasSuffix("Photos ▸ 2024/Holiday") == true)
-        #expect(Set(nestedCard.rows.map(\.primary)) == ["Day 1/IMG_1.jpg", "Day 2/IMG_1.jpg", "IMG_1.jpg"])
+        #expect(Set(nestedCard.tiles.map(\.primary)) == ["Day 1/IMG_1.jpg", "Day 2/IMG_1.jpg", "IMG_1.jpg"])
         #expect(nestedCard.keepAllTitle == "Keep All Copies")
 
         let mirrored = try Self.onlyGroup([Self.copy("2024/IMG_1.jpg"), Self.copy("2024/IMG_1.jpg", in: Self.backup)])
         let mirroredCard = DuplicateGroupPresentation.map(mirrored, session: DuplicatesSession())
         #expect(mirroredCard.sharedFacts?.contains("▸") == false)
-        #expect(Set(mirroredCard.rows.map(\.primary)) == ["Photos ▸ 2024/IMG_1.jpg", "Backup ▸ 2024/IMG_1.jpg"])
+        #expect(Set(mirroredCard.tiles.map(\.primary)) == ["Photos ▸ 2024/IMG_1.jpg", "Backup ▸ 2024/IMG_1.jpg"])
         #expect(mirroredCard.decision == "Keeping one copy in each library")
     }
 
@@ -298,16 +297,16 @@ struct DuplicatesTests {
         let waitingCard = DuplicateGroupPresentation.map(waiting, session: session)
         #expect(waitingCard.decision == "Choose which edited copy to keep")
         #expect(waitingCard.sharedFacts?.hasSuffix("1 KB each · JPG · 4032 × 3024 · Photos") == true)
-        let everyRowOffersTheChoice = waitingCard.rows.allSatisfy { $0.fate == .choice }
-        #expect(everyRowOffersTheChoice)
-        #expect(waitingCard.rows.map(\.secondary) == ["Edited in Otos", "Edited in Otos"])
+        let everyTileOffersTheChoice = waitingCard.tiles.allSatisfy { $0.fate == .choice }
+        #expect(everyTileOffersTheChoice)
+        #expect(waitingCard.tiles.map(\.secondary) == ["Edited in Otos", "Edited in Otos"])
         session.keepOnly(Self.copy("b.jpg").copy.id, in: waiting)
         let chosen = DuplicateGroupPresentation.map(waiting, session: session)
         #expect(chosen.decision == "Keeping the copy you chose")
-        #expect(chosen.rows.map(\.fate) == [.movesToTrash, .stays])
+        #expect(chosen.tiles.map(\.fate) == [.movesToTrash, .stays])
         // Two edits cannot combine: the leaving copy's edit goes with it, and the row says so.
-        #expect(chosen.rows[0].secondary == "Edited in Otos. Its edits move to the Trash with it")
-        #expect(chosen.rows[1].secondary == "Edited in Otos")
+        #expect(chosen.tiles[0].secondary == "Edited in Otos. Its edits move to the Trash with it")
+        #expect(chosen.tiles[1].secondary == "Edited in Otos")
 
         // A choice taken back is the default again.
         session = DuplicatesSession()
@@ -340,10 +339,10 @@ struct DuplicatesTests {
         #expect(threeSession.keeps(a, in: three))
     }
 
-    /// Versions of one photo show their pictures on the rows only when the pixels or the
-    /// format differ; otherwise one picture stands for the group and the shared facts go on
-    /// the card, at the precision the list shows.
-    @Test func versionRowsShowPicturesOnlyWhenThePicturesDiffer() {
+    /// Versions of one photo: what differs goes on the tiles and what they share in the
+    /// header, at the precision the list shows — and a size the shown figure ties, at the
+    /// fewest decimals that tell the copies apart.
+    @Test func versionTilesShowWhatDiffersAtThePrecisionThatTellsThemApart() {
         let ids = ["IMG_1.HEIC", "IMG_1_001.HEIC"].map {
             MediaAssetID(libraryRootPath: Self.photos, relativePath: MediaRelativePath(rawValue: $0))
         }
@@ -359,28 +358,25 @@ struct DuplicatesTests {
             keptPairs: [], originals: Set(ids)
         )
         // 11,200,000 and 11,400,000 bytes both show as 11 MB: the rule ranks the bytes, so
-        // the rows show the bytes and the pictures, and the card drops the size.
+        // the tiles show the sizes at one decimal, and the header drops the size.
         let alikeCard = DuplicateGroupPresentation.map(alike, session: DuplicatesSession())
         #expect(alikeCard.title == "2 files of one photo")
         #expect(alikeCard.decision == "Keeping the largest file")
-        #expect(alikeCard.headerThumbnail == nil)
         #expect(alikeCard.showsCompare)
         #expect(alikeCard.sharedFacts == "HEIC · 4000 × 3000 · Photos")
-        #expect(alikeCard.rows.map(\.primary) == ["IMG_1_001.HEIC", "IMG_1.HEIC"])
-        #expect(alikeCard.rows.map(\.secondary) == ["11,400,000 bytes", "11,200,000 bytes"])
-        #expect(alikeCard.rows.map(\.thumbnailAspect) == [0.75, 0.75])
+        #expect(alikeCard.tiles.map(\.primary) == ["IMG_1_001.HEIC", "IMG_1.HEIC"])
+        #expect(alikeCard.tiles.map(\.secondary) == ["11.4 MB", "11.2 MB"])
 
-        // The same bytes under two names: one picture, the size on the card, nothing on the
-        // rows but the names, and the name decides.
+        // The same bytes under two names: the size in the header, nothing on the tiles but
+        // the names, and the name decides.
         let same = DuplicateGroupPolicy.group(
             id: .samePhoto(ids), copies: [version(ids[0], width: 4000, bytes: 11_200_000), version(ids[1], width: 4000, bytes: 11_200_000)],
             keptPairs: [], originals: Set(ids)
         )
         let sameCard = DuplicateGroupPresentation.map(same, session: DuplicatesSession())
         #expect(sameCard.decision == "Keeping the original file name")
-        #expect(sameCard.headerThumbnail == ids[0])
         #expect(sameCard.sharedFacts == "11 MB each · HEIC · 4000 × 3000 · Photos")
-        #expect(sameCard.rows.map(\.secondary) == [nil, nil])
+        #expect(sameCard.tiles.map(\.secondary) == [nil, nil])
 
         let resized = DuplicateGroupPolicy.group(
             id: .samePhoto(ids), copies: [version(ids[0], width: 4000, bytes: 11_200_000), version(ids[1], width: 1000, bytes: 400_000)],
@@ -388,11 +384,10 @@ struct DuplicatesTests {
         )
         let resizedCard = DuplicateGroupPresentation.map(resized, session: DuplicatesSession())
         #expect(resizedCard.decision == "Keeping the camera original")
-        #expect(resizedCard.headerThumbnail == nil)
         #expect(resizedCard.sharedFacts == "HEIC · Photos")
-        #expect(resizedCard.rows.map(\.secondary) == ["4000 × 3000 · 11 MB · Camera original", "1000 × 750 · 400 KB · Not the camera original"])
+        #expect(resizedCard.tiles.map(\.secondary) == ["4000 × 3000 · 11 MB · Camera original", "1000 × 750 · 400 KB · Not the camera original"])
 
-        // Two files that name no capture still rank by pixels and size: the rows show the
+        // Two files that name no capture still rank by pixels and size: the tiles show the
         // sizes that differ, and the line names the rule that used them.
         let screenshots = DuplicateGroupPolicy.group(
             id: .samePhoto(ids), copies: [version(ids[0], width: 1206, bytes: 108_000), version(ids[1], width: 1206, bytes: 116_000)],
@@ -400,25 +395,62 @@ struct DuplicatesTests {
         )
         let screenshotsCard = DuplicateGroupPresentation.map(screenshots, session: DuplicatesSession())
         #expect(screenshotsCard.decision == "Keeping the largest file")
-        #expect(screenshotsCard.rows.map(\.primary) == ["IMG_1_001.HEIC", "IMG_1.HEIC"])
-        #expect(screenshotsCard.rows.map(\.secondary) == ["116 KB", "108 KB"])
-        #expect(resizedCard.rows.map(\.thumbnailAspect) == [0.75, 0.75])
+        #expect(screenshotsCard.tiles.map(\.primary) == ["IMG_1_001.HEIC", "IMG_1.HEIC"])
+        #expect(screenshotsCard.tiles.map(\.secondary) == ["116 KB", "108 KB"])
     }
 
-    /// A row says where its work goes, and every row of a group takes the group's shape.
-    @Test func aLeavingRowSaysWhereItsWorkGoes() throws {
+    /// Six same-second files whose sizes all round to 39 MB: two decimals tell each apart,
+    /// so the tiles never show a tie the keeper rule broke; equal bytes stay equal.
+    @Test func sizesThatTieAtTheShownPrecisionGetTheDecimalsThatTellThemApart() {
+        let bytes: [Int64] = [39_133_184, 39_100_416, 38_821_888, 38_805_504, 38_801_408, 38_793_216]
+        let copies = bytes.enumerated().map { index, size in
+            DuplicateCopy(
+                id: MediaAssetID(libraryRootPath: Self.photos, relativePath: MediaRelativePath(rawValue: "f\(index).arw")),
+                libraryDisplayName: "Photos", kind: .raw, captureDate: nil, byteSize: size, createdAt: nil,
+                pixelWidth: 6192, pixelHeight: 4128, mediaChoice: .notRated, isEdited: false, hasCompanions: false
+            )
+        }
+        let sizes = DuplicateSharedFacts.distinguishingSizes(of: copies)
+        #expect(copies.map { sizes[$0.id] } == ["39.13 MB", "39.10 MB", "38.82 MB", "38.81 MB", "38.80 MB", "38.79 MB"])
+
+        let twins = Array(copies.prefix(2)).map {
+            DuplicateCopy(
+                id: $0.id, libraryDisplayName: "Photos", kind: .raw, captureDate: nil, byteSize: 39_133_184,
+                createdAt: nil, pixelWidth: 6192, pixelHeight: 4128, mediaChoice: .notRated, isEdited: false,
+                hasCompanions: false
+            )
+        }
+        #expect(Set(DuplicateSharedFacts.distinguishingSizes(of: twins).values) == ["39 MB"])
+    }
+
+    /// ← and → walk every copy across groups; ↑ and ↓ keep the place in the next group, or
+    /// take its last copy when it is shorter.
+    @Test func theArrowKeysWalkTheTilesInReadingOrder() {
+        let ids = (0 ..< 5).map {
+            MediaAssetID(libraryRootPath: Self.photos, relativePath: MediaRelativePath(rawValue: "\($0).jpg"))
+        }
+        let order = DuplicatesTileOrder(groups: [[ids[0], ids[1], ids[2]], [ids[3], ids[4]]])
+        #expect(order.target(from: nil, .right) == ids[0])
+        #expect(order.target(from: ids[2], .right) == ids[3])
+        #expect(order.target(from: ids[3], .left) == ids[2])
+        #expect(order.target(from: ids[0], .left) == nil)
+        #expect(order.target(from: ids[2], .down) == ids[4])
+        #expect(order.target(from: ids[4], .up) == ids[1])
+        #expect(order.target(from: ids[4], .down) == nil)
+    }
+
+    /// A leaving tile says where its work goes.
+    @Test func aLeavingTileSaysWhereItsWorkGoes() throws {
         let group = try Self.onlyGroup([Self.copy("a.jpg", born: 50), Self.copy("b.jpg", born: 90, choice: .liked)])
         let card = DuplicateGroupPresentation.map(group, session: DuplicatesSession())
         #expect(card.decision == "Keeping the copy you liked")
         var session = DuplicatesSession()
         session.keepOnly(Self.copy("a.jpg").copy.id, in: group)
         let moved = DuplicateGroupPresentation.map(group, session: session)
-        let leaving = try #require(moved.rows.first { $0.id == Self.copy("b.jpg").copy.id })
+        let leaving = try #require(moved.tiles.first { $0.id == Self.copy("b.jpg").copy.id })
         #expect(leaving.fate == .movesToTrash)
         #expect(leaving.secondary?.hasPrefix("File created ") == true)
         #expect(leaving.secondary?.hasSuffix(" · Liked. Its Like moves to the kept copy") == true)
-        let everyRowHasTheLine = moved.rows.allSatisfy(\.showsSecondaryLine)
-        #expect(everyRowHasTheLine)
         #expect(leaving.accessibilityLabel.hasPrefix("b.jpg, moves to Trash, "))
     }
 

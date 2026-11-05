@@ -1,22 +1,28 @@
+import AppKit
 import SwiftUI
 
 // The detail pane for the `.duplicates` scope (ADR 0042, `docs/design/duplicates.md`): a
-// list of groups, each a card — one picture when one stands for every copy, the facts the
-// copies share, and the decision in words — over the rows that say what differs about
-// each copy and its fate; then a fixed-height bar stating the duplicates fact and offering
-// the one act. Passive: every string comes from `DuplicatesPresentation`, and every
-// control calls a view-model intent; the marks and counts are `DuplicatesSession`'s.
+// list of groups, each a header — the facts the copies share and the decision in words —
+// over a strip of tiles, one per copy, each its picture, what differs about it and its
+// Keep mark; then a fixed-height bar stating the duplicates fact and offering the one act.
+// Passive: every string comes from `DuplicatesPresentation`, every control calls a
+// view-model intent, and a click on a tile goes to the grid's one selection model
+// (`GridSelection`, through the view model); the marks and counts are `DuplicatesSession`'s.
 
 struct DuplicatesView: View {
     let duplicates: CatalogDuplicatesState
     let session: DuplicatesSession
     let canUndoMove: Bool
-    let selection: Binding<Set<MediaAssetID>>
+    let selection: Set<MediaAssetID>
     let tileContentStore: TileContentStore?
     let thumbnailDirectory: URL?
     let detailReader: MediaTileDetailReader?
     let actions: DuplicatesActions
 
+    /// The copy the arrow keys move from: the last one clicked or reached by a key. Local
+    /// control state; the selection itself is the view model's.
+    @State private var cursor: MediaAssetID?
+    @FocusState private var listFocused: Bool
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -55,77 +61,141 @@ struct DuplicatesView: View {
         duplicates.groups.filter { $0.libraryPair == nil }
     }
 
-    /// Cards and rows are all rows of one list: a card is a row that cannot be selected,
-    /// never a section header, which the platform pins at the top edge and draws over the
-    /// rows passing beneath it. Separators are the cards' own hairlines (DES-023), drawn
-    /// between groups, never above the first.
+    /// The groups on screen, in the list's order: each pair's groups while it is expanded,
+    /// then the standalone groups.
+    private var shownGroups: [DuplicateGroup] {
+        pairs.flatMap { session.expandedPairs.contains($0.pair) ? $0.groups : [] } + standaloneGroups
+    }
+
+    /// The copies on screen in reading order, by group: the order ⇧-click ranges over and
+    /// the arrow keys walk. A kept group shows no tiles, so it has none.
+    private var tileOrder: DuplicatesTileOrder {
+        DuplicatesTileOrder(groups: shownGroups.filter { !$0.isKept }.map { $0.copies.map(\.id) })
+    }
+
     private var list: some View {
-        List(selection: selection) {
-            ForEach(Array(pairs.enumerated()), id: \.element.pair) { index, entry in
-                DuplicateLibraryPairRow(
-                    presentation: .map(entry.pair, groups: entry.groups, session: session),
-                    groups: entry.groups,
-                    isExpanded: session.expandedPairs.contains(entry.pair),
-                    isFirst: index == 0,
-                    actions: actions
-                )
-                .selectionDisabled()
-                .listRowSeparator(.hidden)
-                if session.expandedPairs.contains(entry.pair) {
-                    ForEach(entry.groups) { group in
-                        groupRows(group, isFirst: false)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(pairs.enumerated()), id: \.element.pair) { index, entry in
+                        DuplicateLibraryPairRow(
+                            presentation: .map(entry.pair, groups: entry.groups, session: session),
+                            groups: entry.groups,
+                            isExpanded: session.expandedPairs.contains(entry.pair),
+                            isFirst: index == 0,
+                            actions: actions
+                        )
+                        if session.expandedPairs.contains(entry.pair) {
+                            ForEach(entry.groups) { group in
+                                groupSection(group, isFirst: false)
+                            }
+                        }
+                    }
+                    ForEach(Array(standaloneGroups.enumerated()), id: \.element.id) { index, group in
+                        groupSection(group, isFirst: index == 0 && pairs.isEmpty)
                     }
                 }
+                // DES-060's section inset: one left edge for every header and first tile.
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 16)
+                .background {
+                    // A click on the list's empty space selects nothing, as in the grid.
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            listFocused = true
+                            select(nil)
+                        }
+                }
             }
-            ForEach(Array(standaloneGroups.enumerated()), id: \.element.id) { index, group in
-                groupRows(group, isFirst: index == 0 && pairs.isEmpty)
+            .background(DesignPalette.content(for: colorScheme))
+            .focusable()
+            .focusEffectDisabled()
+            .focused($listFocused)
+            .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
+                guard let direction = DuplicatesTileOrder.Direction(press.key),
+                      let target = tileOrder.target(from: cursor, direction)
+                else {
+                    return .ignored
+                }
+                select(target, modifiers: press.modifiers.contains(.shift) ? .shift : [])
+                proxy.scrollTo(target)
+                return .handled
             }
-        }
-        .scrollContentBackground(.hidden)
-        .background(DesignPalette.content(for: colorScheme))
-        // The platform's list inset left a blank band before the first card.
-        .contentMargins(.top, 8, for: .scrollContent)
-        .onKeyPress(.return) {
-            actions.openGroup()
-            return .handled
-        }
-        // Space opens the group as Return does: Lightroom's Loupe toggle.
-        .onKeyPress(.space) {
-            actions.openGroup()
-            return .handled
+            .onKeyPress(.return) {
+                actions.openGroup()
+                return .handled
+            }
+            // Space opens the group as Return does: Lightroom's Loupe toggle.
+            .onKeyPress(.space) {
+                actions.openGroup()
+                return .handled
+            }
+            .onChange(of: selection) { _, selected in
+                // A selection made elsewhere — Show, Undo's reveal — is scrolled to and
+                // becomes where the arrow keys start.
+                if let cursor, selected.contains(cursor) {
+                    return
+                }
+                if let first = tileOrder.copies.first(where: selected.contains) {
+                    cursor = first
+                    proxy.scrollTo(first)
+                }
+            }
         }
     }
 
+    private func select(_ id: MediaAssetID?, modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
+        cursor = id
+        actions.select(id, modifiers, tileOrder.copies)
+    }
+
     @ViewBuilder
-    private func groupRows(_ group: DuplicateGroup, isFirst: Bool) -> some View {
+    private func groupSection(_ group: DuplicateGroup, isFirst: Bool) -> some View {
         let presentation = DuplicateGroupPresentation.map(group, session: session)
-        DuplicateGroupCard(
-            group: group,
-            presentation: presentation,
-            isFirst: isFirst,
-            tileContentStore: tileContentStore,
-            thumbnailDirectory: thumbnailDirectory,
-            detailReader: detailReader,
-            actions: actions
-        )
-        .selectionDisabled()
-        .listRowSeparator(.hidden)
-        ForEach(presentation.rows) { row in
-            DuplicateCopyRow(
-                row: row,
-                tileContentStore: tileContentStore,
-                thumbnailDirectory: thumbnailDirectory,
-                detailReader: detailReader,
-                actions: actions
-            )
-            .tag(row.id)
-            .listRowSeparator(.hidden)
+        VStack(alignment: .leading, spacing: 10) {
+            DuplicateGroupSeam(isFirst: isFirst)
+            DuplicateGroupHeader(group: group, presentation: presentation, actions: actions)
+            if !presentation.tiles.isEmpty {
+                LazyVGrid(
+                    columns: [GridItem(
+                        .adaptive(minimum: DuplicateCopyTile.width, maximum: DuplicateCopyTile.width),
+                        spacing: DuplicateCopyTile.gutter,
+                        alignment: .topLeading
+                    )],
+                    alignment: .leading,
+                    spacing: 12
+                ) {
+                    ForEach(presentation.tiles) { tile in
+                        DuplicateCopyTile(
+                            tile: tile,
+                            isSelected: selection.contains(tile.id),
+                            tileContentStore: tileContentStore,
+                            thumbnailDirectory: thumbnailDirectory,
+                            detailReader: detailReader,
+                            actions: actions,
+                            select: {
+                                listFocused = true
+                                select(tile.id)
+                            }
+                        )
+                        .id(tile.id)
+                    }
+                }
+            }
         }
+        .padding(.top, isFirst ? 0 : 4)
+        .padding(.bottom, 16)
     }
 }
 
 /// The view model's duplicates intents, handed to the passive views.
 struct DuplicatesActions {
+    /// A click or arrow key on a tile (nil: the list's empty space), with its modifiers and
+    /// the list's copies in order — the grid's click intent, so one selection model serves
+    /// both (APP-011).
+    let select: @MainActor (MediaAssetID?, NSEvent.ModifierFlags, [MediaAssetID]) -> Void
     let keep: @MainActor (MediaAssetID) -> Void
     let unkeep: @MainActor (MediaAssetID) -> Void
     let keepAll: @MainActor (DuplicateGroup) -> Void
@@ -159,99 +229,67 @@ private struct DuplicateGroupSeam: View {
     }
 }
 
-/// A group's card: the picture (when one stands for every copy), the title, the shared
-/// facts and the decision, with Compare and Keep All Copies trailing. Kept, one quiet
-/// line with Review Again.
-private struct DuplicateGroupCard: View {
+/// A group's header: the title with Compare and Keep All Copies trailing, the shared
+/// facts, and the decision. Kept, the title and facts with Review Again.
+private struct DuplicateGroupHeader: View {
     let group: DuplicateGroup
     let presentation: DuplicateGroupPresentation
-    let isFirst: Bool
-    let tileContentStore: TileContentStore?
-    let thumbnailDirectory: URL?
-    let detailReader: MediaTileDetailReader?
     let actions: DuplicatesActions
 
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(spacing: 0) {
-            DuplicateGroupSeam(isFirst: isFirst)
-            card
-        }
-        .padding(.top, isFirst ? 0 : 8)
-    }
-
-    private var card: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // The well is reserved on every card, so every card's text shares one left
-            // edge (DES-016); it is blank when the rows carry the pictures, and for a
-            // kept group.
-            ZStack {
-                if let id = presentation.headerThumbnail {
-                    DuplicateThumbnail(
-                        id: id,
-                        kind: presentation.headerKind,
-                        width: DuplicateThumbnail.groupEdge,
-                        height: DuplicateThumbnail.groupEdge,
-                        tileContentStore: tileContentStore,
-                        thumbnailDirectory: thumbnailDirectory,
-                        detailReader: detailReader
-                    )
-                }
-            }
-            .frame(width: DuplicateThumbnail.groupEdge, height: presentation.isKept ? 0 : DuplicateThumbnail.groupEdge)
-            .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(presentation.title)
                     .font(.headline)
                     .foregroundStyle(DesignPalette.label(for: colorScheme))
                     .monospacedDigit()
                     .lineLimit(1)
+                    .accessibilityLabel(presentation.accessibilityLabel)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 8)
+                // Not Tab stops: on a library of hundreds of groups they would stand between
+                // the list and the bar (DES-080). Photo ▸ Keep All Copies / Review Again and
+                // Return (Compare) act on the selected copies' groups.
+                HStack(spacing: 8) {
+                    if presentation.showsCompare {
+                        Button("Compare") {
+                            actions.compareGroup(group)
+                        }
+                        .focusable(false)
+                        .help("See the first two side by side, at full size.")
+                    }
+                    if let title = presentation.keepAllTitle {
+                        Button(title) {
+                            actions.keepAll(group)
+                        }
+                        .focusable(false)
+                    } else {
+                        Button("Review Again") {
+                            actions.reviewAgain([group])
+                        }
+                        .focusable(false)
+                    }
+                }
+                .controlSize(.small)
+            }
+            Group {
                 Text(presentation.sharedFacts ?? " ")
                     .font(.subheadline)
                     .foregroundStyle(DesignPalette.l3(for: colorScheme))
                     .monospacedDigit()
-                    .lineLimit(1)
-                    .truncationMode(.middle)
                 if let decision = presentation.decision {
                     // The verdict, at L2: the one line that says what the act will do.
                     Text(decision)
                         .font(.body)
                         .foregroundStyle(DesignPalette.label(for: colorScheme))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
                 }
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(presentation.accessibilityLabel)
-            .accessibilityAddTraits(.isHeader)
-            Spacer(minLength: 8)
-            // Not Tab stops: on a library of hundreds of groups they would stand between the
-            // list and the bar (DES-080). Photo ▸ Keep All Copies / Review Again and Return
-            // (Compare) act on the selected group.
-            HStack(spacing: 8) {
-                if presentation.showsCompare {
-                    Button("Compare") {
-                        actions.compareGroup(group)
-                    }
-                    .focusable(false)
-                    .help("See the first two side by side, at full size.")
-                }
-                if let title = presentation.keepAllTitle {
-                    Button(title) {
-                        actions.keepAll(group)
-                    }
-                    .focusable(false)
-                } else {
-                    Button("Review Again") {
-                        actions.reviewAgain([group])
-                    }
-                    .focusable(false)
-                }
-            }
-            .controlSize(.small)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .accessibilityHidden(true)
         }
-        .padding(.top, 4)
     }
 }
 
@@ -334,113 +372,100 @@ private struct DuplicateLibraryPairRow: View {
     }
 }
 
-/// One copy: its picture when the pictures are what differ, what differs about it, and at
-/// its trailing edge the Keep checkbox beside its fate in words — control and consequence
-/// together, at one width in every state.
-private struct DuplicateCopyRow: View {
-    let row: DuplicateCopyRowPresentation
+/// One copy: its picture, bright when it stays and dimmed when it moves; what differs
+/// about it; and its Keep mark — one size for every tile, so a group reads as one row.
+private struct DuplicateCopyTile: View {
+    /// Wide enough for a camera's whole file name (`20261030_185200_001.arw`) in `.body`.
+    static let width: CGFloat = 184
+    static let faceHeight: CGFloat = 138
+    /// DES-060's 8 pt gutter between tiles.
+    static let gutter: CGFloat = 8
+    /// The checkbox and `Keep This Copy` share one slot height, so a waiting group's tiles
+    /// are as tall as the rest (DES-053).
+    private static let markHeight: CGFloat = 22
+
+    let tile: DuplicateCopyTilePresentation
+    let isSelected: Bool
     let tileContentStore: TileContentStore?
     let thumbnailDirectory: URL?
     let detailReader: MediaTileDetailReader?
     let actions: DuplicatesActions
+    let select: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
 
-    private static let fateWidth: CGFloat = 212
-
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            if let aspect = row.thumbnailAspect {
-                DuplicateThumbnail(
-                    id: row.id,
-                    kind: row.kind,
-                    width: DuplicateThumbnail.versionEdge,
-                    height: (DuplicateThumbnail.versionEdge * min(1, aspect)).rounded(),
-                    tileContentStore: tileContentStore,
-                    thumbnailDirectory: thumbnailDirectory,
-                    detailReader: detailReader
-                )
-            } else {
-                // The card's well, left blank, so the row's L2 shares the card text's left
-                // edge (DES-016).
-                Color.clear.frame(width: DuplicateThumbnail.groupEdge, height: 1)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(row.primary)
-                    .font(.body)
-                    .foregroundStyle(DesignPalette.label(for: colorScheme))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if row.showsSecondaryLine {
-                    Text(row.secondary ?? " ")
-                        .font(.subheadline)
-                        .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-            }
-            .contentShape(Rectangle())
-            .onTapGesture(count: 2) {
-                actions.openGroupContaining(row.id)
-            }
-            Spacer(minLength: 8)
-                .contentShape(Rectangle())
-                // Double-click on the row's picture, name or space opens the group of the
-                // row clicked, as Return opens the selection's (HIG Lists) — not on its
-                // controls, where a second click would toggle twice.
-                .onTapGesture(count: 2) {
-                    actions.openGroupContaining(row.id)
-                }
-            fate
-                .frame(width: Self.fateWidth, alignment: .leading)
+        VStack(alignment: .leading, spacing: 4) {
+            DuplicateThumbnail(
+                id: tile.id,
+                kind: tile.kind,
+                width: Self.width,
+                height: Self.faceHeight,
+                isDimmed: tile.fate == .movesToTrash,
+                isSelected: isSelected,
+                tileContentStore: tileContentStore,
+                thumbnailDirectory: thumbnailDirectory,
+                detailReader: detailReader
+            )
+            .padding(.bottom, 2)
+            Text(tile.primary)
+                .font(.body)
+                .foregroundStyle(DesignPalette.label(for: colorScheme))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Text(tile.secondary ?? " ")
+                .font(.subheadline)
+                .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                .monospacedDigit()
+                .lineLimit(1)
+                .truncationMode(.tail)
+            mark
+                .frame(height: Self.markHeight, alignment: .leading)
         }
-        .padding(.vertical, 2)
+        .frame(width: Self.width, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: select)
+        // The first click selects at once; the second also opens the group (HIG Lists).
+        .simultaneousGesture(TapGesture(count: 2).onEnded {
+            actions.openGroupContaining(tile.id)
+        })
+        .help(([tile.primary] + (tile.secondary.map { [$0] } ?? [])).joined(separator: "\n"))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(row.accessibilityLabel)
+        .accessibilityLabel(tile.accessibilityLabel)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .contextMenu {
-            Button("Keep This Copy") { actions.keep(row.id) }
-                .disabled(row.fate == .stays)
-            Button("Don't Keep This Copy") { actions.unkeep(row.id) }
-                .disabled(row.fate == .movesToTrash || (row.fate == .stays && !row.canUnkeep))
-            Button("Keep Only This Copy") { actions.keepOnly(row.id) }
+            Button("Keep This Copy") { actions.keep(tile.id) }
+                .disabled(tile.fate == .stays)
+            Button("Don't Keep This Copy") { actions.unkeep(tile.id) }
+                .disabled(tile.fate == .movesToTrash || (tile.fate == .stays && !tile.canUnkeep))
+            Button("Keep Only This Copy") { actions.keepOnly(tile.id) }
             Divider()
-            Button("Move to Trash Now") { actions.moveToTrashNow(row.id) }
+            Button("Move to Trash Now") { actions.moveToTrashNow(tile.id) }
         }
-        .accessibilityAction(named: "Keep This Copy") { actions.keep(row.id) }
-        .accessibilityAction(named: "Keep Only This Copy") { actions.keepOnly(row.id) }
-        .accessibilityAction(named: "Don't Keep This Copy") { actions.unkeep(row.id) }
+        .accessibilityAction(named: "Keep This Copy") { actions.keep(tile.id) }
+        .accessibilityAction(named: "Keep Only This Copy") { actions.keepOnly(tile.id) }
+        .accessibilityAction(named: "Don't Keep This Copy") { actions.unkeep(tile.id) }
     }
 
-    /// The mark and its meaning (DES-029): a checkbox, not a Tab stop (rows are the
-    /// selection; Photo ▸ Keep This Copy / Don't Keep This Copy act on them), beside
-    /// `Stays` or `Moves to Trash`. A waiting row offers the act that decides it.
+    /// The mark: a checkbox titled `Keep` — the setting, which never changes with its state
+    /// (HIG Toggles) — whose consequence is the face, bright or dimmed. Not a Tab stop:
+    /// tiles are the selection, and Photo ▸ Keep This Copy / Don't Keep This Copy act on
+    /// them. A waiting group's tile offers the act that decides it.
     @ViewBuilder
-    private var fate: some View {
-        switch row.fate {
+    private var mark: some View {
+        switch tile.fate {
         case .stays, .movesToTrash:
-            // The box names the setting, `Keep`, which never changes with its state (HIG
-            // Toggles); the words after it name the consequence.
-            HStack(spacing: 12) {
-                Toggle("Keep", isOn: Binding(
-                    get: { row.fate == .stays },
-                    set: { keep in keep ? actions.keep(row.id) : actions.unkeep(row.id) }
-                ))
-                .toggleStyle(.checkbox)
-                .focusable(false)
-                .disabled(row.fate == .stays && !row.canUnkeep)
-                .modifier(DuplicateKeepHelp(shown: row.fate == .stays && !row.canUnkeep))
-                if row.fate == .stays {
-                    Label("Stays", systemImage: "checkmark.circle")
-                } else {
-                    Label("Moves to Trash", systemImage: "trash")
-                }
-            }
-            .font(.body)
-            .foregroundStyle(DesignPalette.label(for: colorScheme))
+            Toggle("Keep", isOn: Binding(
+                get: { tile.fate == .stays },
+                set: { keep in keep ? actions.keep(tile.id) : actions.unkeep(tile.id) }
+            ))
+            .toggleStyle(.checkbox)
+            .focusable(false)
+            .disabled(tile.fate == .stays && !tile.canUnkeep)
+            .modifier(DuplicateKeepHelp(shown: tile.fate == .stays && !tile.canUnkeep))
         case .choice:
             Button("Keep This Copy") {
-                actions.keepOnly(row.id)
+                actions.keepOnly(tile.id)
             }
             .controlSize(.small)
             .focusable(false)
@@ -462,19 +487,18 @@ private struct DuplicateKeepHelp: ViewModifier {
     }
 }
 
-/// An aspect-fit thumbnail (DES-060A) in a leading-aligned well, following the grid's
-/// no-blank rule: the kind glyph (DES-063) only before this copy's thumbnail has ever
-/// decoded, and its slash variant once a decode has failed.
+/// A tile's face: the thumbnail aspect-fit and centred in its cell (DES-060A), following
+/// the grid's no-blank rule — the kind glyph (DES-063) only before this copy's thumbnail
+/// has ever decoded, and its slash variant once a decode has failed. A copy that moves is
+/// drawn dimmed, the Lightroom idiom for a rejected photo; selection is DES-061's 3 pt
+/// accent border on the picture, never a fill.
 private struct DuplicateThumbnail: View {
-    /// A group's one picture, at the head of the card.
-    static let groupEdge: CGFloat = 64
-    /// A row's picture when the pictures are what differ: the stored 256 px thumbnail at 2×.
-    static let versionEdge: CGFloat = 128
-
     let id: MediaAssetID
     let kind: MediaKind?
     let width: CGFloat
     let height: CGFloat
+    let isDimmed: Bool
+    let isSelected: Bool
     let tileContentStore: TileContentStore?
     let thumbnailDirectory: URL?
     let detailReader: MediaTileDetailReader?
@@ -492,13 +516,24 @@ private struct DuplicateThumbnail: View {
     }
 
     var body: some View {
-        ZStack(alignment: .leading) {
+        ZStack {
             if let image {
+                let fitted = fittedSize(of: image)
                 Image(decorative: image, scale: 1)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: width, maxHeight: height, alignment: .leading)
+                    .frame(width: fitted.width, height: fitted.height)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .opacity(isDimmed ? 0.4 : 1)
+                    .overlay {
+                        // A hairline edge (DES-023) so a dark picture reads on the dark
+                        // backdrop; the selection border replaces it.
+                        RoundedRectangle(cornerRadius: 4)
+                            .strokeBorder(
+                                isSelected ? Color.accentColor : DesignPalette.hairline(for: colorScheme),
+                                lineWidth: isSelected ? 3 : 1
+                            )
+                    }
             } else {
                 Image(systemName: MediaAssetTilePresentation.placeholderIconSystemName(
                     for: kind, thumbnailUnavailable: unavailable
@@ -506,18 +541,15 @@ private struct DuplicateThumbnail: View {
                 .font(.title2)
                 .foregroundStyle(.tertiary)
                 .frame(width: width, height: height)
+                .overlay {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 4)
+                            .strokeBorder(Color.accentColor, lineWidth: 3)
+                    }
+                }
             }
         }
-        .frame(width: width, height: height, alignment: .leading)
-        .overlay(alignment: .leading) {
-            // A hairline edge (DES-023) so a dark picture reads on the dark backdrop.
-            if let image {
-                let fitted = fittedSize(of: image)
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(DesignPalette.hairline(for: colorScheme))
-                    .frame(width: fitted.width, height: fitted.height)
-            }
-        }
+        .frame(width: width, height: height)
         .task(id: id) {
             await load()
         }
@@ -649,6 +681,18 @@ struct DuplicatesStatusBar: View {
                 .font(.subheadline)
                 .foregroundStyle(DesignPalette.l3(for: colorScheme))
                 .lineLimit(2)
+        }
+    }
+}
+
+private extension DuplicatesTileOrder.Direction {
+    init?(_ key: KeyEquivalent) {
+        switch key {
+        case .leftArrow: self = .left
+        case .rightArrow: self = .right
+        case .upArrow: self = .up
+        case .downArrow: self = .down
+        default: return nil
         }
     }
 }

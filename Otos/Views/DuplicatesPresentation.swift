@@ -5,7 +5,7 @@ import Foundation
 // Pure mappings from the published groups and the session's marks to what the list and
 // the bar draw: every string on the surface is composed here, so the view is passive and
 // the words are testable without a view. The one rule the spec states — the header says
-// what the copies share, the rows say what differs, and the fate and its reason are
+// what the copies share, the tiles say what differs, and the fate and its reason are
 // stated in words — is these mappings.
 
 /// What the duplicates bar draws (DES-018): *what* (L1 over one L3 clause) · *the middle
@@ -21,7 +21,7 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
         case legend(String)
     }
 
-    static let legend = "Checked copies stay. Unchecked copies go to the Trash; Undo brings them back."
+    static let legend = "Checked copies stay. Dimmed copies go to the Trash; Undo brings them back."
 
     let primaryLine: String
     /// `178 extra copies to move · 53.2 GB`: what the act moves, the count the button
@@ -77,43 +77,37 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
     }
 }
 
-/// A copy's fate as the row states it beside its checkbox (DES-029: a symbol and a word,
-/// never colour alone).
+/// A copy's fate as its tile states it: the checkbox, and a face drawn bright or dimmed
+/// (DES-029: never colour alone).
 nonisolated enum DuplicateCopyFate: Equatable, Sendable {
     /// Checked: the copy stays.
     case stays
     /// Unchecked: the copy moves with the act.
     case movesToTrash
-    /// The group waits: the row offers `Keep This Copy` instead of a checkbox, so the
+    /// The group waits: the tile offers `Keep This Copy` instead of a checkbox, so the
     /// first click means keep, never un-keep.
     case choice
 }
 
-/// One row of a group: what differs about this copy, and its fate.
-nonisolated struct DuplicateCopyRowPresentation: Equatable, Sendable, Identifiable {
+/// One tile of a group's strip: what differs about this copy, and its fate.
+nonisolated struct DuplicateCopyTilePresentation: Equatable, Sendable, Identifiable {
     let id: MediaAssetID
     let kind: MediaKind?
     /// The part of the location the header did not state (L2).
     let primary: String
     /// The facts that differ within the group, then the copy's own marks (L3); nil when
-    /// there is nothing to say.
+    /// there is nothing to say, drawn as a blank line so every tile has one height.
     let secondary: String?
     let fate: DuplicateCopyFate
     /// Whether unchecking changes a mark: another copy stays kept, or the pair's other copy
     /// takes over. False only on the last kept copy of a group of three or more.
     let canUnkeep: Bool
-    /// Height over width of the row's thumbnail when the pictures are what differ; nil when
-    /// the card's one picture stands for the group.
-    let thumbnailAspect: Double?
-    /// Whether the group's rows take two lines: every row in a group has one shape, so the
-    /// checkboxes sit at one pitch and no row reflows when a mark changes (DES-053).
-    let showsSecondaryLine: Bool
     /// What VoiceOver reads: what differs, the fate, then the facts (DES-082).
     let accessibilityLabel: String
 }
 
-/// One group as the list draws it: the card (title, shared facts, decision), its controls,
-/// and its rows — or, kept, one quiet line with Review Again.
+/// One group as the list draws it: the header (title, shared facts, decision), its
+/// controls, and the strip of its copies — or, kept, one quiet header with Review Again.
 nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable {
     let id: DuplicateGroupID
     /// `2 identical videos`, `3 files of one photo`; kept, `Kept both copies`.
@@ -123,16 +117,12 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
     /// What Otos will do and why, or what the user must choose; nil for a kept group,
     /// whose title says it.
     let decision: String?
-    /// The copy whose thumbnail stands for the group: the kept copy, when one picture
-    /// stands for every copy.
-    let headerThumbnail: MediaAssetID?
-    let headerKind: MediaKind?
     let showsCompare: Bool
     /// `Keep Both Copies` / `Keep All Copies`; nil when kept, where `Review Again` stands.
     let keepAllTitle: String?
     let isKept: Bool
-    let rows: [DuplicateCopyRowPresentation]
-    /// What VoiceOver reads for the card: the date first, since it is what tells one group
+    let tiles: [DuplicateCopyTilePresentation]
+    /// What VoiceOver reads for the header: the date first, since it is what tells one group
     /// from the next (DES-082), then the title, the facts and the decision, with words for
     /// the glyphs.
     let accessibilityLabel: String
@@ -160,7 +150,7 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
             shared.append(kind)
         }
         // The size first: it is the fact a reader uses; the format and pixels qualify it.
-        // Off the card when the shown size hides a difference the rows must show.
+        // Off the header when the shown size hides a difference the tiles must show.
         if let size = facts.sharedSize, !facts.bytesDifferBelowShownPrecision {
             shared.append(count > 1 ? "\(size) each" : size)
         }
@@ -180,8 +170,7 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
             let title = count == 2 ? "Kept both copies" : "Kept all \(count) copies"
             return DuplicateGroupPresentation(
                 id: group.id, title: title, sharedFacts: sharedFacts, decision: nil,
-                headerThumbnail: nil, headerKind: copies.first?.kind, showsCompare: false, keepAllTitle: nil,
-                isKept: true, rows: [],
+                showsCompare: false, keepAllTitle: nil, isKept: true, tiles: [],
                 accessibilityLabel: ([taken, title].compactMap(\.self) + spokenFacts).joined(separator: ", ")
             )
         }
@@ -189,46 +178,32 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
         let kept = copies.filter { session.keeps($0.id, in: group) }.map(\.id)
         let decision = decision(for: group, session: session, keptCount: kept.count, isSamePhoto: isSamePhoto)
         let carries = session.carries(in: group)
-        // The pictures are what differ when the pixels, the format or the size do: one
-        // picture must never stand for two files the screen knows apart. Otherwise the
-        // card's one picture stands for every copy.
-        let picturesDiffer = isSamePhoto
-            && (facts.sharedDimensions == nil || facts.sharedFormat == nil || facts.sharedSize == nil
-                || facts.bytesDifferBelowShownPrecision)
-        var rows = copies.map { copy -> DuplicateCopyRowPresentation in
+        let sizes = DuplicateSharedFacts.distinguishingSizes(of: copies)
+        let tiles = copies.map { copy -> DuplicateCopyTilePresentation in
             let fate: DuplicateCopyFate = if session.needsChoice(group) {
                 .choice
             } else {
                 session.keeps(copy.id, in: group) ? .stays : .movesToTrash
             }
             let carried = Set(carries.filter { $0.from == copy.id }.map(\.work))
-            let rowFacts = rowFacts(copy, in: group, fate: fate, carried: carried, shared: facts, dates: dates)
+            let tileFacts = tileFacts(
+                copy, in: group, fate: fate, carried: carried, shared: facts, sizes: sizes, dates: dates
+            )
             let primary = location.remainder(for: copy)
             let fateWords = switch fate {
             case .stays: "stays"
             case .movesToTrash: "moves to Trash"
             case .choice: "waiting for your choice"
             }
-            return DuplicateCopyRowPresentation(
+            return DuplicateCopyTilePresentation(
                 id: copy.id,
                 kind: copy.kind,
                 primary: primary,
-                secondary: rowFacts.isEmpty ? nil : rowFacts.joined(separator: " · "),
+                secondary: tileFacts.isEmpty ? nil : tileFacts.joined(separator: " · "),
                 fate: fate,
                 canUnkeep: session.canUnkeep(copy.id, in: group),
-                thumbnailAspect: picturesDiffer ? aspect(of: copy) : nil,
-                showsSecondaryLine: false,
-                accessibilityLabel: ([primary, fateWords] + rowFacts).joined(separator: ", ")
+                accessibilityLabel: ([primary, fateWords] + tileFacts).joined(separator: ", ")
             )
-        }
-        if rows.contains(where: { $0.secondary != nil }) {
-            rows = rows.map { row in
-                DuplicateCopyRowPresentation(
-                    id: row.id, kind: row.kind, primary: row.primary, secondary: row.secondary, fate: row.fate,
-                    canUnkeep: row.canUnkeep, thumbnailAspect: row.thumbnailAspect, showsSecondaryLine: true,
-                    accessibilityLabel: row.accessibilityLabel
-                )
-            }
         }
 
         return DuplicateGroupPresentation(
@@ -236,24 +211,14 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
             title: kind,
             sharedFacts: sharedFacts,
             decision: decision,
-            headerThumbnail: picturesDiffer ? nil : (kept.first ?? copies.first?.id),
-            headerKind: copies.first?.kind,
             // Compare is for pictures that differ; identical copies have one picture, which
             // Return and double-click open.
             showsCompare: isSamePhoto,
             keepAllTitle: count == 2 ? "Keep Both Copies" : "Keep All Copies",
             isKept: false,
-            rows: rows,
+            tiles: tiles,
             accessibilityLabel: ([taken, kind].compactMap(\.self) + spokenFacts + [decision]).joined(separator: ", ")
         )
-    }
-
-    /// Height over width, so a landscape picture's row is no taller than its picture.
-    private static func aspect(of copy: DuplicateCopy) -> Double {
-        guard let width = copy.pixelWidth, let height = copy.pixelHeight, width > 0, height > 0 else {
-            return 1
-        }
-        return Double(height) / Double(width)
     }
 
     /// Words for the glyphs a fact line draws, so VoiceOver reads facts rather than symbols.
@@ -320,15 +285,16 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
         }
     }
 
-    /// The row's L3: the facts that differ within the group, then the copy's own marks and
+    /// The tile's L3: the facts that differ within the group, then the copy's own marks and
     /// where its work goes — onto the kept copy when the act carries it (`carried`), else
     /// to the Trash with the file.
-    private static func rowFacts(
+    private static func tileFacts(
         _ copy: DuplicateCopy,
         in group: DuplicateGroup,
         fate: DuplicateCopyFate,
         carried: Set<DuplicateCarry.Work>,
         shared: DuplicateSharedFacts,
+        sizes: [MediaAssetID: String],
         dates: DuplicateDateFormat
     ) -> [String] {
         var facts: [String] = []
@@ -339,11 +305,8 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
         if shared.sharedDimensions == nil, let dimensions = DuplicateSharedFacts.dimensions(of: copy) {
             facts.append(dimensions)
         }
-        if shared.sharedSize == nil, let size = DuplicateSharedFacts.size(of: copy) {
+        if shared.sharedSize == nil || shared.bytesDifferBelowShownPrecision, let size = sizes[copy.id] {
             facts.append(size)
-        } else if shared.bytesDifferBelowShownPrecision, let bytes = copy.byteSize {
-            // The rule ranked them by a difference the shown size hides: show the bytes.
-            facts.append("\(bytes.formatted(.number.grouping(.automatic))) bytes")
         }
         let births = copies.compactMap(\.createdAt)
         if Set(births).count > 1, let born = copy.createdAt {
@@ -379,12 +342,13 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
 }
 
 /// The facts a group's copies share, at the precision the list shows (DES-005A), so a
-/// fact goes in the header once or on every row, never both.
+/// fact goes in the header once or on every tile, never both.
 nonisolated struct DuplicateSharedFacts: Equatable, Sendable {
     let sharedFormat: String?
     let sharedDimensions: String?
     let sharedSize: String?
-    /// Every copy shows the same size, yet their bytes differ: the rows show the bytes.
+    /// Every copy shows the same size, yet their bytes differ: the tiles show the sizes at
+    /// the precision that tells them apart.
     let bytesDifferBelowShownPrecision: Bool
 
     init(copies: [DuplicateCopy]) {
@@ -416,12 +380,39 @@ nonisolated struct DuplicateSharedFacts: Equatable, Sendable {
     static func size(of copy: DuplicateCopy) -> String? {
         copy.byteSize.map(ImportBarByteFormat.string(bytes:))
     }
+
+    /// Each copy's size at the list's precision, or — when that ties two copies whose bytes
+    /// differ — in the shown unit with the fewest decimals (up to three) that tell every
+    /// copy of a different size apart (`39.13 MB`, `39.10 MB`; DES-005A), and the bytes when
+    /// three decimals still tie. The keeper rule compares bytes, so the tiles never show a
+    /// tie the rule broke.
+    static func distinguishingSizes(of copies: [DuplicateCopy]) -> [MediaAssetID: String] {
+        let sized = copies.compactMap { copy in copy.byteSize.map { (copy.id, $0) } }
+        let distinctBytes = Set(sized.map(\.1)).count
+        func tellsApart(_ strings: [String]) -> Bool {
+            Set(strings).count == distinctBytes
+        }
+        let plain = sized.map { ImportBarByteFormat.string(bytes: $0.1) }
+        if tellsApart(plain) {
+            return Dictionary(uniqueKeysWithValues: zip(sized.map(\.0), plain))
+        }
+        let largest = sized.map(\.1).max() ?? 0
+        let (divisor, unit): (Double, String) = largest < 1_000_000 ? (1000, "KB")
+            : largest < 100_000_000 ? (1_000_000, "MB") : (1_000_000_000, "GB")
+        for decimals in 1 ... 3 {
+            let strings = sized.map { String(format: "%.\(decimals)f \(unit)", Double($0.1) / divisor) }
+            if tellsApart(strings) {
+                return Dictionary(uniqueKeysWithValues: zip(sized.map(\.0), strings))
+            }
+        }
+        return Dictionary(uniqueKeysWithValues: sized.map { ($0.0, "\($0.1.formatted(.number.grouping(.automatic))) bytes") })
+    }
 }
 
 /// Where a group's copies live, split into what they share (the header) and what each
-/// row must say. Within one library the header names the deepest folder every copy is in
-/// or under, and each row the rest of its path — the bare file name when the copy is in
-/// that folder. Across libraries the header names nothing and each row names its library,
+/// tile must say. Within one library the header names the deepest folder every copy is in
+/// or under, and each tile the rest of its path — the bare file name when the copy is in
+/// that folder. Across libraries the header names nothing and each tile names its library,
 /// folder and file.
 nonisolated struct DuplicateLocationSplit: Equatable, Sendable {
     enum Shared: Equatable, Sendable {
@@ -455,7 +446,7 @@ nonisolated struct DuplicateLocationSplit: Equatable, Sendable {
         }
     }
 
-    /// What the row says about this copy's location.
+    /// What the tile says about this copy's location.
     func remainder(for copy: DuplicateCopy) -> String {
         switch shared {
         case let .folder(_, folder):
@@ -468,7 +459,7 @@ nonisolated struct DuplicateLocationSplit: Equatable, Sendable {
 }
 
 /// The Info pane's date format (`PhotoInfo`): abbreviated date, shortened time. Two birth
-/// times in one minute get their seconds, so the rows that differ are seen to differ.
+/// times in one minute get their seconds, so the tiles that differ are seen to differ.
 nonisolated struct DuplicateDateFormat {
     let calendar: Calendar
 
@@ -531,5 +522,45 @@ nonisolated struct DuplicateLibraryPairPresentation: Equatable, Sendable {
         return DuplicateLibraryPairPresentation(
             pair: pair, firstName: firstName, secondName: secondName, title: title, state: state, isKept: isKept
         )
+    }
+}
+
+/// The list's copies in reading order, by group: what ⇧-click ranges over and the arrow
+/// keys walk. ← and → step through every copy across groups; ↑ and ↓ move to the copy at
+/// the same place in the previous or next group, or that group's last copy when it is
+/// shorter.
+nonisolated struct DuplicatesTileOrder: Equatable, Sendable {
+    enum Direction: Equatable, Sendable {
+        case left, right, up, down
+    }
+
+    let groups: [[MediaAssetID]]
+
+    var copies: [MediaAssetID] {
+        groups.flatMap(\.self)
+    }
+
+    /// Where `direction` goes from `current`; the first copy when nothing is current or
+    /// `current` has left the list, nil at an edge.
+    func target(from current: MediaAssetID?, _ direction: Direction) -> MediaAssetID? {
+        guard let current,
+              let groupIndex = groups.firstIndex(where: { $0.contains(current) }),
+              let index = groups[groupIndex].firstIndex(of: current)
+        else {
+            return copies.first
+        }
+        switch direction {
+        case .left, .right:
+            let flat = copies
+            guard let position = flat.firstIndex(of: current) else { return nil }
+            let next = direction == .right ? position + 1 : position - 1
+            return flat.indices.contains(next) ? flat[next] : nil
+        case .up, .down:
+            let nextGroup = direction == .down ? groupIndex + 1 : groupIndex - 1
+            guard groups.indices.contains(nextGroup), let last = groups[nextGroup].indices.last else {
+                return nil
+            }
+            return groups[nextGroup][min(index, last)]
+        }
     }
 }
