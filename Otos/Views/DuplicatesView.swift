@@ -307,19 +307,33 @@ private struct DuplicateCopyTile: View {
     let actions: DuplicatesActions
     let keep: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
-        DuplicateThumbnail(
-            id: tile.id,
-            kind: tile.kind,
-            edge: Self.edge,
-            fate: tile.fate,
-            size: tile.size,
-            choice: tile.choice,
-            isSelected: isSelected,
-            tileContentStore: tileContentStore,
-            thumbnailDirectory: thumbnailDirectory,
-            detailReader: detailReader
-        )
+        VStack(alignment: .leading, spacing: 4) {
+            DuplicateThumbnail(
+                id: tile.id,
+                kind: tile.kind,
+                edge: Self.edge,
+                fate: tile.fate,
+                size: tile.size,
+                choice: tile.choice,
+                isSelected: isSelected,
+                tileContentStore: tileContentStore,
+                thumbnailDirectory: thumbnailDirectory,
+                detailReader: detailReader
+            )
+            // Which folder this copy is in, when the group spans folders: what a folder
+            // rule chooses between, so the photos say it without a hover.
+            if let folder = tile.folder {
+                Label(folder, systemImage: "folder")
+                    .font(.subheadline)
+                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(width: Self.edge, alignment: .leading)
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture(perform: keep)
         // The first click keeps it at once; the second also opens the group (HIG Lists).

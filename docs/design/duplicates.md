@@ -71,6 +71,9 @@ groups, never above the first.
     DES-005A) and the Like or Dislike glyph at the left.
   - Tags and badges appear only once the picture has painted (DES-062); the DES-063 kind
     glyph stands in the cell before then, and its slash variant once a decode has failed.
+  - When the group's copies sit in more than one folder, under each photo its folder,
+    `folder` glyph and `.subheadline` L3, one line middle-truncated: which folder a copy
+    is in is what a folder rule chooses between, so the photos say it without a hover.
   - No file name on screen: where a copy is and what else differs is its tooltip
     (`Camera Roll ▸ 2026/10/IMG_1.HEIC`, then `6192 × 4128 · 39.13 MB · File created … ·
     Camera original · Liked · Edited in Otos`).

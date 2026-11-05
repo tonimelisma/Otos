@@ -166,6 +166,9 @@ nonisolated struct DuplicateCopyTilePresentation: Equatable, Sendable, Identifia
     let id: MediaAssetID
     let kind: MediaKind?
     let fate: DuplicateCopyFate
+    /// The copy's folder, under its photo, when the group's copies sit in more than one
+    /// folder: which folder a copy is in is then what tells the copies apart.
+    let folder: String?
     /// The size, at the precision that tells this group's copies apart (DES-005A).
     let size: String?
     let choice: MediaChoice
@@ -260,6 +263,7 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
                 id: copy.id,
                 kind: copy.kind,
                 fate: fate,
+                folder: folders.count > 1 ? DuplicateFolderName.string(DuplicateFolder(copy), withLibrary: withLibrary) : nil,
                 size: sizes[copy.id],
                 choice: copy.mediaChoice,
                 help: ([location] + [facts.joined(separator: " · ")].filter { !$0.isEmpty }).joined(separator: "\n"),

@@ -254,6 +254,10 @@ struct DuplicatesTests {
         #expect(header.tiles.map(\.fate) == [.keep, .trash])
         #expect(header.tiles.map(\.size) == ["1 KB", "1 KB"])
         #expect(header.tiles.first?.help.hasPrefix("Photos ▸ 2026/08/a.mp4") == true)
+        // One folder: no folder under the photos; two folders: each photo names its own.
+        #expect(header.tiles.map(\.folder) == [nil, nil])
+        let mirrored = try Self.onlyGroup([Self.copy("2026/08/b.jpg"), Self.copy("Imports/b.jpg")])
+        #expect(Set(DuplicateGroupPresentation.map(mirrored, session: session).tiles.compactMap(\.folder)) == ["2026/08", "Imports"])
 
         session.picks[twins.id] = Self.copy("2026/08/b.mp4").copy.id
         let picked = DuplicateGroupPresentation.map(twins, session: session)
