@@ -19,12 +19,11 @@ struct SamePhotoTests {
     }
 
     /// A still as the rule sees it: its column facts, and the details read for a proposed
-    /// pair — the copy, the render, the sub-seconds and the burst identifier.
+    /// pair — the copy, the render and the sub-seconds.
     private struct Still {
         let candidate: SamePhotoCandidate
         let copy: DuplicateCopy
         let subsecond: String?
-        let burst: String?
     }
 
     private static func still(
@@ -33,7 +32,6 @@ struct SamePhotoTests {
         instant: Double? = 1000,
         subsecond: String? = nil,
         model: String? = "ILCE-6700",
-        burst: String? = nil,
         hash: UInt64 = 0xF0F0,
         width: Int = 4000
     ) -> Still {
@@ -61,8 +59,7 @@ struct SamePhotoTests {
                 isEdited: false,
                 hasCompanions: false
             ),
-            subsecond: subsecond,
-            burst: burst
+            subsecond: subsecond
         )
     }
 
@@ -85,8 +82,7 @@ struct SamePhotoTests {
                         SamePhotoDetail(
                             copy: still.copy,
                             signature: signature,
-                            fractionalSecondDigits: still.subsecond,
-                            burstIdentifier: still.burst
+                            fractionalSecondDigits: still.subsecond
                         )
                     )
                 }
@@ -124,12 +120,21 @@ struct SamePhotoTests {
             Self.still("DSC_2.ARW", raw: true, subsecond: "707"),
         ]
         #expect(Self.groups(frames, signatures: ["DSC_1.ARW": Self.gray(90), "DSC_2.ARW": Self.gray(90)]).isEmpty)
+    }
 
-        let iPhoneBurst = [
-            Self.still("IMG_1.HEIC", burst: "A"),
-            Self.still("IMG_2.HEIC", burst: "B"),
+    /// Six frames of one second whose records carry no sub-seconds — the file has none, or
+    /// the record predates the reader reporting them — prove nothing, so they never group.
+    @Test func sameSecondFramesWithoutSubsecondsNeverGroup() {
+        let names = ["20261004_152305.arw"] + (1 ... 5).map { "20261004_152305_00\($0).arw" }
+        let frames = names.map { Self.still($0, raw: true) }
+        let signatures = Dictionary(uniqueKeysWithValues: names.map { ($0, Self.gray(90)) })
+        #expect(Self.groups(frames, signatures: signatures).isEmpty)
+
+        let oneSideKnown = [
+            Self.still("IMG_1.HEIC", subsecond: "387"),
+            Self.still("IMG_2.HEIC"),
         ]
-        #expect(Self.groups(iPhoneBurst, signatures: ["IMG_1.HEIC": Self.gray(90), "IMG_2.HEIC": Self.gray(90)]).isEmpty)
+        #expect(Self.groups(oneSideKnown, signatures: ["IMG_1.HEIC": Self.gray(90), "IMG_2.HEIC": Self.gray(90)]).isEmpty)
     }
 
     @Test func aResizedStrippedCopyGroupsWithItsSource() {

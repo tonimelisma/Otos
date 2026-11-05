@@ -139,15 +139,24 @@ capture. They are found by pixels, confirmed by pixels, and kept apart from sepa
 captures by capture metadata (`SamePhotoPolicy`):
 
 1. **Capture metadata decides first.** Two files that both name a camera and an instant
-   are one capture only if all of these agree:
-   - the camera model;
-   - the whole-second instant;
-   - where both files carry them, the EXIF sub-seconds, the body serial and Apple's burst
-     identifier (MediaMetadata 0.9).
+   are one capture only if all of these hold:
+   - the camera model agrees;
+   - the whole-second instant agrees;
+   - the body serial agrees, where both files carry one;
+   - both records carry the EXIF sub-seconds, and they agree.
 
    This gate is what separates a still-scene burst. On the owner's library, 5 % of
    same-second burst pairs are as pixel-close as true copies, and every checked pair
-   differed in sub-seconds (`docs/research/2026-10-31-duplicate-calibration.md`).
+   differed in sub-seconds (`docs/research/2026-10-31-duplicate-calibration.md`). So
+   sub-seconds are the proof, and a missing value is unknown, not agreement: a record may
+   lack them because the file has none or because it was read before the reader reported
+   them. Treating a missing value as agreement grouped a Sony ILCE-6700 burst of six RAW
+   frames in one second, and proposed five of them for the Trash: the camera writes
+   sub-seconds, but the six records predated the reader reporting them, and the files were
+   cloud-only, so no re-read had backfilled them. A version whose sub-seconds were stripped
+   is left ungrouped rather than risk a burst frame. Apple's burst identifier is not a
+   test: every frame of one burst shares it, so it can separate bursts but never prove
+   one frame, and sub-seconds already separate them.
 2. **The pixels must match almost exactly.** Each still's **render signature** — a 64-bit
    difference hash and a 32 × 32 grayscale render of its *stored thumbnail* — is the
    measure. A hash within 10 bits proposes a pair; a mean absolute difference below 4 (of
@@ -164,8 +173,7 @@ Other rules:
 - Candidates are blocked by kind, display aspect and whole-second instant, so a library is
   never compared all against all. Pairs are proposed from column facts alone, read as
   pairing facts only (`SamePhotoCandidate`). The copy a group lists, the grayscale
-  render, the sub-seconds and the burst identifier — the last two live in the stored
-  metadata record — are read only for the stills a proposed pair names
+  render and the sub-seconds — which live in the stored metadata record — are read only for the stills a proposed pair names
   (`SamePhotoDetail`). Building every still's copy and decoding every record was most of
   a build: on 2026-11-01 the owner's library had 14,201 stills, of which 2,462 were in a
   proposed pair.
