@@ -125,7 +125,9 @@ everything expensive happens on an actor off the main thread.
   stops a read from honoring one and forgetting the other.
 - **The grid** is the one AppKit boundary (`MediaGridBridgeView` +
   `MediaGrid*`), for cell reuse at tens of thousands of tiles. `MediaGridMutationGate`
-  is the single arbiter of structural applies and zoom swaps. Pointer hover has the
+  is the single arbiter of structural applies and zoom swaps; inside its in-flight slot
+  a structural apply builds its snapshot off the main actor (`buildStructure`) and
+  applies it on the main actor (`commitStructure`). Pointer hover has the
   same single-owner shape as mouse selection: `MediaGridCollectionView` answers only
   the geometry question (which item is under the cursor) through one grid-wide
   tracking area, and the bridge owns what hover means, assigning the curation control

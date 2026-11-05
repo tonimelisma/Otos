@@ -143,7 +143,7 @@ struct MediaGridScrollAnchorTests {
     /// where it was on screen — the user's place survives narrowing the collection. The
     /// assertion is on the item's on-screen offset, not on which item is now leftmost in
     /// the top row: the filter reflows the rows, so the anchored item can sit mid-row.
-    @Test func aFilterKeepsTheTopItemWhereItWas() throws {
+    @Test func aFilterKeepsTheTopItemWhereItWas() async throws {
         let controller = makeAnchorController(itemCount: 200)
         controller.scrollTo(offset: 600)
         let before = try #require(controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []))
@@ -153,6 +153,7 @@ struct MediaGridScrollAnchorTests {
             .map(\.element)
 
         controller.perform(controller.mutationGate.receive(filtered(kept)))
+        try await awaitGridApply(controller, expectedIDs: kept)
 
         let after = try #require(
             controller.onScreenOffset(of: before.id),
@@ -165,7 +166,7 @@ struct MediaGridScrollAnchorTests {
     /// was looking at* in its place — the next later survivor, not whatever now sits at the
     /// same index of the shorter list. Scrolled deep into a large library so the survivor
     /// is far enough down the filtered grid to be positioned without clamping to the top.
-    @Test func aFilterThatRemovesTheTopItemLandsOnItsNearestSurvivor() throws {
+    @Test func aFilterThatRemovesTheTopItemLandsOnItsNearestSurvivor() async throws {
         let controller = makeAnchorController(itemCount: 600)
         controller.scrollTo(offset: 3000)
         let before = try #require(controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []))
@@ -179,6 +180,7 @@ struct MediaGridScrollAnchorTests {
         let expected = try #require(ids[(topIndex + 1)...].first(where: Set(kept).contains))
 
         controller.perform(controller.mutationGate.receive(filtered(kept)))
+        try await awaitGridApply(controller, expectedIDs: kept)
 
         let after = try #require(
             controller.onScreenOffset(of: expected),
@@ -206,7 +208,7 @@ struct MediaGridScrollAnchorTests {
 
     /// A visible selected tile is what the user was working on, so a sort that would carry
     /// it to the other end of the grid keeps it on screen at the same position instead.
-    @Test func aSortKeepsAVisibleSelectedTileWhereItWas() throws {
+    @Test func aSortKeepsAVisibleSelectedTileWhereItWas() async throws {
         let controller = makeAnchorController(itemCount: 200)
         controller.scrollTo(offset: 600)
         let top = try #require(controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []))
@@ -218,6 +220,7 @@ struct MediaGridScrollAnchorTests {
         let offsetBefore = try #require(controller.onScreenOffset(of: selected))
 
         controller.perform(controller.mutationGate.receive(sorted(Array(ids.reversed()))))
+        try await awaitGridApply(controller, expectedIDs: Array(ids.reversed()))
 
         let offsetAfter = try #require(
             controller.onScreenOffset(of: selected),
@@ -228,13 +231,14 @@ struct MediaGridScrollAnchorTests {
 
     /// At the top of the grid a filter with nothing selected stays at the top — there is no
     /// place to keep other than "the beginning".
-    @Test func aFilterAtTheTopStaysAtTheTop() {
+    @Test func aFilterAtTheTopStaysAtTheTop() async throws {
         let controller = makeAnchorController(itemCount: 200)
         controller.scrollTo(offset: 0)
         let kept = controller.currentIDs.enumerated().filter { $0.offset.isMultiple(of: 2) }.map(\.element)
 
         #expect(controller.captureScrollAnchor(change: .filterOrSort, nextOrderedIDs: kept) == nil)
         controller.perform(controller.mutationGate.receive(filtered(kept)))
+        try await awaitGridApply(controller, expectedIDs: kept)
 
         #expect(controller.scrollView.contentView.bounds.origin.y == 0)
     }

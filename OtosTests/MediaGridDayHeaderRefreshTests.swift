@@ -11,13 +11,13 @@ extension AppKitWindowTests {
     struct MediaGridDayHeaderRefreshTests {
         /// The import case: the oldest day lands first, as the top section, so its
         /// header is drawn blank; a newer day then lands above it.
-        @Test func aHeaderThatWasTheFirstSectionDrawsItsDayOnceANewerDayLandsAbove() {
+        @Test func aHeaderThatWasTheFirstSectionDrawsItsDayOnceANewerDayLandsAbove() async throws {
             let harness = DayHeaderHarness()
             let older = harness.ids(prefix: "older", count: 4)
             let newer = harness.ids(prefix: "newer", count: 2)
 
-            harness.apply(older.map { ($0, DayHeaderHarness.olderDay) })
-            harness.apply(
+            try await harness.apply(older.map { ($0, DayHeaderHarness.olderDay) })
+            try await harness.apply(
                 newer.map { ($0, DayHeaderHarness.newerDay) }
                     + older.map { ($0, DayHeaderHarness.olderDay) }
             )
@@ -26,22 +26,48 @@ extension AppKitWindowTests {
             #expect(harness.header(section: 1) == .map(date: DayHeaderHarness.olderDay, itemCount: 4))
         }
 
-        @Test func aHeaderOnScreenDrawsTheCountItsDayHasNow() {
+        @Test func aHeaderOnScreenDrawsTheCountItsDayHasNow() async throws {
             let harness = DayHeaderHarness()
             let newer = harness.ids(prefix: "newer", count: 2)
             let older = harness.ids(prefix: "older", count: 4)
 
-            harness.apply(
+            try await harness.apply(
                 newer.map { ($0, DayHeaderHarness.newerDay) }
                     + older.prefix(2).map { ($0, DayHeaderHarness.olderDay) }
             )
             #expect(harness.header(section: 1) == .map(date: DayHeaderHarness.olderDay, itemCount: 2))
 
-            harness.apply(
+            try await harness.apply(
                 newer.map { ($0, DayHeaderHarness.newerDay) }
                     + older.map { ($0, DayHeaderHarness.olderDay) }
             )
             #expect(harness.header(section: 1) == .map(date: DayHeaderHarness.olderDay, itemCount: 4))
+        }
+
+        /// ARC-023: the snapshot is built off the main actor inside the one in-flight slot.
+        /// Until the build lands nothing on screen changes, and a grid arriving meanwhile
+        /// parks and is applied after it, never instead of it or alongside it.
+        @Test func aGridArrivingWhileTheSnapshotBuildsIsAppliedAfterIt() async throws {
+            let harness = DayHeaderHarness()
+            let older = harness.ids(prefix: "older", count: 4)
+            let newer = harness.ids(prefix: "newer", count: 2)
+            let first = older.map { ($0, DayHeaderHarness.olderDay) }
+            let second = newer.map { ($0, DayHeaderHarness.newerDay) } + first
+
+            harness.receive(first)
+            #expect(harness.controller.mutationGate.inFlight == .structuralApply)
+            #expect(harness.controller.dataSource.snapshot().numberOfItems == 0)
+            harness.receive(second)
+            #expect(harness.controller.mutationGate.stallDiagnosticFields["pendingGrid"] == "true")
+
+            try await awaitGridApply(harness.controller, expectedIDs: second.map(\.0))
+            let applied = harness.controller.dataSource.snapshot()
+            #expect(applied.itemIdentifiers == second.map(\.0))
+            #expect(applied.numberOfSections == 2)
+            #expect(harness.controller.appliedDaySections == [
+                MediaGridDayBarPolicy.Day(date: DayHeaderHarness.newerDay, itemCount: 2),
+                MediaGridDayBarPolicy.Day(date: DayHeaderHarness.olderDay, itemCount: 4),
+            ])
         }
     }
 }
@@ -75,17 +101,23 @@ private final class DayHeaderHarness {
         }
     }
 
-    /// One structural apply of `entries` in order, each with its day bucket, then the
-    /// layout pass that puts the result on screen.
-    func apply(_ entries: [(MediaAssetID, Date)]) {
-        controller.applyStructure(
+    /// Hands the controller a grid of `entries` in order, each with its day bucket, as the
+    /// view model does.
+    func receive(_ entries: [(MediaAssetID, Date)]) {
+        controller.receive(
             CatalogMediaGridState(
                 scope: .allMedia,
                 orderedAssetIDs: entries.map(\.0),
                 dayBuckets: entries.map(\.1)
-            ),
-            change: .unchanged
+            )
         )
+    }
+
+    /// One structural apply of `entries` through the controller's gate, then the layout
+    /// pass that puts the result on screen.
+    func apply(_ entries: [(MediaAssetID, Date)]) async throws {
+        receive(entries)
+        try await awaitGridApply(controller, expectedIDs: entries.map(\.0))
         controller.view.layoutSubtreeIfNeeded()
         controller.collectionView.layoutSubtreeIfNeeded()
     }

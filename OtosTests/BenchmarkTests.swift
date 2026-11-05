@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 @testable import OtosKit
 import Testing
@@ -42,6 +43,33 @@ struct BenchmarkTests {
             #expect(!SamePhotoPolicy.candidatePairs(candidates, excluding: []).isEmpty)
         }
         await store.shutdown()
+    }
+
+    /// The pure half of a grid structural apply, which the user waits for on every switch of
+    /// view: a library of 15,000 photos taken ten a day over 1,500 days, the shape of several
+    /// years, where AppKit's snapshot build grows with days × items.
+    @Test func gridCases() async throws {
+        let dayCount = 1500, perDay = 10
+        let ids = (0 ..< dayCount * perDay).map { index in
+            MediaAssetID(
+                libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
+                relativePath: MediaRelativePath(rawValue: "DCIM/IMG_\(index).HEIC")
+            )
+        }
+        let days = (0 ..< dayCount * perDay).map { index in
+            Optional(Date(timeIntervalSince1970: Double(dayCount - index / perDay) * 86400))
+        }
+        let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids, dayBuckets: days)
+        try await Benchmark.measure("grid.structureBuild.days1500") {
+            let built = await MediaGridViewController.buildStructure(
+                for: grid,
+                descriptorChanged: true,
+                previousOrderedIDs: [],
+                previousOrderedIDSet: []
+            )
+            #expect(built.daySections.count == dayCount)
+            #expect(built.snapshot.numberOfItems == ids.count)
+        }
     }
 
     /// The Swift around Auto straighten's and Auto crop's models, which runs per photo opened in

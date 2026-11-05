@@ -129,7 +129,7 @@ final class MediaGridViewController: NSViewController {
     /// list (`mediaSnapshot(for:)`), not from this type — nulls land wherever
     /// SQLite's `ORDER BY` places them, contiguously, and the walk groups
     /// whatever run it finds.
-    enum Section: Hashable {
+    nonisolated enum Section: Hashable {
         case ungrouped
         case day(Date?)
     }
@@ -147,7 +147,7 @@ final class MediaGridViewController: NSViewController {
     /// Per-section day facts for the snapshot currently applied, in section order;
     /// `nil` marks an `.ungrouped` section, which names no day.
     ///
-    /// Written by `mediaSnapshot(for:)` in the same synchronous region that applies
+    /// Written by `commitStructure` in the same synchronous region that applies
     /// the snapshot, so the layout and this array are never separately observable.
     /// It exists because the alternative — asking the data source, whose only route
     /// to section identifiers is `dataSource.snapshot()` — copies the whole applied
@@ -165,6 +165,9 @@ final class MediaGridViewController: NSViewController {
     var tileContents: TileContentStore = .init()
     /// Last applied reorganization remap epoch from SwiftUI (ARC-051).
     private(set) var detailQueryTask: Task<Void, Never>?
+    /// The off-main snapshot build of the structural apply in flight
+    /// (`applyStructure`). At most one, by the mutation gate's exclusivity.
+    var structureBuildTask: Task<Void, Never>?
     private var detailQueryGeneration = 0
     /// In-flight decode keys `"id|imageKey"` owned by the controller, not the tile.
     private var inFlightDecodes = Set<String>()
@@ -316,6 +319,7 @@ final class MediaGridViewController: NSViewController {
     }
 
     deinit {
+        structureBuildTask?.cancel()
         detailQueryTask?.cancel()
         preheatTask?.cancel()
         scrollCoalesceTask?.cancel()
