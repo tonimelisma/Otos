@@ -6,6 +6,7 @@ extension MediaGridViewController {
     struct StructuralApplyCompletionContext {
         let grid: CatalogMediaGridState
         let change: MediaGridMutationGate.QueryChange
+        /// When the gate admitted the apply, so `applyMs` includes the off-main build.
         let applyStart: ContinuousClock.Instant
         let applyCallStart: ContinuousClock.Instant
         let diffPolicyMs: Int
@@ -21,30 +22,92 @@ extension MediaGridViewController {
         let signpost: OSSignpostIntervalState
     }
 
+    /// Everything a structural apply needs that is a pure function of values: the diffable
+    /// snapshot, the day facts of its sections, and the diff summary against what is on
+    /// screen. Built off the main actor by `buildStructure`, applied on it by
+    /// `commitStructure`.
+    ///
+    /// Not `Sendable`: AppKit's snapshot is not. It crosses back to the main actor as a
+    /// `sending` result, which the compiler accepts only because nothing else holds it.
+    nonisolated struct BuiltStructure {
+        let snapshot: NSDiffableDataSourceSnapshot<Section, MediaAssetID>
+        let daySections: [MediaGridDayBarPolicy.Day?]
+        let summary: MediaGridStructuralApplyPolicy
+        let diffPolicyMs: Int
+        let snapshotBuildMs: Int
+    }
+
+    /// The gate's `.apply` for `grid`. The gate has already marked the structural apply in
+    /// flight, so until `completeStructuralApply` drains it no other exclusive mutation runs
+    /// and `displayedOrderedIDs` does not change: the values handed to the build are still
+    /// the ones on screen when its result is committed, and a grid arriving meanwhile parks
+    /// as the gate's pending grid, applied after this one.
+    ///
+    /// The snapshot is built off the main actor because AppKit's snapshot copies its whole
+    /// item set on every `appendItems`, and a day-grouped grid appends once per day: the
+    /// build grows with days × items (`docs/research/2026-11-04-grid-snapshot-build-off-main.md`).
+    /// One build at a time, by the gate's exclusivity; the task is cancelled only at teardown,
+    /// and a cancelled build is never applied.
     func applyStructure(
         _ grid: CatalogMediaGridState,
         change: MediaGridMutationGate.QueryChange
     ) {
-        let operation = stallMonitor?.beginOperation("MediaGridViewController.applyStructure")
         let applyStart = ContinuousClock.now
-        let policyStart = applyStart
+        let previousOrderedIDs = mutationGate.displayedOrderedIDs
+        let previousOrderedIDSet = mutationGate.displayedOrderedIDSet
+        let descriptorChanged = change != .unchanged
+        structureBuildTask = Task { [weak self, grid, change, previousOrderedIDs, previousOrderedIDSet] in
+            let built = await Self.buildStructure(
+                for: grid,
+                descriptorChanged: descriptorChanged,
+                previousOrderedIDs: previousOrderedIDs,
+                previousOrderedIDSet: previousOrderedIDSet
+            )
+            guard let self, !Task.isCancelled else {
+                return
+            }
+            structureBuildTask = nil
+            commitStructure(built, grid: grid, change: change, applyStart: applyStart)
+        }
+    }
+
+    /// The pure half of a structural apply, off the main actor.
+    @concurrent
+    nonisolated static func buildStructure(
+        for grid: CatalogMediaGridState,
+        descriptorChanged: Bool,
+        previousOrderedIDs: [MediaAssetID],
+        previousOrderedIDSet: Set<MediaAssetID>
+    ) async -> sending BuiltStructure {
+        let policyStart = ContinuousClock.now
         let summary = MediaGridStructuralApplyPolicy.summarize(
-            previousOrderedIDs: mutationGate.displayedOrderedIDs,
-            previousOrderedIDSet: mutationGate.displayedOrderedIDSet,
+            previousOrderedIDs: previousOrderedIDs,
+            previousOrderedIDSet: previousOrderedIDSet,
             nextOrderedIDs: grid.orderedAssetIDs,
-            descriptorChanged: change != .unchanged
+            descriptorChanged: descriptorChanged
         )
         let diffPolicyMs = DiagnosticsTiming.milliseconds(since: policyStart)
-
-        // Identity order is the complete structural contract. Tile details are
-        // read for visible identities after the structural apply, so thumbnail
-        // or video-badge changes never require this O(n) diffable snapshot path.
-        // Selection truth lives in the ViewModel and is already pruned/cleared in
-        // `applyState` before this apply runs; completion only renders the model.
         let snapshotStart = ContinuousClock.now
-        let snapshot = mediaSnapshot(for: grid)
-        let snapshotBuildMs = DiagnosticsTiming.milliseconds(since: snapshotStart)
+        let (snapshot, daySections) = mediaSnapshot(for: grid)
+        return BuiltStructure(
+            snapshot: snapshot,
+            daySections: daySections,
+            summary: summary,
+            diffPolicyMs: diffPolicyMs,
+            snapshotBuildMs: DiagnosticsTiming.milliseconds(since: snapshotStart)
+        )
+    }
 
+    /// The AppKit half of a structural apply, on the main actor and synchronous from here
+    /// to the apply call, so the scroll anchor is read from the layout the apply replaces.
+    private func commitStructure(
+        _ built: BuiltStructure,
+        grid: CatalogMediaGridState,
+        change: MediaGridMutationGate.QueryChange,
+        applyStart: ContinuousClock.Instant
+    ) {
+        let operation = stallMonitor?.beginOperation("MediaGridViewController.applyStructure")
+        let summary = built.summary
         let scrollAnchor = captureScrollAnchor(change: change, nextOrderedIDs: grid.orderedAssetIDs)
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")
         logStartedStructuralApply(grid, change: change, anchor: scrollAnchor, summary: summary)
@@ -57,8 +120,8 @@ extension MediaGridViewController {
             change: change,
             applyStart: applyStart,
             applyCallStart: applyCallStart,
-            diffPolicyMs: diffPolicyMs,
-            snapshotBuildMs: snapshotBuildMs,
+            diffPolicyMs: built.diffPolicyMs,
+            snapshotBuildMs: built.snapshotBuildMs,
             insertedCount: summary.insertedCount,
             removedCount: summary.removedCount,
             reorderOnly: summary.reorderOnly,
@@ -82,17 +145,22 @@ extension MediaGridViewController {
                 stallMonitor: stallMonitor
             )
         }
+        // Assigned beside the apply, not in its completion: `dataSource.apply` updates the
+        // layout synchronously and only *animates* items to their new frames (see
+        // `restoreScrollAnchor`), and nothing suspends between this line and that call, so
+        // no reader can observe this array and the layout disagreeing.
+        appliedDaySections = built.daySections
         applySnapshot(
-            snapshot,
+            built.snapshot,
             summary: summary,
             animationSuppressed: animationSuppressed,
             scrollAnchor: scrollAnchor,
             completion: completion
         )
         // Here rather than in the completion: the apply has already placed every surviving
-        // header at its new section (`mediaSnapshot` documents why the layout is current
-        // on return), and an animated apply's completion lands only after the motion, so a
-        // header would show its old day for the length of it.
+        // header at its new section (`appliedDaySections` above documents why the layout is
+        // current on return), and an animated apply's completion lands only after the
+        // motion, so a header would show its old day for the length of it.
         renderVisibleDayHeaders()
     }
 
@@ -356,9 +424,9 @@ extension MediaGridViewController {
     /// go stale (`MediaGridStructuralApplyPolicy.summarize`, which does drive
     /// real diffing, works entirely off the flat ID list and needs no
     /// day-bucket awareness of its own).
-    private func mediaSnapshot(
+    nonisolated static func mediaSnapshot(
         for grid: CatalogMediaGridState
-    ) -> NSDiffableDataSourceSnapshot<Section, MediaAssetID> {
+    ) -> (NSDiffableDataSourceSnapshot<Section, MediaAssetID>, [MediaGridDayBarPolicy.Day?]) {
         var snapshot = NSDiffableDataSourceSnapshot<Section, MediaAssetID>()
         let runs = MediaGridSectionGroupingPolicy.sectionRuns(
             orderedIDs: grid.orderedAssetIDs,
@@ -376,12 +444,7 @@ extension MediaGridViewController {
                 daySections.append(MediaGridDayBarPolicy.Day(date: date, itemCount: run.ids.count))
             }
         }
-        // Recorded here, not in the apply's completion: `dataSource.apply` updates the
-        // layout synchronously and only *animates* items to their new frames (see
-        // `restoreScrollAnchor`), and nothing suspends between this line and that call,
-        // so no reader can observe this array and the layout disagreeing.
-        appliedDaySections = daySections
-        return snapshot
+        return (snapshot, daySections)
     }
 
     func completeStructuralApply(

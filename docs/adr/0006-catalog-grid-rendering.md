@@ -207,7 +207,20 @@ reporting, visible detail queries, and preheat look-ahead coalesce on a trailing
 ~16 ms edge and skip a new detail query when the visible identity list is unchanged,
 matching the enrichment viewport's newest-value delivery and avoiding per-bounds-tick
 Store cancellation. Permit one structural apply at a time and retain only the latest
-pending grid state. Reset scroll and selection only when the sidebar scope changes; a filter or
+pending grid state. A structural apply has two halves inside that one exclusive slot.
+The pure half — the diff summary against what is on screen, the diffable snapshot, and
+the day facts of its sections — is built off the main actor (`@concurrent`) from values
+copied when the gate admits the apply; the snapshot returns to the main actor as a
+`sending` result, because AppKit's snapshot is not `Sendable` but nothing else holds it.
+The AppKit half — scroll anchor capture, `appliedDaySections`, `dataSource.apply`, the
+anchor restore — then runs synchronously on the main actor. Nothing on screen can change
+between the halves: the gate is in flight, so no other apply or zoom swap runs and a grid
+arriving meanwhile parks. The build is off the main actor because AppKit's snapshot copies
+its whole item set on every `appendItems`, and a day-grouped grid appends once per day, so
+building it costs days × items — about 70 ms for 150 days and 16,869 items, about 400 ms
+for 1,700 days (`docs/research/2026-11-04-grid-snapshot-build-off-main.md`). The apply
+call stays on the main actor and still grows with days: compositional layout re-solves
+every section on a reload, about 0.09 ms per section. Reset scroll and selection only when the sidebar scope changes; a filter or
 sort change keeps the user's place by anchoring on a visible selected tile or the top tile's
 nearest survivor (APP-042); same-descriptor
 structural applies restore surviving selected identities through the minimal
@@ -228,7 +241,8 @@ data-driven change rather than a new rendering mechanism.
 
 ## Consequences
 
-- Media rendering has one narrow MainActor AppKit boundary.
+- Media rendering has one narrow MainActor AppKit boundary. The snapshot a structural
+  apply hands it is built off the main actor; only the apply itself runs on it.
 - SwiftUI remains responsible for window composition and empty-state shell.
 - Collection updates are imperative but isolated and state-machine tested.
 - Same-identity background enrichment or fact-detail updates do not recycle
