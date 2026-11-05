@@ -87,6 +87,12 @@ extension MediaGridViewController {
             descriptorChanged: descriptorChanged
         )
         let diffPolicyMs = DiagnosticsTiming.milliseconds(since: policyStart)
+
+        // Identity order is the complete structural contract. Tile details are
+        // read for visible identities after the structural apply, so thumbnail
+        // or video-badge changes never require this O(n) diffable snapshot path.
+        // Selection truth lives in the ViewModel and is already pruned/cleared in
+        // `applyState` before this apply runs; completion only renders the model.
         let snapshotStart = ContinuousClock.now
         let (snapshot, daySections) = mediaSnapshot(for: grid)
         return BuiltStructure(
