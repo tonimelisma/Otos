@@ -2,29 +2,29 @@ import Foundation
 
 // Duplicates presentation (ADR 0042, `docs/design/duplicates.md`)
 //
-// Pure mappings from the published groups and the session's marks to what the list and
-// the bar draw: every string on the surface is composed here, so the view is passive and
-// the words are testable without a view. The one rule the spec states — the header says
-// what the copies share, the tiles say what differs, and the fate and its reason are
-// stated in words — is these mappings.
+// Pure mappings from the published groups and the session's picks and rules to what the
+// list and the bar draw: a rule row for each folder that holds duplicates, then each group
+// as its date and why it keeps what it keeps over its copies' photos, each tagged Keep or
+// Trash. Every string on the surface is composed here, so the view is passive and the
+// words are testable without a view.
 
 /// What the duplicates bar draws (DES-018): *what* (L1 over one L3 clause) · *the middle
-/// zone* (the receipt of the last act, the groups that wait, or the legend) · *the act*.
+/// zone* (the receipt of the last move, the groups that wait, or the legend) · *the act*.
 nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
     enum Middle: Equatable, Sendable {
-        /// What the last act moved, with Undo while it is the window's last change, over
+        /// What the last move hid, with Undo while it is the window's last change, over
         /// what the user does next to get the space.
         case receipt(line: String, detail: String, canUndo: Bool)
         /// `6 photos need your choice`, beside Show.
         case choices(String)
-        /// What the marks mean, while nothing waits and nothing was just moved.
+        /// How to choose, while nothing waits and nothing was just moved.
         case legend(String)
     }
 
-    static let legend = "Checked copies stay. Dimmed copies go to the Trash; Undo brings them back."
+    static let legend = "Click a photo to keep it, or set a rule for a whole folder above."
 
     let primaryLine: String
-    /// `178 extra copies to move · 53.2 GB`: what the act moves, the count the button
+    /// `221 copies go to the Trash · 53.9 GB`: what the act moves, the count the button
     /// repeats and the bytes it does not carry; nil, drawn as blank space at the same
     /// height, while nothing moves (DES-053).
     let secondaryLine: String?
@@ -44,7 +44,7 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
         let moving = tally.itemsToMove.count
         let secondary: String? = if moving > 0 {
             [
-                "\(moving) extra \(moving == 1 ? "copy" : "copies") to move",
+                "\(moving) \(moving == 1 ? "copy goes" : "copies go") to the Trash",
                 ImportBarByteFormat.phrase(tally.bytesToMove),
             ].compactMap(\.self).joined(separator: " · ")
         } else {
@@ -54,7 +54,7 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
         let middle: Middle = if let receipt {
             .receipt(
                 line: [
-                    "\(receipt.movedCount) extra \(receipt.movedCount == 1 ? "copy" : "copies") moved to the Trash",
+                    "\(receipt.movedCount) \(receipt.movedCount == 1 ? "copy" : "copies") moved to the Trash",
                     ImportBarByteFormat.phrase(receipt.bytes),
                 ].compactMap(\.self).joined(separator: " · "),
                 detail: "Empty the Trash in Finder to free the space",
@@ -71,191 +71,228 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
             middle: middle,
             // DES-036: the count is the new information the click commits to; disabled, the
             // title keeps its place and says what it would do (DES-053).
-            actionTitle: moving > 0 ? "Move \(moving) Extra \(moving == 1 ? "Copy" : "Copies") to Trash" : "Move Extra Copies to Trash",
+            actionTitle: moving > 0 ? "Move \(moving) \(moving == 1 ? "Copy" : "Copies") to Trash" : "Move Copies to Trash",
             actionEnabled: moving > 0
         )
     }
 }
 
-/// A copy's fate as its tile states it: the checkbox, and a face drawn bright or dimmed
-/// (DES-029: never colour alone).
-nonisolated enum DuplicateCopyFate: Equatable, Sendable {
-    /// Checked: the copy stays.
-    case stays
-    /// Unchecked: the copy moves with the act.
-    case movesToTrash
-    /// The group waits: the tile offers `Keep This Copy` instead of a checkbox, so the
-    /// first click means keep, never un-keep.
-    case choice
+/// A folder's name as the list shows it: the folder inside its library, and the library's
+/// name too when the list spans libraries.
+nonisolated enum DuplicateFolderName {
+    static func string(_ folder: DuplicateFolder, withLibrary: Bool) -> String {
+        let inside = folder.folder.isEmpty ? folder.libraryDisplayName : folder.folder
+        guard withLibrary, !folder.folder.isEmpty else {
+            return inside
+        }
+        return "\(folder.libraryDisplayName) ▸ \(inside)"
+    }
 }
 
-/// One tile of a group's strip: what differs about this copy, and its fate.
+/// One rule row: a folder (or two) that holds duplicates, how many, and the rule for all of
+/// them as a segmented choice.
+nonisolated struct DuplicateFolderRulePresentation: Equatable, Sendable, Identifiable {
+    struct Option: Equatable, Sendable {
+        let rule: DuplicateFolderRule
+        let title: String
+    }
+
+    let folderSet: DuplicateFolderSet
+    /// `2026/08 and Imports/Aug 2026`, or `2026/10`.
+    let title: String
+    /// `412 photos in both`, `38 photos saved twice in this folder`.
+    let detail: String
+    /// `Keep the copies in`, `Keep the`.
+    let prompt: String
+    let options: [Option]
+    let selected: DuplicateFolderRule
+    var id: DuplicateFolderSet {
+        folderSet
+    }
+
+    static func map(
+        _ summary: DuplicateFolderSetSummary,
+        rule: DuplicateFolderRule?,
+        noun: DuplicateItemNoun,
+        withLibrary: Bool
+    ) -> DuplicateFolderRulePresentation {
+        let folders = summary.folderSet.folders
+        let names = folders.map { DuplicateFolderName.string($0, withLibrary: withLibrary) }
+        let count = summary.groupCount
+        let things = "\(count) \(noun.string(count: count))"
+        if folders.count == 2 {
+            let spansLibraries = folders[0].library != folders[1].library
+            return DuplicateFolderRulePresentation(
+                folderSet: summary.folderSet,
+                title: "\(names[0]) and \(names[1])",
+                detail: "\(things) in both",
+                prompt: "Keep the copies in",
+                options: [
+                    Option(rule: .folder(folders[0]), title: names[0]),
+                    Option(rule: .folder(folders[1]), title: names[1]),
+                    // Across libraries the keeper rule keeps each library's copy.
+                    Option(rule: .automatic, title: spansLibraries ? "Both" : "Otos decides"),
+                ],
+                selected: rule ?? .automatic
+            )
+        }
+        return DuplicateFolderRulePresentation(
+            folderSet: summary.folderSet,
+            title: names.first ?? "",
+            detail: "\(things) saved twice in this folder",
+            prompt: "Keep the",
+            options: [
+                Option(rule: .automatic, title: "Best copy"),
+                Option(rule: .originalName, title: "Original name"),
+                Option(rule: .oldest, title: "Oldest"),
+                Option(rule: .largest, title: "Largest"),
+            ],
+            selected: rule ?? .automatic
+        )
+    }
+}
+
+/// A copy's fate as its photo shows it: a tag, and a face drawn bright or dimmed (DES-029:
+/// a word and a glyph, never colour alone).
+nonisolated enum DuplicateCopyFate: Equatable, Sendable {
+    case keep
+    case trash
+    /// The group waits for a click: its copies hold work no rule decides between.
+    case undecided
+}
+
+/// One copy's photo: its fate, its size over the picture, and the rest in its tooltip.
 nonisolated struct DuplicateCopyTilePresentation: Equatable, Sendable, Identifiable {
     let id: MediaAssetID
     let kind: MediaKind?
-    /// The part of the location the header did not state (L2).
-    let primary: String
-    /// The facts that differ within the group, then the copy's own marks (L3); nil when
-    /// there is nothing to say, drawn as a blank line so every tile has one height.
-    let secondary: String?
     let fate: DuplicateCopyFate
-    /// Whether unchecking changes a mark: another copy stays kept, or the pair's other copy
-    /// takes over. False only on the last kept copy of a group of three or more.
-    let canUnkeep: Bool
-    /// What VoiceOver reads: what differs, the fate, then the facts (DES-082).
+    /// The size, at the precision that tells this group's copies apart (DES-005A).
+    let size: String?
+    let choice: MediaChoice
+    /// Where it is and what it is, for the tooltip.
+    let help: String
+    /// What VoiceOver reads: the file, its fate, then the facts (DES-082).
     let accessibilityLabel: String
 }
 
-/// One group as the list draws it: the header (title, shared facts, decision), its
-/// controls, and the strip of its copies — or, kept, one quiet header with Review Again.
+/// One group as the list draws it: its date and why it keeps what it keeps, over its
+/// photos; kept, `Kept all N copies` with Review Again.
 nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable {
     let id: DuplicateGroupID
-    /// `2 identical videos`, `3 files of one photo`; kept, `Kept both copies`.
+    /// The capture date: `October 4, 2026`.
     let title: String
-    /// The facts every copy shares, with the shared location last; nil when none is known.
-    let sharedFacts: String?
-    /// What Otos will do and why, or what the user must choose; nil for a kept group,
-    /// whose title says it.
-    let decision: String?
-    let showsCompare: Bool
-    /// `Keep Both Copies` / `Keep All Copies`; nil when kept, where `Review Again` stands.
-    let keepAllTitle: String?
+    /// `2026/10 · Keeping the original name`, `You chose this one`, or what to choose.
+    let reason: String
     let isKept: Bool
     let tiles: [DuplicateCopyTilePresentation]
-    /// What VoiceOver reads for the header: the date first, since it is what tells one group
-    /// from the next (DES-082), then the title, the facts and the decision, with words for
-    /// the glyphs.
     let accessibilityLabel: String
 
     static func map(
         _ group: DuplicateGroup,
         session: DuplicatesSession,
+        withLibrary: Bool = false,
         calendar: Calendar = .current
     ) -> DuplicateGroupPresentation {
         let copies = group.copies
-        let isSamePhoto = group.id.isSamePhoto
         let count = copies.count
-        let noun = DuplicateItemNoun.covering(copies.map(\.kind))
-        let location = DuplicateLocationSplit(copies: copies)
-        let dates = DuplicateDateFormat(calendar: calendar)
-        let facts = DuplicateSharedFacts(copies: copies)
-        let kind = isSamePhoto ? "\(count) files of one photo" : "\(count) identical \(noun.string(count: count))"
-        let taken = group.captureDate.map { "Captured \(dates.string(for: $0))" }
-
-        var shared: [String] = []
-        if let taken {
-            shared.append(taken)
-        }
+        let title = group.captureDate.map {
+            $0.formatted(Date.FormatStyle(date: .long, time: .omitted, calendar: calendar))
+        } ?? "No Date"
         if group.isKept {
-            shared.append(kind)
-        }
-        // The size first: it is the fact a reader uses; the format and pixels qualify it.
-        // Off the header when the shown size hides a difference the tiles must show.
-        if let size = facts.sharedSize, !facts.bytesDifferBelowShownPrecision {
-            shared.append(count > 1 ? "\(size) each" : size)
-        }
-        if let format = facts.sharedFormat {
-            shared.append(format)
-        }
-        if let dimensions = facts.sharedDimensions {
-            shared.append(dimensions)
-        }
-        if let header = location.header {
-            shared.append(header)
-        }
-        let sharedFacts = shared.isEmpty ? nil : shared.joined(separator: " · ")
-        let spokenFacts = shared.filter { $0 != taken }.map(spoken)
-
-        if group.isKept {
-            let title = count == 2 ? "Kept both copies" : "Kept all \(count) copies"
+            let note = count == 2 ? "Kept both copies" : "Kept all \(count) copies"
             return DuplicateGroupPresentation(
-                id: group.id, title: title, sharedFacts: sharedFacts, decision: nil,
-                showsCompare: false, keepAllTitle: nil, isKept: true, tiles: [],
-                accessibilityLabel: ([taken, title].compactMap(\.self) + spokenFacts).joined(separator: ", ")
+                id: group.id, title: title, reason: note, isKept: true, tiles: [],
+                accessibilityLabel: "\(title), \(note)"
             )
         }
+        let resolution = session.resolution(of: group)
+        let folders = DuplicateFolderSet(group).folders
+        let place = folders.count == 1 ? DuplicateFolderName.string(folders[0], withLibrary: withLibrary) : nil
+        let why: String = if let resolution {
+            reasonText(resolution, in: group, withLibrary: withLibrary)
+        } else if case let .waits(conflict) = group.default {
+            waitingText(conflict)
+        } else {
+            ""
+        }
+        let reason = [place, why].compactMap(\.self).filter { !$0.isEmpty }.joined(separator: " · ")
 
-        let kept = copies.filter { session.keeps($0.id, in: group) }.map(\.id)
-        let decision = decision(for: group, session: session, keptCount: kept.count, isSamePhoto: isSamePhoto)
-        let carries = session.carries(in: group)
-        let sizes = DuplicateSharedFacts.distinguishingSizes(of: copies)
+        let dates = DuplicateDateFormat(calendar: calendar)
+        let sizes = DuplicateTileFacts.distinguishingSizes(of: copies)
+        let births = copies.compactMap(\.createdAt)
         let tiles = copies.map { copy -> DuplicateCopyTilePresentation in
-            let fate: DuplicateCopyFate = if session.needsChoice(group) {
-                .choice
+            let fate: DuplicateCopyFate = if let resolution {
+                resolution.keep.contains(copy.id) ? .keep : .trash
             } else {
-                session.keeps(copy.id, in: group) ? .stays : .movesToTrash
+                .undecided
             }
-            let carried = Set(carries.filter { $0.from == copy.id }.map(\.work))
-            let tileFacts = tileFacts(
-                copy, in: group, fate: fate, carried: carried, shared: facts, sizes: sizes, dates: dates
-            )
-            let primary = location.remainder(for: copy)
+            var facts: [String] = []
+            if let dimensions = DuplicateTileFacts.dimensions(of: copy) {
+                facts.append(dimensions)
+            }
+            if let size = sizes[copy.id] {
+                facts.append(size)
+            }
+            if let born = copy.createdAt, Set(births).count > 1 {
+                facts.append("File created \(dates.string(for: born, among: births))")
+            }
+            if group.cameraOriginals.contains(copy.id), group.cameraOriginals.count < count {
+                facts.append("Camera original")
+            }
+            switch copy.mediaChoice {
+            case .liked: facts.append("Liked")
+            case .disliked: facts.append("Disliked")
+            case .notRated: break
+            }
+            if copy.isEdited {
+                facts.append("Edited in Otos")
+            }
+            if copy.hasCompanions {
+                facts.append("Has an .xmp or .srt file")
+            }
+            let location = "\(copy.libraryDisplayName) ▸ \(copy.id.relativePath.rawValue)"
             let fateWords = switch fate {
-            case .stays: "stays"
-            case .movesToTrash: "moves to Trash"
-            case .choice: "waiting for your choice"
+            case .keep: "keep"
+            case .trash: "goes to the Trash"
+            case .undecided: "not chosen yet"
             }
             return DuplicateCopyTilePresentation(
                 id: copy.id,
                 kind: copy.kind,
-                primary: primary,
-                secondary: tileFacts.isEmpty ? nil : tileFacts.joined(separator: " · "),
                 fate: fate,
-                canUnkeep: session.canUnkeep(copy.id, in: group),
-                accessibilityLabel: ([primary, fateWords] + tileFacts).joined(separator: ", ")
+                size: sizes[copy.id],
+                choice: copy.mediaChoice,
+                help: ([location] + [facts.joined(separator: " · ")].filter { !$0.isEmpty }).joined(separator: "\n"),
+                accessibilityLabel: ([copy.id.relativePath.fileName, fateWords] + facts).joined(separator: ", ")
             )
         }
-
         return DuplicateGroupPresentation(
             id: group.id,
-            title: kind,
-            sharedFacts: sharedFacts,
-            decision: decision,
-            // Compare is for pictures that differ; identical copies have one picture, which
-            // Return and double-click open.
-            showsCompare: isSamePhoto,
-            keepAllTitle: count == 2 ? "Keep Both Copies" : "Keep All Copies",
+            title: title,
+            reason: reason,
             isKept: false,
             tiles: tiles,
-            accessibilityLabel: ([taken, kind].compactMap(\.self) + spokenFacts + [decision]).joined(separator: ", ")
+            accessibilityLabel: [title, reason].filter { !$0.isEmpty }.joined(separator: ", ")
         )
     }
 
-    /// Words for the glyphs a fact line draws, so VoiceOver reads facts rather than symbols.
-    private static func spoken(_ fact: String) -> String {
-        fact.replacingOccurrences(of: " × ", with: " by ").replacingOccurrences(of: " ▸ ", with: ", folder ")
-    }
-
-    /// The decision line (`docs/design/duplicates.md`, "The decision line"): one clause,
-    /// computed from the default and the marks.
-    private static func decision(
-        for group: DuplicateGroup,
-        session: DuplicatesSession,
-        keptCount: Int,
-        isSamePhoto: Bool
-    ) -> String {
-        let copyNoun = isSamePhoto ? "file" : "copy"
-        let plural = isSamePhoto ? "files" : "copies"
-        let spansLibraries = Set(group.copies.map(\.id.libraryRootPath)).count > 1
-        switch group.default {
-        case .kept:
-            // Unreachable: a kept group's card has no decision line (`map` returns first).
-            return "Kept every \(copyNoun)"
-        case let .waits(conflict):
-            if session.hasChosen(in: group) {
-                return keptCount == 1 ? "Keeping the \(copyNoun) you chose" : "Keeping the \(plural) you chose"
+    /// Why the group keeps what it keeps, in words: the click, the folder's rule, or the
+    /// keeper rule's deciding criterion.
+    private static func reasonText(_ resolution: DuplicateResolution, in group: DuplicateGroup, withLibrary: Bool) -> String {
+        let copyNoun = group.id.isSamePhoto ? "file" : "copy"
+        switch resolution.reason {
+        case .picked:
+            return "You chose this one"
+        case let .rule(rule):
+            switch rule {
+            case .automatic: return ""
+            case let .folder(folder):
+                return "Keeping the \(copyNoun) in \(DuplicateFolderName.string(folder, withLibrary: withLibrary)), as the folder rule says"
+            case .originalName: return "Keeping the original name, as the folder rule says"
+            case .oldest: return "Keeping the oldest, as the folder rule says"
+            case .largest: return "Keeping the largest, as the folder rule says"
             }
-            let library = group.copies.first { $0.id.libraryRootPath == conflict.library }?.libraryDisplayName
-            let place = spansLibraries && library != nil ? " in \(library!)" : ""
-            switch conflict.kind {
-            case .edits: return "Choose which edited \(copyNoun)\(place) to keep"
-            case .companions: return "Choose which \(copyNoun) with an .xmp or .srt file\(place) to keep"
-            case .choices: return "Choose the liked or the disliked \(copyNoun)\(place) to keep"
-            }
-        case let .keep(ids, reason):
-            if session.hasChosen(in: group) {
-                return keptCount == 1 ? "Keeping the \(copyNoun) you chose" : "Keeping the \(plural) you chose"
-            }
+        case let .automatic(reason):
             switch reason {
             case .eachLibrary:
                 return "Keeping one \(copyNoun) in each library"
@@ -267,118 +304,32 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
                 case .largestFile: return "Keeping the largest file"
                 case .edited: return "Keeping the \(copyNoun) edited in Otos"
                 case .rated:
-                    let keptCopy = group.copies.first { ids.contains($0.id) }
-                    return keptCopy?.mediaChoice == .disliked
+                    let kept = group.copies.first { resolution.keep.contains($0.id) }
+                    return kept?.mediaChoice == .disliked
                         ? "Keeping the \(copyNoun) you disliked"
                         : "Keeping the \(copyNoun) you liked"
-                case .originalName: return "Keeping the original file name"
+                case .originalName: return "Keeping the original name"
                 case .earliestBirth: return "Keeping the older file"
-                case .pathOrder:
-                    // A tie-break is not a merit: say why it does not matter which.
-                    let sharesFolder = Set(group.copies.map(\.folder)).count == 1
-                    let order = sharesFolder ? "the first by name" : "the first by folder and name"
-                    return isSamePhoto
-                        ? "Nothing told them apart, so keeping \(order)"
-                        : "Alike in every way, so keeping \(order)"
+                case .pathOrder: return "Alike in every way, so keeping the first by name"
                 }
             }
         }
     }
 
-    /// The tile's L3: the facts that differ within the group, then the copy's own marks and
-    /// where its work goes — onto the kept copy when the act carries it (`carried`), else
-    /// to the Trash with the file.
-    private static func tileFacts(
-        _ copy: DuplicateCopy,
-        in group: DuplicateGroup,
-        fate: DuplicateCopyFate,
-        carried: Set<DuplicateCarry.Work>,
-        shared: DuplicateSharedFacts,
-        sizes: [MediaAssetID: String],
-        dates: DuplicateDateFormat
-    ) -> [String] {
-        var facts: [String] = []
-        let copies = group.copies
-        if shared.sharedFormat == nil, let format = DuplicateSharedFacts.format(of: copy) {
-            facts.append(format)
+    /// What a group whose copies hold work that cannot be combined asks for.
+    private static func waitingText(_ conflict: DuplicateWorkConflict) -> String {
+        switch conflict.kind {
+        case .edits: "The copies have different edits: click the one to keep"
+        case .companions: "More than one copy has an .xmp or .srt file: click the one to keep"
+        case .choices: "The copies are liked and disliked: click the one to keep"
         }
-        if shared.sharedDimensions == nil, let dimensions = DuplicateSharedFacts.dimensions(of: copy) {
-            facts.append(dimensions)
-        }
-        if shared.sharedSize == nil || shared.bytesDifferBelowShownPrecision, let size = sizes[copy.id] {
-            facts.append(size)
-        }
-        let births = copies.compactMap(\.createdAt)
-        if Set(births).count > 1, let born = copy.createdAt {
-            facts.append("File created \(dates.string(for: born, among: births))")
-        }
-        // A fact that differs: not when every copy is the camera's own file, and stated for
-        // the other copy too, so no row is left blank beside a fact about its sibling.
-        let everyCopyOriginal = copies.allSatisfy { group.cameraOriginals.contains($0.id) }
-        if !everyCopyOriginal, !group.cameraOriginals.isEmpty {
-            facts.append(group.cameraOriginals.contains(copy.id) ? "Camera original" : "Not the camera original")
-        }
-        let leaving = fate == .movesToTrash
-        switch copy.mediaChoice {
-        case .liked: facts.append(carried.contains(.choice) ? "Liked. Its Like moves to the kept copy" : "Liked")
-        case .disliked:
-            facts.append(carried.contains(.choice) ? "Disliked. Its Dislike moves to the kept copy" : "Disliked")
-        case .notRated: break
-        }
-        if copy.isEdited {
-            if carried.contains(.edit) {
-                facts.append("Edited in Otos. Its edits move to the kept copy")
-            } else if leaving {
-                facts.append("Edited in Otos. Its edits move to the Trash with it")
-            } else {
-                facts.append("Edited in Otos")
-            }
-        }
-        if copy.hasCompanions {
-            facts.append(leaving ? "Its .xmp or .srt file moves to the Trash with it" : "Has an .xmp or .srt file")
-        }
-        return facts
     }
 }
 
-/// The facts a group's copies share, at the precision the list shows (DES-005A), so a
-/// fact goes in the header once or on every tile, never both.
-nonisolated struct DuplicateSharedFacts: Equatable, Sendable {
-    let sharedFormat: String?
-    let sharedDimensions: String?
-    let sharedSize: String?
-    /// Every copy shows the same size, yet their bytes differ: the tiles show the sizes at
-    /// the precision that tells them apart.
-    let bytesDifferBelowShownPrecision: Bool
-
-    init(copies: [DuplicateCopy]) {
-        sharedFormat = Self.shared(copies.map(Self.format(of:)))
-        sharedDimensions = Self.shared(copies.map(Self.dimensions(of:)))
-        sharedSize = Self.shared(copies.map(Self.size(of:)))
-        bytesDifferBelowShownPrecision = sharedSize != nil && Set(copies.map(\.byteSize)).count > 1
-    }
-
-    /// The one value every copy has; nil when any copy lacks it or they differ.
-    private static func shared(_ values: [String?]) -> String? {
-        let present = values.compactMap(\.self)
-        guard present.count == values.count, let first = present.first, present.allSatisfy({ $0 == first }) else {
-            return nil
-        }
-        return first
-    }
-
-    static func format(of copy: DuplicateCopy) -> String? {
-        let format = copy.id.relativePath.fileExtension.uppercased()
-        return format.isEmpty ? nil : format
-    }
-
+nonisolated enum DuplicateTileFacts {
     static func dimensions(of copy: DuplicateCopy) -> String? {
         guard let width = copy.pixelWidth, let height = copy.pixelHeight else { return nil }
         return "\(width) × \(height)"
-    }
-
-    static func size(of copy: DuplicateCopy) -> String? {
-        copy.byteSize.map(ImportBarByteFormat.string(bytes:))
     }
 
     /// Each copy's size at the list's precision, or — when that ties two copies whose bytes
@@ -409,55 +360,6 @@ nonisolated struct DuplicateSharedFacts: Equatable, Sendable {
     }
 }
 
-/// Where a group's copies live, split into what they share (the header) and what each
-/// tile must say. Within one library the header names the deepest folder every copy is in
-/// or under, and each tile the rest of its path — the bare file name when the copy is in
-/// that folder. Across libraries the header names nothing and each tile names its library,
-/// folder and file.
-nonisolated struct DuplicateLocationSplit: Equatable, Sendable {
-    enum Shared: Equatable, Sendable {
-        /// Every copy is in or under this folder of this library ("" for its top).
-        case folder(library: String, folder: String)
-        case nothing
-    }
-
-    let shared: Shared
-
-    init(copies: [DuplicateCopy]) {
-        let libraries = Set(copies.map(\.id.libraryRootPath))
-        guard libraries.count == 1, let first = copies.first else {
-            shared = .nothing
-            return
-        }
-        var common = first.folder.split(separator: "/").map(String.init)
-        for copy in copies.dropFirst() {
-            let parts = copy.folder.split(separator: "/").map(String.init)
-            let kept = zip(common, parts).prefix { $0 == $1 }.count
-            common = Array(common.prefix(kept))
-        }
-        shared = .folder(library: first.libraryDisplayName, folder: common.joined(separator: "/"))
-    }
-
-    /// The header's location line; nil when the copies share no library.
-    var header: String? {
-        switch shared {
-        case let .folder(library, folder): folder.isEmpty ? library : "\(library) ▸ \(folder)"
-        case .nothing: nil
-        }
-    }
-
-    /// What the tile says about this copy's location.
-    func remainder(for copy: DuplicateCopy) -> String {
-        switch shared {
-        case let .folder(_, folder):
-            let path = copy.id.relativePath.rawValue
-            return folder.isEmpty ? path : String(path.dropFirst(folder.count + 1))
-        case .nothing:
-            return "\(copy.libraryDisplayName) ▸ \(copy.id.relativePath.rawValue)"
-        }
-    }
-}
-
 /// The Info pane's date format (`PhotoInfo`): abbreviated date, shortened time. Two birth
 /// times in one minute get their seconds, so the tiles that differ are seen to differ.
 nonisolated struct DuplicateDateFormat {
@@ -472,56 +374,6 @@ nonisolated struct DuplicateDateFormat {
         let collides = others.contains { $0 != date && string(for: $0) == short }
         guard collides else { return short }
         return date.formatted(Date.FormatStyle(date: .abbreviated, time: .standard, calendar: calendar))
-    }
-}
-
-/// A library pair's summary row.
-nonisolated struct DuplicateLibraryPairPresentation: Equatable, Sendable {
-    let pair: DuplicateLibraryPair
-    let firstName: String
-    let secondName: String
-    let title: String
-    /// What the pair's marks will do: nothing, or one library's copies moving; or that the
-    /// user kept both libraries' copies.
-    let state: String
-    let isKept: Bool
-
-    static func map(
-        _ pair: DuplicateLibraryPair,
-        groups: [DuplicateGroup],
-        session: DuplicatesSession
-    ) -> DuplicateLibraryPairPresentation {
-        let copies = groups.flatMap(\.copies)
-        func name(of library: LibraryRootPath) -> String {
-            copies.first { $0.id.libraryRootPath == library }?.libraryDisplayName ?? library.displayName
-        }
-        let firstName = name(of: pair.first)
-        let secondName = name(of: pair.second)
-        let noun = DuplicateItemNoun.covering(copies.map(\.kind)).string(count: groups.count)
-        let title = "\(firstName) and \(secondName) share \(groups.count) \(noun)"
-        let isKept = groups.allSatisfy(\.isKept)
-        var movingByLibrary: [LibraryRootPath: Int] = [:]
-        for group in groups {
-            for id in session.copiesToMove(in: group) {
-                movingByLibrary[id.libraryRootPath, default: 0] += 1
-            }
-        }
-        let state: String = if isKept {
-            "You kept both libraries' copies"
-        } else if movingByLibrary.isEmpty {
-            "Each library keeps its own copy. Nothing moves."
-        } else {
-            movingByLibrary
-                .sorted { $0.key.rawValue < $1.key.rawValue }
-                .map { library, count in
-                    let name = library == pair.first ? firstName : secondName
-                    return "\(count) \(count == 1 ? "copy" : "copies") in \(name) \(count == 1 ? "moves" : "move") to the Trash"
-                }
-                .joined(separator: ". ")
-        }
-        return DuplicateLibraryPairPresentation(
-            pair: pair, firstName: firstName, secondName: secondName, title: title, state: state, isKept: isKept
-        )
     }
 }
 

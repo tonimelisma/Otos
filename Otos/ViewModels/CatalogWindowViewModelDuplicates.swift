@@ -5,13 +5,11 @@ import OSLog
 // Duplicates intents (ADR 0042)
 //
 // Projection publishes the groups on `CatalogWindowState.duplicates` in every scope; this
-// file owns what is specific to working through them: the user's Keep marks and open
-// summaries (`DuplicatesSession`), and the intents — Keep This Copy, Don't Keep This Copy,
-// Keep Only This Copy, Keep All Copies, Review Again, Keep Both Libraries, Keep Only
-// <Library>, Move Extra Copies to Trash, and opening a group. Menu items, buttons and
-// VoiceOver actions all call these. Moving copies goes through `moveMediaToTrash`, the one
-// Move to Trash path, so its undo, its download question and its queue are the ordinary
-// ones.
+// file owns what is specific to working through them: the copy the user clicked in each
+// group and the rule set for each folder (`DuplicatesSession`), and the intents — Keep
+// This Copy, a folder rule, Keep All Copies, Review Again, Move Copies to Trash, and opening
+// a group. Moving copies goes through `moveMediaToTrash`, the one Move to Trash path, so
+// its undo, its download question and its queue are the ordinary ones.
 
 extension CatalogWindowViewModel {
     /// Whether the detail pane is the duplicates list. Read from the published scope
@@ -54,11 +52,11 @@ extension CatalogWindowViewModel {
 
     // MARK: - State
 
-    /// Groups not built yet say nothing about which copies left, so marks stay. The last
-    /// act's receipt is the list's: leaving the list ends it.
+    /// Picks whose copy left are forgotten; the last move's receipt is the list's, so
+    /// leaving the list ends it.
     func applyDuplicatesState(_ next: CatalogWindowState) {
         if let duplicates = next.duplicates {
-            duplicatesSession.forgetMarks(absentFrom: duplicates)
+            duplicatesSession.forgetPicks(absentFrom: duplicates)
         }
         if next.resolvedSidebarSelection != .duplicates, duplicatesSession.receipt != nil {
             duplicatesSession.receipt = nil
@@ -75,9 +73,8 @@ extension CatalogWindowViewModel {
 
     // MARK: - Intents
 
-    /// A click or arrow key on a tile, through the grid's click intent: the list's
-    /// selection is the ordinary media selection, which Photo commands, ⌘⌫ and Undo's
-    /// reveal all read, ranged over the list's own order of copies.
+    /// An arrow key on a photo, through the grid's click intent: the list's selection is
+    /// the ordinary media selection, which Photo commands, ⌘⌫ and Undo's reveal all read.
     func selectDuplicateCopy(_ hit: MediaAssetID?, modifiers: NSEvent.ModifierFlags, orderedIDs: [MediaAssetID]) {
         applyGridClick(hit: hit, modifiers: modifiers, orderedIDs: orderedIDs)
         setFocus(hit)
@@ -89,140 +86,80 @@ extension CatalogWindowViewModel {
             select: { [weak self] hit, modifiers, order in
                 self?.selectDuplicateCopy(hit, modifiers: modifiers, orderedIDs: order)
             },
-            keep: { [weak self] id in self?.setDuplicateKeep(true, for: [id]) },
-            unkeep: { [weak self] id in self?.setDuplicateKeep(false, for: [id]) },
+            keep: { [weak self] id in self?.keepDuplicateCopy(id) },
+            setRule: { [weak self] rule, set in self?.setDuplicateFolderRule(rule, for: set) },
             keepAll: { [weak self] group in self?.keepAllDuplicateCopies([group]) },
-            keepOnly: { [weak self] id in self?.keepOnlyDuplicateCopy(id) },
             reviewAgain: { [weak self] groups in self?.reviewKeptDuplicateGroups(groups) },
-            keepBothLibraries: { [weak self] pair in self?.keepBothLibraries(pair) },
-            keepOnlyLibrary: { [weak self] library, pair in self?.keepOnlyLibrary(library, of: pair) },
-            keepEachLibrary: { [weak self] pair in self?.keepEachLibrary(of: pair) },
-            togglePair: { [weak self] pair in self?.toggleDuplicateLibraryPair(pair) },
             openGroup: { [weak self] in self?.openSelectedDuplicateGroup() },
             openGroupContaining: { [weak self] id in self?.openDuplicateGroup(containing: id) },
-            compareGroup: { [weak self] group in self?.compareDuplicateGroup(group) },
             moveToTrashNow: { [weak self] id in self?.moveMediaToTrash([id]) },
-            moveMarked: { [weak self] in self?.moveMarkedDuplicatesToTrash() },
+            moveAll: { [weak self] in self?.moveDuplicatesToTrash() },
             undoMove: { [weak self] in self?.undoLastChange() },
             revealNeedingChoice: { [weak self] in self?.revealDuplicateGroupNeedingChoice() }
         )
     }
 
-    /// Photo ▸ Keep This Copy: the selected copies are kept.
-    func keepSelectedDuplicateCopies() {
-        setDuplicateKeep(true, for: orderedSelectedAssetIDs)
-    }
-
-    /// Photo ▸ Keep Only This Copy: the selected copy is kept and every other copy of its
-    /// group marked to move.
-    func keepOnlySelectedDuplicateCopy() {
-        guard let id = orderedSelectedAssetIDs.first else {
-            return
-        }
-        keepOnlyDuplicateCopy(id)
-    }
-
-    var canKeepOnlySelectedDuplicateCopy: Bool {
-        showsDuplicatesList && orderedSelectedAssetIDs.count == 1
-            && orderedSelectedAssetIDs.first.flatMap(duplicateGroup(containing:)).map { !$0.isKept } == true
-    }
-
-    func keepOnlyDuplicateCopy(_ id: MediaAssetID) {
+    /// A click on a photo, Space, and Photo ▸ Keep This Copy: this copy stays and the rest
+    /// of its group goes, whatever its folder's rule says.
+    func keepDuplicateCopy(_ id: MediaAssetID) {
         guard let group = duplicateGroup(containing: id), !group.isKept else {
             return
         }
-        duplicatesSession.keepOnly(id, in: group)
+        duplicatesSession.picks[group.id] = id
         duplicatesSession.receipt = nil
-        OtosLog.ui.noticeOperation("duplicates.mark", phase: "keepOnly", fields: [
+        OtosLog.ui.noticeOperation("duplicates.keep", phase: "pick", fields: [
             "copies": "\(group.copies.count)", "kind": group.id.kindName,
         ])
     }
 
-    /// A library pair's Keep Only <Library>: every copy the pair's groups hold in the other
-    /// library is marked to move; the act moves them, under its ordinary count.
-    func keepOnlyLibrary(_ library: LibraryRootPath, of pair: DuplicateLibraryPair) {
-        let groups = state.duplicates?.activeGroups.filter { $0.libraryPair == pair } ?? []
-        guard !groups.isEmpty else {
+    func keepSelectedDuplicateCopy() {
+        guard let id = orderedSelectedAssetIDs.first else {
             return
         }
-        duplicatesSession.keepOnly(library, in: groups)
-        OtosLog.ui.noticeOperation("duplicates.mark", phase: "keepOnlyLibrary", fields: [
-            "groups": "\(groups.count)",
+        keepDuplicateCopy(id)
+    }
+
+    var canKeepSelectedDuplicateCopy: Bool {
+        showsDuplicatesList && orderedSelectedAssetIDs.count == 1
+            && orderedSelectedAssetIDs.first.flatMap(duplicateGroup(containing:)).map { !$0.isKept } == true
+    }
+
+    /// A folder's rule: every group in that folder set keeps what the rule says, except
+    /// the groups whose photo the user clicked. Choosing a rule clears none of those picks.
+    func setDuplicateFolderRule(_ rule: DuplicateFolderRule, for set: DuplicateFolderSet) {
+        duplicatesSession.rules[set] = rule == .automatic ? nil : rule
+        duplicatesSession.receipt = nil
+        OtosLog.ui.noticeOperation("duplicates.keep", phase: "rule", fields: [
+            "folders": "\(set.folders.count)", "rule": "\(rule)",
         ])
     }
 
-    /// A library pair's Keep One Copy in Each Library: the pair's marks return to the
-    /// default, so a Keep Only pick is taken back without the act.
-    func keepEachLibrary(of pair: DuplicateLibraryPair) {
-        let groups = state.duplicates?.activeGroups.filter { $0.libraryPair == pair } ?? []
-        guard !groups.isEmpty else {
+    /// The bar's act: every group's extra copies move to the Trash through the one Move to
+    /// Trash path, carrying their likes and edits onto the kept copy that lacks them.
+    func moveDuplicatesToTrash() {
+        guard let tally = duplicatesTally, !tally.itemsToMove.isEmpty, mediaTrashTask == nil else {
             return
         }
-        duplicatesSession.forgetMarks(in: groups)
-        OtosLog.ui.noticeOperation("duplicates.mark", phase: "keepEachLibrary", fields: [
-            "groups": "\(groups.count)",
+        OtosLog.ui.noticeOperation("duplicates.move", phase: "start", fields: [
+            "count": "\(tally.itemsToMove.count)", "carries": "\(tally.carries.count)",
         ])
+        // The receipt is written once the Store has hidden the copies (`performMoveToTrash`).
+        moveMediaToTrash(tally.itemsToMove, carrying: tally.carries)
     }
 
-    /// Photo ▸ Don't Keep This Copy: the selected copies are marked to move. A group
-    /// always keeps one copy, so the last kept copy of a group is never marked.
-    func markSelectedDuplicateCopiesForTrash() {
-        setDuplicateKeep(false, for: orderedSelectedAssetIDs)
+    var canMoveDuplicatesToTrash: Bool {
+        showsDuplicatesList && mediaTrashTask == nil && duplicatesTally?.itemsToMove.isEmpty == false
     }
 
-    var canKeepSelectedDuplicateCopies: Bool {
-        showsDuplicatesList && orderedSelectedAssetIDs.contains { id in
-            duplicateGroup(containing: id).map { !duplicatesSession.keeps(id, in: $0) } ?? false
-        }
-    }
-
-    var canMarkSelectedDuplicateCopiesForTrash: Bool {
-        showsDuplicatesList && orderedSelectedAssetIDs.contains { id in
-            duplicateGroup(containing: id).map { !$0.isKept && duplicatesSession.canUnkeep(id, in: $0) } ?? false
-        }
-    }
-
-    /// What ⌘⌫ and Photo ▸ Move to Trash move on this list: the selected rows that are
-    /// extra copies — never a kept one, and never a row that was not selected — so Select
-    /// All then ⌘⌫ clears the extras and nothing else. A copy is moved now, kept or not,
-    /// only by its row's Move to Trash Now.
+    /// What ⌘⌫ moves on this list: the extra copies of the groups the selection touches,
+    /// never a kept copy, so Select All then ⌘⌫ is the bar's act and not the loss of every
+    /// copy.
     func selectedDuplicatesToMove() -> (ids: [MediaAssetID], carries: [DuplicateCarry]) {
-        var ids: [MediaAssetID] = []
-        var carries: [DuplicateCarry] = []
-        for group in selectedDuplicateGroups() where !group.isKept {
-            let moving = duplicatesSession.copiesToMove(in: group)
-            let selected = Set(orderedSelectedAssetIDs)
-            let chosen = moving.filter(selected.contains)
-            guard !chosen.isEmpty else { continue }
-            ids += chosen
-            carries += duplicatesSession.carries(in: group).filter { chosen.contains($0.from) }
-        }
-        return (ids, carries)
+        let resolutions = selectedDuplicateGroups().compactMap(duplicatesSession.resolution(of:))
+        return (resolutions.flatMap(\.moving), resolutions.flatMap(\.carries))
     }
 
-    func setDuplicateKeep(_ keep: Bool, for ids: [MediaAssetID]) {
-        var changed = 0
-        for id in ids {
-            guard let group = duplicateGroup(containing: id), !group.isKept else {
-                continue
-            }
-            if keep {
-                guard !duplicatesSession.keeps(id, in: group) else { continue }
-                duplicatesSession.keepOverrides[id] = true
-                changed += 1
-            } else if duplicatesSession.unkeep(id, in: group) {
-                changed += 1
-            }
-        }
-        if changed > 0 {
-            duplicatesSession.receipt = nil
-        }
-        OtosLog.ui.noticeOperation("duplicates.mark", phase: keep ? "keep" : "move", fields: [
-            "requested": "\(ids.count)", "changed": "\(changed)",
-        ])
-    }
-
-    /// The groups the selection touches, or the one given.
+    /// The groups the selection touches, in list order.
     private func selectedDuplicateGroups() -> [DuplicateGroup] {
         var seen: Set<DuplicateGroupID> = []
         return orderedSelectedAssetIDs.compactMap { id in
@@ -237,7 +174,7 @@ extension CatalogWindowViewModel {
         showsDuplicatesList && selectedDuplicateGroups().contains { !$0.isKept }
     }
 
-    /// Photo ▸ Keep All Copies, and a group's Keep All button: the groups are set aside,
+    /// Photo ▸ Keep All Copies and a photo's context menu: the groups are set aside,
     /// remembered per pair of copies, and listed under Kept. Undoable.
     func keepAllDuplicateCopies(_ groups: [DuplicateGroup]? = nil) {
         let targets = (groups ?? selectedDuplicateGroups()).filter { !$0.isKept }
@@ -247,53 +184,17 @@ extension CatalogWindowViewModel {
         submitDuplicatesKeepAll(targets.map { $0.copies.map(\.id) }, actionName: "Keep All Copies")
     }
 
-    /// A library pair's Keep Both Libraries: every group the two libraries share is kept.
-    func keepBothLibraries(_ pair: DuplicateLibraryPair) {
-        let targets = state.duplicates?.activeGroups.filter { $0.libraryPair == pair } ?? []
-        guard !targets.isEmpty else {
-            return
-        }
-        submitDuplicatesKeepAll(targets.map { $0.copies.map(\.id) }, actionName: "Keep Both Libraries")
-    }
-
-    /// The bar's act: every marked copy moves to the Trash, through the one Move to Trash
-    /// path, carrying its curation and edit onto the kept copy that lacks them.
-    func moveMarkedDuplicatesToTrash() {
-        guard let tally = duplicatesTally, !tally.itemsToMove.isEmpty, mediaTrashTask == nil else {
-            return
-        }
-        OtosLog.ui.noticeOperation("duplicates.move", phase: "start", fields: [
-            "count": "\(tally.itemsToMove.count)", "carries": "\(tally.carries.count)",
-        ])
-        // The receipt is written once the Store has hidden the copies (`performMoveToTrash`).
-        moveMediaToTrash(tally.itemsToMove, carrying: tally.carries)
-    }
-
-    var canMoveMarkedDuplicatesToTrash: Bool {
-        showsDuplicatesList && mediaTrashTask == nil && duplicatesTally?.itemsToMove.isEmpty == false
-    }
-
-    func toggleDuplicateLibraryPair(_ pair: DuplicateLibraryPair) {
-        if duplicatesSession.expandedPairs.contains(pair) {
-            duplicatesSession.expandedPairs.remove(pair)
-        } else {
-            duplicatesSession.expandedPairs.insert(pair)
-        }
-    }
-
-    /// `6 photos need your choice · Show`: selects the first group that waits.
+    /// `6 photos need your choice · Show`: selects the first group whose copies hold work
+    /// that cannot be combined and that the user has not decided.
     func revealDuplicateGroupNeedingChoice() {
-        guard let group = state.duplicates?.activeGroups.first(where: duplicatesSession.needsChoice)
+        guard let group = state.duplicates?.activeGroups.first(where: { $0.defaultKeep == nil && duplicatesSession.picks[$0.id] == nil })
         else {
             return
-        }
-        if let pair = group.libraryPair {
-            duplicatesSession.expandedPairs.insert(pair)
         }
         selectAssets(group.copies.map(\.id))
     }
 
-    /// Return on a row: the group in Compare (two copies) or Loupe, the group as the
+    /// Return on a photo: the group in Compare (two copies) or Loupe, the group as the
     /// filmstrip. The sidebar keeps Duplicates highlighted (`SidebarSelection.sidebarRow`).
     func openSelectedDuplicateGroup() {
         guard let group = selectedDuplicateGroups().first else {
@@ -302,19 +203,13 @@ extension CatalogWindowViewModel {
         openDuplicateGroup(group, mode: group.copies.count == 2 ? .compare : .loupe)
     }
 
-    /// Double-click on a row: that row's group, whatever the selection holds at that
+    /// Double-click on a photo: that photo's group, whatever the selection holds at that
     /// instant.
     func openDuplicateGroup(containing id: MediaAssetID) {
         guard let group = duplicateGroup(containing: id) else {
             return
         }
         openDuplicateGroup(group, mode: group.copies.count == 2 ? .compare : .loupe)
-    }
-
-    /// A same-photo group's Compare: versions are told apart by their pixels, so its first
-    /// two — the kept version and the next — side by side, the group as the filmstrip.
-    func compareDuplicateGroup(_ group: DuplicateGroup) {
-        openDuplicateGroup(group, mode: .compare)
     }
 
     private func openDuplicateGroup(_ group: DuplicateGroup, mode: BrowserViewMode) {
@@ -356,7 +251,7 @@ extension CatalogWindowViewModel {
         showsDuplicatesList && selectedDuplicateGroups().contains(where: \.isKept)
     }
 
-    /// Review Again, on a kept group's card or Photo ▸ Review Again on the selected kept
+    /// Review Again, on a kept group's header or Photo ▸ Review Again on the selected kept
     /// groups: forgets the pairs that keep them aside, so they return to the list with their
     /// default. Undoable by its own name: undo keeps them again.
     func reviewKeptDuplicateGroups(_ groups: [DuplicateGroup]? = nil) {

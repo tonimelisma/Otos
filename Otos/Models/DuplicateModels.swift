@@ -78,22 +78,6 @@ nonisolated struct DuplicateCopy: Equatable, Sendable, Identifiable {
     }
 }
 
-/// Two libraries that share identical items, summarized as one row before their groups.
-nonisolated struct DuplicateLibraryPair: Hashable, Sendable {
-    let first: LibraryRootPath
-    let second: LibraryRootPath
-
-    init(_ left: LibraryRootPath, _ right: LibraryRootPath) {
-        if left.rawValue <= right.rawValue {
-            first = left
-            second = right
-        } else {
-            first = right
-            second = left
-        }
-    }
-}
-
 /// The keeper rule's criteria, in the order they are tried (ADR 0042). A group's default
 /// names the one that decided it, so the list can say why a copy is kept.
 nonisolated enum DuplicateKeeperCriterion: Int, Comparable, Sendable {
@@ -151,8 +135,6 @@ nonisolated struct DuplicateGroup: Equatable, Sendable, Identifiable {
     /// The copies, in display order: kept copies first, then by library and path.
     let copies: [DuplicateCopy]
     let `default`: DuplicateDefault
-    /// The two libraries this group spans, when it spans exactly two.
-    let libraryPair: DuplicateLibraryPair?
     /// For versions of one photo, the copies that name their capture: the camera's own
     /// files, which the keeper rule prefers and the list marks `Camera original`.
     let cameraOriginals: Set<MediaAssetID>
@@ -295,10 +277,6 @@ nonisolated enum DuplicateGroupPolicy {
         let rule = KeeperRule(comparesPixels: id.isSamePhoto, originals: originals)
         let facts = order.map { Facts(unordered[$0], orderKey: unorderedKeys[$0], rule: rule) }
         let ids = copies.map(\.id)
-        let libraries = Set(ids.map(\.libraryRootPath)).sorted { $0.rawValue < $1.rawValue }
-        let libraryPair: DuplicateLibraryPair? = libraries.count == 2
-            ? DuplicateLibraryPair(libraries[0], libraries[1])
-            : nil
 
         var keptTogether: Set<MediaAssetID> = []
         var everyPairKept = true
@@ -314,7 +292,7 @@ nonisolated enum DuplicateGroupPolicy {
         }
         if everyPairKept {
             return DuplicateGroup(
-                id: id, copies: copies, default: .kept, libraryPair: libraryPair, cameraOriginals: originals
+                id: id, copies: copies, default: .kept, cameraOriginals: originals
             )
         }
 
@@ -332,7 +310,7 @@ nonisolated enum DuplicateGroupPolicy {
             return left < right
         }
         return DuplicateGroup(
-            id: id, copies: ordered.map { copies[$0] }, default: `default`, libraryPair: libraryPair,
+            id: id, copies: ordered.map { copies[$0] }, default: `default`,
             cameraOriginals: originals
         )
     }
@@ -532,109 +510,135 @@ nonisolated struct DuplicateKeptPair: Hashable, Sendable {
     }
 }
 
-/// What the window holds while the user works through Duplicates (ADR 0042): the marks
-/// the user changed and which summaries are open. Pure, so what the bar counts and what
-/// the act moves are one computation. Every active group is on screen: one found while the
-/// user looks joins the list at once, and one that resolves or vanishes leaves at once.
-nonisolated struct DuplicatesSession: Equatable, Sendable {
-    /// Copies whose Keep the user set, overriding the group's default.
-    var keepOverrides: [MediaAssetID: Bool] = [:]
-    var expandedPairs: Set<DuplicateLibraryPair> = []
-    /// What the bar's act last moved, shown as its receipt until the marks change or the
-    /// user leaves the list.
-    var receipt: DuplicatesReceipt?
+/// A folder that holds copies: a library and the folder inside it.
+nonisolated struct DuplicateFolder: Hashable, Sendable, Comparable {
+    let library: LibraryRootPath
+    let libraryDisplayName: String
+    /// The folder inside its library, empty at the library's top.
+    let folder: String
 
-    /// Drops the marks of copies no group holds any more, so a copy that comes back — its
-    /// move undone, its library back online — starts from its group's default.
-    mutating func forgetMarks(absentFrom state: CatalogDuplicatesState) {
-        guard !keepOverrides.isEmpty else {
-            return
-        }
-        let live = Set(state.groups.flatMap(\.copies).map(\.id))
-        keepOverrides = keepOverrides.filter { live.contains($0.key) }
+    init(_ copy: DuplicateCopy) {
+        library = copy.id.libraryRootPath
+        libraryDisplayName = copy.libraryDisplayName
+        folder = copy.folder
     }
 
-    /// The marks of these groups return to their defaults.
-    mutating func forgetMarks(in groups: [DuplicateGroup]) {
-        for group in groups {
-            for copy in group.copies {
-                keepOverrides[copy.id] = nil
+    static func < (left: Self, right: Self) -> Bool {
+        (left.library.rawValue, left.folder) < (right.library.rawValue, right.folder)
+    }
+}
+
+/// The folders a group's copies sit in, sorted: one folder when a file was saved twice in
+/// place, two when one folder mirrors another. A folder rule covers every group with the
+/// same set.
+nonisolated struct DuplicateFolderSet: Hashable, Sendable {
+    let folders: [DuplicateFolder]
+
+    init(_ group: DuplicateGroup) {
+        folders = Set(group.copies.map(DuplicateFolder.init)).sorted()
+    }
+
+    init(folders: [DuplicateFolder]) {
+        self.folders = folders.sorted()
+    }
+}
+
+/// A rule the user sets for every group in a folder set, so a folder of duplicates is
+/// decided at once. A click on one photo overrides it for that group.
+nonisolated enum DuplicateFolderRule: Hashable, Sendable {
+    /// The keeper rule (ADR 0042): each library's best copy.
+    case automatic
+    /// Keep the copy in this folder (two-folder sets).
+    case folder(DuplicateFolder)
+    /// Keep the copy without a ` copy` / ` (1)` / `_001` suffix (one-folder sets).
+    case originalName
+    /// Keep the earliest-born copy.
+    case oldest
+    /// Keep the largest file.
+    case largest
+}
+
+/// Why a group keeps what it keeps, for its header.
+nonisolated enum DuplicateKeepReason: Equatable, Sendable {
+    /// The user clicked this copy.
+    case picked
+    /// A folder rule decided it.
+    case rule(DuplicateFolderRule)
+    /// The keeper rule decided it.
+    case automatic(DuplicateDefault.Reason)
+}
+
+/// What one group keeps and moves, and why (ADR 0042). Pure, so what a tile shows, what
+/// the bar counts and what the act moves are one computation.
+nonisolated struct DuplicateResolution: Equatable, Sendable {
+    let keep: Set<MediaAssetID>
+    let moving: [MediaAssetID]
+    let carries: [DuplicateCarry]
+    let bytes: PartialByteCount
+    let reason: DuplicateKeepReason
+
+    /// The group's resolution: the user's pick, else its folder set's rule, else its
+    /// default. Nil for a kept group, and for a group whose copies hold work that cannot be
+    /// combined until the user picks: no rule decides between two people's edits.
+    static func of(_ group: DuplicateGroup, pick: MediaAssetID?, rule: DuplicateFolderRule?) -> DuplicateResolution? {
+        guard !group.isKept else {
+            return nil
+        }
+        if let pick, group.copies.contains(where: { $0.id == pick }) {
+            return make(group, keep: [pick], reason: .picked)
+        }
+        guard case let .keep(defaultKeep, defaultReason) = group.default else {
+            return nil
+        }
+        if let rule, rule != .automatic, let keep = keep(group, by: rule) {
+            return make(group, keep: keep, reason: .rule(rule))
+        }
+        return make(group, keep: defaultKeep, reason: .automatic(defaultReason))
+    }
+
+    /// What a rule keeps in this group; nil when it decides nothing here (a folder the
+    /// group has no copy in), so the default stands.
+    private static func keep(_ group: DuplicateGroup, by rule: DuplicateFolderRule) -> Set<MediaAssetID>? {
+        let copies = group.copies
+        switch rule {
+        case .automatic:
+            return nil
+        case let .folder(folder):
+            let inFolder = copies.filter { DuplicateFolder($0) == folder }
+            guard !inFolder.isEmpty else { return nil }
+            if inFolder.count == 1 {
+                return [inFolder[0].id]
             }
+            return DuplicateGroupPolicy.group(
+                id: group.id, copies: inFolder, keptPairs: [], originals: group.cameraOriginals
+            ).defaultKeep
+        case .originalName:
+            return best(of: copies) { DuplicateGroupPolicy.hasCopySuffix($0.id.relativePath.rawValue) ? 1 : 0 }
+        case .oldest:
+            return best(of: copies) { $0.createdAt?.timeIntervalSince1970 ?? .infinity }
+        case .largest:
+            return best(of: copies) { -Double($0.byteSize ?? 0) }
         }
     }
 
-    /// Keep Only This Copy: this copy is kept and every other copy of its group marked.
-    mutating func keepOnly(_ copy: MediaAssetID, in group: DuplicateGroup) {
-        for other in group.copies {
-            keepOverrides[other.id] = other.id == copy
-        }
+    /// The copy with the lowest score; ties go to the group's own order, which puts its
+    /// default keeper first.
+    private static func best(of copies: [DuplicateCopy], score: (DuplicateCopy) -> Double) -> Set<MediaAssetID>? {
+        guard let first = copies.min(by: { score($0) < score($1) }) else { return nil }
+        return [first.id]
     }
 
-    /// Don't Keep This Copy. In a pair, unkeeping the only kept copy keeps the other, since
-    /// a group always keeps one and there is only one other: one click swaps a pair's
-    /// keeper. Elsewhere the last kept copy stays kept. Returns whether a mark changed.
-    @discardableResult
-    mutating func unkeep(_ copy: MediaAssetID, in group: DuplicateGroup) -> Bool {
-        guard keeps(copy, in: group) else {
-            return false
-        }
-        if canMoveToTrash(copy, in: group) {
-            keepOverrides[copy] = false
-            return true
-        }
-        guard group.copies.count == 2, let other = group.copies.first(where: { $0.id != copy }) else {
-            return false
-        }
-        keepOnly(other.id, in: group)
-        return true
-    }
-
-    /// Whether unkeeping this copy changes a mark: it is kept and another copy stays kept,
-    /// or the group is a pair and the other copy takes over.
-    func canUnkeep(_ copy: MediaAssetID, in group: DuplicateGroup) -> Bool {
-        keeps(copy, in: group) && (canMoveToTrash(copy, in: group) || group.copies.count == 2)
-    }
-
-    /// A library pair's Keep Only: every copy the pair's groups hold in the other library is
-    /// marked, and each group's copies in this library keep their own marks and defaults.
-    mutating func keepOnly(_ library: LibraryRootPath, in groups: [DuplicateGroup]) {
-        for group in groups where group.copies.contains(where: { $0.id.libraryRootPath == library }) {
-            for copy in group.copies where copy.id.libraryRootPath != library {
-                keepOverrides[copy.id] = false
-            }
-        }
-    }
-
-    /// Whether this copy is kept: the user's mark, else the group's default, else kept
-    /// (a waiting group marks nothing).
-    func keeps(_ copy: MediaAssetID, in group: DuplicateGroup) -> Bool {
-        if let override = keepOverrides[copy] {
-            return override
-        }
-        return group.defaultKeep?.contains(copy) ?? true
-    }
-
-    /// The copies this group would move to the Trash: none unless the group has a default
-    /// or the user marked it, and never every copy.
-    func copiesToMove(in group: DuplicateGroup) -> [MediaAssetID] {
-        let moving = group.copies.map(\.id).filter { !keeps($0, in: group) }
-        return moving.count < group.copies.count ? moving : []
-    }
-
-    /// The authored work the act carries onto a kept copy: a moved copy's choice when the
-    /// kept copy has none, and its edit when the kept copy has none. The kept copy is the
-    /// first kept in the moved copy's library, else the group's first kept copy. The Store
-    /// re-reads both copies when it writes, so a carry only ever fills what is missing.
-    func carries(in group: DuplicateGroup) -> [DuplicateCarry] {
-        let moving = Set(copiesToMove(in: group))
-        guard !moving.isEmpty else {
-            return []
-        }
-        let kept = group.copies.filter { !moving.contains($0.id) }
+    /// The authored work carried onto a kept copy: a moved copy's choice when the kept copy
+    /// has none, and its edit when the kept copy has none. The kept copy is the first kept
+    /// in the moved copy's library, else the group's first kept copy. The Store re-reads
+    /// both copies when it writes, so a carry only ever fills what is missing.
+    private static func make(_ group: DuplicateGroup, keep: Set<MediaAssetID>, reason: DuplicateKeepReason) -> DuplicateResolution {
+        let moving = group.copies.filter { !keep.contains($0.id) }
+        let kept = group.copies.filter { keep.contains($0.id) }
         var carries: [DuplicateCarry] = []
         var choiceFilled: Set<MediaAssetID> = []
         var editFilled: Set<MediaAssetID> = []
-        for copy in group.copies where moving.contains(copy.id) {
+        for copy in moving {
             guard let target = kept.first(where: { $0.id.libraryRootPath == copy.id.libraryRootPath }) ?? kept.first
             else {
                 continue
@@ -646,57 +650,87 @@ nonisolated struct DuplicatesSession: Equatable, Sendable {
                 carries.append(DuplicateCarry(from: copy.id, to: target.id, work: .edit))
             }
         }
-        return carries
+        let known = moving.compactMap(\.byteSize)
+        return DuplicateResolution(
+            keep: keep,
+            moving: moving.map(\.id),
+            carries: carries,
+            bytes: PartialByteCount(knownBytes: known.reduce(0, +), unknownCount: moving.count - known.count),
+            reason: reason
+        )
+    }
+}
+
+/// What the window holds while the user works through Duplicates (ADR 0042): the copy the
+/// user clicked in each group, the rule set for each folder set, and the receipt of the
+/// last move. Window state, not catalog state: a decision in progress, forgotten once its
+/// group or folder set is gone.
+nonisolated struct DuplicatesSession: Equatable, Sendable {
+    var picks: [DuplicateGroupID: MediaAssetID] = [:]
+    var rules: [DuplicateFolderSet: DuplicateFolderRule] = [:]
+    /// What the last move hid, shown as its receipt until a pick or rule changes or the
+    /// user leaves the list.
+    var receipt: DuplicatesReceipt?
+
+    func resolution(of group: DuplicateGroup) -> DuplicateResolution? {
+        DuplicateResolution.of(group, pick: picks[group.id], rule: rules[DuplicateFolderSet(group)])
     }
 
-    /// A waiting group the user has not touched.
-    func needsChoice(_ group: DuplicateGroup) -> Bool {
-        group.defaultKeep == nil && !hasChosen(in: group)
+    /// Drops picks whose copy no group holds any more, so a copy that comes back starts
+    /// from its group's rule or default.
+    mutating func forgetPicks(absentFrom state: CatalogDuplicatesState) {
+        let live = Dictionary(uniqueKeysWithValues: state.groups.map { ($0.id, Set($0.copies.map(\.id))) })
+        picks = picks.filter { live[$0.key]?.contains($0.value) == true }
     }
 
-    /// Whether the user's marks leave this group other than its default: a mark changed and
-    /// changed back is no choice.
-    func hasChosen(in group: DuplicateGroup) -> Bool {
-        guard let defaultKeep = group.defaultKeep else {
-            return group.copies.contains { keepOverrides[$0.id] != nil }
-        }
-        return group.copies.contains { keeps($0.id, in: group) != defaultKeep.contains($0.id) }
+    /// Every move the list would make: each active group's resolution.
+    func moves(in state: CatalogDuplicatesState) -> [DuplicateResolution] {
+        state.activeGroups.compactMap(resolution(of:))
     }
 
-    /// Whether the user may unmark this copy: a group always keeps one copy.
-    func canMoveToTrash(_ copy: MediaAssetID, in group: DuplicateGroup) -> Bool {
-        guard keeps(copy, in: group) else {
-            return false
-        }
-        return group.copies.count { keeps($0.id, in: group) } > 1
-    }
-
-    /// What the bar states and the act moves, over every active group.
+    /// What the bar states, over every active group.
     func tally(in state: CatalogDuplicatesState) -> DuplicatesTally {
         let groups = state.activeGroups
-        var moving: [MediaAssetID] = []
-        var carried: [DuplicateCarry] = []
-        var bytes: Int64 = 0
-        var unknownSizes = 0
-        for group in groups {
-            carried += carries(in: group)
-            for id in copiesToMove(in: group) {
-                moving.append(id)
-                if let size = group.copies.first(where: { $0.id == id })?.byteSize {
-                    bytes += size
-                } else {
-                    unknownSizes += 1
-                }
-            }
-        }
+        let resolutions = groups.compactMap(resolution(of:))
         return DuplicatesTally(
             itemsWithDuplicates: groups.count,
             noun: DuplicateItemNoun.covering(groups.flatMap(\.copies).map(\.kind)),
-            itemsToMove: moving,
-            carries: carried,
-            bytesToMove: PartialByteCount(knownBytes: bytes, unknownCount: unknownSizes),
-            needingChoice: groups.count(where: needsChoice)
+            itemsToMove: resolutions.flatMap(\.moving),
+            carries: resolutions.flatMap(\.carries),
+            bytesToMove: PartialByteCount(
+                knownBytes: resolutions.reduce(0) { $0 + $1.bytes.knownBytes },
+                unknownCount: resolutions.reduce(0) { $0 + $1.bytes.unknownCount }
+            ),
+            needingChoice: groups.count { !$0.isKept && resolution(of: $0) == nil }
         )
+    }
+}
+
+/// A folder set the list offers a rule for: one folder with copies saved twice in it, or
+/// two folders that mirror each other, with how many groups it covers.
+nonisolated struct DuplicateFolderSetSummary: Equatable, Sendable, Identifiable {
+    let folderSet: DuplicateFolderSet
+    let groupCount: Int
+    var id: DuplicateFolderSet {
+        folderSet
+    }
+
+    /// The folder sets of the active groups, largest first; sets of three or more folders
+    /// are decided group by group.
+    static func summaries(of state: CatalogDuplicatesState) -> [DuplicateFolderSetSummary] {
+        var counts: [DuplicateFolderSet: Int] = [:]
+        for group in state.activeGroups {
+            let set = DuplicateFolderSet(group)
+            if set.folders.count <= 2 {
+                counts[set, default: 0] += 1
+            }
+        }
+        return counts.map { DuplicateFolderSetSummary(folderSet: $0.key, groupCount: $0.value) }
+            .sorted { left, right in
+                left.groupCount != right.groupCount
+                    ? left.groupCount > right.groupCount
+                    : (left.folderSet.folders.first?.folder ?? "") < (right.folderSet.folders.first?.folder ?? "")
+            }
     }
 }
 
@@ -705,10 +739,12 @@ nonisolated struct DuplicatesTally: Equatable, Sendable {
     let itemsWithDuplicates: Int
     /// What those groups hold, so the L1 noun is honest for a library of videos.
     let noun: DuplicateItemNoun
+    /// The copies the act moves: every group's resolution.
     let itemsToMove: [MediaAssetID]
     /// The work the act carries onto kept copies as it moves `itemsToMove`.
     var carries: [DuplicateCarry] = []
     let bytesToMove: PartialByteCount
+    /// Groups whose copies hold work that cannot be combined, waiting for a click.
     let needingChoice: Int
 }
 

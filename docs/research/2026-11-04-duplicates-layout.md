@@ -47,7 +47,7 @@ What every one of them does, and the rejected design did not:
 3. **Metadata comes second**: one short line under the tile, or an Info panel. A
    difference is shown so it can be read (Mylio's highlight), not as raw bytes.
 
-## Decision
+## First decision (superseded by the owner follow-up below)
 
 The design follows Lightroom Classic, Otos's reference idiom, as far as a review surface
 allows.
@@ -91,3 +91,18 @@ Rejected:
 - [Gemini 2 user guide](https://cdn2.macpaw.com/manuals/Gemin-2-User-Guide-29062021.pdf)
 - [Mylio: Photo DeDupe](https://support.mylio.com/find-duplicate-photos-photo-dedupe)
 - [Excire: duplicate finder](https://excire.com/en/tutorials/excire-search/duplikatefinder/)
+
+## Owner follow-up, 2026-11-04
+
+A Photos-style Merge was built next ("just like Photos.app") and rejected before merging:
+it hides which copy stays and offers no clean way to choose it. The owner asked for "a
+really clean way to choose which photo to keep", and for acting on a whole folder of
+duplicates at once by a rule. The design that followed, in `docs/design/duplicates.md`:
+
+- Photos' layout kept: the copies side by side as photos, the size over each.
+- Each photo tagged **Keep** or **Trash**, the leaving copy dimmed (Lightroom's reject);
+  one click on a photo keeps it.
+- One rule row per folder set: two folders that mirror each other (keep the copies in one),
+  or one folder with files saved twice (keep the original name, the oldest, the largest).
+- The act names itself, `Move N Copies to Trash`, and asks nothing: every fate is on
+  screen first.
