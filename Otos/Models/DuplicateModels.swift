@@ -792,8 +792,11 @@ nonisolated struct DuplicateCarry: Hashable, Sendable {
 /// gates keep separate captures — bursts, brackets — apart:
 ///
 /// 1. Capture metadata decides first. Two files that both name a camera and an instant are
-///    one capture only if the camera model, the whole-second instant and, where both carry
-///    them, the sub-seconds, body serial and burst identifier agree.
+///    one capture only if the camera model and the whole-second instant agree, the body
+///    serial agrees where both carry one, and both carry the same sub-seconds. Sub-seconds
+///    are the proof: a record without them cannot tell a version from a frame shot in the
+///    same second, whether the file has none or its record predates the reader reporting
+///    them, so it proves nothing and the pair is not grouped.
 /// 2. The pixels must match almost exactly: a difference hash within
 ///    `RenderSignature.candidateHammingDistance` proposes, and a mean grayscale difference
 ///    below `RenderSignature.confirmedMeanDifference` confirms.
@@ -892,11 +895,14 @@ nonisolated enum SamePhotoPolicy {
             && agree(left.serialNumber, right.serialNumber)
     }
 
-    /// The record half of gate 1: where both files carry them, the sub-seconds and the burst
-    /// identifier agree.
-    static func recordsAgree(_ left: SamePhotoDetail, _ right: SamePhotoDetail) -> Bool {
-        agree(left.fractionalSecondDigits, right.fractionalSecondDigits)
-            && agree(left.burstIdentifier, right.burstIdentifier)
+    /// The record half of gate 1: both records carry sub-seconds, and they are the same.
+    /// Missing sub-seconds are unknown, not agreement: every frame of a same-second burst
+    /// would otherwise pass, and 5 % of those are as pixel-close as true copies.
+    static func recordsProveOneCapture(_ left: SamePhotoDetail, _ right: SamePhotoDetail) -> Bool {
+        guard let leftDigits = left.fractionalSecondDigits, let rightDigits = right.fractionalSecondDigits else {
+            return false
+        }
+        return leftDigits == rightDigits
     }
 
     private static func agree(_ first: String?, _ second: String?) -> Bool {
@@ -916,7 +922,7 @@ nonisolated enum SamePhotoPolicy {
             guard let leftDetail = details[pair.left.id], let rightDetail = details[pair.right.id] else {
                 continue
             }
-            if pair.left.hasCaptureMetadata, pair.right.hasCaptureMetadata, !recordsAgree(leftDetail, rightDetail) {
+            if pair.left.hasCaptureMetadata, pair.right.hasCaptureMetadata, !recordsProveOneCapture(leftDetail, rightDetail) {
                 continue
             }
             let difference = leftDetail.signature.meanDifference(to: rightDetail.signature)

@@ -38,6 +38,10 @@ MediaMetadata 0.7.0 adds what a consumer needs to stop re-deriving:
 - `contentIdentifier`, Apple's Live Photo pairing identifier (0.8.2; ADR 0041).
 - `levelingTurnDegrees`, the turn that levels a picture from the camera's gravity reading,
   and the rule for when that reading means nothing (0.9.1; ADR 0036).
+- `extractionRevision(for:)` also rises for a newly reported field (0.9.2), and the
+  fields added since 0.7.1 moved it: a stored row cannot tell "the file has none" from
+  "the reader did not look", so a revision that announced only corrections left every new
+  field to a consumer migration.
 
 ## Decision
 
@@ -108,7 +112,10 @@ what those facts mean. That covers:
   - A cloud-only row is skipped and offered again next launch. Card and camera rows are
     never refreshed. The one exception is a record that may be half of a Live Photo
     (ADR 0041): it is handed to enrichment, which downloads it once for every product.
-  - No per-fix migration is written again.
+  - No migration is written for a parser fix or a new field. v9 and v12 cleared
+    revisions for fields the library added before its revision announced new fields
+    (0.8.2's content identifier, 0.9.0's sub-seconds); since 0.9.2 the revision carries
+    both.
 - **Import reuse derives like enrichment.** A reused overlay is written through
   `writeMetadataProjection` with the destination's own mtime, so a reused video row
   derives the same capture wall a fresh enrichment of that file would.

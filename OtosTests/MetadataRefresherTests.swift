@@ -104,7 +104,7 @@ struct MetadataRefresherTests {
                 Fixture(root: 1, path: "older.heic", enrichedMTime: 100, family: "heif", revision: current - 1),
                 Fixture(root: 1, path: "current.heic", enrichedMTime: 100, family: "heif", revision: current),
                 Fixture(root: 1, path: "changed.heic", enrichedMTime: 99, family: "heif", revision: nil),
-                Fixture(root: 1, path: "unchanged.jpg", enrichedMTime: 100, family: "jpeg", revision: nil),
+                Fixture(root: 1, path: "unchanged.gif", enrichedMTime: 100, family: "gif", revision: nil),
                 Fixture(root: 2, path: "card.heic", enrichedMTime: 100, family: "heif", revision: nil),
             ] {
                 try db.execute(
