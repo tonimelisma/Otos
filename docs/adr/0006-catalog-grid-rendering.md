@@ -179,7 +179,8 @@ skips `TileContentStore.prune` (membership identical by definition). The
 mutation gate retains `displayedOrderedIDSet` with `displayedOrderedIDs` so
 apply-policy summarize does not rebuild the previous-order Set every apply.
 Descriptor-changed reorders (sort/scope/filter flips) and large membership
-applies (`n ≥ 1000`) use AppKit's reloadData-class diffable path
+applies (`n ≥ 1000` on either side: the grid on screen or the next one, because
+the animated diff pays for every removed item as well as every inserted one) use AppKit's reloadData-class diffable path
 (`animatingDifferences: false`), completely unaffected by the animation tuning
 above. Same-descriptor reorders are structurally bounded to small mover counts
 by enrichment batch caps within one projection tick; do not add LIS/mover-count
