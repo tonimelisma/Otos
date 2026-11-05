@@ -26,8 +26,12 @@ nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
     /// - Descriptor-changed reorder (sort/scope/filter flip): reloadData fallback;
     ///   the position is reset or re-anchored rather than animated, and whole-list
     ///   moves hit the quadratic cliff.
-    /// - Large insert/remove (`n ≥ 1000`): reloadData fallback.
-    /// - Small insert/remove: animate (existing behavior).
+    /// - Large insert/remove — the grid on screen or the next one holds `n ≥ 1000`
+    ///   items: reloadData fallback. Both sides count because the animated diff pays for
+    ///   every removed item as well as every inserted one: shrinking 16,870 items to 881
+    ///   animated kept the main thread busy for about 430 ms, against about 150 ms for the
+    ///   reloadData switch the other way.
+    /// - Small insert/remove: animate.
     ///
     /// `previousOrderedIDSet` must match `Set(previousOrderedIDs)` — the gate retains
     /// both so each apply does not rebuild the membership set from 23k IDs.
@@ -47,7 +51,8 @@ nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
         let reorderOnly = insertedCount == 0
             && removedCount == 0
             && previousOrderedIDs != nextOrderedIDs
-        let largeApply = nextOrderedIDs.count >= reloadDataFallbackItemCountThreshold
+        let largeApply = max(previousOrderedIDs.count, nextOrderedIDs.count)
+            >= reloadDataFallbackItemCountThreshold
         let usesReloadDataFallback = if reorderOnly {
             descriptorChanged
         } else if largeApply {

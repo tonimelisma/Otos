@@ -381,6 +381,26 @@ struct MediaGridBridgeTests {
         #expect(policy.usesReloadDataFallback)
     }
 
+    /// Leaving a large grid for a small one is as large an apply as the reverse: the
+    /// animated diff would remove every item of the grid on screen.
+    @Test func structuralApplyPolicyFallsBackWhenALargeGridShrinksToASmallOne() {
+        let largePrevious = makeGrid(
+            scope: .allMedia,
+            paths: (0 ..< MediaGridStructuralApplyPolicy.reloadDataFallbackItemCountThreshold).map { "asset-\($0).jpg" }
+        ).orderedAssetIDs
+        let small = makeGrid(scope: .allMedia, paths: ["other-a.jpg", "other-b.jpg"]).orderedAssetIDs
+        let policy = MediaGridStructuralApplyPolicy.summarize(
+            previousOrderedIDs: largePrevious,
+            previousOrderedIDSet: Set(largePrevious),
+            nextOrderedIDs: small,
+            descriptorChanged: true
+        )
+        #expect(policy.removedCount == largePrevious.count)
+        #expect(policy.largeApply)
+        #expect(!policy.animatingDifferences)
+        #expect(policy.usesReloadDataFallback)
+    }
+
     @Test func gateApplyCarriesQueryChangeFact() {
         let gate = MediaGridMutationGate()
         let allMedia = makeGrid(scope: .allMedia, paths: ["a.jpg"])
