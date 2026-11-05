@@ -36,21 +36,21 @@ until the first build: the row has no count and the list draws nothing until the
 than claiming "No duplicates".
 
 **Every group has a default, and no default loses work** (owner, 2026-11-01, Plan 0111).
-The copies to keep are chosen and the rest marked; the user can change any mark.
+The default is what a group keeps until the user clicks a photo or sets its folder's
+rule.
 
 - **Each library keeps its own copy.** Nothing across libraries is preselected, so a group
-  whose copies span libraries keeps the best copy in each. Groups spanning exactly two
-  libraries are summarized per library pair, with Keep Both Libraries and `Keep Only
-  <Library>`, which marks every copy the pair holds in the other library.
-- **Work is carried, not chosen between.** When the act moves a copy whose curation or edit
-  the kept copy lacks, the kept copy takes it (`DuplicatesSession.carries`). The Store
+  whose copies span libraries keeps the best copy in each, until the folder rule for those
+  two folders keeps one side.
+- **Work is carried, not chosen between.** When the act moves a copy whose curation or
+  edit the kept copy lacks, the kept copy takes it (`DuplicateResolution.carries`). The Store
   writes the carry in the transaction that hides the moved copy, only where the kept copy
   still lacks the work, and records what it replaced under the command's batch; Undo of
   that Move to Trash puts it back for every moved copy that came back. Companion files are
   another app's files and never move onto another copy.
 - **Only work that cannot be combined waits:** two edited copies, two with companions, or
-  two different choices, within one library. Those groups have no default and say
-  `Choose a copy to keep`.
+  two different choices, within one library. Those groups have no default and tag
+  nothing until a click settles them.
 - **The best copy is kept**, in this order:
   1. a copy with companion files, since they cannot move;
   2. for versions of the same photo, whether or not they name their capture, the camera
@@ -61,15 +61,11 @@ The copies to keep are chosen and the rest marked; the user can change any mark.
      `_001`, the collision suffix Otos's own import gives a second copy, ARC-050);
   5. the earliest birth time;
   6. path order.
-- **Keep Only This Copy** keeps a row's copy and marks the rest of its group. A waiting
-  group's rows offer it as `Keep This Copy`, so the first click on such a group means
-  keep.
-- **The default says why.** `DuplicateDefault` records the criterion that separated the
-  kept copy from the copy it beat last (birth times compared at whole seconds, the
-  precision the list shows), that each library keeps its own, or which work conflicts and
-  in which library; the list states it in words, computed, never stored
-  (`docs/design/duplicates.md`). Groups are listed versions first, then identical copies,
-  each newest first by the kept copy's capture date.
+- **The default records why.** `DuplicateDefault` records the criterion that separated the
+  kept copy from the copy it beat last (birth times compared at whole seconds), that each
+  library keeps its own, or which work conflicts and in which library; a waiting group's
+  header names the conflict. Groups are listed versions first, then identical copies, each
+  newest first by the kept copy's capture date.
 
 **The one durable fact is Keep All Copies,** remembered per pair of paths in
 `duplicate_kept_pair` (schema v11). It is overlay on both copies:
@@ -78,28 +74,39 @@ The copies to keep are chosen and the rest marked; the user can change any mark.
 - `ON DELETE CASCADE` ends it with either copy's proven deletion or its library's
   removal.
 
-A group whose every pair is kept stays in its place in the list as one quiet card, `Kept
-both copies`, and is counted nowhere; a card that vanished on Keep Both read as a deletion.
+A group whose every pair is kept stays in its place in the list as one quiet header, `Kept
+both copies`, and is counted nowhere; a group that vanished on Keep Both read as a deletion.
 A later copy of copies kept together is the only one offered as extra. Keep All is
 undoable, delivered on one ordered intent stream (ADR 0032 rule 5); Review Again forgets a
 kept group's pairs on the same stream, undoable by its own name, so a kept group is never a
 dismissal without a way back.
 
-**Marks are window state.** The user's Keep / Move marks live in `DuplicatesSession`, owned
-by the view model; a mark is forgotten once no group holds its copy. The list always shows
-every active group: one found while the user looks joins at once, and one that resolves or
-vanishes leaves at once. The act moves exactly the marked copies the bar counts, through the
-one Move to Trash path (`moveMediaToTrash`): its download question
-(APP-045), its queue, and its undo are the ordinary ones; the bar then shows the act's
-receipt with Undo until a mark changes or the user leaves the list. A group always keeps
-one copy: the mark refuses the last kept copy of three or more, and in a pair unkeeping
-the kept copy keeps the other. On the list, ⌘⌫ (the ordinary Move to Trash) moves the
-selected groups' extra copies and never a kept one, so Select All then ⌘⌫ cannot empty a
-group; a row's `Move to Trash Now` moves that one copy, kept or not, after which the group
-re-derives without it.
+**Choosing what stays: one click, or one rule for a folder** (owner, 2026-11-04). Every
+group shows its copies as photos tagged Keep or Trash. What a group keeps is
+`DuplicateResolution`, pure, so what a photo shows, what the bar counts and what the act
+moves are one computation, resolved in this order:
+
+1. the copy the user clicked (`DuplicatesSession.picks`), which keeps that copy alone;
+2. the rule the user set for the group's folder set (`DuplicatesSession.rules`): for two
+   folders that mirror each other, keep the copies in one of them (the best of them by the
+   keeper rule when a folder holds more than one); for one folder with files saved twice,
+   keep the original name, the oldest, or the largest;
+3. the group's default.
+
+A group whose copies hold work that cannot be combined is decided only by a click: no rule
+chooses between two people's work. A folder set is the sorted set of (library, folder) the
+group's copies sit in; sets of three or more folders get no rule. Picks and rules are
+window state, a decision in progress; a pick is forgotten once its copy leaves the group.
+The one act, `Move N Copies to Trash`, moves every group's copies tagged Trash through the
+one Move to Trash path (`moveMediaToTrash`): its download question (APP-045), its queue and
+its undo are the ordinary ones, and the bar shows its receipt with Undo until a click or
+rule changes or the user leaves the list. It asks nothing (DES-076): every fate is on
+screen before the click. A group always keeps one copy. On the list, ⌘⌫ moves the selected
+groups' copies tagged Trash and never a kept one; a photo's `Move to Trash Now` moves that
+one copy, kept or not, after which the group re-derives without it.
 
 **Scopes.** `.duplicates` is every copy in a group, presented as the duplicates list, so the
-list's rows are the ordinary media selection — Photo commands, ⌘⌫ and Undo's reveal read
+list's photos are the ordinary media selection — Photo commands, ⌘⌫ and Undo's reveal read
 it. `.duplicateGroup(id)` is the leaf under it, one group's copies in the ordinary
 Compare, Loupe or grid, reached by Return and left by Back to Duplicates. Both resolve
 through `CatalogScopePredicate.ContentConstraint`. A group is never named by its digest
@@ -116,14 +123,16 @@ file, not a copy of another.
 | Alternative | Why rejected |
 | --- | --- |
 | A duplicate-group table with IDs | A second identity for facts the digests already state; it would go stale with every scan. |
-| Preselect across libraries by sidebar order | Empties a mirror library in one unread bulk act (review finding 1). A library goes only when the user names it in `Keep Only <Library>`. |
+| Preselect across libraries by sidebar order | Empties a mirror library in one unread bulk act (review finding 1). A library goes only when the user picks it in its folder rule. |
 | Let groups with authored work, or versions of the same photo, wait without a default | Nothing in the act's count until the user decides each group; competitors default every group (Photos, Lightroom web, PhotoSweeper, Mylio). Carrying the work makes a default safe (owner, 2026-11-01). |
-| Persist per-copy marks | A decision in progress, not a fact about the files; it would outlive the groups it described. |
+| A Keep checkbox per copy (the 2026-11-02 design) | Shipped as a list of rows, then as tiles; the owner rejected both on sight. A tag on the photo and a click on it say the same thing with nothing to read. |
+| Photos' Merge (built 2026-11-04, never merged) | It hides which copy stays and offers no way to choose it short of a context menu; the owner asked for a clean way to choose. |
+| Library pair summary rows | A folder set covers them: two folders in two libraries are one of its cases, with `Both` as the default. |
 | Hold groups found mid-visit behind `N more found · Show` | A second answer to "which groups exist", besides the published state. It snapshotted the catalog before its first load at launch and hid every group behind `0 photos · 164 more found`. The owner wants the list to show every duplicate, always (2026-11-01). |
 | Return as the bulk act's key | Return opens a group; a bulk move must not be one keystroke from a list. |
-| A confirmation before the bulk act | Photos confirms a merge, which is not undoable; this act is the ordinary Move to Trash, undoable and recoverable, and the HIG reserves alerts for uncommon acts that cannot be undone (DES-076). |
-| A checkbox meaning "move to Trash", the category's convention | The kept set is what the rule explains and what a group must never empty; a positive mark reassures where a destructive one warns. |
-| Single-letter shortcuts for Keep and Move | P, U and X already mean curation choices; one key never means two things. |
+| A confirmation before the act | Every Keep and Trash is on screen before the click, the act is the ordinary undoable Move to Trash, and the HIG reserves alerts for uncommon acts that cannot be undone (DES-076). |
+| Rules that apply across the whole library at once | A folder is the unit a user knows ("my imports folder", "the backup"); a library-wide rule would decide groups the user has not looked at in folders they did not name. |
+| Single-letter shortcuts for Keep | P, U and X already mean curation choices; one key never means two things. Space keeps the selected photo. |
 
 ## Consequences
 

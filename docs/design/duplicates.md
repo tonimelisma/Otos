@@ -4,227 +4,141 @@ The surface for clearing extra copies of photos and videos the libraries already
 (ADR 0042). Reached from the **Duplicates** row under **Utilities**, the last section of
 the sidebar — the header Photos gives its own Duplicates row. The row exists while any
 group is active and stays while selected; it is last so that its arrival pushes no row
-under the pointer. Why it looks like this, and the reviews that shaped it:
-`docs/research/2026-11-02-duplicates-review-ux.md`.
+under the pointer.
+
+The owner's direction (2026-11-04; `docs/research/2026-11-04-duplicates-layout.md`): a
+really clean way to choose which photo to keep, and a rule that decides a whole folder of
+duplicates at once. So every group shows its copies as photos side by side, as Photos lays
+them out, each tagged **Keep** or **Trash**; one click on a photo keeps that one; and each
+folder that holds duplicates has one rule row at the top.
 
 ## L1 primary fact
 
 How many items have duplicates: `110 videos with duplicates`, `140 photos with
 duplicates`, `312 items with duplicates` when the groups hold both or a kind is not yet
-read, or `No duplicates`. The sidebar row's count is the same number (DES-017). Groups
-under a library pair count like any other.
-
-## The one rule
-
-**The header says what the copies share; the rows say what differs; the fate and its
-reason are stated in words on every group.** A fact shown twice must be compared; a fact
-shown once can be trusted. Everything below follows from it.
+read, or `No duplicates`. The sidebar row's count is the same number (DES-017).
 
 ## Zones
 
-A list of groups above a fixed-height bar (DES-018, DES-053). Before the groups are first
-built the pane draws nothing (APP-044); with no group the bar carries the L1 `No
-duplicates` and the list area says why: `Nothing Otos has checked is stored twice.` The window shows no `Filtered` subtitle here: the list ignores the
-filter.
+A list above a fixed-height bar (DES-018, DES-053). Before the groups are first built the
+pane draws nothing (APP-044); with no group the bar carries the L1 `No duplicates` and the
+list area says why: `Nothing Otos has checked is stored twice.` The window shows no
+`Filtered` subtitle here: the list ignores the filter. The list's backdrop is `content`
+(DES-022); everything in it shares the 12 pt section inset (DES-060).
 
-**List.** Files of one photo first — the groups that need eyes — then identical copies,
-each newest first by capture date (the kept copy's), the grid's order, undated groups
-last, kept groups in their place among them. A group found while the user looks joins at
-its date at once; one that resolves leaves at once. Selection is by copy, so a group
-joining above the selection does not move it; a group leaving takes its rows out of the
-selection and selects nothing in their place. The list's backdrop is `content` (DES-022);
-a hairline (DES-023) separates groups and is never drawn above the first, and the list
-begins 8 pt below its top edge rather than at the platform inset.
+**Folders with duplicates** (`.subheadline` L3 caption), first: one row per folder set,
+largest first, each with a hairline under it (DES-023):
 
-- **Library pairs first.** Two libraries that share identical items get one summary
-  section each, before the groups: `.headline` `Backup and Photos share 29,870 photos`;
-  `.subheadline` what the pair's marks will do — `Each library keeps its own copy. Nothing
-  moves.`, or `29,870 copies in Backup move to the Trash` after a pick; a trailing
-  `Keep Only…` pull-down whose items are `Keep Only Photos`, `Keep Only Backup`, and
-  `Keep One Copy in Each Library` (the marks back to their default); and `Keep Both
-  Libraries`, which sets aside everything the two share, tooltip `Sets aside everything
-  these libraries share. Nothing moves.` Set aside, the row reads `You kept both
-  libraries' copies` with `Review Again` in place of both controls. A disclosure chevron
-  shows the shared groups under it; they are collapsed by default, since the decision is
-  the libraries'. A group spanning three or more libraries has no pair and lists like any
-  group.
+- **Two folders that mirror each other** (an import folder and the dated folder, a backup
+  library and the main one): leading `folder.badge.questionmark`; `.body` `2026/08 and
+  Imports/Aug 2026` (each name its folder inside the library, with the library's name
+  first when the list spans libraries); `.subheadline` L3 `412 photos in both`; trailing,
+  L3 `Keep the copies in` beside a segmented control: `2026/08` | `Imports/Aug 2026` |
+  `Otos decides` (`Both` when the folders are in different libraries, since the keeper
+  rule then keeps each library's copy).
+- **One folder with files saved twice in it** (`Blue.heic` and `Blue_001.heic`): leading
+  `folder`; `.body` the folder; L3 `38 photos saved twice in this folder`; trailing `Keep
+  the` beside `Best copy` | `Original name` | `Oldest` | `Largest`.
+- A group whose copies sit in three or more folders has no row: it is decided by its own
+  photos.
+- The rule applies at once to every group in that set; the photos re-tag as it changes.
+  A click on one photo still outranks the rule for that group. A group whose copies hold
+  work that cannot be combined (two edits, two with `.xmp` / `.srt` files, a like and a
+  dislike) is never decided by a rule: Otos will not choose between two people's work on
+  someone's behalf.
 
-- **Each group** is a card over its rows, three lines beside a 64 pt well:
-  1. `.headline`: `2 identical videos`, `3 identical photos`, `2 identical items` when a
-     kind is not yet read; `2 files of one photo` for versions of one capture — "files",
-     since to a Lightroom user a version is an edit.
-  2. `.subheadline`, the shared facts, at the precision the list shows (DES-005A):
-     `Captured Aug 2, 2026 at 12:56 AM · 134 MB each · MP4 · 3840 × 2160 · Camera Roll ▸
-     2026/08` — the kept copy's capture date in the Info pane's format and word
-     (`PhotoInfo`), then the size (first: it is the fact a reader uses), format and
-     dimensions when every copy shares them (`each` on a shared size, since one file is
-     not the group; the size leaves the card when the shown figure hides a difference in
-     bytes, which the rows then show), then the location: within one library, the
-     deepest folder every copy is in or under (`Camera Roll` alone when that is the
-     library's top); across libraries, nothing. A fact the catalog lacks is left out,
-     never `Unknown`. This is a line of looked-up facts, not a status string (DES-034): up
-     to five facts a middot apart.
-  3. `.body`, label colour (L2): the decision (below) — the verdict, the one line that
-     says what the act will do, so it is not read as one more fact.
-  - **The well** holds one aspect-fit thumbnail, edged with a DES-023 hairline so a dark
-    picture reads on the dark backdrop, when one picture stands for every copy: every
-    identical group, and a group of files of one photo whose dimensions, format and bytes
-    agree. It is blank when the rows carry the pictures — files of one photo whose
-    dimensions, format or size differ, where one picture must never stand for two files
-    the screen knows apart — so every card's text shares one left edge (DES-016). The
-    DES-063 kind glyph stands in the well before the thumbnail decodes, and its slash
-    variant once a decode has failed.
-  - Every card line is one line, middle-truncated.
-  - Trailing, `.small`: `Compare` (the group's first two side by side, the group as the
-    filmstrip; tooltip `See the first two side by side, at full size.`) for files of one
-    photo — identical copies have one picture, which Return and double-click open — then
-    `Keep Both Copies` for two copies or `Keep All Copies` for more. These are not Tab stops (DES-080): the Photo menu's Keep All Copies
-    and Review Again, and Return, act on the selected group.
-  - **A kept group** (Keep Both Copies, Keep All Copies) stays in its place as one quiet
-    card with no well, no rows and no decision: `.headline` `Kept both copies` (`Kept all
-    3 copies`), the shared facts with the kind in them (`Captured … · 2 identical videos ·
-    Camera Roll ▸ 2026/08`), and `Review Again` trailing, which forgets the kept pairs and
-    returns the group's rows with its default. A card that vanished on Keep Both read as a
-    deletion; one that stays, quiet, reads as kept.
+**Groups**, then: files of one photo first, then identical copies, each newest first by
+capture date, undated last, kept groups in their place among them. A hairline separates
+groups, never above the first.
 
-- **Each copy** is a row: what differs, then its fate beside its mark:
-  - leading, a 128 pt-wide aspect-fit thumbnail (the stored 256 px thumbnail at 2×) when
-    the pictures are what differ, its height the picture's own (a landscape row is no
-    taller than its picture; every row of a group shares the aspect, so the group keeps one
-    pitch); otherwise the card's well, left blank, so the row's L2 shares the card text's
-    left edge (DES-016). The row's selection highlight passes behind a thumbnail, the
-    platform's list norm rather than DES-061's tile border.
-  - L2 (`.body`): the part of the location the header did not state — the file name when
-    the copy is in the header's folder (`20260801_175635.mp4`); the rest of its path when
-    it is under it (`Day 1/IMG_0001.JPG`); library, folder and file when the group spans
-    libraries (`Backup ▸ 2024/IMG_0001.JPG`). Middle-truncated.
-  - L3 (`.subheadline`): the facts that differ within the group, in this order — the
-    format, dimensions and size, each only when the copies' differ at the precision the
-    list shows (the shared ones are on the card), the size as `11,400,000 bytes` when the
-    shown figure ties but the bytes do not; `File created Aug 2, 2026 at 12:56 AM` when
-    birth times differ (with seconds when two copies share a minute; the keeper rule
-    compares birth times at whole seconds and sizes in bytes, and the rows show each at
-    the precision that tells the copies apart, so the rows and the rule never disagree) —
-    then the copy's own marks: `Camera original` or `Not the camera original` (only when
-    not every copy is one, and for every row, so no row is blank beside a fact about its
-    sibling), `Liked` or `Disliked`, `Edited in Otos`, `Has an .xmp or .srt file`. On a copy that moves, a mark says where its work goes: `Liked. Its Like
-    moves to the kept copy` and `Edited in Otos. Its edits move to the kept copy` when the
-    act carries it (the kept copy lacks it); `Edited in Otos. Its edits move to the Trash
-    with it` when it cannot (the user chose between two edits); `Its .xmp or .srt file
-    moves to the Trash with it` always, since those files never carry. Every row of a
-    group takes the group's shape: when any row has an L3, all have the line, so the
-    checkboxes sit at one pitch and nothing reflows when a mark changes.
-  - trailing, at one width in every state (DES-053): the `Keep` checkbox with its title
-    shown — the box names the setting, which never changes with its state (HIG Toggles),
-    so a user from a tool where the box means *delete* cannot read an unchecked box as
-    "not marked" — then, 12 pt after it, the consequence as a symbol and a word (DES-029):
-    `Stays` with `checkmark.circle` when checked, `Moves to Trash` with `trash` when not,
-    both in label colour (a grey `Stays` read as switched off). VoiceOver reads the row,
-    not the box, and the box is not a Tab stop: rows are the selection. In a pair,
-    unchecking the kept copy keeps the other — one click swaps the keeper, since a group
-    always keeps one and there is only one other. With three or more copies the last
-    checked box is disabled, tooltip `A group always keeps one copy.`. A copy of a waiting
-    group offers `Keep This Copy`, a `.small` button that keeps it and marks the rest (Keep
-    Only This Copy), so the first click means keep, never un-keep — such a row has no
-    checkbox.
-  - Return or Space on a selected row, and double-click on a row's picture, name or space
-    (not its controls), open that row's group.
-  - Context menu: `Keep This Copy`, `Don't Keep This Copy`, `Keep Only This Copy`, then
-    `Move to Trash Now` — the ordinary act on this one copy, now, for a user who wants to
-    try one before the bar's act; "Now" because it acts where the fate word only states.
+- **The header**: the capture date, `.headline`, long style (`October 4, 2026`; `No
+  Date` when none is known), then `.subheadline` L3 one line, middle-truncated: the
+  folder when every copy shares one, then why the group keeps what it keeps — `Keeping
+  the original name`, `Keeping the older file`, `Keeping the camera original` (the keeper
+  rule's deciding criterion, ADR 0042); `Keeping the original name, as the folder rule
+  says`; `You chose this one`; or, for a group that waits, `The copies have different
+  edits: click the one to keep`. A kept group (Keep All Copies) reads `Kept both copies`
+  with a `Review Again` link, and shows no photos.
+- **The photos**: one per copy, 8 pt apart (DES-060), wrapping only when the pane is
+  narrower than the group. Each is a 180 pt square cell with the copy's own thumbnail
+  aspect-fit in it (DES-060A), radius 4, edged with a DES-023 hairline.
+  - Top left, its fate as a tag, word and glyph (DES-029): **Keep** with a checkmark on
+    the accent colour, or **Trash** with a trash can on black 55 %. A copy that goes is
+    drawn at 40 % opacity, so a group's keeper reads at a glance, in grayscale too. A group
+    that waits tags nothing until a click.
+  - Over the bottom of the picture, white over a soft shadow as Photos draws them: the
+    size centred (at the precision that tells the group's copies apart, `39.13 MB`;
+    DES-005A) and the Like or Dislike glyph at the left.
+  - Tags and badges appear only once the picture has painted (DES-062); the DES-063 kind
+    glyph stands in the cell before then, and its slash variant once a decode has failed.
+  - When the group's copies sit in more than one folder, under each photo its folder,
+    `folder` glyph and `.subheadline` L3, one line middle-truncated: which folder a copy
+    is in is what a folder rule chooses between, so the photos say it without a hover.
+  - No file name on screen: where a copy is and what else differs is its tooltip
+    (`Camera Roll ▸ 2026/10/IMG_1.HEIC`, then `6192 × 4128 · 39.13 MB · File created … ·
+    Camera original · Liked · Edited in Otos`).
+  - **A click keeps that copy** and tags every other copy of its group Trash. It also
+    selects the photo (DES-061's 3 pt accent border). A double-click opens the group.
+  - Context menu: `Keep This Copy`, `Keep All Copies`, then `Move to Trash Now` — the
+    ordinary act on this one copy, now.
 
 **Bar.** Three zones at one fixed height (DES-018, DES-053):
 
 | Zone | Content |
 | --- | --- |
-| What | L1, as above, over one L3 clause: `178 extra copies to move · 53.2 GB` — the count the button repeats, so the two numbers on the bar are seen to be one, and the bytes it does not carry (file sizes, the trash bar's convention; `at least 53.2 GB` when some sizes are unknown); blank space while nothing moves. |
-| Middle, behind a hairline | One of three, never blank: the **receipt** of the last Move to Trash from the list, `178 extra copies moved to the Trash · 53.2 GB`, written once the Store has hidden the copies (never on the click: the download question may be declined), counting what was hidden, with `Undo` while that act is the window's last change, over `Empty the Trash in Finder to free the space`, until that act is undone, a mark changes, a later move replaces it, or the user leaves the list; else the **choices**, `6 photos need your choice` with `Show`, while any group waits (Show selects the first); else the **legend**, `Checked copies stay. Unchecked copies go to the Trash; Undo brings them back.` — the sentence a first visit needs, since the act asks nothing. |
-| Act | `Move 178 Extra Copies to Trash`, a plain bordered button with no Return equivalent (DES-052's deviation), tooltip `Moves the extra copies to the Trash. Edit ▸ Undo, or the Trash, puts them back.` Disabled, it reads `Move Extra Copies to Trash`, tooltip `Uncheck Keep on a copy, or choose a copy to keep in a group that waits.` No confirmation (DES-076, HIG Alerts): the act is undoable and the Trash recoverable, and the receipt says what happened. |
+| What | L1, as above, over one L3 clause: `221 copies go to the Trash · 53.9 GB` — the count the button repeats and the bytes it does not carry; blank space while nothing would move. |
+| Middle, behind a hairline | One of three, never blank: the **receipt** of the last move, `221 copies moved to the Trash · 53.9 GB`, written once the Store has hidden the copies, with `Undo` while that move is the window's last change, over `Empty the Trash in Finder to free the space`, until a click or rule changes, a later move replaces it, or the user leaves the list; else the **choices**, `6 photos need your choice` with `Show`, while any group waits (Show selects its first photo); else the **legend**, `Click a photo to keep it, or set a rule for a whole folder above.` |
+| Act | `Move 221 Copies to Trash`, a plain bordered button with no Return equivalent (DES-052's deviation), tooltip `Moves every copy tagged Trash to the Trash. Edit ▸ Undo puts them back.` Disabled, it reads `Move Copies to Trash`. No confirmation (DES-076): every Keep and Trash is on screen before the click, the act is undoable, and the receipt says what happened. |
 
-## The decision line
-
-One clause per group, the header's last line, computed from the keeper rule (ADR 0042)
-and the session's marks — never a stored string.
-
-| State | Line |
-| --- | --- |
-| Default, decided by an `.xmp` / `.srt` file | `Keeping the copy with its .xmp or .srt file` (`file` for files of one photo, throughout) |
-| … by the camera original (versions) | `Keeping the camera original` |
-| … by pixels (versions) | `Keeping the file with the most pixels` |
-| … by file size (versions) | `Keeping the largest file` |
-| … by an edit | `Keeping the copy edited in Otos` |
-| … by a choice | `Keeping the copy you liked` / `Keeping the copy you disliked` |
-| … by a copy suffix | `Keeping the original file name` |
-| … by birth time | `Keeping the older file` |
-| … by path order | A tie-break is not a merit, so the line says why it does not matter: `Alike in every way, so keeping the first by name` for identical copies, `Nothing told them apart, so keeping the first by name` for files of one photo; `… by folder and name` when the card names no folder every copy is in |
-| Default across libraries | `Keeping one copy in each library` |
-| The marks differ from the default | `Keeping the copy you chose` (`copies` when more than one is kept); marks changed back are the default again |
-| Waits: more than one edited | `Choose which edited copy to keep` (`… edited copy in Photos …` when the group spans libraries and names the library that conflicts) |
-| Waits: more than one with an `.xmp` / `.srt` file | `Choose which copy with an .xmp or .srt file to keep` |
-| Waits: different choices | `Choose the liked or the disliked copy to keep` |
-| Kept | none: the card reads `Kept both copies` |
-
-The deciding criterion is the one at which the kept copy beats the other copy it beats
-last in the rule's order, so the line names the rule that was needed, not the first one
-that happened to apply; with three or more copies the rows' L3 shows the fact that beat
-each one. A waiting group keeps every copy and counts nothing until `Keep This Copy` on
-one of its rows decides it.
+Moved copies go to the Trash through the ordinary Move to Trash, carrying their likes and
+edits onto the kept copy that lacks them; `.xmp` / `.srt` files go with their copy.
 
 ## Defaults
 
-Every group has a default (ADR 0042, Plan 0111):
+Before a click or a rule, every group keeps what the keeper rule picks (ADR 0042):
 
-- **Each library keeps its own copy.** A group spanning libraries keeps the best copy in
-  each; its library pair row offers `Keep Only <Library>` beside `Keep Both Libraries`.
+- **Each library keeps its own copy.**
 - **The best copy is kept:** one with `.xmp` / `.srt` files; for files of one photo —
   whether or not they name their capture — the camera original, then the most pixels,
   then the largest file in bytes; an edited copy, then one with a choice; the name without
   a ` copy` / ` (1)` / `_001` suffix; the earliest-born, at whole seconds; path order.
 - **Work moves with the act.** A moved copy's choice or edit goes onto the kept copy that
   lacks it, and Undo takes it back.
-- **Only work that cannot be combined waits** — two edits, two with `.xmp` / `.srt` files,
-  two different choices — with everything kept and the conflict named.
+- **Only work that cannot be combined waits**, tagging nothing until a click.
+
+Clicks and rules are window state, a decision in progress: a click is forgotten once its
+copy leaves the group.
 
 ## Keyboard and VoiceOver
 
-Rows are the selection. The `Keep` checkbox and the cards' buttons are not Tab stops;
-`Show`, `Undo` and the bar's button are, so the bar is at most two Tabs from the list.
+Photos are the selection. The rule rows' segmented controls are Tab stops, as are `Show`,
+`Undo` and the bar's button; the photos and the header links are not (DES-080).
 
-**Commands.** These act on the selected rows:
-- **Photo ▸ Keep This Copy**
-- **Don't Keep This Copy**
-- **Keep Only This Copy** (also the row's context menu)
-- **Keep All Copies**
-- **Review Again**
-- **Move Extra Copies to Trash**
-
-There are no bare-key equivalents: P, U and X already mean curation, and Space is
-Lightroom's Loupe toggle.
+**Commands**, on the selected photo: **Photo ▸ Keep This Copy**, **Keep All Copies**,
+**Review Again**, and **Move Duplicates to Trash** (the bar's act). There are no bare-key
+equivalents: P, U and X already mean curation.
 
 **Keys.**
-- **Return** and **Space** open the selected group in Compare (two copies) or Loupe, with
-  the group as the filmstrip (Space is Lightroom's Loupe toggle). **Back to Duplicates**
-  returns.
-- **⌘⌫** (Photo ▸ Move to Trash) moves the selected rows that read `Moves to Trash` —
-  never a kept one, and never a row that was not selected — so Select All then ⌘⌫ is the
-  bar's act for what is selected, not the loss of every copy. A kept copy moves now only by its row's
-  `Move to Trash Now`.
+- **←** and **→** select the previous and next copy in the list's order, across groups;
+  **↑** and **↓** the copy at the same place in the previous and next group. The list
+  scrolls the selected photo into view.
+- **Space** keeps the selected photo, as a click does.
+- **Return** opens the selected photo's group in Compare (two copies) or Loupe, with the
+  group as the filmstrip. **Back to Duplicates** returns.
+- **⌘⌫** (Photo ▸ Move to Trash) moves the selected groups' copies tagged Trash — never a
+  kept one — so Select All then ⌘⌫ is the bar's act for what is selected.
 
 **VoiceOver.**
-- A card is a header and leads with what tells one group from the next (DES-082):
-  `Captured Aug 2, 2026 at 12:56 AM, 2 identical videos, 134 MB each, MP4, 3840 by 2160,
-  Camera Roll, folder 2026/08, Keeping the older file`. The pair row's chevron reads `Show
-  the shared items` / `Hide the shared items`.
-- A row is one element reading what differs, then its fate, then its facts:
-  `20260802_005635.mp4, moves to Trash, File created Aug 2, 2026 at 12:56 AM`
-  (`stays` for a kept copy); a waiting row reads `waiting for your choice`.
-- It offers Keep This Copy, Keep Only This Copy and Don't Keep This Copy as custom actions
-  (DES-085).
+- A header reads its date and why it keeps what it keeps.
+- A photo is one button reading its file name, its fate (`keep`, `goes to the Trash`,
+  `not chosen yet`), then its facts (DES-082); its action keeps it.
 
 ## Undo
 
 - **Move to Trash** is the ordinary `Undo Move to Trash`, from Edit ▸ Undo or the
   receipt's `Undo`; on this list it selects the copies it brings back, whose groups
-  rejoin at their dates (HIG Undo: show the result).
-- **Keep All Copies**, **Keep Both Libraries** and **Review Again** are undoable by their
-  own names. Undo selects the group it brings back.
+  rejoin at their dates (HIG Undo: show the result), and takes back the carried likes and
+  edits.
+- **Keep All Copies** and **Review Again** are undoable by their own names.
+- A click and a rule are not undoable acts: another click or rule changes them back, and
+  nothing on disk changes until Move to Trash.

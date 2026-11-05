@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// ADR 0042: the keeper rule, the session's counts, and the Store's duplicates read.
+/// ADR 0042: the keeper rule, what a pick or a folder rule keeps, and the Store's read.
 @Suite(.testDirectory)
 struct DuplicatesTests {
     private static let photos = LibraryRootPath(rawValue: "/Users/me/Photos")
@@ -67,7 +67,7 @@ struct DuplicatesTests {
         let edited = Self.copy("b.jpg", edited: true).copy.id
         let group = try Self.onlyGroup([Self.copy("a.jpg", choice: .liked), Self.copy("b.jpg", edited: true)])
         #expect(group.defaultKeep == [edited])
-        #expect(DuplicatesSession().carries(in: group) == [DuplicateCarry(from: liked, to: edited, work: .choice)])
+        #expect(DuplicatesSession().resolution(of: group)?.carries == [DuplicateCarry(from: liked, to: edited, work: .choice)])
     }
 
     @Test func onlyWorkThatCannotBeCombinedWaits() throws {
@@ -84,18 +84,21 @@ struct DuplicatesTests {
     @Test func eachLibraryKeepsItsOwnCopy() throws {
         let pair = try Self.onlyGroup([Self.copy("IMG_1.jpg"), Self.copy("IMG_1.jpg", in: Self.backup)])
         #expect(pair.defaultKeep == [Self.copy("IMG_1.jpg").copy.id, Self.copy("IMG_1.jpg", in: Self.backup).copy.id])
-        #expect(pair.libraryPair == DuplicateLibraryPair(Self.photos, Self.backup))
 
-        // A second copy inside one library is still marked.
+        // Each library keeps its copy, so nothing moves; a second copy inside one library
+        // still goes.
+        #expect(DuplicatesSession().resolution(of: pair)?.moving == [])
         let extra = try Self.onlyGroup([
             Self.copy("IMG_1.jpg"),
             Self.copy("IMG_1 copy.jpg"),
             Self.copy("IMG_1.jpg", in: Self.backup),
         ])
-        #expect(DuplicatesSession().copiesToMove(in: extra) == [Self.copy("IMG_1 copy.jpg").copy.id])
+        #expect(DuplicatesSession().resolution(of: extra)?.moving == [Self.copy("IMG_1 copy.jpg").copy.id])
     }
 
-    @Test func keepOnlyMarksTheRestOfTheGroupOrTheOtherLibrary() throws {
+    /// A click keeps that copy and nothing else, across libraries too; it outranks the
+    /// folder's rule.
+    @Test func aClickKeepsThatCopyAndOutranksTheFolderRule() throws {
         let group = try Self.onlyGroup([
             Self.copy("IMG_1.jpg"),
             Self.copy("IMG_1 copy.jpg"),
@@ -103,12 +106,14 @@ struct DuplicatesTests {
         ])
         let suffixed = Self.copy("IMG_1 copy.jpg").copy.id
         var session = DuplicatesSession()
-        session.keepOnly(suffixed, in: group)
-        #expect(Set(session.copiesToMove(in: group)) == [Self.copy("IMG_1.jpg").copy.id, Self.copy("IMG_1.jpg", in: Self.backup).copy.id])
+        session.picks[group.id] = suffixed
+        let picked = try #require(session.resolution(of: group))
+        #expect(picked.keep == [suffixed])
+        #expect(Set(picked.moving) == [Self.copy("IMG_1.jpg").copy.id, Self.copy("IMG_1.jpg", in: Self.backup).copy.id])
+        #expect(picked.reason == .picked)
 
-        var byLibrary = DuplicatesSession()
-        byLibrary.keepOnly(Self.photos, in: [group])
-        #expect(Set(byLibrary.copiesToMove(in: group)) == [suffixed, Self.copy("IMG_1.jpg", in: Self.backup).copy.id])
+        session.rules[DuplicateFolderSet(group)] = .largest
+        #expect(session.resolution(of: group)?.keep == [suffixed])
     }
 
     @Test func keptCopiesAreSetAsideAndALaterCopyIsTheOnlyOneOffered() throws {
@@ -142,55 +147,56 @@ struct DuplicatesTests {
         #expect(DuplicateGroupPolicy.hasCopySuffix(".hidden copy"))
     }
 
-    @Test func theSessionNeverMovesEveryCopyAndCountsEveryActiveGroup() throws {
+    @Test func theTallyCountsEveryActiveGroupAndWhatTheActMoves() throws {
         let preselected = try Self.onlyGroup([Self.copy("a/IMG_1.jpg"), Self.copy("b/IMG_1 copy.jpg")])
         let waiting = try DuplicateGroupPolicy.group(
             id: .identical(#require(XXH3Digest128(data: Data(repeating: 2, count: 16)))),
             copies: [Self.copy("x.jpg", edited: true).copy, Self.copy("y.jpg", edited: true).copy],
             keptPairs: []
         )
-        let state = CatalogDuplicatesState(groups: [preselected, waiting])
         var session = DuplicatesSession()
-
+        let state = CatalogDuplicatesState(groups: [preselected, waiting])
         let tally = session.tally(in: state)
         #expect(tally.itemsWithDuplicates == 2)
         #expect(tally.noun == .photos)
         #expect(tally.itemsToMove == [Self.copy("b/IMG_1 copy.jpg").copy.id])
+        #expect(tally.bytesToMove == PartialByteCount(knownBytes: 1000, unknownCount: 0))
         #expect(tally.needingChoice == 1)
 
-        // The kept copy of a group cannot be the last to go.
-        let keeper = Self.copy("a/IMG_1.jpg").copy.id
-        #expect(!session.canMoveToTrash(keeper, in: preselected))
-        // Even marked by hand, every copy of a group never moves: the group moves none.
-        session.keepOverrides[keeper] = false
-        #expect(session.copiesToMove(in: preselected).isEmpty)
-        session.keepOverrides[keeper] = nil
+        // No rule decides between two edits; a click does, and the group joins the act.
+        session.rules[DuplicateFolderSet(waiting)] = .oldest
+        #expect(session.resolution(of: waiting) == nil)
+        session.picks[waiting.id] = Self.copy("y.jpg").copy.id
+        let decided = session.tally(in: state)
+        #expect(decided.needingChoice == 0)
+        #expect(decided.itemsToMove == [Self.copy("b/IMG_1 copy.jpg").copy.id, Self.copy("x.jpg").copy.id])
 
-        // A group found while the user looks joins the count and the act at once.
-        let newcomer = try DuplicateGroupPolicy.group(
-            id: .identical(#require(XXH3Digest128(data: Data(repeating: 3, count: 16)))),
-            copies: [Self.copy("n/a.jpg").copy, Self.copy("n/a copy.jpg").copy],
-            keptPairs: []
-        )
-        let grown = CatalogDuplicatesState(groups: [preselected, waiting, newcomer])
-        let grownTally = session.tally(in: grown)
-        #expect(grownTally.itemsWithDuplicates == 3)
-        #expect(grownTally.itemsToMove == [Self.copy("b/IMG_1 copy.jpg").copy.id, Self.copy("n/a copy.jpg").copy.id])
+        // A pick is forgotten once its copy has left the group.
+        session.forgetPicks(absentFrom: CatalogDuplicatesState(groups: [preselected]))
+        #expect(session.picks.isEmpty)
     }
 
-    @Test func aMarkIsForgottenOnceNoGroupHoldsItsCopy() throws {
-        let group = try Self.onlyGroup([Self.copy("a/IMG_1.jpg"), Self.copy("b/IMG_1 copy.jpg")])
-        let suffixed = Self.copy("b/IMG_1 copy.jpg").copy.id
+    /// One rule decides every group in a folder, or in a pair of folders.
+    @Test func aFolderRuleDecidesEveryGroupInThatFolder() throws {
+        let one = try Self.onlyGroup([Self.copy("2026/10/a_001.jpg", born: 10), Self.copy("2026/10/a.jpg", born: 90)])
         var session = DuplicatesSession()
-        session.keepOverrides[suffixed] = true
+        let oneFolder = DuplicateFolderSet(one)
+        #expect(oneFolder.folders.map(\.folder) == ["2026/10"])
+        #expect(session.resolution(of: one)?.keep == [Self.copy("2026/10/a.jpg").copy.id])
+        session.rules[oneFolder] = .oldest
+        #expect(session.resolution(of: one)?.keep == [Self.copy("2026/10/a_001.jpg").copy.id])
+        #expect(session.resolution(of: one)?.reason == .rule(.oldest))
+        session.rules[oneFolder] = .originalName
+        #expect(session.resolution(of: one)?.keep == [Self.copy("2026/10/a.jpg").copy.id])
 
-        session.forgetMarks(absentFrom: CatalogDuplicatesState(groups: [group]))
-        #expect(session.keepOverrides[suffixed] == true)
+        let mirrored = try Self.onlyGroup([Self.copy("2026/08/b.jpg", born: 10), Self.copy("Imports/b.jpg", born: 90)])
+        let pair = DuplicateFolderSet(mirrored)
+        let imports = try #require(pair.folders.first { $0.folder == "Imports" })
+        session.rules[pair] = .folder(imports)
+        #expect(session.resolution(of: mirrored)?.keep == [Self.copy("Imports/b.jpg").copy.id])
 
-        // The copy left — moved, its library offline — so when it returns it starts over.
-        session.forgetMarks(absentFrom: .empty)
-        #expect(session.keepOverrides.isEmpty)
-        #expect(!session.keeps(suffixed, in: group))
+        let summaries = DuplicateFolderSetSummary.summaries(of: CatalogDuplicatesState(groups: [one, mirrored]))
+        #expect(Set(summaries.map(\.folderSet)) == [oneFolder, pair])
     }
 
     @Test func theBarNamesTheActAndKeepsItsTitleWhenDisabled() {
@@ -200,7 +206,7 @@ struct DuplicatesTests {
         #expect(none.primaryLine == "6 videos with duplicates")
         #expect(none.secondaryLine == nil)
         #expect(none.middle == .choices("6 videos need your choice"))
-        #expect(none.actionTitle == "Move Extra Copies to Trash")
+        #expect(none.actionTitle == "Move Copies to Trash")
         #expect(!none.actionEnabled)
 
         let two = DuplicatesBarPresentation.map(DuplicatesTally(
@@ -209,13 +215,11 @@ struct DuplicatesTests {
             bytesToMove: PartialByteCount(knownBytes: 14_900_000_000, unknownCount: 0), needingChoice: 0
         ))
         #expect(two.primaryLine == "110 photos and videos with duplicates")
-        // The count the button repeats, and the bytes it does not carry.
-        #expect(two.secondaryLine == "2 extra copies to move · 14.9 GB")
+        #expect(two.secondaryLine == "2 copies go to the Trash · 14.9 GB")
         #expect(two.middle == .legend(DuplicatesBarPresentation.legend))
-        #expect(two.actionTitle == "Move 2 Extra Copies to Trash")
+        #expect(two.actionTitle == "Move 2 Copies to Trash")
         #expect(two.actionEnabled)
 
-        // After the act, its receipt with Undo while the act is the window's last change.
         let moved = DuplicatesBarPresentation.map(
             DuplicatesTally(itemsWithDuplicates: 0, noun: .items, itemsToMove: [], bytesToMove: .zero, needingChoice: 0),
             receipt: DuplicatesReceipt(
@@ -225,14 +229,12 @@ struct DuplicatesTests {
         )
         #expect(moved.primaryLine == "No duplicates")
         #expect(moved.middle == .receipt(
-            line: "2 extra copies moved to the Trash · 14.9 GB",
+            line: "2 copies moved to the Trash · 14.9 GB",
             detail: "Empty the Trash in Finder to free the space",
             canUndo: true
         ))
     }
 
-    /// The noun is the user's own word for what the groups hold, and `items` until the
-    /// catalog has read every kind.
     @Test func theNounFollowsWhatTheGroupsHold() {
         #expect(DuplicateItemNoun.covering([.video, .video]) == .videos)
         #expect(DuplicateItemNoun.covering([.image, .raw]) == .photos)
@@ -241,109 +243,49 @@ struct DuplicatesTests {
         #expect(DuplicateItemNoun.covering([]) == .items)
     }
 
-    /// The header says what the copies share, the rows say what differs: the deepest folder
-    /// every copy is in or under goes in the header, and each row names the rest.
-    @Test func theHeaderNamesWhatTheCopiesShareAndTheRowsWhatDiffers() throws {
-        let twins = try Self.onlyGroup([Self.copy("2026/08/a.mp4", kind: .video), Self.copy("2026/08/b.mp4", kind: .video)])
-        let card = DuplicateGroupPresentation.map(twins, session: DuplicatesSession())
-        #expect(card.title == "2 identical videos")
-        #expect(card.sharedFacts?.hasSuffix("1 KB each · MP4 · 4032 × 3024 · Photos ▸ 2026/08") == true)
-        #expect(card.rows.map(\.primary) == ["a.mp4", "b.mp4"])
-        #expect(card.headerThumbnail == twins.copies.first?.id)
-        #expect(!card.showsCompare)
-        #expect(card.keepAllTitle == "Keep Both Copies")
+    /// A group is its date and why it keeps what it keeps, over its photos tagged Keep or
+    /// Trash, each with its size; where each copy is goes in its tooltip.
+    @Test func aGroupSaysWhyAndTagsEachPhotoKeepOrTrash() throws {
+        let twins = try Self.onlyGroup([Self.copy("2026/08/a.mp4", born: 10, kind: .video), Self.copy("2026/08/b.mp4", born: 90, kind: .video)])
+        var session = DuplicatesSession()
+        let header = DuplicateGroupPresentation.map(twins, session: session)
+        #expect(header.title == Date(timeIntervalSince1970: 1_700_000_000).formatted(date: .long, time: .omitted))
+        #expect(header.reason == "2026/08 · Keeping the older file")
+        #expect(header.tiles.map(\.fate) == [.keep, .trash])
+        #expect(header.tiles.map(\.size) == ["1 KB", "1 KB"])
+        #expect(header.tiles.first?.help.hasPrefix("Photos ▸ 2026/08/a.mp4") == true)
+        // One folder: no folder under the photos; two folders: each photo names its own.
+        #expect(header.tiles.map(\.folder) == [nil, nil])
+        let mirrored = try Self.onlyGroup([Self.copy("2026/08/b.jpg"), Self.copy("Imports/b.jpg")])
+        #expect(Set(DuplicateGroupPresentation.map(mirrored, session: session).tiles.compactMap(\.folder)) == ["2026/08", "Imports"])
 
-        let nested = try Self.onlyGroup([
-            Self.copy("2024/Holiday/Day 1/IMG_1.jpg"), Self.copy("2024/Holiday/Day 2/IMG_1.jpg"), Self.copy("2024/Holiday/IMG_1.jpg"),
-        ])
-        let nestedCard = DuplicateGroupPresentation.map(nested, session: DuplicatesSession())
-        #expect(nestedCard.sharedFacts?.hasSuffix("Photos ▸ 2024/Holiday") == true)
-        #expect(Set(nestedCard.rows.map(\.primary)) == ["Day 1/IMG_1.jpg", "Day 2/IMG_1.jpg", "IMG_1.jpg"])
-        #expect(nestedCard.keepAllTitle == "Keep All Copies")
+        session.picks[twins.id] = Self.copy("2026/08/b.mp4").copy.id
+        let picked = DuplicateGroupPresentation.map(twins, session: session)
+        #expect(picked.reason == "2026/08 · You chose this one")
+        #expect(picked.tiles.map(\.fate) == [.trash, .keep])
 
-        let mirrored = try Self.onlyGroup([Self.copy("2024/IMG_1.jpg"), Self.copy("2024/IMG_1.jpg", in: Self.backup)])
-        let mirroredCard = DuplicateGroupPresentation.map(mirrored, session: DuplicatesSession())
-        #expect(mirroredCard.sharedFacts?.contains("▸") == false)
-        #expect(Set(mirroredCard.rows.map(\.primary)) == ["Photos ▸ 2024/IMG_1.jpg", "Backup ▸ 2024/IMG_1.jpg"])
-        #expect(mirroredCard.decision == "Keeping one copy in each library")
+        let undated = try Self.onlyGroup([Self.copy("a.jpg", captured: nil), Self.copy("a copy.jpg", captured: nil)])
+        #expect(DuplicateGroupPresentation.map(undated, session: session).title == "No Date")
     }
 
-    /// The decision line names the rule that was needed, the conflict that waits, or the
-    /// user's own choice — and a mark changed back is no choice.
-    @Test func theDecisionLineSaysWhyOrWhatToChoose() throws {
-        var session = DuplicatesSession()
-        let suffixed = try Self.onlyGroup([Self.copy("a/IMG_1 copy.jpg", born: 50), Self.copy("b/IMG_1.jpg", born: 90)])
-        #expect(DuplicateGroupPresentation.map(suffixed, session: session).decision == "Keeping the original file name")
-
-        let older = try Self.onlyGroup([Self.copy("b/IMG_1.jpg", born: 90), Self.copy("a/IMG_1.jpg", born: 50)])
-        #expect(DuplicateGroupPresentation.map(older, session: session).decision == "Keeping the older file")
-        // Birth times are compared at whole seconds, as the rows show them.
-        let sameSecond = try Self.onlyGroup([Self.copy("b.jpg", born: 50.9), Self.copy("a.jpg", born: 50.1)])
-        #expect(DuplicateGroupPresentation.map(sameSecond, session: session).decision == "Alike in every way, so keeping the first by name")
-        let acrossFolders = try Self.onlyGroup([Self.copy("2025/a.jpg", born: 50), Self.copy("2024/b.jpg", born: 50)])
-        #expect(DuplicateGroupPresentation.map(acrossFolders, session: session).decision
-            == "Alike in every way, so keeping the first by folder and name")
-
-        // The deciding criterion is the one needed against the copy beaten last: the plain
-        // name beats the suffixed copy by name, and the older plain name by birth.
-        let three = try Self.onlyGroup([
-            Self.copy("a/IMG_1.jpg", born: 50), Self.copy("b/IMG_1.jpg", born: 90), Self.copy("c/IMG_1 copy.jpg", born: 10),
-        ])
-        #expect(DuplicateGroupPresentation.map(three, session: session).decision == "Keeping the older file")
-
-        let disliked = try Self.onlyGroup([Self.copy("a.jpg", choice: .disliked), Self.copy("b.jpg")])
-        #expect(DuplicateGroupPresentation.map(disliked, session: session).decision == "Keeping the copy you disliked")
-
+    /// A group whose copies hold work that cannot be combined tags nothing and asks for a
+    /// click. A kept group says so.
+    @Test func aGroupThatWaitsAsksForAClick() throws {
         let waiting = try Self.onlyGroup([Self.copy("a.jpg", edited: true), Self.copy("b.jpg", edited: true)])
-        let waitingCard = DuplicateGroupPresentation.map(waiting, session: session)
-        #expect(waitingCard.decision == "Choose which edited copy to keep")
-        #expect(waitingCard.sharedFacts?.hasSuffix("1 KB each · JPG · 4032 × 3024 · Photos") == true)
-        let everyRowOffersTheChoice = waitingCard.rows.allSatisfy { $0.fate == .choice }
-        #expect(everyRowOffersTheChoice)
-        #expect(waitingCard.rows.map(\.secondary) == ["Edited in Otos", "Edited in Otos"])
-        session.keepOnly(Self.copy("b.jpg").copy.id, in: waiting)
-        let chosen = DuplicateGroupPresentation.map(waiting, session: session)
-        #expect(chosen.decision == "Keeping the copy you chose")
-        #expect(chosen.rows.map(\.fate) == [.movesToTrash, .stays])
-        // Two edits cannot combine: the leaving copy's edit goes with it, and the row says so.
-        #expect(chosen.rows[0].secondary == "Edited in Otos. Its edits move to the Trash with it")
-        #expect(chosen.rows[1].secondary == "Edited in Otos")
+        let header = DuplicateGroupPresentation.map(waiting, session: DuplicatesSession())
+        #expect(header.reason == "Photos · The copies have different edits: click the one to keep")
+        #expect(header.tiles.map(\.fate) == [.undecided, .undecided])
 
-        // A choice taken back is the default again.
-        session = DuplicatesSession()
-        let kept = Self.copy("b/IMG_1.jpg").copy.id
-        session.keepOverrides[kept] = true
-        #expect(DuplicateGroupPresentation.map(suffixed, session: session).decision == "Keeping the original file name")
-        session.keepOverrides[Self.copy("a/IMG_1 copy.jpg").copy.id] = true
-        #expect(DuplicateGroupPresentation.map(suffixed, session: session).decision == "Keeping the copies you chose")
+        let a = Self.copy("Print/IMG_1.jpg").copy.id
+        let b = Self.copy("2024/IMG_1.jpg").copy.id
+        let kept = try Self.onlyGroup([Self.copy("Print/IMG_1.jpg"), Self.copy("2024/IMG_1.jpg")], kept: [DuplicateKeptPair(a, b)])
+        let keptHeader = DuplicateGroupPresentation.map(kept, session: DuplicatesSession())
+        #expect(keptHeader.isKept)
+        #expect(keptHeader.reason == "Kept both copies")
+        #expect(keptHeader.tiles.isEmpty)
     }
 
-    /// In a pair, unchecking the kept copy keeps the other: one click swaps the keeper. With
-    /// three copies the last kept copy stays kept.
-    @Test func uncheckingAPairsKeptCopyKeepsTheOther() throws {
-        let pair = try Self.onlyGroup([Self.copy("a.jpg", born: 50), Self.copy("b.jpg", born: 90)])
-        let a = Self.copy("a.jpg").copy.id
-        let b = Self.copy("b.jpg").copy.id
-        var session = DuplicatesSession()
-        #expect(session.canUnkeep(a, in: pair))
-        let swapped = session.unkeep(a, in: pair)
-        #expect(swapped)
-        #expect(!session.keeps(a, in: pair))
-        #expect(session.keeps(b, in: pair))
-        #expect(DuplicateGroupPresentation.map(pair, session: session).decision == "Keeping the copy you chose")
-
-        let three = try Self.onlyGroup([Self.copy("a.jpg", born: 50), Self.copy("b.jpg", born: 90), Self.copy("c.jpg", born: 90)])
-        var threeSession = DuplicatesSession()
-        #expect(!threeSession.canUnkeep(a, in: three))
-        let refused = !threeSession.unkeep(a, in: three)
-        #expect(refused)
-        #expect(threeSession.keeps(a, in: three))
-    }
-
-    /// Versions of one photo show their pictures on the rows only when the pixels or the
-    /// format differ; otherwise one picture stands for the group and the shared facts go on
-    /// the card, at the precision the list shows.
-    @Test func versionRowsShowPicturesOnlyWhenThePicturesDiffer() {
+    @Test func versionTilesCarryTheSizeThatTellsThemApart() {
         let ids = ["IMG_1.HEIC", "IMG_1_001.HEIC"].map {
             MediaAssetID(libraryRootPath: Self.photos, relativePath: MediaRelativePath(rawValue: $0))
         }
@@ -354,72 +296,84 @@ struct DuplicatesTests {
                 isEdited: false, hasCompanions: false
             )
         }
+        // 11,200,000 and 11,400,000 bytes both show as 11 MB: the rule ranks the bytes, so
+        // the tiles show the sizes at one decimal.
         let alike = DuplicateGroupPolicy.group(
             id: .samePhoto(ids), copies: [version(ids[0], width: 4000, bytes: 11_200_000), version(ids[1], width: 4000, bytes: 11_400_000)],
             keptPairs: [], originals: Set(ids)
         )
-        // 11,200,000 and 11,400,000 bytes both show as 11 MB: the rule ranks the bytes, so
-        // the rows show the bytes and the pictures, and the card drops the size.
-        let alikeCard = DuplicateGroupPresentation.map(alike, session: DuplicatesSession())
-        #expect(alikeCard.title == "2 files of one photo")
-        #expect(alikeCard.decision == "Keeping the largest file")
-        #expect(alikeCard.headerThumbnail == nil)
-        #expect(alikeCard.showsCompare)
-        #expect(alikeCard.sharedFacts == "HEIC · 4000 × 3000 · Photos")
-        #expect(alikeCard.rows.map(\.primary) == ["IMG_1_001.HEIC", "IMG_1.HEIC"])
-        #expect(alikeCard.rows.map(\.secondary) == ["11,400,000 bytes", "11,200,000 bytes"])
-        #expect(alikeCard.rows.map(\.thumbnailAspect) == [0.75, 0.75])
-
-        // The same bytes under two names: one picture, the size on the card, nothing on the
-        // rows but the names, and the name decides.
-        let same = DuplicateGroupPolicy.group(
-            id: .samePhoto(ids), copies: [version(ids[0], width: 4000, bytes: 11_200_000), version(ids[1], width: 4000, bytes: 11_200_000)],
-            keptPairs: [], originals: Set(ids)
-        )
-        let sameCard = DuplicateGroupPresentation.map(same, session: DuplicatesSession())
-        #expect(sameCard.decision == "Keeping the original file name")
-        #expect(sameCard.headerThumbnail == ids[0])
-        #expect(sameCard.sharedFacts == "11 MB each · HEIC · 4000 × 3000 · Photos")
-        #expect(sameCard.rows.map(\.secondary) == [nil, nil])
+        let alikeHeader = DuplicateGroupPresentation.map(alike, session: DuplicatesSession())
+        #expect(alikeHeader.tiles.map(\.size) == ["11.4 MB", "11.2 MB"])
+        #expect(alikeHeader.reason == "Photos · Keeping the largest file")
 
         let resized = DuplicateGroupPolicy.group(
             id: .samePhoto(ids), copies: [version(ids[0], width: 4000, bytes: 11_200_000), version(ids[1], width: 1000, bytes: 400_000)],
             keptPairs: [], originals: [ids[0]]
         )
-        let resizedCard = DuplicateGroupPresentation.map(resized, session: DuplicatesSession())
-        #expect(resizedCard.decision == "Keeping the camera original")
-        #expect(resizedCard.headerThumbnail == nil)
-        #expect(resizedCard.sharedFacts == "HEIC · Photos")
-        #expect(resizedCard.rows.map(\.secondary) == ["4000 × 3000 · 11 MB · Camera original", "1000 × 750 · 400 KB · Not the camera original"])
-
-        // Two files that name no capture still rank by pixels and size: the rows show the
-        // sizes that differ, and the line names the rule that used them.
-        let screenshots = DuplicateGroupPolicy.group(
-            id: .samePhoto(ids), copies: [version(ids[0], width: 1206, bytes: 108_000), version(ids[1], width: 1206, bytes: 116_000)],
-            keptPairs: [], originals: []
-        )
-        let screenshotsCard = DuplicateGroupPresentation.map(screenshots, session: DuplicatesSession())
-        #expect(screenshotsCard.decision == "Keeping the largest file")
-        #expect(screenshotsCard.rows.map(\.primary) == ["IMG_1_001.HEIC", "IMG_1.HEIC"])
-        #expect(screenshotsCard.rows.map(\.secondary) == ["116 KB", "108 KB"])
-        #expect(resizedCard.rows.map(\.thumbnailAspect) == [0.75, 0.75])
+        let resizedHeader = DuplicateGroupPresentation.map(resized, session: DuplicatesSession())
+        #expect(resizedHeader.tiles.map(\.size) == ["11 MB", "400 KB"])
+        #expect(resizedHeader.tiles.map(\.help) == [
+            "Photos ▸ IMG_1.HEIC\n4000 × 3000 · 11 MB · Camera original",
+            "Photos ▸ IMG_1_001.HEIC\n1000 × 750 · 400 KB",
+        ])
     }
 
-    /// A row says where its work goes, and every row of a group takes the group's shape.
-    @Test func aLeavingRowSaysWhereItsWorkGoes() throws {
-        let group = try Self.onlyGroup([Self.copy("a.jpg", born: 50), Self.copy("b.jpg", born: 90, choice: .liked)])
-        let card = DuplicateGroupPresentation.map(group, session: DuplicatesSession())
-        #expect(card.decision == "Keeping the copy you liked")
-        var session = DuplicatesSession()
-        session.keepOnly(Self.copy("a.jpg").copy.id, in: group)
-        let moved = DuplicateGroupPresentation.map(group, session: session)
-        let leaving = try #require(moved.rows.first { $0.id == Self.copy("b.jpg").copy.id })
-        #expect(leaving.fate == .movesToTrash)
-        #expect(leaving.secondary?.hasPrefix("File created ") == true)
-        #expect(leaving.secondary?.hasSuffix(" · Liked. Its Like moves to the kept copy") == true)
-        let everyRowHasTheLine = moved.rows.allSatisfy(\.showsSecondaryLine)
-        #expect(everyRowHasTheLine)
-        #expect(leaving.accessibilityLabel.hasPrefix("b.jpg, moves to Trash, "))
+    @Test func sizesThatTieAtTheShownPrecisionGetTheDecimalsThatTellThemApart() {
+        let bytes: [Int64] = [39_133_184, 39_100_416, 38_821_888, 38_805_504, 38_801_408, 38_793_216]
+        let copies = bytes.enumerated().map { index, size in
+            DuplicateCopy(
+                id: MediaAssetID(libraryRootPath: Self.photos, relativePath: MediaRelativePath(rawValue: "f\(index).arw")),
+                libraryDisplayName: "Photos", kind: .raw, captureDate: nil, byteSize: size, createdAt: nil,
+                pixelWidth: 6192, pixelHeight: 4128, mediaChoice: .notRated, isEdited: false, hasCompanions: false
+            )
+        }
+        let sizes = DuplicateTileFacts.distinguishingSizes(of: copies)
+        #expect(copies.map { sizes[$0.id] } == ["39.13 MB", "39.10 MB", "38.82 MB", "38.81 MB", "38.80 MB", "38.79 MB"])
+
+        let twins = Array(copies.prefix(2)).map {
+            DuplicateCopy(
+                id: $0.id, libraryDisplayName: "Photos", kind: .raw, captureDate: nil, byteSize: 39_133_184,
+                createdAt: nil, pixelWidth: 6192, pixelHeight: 4128, mediaChoice: .notRated, isEdited: false,
+                hasCompanions: false
+            )
+        }
+        #expect(Set(DuplicateTileFacts.distinguishingSizes(of: twins).values) == ["39 MB"])
+    }
+
+    /// ← and → walk every copy across groups; ↑ and ↓ keep the place in the next group, or
+    /// take its last copy when it is shorter.
+    @Test func theArrowKeysWalkTheTilesInReadingOrder() {
+        let ids = (0 ..< 5).map {
+            MediaAssetID(libraryRootPath: Self.photos, relativePath: MediaRelativePath(rawValue: "\($0).jpg"))
+        }
+        let order = DuplicatesTileOrder(groups: [[ids[0], ids[1], ids[2]], [ids[3], ids[4]]])
+        #expect(order.target(from: nil, .right) == ids[0])
+        #expect(order.target(from: ids[2], .right) == ids[3])
+        #expect(order.target(from: ids[3], .left) == ids[2])
+        #expect(order.target(from: ids[0], .left) == nil)
+        #expect(order.target(from: ids[2], .down) == ids[4])
+        #expect(order.target(from: ids[4], .up) == ids[1])
+        #expect(order.target(from: ids[4], .down) == nil)
+    }
+
+    /// A folder rule row offers what fits its folders: two folders, either one or the
+    /// default; one folder, how to choose within it.
+    @Test func aFolderRowOffersWhatFitsItsFolders() throws {
+        let mirrored = try Self.onlyGroup([Self.copy("2026/08/b.jpg"), Self.copy("Imports/b.jpg")])
+        let pair = try #require(DuplicateFolderSetSummary.summaries(of: CatalogDuplicatesState(groups: [mirrored])).first)
+        let row = DuplicateFolderRulePresentation.map(pair, rule: nil, noun: .photos, withLibrary: false)
+        #expect(row.title == "2026/08 and Imports")
+        #expect(row.detail == "1 photo in both")
+        #expect(row.prompt == "Keep the copies in")
+        #expect(row.options.map(\.title) == ["2026/08", "Imports", "Otos decides"])
+        #expect(row.selected == .automatic)
+
+        let twice = try Self.onlyGroup([Self.copy("2026/10/a.jpg"), Self.copy("2026/10/a_001.jpg")])
+        let one = try #require(DuplicateFolderSetSummary.summaries(of: CatalogDuplicatesState(groups: [twice])).first)
+        let oneRow = DuplicateFolderRulePresentation.map(one, rule: .oldest, noun: .photos, withLibrary: false)
+        #expect(oneRow.detail == "1 photo saved twice in this folder")
+        #expect(oneRow.options.map(\.title) == ["Best copy", "Original name", "Oldest", "Largest"])
+        #expect(oneRow.selected == .oldest)
     }
 
     @Test func theStoreGroupsVisibleCopiesWithCurrentDigestsAndRemembersKeepAll() async throws {

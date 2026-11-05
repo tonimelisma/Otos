@@ -200,12 +200,11 @@ struct BrowserPlaceTests {
         #expect(model.pendingPlaceRestore == nil)
     }
 
-    /// A same-photo group's Compare opens its first two versions side by side, whatever the
-    /// group's size, before Projection has published the group's scope; Return on a larger
-    /// group opens Loupe.
-    @Test func comparingAVersionGroupOpensItsFirstTwoSideBySide() {
+    /// Return on a picture opens its group: two copies side by side in Compare, more in
+    /// Loupe, before Projection has published the group's scope.
+    @Test func openingAGroupShowsTwoCopiesInCompareAndMoreInLoupe() {
         let domain = PreferencesDomain.suite(UUID().uuidString)
-        let ids = makeIDs(3)
+        let ids = makeIDs(5)
         let model = makeViewModel(domain)
         let copies = ids.map { id in
             DuplicateCopy(
@@ -213,28 +212,33 @@ struct BrowserPlaceTests {
                 pixelWidth: 4, pixelHeight: 3, mediaChoice: .notRated, isEdited: false, hasCompanions: false
             )
         }
-        let group = DuplicateGroupPolicy.group(id: .samePhoto(ids), copies: copies, keptPairs: [], originals: [ids[0]])
+        let pair = DuplicateGroupPolicy.group(
+            id: .samePhoto(Array(ids.prefix(2))), copies: Array(copies.prefix(2)), keptPairs: [], originals: [ids[0]]
+        )
+        let three = DuplicateGroupPolicy.group(
+            id: .samePhoto(Array(ids.suffix(3))), copies: Array(copies.suffix(3)), keptPairs: [], originals: [ids[2]]
+        )
         var state = loadedState(descriptor: CatalogQueryDescriptor(scope: .duplicates), ids: ids)
-        state.duplicates = CatalogDuplicatesState(groups: [group])
+        state.duplicates = CatalogDuplicatesState(groups: [pair, three])
         model.applyState(state)
 
-        model.compareDuplicateGroup(group)
-
-        #expect(model.sidebarSelection == .duplicateGroup(group.id))
+        model.selectDuplicateCopy(ids[1], modifiers: [], orderedIDs: ids)
+        model.openSelectedDuplicateGroup()
+        #expect(model.sidebarSelection == .duplicateGroup(pair.id))
         #expect(model.viewMode == .compare)
-        #expect(model.gridSelection.selection == Set(group.copies.prefix(2).map(\.id)))
+        #expect(model.gridSelection.selection == Set(pair.copies.map(\.id)))
 
         model.returnToDuplicates()
         model.applyState(state)
-        model.setDuplicatesSelection([ids[2]])
+        model.selectDuplicateCopy(ids[4], modifiers: [], orderedIDs: ids)
         model.openSelectedDuplicateGroup()
         #expect(model.viewMode == .loupe)
     }
 
-    /// ⌘⌫ on the list moves the selected groups' extra copies and never a kept one, so
-    /// Select All then ⌘⌫ cannot empty a group (ADR 0042); double-click opens the group of
-    /// the row clicked, whatever the selection holds.
-    @Test func commandBackspaceOnTheListMovesOnlyTheSelectedExtras() throws {
+    /// A click keeps that copy; ⌘⌫ on the list moves the selected groups' copies tagged
+    /// Trash and never the kept one, so Select All then ⌘⌫ cannot empty a group (ADR 0042).
+    /// Double-click opens the group of the photo clicked, whatever the selection holds.
+    @Test func aClickKeepsACopyAndCommandBackspaceMovesOnlyTheOthers() throws {
         let domain = PreferencesDomain.suite(UUID().uuidString)
         let ids = makeIDs(3)
         let model = makeViewModel(domain)
@@ -251,15 +255,14 @@ struct BrowserPlaceTests {
         state.duplicates = CatalogDuplicatesState(groups: [group])
         model.applyState(state)
 
-        model.setDuplicatesSelection(Set(ids))
-        let targets = model.selectedDuplicatesToMove()
-        #expect(Set(targets.ids) == Set(ids.dropFirst()))
-        #expect(!targets.ids.contains(ids[0]))
+        model.selectDuplicateCopy(ids[0], modifiers: [], orderedIDs: ids)
+        model.selectDuplicateCopy(ids[2], modifiers: .shift, orderedIDs: ids)
+        #expect(Set(model.selectedDuplicatesToMove().ids) == Set(ids.dropFirst()))
         #expect(model.canMoveTargetedMediaToTrash)
 
-        model.setDuplicatesSelection([ids[0]])
-        #expect(model.selectedDuplicatesToMove().ids.isEmpty)
-        #expect(!model.canMoveTargetedMediaToTrash)
+        model.keepDuplicateCopy(ids[2])
+        #expect(Set(model.selectedDuplicatesToMove().ids) == [ids[0], ids[1]])
+        #expect(model.duplicatesTally?.itemsToMove.contains(ids[2]) == false)
 
         model.openDuplicateGroup(containing: ids[2])
         #expect(model.sidebarSelection == .duplicateGroup(group.id))
@@ -296,7 +299,7 @@ struct BrowserPlaceTests {
         #expect(model.showsDuplicatesRow)
         #expect(model.duplicatesCount == nil)
         #expect(model.duplicatesTally == nil)
-        #expect(!model.canMoveMarkedDuplicatesToTrash)
+        #expect(!model.canMoveDuplicatesToTrash)
     }
 
     /// Once loaded, the rows follow the catalog: All Media with two fixed libraries.

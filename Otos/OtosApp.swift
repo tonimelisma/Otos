@@ -329,20 +329,12 @@ public struct OtosApp: App {
                 .keyboardShortcut(.delete, modifiers: .command)
                 .disabled(!catalogViewModel.canMoveTargetedMediaToTrash)
                 Divider()
-                // Duplicates (ADR 0042): the list's rows are the targets. No bare keys — P, U
-                // and X already mean a choice, and one key never means two things.
+                // Duplicates (ADR 0042): the list's selected copies are the targets. No bare
+                // keys — P, U and X already mean a choice, and one key never means two things.
                 Button("Keep This Copy") {
-                    catalogViewModel.keepSelectedDuplicateCopies()
+                    catalogViewModel.keepSelectedDuplicateCopy()
                 }
-                .disabled(!catalogViewModel.canKeepSelectedDuplicateCopies)
-                Button("Keep Only This Copy") {
-                    catalogViewModel.keepOnlySelectedDuplicateCopy()
-                }
-                .disabled(!catalogViewModel.canKeepOnlySelectedDuplicateCopy)
-                Button("Don't Keep This Copy") {
-                    catalogViewModel.markSelectedDuplicateCopiesForTrash()
-                }
-                .disabled(!catalogViewModel.canMarkSelectedDuplicateCopiesForTrash)
+                .disabled(!catalogViewModel.canKeepSelectedDuplicateCopy)
                 Button("Keep All Copies") {
                     catalogViewModel.keepAllDuplicateCopies()
                 }
@@ -351,10 +343,10 @@ public struct OtosApp: App {
                     catalogViewModel.reviewKeptDuplicateGroups()
                 }
                 .disabled(!catalogViewModel.canReviewSelectedDuplicateGroups)
-                Button("Move Extra Copies to Trash") {
-                    catalogViewModel.moveMarkedDuplicatesToTrash()
+                Button("Move Duplicates to Trash") {
+                    catalogViewModel.moveDuplicatesToTrash()
                 }
-                .disabled(!catalogViewModel.canMoveMarkedDuplicatesToTrash)
+                .disabled(!catalogViewModel.canMoveDuplicatesToTrash)
             }
             CommandMenu("Library") {
                 Button("Reorganize Library…") {
