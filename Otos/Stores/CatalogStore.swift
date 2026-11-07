@@ -2910,7 +2910,7 @@ extension CatalogStore {
         } else {
             try await insertRemovableRoot(attachment, lastSeenAt: lastSeenAt, dbWriter: dbQueue)
         }
-        try await markRetainedRowsAwaitingPresence(attachment, dbWriter: dbQueue)
+        await markRetainedRowsAwaitingPresence(attachment, dbWriter: dbQueue)
         await finishRemovableRootAttachment(attachment)
     }
 
@@ -2918,16 +2918,26 @@ extension CatalogStore {
     /// have been erased, formatted or filled in a camera since. Its retained rows keep
     /// every overlay (ADR 0008) but stay out of sight until this attachment's scan or
     /// enumeration sees each file, so the grid fills as the source is read and never
-    /// shows what it held last time. The completed read deletes what it never saw.
+    /// shows what it held last time. The completed read deletes what it never saw. A
+    /// failed write is logged and the attachment goes on: the rows then show as last held.
     private func markRetainedRowsAwaitingPresence(
         _ attachment: RemovableRootAttachment,
         dbWriter: any DatabaseWriter
-    ) async throws {
+    ) async {
         guard let rootRowID = roots[attachment.path]?.rowID else {
             return
         }
-        let marked = try await dbWriter.write { db in
-            try Self.setAwaitingPresence(true, rootRowID: rootRowID, db: db)
+        let marked: Int
+        do {
+            marked = try await dbWriter.write { db in
+                try Self.setAwaitingPresence(true, rootRowID: rootRowID, db: db)
+            }
+        } catch {
+            OtosLog.catalog.errorOperation("catalog.removable.attach", phase: "awaitingPresenceFailed", fields: [
+                "rootPath": attachment.path.rawValue,
+                "error": String(describing: error),
+            ])
+            return
         }
         OtosLog.catalog.noticeOperation("catalog.removable.attach", phase: "awaitingPresence", fields: [
             "rootPath": attachment.path.rawValue,
@@ -3195,24 +3205,29 @@ extension CatalogStore {
         upsert(state)
     }
 
-    /// With the source gone, no attachment awaits its files: an offline card shows the
-    /// rows it last held, including those a read cut short had not reached (ADR 0013).
-    /// A failed write leaves them hidden until the next attach or launch clears them, and
-    /// is logged.
-    private func clearAwaitingPresence(of root: LibraryRoot, rootRowID: Int64) async {
+    /// Ends the wait for a source's unseen files without the read that would have
+    /// settled them (ADR 0013). On detach no attachment awaits them; when a read fails or
+    /// ends incomplete it proved neither their presence nor their absence (ADR 0032 rule
+    /// 4). Either way the source shows the rows it last held, as an offline card does.
+    /// A failed write leaves them hidden until the next attach or launch, and is logged.
+    private func releaseAwaitingPresence(of rootPath: LibraryRootPath, rootRowID: Int64, reason: String) async {
         do {
-            let cleared = try await database().write { db in
+            let released = try await database().write { db in
                 try Self.setAwaitingPresence(false, rootRowID: rootRowID, db: db)
             }
-            if cleared > 0 {
-                OtosLog.catalog.noticeOperation("catalog.removable.detach", phase: "clearedAwaitingPresence", fields: [
-                    "rootPath": root.path.rawValue,
-                    "count": "\(cleared)",
+            if released > 0 {
+                OtosLog.catalog.noticeOperation("catalog.removable.awaitingPresence", phase: "released", fields: [
+                    "rootPath": rootPath.rawValue,
+                    "reason": reason,
+                    "count": "\(released)",
                 ])
+                bumpNamespaceRevision(for: rootPath)
+                notifyCatalogChanged()
             }
         } catch {
-            OtosLog.catalog.errorOperation("catalog.removable.detach", phase: "clearAwaitingPresenceFailed", fields: [
-                "rootPath": root.path.rawValue,
+            OtosLog.catalog.errorOperation("catalog.removable.awaitingPresence", phase: "releaseFailed", fields: [
+                "rootPath": rootPath.rawValue,
+                "reason": reason,
                 "error": String(describing: error),
             ])
         }
@@ -3278,7 +3293,7 @@ extension CatalogStore {
         }
         await releaseEnrichmentClaimsForRoot(rootRowID)
         await recordLastSeen(of: root, rootRowID: rootRowID)
-        await clearAwaitingPresence(of: root, rootRowID: rootRowID)
+        await releaseAwaitingPresence(of: root.path, rootRowID: rootRowID, reason: "detached")
         forgetUnreadableSources(under: root.path)
         setAvailability(.unavailable, for: root.path)
         // Detach keeps the staged bytes: they are already off the camera, and
@@ -3523,6 +3538,11 @@ extension CatalogStore {
             state.activity = .idle
             upsert(state)
             notifyCatalogChanged()
+        }
+        // A completed enumeration has already deleted what it never saw; one that ended
+        // without completing leaves its unseen rows to be shown as last held.
+        if roots[scan.rootPath]?.rowID == scan.rootRowID {
+            await releaseAwaitingPresence(of: scan.rootPath, rootRowID: scan.rootRowID, reason: "enumerationEnded")
         }
     }
 
@@ -4422,6 +4442,9 @@ private extension CatalogStore {
             "op=catalog.scan phase=error \(otosLogFields(diagnosticFields), privacy: .public)"
         )
         clearCurrentScan(scan, armFilesystemWatching: true)
+        if roots[scan.rootPath]?.root.kind != .library, roots[scan.rootPath]?.rowID == scan.rootRowID {
+            await releaseAwaitingPresence(of: scan.rootPath, rootRowID: scan.rootRowID, reason: "scanFailed")
+        }
     }
 
     private func clearCurrentScan(_ scan: ActiveScan, armFilesystemWatching: Bool) {

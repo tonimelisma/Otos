@@ -75,6 +75,49 @@ struct CatalogStoreRemovablePresenceTests {
         await store.shutdown()
     }
 
+    /// ADR 0032 rule 4: a read that ends without completing proved neither presence nor
+    /// absence, so the source shows the rows it last held rather than a fabricated
+    /// partial — or empty — card.
+    @Test func aReadThatEndsIncompleteShowsTheRowsTheSourceLastHeld() async throws {
+        let staging = try makeTestDirectory().appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        let first = file("IMG_0001.JPG"), second = file("IMG_0002.JPG")
+        let rootPath = try await attachEnumerated(store, staging: staging, files: [first, second])
+        try await store.detachRemovableSource(identity: identity, reason: .disconnected)
+        _ = try await store.attachDeviceMTP(stagingRootURL: staging, identity: identity, displayName: "Camera")
+        let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        try await store.recordDeviceCatalogBatch([first], scan: scan)
+
+        await store.endDeviceCatalogEnumeration(scan: scan)
+
+        #expect(try await visiblePaths(store, rootPath) == [first, second].map(\.relativePath.rawValue))
+        await store.shutdown()
+    }
+
+    /// `.alreadyGone` removes a row and its overlay, so it needs proof: the card mounted
+    /// and the path answering ENOENT. A card that is not mounted proves nothing.
+    @Test func anEraseOnlyCallsAFileGoneWhenTheMountedCardSaysSo() async throws {
+        let temp = try makeTestDirectory()
+        let mounted = LibraryRootPath(rawValue: temp.appending(path: "Card").path(percentEncoded: false))
+        try FileManager.default.createDirectory(at: mounted.url, withIntermediateDirectories: true)
+        let unmounted = LibraryRootPath(rawValue: temp.appending(path: "Ejected").path(percentEncoded: false))
+        let path = MediaRelativePath(rawValue: "DCIM/IMG_0001.JPG")
+        func erase(_ root: LibraryRootPath) async -> SourceEraseOutcome {
+            await SourceEraser.erase(
+                kind: .removableVolume,
+                identity: .volume(uuid: "presence-erase"),
+                rootPath: root,
+                relativePath: path,
+                filesystemURL: root.url.appending(path: path.rawValue),
+                cameraImport: nil
+            )
+        }
+
+        #expect(await erase(mounted) == .alreadyGone)
+        #expect(await erase(unmounted) == .failed)
+    }
+
     @Test func aProcessThatEndedMidReadLeavesNoRowHiddenAtTheNextLaunch() async throws {
         let temp = try makeTestDirectory()
         let database = temp.appending(path: "catalog.sqlite")

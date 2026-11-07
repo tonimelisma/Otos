@@ -149,9 +149,10 @@ Adjacent decisions requiring separate ADRs or specs:
    While marked, a row is in no user-facing read (the one scope clause), no import
    plan and no enrichment claim, but it keeps every overlay, so a file still on the
    card reappears with its thumbnail the moment the read reaches it. Detach and launch
-   clear the mark — with no attachment, nothing is awaited — so an offline source
-   shows the rows it last held, including any a cut-short read never reached; a card
-   resumed after a refused eject is read again. Field trace 2026-11-06: an inserted
+   clear the mark — with no attachment, nothing is awaited — and so does a read that
+   fails or ends without completing, which proved neither presence nor absence (ADR
+   0032 rule 4): the source then shows the rows it last held, never a partial or empty
+   card. A card resumed after a refused eject is read again. Field trace 2026-11-06: an inserted
    card showed 32 tiles it no longer held, and its import bar planned from them, until
    its scan deleted 68 stale rows. Rejected: deleting retained rows at attach (throws
    away overlay for files still present); showing them dimmed until confirmed (shows

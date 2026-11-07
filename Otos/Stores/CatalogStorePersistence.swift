@@ -909,9 +909,10 @@ extension CatalogStore {
             SELECT relative_path, name, content_type_identifier, kind, format,
                    byte_size, created_at_unix, content_modified_at_unix
             FROM media_asset
-            WHERE library_root_id = ?
+            WHERE library_root_id = ? AND parent_path = ?
             """,
-            arguments: [libraryRootID]
+            // `parent_path` keeps the trailing slash `MediaRelativePath.folder` drops.
+            arguments: [libraryRootID, directoryKey.isEmpty ? "" : directoryKey + "/"]
         )
         return rows.compactMap { row in
             let relativePath = MediaRelativePath(rawValue: row["relative_path"])
@@ -1047,11 +1048,7 @@ extension CatalogStore {
         db: Database
     ) throws -> Bool {
         let directoryKey = MediaCompanionPairing.directoryKey(of: relativePath)
-        let primaries = try fetchPrimariesInDirectory(
-            libraryRootID: libraryRootID,
-            directoryKey: directoryKey,
-            db: db
-        )
+        // Most folders hold no companions; they need no primaries read.
         let companions = try fetchCompanionsInDirectory(
             libraryRootID: libraryRootID,
             directoryKey: directoryKey,
@@ -1060,6 +1057,11 @@ extension CatalogStore {
         guard !companions.isEmpty else {
             return false
         }
+        let primaries = try fetchPrimariesInDirectory(
+            libraryRootID: libraryRootID,
+            directoryKey: directoryKey,
+            db: db
+        )
         let paired = MediaCompanionPairing.pair(companions: companions, primaries: primaries)
         var changed = false
         for companion in paired {

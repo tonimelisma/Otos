@@ -307,7 +307,8 @@ struct MediaImportRecovery {
     // MARK: - Card erase
 
     /// One lease per source root for every row under it. A root another owner holds,
-    /// or one that is not attached, keeps its rows for the next launch.
+    /// or a card that is not mounted (`SourceEraser` refuses it), keeps its rows for the
+    /// next launch.
     private func recoverSourceErases(_ operations: [ActiveSourceEraseOperation]) async {
         let byRoot = Dictionary(grouping: operations, by: \.sourceRootPath)
         for (root, rootOperations) in byRoot.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
@@ -347,6 +348,7 @@ struct MediaImportRecovery {
         guard await SourceEraser.erase(
             kind: operation.sourceKind,
             identity: operation.sourceDeviceIdentity,
+            rootPath: operation.sourceRootPath,
             relativePath: operation.sourceRelativePath,
             filesystemURL: url,
             cameraImport: cameraImport

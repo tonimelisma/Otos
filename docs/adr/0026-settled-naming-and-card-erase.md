@@ -74,7 +74,10 @@ deleted, or already gone, is proof of its deletion (ADR 0008), so its catalog ro
 media or companion, with its companions re-paired — and its derived images go in the
 same durable write that clears its `active_source_erase` journal entry
 (`CatalogStore.recordSourceFileErased`, sharing `purgeGonePath` with filesystem-event
-reconciliation). Recovery settles both together. Leaving the rows to a rescan was the
+reconciliation). Recovery settles both together. Because `.alreadyGone` now removes
+overlay, it needs proof: the card's root is a mounted directory and the path answers
+`ENOENT`. An unmounted card or any other `lstat` error is a failed erase, which keeps
+the row and the journal entry for the next attempt. Leaving the rows to a rescan was the
 earlier arrangement: the rescan was deferred behind the erase lease and usually lost
 the race with Eject, so the card's next attachment showed files it no longer held.
 
