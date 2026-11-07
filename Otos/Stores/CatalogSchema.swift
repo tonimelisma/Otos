@@ -324,9 +324,6 @@ nonisolated enum CatalogSchema {
         CREATE INDEX idx_media_asset_awaiting_presence
         ON media_asset(library_root_id) WHERE awaiting_presence <> 0
         """,
-        // Companion re-pairing reads one folder's primaries; a card erase does it once
-        // per erased file, so the read is by folder rather than by root.
-        "CREATE INDEX idx_media_asset_parent_path ON media_asset(library_root_id, parent_path)",
     ]
 
     static let baselineStatements: [String] = [
