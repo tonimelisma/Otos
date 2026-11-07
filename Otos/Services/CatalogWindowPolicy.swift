@@ -243,6 +243,9 @@ nonisolated enum CatalogWindowPolicy {
             if library?.kind == .deviceMTP, library?.isEnumerating == true {
                 return .deviceEnumerating(library?.displayName ?? "this camera")
             }
+            if library?.kind == .removableVolume, library?.isScanning == true {
+                return .cardReading(library?.displayName ?? "this card")
+            }
             switch library?.availability {
             case .unknown:
                 return .libraryChecking

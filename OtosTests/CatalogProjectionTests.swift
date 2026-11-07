@@ -480,6 +480,26 @@ extension CatalogProjectionTests {
         #expect(state.deviceConnectionBanner?.identity == .camera(id: "serial"))
         #expect(state.deviceConnectionBanner?.message.contains("Mass Storage") == true)
     }
+
+    /// ADR 0013: while an attached card is scanned and nothing on it has been seen yet,
+    /// the grid says it is reading the card — not that there is no media.
+    @Test func aCardBeingScannedWithNothingSeenYetShowsReadingCard() async {
+        let projection = CatalogProjection()
+        let card = LibraryRoot(
+            path: LibraryRootPath(rawValue: "/Volumes/CARD"),
+            kind: .removableVolume,
+            deviceIdentity: .volume(uuid: "card"),
+            displayName: "CARD"
+        )
+        let fixture = makeProjectionFixture(
+            libraries: [CatalogLibraryState(root: card, availability: .available, activity: .scanning)],
+            assets: []
+        )
+
+        let state = await projection.windowState(fixture: fixture, sidebarSelection: .library(card.path))
+
+        #expect(state.mediaEmptyState == .cardReading("CARD"))
+    }
 }
 
 private func makeLibrary(

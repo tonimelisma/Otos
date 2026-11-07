@@ -14,7 +14,7 @@ nonisolated struct RootRuntimeState: Equatable {
     /// comes from display name at query time regardless.
     var sortIndex: Int64
     var availability: LibraryAvailability
-    /// Stored activity (idle / enumerating / …). `.scanning` is derived from `activeScan`
+    /// Stored activity (idle / enumerating / …). `.scanning` is derived from the scan leases
     /// in `CatalogStore.activity(for:)` and is not written here.
     var activity: CatalogLibraryActivity
     var isEjectable: Bool

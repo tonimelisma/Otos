@@ -119,6 +119,20 @@ The owed-plan counters have no such failure mode — `planCovered` catches up to
 `planRequested` in the same transition that takes up the rebuild that would fire
 regardless.
 
+### A plan built while the source was read is never offered
+
+Readiness answers whether the source is settled *now*, not whether the plan saw it
+settled. A build taken up while the card was still scanning plans over the rows the
+scan had reached; the scan then goes idle and readiness flips `.ready` before the
+successor build lands. Field trace 2026-11-06: such a plan offered "Erase 68 items ·
+All 68 items are already in Camera Roll" for 55 ms, from rows the card no longer held.
+So the session records, at take-up, whether its source was settled
+(`BuildContext.sourceSettledAtTakeUp`, carried to `ReadyContext.builtFromSettledSource`).
+A plan built from an unsettled source is never presented (`readyState`) or run
+(`beginExecutionIfPossible`), and the source settling requests its successor even when
+the read moved no revision — an identical card's scan bumps only the plan revision,
+which asks for no rebuild of its own.
+
 ### Single presentation writer
 
 Every field on `MediaOperationSourcePresentation` — progress, `copiedJustNow`,

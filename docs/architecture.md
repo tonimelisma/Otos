@@ -167,6 +167,13 @@ everything expensive happens on an actor off the main thread.
   submits device/background demand to `MaterializationCoordinator`, which calls the
   one-URL `FileMaterialization` mechanism. The coordinator owns the bounded physical
   scheduler plus a per-root `providerUnavailable` breaker (two consecutive `ETIMEDOUT` probes → 60s `providerBreakerOpen` suppression, preventing a dead-provider storm from holding `backgroundPerRootCap=1` 32×2s); `FileMaterialization` owns the one-URL `SF_DATALESS` gate and `k=2` short-circuit. Enrichment owns a separate bounded producer window (32 claims, at most 16 handed off globally and two per root). Scanning never materializes (ADR 0008/0009).
+- **Scan lanes and source presence**: a filesystem scan holds a lease in its lane —
+  one lane shared by the fixed libraries, one per card (`ScanLeaseController.ScanLane`)
+  — so a card is read the moment it attaches. A card's or camera's retained rows are
+  marked `awaiting_presence` on attach and leave that state only as its read observes
+  each file; the scope clause, import planning and enrichment claims skip marked rows,
+  detach and launch clear the mark, and an erase removes each file's row with its
+  journal entry (ADR 0013, ADR 0026).
 - **Scan freshness and import settlement**: each active scan captures the root's
   namespace-mutation epoch. Independent import, reorganization, and filesystem-event
   mutations advance the epoch and retain typed dirty scopes; a stale scan can still
@@ -236,7 +243,8 @@ everything expensive happens on an actor off the main thread.
   settled to idle — never while it is still scanning/enumerating or unreachable —
   and once every date-dependent naming fact is settled by the enrichment signature;
   never as a provably-empty card until the current plan is guaranteed to reflect
-  settled occupancy (ADR 0024; ADR 0026). Several sources may hold a
+  settled occupancy, and never from a plan whose build began while the source was
+  still being read (ADR 0024; ADR 0026). Several sources may hold a
   ready plan into one
   destination at once: planning stays parallel and each source reads the namespace
   independently, while a coordinator-owned reservation ledger keeps their claimed names

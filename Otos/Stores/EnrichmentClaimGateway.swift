@@ -135,6 +135,7 @@ nonisolated enum EnrichmentClaimGateway {
                 WHERE library_root_id = ?
                   AND (\(stalenessSQLPredicate(everyProduct: false)))
                   AND trash_path IS NULL
+              AND awaiting_presence = 0
             )
             """,
             arguments: [rootID]
@@ -208,6 +209,7 @@ nonisolated enum EnrichmentClaimGateway {
               AND (\(stalenessSQLPredicate(everyProduct: everyProduct)))
               AND enrichment_claimed IS NULL
               AND trash_path IS NULL
+              AND awaiting_presence = 0
             """,
             arguments: [libraryRootID, relativePath.rawValue]
         )
@@ -284,6 +286,7 @@ private nonisolated func rootEnrichmentClaimQuery(
           AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(everyProduct: everyProduct)))
           AND enrichment_claimed IS NULL
           AND trash_path IS NULL
+          AND awaiting_presence = 0
         ORDER BY best_capture_unix DESC, relative_path
         LIMIT ?
         """,
@@ -308,6 +311,7 @@ private nonisolated func globalEnrichmentClaimQuery(
           AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(everyProduct: everyProduct)))
           AND enrichment_claimed IS NULL
           AND trash_path IS NULL
+          AND awaiting_presence = 0
         ORDER BY best_capture_unix DESC, library_root_id, relative_path
         LIMIT ?
         """,
@@ -332,6 +336,7 @@ private nonisolated func claimStoredAssetsNeedingEnrichment(
           AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(everyProduct: everyProduct)))
           AND enrichment_claimed IS NULL
           AND trash_path IS NULL
+          AND awaiting_presence = 0
         """,
         arguments: StatementArguments(arguments)
     )

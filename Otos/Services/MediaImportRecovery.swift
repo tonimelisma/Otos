@@ -351,6 +351,6 @@ struct MediaImportRecovery {
             filesystemURL: url,
             cameraImport: cameraImport
         ).isSettled else { return }
-        await ImportStaging.completeEraseJournal(operation.key, store: store)
+        await ImportStaging.recordErased(operation, store: store)
     }
 }

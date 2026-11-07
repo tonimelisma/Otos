@@ -141,7 +141,33 @@ Adjacent decisions requiring separate ADRs or specs:
    is now explicit: in-place reads plus import-time hashing, not wholesale staging
    of removable volumes to local cache, which remains an open disk-cost tradeoff.
 
-8. **Platform monitors are thin adapters.** `RemovableVolumeMonitor` and
+8. **A returning source shows what this attachment has read, as it reads it.** A
+   source's retained rows describe what it held when last read, and a card is
+   routinely erased, formatted or refilled in a camera in between. On attach every
+   retained row is marked `awaiting_presence`; each scan or enumeration upsert that
+   observes the file clears it, and the completed read deletes what it never saw.
+   While marked, a row is in no user-facing read (the one scope clause), no import
+   plan and no enrichment claim, but it keeps every overlay, so a file still on the
+   card reappears with its thumbnail the moment the read reaches it. Detach and launch
+   clear the mark — with no attachment, nothing is awaited — so an offline source
+   shows the rows it last held, including any a cut-short read never reached; a card
+   resumed after a refused eject is read again. Field trace 2026-11-06: an inserted
+   card showed 32 tiles it no longer held, and its import bar planned from them, until
+   its scan deleted 68 stale rows. Rejected: deleting retained rows at attach (throws
+   away overlay for files still present); showing them dimmed until confirmed (shows
+   files the card may not hold, which is the fault being fixed); a per-attachment
+   generation column (needs a durable counter for a process-local fact the boolean
+   already answers).
+
+9. **A card is read in its own scan lane.** Filesystem scans hold a lease per lane:
+   fixed libraries share one, since they live on the system disk or behind a file
+   provider and walking two at once only slows both; each card is its own device and
+   has a lane of its own. In the field trace above the card's one-second scan waited
+   12.8 s behind a launch rescan of a 16,000-file library. Rejected: queue priority
+   alone (a library walk already running still holds the one lane); cancelling the
+   library walk (newer work never cancels published work, ADR 0032 rule 3).
+
+10. **Platform monitors are thin adapters.** `RemovableVolumeMonitor` and
    `CameraSourceMonitor` translate OS events into typed attach/detach inputs.
    They do not write SQLite, decide overlay lifecycle, or perform scan
    reconciliation.
@@ -164,6 +190,8 @@ Adjacent decisions requiring separate ADRs or specs:
 ## Verification
 
 - `OtosTests/CatalogStoreRemovableSourceTests.swift`
+- `OtosTests/CatalogStoreRemovablePresenceTests.swift`
+- `OtosTests/ScanLeaseControllerTests.swift`
 - `OtosTests/CatalogProjectionTests.swift`
 - `OtosTests/CatalogStoreEnrichmentClaimTests.swift`
 - `OtosTests/EnrichmentCoordinatorTests.swift`

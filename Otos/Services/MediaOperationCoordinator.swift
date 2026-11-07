@@ -766,6 +766,13 @@ actor MediaOperationCoordinator {
         guard ImportSourceReadiness.evaluate(session.root) == .ready else {
             return .inventory
         }
+        // The source settling is not proof this plan saw it settled: a plan built while
+        // the card was still being scanned planned over rows the scan had not finished
+        // (ADR 0024). Field trace: such a plan offered "Erase 68 items" from rows the card
+        // no longer held, until its successor landed.
+        guard ctx.builtFromSettledSource else {
+            return .inventory
+        }
         let totals = ctx.plan.totals
         let isEmptyCard = totals.copyCount == 0 && totals.companionCopyCount == 0 && totals.skipCount == 0
         if isEmptyCard, session.needsPlan {

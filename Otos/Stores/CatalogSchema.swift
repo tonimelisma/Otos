@@ -307,6 +307,25 @@ nonisolated enum CatalogSchema {
         ]
     }
 
+    /// Whether a card's or camera's retained row has been seen by the source's current
+    /// attachment (ADR 0013). Attach sets it on every row the source held; each scan
+    /// upsert that observes the file clears it, so the grid fills as the card is read
+    /// instead of showing what the card held last time; the completed scan deletes what
+    /// it never saw. Detach and launch clear it: with no attachment, nothing is awaited,
+    /// and an offline card shows the rows it last held. Every user-facing read, import
+    /// planning and enrichment claims exclude a row while it is set.
+    static let awaitingPresenceMigrationIdentifier = "v14_media_asset_awaiting_presence"
+
+    static let awaitingPresenceStatements: [String] = [
+        "ALTER TABLE media_asset ADD COLUMN awaiting_presence INTEGER NOT NULL DEFAULT 0",
+        // Few rows are ever set, and every write that clears them in bulk — detach, launch
+        // — reads only those through this index rather than the whole table.
+        """
+        CREATE INDEX idx_media_asset_awaiting_presence
+        ON media_asset(library_root_id) WHERE awaiting_presence <> 0
+        """,
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (

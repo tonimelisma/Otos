@@ -29,6 +29,7 @@ nonisolated enum MediaOperationGateway {
                         THEN content_hash_xxh3_128 END AS current_content_hash
             FROM media_asset
             WHERE library_root_id = ?
+              AND awaiting_presence = 0
             ORDER BY relative_path COLLATE NOCASE, relative_path
             """,
             arguments: [libraryRootID]

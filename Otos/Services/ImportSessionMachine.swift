@@ -45,6 +45,9 @@ nonisolated struct ImportSessionMachine {
         let generation: BuildGeneration
         let runID: String
         let destination: LibraryRootPath
+        /// Whether the source had finished being read (ADR 0024 readiness) when this build
+        /// was taken up. A build taken up mid-read plans over the rows the read had reached.
+        let sourceSettledAtTakeUp: Bool
     }
 
     /// A build that found a destination folder it could not read is deferred, not
@@ -65,6 +68,11 @@ nonisolated struct ImportSessionMachine {
         let skippedPackageCount: Int
         let claims: Set<FilesystemNameKey>
         let attentionItems: [MediaAttentionItem]
+        /// Whether the source had finished being read when the build began. A plan built
+        /// while a card was still being scanned describes part of it — or, before the scan
+        /// reaches anything, nothing — so it is never offered or run; the source's settling
+        /// asks for the plan that is (ADR 0024).
+        let builtFromSettledSource: Bool
     }
 
     nonisolated enum ExecutionInterruption: Equatable {
@@ -624,6 +632,20 @@ nonisolated struct ImportSessionMachine {
                 takeUpBuild(source.path, into: &effects)
             }
         }
+        // A plan built while the source was still being read is owed a successor once the
+        // read settles, whether or not the read moved a revision: an identical card's scan
+        // bumps only the plan revision, which asks for no rebuild of its own.
+        if ImportSourceReadiness.evaluate(source) == .ready,
+           case let .ready(ctx) = sessions[source.path]?.phase,
+           !ctx.builtFromSettledSource
+        {
+            OtosLog.catalog.noticeOperation("import.plan", phase: "rebuildAfterSourceSettled", fields: [
+                "rootPath": source.path.rawValue,
+                "run": ctx.runID,
+            ])
+            sessions[source.path]?.requestPlan()
+            takeUpBuild(source.path, into: &effects)
+        }
         reconcileDestination(for: source.path, fixedAvailable: fixedAvailable, into: &effects)
         // Readiness can turn `.ready` (enumeration/scan activity flips idle) via this
         // cheap catalog-change refresh alone, without an occupancy change of its own. A
@@ -991,7 +1013,14 @@ nonisolated struct ImportSessionMachine {
             effects.append(.publish)
             return true
         }
-        session.phase = .building(BuildContext(generation: buildGen, runID: runID, destination: destination))
+        let sourceSettled = libraries.first { $0.path == source }
+            .map { ImportSourceReadiness.evaluate($0) == .ready } ?? false
+        session.phase = .building(BuildContext(
+            generation: buildGen,
+            runID: runID,
+            destination: destination,
+            sourceSettledAtTakeUp: sourceSettled
+        ))
         let policy = ImportPolicy.from(session.preferences)
         sessions[source] = session
         effects.append(.startBuild(BuildRequest(
@@ -1147,7 +1176,8 @@ nonisolated struct ImportSessionMachine {
             runID: runID,
             skippedPackageCount: built.skippedPackageCount,
             claims: newClaims,
-            attentionItems: plan.attentionItems
+            attentionItems: plan.attentionItems,
+            builtFromSettledSource: owned.context.sourceSettledAtTakeUp
         )
         sessions[source]?.phase = .ready(readyCtx)
         sessions[source]?.lastReadyContext = readyCtx
@@ -1157,6 +1187,20 @@ nonisolated struct ImportSessionMachine {
         sessions[source]?.unreadableRetry = nil
         // `planRequested` is left as found: taking this build up covered what it saw, so
         // a request now is a fact this plan never saw.
+        guard readyCtx.builtFromSettledSource else {
+            // Built mid-read, it is never offered. A source that settled while it ran has
+            // already had its settling refresh, so its successor is asked for here.
+            if libraries.first(where: { $0.path == source }).map({ ImportSourceReadiness.evaluate($0) == .ready }) == true {
+                OtosLog.catalog.noticeOperation("import.plan", phase: "rebuildAfterSourceSettled", fields: [
+                    "rootPath": source.rawValue,
+                    "run": runID,
+                ])
+                sessions[source]?.requestPlan()
+                takeUpBuild(source, into: &effects)
+            }
+            effects.append(.publish)
+            return .applied
+        }
         if sessions[source]?.attachToReadyMs == nil, let startedAt = sessions[source]?.attachStartedAt {
             let elapsed = startedAt.duration(to: ContinuousClock().now)
             let readyMs = DiagnosticsTiming.milliseconds(elapsed)
@@ -1306,6 +1350,10 @@ nonisolated struct ImportSessionMachine {
         guard let sourceState = libraries.first(where: { $0.path == source }) else { return }
         guard ImportSourceReadiness.evaluate(sourceState) == .ready else {
             OtosLog.catalog.notice("op=import.execute phase=deferred reason=sourceNotReady rootPath=\(source.rawValue, privacy: .public)")
+            return
+        }
+        guard ctx.builtFromSettledSource else {
+            OtosLog.catalog.notice("op=import.execute phase=deferred reason=planBuiltDuringSourceRead rootPath=\(source.rawValue, privacy: .public)")
             return
         }
         guard isExecutableSource(sourceState) else {
