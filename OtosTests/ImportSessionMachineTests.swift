@@ -427,6 +427,61 @@ struct ImportSessionMachineTests {
         #expect(machine.sessions[Self.card]?.importRequested == false)
     }
 
+    /// ADR 0024, field trace 2026-11-06: a plan built while the card was still being
+    /// scanned offered "Erase 68 items" from rows the card no longer held. Such a plan is
+    /// never run, and the card settling asks for the plan that is — even when the scan
+    /// moved no revision of its own.
+    @Test func aPlanBuiltWhileTheCardIsReadIsNeverRunAndTheCardSettlingRebuildsIt() throws {
+        let scanning = [Self.library(Self.libraryA), Self.cardState(activity: .scanning)]
+        let idle = [Self.library(Self.libraryA), Self.cardState()]
+        var (machine, build) = Self.attachedWithBuildRunning(libraries: scanning)
+        // Import pressed mid-build asks for another plan; the card is still being read.
+        _ = machine.handle(.importQueued(source: Self.card))
+        let first = machine.handle(.buildFinished(build.id, Self.builtPlan(for: build)))
+        #expect(Self.executions(in: first).isEmpty)
+        let midReadSuccessor = try #require(Self.builds(in: first).first)
+
+        let settled = machine.handle(.librariesRefreshed(Self.snapshot(idle)))
+        #expect(Self.executions(in: settled).isEmpty)
+
+        // The successor began mid-read too, so it is not run either: it asks for the
+        // plan that saw the card settled, and that one runs.
+        let second = machine.handle(.buildFinished(midReadSuccessor.id, Self.builtPlan(for: midReadSuccessor)))
+        #expect(Self.executions(in: second).isEmpty)
+        let settledBuild = try #require(Self.builds(in: second).first)
+        let third = machine.handle(.buildFinished(settledBuild.id, Self.builtPlan(for: settledBuild)))
+        #expect(Self.executions(in: third).count == 1)
+    }
+
+    /// A plan built mid-read and still held when the card settles is rebuilt by the
+    /// settling refresh itself, even though the scan moved no revision.
+    @Test func aHeldMidReadPlanIsRebuiltWhenTheCardSettles() {
+        var (machine, build) = Self.attachedWithBuildRunning(
+            libraries: [Self.library(Self.libraryA), Self.cardState(activity: .scanning)]
+        )
+        let finished = machine.handle(.buildFinished(build.id, Self.builtPlan(for: build)))
+        #expect(Self.builds(in: finished).isEmpty)
+
+        let settled = machine.handle(.librariesRefreshed(Self.snapshot([Self.library(Self.libraryA), Self.cardState()])))
+
+        #expect(Self.builds(in: settled).count == 1)
+    }
+
+    /// The card can settle while the build that began mid-read is still running; that
+    /// build's result then asks for its successor itself.
+    @Test func aPlanBuiltMidReadThatLandsAfterTheCardSettledRequestsItsSuccessor() {
+        var (machine, build) = Self.attachedWithBuildRunning(
+            libraries: [Self.library(Self.libraryA), Self.cardState(activity: .scanning)]
+        )
+        let settled = machine.handle(.librariesRefreshed(Self.snapshot([Self.library(Self.libraryA), Self.cardState()])))
+        #expect(Self.builds(in: settled).isEmpty)
+
+        let finished = machine.handle(.buildFinished(build.id, Self.builtPlan(for: build)))
+
+        #expect(Self.builds(in: finished).count == 1)
+        #expect(machine.sessions[Self.card]?.attachToReadyMs == nil)
+    }
+
     @Test func queueingAnExecutingSourceIsRejected() throws {
         var (machine, _) = try Self.executing()
 

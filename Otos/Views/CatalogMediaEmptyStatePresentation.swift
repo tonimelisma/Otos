@@ -29,6 +29,8 @@ extension CatalogMediaEmptyState {
             "Library Unavailable"
         case .deviceEnumerating:
             "Reading Items"
+        case .cardReading:
+            "Reading Card"
         case .catalogIncompatible:
             "Catalog Incompatible"
         }
@@ -57,6 +59,8 @@ extension CatalogMediaEmptyState {
             Reading items from \(name). This can take several minutes on this connection. \
             For faster browsing and import, insert the memory card directly or use the camera's Mass Storage USB mode.
             """
+        case let .cardReading(name):
+            "Reading items from \(name). They appear here as they are found."
         case let .catalogIncompatible(problem):
             problem.errorDescription
         }
@@ -78,15 +82,19 @@ extension CatalogMediaEmptyState {
             "externaldrive.badge.questionmark"
         case .deviceEnumerating:
             "camera.metering.matrix"
+        case .cardReading:
+            "sdcard"
         case .catalogIncompatible:
             "exclamationmark.triangle"
         }
     }
 
     var isProgressing: Bool {
-        if case .deviceEnumerating = self {
-            return true
+        switch self {
+        case .deviceEnumerating, .cardReading:
+            true
+        default:
+            false
         }
-        return false
     }
 }

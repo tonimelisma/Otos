@@ -24,6 +24,9 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
     case libraryChecking
     case libraryUnavailable
     case deviceEnumerating(String)
+    /// A card is being scanned and nothing on it has been seen yet: its items appear as
+    /// the scan reaches them (ADR 0013), so it is neither empty nor done.
+    case cardReading(String)
     /// Catalog file was written by a newer or unrecognized Otos; nothing is
     /// loaded. Carries the typed compatibility result, not a pre-rendered
     /// string — `CatalogMediaEmptyStatePresentation.message` is the one place
@@ -53,6 +56,8 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
             "libraryUnavailable"
         case .deviceEnumerating:
             "deviceEnumerating"
+        case .cardReading:
+            "cardReading"
         case .catalogIncompatible:
             "catalogIncompatible"
         }

@@ -55,6 +55,7 @@ nonisolated enum SourceEraser {
     static func erase(
         kind: LibraryRootKind,
         identity: DeviceIdentity?,
+        rootPath: LibraryRootPath,
         relativePath: MediaRelativePath,
         filesystemURL: URL,
         cameraImport: CameraImportAccess?
@@ -66,7 +67,28 @@ nonisolated enum SourceEraser {
             )
             return .refused
         case .removableVolume:
-            guard FileManager.default.fileExists(atPath: filesystemURL.path(percentEncoded: false)) else {
+            // `.alreadyGone` removes the file's catalog row and overlay, so it needs proof:
+            // the card is mounted and the path answers ENOENT. An unmounted card, a
+            // permission refusal or an I/O error proves nothing (ADR 0032 rule 4).
+            var rootInfo = stat()
+            guard stat(rootPath.url.path(percentEncoded: false), &rootInfo) == 0,
+                  rootInfo.st_mode & S_IFMT == S_IFDIR
+            else {
+                OtosLog.mediaIO.notice(
+                    "op=source.erase phase=refused reason=sourceRootAbsent path=\(relativePath.rawValue, privacy: .public)"
+                )
+                return .failed
+            }
+            var fileInfo = stat()
+            if lstat(filesystemURL.path(percentEncoded: false), &fileInfo) != 0 {
+                let code = errno
+                guard code == ENOENT else {
+                    OtosLog.mediaIO.errorOperation("source.erase", phase: "failed", fields: [
+                        "path": relativePath.rawValue,
+                        "errno": "\(code)",
+                    ])
+                    return .failed
+                }
                 return .alreadyGone
             }
             do {
@@ -790,10 +812,10 @@ actor MediaImportExecutor {
                     ])
                     logged += 1
                 }
-                await ImportStaging.completeEraseJournal(journal.key, store: store)
+                await ImportStaging.recordErased(journal, store: store)
             case .alreadyGone:
                 skipped += 1
-                await ImportStaging.completeEraseJournal(journal.key, store: store)
+                await ImportStaging.recordErased(journal, store: store)
             case .refused, .failed:
                 failed += 1
             }
@@ -885,7 +907,7 @@ actor MediaImportExecutor {
             )
             switch erased {
             case .deleted, .alreadyGone:
-                await ImportStaging.completeEraseJournal(journal.key, store: store)
+                await ImportStaging.recordErased(journal, store: store)
             case .refused, .failed:
                 OtosLog.mediaIO.errorOperation("import.erase", phase: "landedNotErased", fields: [
                     "run": context.runID,
@@ -922,6 +944,7 @@ actor MediaImportExecutor {
         return await SourceEraser.erase(
             kind: sourceKind,
             identity: sourceDeviceIdentity,
+            rootPath: sourceRoot,
             relativePath: relativePath,
             filesystemURL: url,
             cameraImport: cameraImport
@@ -1976,14 +1999,15 @@ nonisolated enum ImportStaging {
         return allGone
     }
 
-    /// Clears an erase journal row once its file is gone. A failed clear is logged; the
-    /// row is found again at startup, where the file is already gone and the row settles.
-    static func completeEraseJournal(_ key: ActiveSourceEraseKey, store: CatalogStore) async {
+    /// Records that an erased file is gone: its journal row and its catalog row clear
+    /// together. A failed write is logged; the journal row is found again at startup,
+    /// where the file is already gone and both settle.
+    static func recordErased(_ operation: ActiveSourceEraseOperation, store: CatalogStore) async {
         do {
-            try await store.completeSourceEraseOperation(key: key)
+            try await store.recordSourceFileErased(operation)
         } catch {
             OtosLog.catalog.errorOperation("import.erase.journal", phase: "completeFailed", fields: [
-                "key": key.rawValue,
+                "key": operation.key.rawValue,
                 "error": String(describing: error),
             ])
         }

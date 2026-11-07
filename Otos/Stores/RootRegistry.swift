@@ -6,7 +6,7 @@ import Foundation
 /// `RootRegistry` and calls it synchronously inside its isolation — this is not a
 /// second actor. Maps stay consistent only through `upsert` / `remove`.
 ///
-/// `.scanning` is not stored here; the Store overlays it from `activeScan` when
+/// `.scanning` is not stored here; the Store overlays it from the scan leases when
 /// building `CatalogLibraryState`.
 nonisolated struct RootRegistry {
     private(set) var statesByPath: [LibraryRootPath: RootRuntimeState] = [:]

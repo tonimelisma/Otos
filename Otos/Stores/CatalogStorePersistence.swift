@@ -132,6 +132,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.awaitingPresenceMigrationIdentifier) { db in
+            for statement in CatalogSchema.awaitingPresenceStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -405,6 +410,58 @@ extension CatalogStore {
             arguments: [rootRowID, relativePath.rawValue]
         )
         return db.changesCount > 0
+    }
+
+    /// Removes a path proven gone from its root — its media or companion row — and
+    /// re-pairs the companions left in its directory. The one purge for a single gone
+    /// path, shared by filesystem-event reconciliation and card erase. Returns whether
+    /// any row changed.
+    static func purgeGonePath(
+        relativePath: MediaRelativePath,
+        rootRowID: Int64,
+        capabilities: VolumeNamespaceCapabilities,
+        db: Database
+    ) throws -> Bool {
+        var changed = false
+        if try deleteAssetRow(rootRowID: rootRowID, relativePath: relativePath, db: db) {
+            changed = true
+        }
+        if try deleteCompanionRow(rootRowID: rootRowID, relativePath: relativePath, db: db) {
+            changed = true
+        }
+        if try repairCompanionsInDirectory(
+            of: relativePath,
+            libraryRootID: rootRowID,
+            capabilities: capabilities,
+            db: db
+        ) {
+            changed = true
+        }
+        return changed
+    }
+
+    /// Marks every row of a source as not yet seen by its new attachment, or clears that
+    /// mark (ADR 0013). Returns how many rows changed.
+    static func setAwaitingPresence(_ awaiting: Bool, rootRowID: Int64, db: Database) throws -> Int {
+        if awaiting {
+            try db.execute(
+                sql: "UPDATE media_asset SET awaiting_presence = 1 WHERE library_root_id = ? AND awaiting_presence = 0",
+                arguments: [rootRowID]
+            )
+        } else {
+            try db.execute(
+                sql: "UPDATE media_asset SET awaiting_presence = 0 WHERE library_root_id = ? AND awaiting_presence <> 0",
+                arguments: [rootRowID]
+            )
+        }
+        return db.changesCount
+    }
+
+    /// No source is attached while the catalog loads, so no row awaits an attachment.
+    /// Clears what a process that ended mid-read left set.
+    static func clearAllAwaitingPresence(db: Database) throws -> Int {
+        try db.execute(sql: "UPDATE media_asset SET awaiting_presence = 0 WHERE awaiting_presence <> 0")
+        return db.changesCount
     }
 
     struct CatalogedFileDeletionTarget {
@@ -852,9 +909,10 @@ extension CatalogStore {
             SELECT relative_path, name, content_type_identifier, kind, format,
                    byte_size, created_at_unix, content_modified_at_unix
             FROM media_asset
-            WHERE library_root_id = ?
+            WHERE library_root_id = ? AND parent_path = ?
             """,
-            arguments: [libraryRootID]
+            // `parent_path` keeps the trailing slash `MediaRelativePath.folder` drops.
+            arguments: [libraryRootID, directoryKey.isEmpty ? "" : directoryKey + "/"]
         )
         return rows.compactMap { row in
             let relativePath = MediaRelativePath(rawValue: row["relative_path"])
@@ -990,11 +1048,7 @@ extension CatalogStore {
         db: Database
     ) throws -> Bool {
         let directoryKey = MediaCompanionPairing.directoryKey(of: relativePath)
-        let primaries = try fetchPrimariesInDirectory(
-            libraryRootID: libraryRootID,
-            directoryKey: directoryKey,
-            db: db
-        )
+        // Most folders hold no companions; they need no primaries read.
         let companions = try fetchCompanionsInDirectory(
             libraryRootID: libraryRootID,
             directoryKey: directoryKey,
@@ -1003,6 +1057,11 @@ extension CatalogStore {
         guard !companions.isEmpty else {
             return false
         }
+        let primaries = try fetchPrimariesInDirectory(
+            libraryRootID: libraryRootID,
+            directoryKey: directoryKey,
+            db: db
+        )
         let paired = MediaCompanionPairing.pair(companions: companions, primaries: primaries)
         var changed = false
         for companion in paired {
@@ -1162,7 +1221,7 @@ extension CatalogStore {
         ) {
             try db.execute(
                 sql: """
-                UPDATE media_asset SET relative_path = ?, relative_path_key = ?
+                UPDATE media_asset SET relative_path = ?, relative_path_key = ?, awaiting_presence = 0
                 WHERE library_root_id = ? AND relative_path = ?
                 """,
                 arguments: [file.relativePath.rawValue, pathKey, libraryRootID, existingPath]
@@ -1209,7 +1268,8 @@ extension CatalogStore {
         }
         // The compound key makes a scan idempotent: observing the same relative
         // path refreshes its current filesystem facts instead of creating scan
-        // history or a second asset identity.
+        // history or a second asset identity. Observing a row the current attachment
+        // had not yet seen reveals it (`awaiting_presence`), and that is a change.
         try db.execute(
             sql: """
             INSERT INTO media_asset (
@@ -1238,8 +1298,10 @@ extension CatalogStore {
                 byte_size = excluded.byte_size,
                 created_at_unix = excluded.created_at_unix,
                 content_modified_at_unix = excluded.content_modified_at_unix,
-                file_identifier = excluded.file_identifier
-            WHERE media_asset.sort_key IS NOT excluded.sort_key
+                file_identifier = excluded.file_identifier,
+                awaiting_presence = 0
+            WHERE media_asset.awaiting_presence <> 0
+               OR media_asset.sort_key IS NOT excluded.sort_key
                OR media_asset.file_identifier IS NOT excluded.file_identifier
                OR media_asset.name_sort_key IS NOT excluded.name_sort_key
                OR media_asset.name IS NOT excluded.name

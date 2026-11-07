@@ -61,7 +61,7 @@ nonisolated struct ClaimedEnrichmentCandidate: Sendable {
 /// make this actor reentrant, so active scans carry the root path, private root-row
 /// instance, and in-memory lease generation they own and revalidate them after each
 /// database await. `ScanLeaseController` holds the lease/queue bookkeeping; this actor
-/// keeps `currentScanTask` and all spawn/await orchestration. Completed scans reconcile missing paths; failed,
+/// keeps one scan task per lane and all spawn/await orchestration. Completed scans reconcile missing paths; failed,
 /// cancelled, or
 /// stale scans preserve prior rows because incomplete observation cannot prove
 /// removal. Device enumerations use the same process-local lease before they may
@@ -270,7 +270,10 @@ actor CatalogStore {
     private var changeDeliveries: [UUID: DeliveryCount] = [:]
     private var planningChangeDeliveries: [UUID: DeliveryCount] = [:]
     private var scanLeases = ScanLeaseController()
-    private var currentScanTask: Task<Void, Never>?
+    /// The filesystem walk each lane is running (`ScanLeaseController.ScanLane`): one
+    /// for the fixed libraries, one per card. Each is cancelled when its root goes away,
+    /// and every callback revalidates its `ActiveScan` lease before mutating actor state.
+    private var scanTasks: [ScanLeaseController.ScanLane: Task<Void, Never>] = [:]
     private var filesystemWatchingStarted = false
     private var filesystemEventSink: AsyncStream<FilesystemEvent>.Continuation?
     private var filesystemEventConsumer: Task<Void, Never>?
@@ -312,7 +315,7 @@ actor CatalogStore {
     var isFilesystemQuiescent: Bool {
         filesystemEventPasses.isEmpty
             && filesystemEventBatches.isEmpty
-            && scanLeases.activeScan == nil
+            && scanLeases.activeScans.isEmpty
             && scanLeases.pendingScanPaths.isEmpty
             && scanLeases.rescanAfterCurrentScan.isEmpty
             && filesystemDirty.isEmpty
@@ -2064,6 +2067,16 @@ extension CatalogStore {
         try await dbQueue.write { db in
             _ = try Self.releaseUnrenderedEdits(db: db)
         }
+        // No card or camera is attached while the catalog loads; a process that ended
+        // while one was being read left its unseen rows marked (ADR 0013).
+        let clearedAwaiting = try await dbQueue.write { db in
+            try Self.clearAllAwaitingPresence(db: db)
+        }
+        if clearedAwaiting > 0 {
+            OtosLog.catalog.noticeOperation("catalog.start", phase: "clearedAwaitingPresence", fields: [
+                "count": "\(clearedAwaiting)",
+            ])
+        }
         // Remap batches a previous process settled had a window that no longer exists;
         // no identity this process shows was ever under their old paths (ARC-052).
         try await dbQueue.write { db in
@@ -2813,12 +2826,11 @@ extension CatalogStore {
         filesystemDirty.removeValue(forKey: path)
         lastSuccessfulFullRootScanAt.removeValue(forKey: path)
         knownMaterializationSuppression.removeAll(under: path)
-        guard scanLeases.cancelWork(for: path) else {
+        guard let lane = scanLeases.cancelWork(for: path) else {
             return nil
         }
-        let cancelledScan = currentScanTask
+        let cancelledScan = scanTasks.removeValue(forKey: lane)
         cancelledScan?.cancel()
-        currentScanTask = nil
         return cancelledScan
     }
 
@@ -2898,7 +2910,40 @@ extension CatalogStore {
         } else {
             try await insertRemovableRoot(attachment, lastSeenAt: lastSeenAt, dbWriter: dbQueue)
         }
+        await markRetainedRowsAwaitingPresence(attachment, dbWriter: dbQueue)
         await finishRemovableRootAttachment(attachment)
+    }
+
+    /// What the source held when it was last read is not what it holds now: a card may
+    /// have been erased, formatted or filled in a camera since. Its retained rows keep
+    /// every overlay (ADR 0008) but stay out of sight until this attachment's scan or
+    /// enumeration sees each file, so the grid fills as the source is read and never
+    /// shows what it held last time. The completed read deletes what it never saw. A
+    /// failed write is logged and the attachment goes on: the rows then show as last held.
+    private func markRetainedRowsAwaitingPresence(
+        _ attachment: RemovableRootAttachment,
+        dbWriter: any DatabaseWriter
+    ) async {
+        guard let rootRowID = roots[attachment.path]?.rowID else {
+            return
+        }
+        let marked: Int
+        do {
+            marked = try await dbWriter.write { db in
+                try Self.setAwaitingPresence(true, rootRowID: rootRowID, db: db)
+            }
+        } catch {
+            OtosLog.catalog.errorOperation("catalog.removable.attach", phase: "awaitingPresenceFailed", fields: [
+                "rootPath": attachment.path.rawValue,
+                "error": String(describing: error),
+            ])
+            return
+        }
+        OtosLog.catalog.noticeOperation("catalog.removable.attach", phase: "awaitingPresence", fields: [
+            "rootPath": attachment.path.rawValue,
+            "kind": attachment.kind.rawValue,
+            "count": "\(marked)",
+        ])
     }
 
     private func updateExistingRemovableRoot(
@@ -3160,6 +3205,34 @@ extension CatalogStore {
         upsert(state)
     }
 
+    /// Ends the wait for a source's unseen files without the read that would have
+    /// settled them (ADR 0013). On detach no attachment awaits them; when a read fails or
+    /// ends incomplete it proved neither their presence nor their absence (ADR 0032 rule
+    /// 4). Either way the source shows the rows it last held, as an offline card does.
+    /// A failed write leaves them hidden until the next attach or launch, and is logged.
+    private func releaseAwaitingPresence(of rootPath: LibraryRootPath, rootRowID: Int64, reason: String) async {
+        do {
+            let released = try await database().write { db in
+                try Self.setAwaitingPresence(false, rootRowID: rootRowID, db: db)
+            }
+            if released > 0 {
+                OtosLog.catalog.noticeOperation("catalog.removable.awaitingPresence", phase: "released", fields: [
+                    "rootPath": rootPath.rawValue,
+                    "reason": reason,
+                    "count": "\(released)",
+                ])
+                bumpNamespaceRevision(for: rootPath)
+                notifyCatalogChanged()
+            }
+        } catch {
+            OtosLog.catalog.errorOperation("catalog.removable.awaitingPresence", phase: "releaseFailed", fields: [
+                "rootPath": rootPath.rawValue,
+                "reason": reason,
+                "error": String(describing: error),
+            ])
+        }
+    }
+
     /// Forgets every card and camera Otos has not seen for
     /// `RemovableSourceRetention.unseenPeriod`, exactly as Settings' Forget does: the
     /// source, its rows, its likes and its thumbnails (owner decision 2026-10-25,
@@ -3220,6 +3293,7 @@ extension CatalogStore {
         }
         await releaseEnrichmentClaimsForRoot(rootRowID)
         await recordLastSeen(of: root, rootRowID: rootRowID)
+        await releaseAwaitingPresence(of: root.path, rootRowID: rootRowID, reason: "detached")
         forgetUnreadableSources(under: root.path)
         setAvailability(.unavailable, for: root.path)
         // Detach keeps the staged bytes: they are already off the camera, and
@@ -3326,6 +3400,11 @@ extension CatalogStore {
         let changed = setAvailability(.available, for: root.path)
         if changed {
             notifyCatalogChanged()
+        }
+        // The quiesce cancelled any scan reading the card, and rows that scan had not
+        // reached are still awaiting presence; a card that stays mounted is read again.
+        if root.kind == .removableVolume {
+            enqueueScans([root.path], priority: .front)
         }
         OtosLog.catalog.notice(
             "op=catalog.removable.resume phase=finish identity=\(identity, privacy: .public) rootPath=\(root.path.rawValue, privacy: .public) kind=\(root.kind.rawValue, privacy: .public)"
@@ -3460,6 +3539,11 @@ extension CatalogStore {
             upsert(state)
             notifyCatalogChanged()
         }
+        // A completed enumeration has already deleted what it never saw; one that ended
+        // without completing leaves its unseen rows to be shown as last held.
+        if roots[scan.rootPath]?.rowID == scan.rootRowID {
+            await releaseAwaitingPresence(of: scan.rootPath, rootRowID: scan.rootRowID, reason: "enumerationEnded")
+        }
     }
 
     func applyProvisionalThumbnails(_ thumbnailsByID: [MediaAssetID: String]) async throws {
@@ -3504,8 +3588,10 @@ extension CatalogStore {
             namespaceMutationLeases.removeValue(forKey: path)
         }
         handedOffLibraryRemovals.removeAll()
-        currentScanTask?.cancel()
-        currentScanTask = nil
+        for task in scanTasks.values {
+            task.cancel()
+        }
+        scanTasks.removeAll()
         integrityScanTask?.cancel()
         integrityScanTask = nil
         scanLeases.resetAll()
@@ -3955,14 +4041,22 @@ private extension CatalogStore {
         startNextScanIfNeeded()
     }
 
+    /// The lane a root's filesystem walks take (`ScanLeaseController.ScanLane`).
+    private func scanLane(for path: LibraryRootPath) -> ScanLeaseController.ScanLane {
+        roots[path]?.root.kind == .library ? .fixedLibraries : .removableSource(path)
+    }
+
+    /// Starts every queued scan whose lane is free, in queue order: a card attached while
+    /// a library rescans is read at once in its own lane.
     private func startNextScanIfNeeded() {
         guard !reconcilePassRunning else {
             return
         }
-        guard currentScanTask == nil else {
-            return
-        }
-        while let nextPath = scanLeases.popPending() {
+        while true {
+            let busyLanes = Set(scanLeases.activeScans.keys)
+            guard let nextPath = scanLeases.takeFirstPending(where: { !busyLanes.contains(scanLane(for: $0)) }) else {
+                return
+            }
             guard roots[nextPath] != nil,
                   let rootRowID = roots[nextPath]?.rowID
             else {
@@ -3978,12 +4072,13 @@ private extension CatalogStore {
                 continue
             }
             setAvailability(.available, for: nextPath)
+            let lane = scanLane(for: nextPath)
             let scan = scanLeases.makeActiveScan(
                 rootPath: nextPath,
                 rootRowID: rootRowID,
                 startNamespaceMutationEpoch: roots[nextPath]?.namespaceMutationEpoch ?? 0
             )
-            scanLeases.beginFilesystemScan(scan)
+            scanLeases.beginFilesystemScan(scan, lane: lane)
             filesystemWatchingArmed.insert(nextPath)
             filesystemWatcher.addRoot(nextPath)
             notifyCatalogChanged()
@@ -3991,12 +4086,9 @@ private extension CatalogStore {
             recordDiagnostic(
                 operation: "catalog.scan",
                 phase: "start",
-                fields: ["rootPath": nextPath.rawValue]
+                fields: ["rootPath": nextPath.rawValue, "lane": lane.diagnosticName]
             )
-            // The scan task is retained in `currentScanTask`, cancelled when
-            // the owning root goes away, and every callback revalidates the
-            // `ActiveScan` lease before mutating actor state.
-            currentScanTask = Task.detached(priority: .utility) { [scanner, scanCadence] in
+            scanTasks[lane] = Task.detached(priority: .utility) { [scanner, scanCadence] in
                 do {
                     let observation = try await scanner.scanRoot(nextPath, scanCadence) { batch in
                         try await self.recordScannedBatch(batch, scan: scan)
@@ -4008,7 +4100,6 @@ private extension CatalogStore {
                     await self.scanFailed(scan: scan, error: error)
                 }
             }
-            return
         }
     }
 
@@ -4351,6 +4442,9 @@ private extension CatalogStore {
             "op=catalog.scan phase=error \(otosLogFields(diagnosticFields), privacy: .public)"
         )
         clearCurrentScan(scan, armFilesystemWatching: true)
+        if roots[scan.rootPath]?.root.kind != .library, roots[scan.rootPath]?.rowID == scan.rootRowID {
+            await releaseAwaitingPresence(of: scan.rootPath, rootRowID: scan.rootRowID, reason: "scanFailed")
+        }
     }
 
     private func clearCurrentScan(_ scan: ActiveScan, armFilesystemWatching: Bool) {
@@ -4358,8 +4452,11 @@ private extension CatalogStore {
             return
         }
         let rootPath = scan.rootPath
-        let needsRescan = scanLeases.clearFilesystemScan(scan)
-        currentScanTask = nil
+        guard let cleared = scanLeases.clearFilesystemScan(scan) else {
+            return
+        }
+        let needsRescan = cleared.needsRescan
+        scanTasks.removeValue(forKey: cleared.lane)
 
         if armFilesystemWatching, roots[rootPath] != nil {
             filesystemWatchingArmed.insert(rootPath)
@@ -4774,7 +4871,8 @@ private extension CatalogStore {
                 return
             }
             let needsLease = accumulator.isRootDirty || !accumulator.subtrees.isEmpty
-            if needsLease, scanLeases.activeScan != nil || currentScanTask != nil {
+            let lane = scanLane(for: root)
+            if needsLease, scanLeases.isLaneBusy(lane) || scanTasks[lane] != nil {
                 return
             }
             let dirt = accumulator.take()
@@ -4854,7 +4952,8 @@ private extension CatalogStore {
             rootRowID: rootRowID,
             startNamespaceMutationEpoch: roots[root]?.namespaceMutationEpoch ?? 0
         )
-        scanLeases.beginFilesystemScan(scan)
+        let lane = scanLane(for: root)
+        scanLeases.beginFilesystemScan(scan, lane: lane)
         filesystemWatchingArmed.insert(root)
         filesystemWatcher.addRoot(root)
         notifyCatalogChanged()
@@ -4877,7 +4976,7 @@ private extension CatalogStore {
         // `NonisolatedNonsendingByDefault` runs on the caller's actor. A detached task is the
         // same mechanism a full scan uses; every Store mutation below hops back through an
         // actor method that revalidates the scan lease first.
-        currentScanTask = Task.detached(priority: .utility) { [scanner, scanCadence] in
+        scanTasks[lane] = Task.detached(priority: .utility) { [scanner, scanCadence] in
             do {
                 var totalObserved = 0
                 var totalDeleted = 0
@@ -5228,22 +5327,12 @@ private extension CatalogStore {
                 return .unchanged
             }
             let deleted = try await dbQueue.write { db -> Bool in
-                var changed = false
-                if try Self.deleteAssetRow(rootRowID: rootRowID, relativePath: relativePath, db: db) {
-                    changed = true
-                }
-                if try Self.deleteCompanionRow(rootRowID: rootRowID, relativePath: relativePath, db: db) {
-                    changed = true
-                }
-                if try Self.repairCompanionsInDirectory(
-                    of: relativePath,
-                    libraryRootID: rootRowID,
+                try Self.purgeGonePath(
+                    relativePath: relativePath,
+                    rootRowID: rootRowID,
                     capabilities: capabilities,
                     db: db
-                ) {
-                    changed = true
-                }
-                return changed
+                )
             }
             guard deleted else {
                 return .unchanged
@@ -5356,11 +5445,47 @@ extension CatalogStore {
         }
     }
 
-    func completeSourceEraseOperation(key: ActiveSourceEraseKey) async throws {
+    /// Settles an erase whose file the source no longer holds: the journal row and the
+    /// item's catalog row go in one durable transaction, with its derived images after.
+    /// The erase is the proof of deletion (ADR 0008), so the catalog follows the card as
+    /// each file goes rather than waiting for a rescan the user's Eject usually cancels.
+    /// A root that is no longer registered has no row to remove; its journal still clears.
+    func recordSourceFileErased(_ operation: ActiveSourceEraseOperation) async throws {
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
-            try Self.deleteActiveSourceErase(key: key, db: db)
+        let rootState = roots[operation.sourceRootPath]
+        let derivedImagePaths = try Self.writeWithJournalDurability(dbWriter) { db -> [String]? in
+            try Self.deleteActiveSourceErase(key: operation.key, db: db)
+            guard let rootState else {
+                return nil
+            }
+            let target = try Self.catalogedFileDeletionTarget(
+                relativePath: operation.sourceRelativePath,
+                rootRowID: rootState.rowID,
+                db: db
+            )
+            let removed = try Self.purgeGonePath(
+                relativePath: operation.sourceRelativePath,
+                rootRowID: rootState.rowID,
+                capabilities: rootState.capabilities,
+                db: db
+            )
+            return removed ? target?.derivedImagePaths ?? [] : nil
         }
+        guard let derivedImagePaths else {
+            return
+        }
+        if let thumbnailDirectory {
+            for path in derivedImagePaths {
+                ThumbnailStore.delete(path, in: thumbnailDirectory)
+            }
+        }
+        OtosLog.catalog.noticeOperation("import.erase.catalog", phase: "removed", fields: [
+            "rootPath": operation.sourceRootPath.rawValue,
+            "relativePath": operation.sourceRelativePath.rawValue,
+            "derivedImages": "\(derivedImagePaths.count)",
+        ])
+        bumpNamespaceRevision(for: operation.sourceRootPath)
+        notifyCatalogChanged()
     }
 
     func beginImportOperation(_ operation: ActiveFileOperation) async throws {

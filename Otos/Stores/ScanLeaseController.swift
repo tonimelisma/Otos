@@ -4,15 +4,33 @@ import Foundation
 ///
 /// Actor-confined bookkeeping for filesystem-scan and device-enumeration leases,
 /// the pending scan queue, and "rescan after current scan" deferrals.
-/// `CatalogStore` owns one `ScanLeaseController`, keeps `currentScanTask`, and
+/// `CatalogStore` owns one `ScanLeaseController`, keeps one scan task per lane, and
 /// performs all spawn/await/DB work. This type only answers lease ownership and
 /// queue mutations synchronously inside Store isolation — not a second actor.
+///
+/// A filesystem lease belongs to a lane (`ScanLane`). Fixed libraries share one lane:
+/// they live on the system disk or behind a file provider, and walking two at once
+/// only makes both slower. Each card is a separate device, so it has a lane of its own
+/// and is read the moment it attaches, never queued behind a library rescan.
 ///
 /// `ActiveScan` remains nested on `CatalogStore` so the public device-enumeration
 /// API surface stays unchanged.
 nonisolated struct ScanLeaseController {
+    /// Which filesystem walks may run at once: one per lane.
+    enum ScanLane: Hashable {
+        case fixedLibraries
+        case removableSource(LibraryRootPath)
+
+        var diagnosticName: String {
+            switch self {
+            case .fixedLibraries: "fixedLibraries"
+            case .removableSource: "removableSource"
+            }
+        }
+    }
+
     private(set) var pendingScanPaths: [LibraryRootPath] = []
-    private(set) var activeScan: CatalogStore.ActiveScan?
+    private(set) var activeScans: [ScanLane: CatalogStore.ActiveScan] = [:]
     private(set) var activeDeviceScans: [LibraryRootPath: CatalogStore.ActiveScan] = [:]
     private(set) var rescanAfterCurrentScan: Set<LibraryRootPath> = []
     private var nextLeaseGeneration: UInt64 = 0
@@ -23,11 +41,15 @@ nonisolated struct ScanLeaseController {
     }
 
     func hasActiveFilesystemScan(for path: LibraryRootPath) -> Bool {
-        activeScan?.rootPath == path
+        activeScans.values.contains { $0.rootPath == path }
+    }
+
+    func isLaneBusy(_ lane: ScanLane) -> Bool {
+        activeScans[lane] != nil
     }
 
     func isCurrentFilesystemScan(_ scan: CatalogStore.ActiveScan) -> Bool {
-        activeScan == scan
+        activeScans.values.contains(scan)
     }
 
     func isCurrentDeviceScan(_ scan: CatalogStore.ActiveScan) -> Bool {
@@ -67,7 +89,7 @@ nonisolated struct ScanLeaseController {
         knownRoots: (LibraryRootPath) -> Bool
     ) {
         for path in paths where knownRoots(path) {
-            if activeScan?.rootPath == path || pendingScanPaths.contains(path) {
+            if hasActiveFilesystemScan(for: path) || pendingScanPaths.contains(path) {
                 continue
             }
             switch priority {
@@ -96,20 +118,20 @@ nonisolated struct ScanLeaseController {
         rescanAfterCurrentScan.remove(path) != nil
     }
 
-    mutating func beginFilesystemScan(_ scan: CatalogStore.ActiveScan) {
-        activeScan = scan
+    mutating func beginFilesystemScan(_ scan: CatalogStore.ActiveScan, lane: ScanLane) {
+        activeScans[lane] = scan
     }
 
-    /// Clears the filesystem lease when `scan` is still current. Returns whether
-    /// a deferred rescan was pending for that root.
+    /// Clears the filesystem lease when `scan` is still current. Returns the lane it
+    /// held, and whether a deferred rescan was pending for that root; `nil` when the
+    /// scan no longer holds a lease.
     @discardableResult
-    mutating func clearFilesystemScan(_ scan: CatalogStore.ActiveScan) -> Bool {
-        guard activeScan == scan else {
-            return false
+    mutating func clearFilesystemScan(_ scan: CatalogStore.ActiveScan) -> (lane: ScanLane, needsRescan: Bool)? {
+        guard let lane = activeScans.first(where: { $0.value == scan })?.key else {
+            return nil
         }
-        let rootPath = scan.rootPath
-        activeScan = nil
-        return takeRescanAfterCurrentScan(rootPath)
+        activeScans.removeValue(forKey: lane)
+        return (lane, takeRescanAfterCurrentScan(scan.rootPath))
     }
 
     mutating func beginDeviceScan(_ scan: CatalogStore.ActiveScan) {
@@ -127,33 +149,34 @@ nonisolated struct ScanLeaseController {
         activeDeviceScans.removeValue(forKey: path)
     }
 
-    /// Cancels lease bookkeeping for a removed root. Returns whether the
-    /// filesystem scan for this path was active (Store must cancel the task).
+    /// Cancels lease bookkeeping for a removed root. Returns the lane whose filesystem
+    /// scan was reading this path, if one was (Store must cancel that lane's task).
     @discardableResult
-    mutating func cancelWork(for path: LibraryRootPath) -> Bool {
+    mutating func cancelWork(for path: LibraryRootPath) -> ScanLane? {
         removeRescanDeferral(path)
         removePending(path)
         removeDeviceScan(for: path)
-        if activeScan?.rootPath == path {
-            activeScan = nil
-            return true
+        guard let lane = activeScans.first(where: { $0.value.rootPath == path })?.key else {
+            return nil
         }
-        return false
+        activeScans.removeValue(forKey: lane)
+        return lane
     }
 
     mutating func resetAll() {
-        activeScan = nil
+        activeScans.removeAll()
         activeDeviceScans.removeAll()
         pendingScanPaths.removeAll()
         rescanAfterCurrentScan.removeAll()
     }
 
-    /// Pops the next pending path without validating the root. Store performs
-    /// availability and row-ID checks before starting work.
-    mutating func popPending() -> LibraryRootPath? {
-        guard !pendingScanPaths.isEmpty else {
+    /// Takes the first pending path `canStart` admits — one whose lane is free — and
+    /// leaves the rest queued in order. Store performs availability and row-ID checks
+    /// before starting work.
+    mutating func takeFirstPending(where canStart: (LibraryRootPath) -> Bool) -> LibraryRootPath? {
+        guard let index = pendingScanPaths.firstIndex(where: canStart) else {
             return nil
         }
-        return pendingScanPaths.removeFirst()
+        return pendingScanPaths.remove(at: index)
     }
 }

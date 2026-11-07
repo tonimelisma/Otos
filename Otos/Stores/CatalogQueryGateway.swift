@@ -497,12 +497,14 @@ private nonisolated func scopeClause(
         rootPredicate = "media_asset.library_root_id IN (\(sqlPlaceholders(count: scope.rootIDs.count)))"
         arguments.append(contentsOf: scope.rootIDs)
     }
-    // Items waiting to move to the Trash, and the movie of a Live Photo — a member of its
-    // still's item (ADR 0041) — are hidden from every user-facing media query; this scope
-    // clause is the one choke point those queries share.
+    // Items waiting to move to the Trash, the movie of a Live Photo — a member of its
+    // still's item (ADR 0041) — and a card's or camera's retained rows its current
+    // attachment has not yet seen (ADR 0013) are hidden from every user-facing media
+    // query; this scope clause is the one choke point those queries share.
     var predicate = """
     \(rootPredicate)
       AND media_asset.pending_trash_batch_unix_ms IS NULL
+      AND media_asset.awaiting_presence = 0
       AND NOT \(LivePhotoSQL.isPairedMotion("media_asset"))
     """
     if let importBatchUnixMs = scope.importBatchUnixMs {

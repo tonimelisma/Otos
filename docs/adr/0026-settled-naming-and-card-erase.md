@@ -69,6 +69,18 @@ enrichment is guaranteed to complete, and only a genuine I/O read failure is
 non-terminal. A build that decides to wait revalidates against live rows first,
 because a batch landing mid-build is not replayed by the catalog-change wake.
 
+The catalog follows the card as each file is erased. `SourceEraser` reporting a file
+deleted, or already gone, is proof of its deletion (ADR 0008), so its catalog row —
+media or companion, with its companions re-paired — and its derived images go in the
+same durable write that clears its `active_source_erase` journal entry
+(`CatalogStore.recordSourceFileErased`, sharing `purgeGonePath` with filesystem-event
+reconciliation). Recovery settles both together. Because `.alreadyGone` now removes
+overlay, it needs proof: the card's root is a mounted directory and the path answers
+`ENOENT`. An unmounted card or any other `lstat` error is a failed erase, which keeps
+the row and the journal entry for the next attempt. Leaving the rows to a rescan was the
+earlier arrangement: the rescan was deferred behind the erase lease and usually lost
+the race with Eject, so the card's next attachment showed files it no longer held.
+
 Source deletion has exactly one implementation. `SourceEraser` is it, every
 caller routes through it, and it refuses fixed library roots. The previous
 arrangement documented that ownership while a second `FileManager.removeItem`
