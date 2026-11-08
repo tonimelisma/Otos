@@ -244,7 +244,10 @@ nonisolated enum ImportBarPresentation {
             itemsLine = nil
             track = .indeterminate
         }
-        let primaryLine = sourceKind == .deviceMTP ? "Checking the camera…" : "Checking the card…"
+        let primaryLine = switch sourceKind {
+        case .deviceMTP: "Checking the camera…"
+        case .library, .removableVolume: "Checking the card…"
+        }
         let primaryAction: ImportBarDrawnState.PrimaryAction = .importNewItems
         // The choices are live while Otos checks: nothing about the check
         // depends on the destination or the checkboxes, and a pick made now is
@@ -810,7 +813,10 @@ nonisolated enum ImportBarPresentation {
                 "The library isn't available"
             }
         case .sourceNotReady:
-            sourceKind == .deviceMTP ? "The camera is still reading its card" : "The card is still being read"
+            switch sourceKind {
+            case .deviceMTP: "The camera is still reading its card"
+            case .library, .removableVolume: "The card is still being read"
+            }
         case .unexpected:
             nil
         }

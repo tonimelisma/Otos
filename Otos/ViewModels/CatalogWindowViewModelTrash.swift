@@ -50,7 +50,7 @@ extension CatalogWindowViewModel {
         let roots = Dictionary(
             uniqueKeysWithValues: (state.libraries + state.removableSources).map { ($0.path, $0.root) }
         )
-        return ids.allSatisfy { roots[$0.libraryRootPath]?.kind != .deviceMTP }
+        return ids.allSatisfy { roots[$0.libraryRootPath]?.kind.supportsMoveToTrash != false }
     }
 
     /// Hides the targets behind one pending Move to Trash and hands them to the queue.

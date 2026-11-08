@@ -308,11 +308,128 @@ nonisolated struct LibraryRoot: Identifiable, Hashable {
         displayNameOverride?.isEmpty == false ? displayNameOverride ?? path.displayName : path.displayName
     }
 
+    /// A card or camera (`LibraryRootKind.isRemovable`).
     var isRemovableSource: Bool {
-        kind != .library
+        kind.isRemovable
     }
 
-    /// Whether enrichment claims this root's rows for every stale product at once —
+    /// `LibraryRootKind.claimsEveryProductTogether`.
+    var claimsEveryProductTogether: Bool {
+        kind.claimsEveryProductTogether
+    }
+
+    /// `LibraryRootKind.producesAfterMetadata`.
+    var producesAfterMetadata: Bool {
+        kind.producesAfterMetadata
+    }
+}
+
+/// The catalog stores every source as a root because the filesystem path remains
+/// the asset identity boundary. Kind only changes ownership semantics: fixed
+/// libraries participate in All Media and launch scans, while removable sources
+/// are event-driven and are scoped to their own sidebar rows.
+///
+/// Every question a caller asks about a kind is one named capability below, each an
+/// exhaustive `switch`, so a new kind does not compile until it answers every question
+/// (ADR 0046). No caller compares kinds directly: a bare `kind == .library` answers a
+/// different question at each call site, and a new kind would be wrong in most of them.
+nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
+    case library
+    case removableVolume
+    case deviceMTP
+
+    /// A folder on this Mac the user chose as a library (ADR 0003): its stored path is
+    /// normalized at load, it is scanned at launch and by integrity scans on the fixed
+    /// libraries' lane, and `MetadataRefresher` re-reads its rows from local bytes.
+    var isUserChosenFolder: Bool {
+        switch self {
+        case .library: true
+        case .removableVolume, .deviceMTP: false
+        }
+    }
+
+    /// Listed in the sidebar's Libraries section, in the user's order, rather than in
+    /// Removable while connected.
+    var isInLibrariesSection: Bool {
+        switch self {
+        case .library: true
+        case .removableVolume, .deviceMTP: false
+        }
+    }
+
+    /// Spanned by All Media, Places, Imports and Duplicates (ADR 0013 decision 3).
+    var isMemberOfAllMedia: Bool {
+        switch self {
+        case .library: true
+        case .removableVolume, .deviceMTP: false
+        }
+    }
+
+    /// Where an import may copy media to, and whose digests an import trusts as
+    /// "already in a library".
+    var isImportDestination: Bool {
+        switch self {
+        case .library: true
+        case .removableVolume, .deviceMTP: false
+        }
+    }
+
+    /// A card or camera (ADR 0013): it attaches and detaches, starts each launch
+    /// unavailable, is an import source, is enriched ahead of fixed libraries while
+    /// connected, holds rows awaiting presence on attach, and is forgotten after the
+    /// retention period unseen.
+    var isRemovable: Bool {
+        switch self {
+        case .removableVolume, .deviceMTP: true
+        case .library: false
+        }
+    }
+
+    /// Has a filesystem namespace Otos walks and watches: a library, or a mounted card.
+    var hasFilesystemNamespace: Bool {
+        switch self {
+        case .library, .removableVolume: true
+        case .deviceMTP: false
+        }
+    }
+
+    /// Move to Trash applies to its originals (ADR 0022). A camera's files are not on a
+    /// filesystem the Trash can reach.
+    var supportsMoveToTrash: Bool {
+        switch self {
+        case .library, .removableVolume: true
+        case .deviceMTP: false
+        }
+    }
+
+    /// Rows come from the source's own listing under an enumeration lease, not from a
+    /// filesystem walk (ADR 0013 decision 5).
+    var rowsComeFromSourceListing: Bool {
+        switch self {
+        case .deviceMTP: true
+        case .library, .removableVolume: false
+        }
+    }
+
+    /// Originals are copied into an Otos staging folder on demand rather than read in
+    /// place, so the staging folder and its files are Otos's to release.
+    var stagesOriginals: Bool {
+        switch self {
+        case .deviceMTP: true
+        case .library, .removableVolume: false
+        }
+    }
+
+    /// An import reads this source's own files in place, so enrichment leaves the source
+    /// alone while one runs rather than competing for its bandwidth.
+    var pausesEnrichmentWhileImporting: Bool {
+        switch self {
+        case .removableVolume: true
+        case .library, .deviceMTP: false
+        }
+    }
+
+    /// Whether enrichment claims this kind's rows for every stale product at once —
     /// metadata, rendering and digest from one read (ADR 0009, ADR 0018). A fixed library
     /// does: its files may be cloud-only, and a download is paid once for all of them.
     ///
@@ -324,26 +441,27 @@ nonisolated struct LibraryRoot: Identifiable, Hashable {
     /// `.deviceMTP` is claimed for metadata only: a camera row is enriched from a few
     /// kilobytes of ranged reads, and a rendering or digest would force the whole-file
     /// transfer. Those rows get both at import, from the staged copy's local bytes.
-    ///
-    /// Single home for the rule so a future root kind cannot diverge one caller.
     var claimsEveryProductTogether: Bool {
-        kind == .library
+        switch self {
+        case .library: true
+        case .removableVolume, .deviceMTP: false
+        }
     }
 
-    /// Whether this root's rows get a rendering-and-digest pass once its metadata is current.
+    /// The kinds that have `capability`, as a SQL list of quoted `library_root.kind`
+    /// values, so a query states the same rule the Swift callers ask. Raw values are
+    /// fixed identifiers with no quotes, so they need no escaping.
+    static func sqlLiteralList(_ capability: KeyPath<Self, Bool>) -> String {
+        allCases.filter { $0[keyPath: capability] }.map { "'\($0.rawValue)'" }.joined(separator: ", ")
+    }
+
+    /// Whether this kind's rows get a rendering-and-digest pass once metadata is current.
     var producesAfterMetadata: Bool {
-        kind == .removableVolume
+        switch self {
+        case .removableVolume: true
+        case .library, .deviceMTP: false
+        }
     }
-}
-
-/// The catalog stores every source as a root because the filesystem path remains
-/// the asset identity boundary. Kind only changes ownership semantics: fixed
-/// libraries participate in All Media and launch scans, while removable sources
-/// are event-driven and are scoped to their own sidebar rows.
-nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
-    case library
-    case removableVolume
-    case deviceMTP
 
     var sidebarSystemImage: String {
         switch self {

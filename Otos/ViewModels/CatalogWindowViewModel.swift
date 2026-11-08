@@ -581,17 +581,18 @@ final class CatalogWindowViewModel {
             // exist. A device root is never servable by the cloud provider, and a
             // device root with no live session is a state, not a fallback (APP-018).
             executor: { [weak catalogStore] request in
-                let kind = await catalogStore?.rootKind(for: request.id.libraryRootPath)
-                guard kind == .deviceMTP else {
+                switch await catalogStore?.rootKind(for: request.id.libraryRootPath) {
+                case .deviceMTP:
+                    guard let result = await deviceStagingRegistry.materialize(request.id.fileURL) else {
+                        return MaterializationResult(outcome: .deviceUnavailable, rerequestCount: 0, elapsedMs: 0)
+                    }
+                    return result
+                case .library, .removableVolume, nil:
                     return await FileMaterialization.materialize(
                         request.id.fileURL,
                         persistence: .forPriority(request.priority)
                     )
                 }
-                guard let result = await deviceStagingRegistry.materialize(request.id.fileURL) else {
-                    return MaterializationResult(outcome: .deviceUnavailable, rerequestCount: 0, elapsedMs: 0)
-                }
-                return result
             }
         )
         self.materializationCoordinator = materializationCoordinator

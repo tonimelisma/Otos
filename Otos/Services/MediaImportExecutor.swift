@@ -44,7 +44,7 @@ nonisolated enum StagedSourceReleaser {
         // Only a device root has a cache to release. A removable volume's "source" is the
         // user's own card, and a library's is the user's own file; neither is ours to
         // remove, which is why this switches on kind rather than testing for a file.
-        guard kind == .deviceMTP else {
+        guard kind.stagesOriginals else {
             return
         }
         DeviceStagingLocation.releaseStagedFile(at: sourceURL)

@@ -373,14 +373,15 @@ actor MediaOperationCoordinator {
     }
 
     private func autoEjectIfRequested(_ root: LibraryRoot) async {
-        if root.kind == .deviceMTP {
+        switch root.kind {
+        case .deviceMTP:
             guard let identity = root.deviceIdentity, let cameraImport else { return }
             let outcome = await cameraImport.eject(identity: identity)
             OtosLog.catalog.notice("op=import.autoEject phase=camera outcome=\(String(describing: outcome), privacy: .public)")
-            return
-        }
-        if let autoEjectHandler {
-            await autoEjectHandler(root)
+        case .library, .removableVolume:
+            if let autoEjectHandler {
+                await autoEjectHandler(root)
+            }
         }
     }
 
@@ -429,7 +430,7 @@ actor MediaOperationCoordinator {
     private func readSourcesSnapshot(reason: String) async -> Machine.SourcesSnapshot {
         let libraries = await store.currentLibraries()
         var revisions: [LibraryRootPath: RootPlanningRevisions] = [:]
-        for source in libraries where source.root.kind != .library && source.availability == .available {
+        for source in libraries where source.root.kind.isRemovable && source.availability == .available {
             if let current = await store.planningRevisions(for: source.path) {
                 revisions[source.path] = current
             }
