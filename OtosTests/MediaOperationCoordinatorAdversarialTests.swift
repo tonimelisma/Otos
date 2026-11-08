@@ -2288,9 +2288,9 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(emptyPlan.totals.copyCount == 0)
 
         // Live device inventory lands after the session already reached Ready.
-        let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
         let relativePath = MediaRelativePath(rawValue: "DCIM/IMG_0001.JPG")
-        try await store.recordDeviceCatalogBatch([
+        try await store.recordSourceListingBatch([
             ScannedMediaFile(
                 relativePath: relativePath,
                 name: "IMG_0001.JPG",
@@ -2300,7 +2300,7 @@ struct MediaOperationCoordinatorAdversarialTests {
                 contentModifiedAt: Date(timeIntervalSince1970: 1000)
             ),
         ], scan: scan)
-        try await store.completeDeviceCatalogEnumeration(scan: scan, observedPaths: [relativePath])
+        try await store.completeSourceListing(scan: scan, observedPaths: [relativePath])
         // ARC-057: a camera is gated on proven naming facts exactly like
         // a card, and its bytes are staged locally so enrichment can supply them.
         // Nothing runs enrichment in this test, so stand in for it.
@@ -2343,9 +2343,9 @@ struct MediaOperationCoordinatorAdversarialTests {
         // Live device inventory lands while the session already has a plan
         // (D1's exact precondition) — enumeration is still in progress the
         // whole time; activity never flips idle here.
-        let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
         let relativePath = MediaRelativePath(rawValue: "DCIM/IMG_0001.JPG")
-        try await store.recordDeviceCatalogBatch([
+        try await store.recordSourceListingBatch([
             ScannedMediaFile(
                 relativePath: relativePath,
                 name: "IMG_0001.JPG",
@@ -2397,7 +2397,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         // is documented as the one case whose detail is for the log and never the
         // bar, so routing a known, named condition through it would publish an
         // internal string as a user-facing fact.
-        try await store.completeDeviceCatalogEnumeration(scan: scan, observedPaths: [relativePath])
+        try await store.completeSourceListing(scan: scan, observedPaths: [relativePath])
         let resolved = try await waitForPresentation(coordinator, source: rootPath, predicate: { pres in
             if case .executionUnavailable = pres.state {
                 return true

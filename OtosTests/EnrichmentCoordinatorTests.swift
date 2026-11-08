@@ -833,8 +833,8 @@ struct EnrichmentCoordinatorTests {
             identity: .camera(id: "ranged-route"),
             displayName: "Camera"
         )
-        let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
-        try await store.recordDeviceCatalogBatch([
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
+        try await store.recordSourceListingBatch([
             ScannedMediaFile(
                 relativePath: MediaRelativePath(rawValue: "DSC00001.ARW"),
                 name: "DSC00001.ARW",

@@ -96,12 +96,12 @@ final class CameraCatalogSync {
         let identity = source.identity
         var activeScan: CatalogStore.ActiveScan?
         do {
-            let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+            let scan = try await store.beginSourceListing(rootPath: rootPath)
             activeScan = scan
             let snapshot = try await source.catalogSnapshot()
             try Task.checkCancellation()
             let items = snapshot.items
-            try await store.recordDeviceCatalogBatch(Self.scannedFiles(for: items), scan: scan)
+            try await store.recordSourceListingBatch(Self.scannedFiles(for: items), scan: scan)
             // Decide once per attach whether this device answers ranged reads, before any
             // seeding, because the answer decides whether seeding happens at all. One
             // 12-byte read against one item: cheap enough to always do, and the only honest
@@ -122,7 +122,7 @@ final class CameraCatalogSync {
                 await enrichment.stage(Self.stagingSeeds(for: added, rootPath: rootPath))
             }
             if snapshot.isStable {
-                try await store.completeDeviceCatalogEnumeration(
+                try await store.completeSourceListing(
                     scan: scan,
                     observedPaths: Set(items.map(\.relativePath)),
                     companions: Self.mediaCompanions(for: snapshot.companions)
@@ -149,7 +149,7 @@ final class CameraCatalogSync {
             )
         }
         if let activeScan {
-            await store.endDeviceCatalogEnumeration(scan: activeScan)
+            await store.endSourceListing(scan: activeScan)
         }
     }
 

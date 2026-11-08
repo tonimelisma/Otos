@@ -3411,7 +3411,7 @@ extension CatalogStore {
         )
     }
 
-    func beginDeviceCatalogEnumeration(rootPath: LibraryRootPath) async throws -> ActiveScan {
+    func beginSourceListing(rootPath: LibraryRootPath) async throws -> ActiveScan {
         guard roots[rootPath]?.root.kind.rowsComeFromSourceListing == true,
               roots[rootPath]?.availability == .available,
               let rootRowID = roots[rootPath]?.rowID
@@ -3423,7 +3423,7 @@ extension CatalogStore {
             rootRowID: rootRowID,
             startNamespaceMutationEpoch: roots[rootPath]?.namespaceMutationEpoch ?? 0
         )
-        scanLeases.beginDeviceScan(scan)
+        scanLeases.beginListingScan(scan)
         if var state = roots[rootPath] {
             state.activity = .enumerating
             upsert(state)
@@ -3432,7 +3432,7 @@ extension CatalogStore {
         return scan
     }
 
-    func recordDeviceCatalogBatch(_ batch: [ScannedMediaFile], scan: ActiveScan) async throws {
+    func recordSourceListingBatch(_ batch: [ScannedMediaFile], scan: ActiveScan) async throws {
         try await ensureStartedForMutation()
         guard owns(scan),
               roots[scan.rootPath]?.root.kind.rowsComeFromSourceListing == true,
@@ -3470,11 +3470,11 @@ extension CatalogStore {
             notifyCatalogChanged()
         }
         OtosLog.catalog.notice(
-            "op=catalog.device.scan.batch phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) count=\(batch.count, privacy: .public) changedCount=\(timedChangedCount.value, privacy: .public) waitMs=\(timedChangedCount.waitMs, privacy: .public) execMs=\(timedChangedCount.execMs, privacy: .public)"
+            "op=catalog.source.listing.batch phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) count=\(batch.count, privacy: .public) changedCount=\(timedChangedCount.value, privacy: .public) waitMs=\(timedChangedCount.waitMs, privacy: .public) execMs=\(timedChangedCount.execMs, privacy: .public)"
         )
     }
 
-    func completeDeviceCatalogEnumeration(
+    func completeSourceListing(
         scan: ActiveScan,
         observedPaths: Set<MediaRelativePath>,
         companions: [MediaCompanion] = []
@@ -3526,14 +3526,14 @@ extension CatalogStore {
         // was still enumerating must always be revalidated once enumeration proves
         // stable, even if it turns out nothing changed.
         bumpNamespaceRevision(for: scan.rootPath)
-        await endDeviceCatalogEnumeration(scan: scan)
+        await endSourceListing(scan: scan)
     }
 
-    func endDeviceCatalogEnumeration(scan: ActiveScan) async {
-        guard scanLeases.isCurrentDeviceScan(scan) else {
+    func endSourceListing(scan: ActiveScan) async {
+        guard scanLeases.isCurrentListingScan(scan) else {
             return
         }
-        scanLeases.endDeviceScan(scan)
+        scanLeases.endListingScan(scan)
         if var state = roots[scan.rootPath], state.root.kind.rowsComeFromSourceListing {
             state.activity = .idle
             upsert(state)
@@ -3986,7 +3986,7 @@ private extension CatalogStore {
 
     private func removeRoot(path: LibraryRootPath) {
         _ = roots.remove(path: path)
-        scanLeases.removeDeviceScan(for: path)
+        scanLeases.removeListingScan(for: path)
     }
 
     private func catalogLibraryState(from state: RootRuntimeState) -> CatalogLibraryState {

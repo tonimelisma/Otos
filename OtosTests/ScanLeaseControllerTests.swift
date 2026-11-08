@@ -57,10 +57,10 @@ struct ScanLeaseControllerTests {
         #expect(controller.owns(filesystemScan) { $0 == pathA && $1 == 1 })
         #expect(!controller.owns(filesystemScan) { $0 == pathA && $1 == 2 })
 
-        let deviceScan = controller.makeActiveScan(rootPath: pathB, rootRowID: 2)
-        controller.beginDeviceScan(deviceScan)
-        #expect(controller.owns(deviceScan) { $0 == pathB && $1 == 2 })
-        #expect(!controller.owns(deviceScan) { $0 == pathB && $1 == 3 })
+        let listingScan = controller.makeActiveScan(rootPath: pathB, rootRowID: 2)
+        controller.beginListingScan(listingScan)
+        #expect(controller.owns(listingScan) { $0 == pathB && $1 == 2 })
+        #expect(!controller.owns(listingScan) { $0 == pathB && $1 == 3 })
     }
 
     @Test func cancelWorkClearsLeaseQueueAndDeferral() {

@@ -31,7 +31,7 @@ nonisolated struct ScanLeaseController {
 
     private(set) var pendingScanPaths: [LibraryRootPath] = []
     private(set) var activeScans: [ScanLane: CatalogStore.ActiveScan] = [:]
-    private(set) var activeDeviceScans: [LibraryRootPath: CatalogStore.ActiveScan] = [:]
+    private(set) var activeListingScans: [LibraryRootPath: CatalogStore.ActiveScan] = [:]
     private(set) var rescanAfterCurrentScan: Set<LibraryRootPath> = []
     private var nextLeaseGeneration: UInt64 = 0
 
@@ -52,8 +52,8 @@ nonisolated struct ScanLeaseController {
         activeScans.values.contains(scan)
     }
 
-    func isCurrentDeviceScan(_ scan: CatalogStore.ActiveScan) -> Bool {
-        activeDeviceScans[scan.rootPath] == scan
+    func isCurrentListingScan(_ scan: CatalogStore.ActiveScan) -> Bool {
+        activeListingScans[scan.rootPath] == scan
     }
 
     func owns(
@@ -61,8 +61,8 @@ nonisolated struct ScanLeaseController {
         rootRowIDMatches: (LibraryRootPath, Int64) -> Bool
     ) -> Bool {
         let isCurrentFilesystem = isCurrentFilesystemScan(scan)
-        let isCurrentDevice = isCurrentDeviceScan(scan)
-        return (isCurrentFilesystem || isCurrentDevice)
+        let isCurrentListing = isCurrentListingScan(scan)
+        return (isCurrentFilesystem || isCurrentListing)
             && rootRowIDMatches(scan.rootPath, scan.rootRowID)
     }
 
@@ -134,19 +134,19 @@ nonisolated struct ScanLeaseController {
         return (lane, takeRescanAfterCurrentScan(scan.rootPath))
     }
 
-    mutating func beginDeviceScan(_ scan: CatalogStore.ActiveScan) {
-        activeDeviceScans[scan.rootPath] = scan
+    mutating func beginListingScan(_ scan: CatalogStore.ActiveScan) {
+        activeListingScans[scan.rootPath] = scan
     }
 
-    mutating func endDeviceScan(_ scan: CatalogStore.ActiveScan) {
-        guard activeDeviceScans[scan.rootPath] == scan else {
+    mutating func endListingScan(_ scan: CatalogStore.ActiveScan) {
+        guard activeListingScans[scan.rootPath] == scan else {
             return
         }
-        activeDeviceScans.removeValue(forKey: scan.rootPath)
+        activeListingScans.removeValue(forKey: scan.rootPath)
     }
 
-    mutating func removeDeviceScan(for path: LibraryRootPath) {
-        activeDeviceScans.removeValue(forKey: path)
+    mutating func removeListingScan(for path: LibraryRootPath) {
+        activeListingScans.removeValue(forKey: path)
     }
 
     /// Cancels lease bookkeeping for a removed root. Returns the lane whose filesystem
@@ -155,7 +155,7 @@ nonisolated struct ScanLeaseController {
     mutating func cancelWork(for path: LibraryRootPath) -> ScanLane? {
         removeRescanDeferral(path)
         removePending(path)
-        removeDeviceScan(for: path)
+        removeListingScan(for: path)
         guard let lane = activeScans.first(where: { $0.value.rootPath == path })?.key else {
             return nil
         }
@@ -165,7 +165,7 @@ nonisolated struct ScanLeaseController {
 
     mutating func resetAll() {
         activeScans.removeAll()
-        activeDeviceScans.removeAll()
+        activeListingScans.removeAll()
         pendingScanPaths.removeAll()
         rescanAfterCurrentScan.removeAll()
     }

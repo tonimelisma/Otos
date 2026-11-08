@@ -108,8 +108,9 @@ Adjacent decisions requiring separate ADRs or specs:
    catalog item names, type, size, dates, and 160x120-ish provisional thumbnails.
    The catalog root path is an app-owned staging directory. Enrichment materializes
    that staging URL by asking the active `DeviceCameraSession` to download the
-   corresponding camera item. Store issues a process-local enumeration lease for
-   each camera attach; batches can upsert observed rows only while that lease is
+   corresponding camera item. Store issues a process-local listing lease
+   (`beginSourceListing`, kind-neutral for every root whose rows come from a source
+   listing) for each camera attach; batches can upsert observed rows only while that lease is
    current, and deletion reconciliation runs only after a stable catalog snapshot.
    Partial or unstable ImageCapture snapshots are fail-closed: they may make
    observed rows visible, but they do not prove that unobserved rows were deleted.

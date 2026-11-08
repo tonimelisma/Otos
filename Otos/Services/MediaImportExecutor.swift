@@ -47,7 +47,7 @@ nonisolated enum StagedSourceReleaser {
         guard kind.stagesOriginals else {
             return
         }
-        DeviceStagingLocation.releaseStagedFile(at: sourceURL)
+        StagingLocation.releaseStagedFile(at: sourceURL)
     }
 }
 

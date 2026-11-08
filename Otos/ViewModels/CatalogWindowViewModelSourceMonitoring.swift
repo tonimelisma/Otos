@@ -65,7 +65,7 @@ extension CatalogWindowViewModel {
     /// a camera attaching right now cannot race it.
     func startDeviceStagingSweepThenCameraMonitoring() {
         deviceStagingSweepTask = Task.detached(priority: .utility) { [weak self] in
-            DeviceStagingLocation.sweepUnownedStaging()
+            StagingLocation.sweepUnownedStaging()
             guard !Task.isCancelled else {
                 return
             }

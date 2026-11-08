@@ -79,6 +79,17 @@ struct LibraryRootKindCapabilityTests {
         ))
     }
 
+    /// A kind that stages its originals names the container they go into, and only such a
+    /// kind does; the staging sweep spans every container.
+    @Test func onlyAStagingKindNamesAStagingContainer() {
+        #expect(LibraryRootKind.deviceMTP.stagingContainer == .device)
+        #expect(LibraryRootKind.library.stagingContainer == nil)
+        #expect(LibraryRootKind.removableVolume.stagingContainer == nil)
+        #expect(StagingContainer.allCases.allSatisfy { container in
+            LibraryRootKind.allCases.contains { $0.stagingContainer == container }
+        })
+    }
+
     @Test func sqlListNamesExactlyTheKindsWithTheCapability() {
         #expect(LibraryRootKind.sqlLiteralList(\.isUserChosenFolder) == "'library'")
         #expect(LibraryRootKind.sqlLiteralList(\.isRemovable) == "'removableVolume', 'deviceMTP'")

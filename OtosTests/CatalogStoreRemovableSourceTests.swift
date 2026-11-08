@@ -64,9 +64,9 @@ struct CatalogStoreRemovableSourceTests {
         let rootPath = try await store.attachDeviceMTP(
             stagingRootURL: stagingRoot, identity: .camera(id: "serial"), displayName: "Camera"
         )
-        let firstScan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
-        try await store.recordDeviceCatalogBatch([kept, deleted], scan: firstScan)
-        try await store.completeDeviceCatalogEnumeration(
+        let firstScan = try await store.beginSourceListing(rootPath: rootPath)
+        try await store.recordSourceListingBatch([kept, deleted], scan: firstScan)
+        try await store.completeSourceListing(
             scan: firstScan, observedPaths: [kept.relativePath, deleted.relativePath]
         )
         #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 2)
@@ -75,9 +75,9 @@ struct CatalogStoreRemovableSourceTests {
         _ = try await store.attachDeviceMTP(
             stagingRootURL: stagingRoot, identity: .camera(id: "serial"), displayName: "Camera"
         )
-        let secondScan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
-        try await store.recordDeviceCatalogBatch([kept], scan: secondScan)
-        try await store.completeDeviceCatalogEnumeration(scan: secondScan, observedPaths: [kept.relativePath])
+        let secondScan = try await store.beginSourceListing(rootPath: rootPath)
+        try await store.recordSourceListingBatch([kept], scan: secondScan)
+        try await store.completeSourceListing(scan: secondScan, observedPaths: [kept.relativePath])
 
         let selected = try await waitForSelectedRelativePaths(
             store, rootPath: rootPath, expected: [kept.relativePath.rawValue]
@@ -312,9 +312,9 @@ struct CatalogStoreRemovableSourceTests {
             identity: .camera(id: "serial"),
             displayName: "Camera"
         )
-        let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
         let relativePath = MediaRelativePath(rawValue: "DCIM/IMG_0001.JPG")
-        try await store.recordDeviceCatalogBatch([
+        try await store.recordSourceListingBatch([
             ScannedMediaFile(
                 relativePath: relativePath,
                 name: "IMG_0001.JPG",
@@ -344,7 +344,7 @@ struct CatalogStoreRemovableSourceTests {
         let assetsByID = try await store.mediaAssets(for: [id])
         #expect(assetsByID[id]?.thumbnailPath == "camera-thumb.jpg")
 
-        try await store.completeDeviceCatalogEnumeration(scan: scan, observedPaths: [relativePath])
+        try await store.completeSourceListing(scan: scan, observedPaths: [relativePath])
         let complete = try await waitForCatalogStoreState(store) { snapshot in
             snapshot.removableSources.first?.activity == .idle
         }
@@ -375,10 +375,10 @@ struct CatalogStoreRemovableSourceTests {
             identity: .camera(id: "serial"),
             displayName: "Camera"
         )
-        let staleScan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
-        let currentScan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        let staleScan = try await store.beginSourceListing(rootPath: rootPath)
+        let currentScan = try await store.beginSourceListing(rootPath: rootPath)
         let currentPath = MediaRelativePath(rawValue: "DCIM/current.JPG")
-        try await store.recordDeviceCatalogBatch([
+        try await store.recordSourceListingBatch([
             ScannedMediaFile(
                 relativePath: currentPath,
                 name: "current.JPG",
@@ -391,7 +391,7 @@ struct CatalogStoreRemovableSourceTests {
 
         var staleBatchThrew = false
         do {
-            try await store.recordDeviceCatalogBatch([
+            try await store.recordSourceListingBatch([
                 ScannedMediaFile(
                     relativePath: MediaRelativePath(rawValue: "DCIM/stale.JPG"),
                     name: "stale.JPG",
@@ -408,7 +408,7 @@ struct CatalogStoreRemovableSourceTests {
 
         var staleCompleteThrew = false
         do {
-            try await store.completeDeviceCatalogEnumeration(scan: staleScan, observedPaths: [])
+            try await store.completeSourceListing(scan: staleScan, observedPaths: [])
         } catch is CancellationError {
             staleCompleteThrew = true
         }
@@ -416,7 +416,7 @@ struct CatalogStoreRemovableSourceTests {
 
         let selected = try await selectedRelativePaths(store, rootPath: rootPath)
         #expect(selected == [currentPath.rawValue])
-        try await store.completeDeviceCatalogEnumeration(scan: currentScan, observedPaths: [currentPath])
+        try await store.completeSourceListing(scan: currentScan, observedPaths: [currentPath])
     }
 
     @Test func startWatchingIncludesAlreadyAttachedRemovableVolumes() async throws {
