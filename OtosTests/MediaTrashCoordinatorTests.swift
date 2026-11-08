@@ -94,6 +94,10 @@ private final class FakeRequester: MaterializationRequesting, Sendable {
         return await handler(request)
     }
 
+    func locality(of id: MediaAssetID) async -> OriginalLocality {
+        .inPlace(FileMaterialization.status(of: id.fileURL))
+    }
+
     var priorities: [MaterializationCoordinator.Priority] {
         priorityStorage.withLock { $0 }
     }
