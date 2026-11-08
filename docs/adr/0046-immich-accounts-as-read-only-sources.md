@@ -146,13 +146,15 @@ reads `AssetsV2` and `AssetExifsV1`, keeping:
 - `type` `IMAGE` and `VIDEO` (no audio: product rule);
 - `visibility` `timeline` and `archive`;
 - `hidden` only as a Live Photo's motion part;
-- never `locked`.
+- never `locked`: an asset moved into the locked folder has its row and overlay purged,
+  because the locked folder is the user asking that it not be seen.
 
 Each row's provisional facts come from the sync stream, as a camera's come from its
 listing:
 
 - name;
-- `fileSizeInByte` as size;
+- `fileSizeInByte` as size, which `AssetExifV1` carries apart from the asset's own line; a
+  line without it keeps the size the catalog holds;
 - `fileModifiedAt` as content-modified time, so ADR 0009 staleness works unchanged;
 - `localDateTime` as capture date.
 
@@ -160,8 +162,9 @@ Its thumbnail and preview are Immich's (§7).
 
 Otos acknowledges each batch only after the Store has applied it, so a crash replays a
 batch rather than losing one. An asset with a non-null `deletedAt` (in Immich's trash) is
-hidden but keeps its overlay, the same rule as Otos's own Trash (ADR 0022). Restoring it
-in Immich shows it again. `AssetDeleteV1` purges the row. `SyncResetV1` runs a full
+hidden but keeps its overlay, the same rule as Otos's own Trash (ADR 0022): its row is
+marked `hidden_by_source` (migration v16), which the shared scope clause and Duplicates'
+reads leave out. Restoring it in Immich shows it again. `AssetDeleteV1` purges the row. `SyncResetV1` runs a full
 resync: rows the resync does not list are purged only after it completes.
 
 The sync runs when the account is added, at launch, and whenever the server becomes

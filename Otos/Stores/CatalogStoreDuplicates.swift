@@ -84,6 +84,7 @@ nonisolated enum DuplicatesGateway {
         \(row).byte_size > 0
           AND \(row).pending_trash_batch_unix_ms IS NULL
           AND \(row).trash_path IS NULL
+          AND \(row).hidden_by_source = 0
           AND NOT \(LivePhotoSQL.isPairedMotion(row))
           AND \(row).content_hash_xxh3_128 IS NOT NULL
           AND length(\(row).content_hash_xxh3_128) = 16
@@ -242,6 +243,7 @@ nonisolated extension DuplicatesGateway {
               AND a.kind IN ('image', 'raw')
               AND a.pending_trash_batch_unix_ms IS NULL
               AND a.trash_path IS NULL
+              AND a.hidden_by_source = 0
               AND a.render_dhash IS NOT NULL
               AND a.render_signature_source = \(RenderSignatureSQL.source("a"))
             """,

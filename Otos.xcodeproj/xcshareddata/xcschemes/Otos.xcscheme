@@ -75,6 +75,11 @@
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable
+            key = "OTOS_IMMICH_LIVE"
+            value = "$(OTOS_IMMICH_LIVE)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
             key = "OTOS_SOURCE_ROOT"
             value = "$(SRCROOT)"
             isEnabled = "YES">

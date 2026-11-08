@@ -498,13 +498,15 @@ private nonisolated func scopeClause(
         arguments.append(contentsOf: scope.rootIDs)
     }
     // Items waiting to move to the Trash, the movie of a Live Photo — a member of its
-    // still's item (ADR 0041) — and a card's or camera's retained rows its current
-    // attachment has not yet seen (ADR 0013) are hidden from every user-facing media
-    // query; this scope clause is the one choke point those queries share.
+    // still's item (ADR 0041) — a card's or camera's retained rows its current
+    // attachment has not yet seen (ADR 0013), and items their source hides (an Immich
+    // asset in Immich's trash, ADR 0046) are hidden from every user-facing media query;
+    // this scope clause is the one choke point those queries share.
     var predicate = """
     \(rootPredicate)
       AND media_asset.pending_trash_batch_unix_ms IS NULL
       AND media_asset.awaiting_presence = 0
+      AND media_asset.hidden_by_source = 0
       AND NOT \(LivePhotoSQL.isPairedMotion("media_asset"))
     """
     if let importBatchUnixMs = scope.importBatchUnixMs {
@@ -531,6 +533,7 @@ private nonisolated func scopeClause(
               WHERE twin.library_root_id IN (\(sqlPlaceholders(count: scope.rootIDs.count)))
                 AND twin.pending_trash_batch_unix_ms IS NULL
                 AND twin.trash_path IS NULL
+                AND twin.hidden_by_source = 0
                 AND NOT \(LivePhotoSQL.isPairedMotion("twin"))
                 AND twin.content_hash_source_size = COALESCE(twin.byte_size, -1)
                 AND twin.content_hash_source_mtime = CAST(COALESCE(twin.content_modified_at_unix, -1) AS INTEGER)

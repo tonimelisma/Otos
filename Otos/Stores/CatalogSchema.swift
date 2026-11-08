@@ -334,6 +334,15 @@ nonisolated enum CatalogSchema {
         "ALTER TABLE library_root ADD COLUMN remote_base_url TEXT",
     ]
 
+    /// An item its source holds but hides: an Immich asset in Immich's trash (ADR 0046 §5).
+    /// The row and its overlay stay, as they do for Otos's own Trash (ADR 0022), and every
+    /// user-facing read leaves it out; the source showing it again shows it again.
+    static let hiddenBySourceMigrationIdentifier = "v16_media_asset_hidden_by_source"
+
+    static let hiddenBySourceStatements: [String] = [
+        "ALTER TABLE media_asset ADD COLUMN hidden_by_source INTEGER NOT NULL DEFAULT 0",
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (
