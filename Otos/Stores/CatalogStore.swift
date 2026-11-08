@@ -88,6 +88,7 @@ actor CatalogStore {
         let sortIndex: Int64
         let capabilities: VolumeNamespaceCapabilities
         let deviceModel: String?
+        let remoteBaseURL: URL?
     }
 
     struct ThumbnailPathMigration {
@@ -2706,7 +2707,7 @@ extension CatalogStore {
                 ThumbnailStore.delete(name, in: thumbnailDirectory)
             }
         }
-        deleteDeviceStagingIfNeeded(root)
+        deleteStagingIfNeeded(root)
         OtosLog.catalog.notice(
             "op=catalog.library.remove phase=finish rootPath=\(path.rawValue, privacy: .public)"
         )
@@ -2849,7 +2850,7 @@ extension CatalogStore {
         }
     }
 
-    private func deleteDeviceStagingIfNeeded(_ root: LibraryRoot) {
+    private func deleteStagingIfNeeded(_ root: LibraryRoot) {
         guard root.kind.stagesOriginals else {
             return
         }
@@ -2860,7 +2861,7 @@ extension CatalogStore {
         } catch {
             // The staging folder is Otos's own; a removal that fails leaves it for the
             // launch-time staging sweep, and is logged so the leftover is explained.
-            OtosLog.fileAccess.errorOperation("deviceStaging", phase: "removeFailed", fields: [
+            OtosLog.fileAccess.errorOperation("source.staging", phase: "removeFailed", fields: [
                 "rootPath": root.path.rawValue,
                 "error": String(describing: error),
             ])
@@ -3171,6 +3172,56 @@ extension CatalogStore {
             deviceModel: nil,
             volumeFormat: nil
         ))
+        return path
+    }
+
+    /// Adds one Immich account as a library (ADR 0046 §2): a root whose path is its own
+    /// staging folder, named by the account's identity, and whose rows will come from its
+    /// server's listing. Adding the same account again returns its existing root.
+    @discardableResult
+    func addImmichAccount(
+        server: URL,
+        userID: String,
+        displayName: String,
+        stagingContainer: URL = StagingLocation.containerURL(.remote)
+    ) async throws -> LibraryRootPath {
+        guard let identity = DeviceIdentity.immichAccount(server: server, userID: userID),
+              let serverURL = ImmichServerAddress.normalized(server)
+        else {
+            throw CatalogStoreError.invalidRemoteServer
+        }
+        try await ensureStartedForMutation()
+        if let existing = roots.rootForDeviceIdentity(identity) {
+            return existing.path
+        }
+        let stagingURL = StagingLocation.sessionRootURL(identity: identity, inContainer: stagingContainer)
+        try FileManager.default.createDirectory(at: stagingURL, withIntermediateDirectories: true)
+        let path = try CatalogPath.normalizedDirectoryPath(for: stagingURL)
+        try validateNoOverlap(path)
+        let storedRoot = try await database().write { db in
+            try Self.insertLibraryRoot(
+                path: path,
+                kind: .immichAccount,
+                deviceIdentity: identity,
+                displayName: displayName,
+                remoteBaseURL: serverURL,
+                db: db
+            )
+        }
+        upsert(RootRuntimeState(
+            root: libraryRoot(from: storedRoot),
+            rowID: storedRoot.id,
+            sortIndex: storedRoot.sortIndex,
+            availability: LibraryRootKind.immichAccount.availabilityAtLaunch,
+            activity: .idle,
+            isEjectable: false,
+            capabilities: storedRoot.capabilities
+        ))
+        OtosLog.catalog.noticeOperation("catalog.immich.add", phase: "finish", fields: [
+            "rootPath": path.rawValue,
+            "server": serverURL.absoluteString,
+        ])
+        notifyCatalogChanged()
         return path
     }
 
@@ -3815,14 +3866,13 @@ private extension CatalogStore {
 
         for storedRoot in storedRoots {
             let root = libraryRoot(from: storedRoot)
-            // SQLite proves that a root was saved, not that it is reachable now.
-            // Fixed libraries are checked by launch scans; removable roots are
-            // event-driven and start unavailable until a monitor re-attaches them.
+            // SQLite proves that a root was saved, not that it is reachable now; what a
+            // launch knows before any source answers is the kind's own rule.
             roots.upsert(RootRuntimeState(
                 root: root,
                 rowID: storedRoot.id,
                 sortIndex: storedRoot.sortIndex,
-                availability: root.kind.isRemovable ? .unavailable : .unknown,
+                availability: root.kind.availabilityAtLaunch,
                 activity: .idle,
                 isEjectable: false,
                 capabilities: storedRoot.capabilities
@@ -3878,7 +3928,8 @@ private extension CatalogStore {
                 lastSeenAt: storedRoot.lastSeenAt,
                 sortIndex: storedRoot.sortIndex,
                 capabilities: storedRoot.capabilities,
-                deviceModel: storedRoot.deviceModel
+                deviceModel: storedRoot.deviceModel,
+                remoteBaseURL: storedRoot.remoteBaseURL
             )
         } catch {
             await recordRootNormalizationFailure(storedRoot, normalizedPath: normalizedPath, error: error)
@@ -4018,7 +4069,8 @@ private extension CatalogStore {
             kind: storedRoot.kind,
             deviceIdentity: storedRoot.deviceIdentity,
             displayName: storedRoot.displayName,
-            lastSeenAt: storedRoot.lastSeenAt
+            lastSeenAt: storedRoot.lastSeenAt,
+            remoteBaseURL: storedRoot.remoteBaseURL
         )
     }
 

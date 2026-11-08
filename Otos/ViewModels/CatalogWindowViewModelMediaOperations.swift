@@ -277,7 +277,7 @@ extension CatalogWindowViewModel {
         guard case let .library(path) = sidebarSelection else {
             return nil
         }
-        guard state.libraries.contains(where: { $0.path == path }) else {
+        guard state.libraries.contains(where: { $0.path == path && $0.kind.supportsReorganization }) else {
             return nil
         }
         return path

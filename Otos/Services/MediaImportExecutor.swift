@@ -61,7 +61,7 @@ nonisolated enum SourceEraser {
         cameraImport: CameraImportAccess?
     ) async -> SourceEraseOutcome {
         switch kind {
-        case .library:
+        case .library, .immichAccount:
             OtosLog.mediaIO.notice(
                 "op=source.erase phase=refused reason=libraryReadOnly path=\(relativePath.rawValue, privacy: .public)"
             )
@@ -1020,7 +1020,7 @@ actor MediaImportExecutor {
                 byteSize: sourceByteSize,
                 modifiedAt: sourceModified
             )
-        case .library:
+        case .library, .immichAccount:
             guard let sourceModified else {
                 return .changed(.date)
             }
@@ -1054,7 +1054,7 @@ actor MediaImportExecutor {
                 operationKey: operationKey,
                 onByteProgress: onByteProgress
             )
-        case .library:
+        case .library, .immichAccount:
             await Self.abandonEntry(operationKey, stagingFiles: [], store: store, reason: "libraryAsSource")
             return .failed(.other)
         }
@@ -1282,7 +1282,7 @@ actor MediaImportExecutor {
             case let .failed(.other(message)):
                 return .failed(message)
             }
-        case .library:
+        case .library, .immichAccount:
             return .failed("librarySource")
         }
     }

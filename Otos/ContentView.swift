@@ -143,7 +143,9 @@ struct ContentView: View {
                 if let presentation = viewModel.selectedImportPresentation {
                     ImportPlanFooter(
                         presentation: presentation,
-                        fixedLibraries: viewModel.state.libraries.filter { $0.availability == .available },
+                        fixedLibraries: viewModel.state.libraries.filter {
+                            $0.kind.isImportDestination && $0.availability == .available
+                        },
                         sourceDisplayName: viewModel.state.removableSources
                             .first { $0.path == presentation.sourcePath }?.displayName ?? "",
                         isCancelling: viewModel.cancellingImportSources.contains(presentation.sourcePath),

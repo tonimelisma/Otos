@@ -291,7 +291,7 @@ private struct LibrariesSettingsView: View {
                 }
                 .width(min: 120, ideal: 160)
                 TableColumn("Location") { library in
-                    Text(library.path.rawValue)
+                    Text(library.root.locationDescription)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .foregroundStyle(.secondary)
@@ -362,13 +362,8 @@ private struct LibrariesSettingsView: View {
             Button("Cancel", role: .cancel) {
                 removalCandidate = nil
             }
-        } message: { _ in
-            Text(
-                """
-                Original media files will stay on disk. Otos will delete this library's catalog information, \
-                and adding it again will require a new scan.
-                """
-            )
+        } message: { root in
+            Text(root.kind.removalMessage)
         }
     }
 
@@ -452,6 +447,23 @@ private extension LibraryAvailability {
 }
 
 private extension LibraryRootKind {
+    /// What removing a library keeps and what it deletes, in the terms of where its
+    /// originals live.
+    var removalMessage: String {
+        switch self {
+        case .immichAccount:
+            """
+            The photos stay on the Immich server. Otos will delete this account's catalog information, \
+            thumbnails and previews, and adding it again will download them again.
+            """
+        case .library, .removableVolume, .deviceMTP:
+            """
+            Original media files will stay on disk. Otos will delete this library's catalog information, \
+            and adding it again will require a new scan.
+            """
+        }
+    }
+
     var settingsLabel: String {
         switch self {
         case .library:
@@ -460,6 +472,8 @@ private extension LibraryRootKind {
             "Card"
         case .deviceMTP:
             "Camera"
+        case .immichAccount:
+            "Immich"
         }
     }
 }

@@ -298,6 +298,8 @@ everything expensive happens on an actor off the main thread.
 | what the UI shows | `CatalogProjection` (derivation) or `CatalogWindowViewModel` (final assignment) — never a view |
 | what is stored | `CatalogStore` + a SQLite migration in `CatalogStorePersistence` + an ADR |
 | platform source handling | the ViewModel owns monitor/session lifetimes; the Store owns attach/detach/remap/persistence |
+| what a kind of root is or may do | `LibraryRootKind`'s capabilities (one exhaustive `switch` each; never compare kinds at a call site) and `StagingContainer` for kinds that stage originals (ADR 0046 §3) |
+| an Immich account's root | `CatalogStore.addImmichAccount` (identity `immich:<server>#<user>`, staging under `RemoteStaging`, `remote_base_url`); rows through the kind-neutral listing API (`beginSourceListing` …); available at launch from its stored listing (`availabilityAtLaunch`), never claimed by enrichment (`enrichesFromOriginals`) (ADR 0046) |
 | import plan lifecycle / footer | `MediaOperationCoordinator` + ViewModel media-ops intents; views stay passive |
 | content hash production/persistence | `ContentHasher` stays inside `MediaEnricher` and `MediaImportExecutor`; enrichment hashes only byte-local roots (`.removableVolume` is gated off, ADR 0018/0013); `CatalogStore` validates source signatures and owns atomic overlay/journal settlement, including each imported copy's product origins (`reused`/`provisional`/`owed`) |
 | library reorganization | `LibraryReorganizationRunner` + ViewModel confirmation/remap; planner/executor stay off MainActor |

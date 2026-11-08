@@ -1328,7 +1328,7 @@ nonisolated struct ImportSessionMachine {
         switch sourceState.root.kind {
         case .removableVolume: true
         case .deviceMTP: canExecuteCameraImport
-        case .library: false
+        case .library, .immichAccount: false
         }
     }
 

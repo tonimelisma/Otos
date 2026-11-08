@@ -245,7 +245,7 @@ nonisolated enum CatalogWindowPolicy {
                 return .deviceEnumerating(library?.displayName ?? "this camera")
             case .removableVolume where library?.isScanning == true:
                 return .cardReading(library?.displayName ?? "this card")
-            case .library, .removableVolume, .deviceMTP, nil:
+            case .library, .removableVolume, .deviceMTP, .immichAccount, nil:
                 break
             }
             switch library?.availability {
@@ -300,7 +300,7 @@ nonisolated enum CatalogWindowPolicy {
         switch root.kind {
         case .deviceMTP:
             break
-        case .library, .removableVolume:
+        case .library, .removableVolume, .immichAccount:
             return nil
         }
         return CatalogDeviceConnectionBanner(

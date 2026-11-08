@@ -587,6 +587,14 @@ final class CatalogWindowViewModel {
                         return MaterializationResult(outcome: .deviceUnavailable, rerequestCount: 0, elapsedMs: 0)
                     }
                     return result
+                case .immichAccount:
+                    // An account's originals arrive over HTTP from its server; until that
+                    // transfer exists, a request for one is refused, never routed to the
+                    // cloud provider (ADR 0046 §4).
+                    OtosLog.mediaIO.noticeOperation("materialization.immich", phase: "refused", fields: [
+                        "reason": "noTransfer", "relativePath": request.id.relativePath.rawValue,
+                    ])
+                    return MaterializationResult(outcome: .requestFailed, rerequestCount: 0, elapsedMs: 0)
                 case .library, .removableVolume, nil:
                     return await FileMaterialization.materialize(
                         request.id.fileURL,

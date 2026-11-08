@@ -8,6 +8,8 @@ import Synchronization
 nonisolated enum StagingContainer: String, CaseIterable, Sendable {
     /// A camera's originals, copied from the device over ImageCapture.
     case device = "DeviceStaging"
+    /// An Immich account's originals, downloaded from its server (ADR 0046 §2).
+    case remote = "RemoteStaging"
 }
 
 /// The one owner of where staged originals live on disk.
