@@ -36,21 +36,28 @@ This ADR references, but does not own:
 
 Loupe also has `VideoPreviewLoader` (`@MainActor` stateless
 factory) for click-to-play inline `AVPlayerView` (`controlsStyle=.inline`) with
-the same `SF_DATALESS` gate and interactive `MaterializationCoordinator` demand
+the same `ensureLocal` demand and re-check before the byte-backed player item
 as preview decode; compare stays poster-only.
 
 **`PreviewImageLoader` is a dedicated actor and the app's only full-size image
 decode path.** Loupe and compare call it with a target long edge (main-display backing
 scale × window long edge). It:
 
-1. Checks `FileMaterialization.status` immediately before every byte read.
-2. On `.dataless`, submits an interactive request to the shared
-   `MaterializationCoordinator` and awaits it. Interactive materialization is
+1. Asks the shared `MaterializationCoordinator` for the original
+   (`ensureLocal`, interactive priority). The coordinator owns where an original's
+   bytes are (`locality(of:)`: `local`, `fetchable`, `unreachable`): for an in-place
+   root, its `SF_DATALESS` status; for a root that stages its originals (a camera), a
+   file absent from the staging folder is fetchable, not missing (ADR 0046 §4).
+   Every other byte reader that may fetch — video playback, the edit lanes, export,
+   hand-off — asks the same two questions.
+2. When the original is fetchable, the coordinator transfers it and the loader awaits
+   it. Interactive materialization is
    *persistent*: it re-asserts the provider request every 500 ms and waits until the
    bytes arrive, which the file's vnode reports, or the request is cancelled, with no fail-fast and no deadline
    (APP-023). There is therefore no "attempt did not materialize" outcome to report —
    the loader returns the decoded image, or `.unavailable` when the file is genuinely
-   absent or the request was cancelled.
+   absent or the request was cancelled. It then checks `FileMaterialization.status`
+   again immediately before the byte read.
 3. Decodes images via Image I/O
    `CGImageSourceCreateThumbnailAtIndex` with
    `kCGImageSourceThumbnailMaxPixelSize` (bounded memory; embedded RAW previews

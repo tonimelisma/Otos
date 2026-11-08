@@ -122,7 +122,7 @@ struct OriginalsReadOnlyTests {
         )
         let loader = PreviewImageLoader(
             status: { _ in .materialized },
-            materializationRequester: ClosureMaterializationRequester { _ in .testMaterialized }
+            materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in .testMaterialized }
         )
         _ = await loader.preview(for: .init(id: id, detail: nil, targetLongEdge: 256))
         try assertUnchanged(before, root: root)
@@ -203,7 +203,7 @@ struct OriginalsReadOnlyTests {
         )
         let loader = VideoPreviewLoader(
             status: { _ in .materialized },
-            materializationRequester: ClosureMaterializationRequester { _ in
+            materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in
                 MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
             }
         )

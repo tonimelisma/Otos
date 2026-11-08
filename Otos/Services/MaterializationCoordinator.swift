@@ -1,9 +1,91 @@
 import Foundation
 import OSLog
 
-/// Shared materialization request boundary used by preview and enrichment consumers.
+/// Shared boundary every byte reader asks before it reads an original: where the bytes
+/// are (`locality(of:)`), and a deliberate download when they are not local
+/// (`materialize`, or `ensureLocal`, which does both).
 nonisolated protocol MaterializationRequesting: Sendable {
     func materialize(_ request: MaterializationCoordinator.Request) async -> MaterializationResult
+    func locality(of id: MediaAssetID) async -> OriginalLocality
+}
+
+/// Where an original's bytes are right now (ADR 0046 §4). Transient, like the
+/// `FileMaterializationStatus` it is read from: a reader still re-checks the file
+/// synchronously right before it reads (ADR 0008).
+nonisolated enum OriginalLocality: Equatable, Sendable {
+    /// The bytes are on this Mac; reading them downloads nothing.
+    case local
+    /// The bytes are not here, and a deliberate transfer can bring them: a dataless
+    /// cloud placeholder, or a staged original not yet copied from its source.
+    case fetchable
+    /// The original cannot be read or fetched: a missing in-place file, or an unreadable
+    /// status.
+    case unreachable
+
+    /// Locality of a file read in place, from its `SF_DATALESS` status.
+    static func inPlace(_ status: FileMaterializationStatus) -> OriginalLocality {
+        switch status {
+        case .materialized: .local
+        case .dataless: .fetchable
+        case .unknown: .unreachable
+        }
+    }
+
+    /// Locality of a root's original. A root that stages its originals keeps them in an
+    /// Otos folder that holds only what has been copied so far, so a file absent there is
+    /// one the source has yet to send, not a missing original. Whether the source can
+    /// send it now is the executor's answer (`deviceUnavailable`), not a guess here.
+    static func of(stagesOriginals: Bool, status: FileMaterializationStatus) -> OriginalLocality {
+        guard stagesOriginals else {
+            return inPlace(status)
+        }
+        return status == .materialized ? .local : .fetchable
+    }
+}
+
+/// What `ensureLocal` found: the original is local, or why it is not.
+nonisolated enum EnsureLocalOutcome: Equatable, Sendable {
+    case local
+    case unreachable
+    case notMaterialized(MaterializationOutcome)
+
+    var isLocal: Bool {
+        self == .local
+    }
+}
+
+extension MaterializationRequesting {
+    /// Makes an original's bytes local before a decode, a render, an export or a
+    /// hand-off reads them: a deliberate transfer at the request's priority when it is
+    /// fetchable, then its locality once more (ADR 0008). The caller still
+    /// re-checks right before its read; this answer can go stale across its next await.
+    @concurrent
+    func ensureLocal(_ request: MaterializationCoordinator.Request) async -> EnsureLocalOutcome {
+        switch await locality(of: request.id) {
+        case .local:
+            break
+        case .unreachable:
+            OtosLog.mediaIO.noticeOperation("original.ensureLocal", phase: "unreachable", fields: [
+                "id": request.id.relativePath.rawValue,
+            ])
+            return .unreachable
+        case .fetchable:
+            let result = await materialize(request)
+            guard result.isMaterialized else {
+                OtosLog.mediaIO.noticeOperation("original.ensureLocal", phase: "notMaterialized", fields: [
+                    "id": request.id.relativePath.rawValue, "outcome": result.outcome.diagnosticDescription,
+                ])
+                return .notMaterialized(result.outcome)
+            }
+        }
+        guard await locality(of: request.id) == .local else {
+            OtosLog.mediaIO.noticeOperation("original.ensureLocal", phase: "unreachable", fields: [
+                "id": request.id.relativePath.rawValue,
+            ])
+            return .unreachable
+        }
+        return .local
+    }
 }
 
 /// Process-lifetime owner of every deliberate provider or device materialization.
@@ -202,6 +284,17 @@ actor MaterializationCoordinator: MaterializationRequesting {
         } onCancel: {
             Task { await self.cancelWaiter(token, for: request.id) }
         }
+    }
+
+    /// Asks the Store what the root is, then reads the file's status off this actor: it
+    /// touches no coordinator state, and the status read is a filesystem call.
+    @concurrent
+    nonisolated func locality(of id: MediaAssetID) async -> OriginalLocality {
+        let kind = await store.rootKind(for: id.libraryRootPath)
+        return OriginalLocality.of(
+            stagesOriginals: kind?.stagesOriginals ?? false,
+            status: FileMaterialization.status(of: id.fileURL)
+        )
     }
 
     func shutdown() async {
@@ -937,46 +1030,25 @@ extension MaterializationResult {
     }
 }
 
-/// Closure adapter retained for focused tests; production composition injects the shared actor.
-/// It tracks no requests of its own, so it truthfully answers zero rather than inheriting a
-/// default that would mask a real conformer forgetting to implement this.
+/// Closure adapter for focused tests: in-place files only, with an injectable status so a
+/// test can stand in for a dataless placeholder. It tracks no requests of its own.
 nonisolated struct ClosureMaterializationRequester: MaterializationRequesting {
+    let status: @Sendable (URL) -> FileMaterializationStatus
     let operation: @Sendable (URL) async -> MaterializationResult
+
+    init(
+        status: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:),
+        operation: @escaping @Sendable (URL) async -> MaterializationResult
+    ) {
+        self.status = status
+        self.operation = operation
+    }
 
     func materialize(_ request: MaterializationCoordinator.Request) async -> MaterializationResult {
         await operation(request.id.fileURL)
     }
-}
 
-extension MaterializationCoordinator {
-    /// Makes a still or video original's bytes local before a render, an export or a
-    /// hand-off reads them (ADR 0008): an interactive download when it is dataless, then
-    /// the check again right before the read. False, logged, when it cannot be made local.
-    @concurrent
-    nonisolated static func makeLocal(
-        _ id: MediaAssetID,
-        sourceSize: Int64?,
-        isVideo: Bool = false,
-        via materialization: MaterializationCoordinator?
-    ) async -> Bool {
-        let url = id.fileURL
-        if FileMaterialization.status(of: url) == .dataless, let materialization {
-            let result = await materialization.materialize(Request(
-                id: id, sourceSize: sourceSize, isVideo: isVideo, priority: .interactive
-            ))
-            guard result.isMaterialized else {
-                OtosLog.mediaIO.noticeOperation("original.makeLocal", phase: "notMaterialized", fields: [
-                    "id": id.relativePath.rawValue, "outcome": String(describing: result.outcome),
-                ])
-                return false
-            }
-        }
-        guard FileMaterialization.status(of: url) == .materialized else {
-            OtosLog.mediaIO.noticeOperation("original.makeLocal", phase: "unavailable", fields: [
-                "id": id.relativePath.rawValue,
-            ])
-            return false
-        }
-        return true
+    func locality(of id: MediaAssetID) async -> OriginalLocality {
+        .inPlace(status(id.fileURL))
     }
 }

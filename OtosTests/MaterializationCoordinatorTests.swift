@@ -4,6 +4,33 @@ import Synchronization
 import Testing
 
 struct MaterializationCoordinatorTests {
+    /// ADR 0046 §4: an in-place original's locality is its `SF_DATALESS` status; a staged
+    /// root's file absent from its staging folder is one its source has yet to send.
+    @Test func localityReadsAStagedRootsAbsentFileAsFetchable() {
+        #expect(OriginalLocality.of(stagesOriginals: false, status: .materialized) == .local)
+        #expect(OriginalLocality.of(stagesOriginals: false, status: .dataless) == .fetchable)
+        #expect(OriginalLocality.of(stagesOriginals: false, status: .unknown) == .unreachable)
+        #expect(OriginalLocality.of(stagesOriginals: true, status: .materialized) == .local)
+        #expect(OriginalLocality.of(stagesOriginals: true, status: .unknown) == .fetchable)
+        #expect(OriginalLocality.of(stagesOriginals: true, status: .dataless) == .fetchable)
+    }
+
+    /// An original that is neither local nor fetchable is answered without a transfer.
+    @Test func ensureLocalNeverFetchesAnUnreachableOriginal() async {
+        let calls = Mutex(0)
+        let requester = ClosureMaterializationRequester(status: { _ in .unknown }) { _ in
+            calls.withLock { $0 += 1 }
+            return .cancelled
+        }
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/Library/Root"),
+            relativePath: MediaRelativePath(rawValue: "gone.jpg")
+        )
+        let outcome = await requester.ensureLocal(.init(id: id, sourceSize: nil, isVideo: false, priority: .interactive))
+        #expect(outcome == .unreachable)
+        #expect(calls.withLock { $0 } == 0)
+    }
+
     /// ENR-008 / ADR 0027: background and device downloads start only while the volume
     /// keeps the free-space floor after them; the photo on screen and a user command do
     /// not wait for it, and a volume that reports no capacity admits.

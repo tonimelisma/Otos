@@ -6,6 +6,9 @@ import ImageIO
 import Testing
 import UniformTypeIdentifiers
 
+/// The fixtures are local files, so nothing is ever fetched.
+private let localOriginals = ClosureMaterializationRequester { _ in .cancelled }
+
 /// ADR 0038: File ▸ Export… writes one new file per photo into the
 /// chosen folder, never overwriting, in the chosen format and size, with or without location.
 @Suite(.testDirectory)
@@ -55,11 +58,11 @@ struct ExportTests {
         settings.limitsSize = true
         settings.longEdge = 48
 
-        let small = try await exportedImage(MediaExporter.export(item, settings: settings, to: folder, materialization: nil))
+        let small = try await exportedImage(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals))
         #expect(small.width == 48 && small.height == 32)
 
         settings.longEdge = 4000
-        let full = try await exportedImage(MediaExporter.export(item, settings: settings, to: folder, materialization: nil))
+        let full = try await exportedImage(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals))
         #expect(full.width == 96 && full.height == 64)
     }
 
@@ -68,14 +71,14 @@ struct ExportTests {
         var settings = ExportSettings.default
         settings.format = .heic
 
-        let kept = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: nil)))
+        let kept = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals)))
         #expect(kept.lastPathComponent == "placed.heic")
         #expect(try properties(of: kept)[kCGImagePropertyGPSDictionary] != nil)
         let source = try #require(CGImageSourceCreateWithURL(kept as CFURL, nil))
         #expect(CGImageSourceGetType(source) as String? == UTType.heic.identifier)
 
         settings.removesLocation = true
-        let removed = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: nil)))
+        let removed = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals)))
         #expect(removed.lastPathComponent == "placed_001.heic")
         #expect(try properties(of: removed)[kCGImagePropertyGPSDictionary] == nil)
         #expect(try properties(of: removed)[kCGImagePropertyExifDictionary] != nil)
@@ -87,7 +90,7 @@ struct ExportTests {
         var settings = ExportSettings.default
         settings.format = .original
 
-        let url = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: nil)))
+        let url = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals)))
         #expect(url.lastPathComponent == "as-is.jpg")
         #expect(try Data(contentsOf: url) == Data(contentsOf: item.id.fileURL))
     }
@@ -109,12 +112,12 @@ struct ExportTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         var settings = ExportSettings.default
 
-        let kept = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: nil)))
+        let kept = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals)))
         #expect(try await abs(AVURLAsset(url: kept).load(.duration).seconds - 0.4) < 0.15)
         #expect(try await hasLocation(kept))
 
         settings.removesLocation = true
-        let removed = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: nil)))
+        let removed = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals)))
         #expect(removed.lastPathComponent == "clip_001.mov")
         #expect(try await !hasLocation(removed))
     }
