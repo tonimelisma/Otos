@@ -1031,7 +1031,7 @@ extension CatalogStore {
         var items: [MediaTrashItem] = []
         for id in requested {
             guard let rootState = roots[id.libraryRootPath],
-                  rootState.root.kind != .deviceMTP,
+                  rootState.root.kind.supportsMoveToTrash,
                   assets[id] != nil
             else {
                 continue
@@ -1150,7 +1150,7 @@ extension CatalogStore {
         var seen = Set<MediaAssetID>()
         let requested = ids.filter { seen.insert($0).inserted }
         let eligible = requested.compactMap { id -> (MediaAssetID, Int64)? in
-            guard let rootState = roots[id.libraryRootPath], rootState.root.kind != .deviceMTP else {
+            guard let rootState = roots[id.libraryRootPath], rootState.root.kind.supportsMoveToTrash else {
                 return nil
             }
             return (id, rootState.rowID)
@@ -2094,7 +2094,7 @@ extension CatalogStore {
         applyLoadedCatalog(roots: normalizedRoots)
         holdJournaledReorganizationRoots(journaledRoots)
         unrequestedLoadedRootPaths = normalizedRoots
-            .filter { $0.kind == .library }
+            .filter(\.kind.isUserChosenFolder)
             .map(\.path)
         OtosSignpost.catalog.endInterval("CatalogApplyLoadedCatalog", applyState)
         started = true
@@ -2421,7 +2421,7 @@ extension CatalogStore {
                 FROM media_asset a
                 JOIN asset_metadata m USING (library_root_id, relative_path)
                 JOIN library_root r ON r.id = a.library_root_id
-                WHERE r.kind = 'library'
+                WHERE r.kind IN (\(LibraryRootKind.sqlLiteralList(\.isUserChosenFolder)))
                     AND COALESCE(m.extraction_revision, 0) < \(Self.currentExtractionRevisionSQL)
                     AND NOT (\(EnrichmentClaimGateway.metadataStalenessSQLPredicate()))
                     AND (a.library_root_id, a.relative_path) > (?, ?)
@@ -2785,7 +2785,7 @@ extension CatalogStore {
     /// present, or that would not change the order, changes nothing.
     func moveLibrary(_ path: LibraryRootPath, _ move: LibraryOrderMove) async throws {
         try await ensureStartedForMutation()
-        let current = currentLibraries().filter { $0.kind == .library }.map(\.path)
+        let current = currentLibraries().filter(\.kind.isInLibrariesSection).map(\.path)
         guard let orderedPaths = move.reordering(current, moving: path), orderedPaths != current else {
             OtosLog.catalog.noticeOperation("catalog.library.reorder", phase: "unchanged", fields: [
                 "path": path.rawValue,
@@ -2850,7 +2850,7 @@ extension CatalogStore {
     }
 
     private func deleteDeviceStagingIfNeeded(_ root: LibraryRoot) {
-        guard root.kind == .deviceMTP else {
+        guard root.kind.stagesOriginals else {
             return
         }
         do {
@@ -3022,7 +3022,7 @@ extension CatalogStore {
         // starts unquiesced.
         state.isQuiesced = false
         upsert(state)
-        if attachment.kind == .removableVolume {
+        if attachment.kind.hasFilesystemNamespace {
             filesystemWatcher.addRoot(attachment.path)
         }
         OtosLog.catalog.info(
@@ -3243,7 +3243,7 @@ extension CatalogStore {
     func forgetRemovableSourcesUnseenForRetentionPeriod() async {
         let cutoff = wallClock().addingTimeInterval(-RemovableSourceRetention.unseenPeriod)
         let expired = roots.values.filter { state in
-            state.root.kind != .library
+            state.root.kind.isRemovable
                 && state.availability != .available
                 && (state.root.lastSeenAt.map { $0 < cutoff } ?? false)
         }.map(\.root)
@@ -3271,7 +3271,7 @@ extension CatalogStore {
     func detachRemovableSource(identity: DeviceIdentity, reason: RemovableSourceDetachReason) async throws {
         try await ensureStartedForMutation()
         guard let root = rootForDeviceIdentity(identity),
-              root.kind != .library,
+              root.kind.isRemovable,
               let rootRowID = roots[root.path]?.rowID
         else {
             return
@@ -3315,7 +3315,7 @@ extension CatalogStore {
     func quiesceRemovableSource(identity: DeviceIdentity) async throws {
         try await ensureStartedForMutation()
         guard let root = rootForDeviceIdentity(identity),
-              root.kind != .library,
+              root.kind.isRemovable,
               let rootRowID = roots[root.path]?.rowID
         else {
             return
@@ -3389,7 +3389,7 @@ extension CatalogStore {
     func resumeRemovableSource(identity: DeviceIdentity) async throws {
         try await ensureStartedForMutation()
         guard let root = rootForDeviceIdentity(identity),
-              root.kind != .library
+              root.kind.isRemovable
         else {
             return
         }
@@ -3403,7 +3403,7 @@ extension CatalogStore {
         }
         // The quiesce cancelled any scan reading the card, and rows that scan had not
         // reached are still awaiting presence; a card that stays mounted is read again.
-        if root.kind == .removableVolume {
+        if root.kind.hasFilesystemNamespace {
             enqueueScans([root.path], priority: .front)
         }
         OtosLog.catalog.notice(
@@ -3412,7 +3412,7 @@ extension CatalogStore {
     }
 
     func beginDeviceCatalogEnumeration(rootPath: LibraryRootPath) async throws -> ActiveScan {
-        guard roots[rootPath]?.root.kind == .deviceMTP,
+        guard roots[rootPath]?.root.kind.rowsComeFromSourceListing == true,
               roots[rootPath]?.availability == .available,
               let rootRowID = roots[rootPath]?.rowID
         else {
@@ -3435,7 +3435,7 @@ extension CatalogStore {
     func recordDeviceCatalogBatch(_ batch: [ScannedMediaFile], scan: ActiveScan) async throws {
         try await ensureStartedForMutation()
         guard owns(scan),
-              roots[scan.rootPath]?.root.kind == .deviceMTP,
+              roots[scan.rootPath]?.root.kind.rowsComeFromSourceListing == true,
               roots[scan.rootPath]?.availability == .available
         else {
             throw CancellationError()
@@ -3480,7 +3480,7 @@ extension CatalogStore {
         companions: [MediaCompanion] = []
     ) async throws {
         guard owns(scan),
-              roots[scan.rootPath]?.root.kind == .deviceMTP,
+              roots[scan.rootPath]?.root.kind.rowsComeFromSourceListing == true,
               roots[scan.rootPath]?.availability == .available
         else {
             throw CancellationError()
@@ -3534,7 +3534,7 @@ extension CatalogStore {
             return
         }
         scanLeases.endDeviceScan(scan)
-        if var state = roots[scan.rootPath], state.root.kind == .deviceMTP {
+        if var state = roots[scan.rootPath], state.root.kind.rowsComeFromSourceListing {
             state.activity = .idle
             upsert(state)
             notifyCatalogChanged()
@@ -3822,7 +3822,7 @@ private extension CatalogStore {
                 root: root,
                 rowID: storedRoot.id,
                 sortIndex: storedRoot.sortIndex,
-                availability: root.kind == .library ? .unknown : .unavailable,
+                availability: root.kind.isRemovable ? .unavailable : .unknown,
                 activity: .idle,
                 isEjectable: false,
                 capabilities: storedRoot.capabilities
@@ -3846,7 +3846,7 @@ private extension CatalogStore {
         _ storedRoot: StoredRoot,
         dbWriter: any DatabaseWriter
     ) async -> StoredRoot {
-        guard storedRoot.kind == .library else {
+        guard storedRoot.kind.isUserChosenFolder else {
             return storedRoot
         }
         guard let normalizedPath = try? CatalogPath.normalizedExistingDirectoryPath(for: storedRoot.path.url),
@@ -4043,7 +4043,7 @@ private extension CatalogStore {
 
     /// The lane a root's filesystem walks take (`ScanLeaseController.ScanLane`).
     private func scanLane(for path: LibraryRootPath) -> ScanLeaseController.ScanLane {
-        roots[path]?.root.kind == .library ? .fixedLibraries : .removableSource(path)
+        roots[path]?.root.kind.isUserChosenFolder == true ? .fixedLibraries : .removableSource(path)
     }
 
     /// Starts every queued scan whose lane is free, in queue order: a card attached while
@@ -4442,7 +4442,7 @@ private extension CatalogStore {
             "op=catalog.scan phase=error \(otosLogFields(diagnosticFields), privacy: .public)"
         )
         clearCurrentScan(scan, armFilesystemWatching: true)
-        if roots[scan.rootPath]?.root.kind != .library, roots[scan.rootPath]?.rowID == scan.rootRowID {
+        if roots[scan.rootPath]?.root.kind.isRemovable == true, roots[scan.rootPath]?.rowID == scan.rootRowID {
             await releaseAwaitingPresence(of: scan.rootPath, rootRowID: scan.rootRowID, reason: "scanFailed")
         }
     }
@@ -5116,7 +5116,7 @@ private extension CatalogStore {
     private func scheduleOverdueIntegrityScans() {
         let now = ContinuousClock.now
         for path in roots.keys {
-            guard roots[path]?.root.kind == .library else {
+            guard roots[path]?.root.kind.isUserChosenFolder == true else {
                 continue
             }
             guard rootIsAvailable(path), filesystemWatchingArmed.contains(path) else {
@@ -6089,7 +6089,7 @@ extension CatalogStore {
     func duplicateCopies(
         availableLibraryPaths: Set<LibraryRootPath>
     ) async throws -> (copies: [DuplicateCopyFacts], keptPairs: Set<DuplicateKeptPair>) {
-        let libraries = roots.values.filter { $0.root.kind == .library && availableLibraryPaths.contains($0.path) }
+        let libraries = roots.values.filter { $0.root.kind.isMemberOfAllMedia && availableLibraryPaths.contains($0.path) }
         guard !libraries.isEmpty else {
             return ([], [])
         }
@@ -6179,7 +6179,7 @@ extension CatalogStore {
 extension CatalogStore {
     /// Visible stills in the fixed libraries whose thumbnail has no current render signature.
     func renderSignatureCandidates(limit: Int) async throws -> [RenderSignatureCandidate] {
-        let libraries = roots.values.filter { $0.root.kind == .library && $0.availability == .available }
+        let libraries = roots.values.filter { $0.root.kind.isMemberOfAllMedia && $0.availability == .available }
         guard !libraries.isEmpty else {
             return []
         }
@@ -6251,7 +6251,7 @@ extension CatalogStore {
     /// rule proposes pairs from. Renders and record facts are read separately, only for the
     /// stills a proposed pair names (`samePhotoDetails`).
     func samePhotoCandidates(availableLibraryPaths: Set<LibraryRootPath>) async throws -> [SamePhotoCandidate] {
-        let libraries = roots.values.filter { $0.root.kind == .library && availableLibraryPaths.contains($0.path) }
+        let libraries = roots.values.filter { $0.root.kind.isMemberOfAllMedia && availableLibraryPaths.contains($0.path) }
         guard !libraries.isEmpty else {
             return []
         }

@@ -83,7 +83,7 @@ nonisolated struct RootRuntimeState: Equatable {
 
     /// Whether an import is copying from this card, so enrichment leaves it alone.
     var isCardBeingImported: Bool {
-        root.kind == .removableVolume && !importingBatches.isEmpty
+        root.kind.pausesEnrichmentWhileImporting && !importingBatches.isEmpty
     }
 
     /// Available, not quiesced, and not a card being imported: enrichment may claim this

@@ -397,7 +397,7 @@ nonisolated struct ImportSessionMachine {
 
     /// Available fixed libraries in the user's order, as of the last refresh.
     var fixedAvailableLibraries: [CatalogLibraryState] {
-        libraries.filter { $0.root.kind == .library && $0.availability == .available }
+        libraries.filter { $0.root.kind.isImportDestination && $0.availability == .available }
     }
 
     func displayName(ofLibrary path: LibraryRootPath) -> String? {
@@ -518,7 +518,7 @@ nonisolated struct ImportSessionMachine {
         guard !isShuttingDown else { return }
         libraries = snapshot.libraries
         let fixedAvailable = fixedAvailableLibraries
-        let removable = libraries.filter { $0.root.kind != .library && $0.availability == .available }
+        let removable = libraries.filter { $0.root.kind.isRemovable && $0.availability == .available }
         var seen = Set<LibraryRootPath>()
         for source in removable {
             seen.insert(source.path)
@@ -809,7 +809,7 @@ nonisolated struct ImportSessionMachine {
         guard namespaceChanged || namingChanged else { return }
         // Source role: the plan reads this root's inventory *and* its capture walls (the
         // date/time name is derived from them), so either revision invalidates it.
-        if libraries.contains(where: { $0.root.kind != .library && $0.path == change.rootPath }),
+        if libraries.contains(where: { $0.root.kind.isRemovable && $0.path == change.rootPath }),
            sessions[change.rootPath] != nil
         {
             sessions[change.rootPath]?.requestPlan()

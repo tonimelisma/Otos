@@ -69,7 +69,7 @@ nonisolated enum SidebarSelectionPolicy {
     }
 
     private static func fixedLibraries(in libraries: [CatalogLibraryState]) -> [CatalogLibraryState] {
-        libraries.filter { $0.kind == .library }
+        libraries.filter(\.kind.isMemberOfAllMedia)
     }
 
     private static func mostRecentlyAttachedConnectedSource(

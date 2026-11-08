@@ -12,8 +12,8 @@ nonisolated enum CatalogWindowPolicy {
     /// Libraries. Removable sources have no user-facing
     /// order to preserve, so they keep the previous display-name rule.
     static func sortLibraries(_ libraries: [CatalogLibraryState]) -> [CatalogLibraryState] {
-        let fixed = libraries.filter { $0.kind == .library }
-        let removable = libraries.filter { $0.kind != .library }.sorted { left, right in
+        let fixed = libraries.filter(\.kind.isInLibrariesSection)
+        let removable = libraries.filter { !$0.kind.isInLibrariesSection }.sorted { left, right in
             let displayComparison = left.displayName.localizedStandardCompare(right.displayName)
             if displayComparison == .orderedSame {
                 return left.path.rawValue.localizedStandardCompare(right.path.rawValue) == .orderedAscending
@@ -27,8 +27,8 @@ nonisolated enum CatalogWindowPolicy {
         from roots: [CatalogLibraryState]
     ) -> (libraries: [CatalogLibraryState], removableSources: [CatalogLibraryState]) {
         (
-            libraries: roots.filter { $0.kind == .library },
-            removableSources: roots.filter { $0.kind != .library }
+            libraries: roots.filter(\.kind.isInLibrariesSection),
+            removableSources: roots.filter { !$0.kind.isInLibrariesSection }
         )
     }
 
@@ -140,7 +140,7 @@ nonisolated enum CatalogWindowPolicy {
                 // are applied by Store.orderedAssetIDs; this pass only re-applies the
                 // root-kind rule, which also holds for IDs carried over from a reused
                 // order (ADR 0007).
-                return rootsByPath[id.libraryRootPath]?.kind == .library
+                return rootsByPath[id.libraryRootPath]?.kind.isMemberOfAllMedia == true
             case let .library(path):
                 return id.libraryRootPath == path
             }
@@ -221,7 +221,7 @@ nonisolated enum CatalogWindowPolicy {
             // These span the fixed libraries, so they answer emptiness the same way: a
             // batch whose rows exist but whose libraries are offline is unreachable,
             // not absent.
-            let fixedLibraries = libraries.filter { $0.kind == .library }
+            let fixedLibraries = libraries.filter(\.kind.isMemberOfAllMedia)
             if fixedLibraries.contains(where: { $0.availability == .unknown }) {
                 return .checkingLibraries
             }
@@ -230,7 +230,7 @@ nonisolated enum CatalogWindowPolicy {
             // The map spans the fixed libraries too. An empty map with reachable
             // libraries means no item carries a location — enrichment may still be
             // finding them — never that there is no media.
-            let fixedLibraries = libraries.filter { $0.kind == .library }
+            let fixedLibraries = libraries.filter(\.kind.isMemberOfAllMedia)
             if fixedLibraries.contains(where: { $0.availability == .unknown }) {
                 return .checkingLibraries
             }
@@ -240,11 +240,13 @@ nonisolated enum CatalogWindowPolicy {
             return .noLocatedMedia
         case let .library(path):
             let library = libraries.first { $0.path == path }
-            if library?.kind == .deviceMTP, library?.isEnumerating == true {
+            switch library?.kind {
+            case .deviceMTP where library?.isEnumerating == true:
                 return .deviceEnumerating(library?.displayName ?? "this camera")
-            }
-            if library?.kind == .removableVolume, library?.isScanning == true {
+            case .removableVolume where library?.isScanning == true:
                 return .cardReading(library?.displayName ?? "this card")
+            case .library, .removableVolume, .deviceMTP, nil:
+                break
             }
             switch library?.availability {
             case .unknown:
@@ -290,9 +292,15 @@ nonisolated enum CatalogWindowPolicy {
     ) -> CatalogDeviceConnectionBanner? {
         guard case let .library(path) = selection,
               let root = roots.first(where: { $0.path == path }),
-              root.kind == .deviceMTP,
               let identity = root.deviceIdentity
         else {
+            return nil
+        }
+        // The advice is about a camera's USB transfer mode, so only a camera shows it.
+        switch root.kind {
+        case .deviceMTP:
+            break
+        case .library, .removableVolume:
             return nil
         }
         return CatalogDeviceConnectionBanner(

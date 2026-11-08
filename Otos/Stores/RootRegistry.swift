@@ -150,7 +150,7 @@ nonisolated struct RootRegistry {
 
     private func fixedLibraryRootIDs(in availableLibraryPaths: Set<LibraryRootPath>) -> [Int64] {
         availableLibraryPaths.compactMap { path in
-            guard let state = statesByPath[path], state.root.kind == .library else {
+            guard let state = statesByPath[path], state.root.kind.isMemberOfAllMedia else {
                 return nil
             }
             return state.rowID
@@ -161,7 +161,7 @@ nonisolated struct RootRegistry {
     /// digests an import may trust as "already in a library".
     func availableFixedLibraryRowIDs() -> [Int64] {
         statesByPath.values
-            .filter { $0.root.kind == .library && $0.availability == .available }
+            .filter { $0.root.kind.isImportDestination && $0.availability == .available }
             .map(\.rowID)
             .sorted()
     }
