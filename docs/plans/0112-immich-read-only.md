@@ -36,8 +36,8 @@ Each increment lands on `main` with its own DoD.
 1. **Docs:** research note, ADR 0046 (Proposed), this plan. *(done: #579, amended #582)* The `AGENTS.md`
    principle restatements land with the increment that makes each true: the byte-read
    rule with increment 3 (done), and source of truth, identity and deletion proof with
-   increment 6, whose sync writes an account's rows and proves their deletion; ADR 0046
-   becomes Accepted then.
+   increment 6b, when the sync that writes an account's rows and proves their deletion
+   runs in the app; ADR 0046 becomes Accepted then.
 2. **Refactor, no behavior change:** root-kind capabilities replace every bare kind
    comparison. Existing tests stay unmodified and green. *(done: #580)*
 3. **Refactor:** `MaterializationCoordinator.locality(of:)` and `ensureLocal`. *(done: #583)* All byte
@@ -54,16 +54,17 @@ Each increment lands on `main` with its own DoD.
    - browsable while unreachable.
 
    Driven by a scripted source in tests.
-6. **Feature:**
-   - `ImmichClient` (URLSession) and the Keychain session store;
-   - the Add Immich Account sheet (server URL, email, password, with validation);
-   - `ImmichCatalogSync` with acks after the Store applies a batch, trash, permanent
-     delete and reset;
-   - Immich's thumbnail and preview downloaded on sync as source-provisional products,
-     sizes and profiles read from each file;
-   - reachability.
-
-   Tested with a `URLProtocol` stub and against a disposable local Immich server.
+6. **Feature**, in three PRs, each with its own DoD:
+   - **6a:** `ImmichClient` (URLSession) and the Keychain session store;
+     `ImmichCatalogSync` with acks after the Store applies a batch, trash
+     (`hidden_by_source`, v16), permanent delete, locked and reset. Tested with a
+     `URLProtocol` stub, a scripted stream, and against the disposable local server.
+   - **6b:** the Add Immich Account sheet (server URL, email, password, with validation);
+     the sync started at launch, on add, and when the server becomes reachable, then on a
+     poll schedule; reachability and the sidebar's offline state; removal deletes the
+     Keychain item and logs the session out. The `AGENTS.md` restatements land here.
+   - **6c:** Immich's thumbnail and preview downloaded on sync as source-provisional
+     products, sizes and profiles read from each file.
 7. **Feature:** original download in the executor branch, for work that needs the bytes
    (full-resolution zoom, edit, export, digest), with every missing product, Otos's
    rendering included, written from that one read. Render signatures keyed by pipeline.

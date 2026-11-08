@@ -1183,6 +1183,30 @@ nonisolated struct ScannedMediaFile: Hashable {
     }
 }
 
+/// An item a source's change stream reports it holds (ADR 0046 §5).
+nonisolated struct SourceListedItem: Hashable, Sendable {
+    /// The item's facts. A nil size is one this report does not carry, and leaves the
+    /// size the catalog already holds.
+    let file: ScannedMediaFile
+    /// The source holds the item but hides it: an Immich asset in Immich's trash.
+    let isHiddenBySource: Bool
+}
+
+/// One batch of a source's change stream, applied in one transaction. A source that
+/// names each item by a folder of its own (an Immich asset ID, ADR 0046 §2) reports a
+/// size and a permanent deletion by that folder.
+nonisolated struct SourceListingChanges: Sendable, Equatable {
+    var listed: [SourceListedItem] = []
+    /// Sizes reported apart from the item's own facts, by the item's folder.
+    var sizesByItemFolder: [String: Int64] = [:]
+    /// Folders of items the source proves deleted. Their rows and overlay are purged.
+    var deletedItemFolders: [String] = []
+
+    var isEmpty: Bool {
+        listed.isEmpty && sizesByItemFolder.isEmpty && deletedItemFolders.isEmpty
+    }
+}
+
 nonisolated enum RemovableSourceDetachReason: String {
     case unmounted
     case ejected

@@ -3580,6 +3580,132 @@ extension CatalogStore {
         await endSourceListing(scan: scan)
     }
 
+    /// Applies one batch of a source's change stream under its listing lease, in one
+    /// transaction (ADR 0046 §5): listed items are upserted, keeping a stored size the
+    /// report does not carry; reported sizes update their item; a deleted item's rows and
+    /// overlay are purged, as proof of deletion. Nothing unlisted is touched: an
+    /// incremental report proves nothing about items it does not name. A full resync
+    /// completes through `completeSourceListing`, which does.
+    func applySourceListingChanges(_ changes: SourceListingChanges, scan: ActiveScan) async throws {
+        try await ensureStartedForMutation()
+        guard owns(scan),
+              roots[scan.rootPath]?.root.kind.rowsComeFromSourceListing == true,
+              roots[scan.rootPath]?.availability == .available
+        else {
+            throw CancellationError()
+        }
+        guard !changes.isEmpty else {
+            return
+        }
+        let dbQueue = try database()
+        let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .unknown
+        let rootRowID = scan.rootRowID
+        let rootPath = scan.rootPath
+        let timed = try await timedWrite(dbQueue) { db in
+            try Self.writeSourceListingChanges(
+                changes, rootRowID: rootRowID, rootPath: rootPath, capabilities: scanCapabilities, db: db
+            )
+        }
+        guard owns(scan) else {
+            throw CancellationError()
+        }
+        if let thumbnailDirectory {
+            for name in timed.value.purgedImages {
+                ThumbnailStore.delete(name, in: thumbnailDirectory)
+            }
+        }
+        if timed.value.changed > 0 {
+            bumpNamespaceRevision(for: scan.rootPath)
+            notifyCatalogChanged()
+        }
+        OtosLog.catalog.noticeOperation("catalog.source.changes", phase: "finish", fields: [
+            "rootPath": scan.rootPath.rawValue,
+            "listed": "\(changes.listed.count)",
+            "sizes": "\(changes.sizesByItemFolder.count)",
+            "deleted": "\(changes.deletedItemFolders.count)",
+            "changed": "\(timed.value.changed)",
+            "waitMs": "\(timed.waitMs)",
+            "execMs": "\(timed.execMs)",
+        ])
+    }
+
+    /// The transaction of `applySourceListingChanges`: rows changed, and the derived
+    /// images of purged rows, to delete once the transaction commits.
+    private nonisolated static func writeSourceListingChanges(
+        _ changes: SourceListingChanges,
+        rootRowID: Int64,
+        rootPath: LibraryRootPath,
+        capabilities: VolumeNamespaceCapabilities,
+        db: Database
+    ) throws -> (changed: Int, purgedImages: [String]) {
+        var changed = 0
+        for item in changes.listed {
+            let file = try keepingStoredSize(item.file, libraryRootID: rootRowID, db: db)
+            if try upsertScannedFile(
+                file, libraryRootPath: rootPath, libraryRootID: rootRowID, capabilities: capabilities, db: db
+            ) {
+                changed += 1
+            }
+            try db.execute(
+                sql: """
+                UPDATE media_asset SET hidden_by_source = ?
+                WHERE library_root_id = ? AND relative_path = ? AND hidden_by_source IS NOT ?
+                """,
+                arguments: [item.isHiddenBySource, rootRowID, file.relativePath.rawValue, item.isHiddenBySource]
+            )
+            changed += db.changesCount
+        }
+        for (folder, size) in changes.sizesByItemFolder {
+            try db.execute(
+                sql: """
+                UPDATE media_asset SET byte_size = ?
+                WHERE library_root_id = ? AND relative_path LIKE ? ESCAPE '\\' AND byte_size IS NOT ?
+                """,
+                arguments: [size, rootRowID, sqlSubtreePrefixPattern(MediaRelativePath(rawValue: folder)), size]
+            )
+            changed += db.changesCount
+        }
+        var purgedImages: [String] = []
+        for folder in changes.deletedItemFolders {
+            let rows = try fetchExistingAssetRows(
+                libraryRootID: rootRowID, underSubtree: MediaRelativePath(rawValue: folder), db: db
+            )
+            purgedImages += rows.flatMap(\.derivedImagePaths)
+            for row in rows {
+                changed += try deleteAssetRow(rootRowID: rootRowID, relativePath: row.relativePath, db: db) ? 1 : 0
+            }
+        }
+        return (changed, purgedImages)
+    }
+
+    /// `file` with the size its row already holds when the report carries none.
+    private nonisolated static func keepingStoredSize(
+        _ file: ScannedMediaFile,
+        libraryRootID: Int64,
+        db: Database
+    ) throws -> ScannedMediaFile {
+        guard file.byteSize == nil,
+              let stored = try Int64.fetchOne(
+                  db,
+                  sql: "SELECT byte_size FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                  arguments: [libraryRootID, file.relativePath.rawValue]
+              )
+        else {
+            return file
+        }
+        return ScannedMediaFile(
+            relativePath: file.relativePath,
+            name: file.name,
+            contentTypeIdentifier: file.contentTypeIdentifier,
+            byteSize: stored,
+            createdAt: file.createdAt,
+            contentModifiedAt: file.contentModifiedAt,
+            kind: file.kind,
+            format: file.format,
+            fileIdentifier: file.fileIdentifier
+        )
+    }
+
     func endSourceListing(scan: ActiveScan) async {
         guard scanLeases.isCurrentListingScan(scan) else {
             return
