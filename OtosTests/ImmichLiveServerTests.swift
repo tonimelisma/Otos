@@ -21,7 +21,8 @@ enum ImmichLiveServer {
 
     static let credentials: Credentials? = {
         guard let path = ProcessInfo.processInfo.environment["OTOS_IMMICH_LIVE"], !path.isEmpty,
-              let text = try? String(contentsOfFile: path, encoding: .utf8)
+              let bytes = FileManager.default.contents(atPath: path),
+              let text = String(bytes: bytes, encoding: .utf8)
         else {
             return nil
         }
