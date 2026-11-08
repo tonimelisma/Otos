@@ -69,7 +69,7 @@ struct SidebarView: View {
             if !libraries.isEmpty {
                 Section("Libraries") {
                     ForEach(libraries) { library in
-                        SidebarRow(systemImage: "folder", title: library.displayName) {
+                        SidebarRow(systemImage: library.kind.sidebarSystemImage, title: library.displayName) {
                             EmptyView()
                         }
                         .tag(SidebarSelection.library(library.path))

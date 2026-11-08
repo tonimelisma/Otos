@@ -246,7 +246,7 @@ nonisolated enum ImportBarPresentation {
         }
         let primaryLine = switch sourceKind {
         case .deviceMTP: "Checking the camera…"
-        case .library, .removableVolume: "Checking the card…"
+        case .library, .removableVolume, .immichAccount: "Checking the card…"
         }
         let primaryAction: ImportBarDrawnState.PrimaryAction = .importNewItems
         // The choices are live while Otos checks: nothing about the check
@@ -815,7 +815,7 @@ nonisolated enum ImportBarPresentation {
         case .sourceNotReady:
             switch sourceKind {
             case .deviceMTP: "The camera is still reading its card"
-            case .library, .removableVolume: "The card is still being read"
+            case .library, .removableVolume, .immichAccount: "The card is still being read"
             }
         case .unexpected:
             nil

@@ -224,6 +224,34 @@ nonisolated struct MediaAssetID: Hashable {
 /// when it reports none. The text is what the catalog and the import journal persist, so
 /// it is built and read only here. An identity from a mount path or a name is transient: it
 /// names one attachment, not the device, so the catalog does not keep a root for it.
+/// The one rule for what names an Immich server (ADR 0046 §2).
+nonisolated enum ImmichServerAddress {
+    /// `scheme://host[:port][/path]`, scheme and host lowercased, a default port and any
+    /// trailing slash, query or fragment dropped. Nil unless the scheme is http or https
+    /// and there is a host.
+    static func normalized(_ url: URL) -> URL? {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = components.host?.lowercased(), !host.isEmpty
+        else {
+            return nil
+        }
+        components.scheme = scheme
+        components.host = host
+        if (scheme == "http" && components.port == 80) || (scheme == "https" && components.port == 443) {
+            components.port = nil
+        }
+        while components.path.hasSuffix("/") {
+            components.path.removeLast()
+        }
+        components.query = nil
+        components.fragment = nil
+        components.user = nil
+        components.password = nil
+        return components.url
+    }
+}
+
 nonisolated struct DeviceIdentity: Hashable, Comparable, Sendable, CustomStringConvertible {
     let rawValue: String
 
@@ -246,6 +274,17 @@ nonisolated struct DeviceIdentity: Hashable, Comparable, Sendable, CustomStringC
 
     static func camera(name: String) -> DeviceIdentity {
         DeviceIdentity(rawValue: "camera:transient:\(name)")
+    }
+
+    /// One user on one Immich server (ADR 0046 §2): `immich:<server>#<user id>`. The
+    /// server is normalized so one server typed two ways is one account: the scheme and
+    /// host lowercased, a default port and a trailing slash dropped. Nil for a URL that
+    /// is not http or https with a host.
+    static func immichAccount(server: URL, userID: String) -> DeviceIdentity? {
+        guard let normalized = ImmichServerAddress.normalized(server) else {
+            return nil
+        }
+        return DeviceIdentity(rawValue: "immich:\(normalized.absoluteString)#\(userID)")
     }
 
     /// Two attached volumes that report one identity: each after the first is told apart
@@ -285,19 +324,23 @@ nonisolated struct LibraryRoot: Identifiable, Hashable {
     let deviceIdentity: DeviceIdentity?
     let displayNameOverride: String?
     let lastSeenAt: Date?
+    /// The server an Immich account reads from (ADR 0046 §2); nil for every other kind.
+    let remoteBaseURL: URL?
 
     init(
         path: LibraryRootPath,
         kind: LibraryRootKind = .library,
         deviceIdentity: DeviceIdentity? = nil,
         displayName: String? = nil,
-        lastSeenAt: Date? = nil
+        lastSeenAt: Date? = nil,
+        remoteBaseURL: URL? = nil
     ) {
         self.path = path
         self.kind = kind
         self.deviceIdentity = deviceIdentity
         displayNameOverride = displayName
         self.lastSeenAt = lastSeenAt
+        self.remoteBaseURL = remoteBaseURL
     }
 
     var id: LibraryRootPath {
@@ -306,6 +349,12 @@ nonisolated struct LibraryRoot: Identifiable, Hashable {
 
     var displayName: String {
         displayNameOverride?.isEmpty == false ? displayNameOverride ?? path.displayName : path.displayName
+    }
+
+    /// Where the root's originals live, as Settings names it: an account's server, or
+    /// the folder's path.
+    var locationDescription: String {
+        remoteBaseURL?.absoluteString ?? path.rawValue
     }
 
     /// A card or camera (`LibraryRootKind.isRemovable`).
@@ -337,6 +386,8 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     case library
     case removableVolume
     case deviceMTP
+    /// One user's assets on an Immich server, read only (ADR 0046).
+    case immichAccount
 
     /// A folder on this Mac the user chose as a library (ADR 0003): its stored path is
     /// normalized at load, it is scanned at launch and by integrity scans on the fixed
@@ -344,7 +395,7 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     var isUserChosenFolder: Bool {
         switch self {
         case .library: true
-        case .removableVolume, .deviceMTP: false
+        case .removableVolume, .deviceMTP, .immichAccount: false
         }
     }
 
@@ -352,7 +403,7 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     /// Removable while connected.
     var isInLibrariesSection: Bool {
         switch self {
-        case .library: true
+        case .library, .immichAccount: true
         case .removableVolume, .deviceMTP: false
         }
     }
@@ -360,7 +411,7 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     /// Spanned by All Media, Places, Imports and Duplicates (ADR 0013 decision 3).
     var isMemberOfAllMedia: Bool {
         switch self {
-        case .library: true
+        case .library, .immichAccount: true
         case .removableVolume, .deviceMTP: false
         }
     }
@@ -370,7 +421,16 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     var isImportDestination: Bool {
         switch self {
         case .library: true
-        case .removableVolume, .deviceMTP: false
+        case .removableVolume, .deviceMTP, .immichAccount: false
+        }
+    }
+
+    /// Library reorganization may move its originals within it (ADR 0003, ARC-051): a
+    /// folder the user chose, whose files Otos may move only when told to.
+    var supportsReorganization: Bool {
+        switch self {
+        case .library: true
+        case .removableVolume, .deviceMTP, .immichAccount: false
         }
     }
 
@@ -381,7 +441,7 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     var isRemovable: Bool {
         switch self {
         case .removableVolume, .deviceMTP: true
-        case .library: false
+        case .library, .immichAccount: false
         }
     }
 
@@ -389,7 +449,7 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     var hasFilesystemNamespace: Bool {
         switch self {
         case .library, .removableVolume: true
-        case .deviceMTP: false
+        case .deviceMTP, .immichAccount: false
         }
     }
 
@@ -398,7 +458,7 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     var supportsMoveToTrash: Bool {
         switch self {
         case .library, .removableVolume: true
-        case .deviceMTP: false
+        case .deviceMTP, .immichAccount: false
         }
     }
 
@@ -406,7 +466,7 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     /// filesystem walk (ADR 0013 decision 5).
     var rowsComeFromSourceListing: Bool {
         switch self {
-        case .deviceMTP: true
+        case .deviceMTP, .immichAccount: true
         case .library, .removableVolume: false
         }
     }
@@ -416,6 +476,7 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     var stagingContainer: StagingContainer? {
         switch self {
         case .deviceMTP: .device
+        case .immichAccount: .remote
         case .library, .removableVolume: nil
         }
     }
@@ -430,7 +491,7 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     var pausesEnrichmentWhileImporting: Bool {
         switch self {
         case .removableVolume: true
-        case .library, .deviceMTP: false
+        case .library, .deviceMTP, .immichAccount: false
         }
     }
 
@@ -449,7 +510,7 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     var claimsEveryProductTogether: Bool {
         switch self {
         case .library: true
-        case .removableVolume, .deviceMTP: false
+        case .removableVolume, .deviceMTP, .immichAccount: false
         }
     }
 
@@ -464,7 +525,7 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     var producesAfterMetadata: Bool {
         switch self {
         case .removableVolume: true
-        case .library, .deviceMTP: false
+        case .library, .deviceMTP, .immichAccount: false
         }
     }
 
@@ -476,6 +537,42 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
             "sdcard"
         case .deviceMTP:
             "camera"
+        case .immichAccount:
+            "server.rack"
+        }
+    }
+
+    /// Its rows stay in the grid while its source cannot be reached: the catalog holds the
+    /// source's last listing, and its thumbnails and previews are stored (ADR 0046 §6). A
+    /// folder or card that is gone shows nothing, because its filesystem is its truth.
+    var showsRowsWhileUnreachable: Bool {
+        switch self {
+        case .immichAccount: true
+        case .library, .removableVolume, .deviceMTP: false
+        }
+    }
+
+    /// What a launch knows of a saved root before any source has answered. A fixed
+    /// library is checked by its launch scan, and a card or camera is unavailable until a
+    /// monitor attaches it. An account's stored listing is its truth until its server
+    /// reports otherwise, so it is available at once; whether the server answers is a
+    /// separate fact (ADR 0046 §6).
+    var availabilityAtLaunch: LibraryAvailability {
+        switch self {
+        case .library: .unknown
+        case .removableVolume, .deviceMTP: .unavailable
+        case .immichAccount: .available
+        }
+    }
+
+    /// Enrichment reads this kind's originals for its metadata and stored images. An
+    /// account's metadata comes from its server's sync stream and its thumbnail and
+    /// preview from the server, so enrichment never claims its rows to download an
+    /// original (ADR 0046 §5, §7).
+    var enrichesFromOriginals: Bool {
+        switch self {
+        case .library, .removableVolume, .deviceMTP: true
+        case .immichAccount: false
         }
     }
 }
@@ -1103,6 +1200,8 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
     /// A durable journal or settlement write SQLite refused because the disk is full
     /// (`SQLITE_FULL`): the floor reached the hard way (ADR 0027).
     case outOfSpace
+    /// An Immich server address that is not an http or https URL with a host.
+    case invalidRemoteServer
 
     var errorDescription: String? {
         switch self {
@@ -1125,6 +1224,8 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
             "The import journal operation \(key.rawValue) is no longer present."
         case .outOfSpace:
             "The disk is full."
+        case .invalidRemoteServer:
+            "Enter the server’s web address, starting with http:// or https://."
         }
     }
 }

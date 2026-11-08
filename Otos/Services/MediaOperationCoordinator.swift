@@ -378,6 +378,8 @@ actor MediaOperationCoordinator {
             guard let identity = root.deviceIdentity, let cameraImport else { return }
             let outcome = await cameraImport.eject(identity: identity)
             OtosLog.catalog.notice("op=import.autoEject phase=camera outcome=\(String(describing: outcome), privacy: .public)")
+        case .immichAccount:
+            break
         case .library, .removableVolume:
             if let autoEjectHandler {
                 await autoEjectHandler(root)

@@ -137,6 +137,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.remoteBaseURLMigrationIdentifier) { db in
+            for statement in CatalogSchema.remoteBaseURLStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -215,23 +220,30 @@ extension CatalogStore {
             db,
             sql: """
             SELECT id, path, kind, device_identity, display_name, last_seen_at, sort_index,
-                   case_sensitive_names, device_model
+                   case_sensitive_names, device_model, remote_base_url
             FROM library_root
             ORDER BY sort_index, path COLLATE NOCASE, path
             """
         ).map { row in
             let kindRaw: String = row["kind"]
             let lastSeenUnix: Double? = row["last_seen_at"]
+            let remoteBaseURL: String? = row["remote_base_url"]
+            // A kind this build does not know is a catalog it cannot read, never a library:
+            // reading it as one would scan and serve another kind's staging folder.
+            guard let kind = LibraryRootKind(rawValue: kindRaw) else {
+                throw DatabaseError(resultCode: .SQLITE_CORRUPT, message: "unknown library_root.kind \(kindRaw)")
+            }
             return StoredRoot(
                 id: row["id"],
                 path: LibraryRootPath(rawValue: row["path"]),
-                kind: LibraryRootKind(rawValue: kindRaw) ?? .library,
+                kind: kind,
                 deviceIdentity: row["device_identity"],
                 displayName: row["display_name"],
                 lastSeenAt: lastSeenUnix.map(Date.init(timeIntervalSince1970:)),
                 sortIndex: row["sort_index"],
                 capabilities: VolumeNamespaceCapabilities(storedCaseSensitiveColumn: row["case_sensitive_names"]),
-                deviceModel: row["device_model"]
+                deviceModel: row["device_model"],
+                remoteBaseURL: remoteBaseURL.flatMap(URL.init(string:))
             )
         }
         let assetCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM media_asset") ?? 0
@@ -256,6 +268,7 @@ extension CatalogStore {
         sortIndex: Int64? = nil,
         capabilities: VolumeNamespaceCapabilities = .unknown,
         deviceModel: String? = nil,
+        remoteBaseURL: URL? = nil,
         db: Database
     ) throws -> StoredRoot {
         let resolvedSortIndex = try sortIndex ?? nextLibraryRootSortIndex(db: db)
@@ -263,9 +276,9 @@ extension CatalogStore {
             sql: """
             INSERT INTO library_root (
                 path, kind, device_identity, display_name, last_seen_at, sort_index,
-                case_sensitive_names, device_model
+                case_sensitive_names, device_model, remote_base_url
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             arguments: [
                 path.rawValue,
@@ -276,6 +289,7 @@ extension CatalogStore {
                 resolvedSortIndex,
                 capabilities.storedCaseSensitiveColumn,
                 deviceModel,
+                remoteBaseURL?.absoluteString,
             ]
         )
         return StoredRoot(
@@ -287,7 +301,8 @@ extension CatalogStore {
             lastSeenAt: lastSeenAt,
             sortIndex: resolvedSortIndex,
             capabilities: capabilities,
-            deviceModel: deviceModel
+            deviceModel: deviceModel,
+            remoteBaseURL: remoteBaseURL
         )
     }
 

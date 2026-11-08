@@ -86,10 +86,10 @@ nonisolated struct RootRuntimeState: Equatable {
         root.kind.pausesEnrichmentWhileImporting && !importingBatches.isEmpty
     }
 
-    /// Available, not quiesced, and not a card being imported: enrichment may claim this
-    /// root's assets.
+    /// Available, enriched from its originals, not quiesced, and not a card being
+    /// imported: enrichment may claim this root's assets.
     var isEnrichable: Bool {
-        availability == .available && !isQuiesced && !isCardBeingImported
+        root.kind.enrichesFromOriginals && availability == .available && !isQuiesced && !isCardBeingImported
     }
 
     init(

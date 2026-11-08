@@ -220,7 +220,7 @@ nonisolated struct RootRegistry {
                 state.path
             case .removableVolume:
                 state.availability == .available ? state.path : nil
-            case .deviceMTP:
+            case .deviceMTP, .immichAccount:
                 nil
             }
         }

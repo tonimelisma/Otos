@@ -33,18 +33,19 @@ Opened 2026-11-07. Decisions: ADR 0046. API facts: `docs/research/2026-11-07-imm
 
 Each increment lands on `main` with its own DoD.
 
-1. **Docs:** research note, ADR 0046 (Proposed), this plan. *(this PR)* The `AGENTS.md`
+1. **Docs:** research note, ADR 0046 (Proposed), this plan. *(done: #579, amended #582)* The `AGENTS.md`
    principle restatements land with the increment that makes each true: the byte-read
-   rule with increment 3, and source of truth, identity and deletion proof with
-   increment 5, when ADR 0046 becomes Accepted.
+   rule with increment 3 (done), and source of truth, identity and deletion proof with
+   increment 6, whose sync writes an account's rows and proves their deletion; ADR 0046
+   becomes Accepted then.
 2. **Refactor, no behavior change:** root-kind capabilities replace every bare kind
-   comparison. Existing tests stay unmodified and green.
-3. **Refactor:** `MaterializationCoordinator.locality(of:)` and `ensureLocal`. All byte
+   comparison. Existing tests stay unmodified and green. *(done: #580)*
+3. **Refactor:** `MaterializationCoordinator.locality(of:)` and `ensureLocal`. *(done: #583)* All byte
    readers ask them. Adds a test that a camera item not yet staged, opened at full
    resolution in the loupe, gets staged. Enrichment readiness moves to `locality(of:)` in
    increment 7, with the download it gates.
 4. **Refactor:** kind-neutral source-enumeration Store API, and a staging location that
-   is not specific to devices.
+   is not specific to devices. *(done: #584)*
 5. **Feature, offline:**
    - the `immichAccount` kind and the v15 migration (`library_root.remote_base_url`);
    - adding and removing an account;

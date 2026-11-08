@@ -17,6 +17,8 @@ struct LibraryRootKindCapabilityTests {
         let sourceListing: Bool
         let stagesOriginals: Bool
         let pausesEnrichmentWhileImporting: Bool
+        let rowsWhileUnreachable: Bool
+        let enrichesFromOriginals: Bool
 
         init(_ kind: LibraryRootKind) {
             userChosenFolder = kind.isUserChosenFolder
@@ -29,12 +31,15 @@ struct LibraryRootKindCapabilityTests {
             sourceListing = kind.rowsComeFromSourceListing
             stagesOriginals = kind.stagesOriginals
             pausesEnrichmentWhileImporting = kind.pausesEnrichmentWhileImporting
+            rowsWhileUnreachable = kind.showsRowsWhileUnreachable
+            enrichesFromOriginals = kind.enrichesFromOriginals
         }
 
         init(
             userChosenFolder: Bool, librariesSection: Bool, allMedia: Bool, importDestination: Bool,
             removable: Bool, filesystemNamespace: Bool, moveToTrash: Bool, sourceListing: Bool,
-            stagesOriginals: Bool, pausesEnrichmentWhileImporting: Bool
+            stagesOriginals: Bool, pausesEnrichmentWhileImporting: Bool,
+            rowsWhileUnreachable: Bool = false, enrichesFromOriginals: Bool = true
         ) {
             self.userChosenFolder = userChosenFolder
             self.librariesSection = librariesSection
@@ -46,12 +51,14 @@ struct LibraryRootKindCapabilityTests {
             self.sourceListing = sourceListing
             self.stagesOriginals = stagesOriginals
             self.pausesEnrichmentWhileImporting = pausesEnrichmentWhileImporting
+            self.rowsWhileUnreachable = rowsWhileUnreachable
+            self.enrichesFromOriginals = enrichesFromOriginals
         }
 
         var description: String {
             "\(userChosenFolder) \(librariesSection) \(allMedia) \(importDestination) \(removable) "
                 + "\(filesystemNamespace) \(moveToTrash) \(sourceListing) \(stagesOriginals) "
-                + "\(pausesEnrichmentWhileImporting)"
+                + "\(pausesEnrichmentWhileImporting) \(rowsWhileUnreachable) \(enrichesFromOriginals)"
         }
     }
 
@@ -79,10 +86,28 @@ struct LibraryRootKindCapabilityTests {
         ))
     }
 
+    /// ADR 0046 §3: an account is a library in browsing — the Libraries section and All
+    /// Media — and in nothing that changes files. Its rows come from its server's listing,
+    /// its originals are staged when fetched, and its rows stay while the server is gone.
+    @Test func anImmichAccountIsABrowsableListingThatChangesNoFiles() {
+        #expect(Row(.immichAccount) == Row(
+            userChosenFolder: false, librariesSection: true, allMedia: true, importDestination: false,
+            removable: false, filesystemNamespace: false, moveToTrash: false, sourceListing: true,
+            stagesOriginals: true, pausesEnrichmentWhileImporting: false,
+            rowsWhileUnreachable: true, enrichesFromOriginals: false
+        ))
+        #expect(LibraryRootKind.allCases.filter(\.supportsReorganization) == [.library])
+        #expect(LibraryRootKind.immichAccount.availabilityAtLaunch == .available)
+        #expect(LibraryRootKind.library.availabilityAtLaunch == .unknown)
+        #expect(LibraryRootKind.removableVolume.availabilityAtLaunch == .unavailable)
+        #expect(LibraryRootKind.deviceMTP.availabilityAtLaunch == .unavailable)
+    }
+
     /// A kind that stages its originals names the container they go into, and only such a
     /// kind does; the staging sweep spans every container.
     @Test func onlyAStagingKindNamesAStagingContainer() {
         #expect(LibraryRootKind.deviceMTP.stagingContainer == .device)
+        #expect(LibraryRootKind.immichAccount.stagingContainer == .remote)
         #expect(LibraryRootKind.library.stagingContainer == nil)
         #expect(LibraryRootKind.removableVolume.stagingContainer == nil)
         #expect(StagingContainer.allCases.allSatisfy { container in

@@ -326,6 +326,14 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// The server an Immich account's root reads from, as Settings shows it (ADR 0046 §2).
+    /// Null for every other kind; the session token is never stored here.
+    static let remoteBaseURLMigrationIdentifier = "v15_library_root_remote_base_url"
+
+    static let remoteBaseURLStatements: [String] = [
+        "ALTER TABLE library_root ADD COLUMN remote_base_url TEXT",
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (
