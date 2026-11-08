@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// Serialized because the state under test is genuinely process-global: `DeviceStagingLocation`
+/// Serialized because the state under test is genuinely process-global: `StagingLocation`
 /// keeps one `flock` table for the whole app instance, and `releaseOwnership()` releases *every*
 /// claim in it — correct for the app-quit path it exists to serve, and unusable concurrently.
 ///
@@ -83,12 +83,12 @@ struct DeviceStagingRegistryTests {
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        let first = DeviceStagingLocation.sessionRootURL(identity: .camera(id: "abc"), inContainer: container)
-        let second = DeviceStagingLocation.sessionRootURL(identity: .camera(id: "abc"), inContainer: container)
+        let first = StagingLocation.sessionRootURL(identity: .camera(id: "abc"), inContainer: container)
+        let second = StagingLocation.sessionRootURL(identity: .camera(id: "abc"), inContainer: container)
 
         #expect(first == second, "a camera's staging path must not depend on which process asked")
         #expect(
-            first != DeviceStagingLocation.sessionRootURL(identity: .camera(id: "xyz"), inContainer: container),
+            first != StagingLocation.sessionRootURL(identity: .camera(id: "xyz"), inContainer: container),
             "different cameras must still get different trees"
         )
     }
@@ -100,13 +100,13 @@ struct DeviceStagingRegistryTests {
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        let stale = DeviceStagingLocation.sessionRootURL(identity: .camera(id: "ended"), inContainer: container)
+        let stale = StagingLocation.sessionRootURL(identity: .camera(id: "ended"), inContainer: container)
             .appending(path: "2020-01-01", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: stale, withIntermediateDirectories: true)
         let file = stale.appending(path: "STALE.ARW", directoryHint: .notDirectory)
         try Data(repeating: 1, count: 512).write(to: file)
 
-        DeviceStagingLocation.sweepUnownedStaging(inContainer: container)
+        StagingLocation.sweepUnownedStaging(inContainers: [container])
 
         #expect(!FileManager.default.fileExists(atPath: file.path(percentEncoded: false)))
     }
@@ -119,14 +119,14 @@ struct DeviceStagingRegistryTests {
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        #expect(DeviceStagingLocation.claimOwnership(identity: .camera(id: "live"), inContainer: container))
-        defer { DeviceStagingLocation.releaseOwnership() }
+        #expect(StagingLocation.claimOwnership(identity: .camera(id: "live"), inContainer: container))
+        defer { StagingLocation.releaseOwnership() }
 
-        let held = DeviceStagingLocation.sessionRootURL(identity: .camera(id: "live"), inContainer: container)
+        let held = StagingLocation.sessionRootURL(identity: .camera(id: "live"), inContainer: container)
         let inFlight = held.appending(path: "DSC00001.ARW", directoryHint: .notDirectory)
         try Data(repeating: 9, count: 256).write(to: inFlight)
 
-        DeviceStagingLocation.sweepUnownedStaging(inContainer: container)
+        StagingLocation.sweepUnownedStaging(inContainers: [container])
 
         #expect(
             FileManager.default.fileExists(atPath: inFlight.path(percentEncoded: false)),
@@ -141,14 +141,14 @@ struct DeviceStagingRegistryTests {
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        DeviceStagingLocation.claimOwnership(identity: .camera(id: "quitting"), inContainer: container)
-        let root = DeviceStagingLocation.sessionRootURL(identity: .camera(id: "quitting"), inContainer: container)
+        StagingLocation.claimOwnership(identity: .camera(id: "quitting"), inContainer: container)
+        let root = StagingLocation.sessionRootURL(identity: .camera(id: "quitting"), inContainer: container)
         let staged = root.appending(path: "A.ARW", directoryHint: .notDirectory)
         try Data(repeating: 3, count: 128).write(to: staged)
-        #expect(DeviceStagingLocation.hasStagedBytes(inContainer: container))
+        #expect(StagingLocation.hasStagedBytes())
 
-        DeviceStagingLocation.releaseOwnership()
-        DeviceStagingLocation.sweepUnownedStaging(inContainer: container)
+        StagingLocation.releaseOwnership()
+        StagingLocation.sweepUnownedStaging(inContainers: [container])
 
         #expect(!FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))
     }
@@ -161,11 +161,11 @@ struct DeviceStagingRegistryTests {
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        DeviceStagingLocation.claimOwnership(identity: .camera(id: "empty"), inContainer: container)
-        defer { DeviceStagingLocation.releaseOwnership() }
+        StagingLocation.claimOwnership(identity: .camera(id: "empty"), inContainer: container)
+        defer { StagingLocation.releaseOwnership() }
 
         #expect(
-            !DeviceStagingLocation.hasStagedBytes(inContainer: container),
+            !StagingLocation.hasStagedBytes(),
             "directories alone are not bytes; quitting must not defer to delete nothing"
         )
     }
@@ -178,15 +178,15 @@ struct DeviceStagingRegistryTests {
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        let inside = DeviceStagingLocation.sessionRootURL(identity: .camera(id: "a"), inContainer: container)
+        let inside = StagingLocation.sessionRootURL(identity: .camera(id: "a"), inContainer: container)
             .appending(path: "DSC00001.ARW", directoryHint: .notDirectory)
-        #expect(DeviceStagingLocation.isInsideStaging(inside, inContainer: container))
+        #expect(StagingLocation.isInsideStaging(inside, inContainers: [container]))
 
-        #expect(!DeviceStagingLocation.isInsideStaging(
-            URL(fileURLWithPath: "/Users/someone/Pictures/DSC00001.ARW"), inContainer: container
+        #expect(!StagingLocation.isInsideStaging(
+            URL(fileURLWithPath: "/Users/someone/Pictures/DSC00001.ARW"), inContainers: [container]
         ))
-        #expect(!DeviceStagingLocation.isInsideStaging(
-            container.deletingLastPathComponent().appending(path: "Elsewhere/DSC.ARW"), inContainer: container
+        #expect(!StagingLocation.isInsideStaging(
+            container.deletingLastPathComponent().appending(path: "Elsewhere/DSC.ARW"), inContainers: [container]
         ))
     }
 }

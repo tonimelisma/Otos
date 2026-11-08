@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 /// ARC-047: device inventory landing must trigger a replan.
-/// `recordDeviceCatalogBatch`/`completeDeviceCatalogEnumeration` bump the occupancy
+/// `recordSourceListingBatch`/`completeSourceListing` bump the occupancy
 /// revision and emit a `RootPlanningChange`; without that, a plan built the moment a
 /// device root became available (from whatever rows were already persisted) would
 /// never be invalidated once the live device inventory landed.
@@ -23,9 +23,9 @@ struct CatalogStoreDeviceInventoryTests {
         let changes = await store.planningChangeNotifications()
         var iterator = changes.makeAsyncIterator()
 
-        let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
         let occupancyBeforeBatch = await store.namespaceRevision(for: rootPath)
-        try await store.recordDeviceCatalogBatch([
+        try await store.recordSourceListingBatch([
             ScannedMediaFile(
                 relativePath: MediaRelativePath(rawValue: "DCIM/IMG_0001.JPG"),
                 name: "IMG_0001.JPG",
@@ -54,14 +54,14 @@ struct CatalogStoreDeviceInventoryTests {
             identity: .camera(id: "serial"),
             displayName: "Camera"
         )
-        let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
         // No batch recorded — an enumeration that observed nothing new still
         // must prove itself stable to whoever built a plan before it finished.
         let occupancyBeforeCompletion = await store.namespaceRevision(for: rootPath)
 
         let changes = await store.planningChangeNotifications()
         var iterator = changes.makeAsyncIterator()
-        try await store.completeDeviceCatalogEnumeration(scan: scan, observedPaths: [])
+        try await store.completeSourceListing(scan: scan, observedPaths: [])
 
         let change = await iterator.next()
         #expect(change?.rootPath == rootPath)

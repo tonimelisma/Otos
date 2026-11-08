@@ -29,9 +29,9 @@ struct CatalogStoreRemovablePresenceTests {
         let rootPath = try await store.attachDeviceMTP(
             stagingRootURL: staging, identity: identity, displayName: "Camera"
         )
-        let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
-        try await store.recordDeviceCatalogBatch(files, scan: scan)
-        try await store.completeDeviceCatalogEnumeration(scan: scan, observedPaths: Set(files.map(\.relativePath)))
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
+        try await store.recordSourceListingBatch(files, scan: scan)
+        try await store.completeSourceListing(scan: scan, observedPaths: Set(files.map(\.relativePath)))
         return rootPath
     }
 
@@ -46,11 +46,11 @@ struct CatalogStoreRemovablePresenceTests {
         _ = try await store.attachDeviceMTP(stagingRootURL: staging, identity: identity, displayName: "Camera")
         // Attached, nothing read yet: the rows it held last time are not shown as present.
         #expect(try await visiblePaths(store, rootPath).isEmpty)
-        let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
-        try await store.recordDeviceCatalogBatch([kept], scan: scan)
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
+        try await store.recordSourceListingBatch([kept], scan: scan)
         // A file the read has reached shows at once, before the read completes.
         #expect(try await visiblePaths(store, rootPath) == [kept.relativePath.rawValue])
-        try await store.completeDeviceCatalogEnumeration(scan: scan, observedPaths: [kept.relativePath])
+        try await store.completeSourceListing(scan: scan, observedPaths: [kept.relativePath])
 
         #expect(try await visiblePaths(store, rootPath) == [kept.relativePath.rawValue])
         #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 1)
@@ -66,8 +66,8 @@ struct CatalogStoreRemovablePresenceTests {
         try await store.detachRemovableSource(identity: identity, reason: .disconnected)
 
         _ = try await store.attachDeviceMTP(stagingRootURL: staging, identity: identity, displayName: "Camera")
-        let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
-        try await store.recordDeviceCatalogBatch([first], scan: scan)
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
+        try await store.recordSourceListingBatch([first], scan: scan)
         try await store.detachRemovableSource(identity: identity, reason: .disconnected)
 
         // Nothing proved the second file gone, so the offline camera still holds both.
@@ -86,10 +86,10 @@ struct CatalogStoreRemovablePresenceTests {
         let rootPath = try await attachEnumerated(store, staging: staging, files: [first, second])
         try await store.detachRemovableSource(identity: identity, reason: .disconnected)
         _ = try await store.attachDeviceMTP(stagingRootURL: staging, identity: identity, displayName: "Camera")
-        let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
-        try await store.recordDeviceCatalogBatch([first], scan: scan)
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
+        try await store.recordSourceListingBatch([first], scan: scan)
 
-        await store.endDeviceCatalogEnumeration(scan: scan)
+        await store.endSourceListing(scan: scan)
 
         #expect(try await visiblePaths(store, rootPath) == [first, second].map(\.relativePath.rawValue))
         await store.shutdown()

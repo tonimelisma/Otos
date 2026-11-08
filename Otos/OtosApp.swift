@@ -56,7 +56,7 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // The common session never attaches a camera. Deferring termination and flashing a
         // window at it would add delay to every quit to report work that does not exist.
-        guard DeviceStagingLocation.hasStagedBytes() else {
+        guard StagingLocation.hasStagedBytes() else {
             return .terminateNow
         }
         showClearingWindow()
@@ -65,8 +65,8 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
             // indistinguishable from one that has exited, which is exactly the state quit
             // wants — so quitting and the crash backstop are the same operation rather than
             // two that could disagree.
-            DeviceStagingLocation.releaseOwnership()
-            DeviceStagingLocation.sweepUnownedStaging()
+            StagingLocation.releaseOwnership()
+            StagingLocation.sweepUnownedStaging()
             await MainActor.run {
                 sender.reply(toApplicationShouldTerminate: true)
             }

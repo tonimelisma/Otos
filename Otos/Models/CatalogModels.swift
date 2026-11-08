@@ -411,13 +411,18 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
         }
     }
 
-    /// Originals are copied into an Otos staging folder on demand rather than read in
-    /// place, so the staging folder and its files are Otos's to release.
-    var stagesOriginals: Bool {
+    /// The Otos staging container this kind's originals are copied into on demand, or nil
+    /// when they are read in place. The staging folder and its files are Otos's to release.
+    var stagingContainer: StagingContainer? {
         switch self {
-        case .deviceMTP: true
-        case .library, .removableVolume: false
+        case .deviceMTP: .device
+        case .library, .removableVolume: nil
         }
+    }
+
+    /// Originals are copied into an Otos staging folder rather than read in place.
+    var stagesOriginals: Bool {
+        stagingContainer != nil
     }
 
     /// An import reads this source's own files in place, so enrichment leaves the source

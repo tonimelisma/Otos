@@ -2,7 +2,15 @@ import Darwin
 import Foundation
 import Synchronization
 
-/// The one owner of where device staging lives on disk.
+/// The folders a staging root's originals are copied into, one per kind that stages them
+/// (`LibraryRootKind.stagingContainer`). Separate containers keep one kind's trees out of
+/// another's listing; every container follows the same ownership and sweep rules.
+nonisolated enum StagingContainer: String, CaseIterable, Sendable {
+    /// A camera's originals, copied from the device over ImageCapture.
+    case device = "DeviceStaging"
+}
+
+/// The one owner of where staged originals live on disk.
 ///
 /// Two types built this path independently before — `DeviceStagingRegistry` for its sweeps
 /// and `DeviceCameraSession` for its own root — so "where is staging?" had two answers, and
@@ -10,7 +18,7 @@ import Synchronization
 ///
 /// ## The path is stable, and that is a correctness requirement
 ///
-/// `DeviceStaging/<identity>/` is keyed by the camera, not by the process. It briefly was
+/// `<container>/<identity>/` is keyed by the source, not by the process. It briefly was
 /// not: an earlier fix put the process instance in the path so a launch sweep could not
 /// delete a peer's in-flight staging. That worked, and broke something bigger — asset
 /// identity *is* the filesystem path (ADR 0008), so a per-launch path made every camera item
@@ -35,7 +43,7 @@ import Synchronization
 ///
 /// The lock decides *deletion only*, never use. Two instances with the same camera attached
 /// both stage normally; only one of them is responsible for cleaning up.
-nonisolated enum DeviceStagingLocation {
+nonisolated enum StagingLocation {
     /// Locks held for cameras attached to this process, keyed by session root path.
     ///
     /// Held open for the life of each attachment; closing the descriptor is what releases
@@ -44,12 +52,12 @@ nonisolated enum DeviceStagingLocation {
 
     private static let ownerMarkerName = ".otos-owner"
 
-    /// The directory holding every camera's staging tree.
+    /// The directory holding every staging tree of one container.
     ///
     /// Under Caches: staging is a rebuildable transfer cache, not overlay. Overlay lives in
     /// Application Support and is backed up; these bytes exist only until the item they
     /// belong to is imported or the app quits.
-    static func containerURL() -> URL {
+    static func containerURL(_ container: StagingContainer) -> URL {
         let caches = (try? FileManager.default.url(
             for: .cachesDirectory,
             in: .userDomainMask,
@@ -58,11 +66,11 @@ nonisolated enum DeviceStagingLocation {
         )) ?? FileManager.default.temporaryDirectory
         return caches
             .appending(path: "net.melisma.Otos", directoryHint: .isDirectory)
-            .appending(path: "DeviceStaging", directoryHint: .isDirectory)
+            .appending(path: container.rawValue, directoryHint: .isDirectory)
     }
 
-    /// Where one camera's bytes go. Stable across launches for the same camera.
-    static func sessionRootURL(identity: DeviceIdentity, inContainer container: URL = containerURL()) -> URL {
+    /// Where one source's bytes go. Stable across launches for the same source.
+    static func sessionRootURL(identity: DeviceIdentity, inContainer container: URL) -> URL {
         let root = container
             .appending(path: CameraSourceMonitor.sanitize(identity.rawValue), directoryHint: .isDirectory)
         var values = URLResourceValues()
@@ -74,7 +82,7 @@ nonisolated enum DeviceStagingLocation {
             // Already gone: the outcome this removal wanted.
         } catch {
             // The folder may not exist yet; it is excluded again whenever it is resolved.
-            OtosLog.fileAccess.errorOperation("camera.staging", phase: "excludeFromBackupFailed", fields: [
+            OtosLog.fileAccess.errorOperation("source.staging", phase: "excludeFromBackupFailed", fields: [
                 "path": root.path(percentEncoded: false),
                 "error": String(describing: error),
             ])
@@ -82,19 +90,19 @@ nonisolated enum DeviceStagingLocation {
         return root
     }
 
-    /// Claims this camera's staging tree for as long as this process is attached to it.
+    /// Claims this source's staging tree for as long as this process is attached to it.
     ///
     /// Best-effort by design: a failed claim means another instance will do the cleaning, not
     /// that staging cannot be used. Returning early rather than throwing keeps attach working
     /// in the pathological case of two instances sharing a camera.
     @discardableResult
-    static func claimOwnership(identity: DeviceIdentity, inContainer container: URL = containerURL()) -> Bool {
+    static func claimOwnership(identity: DeviceIdentity, inContainer container: URL) -> Bool {
         let root = sessionRootURL(identity: identity, inContainer: container)
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         } catch {
             // Without the folder the marker cannot be opened, so the claim reports false.
-            OtosLog.fileAccess.errorOperation("camera.staging", phase: "createFailed", fields: [
+            OtosLog.fileAccess.errorOperation("source.staging", phase: "createFailed", fields: [
                 "path": root.path(percentEncoded: false),
                 "error": String(describing: error),
             ])
@@ -129,17 +137,19 @@ nonisolated enum DeviceStagingLocation {
         }
     }
 
-    /// Deletes every staging tree no live instance is holding.
+    /// Deletes every staging tree, in every container, that no live instance is holding.
     ///
     /// The crash backstop and the quit path, in one function. A tree whose lock can be taken
     /// has no live owner — either its process exited cleanly, or it died and the kernel
     /// released the lock for it — so its bytes belong to a session that is over.
-    static func sweepUnownedStaging(inContainer container: URL = containerURL()) {
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: container,
-            includingPropertiesForKeys: [.isDirectoryKey]
-        ) else {
-            return
+    static func sweepUnownedStaging(
+        inContainers containers: [URL] = StagingContainer.allCases.map(containerURL)
+    ) {
+        let contents = containers.flatMap { container in
+            (try? FileManager.default.contentsOfDirectory(
+                at: container,
+                includingPropertiesForKeys: [.isDirectoryKey]
+            )) ?? []
         }
         var removed = 0
         var skipped = 0
@@ -160,13 +170,13 @@ nonisolated enum DeviceStagingLocation {
                 removed += 1
             } catch {
                 failed += 1
-                OtosLog.fileAccess.errorOperation("camera.staging", phase: "sweepRemoveFailed", fields: [
+                OtosLog.fileAccess.errorOperation("source.staging", phase: "sweepRemoveFailed", fields: [
                     "path": tree.path(percentEncoded: false),
                     "error": String(describing: error),
                 ])
             }
         }
-        OtosLog.fileAccess.noticeOperation("camera.staging", phase: "sweepUnowned", fields: [
+        OtosLog.fileAccess.noticeOperation("source.staging", phase: "sweepUnowned", fields: [
             "removed": "\(removed)",
             "skippedLive": "\(skipped)",
             "failed": "\(failed)",
@@ -183,7 +193,7 @@ nonisolated enum DeviceStagingLocation {
     ///
     /// Enumerating stops at the first file, so this stays cheap when there genuinely are tens
     /// of gigabytes below it.
-    static func hasStagedBytes(inContainer container: URL = containerURL()) -> Bool {
+    static func hasStagedBytes() -> Bool {
         let roots = ownedDescriptors.withLock { Array($0.keys) }
         for path in roots {
             guard let enumerator = FileManager.default.enumerator(
@@ -199,7 +209,6 @@ nonisolated enum DeviceStagingLocation {
                 return true
             }
         }
-        _ = container
         return false
     }
 
@@ -214,7 +223,7 @@ nonisolated enum DeviceStagingLocation {
     /// wrong by one component would be a delete inside the user's own media.
     static func releaseStagedFile(at url: URL) {
         guard isInsideStaging(url) else {
-            OtosLog.fileAccess.errorOperation("camera.staging", phase: "releaseRefused", fields: [
+            OtosLog.fileAccess.errorOperation("source.staging", phase: "releaseRefused", fields: [
                 "reason": "outsideStagingRoot",
                 "path": url.path(percentEncoded: false),
             ])
@@ -226,25 +235,30 @@ nonisolated enum DeviceStagingLocation {
         let bytes = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
         do {
             try FileManager.default.removeItem(at: url)
-            OtosLog.fileAccess.noticeOperation("camera.staging", phase: "released", fields: [
+            OtosLog.fileAccess.noticeOperation("source.staging", phase: "released", fields: [
                 "bytes": bytes.flatMap(\.self).map { "\($0)" } ?? "unknown",
             ])
         } catch {
-            OtosLog.fileAccess.errorOperation("camera.staging", phase: "releaseFailed", fields: [
+            OtosLog.fileAccess.errorOperation("source.staging", phase: "releaseFailed", fields: [
                 "error": String(describing: error),
             ])
         }
     }
 
-    /// Whether `url` lies inside the staging container.
+    /// Whether `url` lies inside a staging container.
     ///
-    /// The guard on releasing staged bytes. Checked against the container rather than one
-    /// camera's tree, because a release can legitimately target any attached camera; what it
+    /// The guard on releasing staged bytes. Checked against the containers rather than one
+    /// source's tree, because a release can legitimately target any attached source; what it
     /// must never do is reach outside staging altogether.
-    static func isInsideStaging(_ url: URL, inContainer container: URL = containerURL()) -> Bool {
-        let root = container.standardizedFileURL.path(percentEncoded: false)
+    static func isInsideStaging(
+        _ url: URL,
+        inContainers containers: [URL] = StagingContainer.allCases.map(containerURL)
+    ) -> Bool {
         let candidate = url.standardizedFileURL.path(percentEncoded: false)
-        let prefix = root.hasSuffix("/") ? root : root + "/"
-        return candidate.hasPrefix(prefix)
+        return containers.contains { container in
+            let root = container.standardizedFileURL.path(percentEncoded: false)
+            let prefix = root.hasSuffix("/") ? root : root + "/"
+            return candidate.hasPrefix(prefix)
+        }
     }
 }

@@ -380,11 +380,12 @@ final class DeviceCameraSession: NSObject {
         self.identity = identity
         self.displayName = displayName
         self.device = device
-        stagingRootURL = DeviceStagingLocation.sessionRootURL(identity: identity)
+        let container = StagingLocation.containerURL(.device)
+        stagingRootURL = StagingLocation.sessionRootURL(identity: identity, inContainer: container)
         // Claims this camera's tree for as long as this process is attached, so a peer's
         // launch sweep leaves it alone. Best-effort: a failed claim means another instance
         // does the cleaning, not that staging is unusable.
-        DeviceStagingLocation.claimOwnership(identity: identity)
+        StagingLocation.claimOwnership(identity: identity, inContainer: container)
         let (stream, continuation) = AsyncStream.makeStream(of: SessionEvent.self, bufferingPolicy: .unbounded)
         events = continuation
         (catalogChanges, catalogChangeBell) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
