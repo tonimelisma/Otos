@@ -5,11 +5,11 @@ import OSLog
 /// Loupe video loader guide
 ///
 /// The loupe analog of `PreviewImageLoader`: a `@MainActor` stateless factory
-/// that gates on `FileMaterialization.status` immediately before any byte-backed
-/// `AVPlayerItem` init, deliberately materializes dataless originals through the
-/// shared `MaterializationCoordinator` at interactive priority when the user has
-/// opened the asset in loupe, and returns a `LoupeVideoState` holding a paused
-/// player.
+/// that asks the shared `MaterializationCoordinator` to make the original local
+/// (`ensureLocal`, interactive priority, because the user has opened the asset in
+/// loupe), re-checks `FileMaterialization.status` immediately before any
+/// byte-backed `AVPlayerItem` init, and returns a `LoupeVideoState` holding a
+/// paused player.
 ///
 /// Why `@MainActor` and stateless: `AVPlayer`/`AVPlayerItem` are `@MainActor`
 /// in the macOS 27 SDK — a video player is a UI object like `AVPlayerView`.
@@ -32,9 +32,9 @@ final class VideoPreviewLoader {
         self.materializationRequester = materializationRequester
     }
 
-    /// Gates on live `SF_DATALESS`, materializes at interactive priority if
-    /// dataless, re-checks before `AVPlayerItem` init, then creates the player —
-    /// paused. Starting playback is the caller's intent, not this factory's.
+    /// Makes the original local at interactive priority, re-checks before
+    /// `AVPlayerItem` init, then creates the player — paused. Starting playback
+    /// is the caller's intent, not this factory's.
     /// Returns `nil` for `providerUnavailable`/`timedOut`/`unknown` and for
     /// non-video kinds — caller keeps the poster thumbnail. Suspends at the
     /// materialization await without blocking the main thread.
@@ -44,37 +44,25 @@ final class VideoPreviewLoader {
         }
         let url = id.fileURL
 
-        switch status(url) {
-        case .dataless:
-            OtosLog.mediaIO.notice(
-                "op=video.decode phase=materialize id=\(id.relativePath.rawValue, privacy: .public)"
+        let readiness = await materializationRequester.ensureLocal(
+            MaterializationCoordinator.Request(
+                id: id,
+                sourceSize: detail?.byteSize,
+                isVideo: true,
+                priority: .interactive
             )
-            let result = await materializationRequester.materialize(
-                MaterializationCoordinator.Request(
-                    id: id,
-                    sourceSize: detail?.byteSize,
-                    isVideo: true,
-                    priority: .interactive
-                )
-            )
-            guard result.isMaterialized else {
-                OtosLog.mediaIO.notice(
-                    """
-                    op=video.decode phase=downloading id=\(id.relativePath.rawValue, privacy: .public) \
-                    outcome=\(result.outcome.diagnosticDescription, privacy: .public)
-                    """
-                )
-                return nil
-            }
-        case .unknown:
+        )
+        guard readiness.isLocal else {
             OtosLog.mediaIO.notice(
-                "op=video.decode phase=unavailable id=\(id.relativePath.rawValue, privacy: .public)"
+                """
+                op=video.decode phase=unavailable id=\(id.relativePath.rawValue, privacy: .public) \
+                readiness=\(String(describing: readiness), privacy: .public)
+                """
             )
             return nil
-        case .materialized:
-            break
         }
 
+        // Re-check immediately before the byte-backed player item (ADR 0008).
         guard status(url) == .materialized else {
             return nil
         }

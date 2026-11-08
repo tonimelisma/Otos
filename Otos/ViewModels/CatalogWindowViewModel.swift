@@ -336,7 +336,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let metadataRefresher: MetadataRefresher?
     /// Signs stored thumbnails for same-photo duplicates (ADR 0042); starts with enrichment.
     @ObservationIgnored let renderSignatureRefresher: RenderSignatureRefresher?
-    @ObservationIgnored let materializationCoordinator: MaterializationCoordinator?
+    @ObservationIgnored let materializationCoordinator: MaterializationCoordinator
     @ObservationIgnored let deviceStagingRegistry: DeviceStagingRegistry
     @ObservationIgnored private let mediaTileDetailReader: MediaTileDetailReader
     @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
@@ -755,7 +755,7 @@ final class CatalogWindowViewModel {
                 group.addTask { await refresher?.shutdown() }
                 group.addTask {
                     await enrichment?.shutdown()
-                    await materialization?.shutdown()
+                    await materialization.shutdown()
                 }
             }
         }
@@ -894,7 +894,7 @@ extension CatalogWindowViewModel {
                 OtosLog.persistence.error("Enrichment startup skipped because catalog start failed")
                 return
             }
-            await materializationCoordinator?.start()
+            await materializationCoordinator.start()
             await coordinator.start()
             await renderSignatureRefresher?.start()
             await metadataRefresher?.refresh()

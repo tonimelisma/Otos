@@ -16,12 +16,15 @@ struct PreviewImageLoaderTests {
             relativePath: MediaRelativePath(rawValue: "sample.jpg")
         )
         let materialized = Mutex(false)
-        let recorder = PreviewMaterializationRecorder {
+        let status: @Sendable (URL) -> FileMaterializationStatus = { _ in
+            materialized.withLock { $0 } ? .materialized : .dataless
+        }
+        let recorder = PreviewMaterializationRecorder(status: status) {
             materialized.withLock { $0 = true }
             return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 1)
         }
         let loader = PreviewImageLoader(
-            status: { _ in materialized.withLock { $0 } ? .materialized : .dataless },
+            status: status,
             materializationRequester: recorder
         )
 
@@ -48,7 +51,10 @@ struct PreviewImageLoaderTests {
         let (started, startedContinuation) = AsyncStream.makeStream(of: Void.self)
         let (gate, gateContinuation) = AsyncStream.makeStream(of: Void.self)
         let materialized = Mutex<Set<String>>([])
-        let recorder = PreviewMaterializationRecorder {
+        let status: @Sendable (URL) -> FileMaterializationStatus = { url in
+            materialized.withLock { $0.contains(url.lastPathComponent) } ? .materialized : .dataless
+        }
+        let recorder = PreviewMaterializationRecorder(status: status) {
             startedContinuation.yield()
             for await _ in gate {
                 break
@@ -56,7 +62,7 @@ struct PreviewImageLoaderTests {
             return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 1)
         }
         let loader = PreviewImageLoader(
-            status: { url in materialized.withLock { $0.contains(url.lastPathComponent) } ? .materialized : .dataless },
+            status: status,
             materializationRequester: recorder
         )
 
@@ -97,7 +103,7 @@ struct PreviewImageLoaderTests {
         )
         let loader = PreviewImageLoader(
             status: { _ in .materialized },
-            materializationRequester: ClosureMaterializationRequester { _ in
+            materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in
                 MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
             }
         )
@@ -125,7 +131,7 @@ struct PreviewImageLoaderTests {
         )
         let loader = PreviewImageLoader(
             status: { _ in .materialized },
-            materializationRequester: ClosureMaterializationRequester { _ in
+            materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in
                 MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
             }
         )
@@ -177,7 +183,7 @@ struct PreviewImageLoaderTests {
         let loader = PreviewImageLoader(
             status: { _ in .dataless },
             derivedImageDirectory: directory,
-            materializationRequester: ClosureMaterializationRequester { _ in
+            materializationRequester: ClosureMaterializationRequester(status: { _ in .dataless }) { _ in
                 materializeCalls.withLock { $0 += 1 }
                 return MaterializationResult(outcome: .timedOut, rerequestCount: 0, elapsedMs: 1)
             }
@@ -207,7 +213,7 @@ struct PreviewImageLoaderTests {
         let materializeCalls = Mutex(0)
         let loader = PreviewImageLoader(
             status: { _ in .dataless },
-            materializationRequester: ClosureMaterializationRequester { _ in
+            materializationRequester: ClosureMaterializationRequester(status: { _ in .dataless }) { _ in
                 materializeCalls.withLock { $0 += 1 }
                 return MaterializationResult(outcome: .timedOut, rerequestCount: 0, elapsedMs: 1)
             }
@@ -238,7 +244,7 @@ struct PreviewImageLoaderTests {
 
         let loader = PreviewImageLoader(
             status: { _ in .materialized },
-            materializationRequester: ClosureMaterializationRequester { _ in
+            materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in
                 MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
             }
         )
@@ -266,7 +272,7 @@ struct PreviewImageLoaderTests {
         )
         let loader = PreviewImageLoader(
             status: { _ in .materialized },
-            materializationRequester: ClosureMaterializationRequester { _ in
+            materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in
                 MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
             }
         )
@@ -283,14 +289,66 @@ struct PreviewImageLoaderTests {
             return
         }
     }
+
+    /// A camera's originals are staged on demand (ADR 0013 decision 5). One never copied,
+    /// opened at full resolution in the loupe, is absent from the staging folder, which
+    /// the coordinator reads as fetchable rather than missing: it stages it through the
+    /// device executor, and the loupe decodes the staged file.
+    @Test func unstagedCameraOriginalOpenedAtFullResolutionIsStaged() async throws {
+        let staging = try makeTestDirectory().appending(path: "Staging")
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        let rootPath = try await store.attachDeviceMTP(
+            stagingRootURL: staging, identity: DeviceIdentity(rawValue: "camera:test"), displayName: "Camera"
+        )
+        let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "DCIM/IMG_0001.JPG"))
+        let staged = Mutex<[MediaAssetID]>([])
+        let coordinator = MaterializationCoordinator(store: store, executor: { request in
+            do {
+                try FileManager.default.createDirectory(
+                    at: request.id.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
+                )
+                try writeTinyJPEG(to: request.id.fileURL)
+            } catch {
+                Issue.record("Staging the test original failed: \(error)")
+                return MaterializationResult(outcome: .requestFailed, rerequestCount: 0, elapsedMs: 0)
+            }
+            staged.withLock { $0.append(request.id) }
+            return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 1)
+        })
+        let loader = PreviewImageLoader(materializationRequester: coordinator)
+
+        #expect(await coordinator.locality(of: id) == .fetchable)
+        let outcome = await loader.preview(
+            for: .init(id: id, detail: nil, targetLongEdge: PreviewImageLoader.fullResolution)
+        )
+        let afterwards = await coordinator.locality(of: id)
+        await coordinator.shutdown()
+
+        guard case .image = outcome else {
+            Issue.record("Expected the staged original decoded, got \(outcome)")
+            return
+        }
+        #expect(staged.withLock { $0 } == [id])
+        #expect(afterwards == .local)
+    }
 }
 
 private final class PreviewMaterializationRecorder: MaterializationRequesting, Sendable {
     private let requestStorage = Mutex<MaterializationCoordinator.Request?>(nil)
     private let result: @Sendable () async -> MaterializationResult
+    private let status: @Sendable (URL) -> FileMaterializationStatus
 
-    init(result: @escaping @Sendable () async -> MaterializationResult) {
+    init(
+        status: @escaping @Sendable (URL) -> FileMaterializationStatus,
+        result: @escaping @Sendable () async -> MaterializationResult
+    ) {
+        self.status = status
         self.result = result
+    }
+
+    func locality(of id: MediaAssetID) async -> OriginalLocality {
+        .inPlace(status(id.fileURL))
     }
 
     func materialize(_ request: MaterializationCoordinator.Request) async -> MaterializationResult {

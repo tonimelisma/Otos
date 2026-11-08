@@ -57,7 +57,7 @@ nonisolated enum MediaExporter {
         _ item: EditedMediaItem,
         settings: ExportSettings,
         to folder: URL,
-        materialization: MaterializationCoordinator?
+        materialization: any MaterializationRequesting
     ) async -> ExportOutcome {
         let start = ContinuousClock.now
         let original = item.id.fileURL
@@ -65,12 +65,12 @@ nonisolated enum MediaExporter {
             guard isDirectory(folder) else {
                 throw ExportError.folderUnavailable
             }
-            if FileMaterialization.status(of: original) == .dataless {
-                try requireRoom(item.sourceSize ?? fileSize(original), onVolumeOf: original)
+            if await materialization.locality(of: item.id) == .fetchable {
+                try requireRoom(item.sourceSize ?? fileSize(original), onVolumeOf: item.id.libraryRootPath.url)
             }
-            guard await MaterializationCoordinator.makeLocal(
-                item.id, sourceSize: item.sourceSize, isVideo: item.isVideo, via: materialization
-            ) else {
+            guard await materialization.ensureLocal(.init(
+                id: item.id, sourceSize: item.sourceSize, isVideo: item.isVideo, priority: .interactive
+            )).isLocal else {
                 throw ExportError.originalUnavailable
             }
             let scratch = try FileManager.default.url(

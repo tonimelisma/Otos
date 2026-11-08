@@ -27,7 +27,7 @@ struct VideoPreviewLoaderTests {
     @Test func playGatesOnVideoKind() async {
         let loader = VideoPreviewLoader(
             status: { _ in .materialized },
-            materializationRequester: ClosureMaterializationRequester { _ in .cancelled }
+            materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in .cancelled }
         )
         let imageDetail = detail(kind: .image)
         let result = await loader.preparePlayer(id: id("v.mp4"), detail: imageDetail)
@@ -37,7 +37,7 @@ struct VideoPreviewLoaderTests {
     @Test func playCreatesPlayerWhenMaterialized() async throws {
         let loader = VideoPreviewLoader(
             status: { _ in .materialized },
-            materializationRequester: ClosureMaterializationRequester { _ in .cancelled }
+            materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in .cancelled }
         )
         let videoDetail = detail(kind: .video)
         let state = try #require(await loader.preparePlayer(id: id("a.mp4"), detail: videoDetail))
@@ -45,11 +45,6 @@ struct VideoPreviewLoaderTests {
     }
 
     @Test func playMaterializesWhenDataless() async throws {
-        let counter = TestCounter()
-        let requester = ClosureMaterializationRequester { _ in
-            counter.increment()
-            return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 10)
-        }
         final class CheckSeq: Sendable {
             private let storage = Mutex(0)
             func next() -> FileMaterializationStatus {
@@ -60,6 +55,11 @@ struct VideoPreviewLoaderTests {
             }
         }
         let seq = CheckSeq()
+        let counter = TestCounter()
+        let requester = ClosureMaterializationRequester(status: { _ in seq.next() }) { _ in
+            counter.increment()
+            return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 10)
+        }
         let loader = VideoPreviewLoader(
             status: { _ in seq.next() },
             materializationRequester: requester
@@ -71,7 +71,7 @@ struct VideoPreviewLoaderTests {
     }
 
     @Test func playReturnsNilOnProviderUnavailable() async {
-        let requester = ClosureMaterializationRequester { _ in
+        let requester = ClosureMaterializationRequester(status: { _ in .dataless }) { _ in
             MaterializationResult(outcome: .providerUnavailable, rerequestCount: 2, elapsedMs: 2000)
         }
         let loader = VideoPreviewLoader(
@@ -86,7 +86,7 @@ struct VideoPreviewLoaderTests {
     @Test func loupeVideoStateCleanupReplacesPlayer() async throws {
         let loader = VideoPreviewLoader(
             status: { _ in .materialized },
-            materializationRequester: ClosureMaterializationRequester { _ in .cancelled }
+            materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in .cancelled }
         )
         let videoDetail = detail(kind: .video)
         let first = try #require(await loader.preparePlayer(id: id("a.mp4"), detail: videoDetail))

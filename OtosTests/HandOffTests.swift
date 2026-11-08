@@ -7,6 +7,9 @@ import Testing
 /// ADR 0037: a hand-off is one full-size file per photo — the original for an
 /// unedited still or video, a rendered JPEG for an edited photo or a RAW, the trimmed range
 /// of a trimmed video.
+/// The fixtures are local files, so nothing is ever fetched.
+private let localOriginals = ClosureMaterializationRequester { _ in .cancelled }
+
 @Suite(.testDirectory)
 @MainActor
 struct HandOffTests {
@@ -124,7 +127,7 @@ struct HandOffTests {
             libraryRootPath: CatalogPath.normalizedExistingDirectoryPath(for: directory),
             relativePath: MediaRelativePath(rawValue: "photo.jpg")
         )
-        let preparer = HandOffPreparer(directory: directory.appending(path: "HandOff"), materialization: nil)
+        let preparer = HandOffPreparer(directory: directory.appending(path: "HandOff"), materialization: localOriginals)
         let item = EditedMediaItem(id: id, isVideo: false, recipe: EditRecipe(exposure: 0.5), sourceSize: nil)
 
         #expect(preparer.readyURL(for: item) == nil)

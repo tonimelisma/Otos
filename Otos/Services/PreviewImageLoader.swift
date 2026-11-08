@@ -21,9 +21,10 @@ nonisolated protocol PreviewLoading: Sendable {
 ///
 /// The loupe/compare analog of `EnrichmentCoordinator`'s byte-read role, and the app's
 /// only full-size decode path (ADR 0016). Callers ask for a preview at a target long edge;
-/// this actor gates on `FileMaterialization.status` immediately before every byte read,
-/// deliberately materializes dataless originals through the non-blocking helper when the
-/// user has opened loupe/compare, and returns a downsampled `CGImage` or `.unavailable`.
+/// this actor asks the shared `MaterializationCoordinator` to make the original local
+/// (`ensureLocal`, interactive, because the user has opened loupe/compare), re-checks
+/// `FileMaterialization.status` immediately before every byte read, and returns a
+/// downsampled `CGImage` or `.unavailable`.
 ///
 /// Per-id in-flight work is coalesced. A small LRU holds recent decodes; a cache hit
 /// requires `entry.longEdge >= request.targetLongEdge` so a screen-size change re-decodes
@@ -189,46 +190,30 @@ actor PreviewImageLoader: PreviewLoading {
             )
         }
 
-        switch status(url) {
-        case .dataless:
-            OtosLog.mediaIO.notice(
-                "op=preview.decode phase=materialize id=\(request.id.relativePath.rawValue, privacy: .public)"
+        let isVideo = request.detail?.bestKind == .video
+            || UTType(filenameExtension: url.pathExtension)?.conforms(to: .movie) == true
+        let readiness = await materializationRequester.ensureLocal(
+            MaterializationCoordinator.Request(
+                id: request.id,
+                sourceSize: request.detail?.byteSize,
+                isVideo: isVideo,
+                priority: .interactive
             )
-            let isVideo = request.detail?.bestKind == .video
-                || UTType(filenameExtension: url.pathExtension)?.conforms(to: .movie) == true
-            let result = await materializationRequester.materialize(
-                MaterializationCoordinator.Request(
-                    id: request.id,
-                    sourceSize: request.detail?.byteSize,
-                    isVideo: isVideo,
-                    priority: .interactive
-                )
-            )
-            guard result.isMaterialized else {
-                OtosLog.mediaIO.notice(
-                    """
-                    op=preview.decode phase=notMaterialized id=\(request.id.relativePath.rawValue, privacy: .public) \
-                    outcome=\(String(describing: result.outcome), privacy: .public)
-                    """
-                )
-                return .unavailable
-            }
-        case .unknown:
+        )
+        guard readiness.isLocal else {
             OtosLog.mediaIO.notice(
-                "op=preview.decode phase=unavailable id=\(request.id.relativePath.rawValue, privacy: .public)"
+                """
+                op=preview.decode phase=unavailable id=\(request.id.relativePath.rawValue, privacy: .public) \
+                readiness=\(String(describing: readiness), privacy: .public)
+                """
             )
             return .unavailable
-        case .materialized:
-            break
         }
 
         // Re-check immediately before the byte read (ADR 0008).
         guard status(url) == .materialized else {
             return .unavailable
         }
-
-        let isMovie = request.detail?.bestKind == .video
-            || UTType(filenameExtension: url.pathExtension)?.conforms(to: .movie) == true
 
         // Decode in a `Task.detached` (off this actor) so two panes can decode concurrently and bookkeeping
         // stays responsive. Dataless/materialize gates above already ran in order.
@@ -242,7 +227,7 @@ actor PreviewImageLoader: PreviewLoading {
             String,
             CGSize?
         )? in
-            if isMovie {
+            if isVideo {
                 return await Self.decodeVideoPoster(url: url, targetLongEdge: target)
             }
             if ImageRenderer.isRAW(url) || !recipe.isNeutral {

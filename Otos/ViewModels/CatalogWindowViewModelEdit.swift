@@ -761,7 +761,7 @@ extension CatalogWindowViewModel {
 nonisolated struct EditPipeline: Sendable {
     let store: CatalogStore
     let renderer: LiveEditRenderer
-    let materialization: MaterializationCoordinator?
+    let materialization: any MaterializationRequesting
     let directory: URL?
     let analyzer: EditAnalyzer
 
@@ -790,7 +790,9 @@ nonisolated struct EditPipeline: Sendable {
     /// facts and upright size, or nil when it cannot be read.
     @concurrent
     func open(_ id: MediaAssetID, sourceSize: Int64?) async -> OpenedEditPhoto? {
-        guard await MaterializationCoordinator.makeLocal(id, sourceSize: sourceSize, via: materialization) else {
+        guard await materialization.ensureLocal(.init(
+            id: id, sourceSize: sourceSize, isVideo: false, priority: .interactive
+        )).isLocal else {
             return nil
         }
         do {
@@ -811,7 +813,9 @@ nonisolated struct EditPipeline: Sendable {
         recipe: EditRecipe,
         sourceSize: Int64?
     ) async -> (image: CGImage, opened: OpenedEditPhoto)? {
-        guard await MaterializationCoordinator.makeLocal(id, sourceSize: sourceSize, via: materialization) else {
+        guard await materialization.ensureLocal(.init(
+            id: id, sourceSize: sourceSize, isVideo: false, priority: .interactive
+        )).isLocal else {
             return nil
         }
         do {
@@ -843,7 +847,9 @@ nonisolated struct EditPipeline: Sendable {
                 ])
                 return nil
             }
-            guard await MaterializationCoordinator.makeLocal(id, sourceSize: result.sourceSize, via: materialization) else {
+            guard await materialization.ensureLocal(.init(
+                id: id, sourceSize: result.sourceSize, isVideo: false, priority: .interactive
+            )).isLocal else {
                 await handToEnrichment(id)
                 return nil
             }
@@ -875,7 +881,9 @@ nonisolated struct EditPipeline: Sendable {
         shown: EditRecipe,
         sourceSize: Int64?
     ) async -> (temperature: Double, tint: Double)? {
-        guard await MaterializationCoordinator.makeLocal(id, sourceSize: sourceSize, via: materialization) else {
+        guard await materialization.ensureLocal(.init(
+            id: id, sourceSize: sourceSize, isVideo: false, priority: .interactive
+        )).isLocal else {
             return nil
         }
         do {
@@ -892,7 +900,9 @@ nonisolated struct EditPipeline: Sendable {
     /// saved, GeoCalib on the upright, unedited photo, trusted only when confident.
     @concurrent
     func analyze(_ request: EditAnalysisRequest) async -> EditAnalysis {
-        guard await MaterializationCoordinator.makeLocal(request.id, sourceSize: request.sourceSize, via: materialization)
+        guard await materialization.ensureLocal(.init(
+            id: request.id, sourceSize: request.sourceSize, isVideo: false, priority: .interactive
+        )).isLocal
         else { return EditAnalysis(crop: nil, level: nil) }
         let url = request.id.fileURL
         let path = request.id.relativePath.rawValue

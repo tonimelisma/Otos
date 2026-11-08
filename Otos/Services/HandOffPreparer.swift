@@ -53,10 +53,10 @@ actor HandOffPreparer {
     }
 
     let directory: URL
-    private let materialization: MaterializationCoordinator?
+    private let materialization: any MaterializationRequesting
     private var cleared = false
 
-    init(directory: URL, materialization: MaterializationCoordinator?) {
+    init(directory: URL, materialization: any MaterializationRequesting) {
         self.directory = directory
         self.materialization = materialization
     }
@@ -73,9 +73,9 @@ actor HandOffPreparer {
             return target
         }
         let start = ContinuousClock.now
-        guard await MaterializationCoordinator.makeLocal(
-            item.id, sourceSize: item.sourceSize, isVideo: item.isVideo, via: materialization
-        ) else {
+        guard await materialization.ensureLocal(.init(
+            id: item.id, sourceSize: item.sourceSize, isVideo: item.isVideo, priority: .interactive
+        )).isLocal else {
             throw PrepareError.originalUnavailable
         }
         // Written beside the target and moved into place, so a reader never sees half a file.

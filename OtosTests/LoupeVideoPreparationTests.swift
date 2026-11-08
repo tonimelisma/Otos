@@ -67,7 +67,7 @@ struct LoupeVideoPreparationTests {
             previewLoader: previewLoader,
             videoLoader: VideoPreviewLoader(
                 status: { _ in .materialized },
-                materializationRequester: ClosureMaterializationRequester { _ in .testMaterialized }
+                materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in .testMaterialized }
             ),
             trashFiles: .refusing
         )

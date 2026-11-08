@@ -113,8 +113,11 @@ and let instrumentation prove a real bottleneck before optimizing it.
 - Most media lives in cloud-synced folders as possibly-dataless placeholders whose
   filesystem facts (name, size, dates, type) read without downloading, but whose
   bytes force materialization. Byte-reading work must never *accidentally*
-  materialize a file: check the `FileMaterialization` detector (`SF_DATALESS`)
-  immediately before any byte read. Deliberate non-blocking background
+  materialize a file. A reader asks `MaterializationCoordinator` where the original
+  is (`locality(of:)`: local, fetchable, unreachable — for a folder, from
+  `SF_DATALESS`; for a source that stages originals, such as a camera, from its
+  staging folder) and fetches through `ensureLocal`, then checks the
+  `FileMaterialization` detector again immediately before the byte read. Deliberate non-blocking background
   materialization for enrichment is permitted (up to eagerly materializing the
   whole library). Otos does not free what it downloads; macOS evicts uploaded, idle
   provider files under disk pressure, and background and device downloads never take

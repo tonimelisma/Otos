@@ -39,12 +39,13 @@ struct PreviewImageLoaderSizeTests {
         let gate = Gate()
         let materialized = Mutex(false)
         let statusCalls = Mutex(0)
+        let status: @Sendable (URL) -> FileMaterializationStatus = { _ in
+            statusCalls.withLock { $0 += 1 }
+            return materialized.withLock { $0 } ? .materialized : .dataless
+        }
         let loader = PreviewImageLoader(
-            status: { _ in
-                statusCalls.withLock { $0 += 1 }
-                return materialized.withLock { $0 } ? .materialized : .dataless
-            },
-            materializationRequester: ClosureMaterializationRequester { _ in
+            status: status,
+            materializationRequester: ClosureMaterializationRequester(status: status) { _ in
                 await gate.wait()
                 materialized.withLock { $0 = true }
                 return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 1)
