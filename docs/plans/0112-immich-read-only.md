@@ -11,6 +11,15 @@ Opened 2026-11-07. Decisions: ADR 0046. API facts: `docs/research/2026-11-07-imm
 - Offline: Otos keeps showing its own stored thumbnail and 2560 px preview. Work that
   needs the original waits for the server and says so.
 
+- An account's grid and loupe show Immich's own thumbnail and preview, downloaded on
+  sync, instead of downloading every original to render (owner proposal, 2026-11-07;
+  ADR 0046 §7, `docs/research/2026-11-07-immich-derived-assets.md`).
+
+## Open owner decision
+
+- Whether an account's RAWs get RAW9 renders on open or zoom, or from a background job
+  while the server is reachable. Until then a RAW shows Immich's libvips development.
+
 ## Defaults taken (not yet confirmed by the owner)
 
 - Owned assets only. Partner and shared-album assets come later.
@@ -32,7 +41,8 @@ Each increment lands on `main` with its own DoD.
    comparison. Existing tests stay unmodified and green.
 3. **Refactor:** `MaterializationCoordinator.locality(of:)` and `ensureLocal`. All byte
    readers ask them. Adds a test that a camera item not yet staged, opened at full
-   resolution in the loupe, gets staged.
+   resolution in the loupe, gets staged. Enrichment readiness moves to `locality(of:)` in
+   increment 7, with the download it gates.
 4. **Refactor:** kind-neutral source-enumeration Store API, and a staging location that
    is not specific to devices.
 5. **Feature, offline:**
@@ -48,12 +58,16 @@ Each increment lands on `main` with its own DoD.
    - the Add Immich Account sheet (server URL, email, password, with validation);
    - `ImmichCatalogSync` with acks after the Store applies a batch, trash, permanent
      delete and reset;
-   - provisional thumbnails and reachability.
+   - Immich's thumbnail and preview downloaded on sync as source-provisional products,
+     sizes and profiles read from each file;
+   - reachability.
 
    Tested with a `URLProtocol` stub and against a disposable local Immich server.
-7. **Feature:** original download in the executor branch, with every enrichment product
-   written from one read and the staged file then released. Includes ranged metadata
-   reads and the free-space floor.
+7. **Feature:** original download in the executor branch, for work that needs the bytes
+   (full-resolution zoom, edit, export, digest), with every missing product, Otos's
+   rendering included, written from that one read. Render signatures keyed by pipeline.
+   Includes ranged metadata reads, the free-space floor, and the RAW9 timing the owner
+   decides.
 8. **Feature:** hand-off, drag, clipboard, Share and Open With for an original not yet
    downloaded, and what each one says while offline.
 9. **Feature:** Live Photo placement, and Duplicates presentation and refused resolutions

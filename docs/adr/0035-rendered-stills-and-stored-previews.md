@@ -1,7 +1,7 @@
 # ADR 0035: Stills are rendered once and kept as a thumbnail and a preview
 
 - Status: Accepted
-- Last updated: 2026-10-31
+- Last updated: 2026-11-07
 
 ## Context
 
@@ -53,6 +53,16 @@ and is never shown at full size except when zoomed to 100%.
   files live in the existing derived-image directory and follow the thumbnail's whole
   lifecycle: staged, promoted only after the row validates, superseded files deleted,
   purged with the row, moved when a root's path changes, and copied by import reuse.
+- **Source-provisional products** (lands with ADR 0046, Proposed). A source that
+  serves its own derived images can supply both products before Otos renders. An Immich
+  account's thumbnail and preview are Immich's own (250 px and 1440 px on the short
+  edge by default; sizes are read from each file, never assumed), downloaded on sync.
+  They are written without a rendering stamp, like a card's Quick Look thumbnail, but
+  unlike it they are not a claim on enrichment: the row is rendered only when its
+  original is local for work that needs its bytes, and that one read writes Otos's
+  rendering over them (ADR 0046 §7). Re-downloading 350 GB of originals to replace a
+  6 GB set of usable images is the cost this state avoids
+  (`docs/research/2026-11-07-immich-derived-assets.md`).
 - **The loupe opens from the preview.** Every request short of full resolution decodes
   the stored preview without touching the original, cloud-only or not. The original's
   long edge comes from the catalog's stored metadata, joined into `MediaTileDetail`, and
@@ -83,6 +93,9 @@ and is never shown at full size except when zoomed to 100%.
   open; a newer thumbnail of the same asset replacing the painted one keeps the no-blank
   rule (APP-015). An imported copy settles with the card's rendering, or with its
   provisional thumbnail until enrichment renders it.
+- An Immich account's photos show Immich's rendering — for a RAW, libvips's, not
+  RAW9 — until their original is local; the grid and loupe of a library always show
+  Otos's.
 - About 6 GB of Application Support for previews, kept for the life of each photo
   (ADR 0008, ADR 0009: no eviction).
 - The backfill re-enriches every library still once: on this library, about 209 GB of
