@@ -60,7 +60,7 @@ extension CatalogProjection {
             return (state, CatalogProjectionBuildMetrics(orderQueryMs: 0))
         }
 
-        let facts = makeBuildFacts(
+        var unsearched = makeBuildFacts(
             allRoots: allRoots,
             request: request,
             resolvedDescriptor: resolvedDescriptor,
@@ -68,6 +68,10 @@ extension CatalogProjection {
             ordered: (orderedAssetIDs, dayBuckets, coordinates),
             orderQueryMs: orderQueryMs
         )
+        if let search = resolvedDescriptor.search {
+            try await applySearch(search, to: &unsearched, store: store)
+        }
+        let facts = unsearched
         // The supplementary reads are independent; an error in any fails the build.
         async let unfilteredVisibleAssetCount = unfilteredVisibleAssetCount(facts, store: store)
         async let allAssetCount = catalogedAssetCount(facts, store: store)
@@ -85,6 +89,30 @@ extension CatalogProjection {
         )
         state.pendingIdentityRemaps = pendingIdentityRemaps
         return (state, metrics)
+    }
+
+    /// Narrows the scope to what `search` matches (ADR 0048). With no index there is no
+    /// answer, so the build fails and publishes nothing rather than an empty grid.
+    private func applySearch(_ search: CatalogSearch, to facts: inout CatalogProjectionBuildFacts, store: CatalogStore) async throws {
+        guard let searchIndex else {
+            throw CatalogProjectionSearchUnavailable()
+        }
+        let matches = try await searchIndex.matches(for: search.text)
+        let unsearched = facts.scopedAssetIDs.count
+        let searched = CatalogWindowPolicy.searched(
+            ids: facts.scopedAssetIDs,
+            dayBuckets: facts.scopedDayBuckets,
+            coordinates: facts.scopedCoordinates,
+            scores: matches.scores,
+            order: search.order
+        )
+        facts.scopedAssetIDs = searched.ids
+        facts.scopedDayBuckets = searched.dayBuckets
+        facts.scopedCoordinates = searched.coordinates
+        facts.search = try await CatalogSearchOutcome(
+            unsearchedScopeCount: unsearched,
+            stillReadingCount: searched.ids.isEmpty ? store.searchEmbeddingPendingCount() : 0
+        )
     }
 
     static func resolvedDescriptor(
@@ -151,7 +179,8 @@ extension CatalogProjection {
             libraries: facts.allRoots,
             allAssetCount: allAssetCount,
             unfilteredVisibleAssetCount: unfilteredVisibleAssetCount,
-            selectedAssetCount: facts.scopedAssetIDs.count
+            selectedAssetCount: facts.scopedAssetIDs.count,
+            search: facts.search
         )
         let state = CatalogWindowPolicy.catalogWindowState(
             CatalogProjectionWindowStateParts(
@@ -219,3 +248,6 @@ extension CatalogProjection {
         )
     }
 }
+
+/// A search was asked of a projection that has no index to answer it.
+nonisolated struct CatalogProjectionSearchUnavailable: Error {}

@@ -276,7 +276,8 @@ extension CatalogWindowViewModel {
         setQueryDescriptor(CatalogQueryDescriptor(
             scope: .mapArea(area),
             filter: queryDescriptor.filter,
-            sort: queryDescriptor.sort
+            sort: queryDescriptor.sort,
+            search: queryDescriptor.search
         ))
         scopeEntrySelection = (queryGeneration, entry)
         enterModeForOpeningScope(mode)
@@ -291,7 +292,8 @@ extension CatalogWindowViewModel {
         setQueryDescriptor(CatalogQueryDescriptor(
             scope: .places,
             filter: queryDescriptor.filter,
-            sort: queryDescriptor.sort
+            sort: queryDescriptor.sort,
+            search: queryDescriptor.search
         ))
     }
 }

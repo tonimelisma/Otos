@@ -175,13 +175,14 @@ nonisolated struct DuplicateLibrary: Sendable {
 
 // MARK: - Same photo (ADR 0042)
 
-/// The thumbnail a render signature is read from, named by what makes it that image: its
-/// path, the edit revision it was rendered with, the file signature it was rendered from
-/// (its rendering stamp, empty for a provisional thumbnail), and — for a thumbnail a
-/// source drew (ADR 0046 §7) — that source products' stamp, because a changed file gets new
-/// source products at the same path. A signature whose source no longer matches is stale.
-nonisolated enum RenderSignatureSQL {
-    static func source(_ row: String) -> String {
+/// The stored thumbnail a product read from it names — a render signature (ADR 0042), a
+/// search embedding (ADR 0048) — by what makes it that image: its path, the edit revision it
+/// was rendered with, the file signature it was rendered from (its rendering stamp, empty
+/// for a provisional thumbnail), and — for a thumbnail a source drew (ADR 0046 §7) — that
+/// source products' stamp, because a changed file gets new source products at the same
+/// path. A product whose recorded identity no longer matches is stale.
+nonisolated enum StoredThumbnailSQL {
+    static func identity(_ row: String) -> String {
         """
         (\(row).thumbnail_path || '|' || \(row).rendered_revision || '|'
             || IFNULL(\(row).rendered_source_size, '') || '|' || IFNULL(\(row).rendered_source_mtime, '')
@@ -262,7 +263,7 @@ nonisolated extension DuplicatesGateway {
             sql: """
             SELECT a.library_root_id, a.relative_path, a.kind, a.capture_instant_unix, a.render_dhash,
                    m.pixel_width, m.pixel_height, m.orientation, m.camera_model, m.serial_number,
-                   \(RenderSignatureSQL.isSourceDrawn("a"))
+                   \(StoredThumbnailSQL.isSourceDrawn("a"))
             FROM media_asset a
             LEFT JOIN asset_metadata m
               ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
@@ -272,7 +273,7 @@ nonisolated extension DuplicatesGateway {
               AND a.trash_path IS NULL
               AND a.hidden_by_source = 0
               AND a.render_dhash IS NOT NULL
-              AND a.render_signature_source = \(RenderSignatureSQL.source("a"))
+              AND a.render_signature_source = \(StoredThumbnailSQL.identity("a"))
             """,
             arguments: StatementArguments(rootIDs)
         )

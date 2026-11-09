@@ -310,6 +310,19 @@
 				Resources/Licenses/FocalNet-LICENSE.txt,
 				Resources/Licenses/GeoCalib-LICENSE.txt,
 				Resources/Licenses/README.md,
+				Services/PhotoSearchIndex.swift,
+				Services/SearchEmbeddingModel.swift,
+				Services/SearchQueryEncoder.swift,
+				Services/SearchTextTokenizer.swift,
+				Stores/SearchEmbeddingStorage.swift,
+				Resources/SigLIP2Image.mlpackage,
+				Resources/SigLIP2Text.mlpackage,
+				Resources/SigLIP2Tokenizer.bin,
+				Resources/SigLIP2TokenEmbeddings-0.bin,
+				Resources/SigLIP2TokenEmbeddings-1.bin,
+				Resources/SigLIP2TokenEmbeddings-2.bin,
+				Resources/SigLIP2TokenEmbeddings-3.bin,
+				Resources/Licenses/SigLIP2-LICENSE.txt,
 			);
 			target = 3B44EB5D2FCEBA57007E4158 /* Otos */;
 		};
@@ -538,6 +551,19 @@
 				Resources/Licenses/FocalNet-LICENSE.txt,
 				Resources/Licenses/GeoCalib-LICENSE.txt,
 				Resources/Licenses/README.md,
+				Services/PhotoSearchIndex.swift,
+				Services/SearchEmbeddingModel.swift,
+				Services/SearchQueryEncoder.swift,
+				Services/SearchTextTokenizer.swift,
+				Stores/SearchEmbeddingStorage.swift,
+				Resources/SigLIP2Image.mlpackage,
+				Resources/SigLIP2Text.mlpackage,
+				Resources/SigLIP2Tokenizer.bin,
+				Resources/SigLIP2TokenEmbeddings-0.bin,
+				Resources/SigLIP2TokenEmbeddings-1.bin,
+				Resources/SigLIP2TokenEmbeddings-2.bin,
+				Resources/SigLIP2TokenEmbeddings-3.bin,
+				Resources/Licenses/SigLIP2-LICENSE.txt,
 			);
 			target = 5980D4726503709D9D7F52EB /* OtosXXH3 */;
 		};

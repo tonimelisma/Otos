@@ -19,6 +19,9 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
     /// a location yet (ADR 0040).
     case noLocatedMedia
     case noFilterMatches
+    /// A search matched nothing in a scope that holds items (ADR 0048). Carries the text and
+    /// how many items search has not read yet, which may still match.
+    case noSearchResults(String, stillReading: Int)
     case checkingLibraries
     case noAvailableMedia
     case libraryChecking
@@ -46,6 +49,8 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
             "noLocatedMedia"
         case .noFilterMatches:
             "noFilterMatches"
+        case let .noSearchResults(_, stillReading):
+            "noSearchResults stillReading=\(stillReading)"
         case .checkingLibraries:
             "checkingLibraries"
         case .noAvailableMedia:

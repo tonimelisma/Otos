@@ -19,6 +19,8 @@ extension CatalogMediaEmptyState {
             "No Located Media"
         case .noFilterMatches:
             "No Matching Media"
+        case let .noSearchResults(text, _):
+            "No Results for \u{201C}\(text)\u{201D}"
         case .checkingLibraries:
             "Checking Libraries"
         case .noAvailableMedia:
@@ -46,6 +48,10 @@ extension CatalogMediaEmptyState {
             "Photos and videos with location information appear here as they are cataloged."
         case .noFilterMatches:
             "No media in this scope matches the active filters."
+        case let .noSearchResults(_, stillReading) where stillReading > 0:
+            "Otos is still reading \(stillReading.formatted()) \(stillReading == 1 ? "item" : "items") for search. They appear here if they match."
+        case .noSearchResults:
+            "Check the spelling or try a new search."
         case .checkingLibraries:
             "Otos is checking whether saved library folders are reachable."
         case .noAvailableMedia:
@@ -76,6 +82,8 @@ extension CatalogMediaEmptyState {
             "map"
         case .noFilterMatches:
             "line.3.horizontal.decrease.circle"
+        case .noSearchResults:
+            "magnifyingglass"
         case .checkingLibraries, .libraryChecking:
             "externaldrive.badge.timemachine"
         case .noAvailableMedia, .libraryUnavailable:

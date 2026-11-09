@@ -77,6 +77,10 @@ actor CatalogProjection {
     /// The duplicate groups the last successful duplicates build produced; nil until one has.
     private var duplicates: CatalogDuplicatesState?
     private var duplicatesProjection: DuplicatesProjection?
+    /// Answers a descriptor's search (ADR 0048); nil where nothing indexes (tests that do
+    /// not search), and a search then publishes nothing.
+    private(set) var searchIndex: PhotoSearchIndex?
+    private var searchTask: Task<Void, Never>?
     private var duplicatesTask: Task<Void, Never>?
     /// Bumped by every catalog change and by a new subscription: the groups may differ.
     private var duplicatesRequested: UInt64 = 0
@@ -154,11 +158,26 @@ actor CatalogProjection {
         return stream
     }
 
+    /// Uses `index` for searches from now on. A change to what it holds asks for a
+    /// publication while a search is shown.
+    func attachSearchIndex(_ index: PhotoSearchIndex) async {
+        searchTask?.cancel()
+        searchIndex = index
+        let changes = await index.changes()
+        searchTask = Task { [weak self] in
+            for await _ in changes {
+                guard let self else { return }
+                await searchIndexDidChange()
+            }
+        }
+    }
+
     func updateSidebarSelection(_ selection: SidebarSelection) {
         updateQueryDescriptor(CatalogQueryDescriptor(
             scope: selection,
             filter: queryRequest.descriptor.filter,
-            sort: queryRequest.descriptor.sort
+            sort: queryRequest.descriptor.sort,
+            search: queryRequest.descriptor.search
         ))
     }
 
@@ -310,6 +329,11 @@ private extension CatalogProjection {
         }
     }
 
+    func searchIndexDidChange() {
+        guard queryRequest.descriptor.search != nil else { return }
+        requestPublication(.structural, ringNow: false)
+    }
+
     func storeDidChange(_ change: CatalogStoreChange) {
         // A remove and same-path add can coalesce into a final snapshot where the
         // path exists again. Store's typed removal signal preserves that transient
@@ -355,7 +379,11 @@ private extension CatalogProjection {
         // identities (a cheap `.refreshVisible`) and the identity comparison
         // short-circuits on the shared array buffer. A structural change or a newer
         // user intent re-runs the full query.
-        let reuse: CatalogProjectionOrderReuse = if kind == .detailOnly, let previous = lastPublishedState {
+        // A search narrows the order after it is read, so the published order is not the
+        // order a search pass starts from: a pass under a search always reads it.
+        let reuse: CatalogProjectionOrderReuse = if kind == .detailOnly, selectedRequest.descriptor.search == nil,
+                                                    let previous = lastPublishedState
+        {
             CatalogProjectionOrderReuse(
                 orderedAssetIDs: previous.mediaGrid.orderedAssetIDs,
                 dayBuckets: previous.mediaGrid.dayBuckets,

@@ -136,36 +136,58 @@ private struct MenuToggleSource {
 
 struct CatalogSortMenu: View {
     let sort: MediaSortOrder
+    let search: CatalogSearch?
     let setOrder: (MediaSortOrder) -> Void
+    let orderByRelevance: () -> Void
 
     var body: some View {
         Menu {
-            CatalogSortMenuContent(sort: sort, setOrder: setOrder)
+            CatalogSortMenuContent(sort: sort, search: search, setOrder: setOrder, orderByRelevance: orderByRelevance)
         } label: {
             Image(systemName: "arrow.up.arrow.down")
         }
-        .help("Sort: \(sort.label)")
+        .help("Sort: \(search?.order == .relevance ? "Relevance" : sort.label)")
     }
 }
 
+/// The sort choices. While a search is shown, `Relevance` — best match first, Lightroom's
+/// default for search results — sits above the scope's own orders (ADR 0048).
 struct CatalogSortMenuContent: View {
     let sort: MediaSortOrder
+    let search: CatalogSearch?
     let setOrder: (MediaSortOrder) -> Void
+    let orderByRelevance: () -> Void
+
+    private enum Choice: Hashable {
+        case relevance
+        case order(MediaSortOrder)
+    }
 
     var body: some View {
-        Picker("Sort Order", selection: sortBinding) {
+        Picker("Sort Order", selection: choiceBinding) {
+            if search != nil {
+                Text("Relevance").tag(Choice.relevance)
+                Divider()
+            }
             ForEach(MediaSortOrder.allCases, id: \.self) { order in
-                Text(order.label).tag(order)
+                Text(order.label).tag(Choice.order(order))
             }
         }
         .pickerStyle(.inline)
         .labelsHidden()
     }
 
-    private var sortBinding: Binding<MediaSortOrder> {
+    private var choiceBinding: Binding<Choice> {
         Binding(
-            get: { sort },
-            set: { order in setOrder(order) }
+            get: { search?.order == .relevance ? .relevance : .order(sort) },
+            set: { choice in
+                switch choice {
+                case .relevance:
+                    orderByRelevance()
+                case let .order(order):
+                    setOrder(order)
+                }
+            }
         )
     }
 }

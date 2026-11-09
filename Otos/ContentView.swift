@@ -17,6 +17,7 @@ struct ContentView: View {
     @Bindable var viewModel: CatalogWindowViewModel
     /// The pane the inspector last showed: view-local, so a collapsing column keeps it.
     @State private var lastInspectorPane: InspectorPane = .edit
+    @FocusState private var isSearchFocused: Bool
 
     /// The large-download question (Plan 0104): the suppression checkbox writes the same
     /// preference as Settings ▸ General.
@@ -269,7 +270,9 @@ struct ContentView: View {
                 )
                 CatalogSortMenu(
                     sort: viewModel.queryDescriptor.sort,
-                    setOrder: viewModel.setSortOrder
+                    search: viewModel.queryDescriptor.search,
+                    setOrder: viewModel.setSortOrder,
+                    orderByRelevance: viewModel.orderSearchByRelevance
                 )
             }
             ToolbarItem(placement: .primaryAction) {
@@ -326,6 +329,17 @@ struct ContentView: View {
                     moveToTrash: viewModel.moveTargetedMediaToTrash
                 )
             }
+        }
+        // Keyword search (ADR 0048): the toolbar's trailing search field narrows whatever
+        // scope is shown; Edit ▸ Find focuses it.
+        .searchable(
+            text: Binding(get: { viewModel.searchText }, set: { viewModel.setSearchText($0) }),
+            placement: .toolbar,
+            prompt: "Search"
+        )
+        .searchFocused($isSearchFocused)
+        .onChange(of: viewModel.searchFocusRequest) {
+            isSearchFocused = true
         }
         .alert(
             "Could Not Eject Disk",

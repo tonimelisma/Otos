@@ -241,7 +241,13 @@ public struct OtosApp: App {
                 }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
             }
-            CommandGroup(replacing: .textEditing) {}
+            // Edit ▸ Find (⌘F), as in Photos: focuses the toolbar search field (ADR 0048).
+            CommandGroup(replacing: .textEditing) {
+                Button("Find") {
+                    catalogViewModel.focusSearch()
+                }
+                .keyboardShortcut("f", modifiers: .command)
+            }
             CommandMenu("Photo") {
                 Button(MediaChoice.liked.actionLabel) {
                     catalogViewModel.submitMediaChoice(.liked, origin: .menu)
@@ -389,7 +395,9 @@ public struct OtosApp: App {
                 Menu("Sort") {
                     CatalogSortMenuContent(
                         sort: catalogViewModel.queryDescriptor.sort,
-                        setOrder: catalogViewModel.setSortOrder
+                        search: catalogViewModel.queryDescriptor.search,
+                        setOrder: catalogViewModel.setSortOrder,
+                        orderByRelevance: catalogViewModel.orderSearchByRelevance
                     )
                 }
                 Divider()

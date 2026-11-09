@@ -168,6 +168,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.searchEmbeddingsMigrationIdentifier) { db in
+            for statement in CatalogSchema.searchEmbeddingsStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

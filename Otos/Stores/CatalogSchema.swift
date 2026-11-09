@@ -458,6 +458,29 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// Search embeddings (ADR 0048): one per asset, read from its stored thumbnail by
+    /// `PhotoSearchIndex`, overlay on the asset — a move carries it (`ON UPDATE CASCADE`, the
+    /// move witness of ADR 0034 included) and the asset's proven deletion or its root's
+    /// removal ends it (`ON DELETE CASCADE`). `source` names the thumbnail and model revision
+    /// it was read from (`SearchEmbeddingStorage.currentSource`); `embedding` is 768
+    /// little-endian Float32 values, or NULL for a thumbnail that did not decode.
+    static let searchEmbeddingsMigrationIdentifier = "v21_search_embeddings"
+
+    static let searchEmbeddingsStatements: [String] = [
+        """
+        CREATE TABLE search_embedding (
+            library_root_id INTEGER NOT NULL,
+            relative_path TEXT NOT NULL,
+            source TEXT NOT NULL,
+            embedding BLOB,
+            PRIMARY KEY (library_root_id, relative_path),
+            FOREIGN KEY (library_root_id, relative_path)
+                REFERENCES media_asset(library_root_id, relative_path)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        )
+        """,
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (

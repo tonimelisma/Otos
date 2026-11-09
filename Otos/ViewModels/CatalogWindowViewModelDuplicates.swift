@@ -221,7 +221,8 @@ extension CatalogWindowViewModel {
         setQueryDescriptor(CatalogQueryDescriptor(
             scope: .duplicateGroup(group.id),
             filter: queryDescriptor.filter,
-            sort: queryDescriptor.sort
+            sort: queryDescriptor.sort,
+            search: queryDescriptor.search
         ))
         selectAssets(Array(ids.prefix(2)))
         setViewMode(mode)
@@ -237,7 +238,8 @@ extension CatalogWindowViewModel {
         setQueryDescriptor(CatalogQueryDescriptor(
             scope: .duplicates,
             filter: queryDescriptor.filter,
-            sort: queryDescriptor.sort
+            sort: queryDescriptor.sort,
+            search: queryDescriptor.search
         ))
     }
 

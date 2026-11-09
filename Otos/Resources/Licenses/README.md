@@ -1,6 +1,6 @@
 # Model notices
 
-Otos ships three converted models (ADR 0045, ADR 0047):
+Otos ships four converted models (ADR 0045, ADR 0047, ADR 0048):
 
 - `FocalNet.mlpackage` is Appwrite FocalNet's human-preference crop ranker
   (https://huggingface.co/appwrite/focalnet), converted to Core ML at full precision.
@@ -19,3 +19,9 @@ Otos ships three converted models (ADR 0045, ADR 0047):
   It is converted to Core ML with 8-bit linear per-channel weights. Code: MIT,
   `AdaFace-LICENSE.txt`. The weights follow the training dataset's licence (WebFace260M,
   non-commercial research); Otos is non-commercial.
+- `SigLIP2Image.mlpackage`, `SigLIP2Text.mlpackage`, `SigLIP2TokenEmbeddings-0…3.bin` and
+  `SigLIP2Tokenizer.bin` are SigLIP 2 B/16-256 (https://huggingface.co/timm/ViT-B-16-SigLIP2-256),
+  from SigLIP 2: Multilingual Vision-Language Encoders, Michael Tschannen et al., 2025. Both
+  towers are converted to Core ML with 8-bit linear per-channel weights; the text tower's token
+  table is stored as int8 rows with per-row scales, and its Gemma tokenizer as a binary
+  vocabulary and merge list. Apache License 2.0: `SigLIP2-LICENSE.txt`.

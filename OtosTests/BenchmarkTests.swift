@@ -151,6 +151,43 @@ struct BenchmarkTests {
         }
     }
 
+    /// Keyword search (ADR 0048): the resize and the image tower for one stored thumbnail, as
+    /// indexing reads each; a query's tokens and text tower; and the match over a 20,000-photo
+    /// library's embeddings, which every search pass runs. Translation is the system's, so a
+    /// case reads English.
+    @Test func searchCases() async throws {
+        let bundle = Bundle(for: CatalogWindowViewModel.self)
+        let thumbnail = SearchModelTests.solid(red: 0.3, green: 0.6, blue: 0.2, width: 256, height: 171)
+        try await Benchmark.measure("search.resample.x16") {
+            var squares = 0
+            for _ in 0 ..< 16 where SearchImageResampler.square(thumbnail, side: SearchImageModel.side) != nil {
+                squares += 1
+            }
+            #expect(squares == 16)
+        }
+
+        let image = try SearchImageModel(bundle: bundle)
+        try await Benchmark.measure("search.embedImage") {
+            let embedding = try image.embedding(of: thumbnail)
+            #expect(embedding.count == SearchEmbedding.dimensions)
+        }
+
+        let tokenizer = try SearchTextTokenizer(bundle: bundle)
+        let text = try SearchTextModel(bundle: bundle)
+        try await Benchmark.measure("search.embedQuery") {
+            let embedding = try text.embedding(of: tokenizer.tokenIDs(for: "children on a swing at the beach"))
+            #expect(embedding.count == SearchEmbedding.dimensions)
+        }
+
+        var generator = SplitMix64(seed: 11)
+        let count = 20000
+        let vectors = (0 ..< count * SearchEmbedding.dimensions).map { _ in Float(generator.next() % 2001) / 1000 - 1 }
+        let query = (0 ..< SearchEmbedding.dimensions).map { _ in Float(generator.next() % 2001) / 1000 - 1 }
+        try await Benchmark.measure("search.match.20k") {
+            #expect(PhotoSearchIndex.scores(vectors, count: count, query: query).count == count)
+        }
+    }
+
     /// Faces of `people` people, each a direction in embedding space with small per-face
     /// variation, spread over ten years; the first `confirmedEach` of each person confirmed.
     static func groupingLibrary(faces count: Int, people: Int, confirmedEach: Int) -> ([FaceFact], [PersonFact]) {

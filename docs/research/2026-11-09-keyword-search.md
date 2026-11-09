@@ -6,7 +6,8 @@ do it under about 500 MB, and what does Apple already provide?
 
 **Answer:** search by a contrastive image–text embedding (the CLIP family) is the only approach
 that finds long-tail phrases. Apple provides no such embedding, so it needs a model of Otos's
-own. The bake-off on the owner's library (section 7) found one clear best design:
+own. The bake-off on the owner's library (section 7) found one clear best design, and the app
+built from it (section 8) measures within three points of it:
 
 - **Translate the query to English with Apple's on-device Translation, then search with
   SigLIP 2 B/16-256.**
@@ -325,17 +326,113 @@ processes used the GPU at once (NLLB image encoding next to text encoding). The 
 0% CPU for 13 minutes. This is the same failure that made Otos run Core ML on the CPU (memory
 `core-ml-in-otos`).
 
-### Open before an ADR
+### Settled in §8
 
-- **The query's language.** In the test, Translation was told each query's language. A typed
-  query does not say it, and a one-word query ("pizza", "sushi", "lumi") is often ambiguous.
-  `NLLanguageRecognizer` constrained to the user's preferred languages, or translating from each
-  preferred language, are the candidates. Both are untested.
-- **Core ML conversion, 8-bit drift and Core ML CPU time** for SigLIP 2 B/16, against these
-  fp32 rankings (memory `core-ml-in-otos`: half precision moved FocalNet's top choice 3.6% of
-  the time).
-- **A match cutoff:** where the ranked list stops, as Ente's 0.175 does for MobileCLIP. It needs
-  calibrating on these judgments for the chosen model.
+The query's language, the Core ML conversion and its 8-bit drift, the match cutoff and the
+resize are measured in §8, with the code Otos ships.
+
+## 8. From the bake-off to the app
+
+Everything here ran the code Otos ships — the converted Core ML models, the Swift tokenizer,
+resize and query encoder (`SearchQueryEncoder`) — on the same 19,221 photos, and every result
+it showed was judged (1,469 more photos, by the same contact-sheet method), so no score below
+counts an unjudged photo.
+
+### Core ML and 8-bit weights
+
+- **The conversion is exact:** at full precision the Core ML image tower reproduces PyTorch
+  (median cosine 1.0000 on 300 photos).
+- **Plain 8-bit was not:** linear per-channel int8 gave a median cosine of 0.917, and English
+  recall@10 fell from 85 to 81. Per-block (0.945) and asymmetric (0.913) int8 were no better.
+- **One tensor caused it.** Quantizing each weight group alone (`tools/sensitivity.py` in the
+  research folder): every block, the patch embedding and the attention pool stay at 0.9999;
+  the positional embedding alone drops to 0.914. It is one (1, 256, 768) tensor, so "per
+  channel" gives 196,608 values a single scale.
+- **Kept at full precision**, the int8 tower matches at 0.9994 (5th percentile 0.9986), 94 MB.
+- **Text tower:** int8 weights and the int8 token table move scores by under a point.
+
+### The resize
+
+The first Swift path drew the thumbnail into a 256 × 256 Core Graphics context. Against
+PyTorch on the same thumbnails its embeddings had a median cosine of 0.973. Fed a square
+resized by PIL, the same path gave 0.999: the gap was the filter. open_clip hands torchvision
+a PIL image, which PIL resizes with its bicubic filter (a = −0.5, widened when shrinking,
+8-bit rounding between passes) and without converting an embedded colour profile.
+`SearchImageResampler` reproduces that (every channel within 1 of PIL on the test fixtures)
+and brings the shipped path to a median of 0.997; what is left is JPEG decoding, which
+differs slightly between ImageIO and libjpeg. In a Debug build the first, per-pixel version
+took 74% of indexing time; as one matrix product per pass and channel (Accelerate) it costs
+under 10 ms.
+
+### Thumbnail or preview
+
+Fully judged, the 256 px thumbnail loses nothing against the bake-off's input (the 2,560 px
+preview downscaled to 512 px where one existed): with Translation told the language, 77.1
+against 77.3 across 16 languages, 85 in English for both. Before judging, the thumbnail had
+looked 2 points worse; that was the photos it ranks that nobody had judged.
+
+### The query's language
+
+The app is never told a query's language. `NLLanguageRecognizer` was run on all 884 queries:
+
+| Recogniser | Correct | Mean recall@10, 16 non-English languages |
+| --- | --- | --- |
+| Told the language | 884 | 77.1 |
+| Constrained to English + Translation's languages (shipped) | 704 | 75.0 |
+| Unconstrained | 678 | 74.4 |
+| No translation, as typed | — | 65.4 |
+
+- **Most mistakes cost nothing:** a cognate read as a neighbouring language translates the
+  same ("strand" as Dutch, "pizza" as Italian).
+- **Those that cost** are words that are ambiguous alone: Turkish "at" (horse) read as English,
+  Polish "kot" (cat) translated from Finnish as "cluck", Swedish "glass" (ice cream) read as
+  English.
+- **Estonian**, which Translation lacks and NaturalLanguage does not recognise, is mostly read
+  as Finnish and translated badly: 37, against 52 as typed.
+- **Fusing** the native and translated embeddings (74.0) and gating on the recogniser's
+  confidence (75.7–76.5) did not beat constrained recognition by more than the judging
+  resolves.
+- **Latency:** asking Translation for every language's availability on every query cost
+  0.67 s; the shipped encoder reads the language list once and asks only about the language
+  it recognised (16 ms). Translating a word takes most of the rest: 884 queries ran in 306 s,
+  0.35 s each, 50 ms of it CPU.
+
+### Where results stop
+
+Scored over every judged photo, English queries, the app's embeddings:
+
+| Cutoff | Judged relevant kept | Median shown | 90th percentile shown | Precision of what is shown |
+| --- | --- | --- | --- | --- |
+| best − 0.04, floor 0.08 (shipped) | 83% | 123 | 418 | 0.65 |
+| best − 0.03, floor 0.08 | 72% | 78 | 269 | 0.73 |
+| cosine ≥ 0.09 | 84% | 140 | 854 | 0.61 |
+| cosine ≥ 0.10 | 75% | 82 | 523 | 0.70 |
+
+Precision is estimated from the judged photos inside the cut, which include a random sample
+of six per concept from anywhere inside it, so it is not only the top of the list. A query for
+something the library hardly holds still shows photos: soccer (one relevant photo), bath
+(none), horse and Christmas tree (two each) show 30–150, nearly all wrong. No cut separates
+them, because their best scores (0.108–0.130) overlap those of queries with hundreds of right
+answers (plane 0.101, beach 0.119). With Relevance order the best matches come first.
+
+### The app on the owner's library
+
+The dev build indexed its own catalog: 14,846 assets in about 20 minutes, 12 a second, while
+enrichment ran. Where its stored thumbnail is the same file as the installed catalog's, its
+stored embedding equals the offline run of the same code (cosine 1.0000); the rest differ
+because the dev catalog rendered its own thumbnails. Its embeddings with its own query
+encoder, over the photos it holds:
+
+| | English | Mean of 16 other languages | Estonian |
+| --- | --- | --- | --- |
+| The app (dev catalog, `SearchQueryEncoder`) | 82 | 74.4 | 34 |
+| The same code on the installed catalog's thumbnails | 83 | 75.0 | 37 |
+| Bake-off: PyTorch, previews, told the language | 85 | 77.3 | 48 |
+
+**App Nap.** With the owner away (`UserIsActive 0`), macOS App Naps Otos as it does Mail and
+Safari: every thread runs at priority 4 and indexing, like enrichment, all but stops until the
+window is seen again. The measurement run turned App Nap off for the dev build
+(`NSAppSleepDisabled`) and removed the setting afterwards.
 
 ## Sources
 

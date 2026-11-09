@@ -49,9 +49,19 @@ nonisolated struct CatalogProjectionBuildFacts {
     let importBatches: [ImportBatchSummary]
     let orderedAssetIDs: [MediaAssetID]
     let availableLibraryPaths: Set<LibraryRootPath>
-    let scopedAssetIDs: [MediaAssetID]
-    let scopedDayBuckets: [Date?]
+    var scopedAssetIDs: [MediaAssetID]
+    var scopedDayBuckets: [Date?]
     /// Each scoped ID's location, index-paired; empty unless the scope requires one.
-    let scopedCoordinates: [PlaceCoordinate]
+    var scopedCoordinates: [PlaceCoordinate]
     let orderQueryMs: Int
+    /// Set when a search narrowed the scope.
+    var search: CatalogSearchOutcome?
+}
+
+/// What a search left of a scope, for the empty state (ADR 0048).
+nonisolated struct CatalogSearchOutcome: Equatable {
+    /// The scope's items before the search narrowed it.
+    let unsearchedScopeCount: Int
+    /// Items whose thumbnails search has not read yet; counted only when nothing matched.
+    let stillReadingCount: Int
 }

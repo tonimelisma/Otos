@@ -231,21 +231,53 @@ nonisolated struct MediaSortOrder: Hashable, CaseIterable {
     }
 }
 
+/// A keyword search narrowing what the scope shows to the photos and videos the text
+/// describes (ADR 0048). Never persisted: a relaunch opens without one, as Photos does.
+nonisolated struct CatalogSearch: Hashable, Sendable {
+    /// How the results are ordered: best match first, Lightroom's default for a search, or
+    /// by the scope's own sort.
+    enum Order: Hashable, Sendable {
+        case relevance
+        case sort
+    }
+
+    /// What the user typed, trimmed; never empty.
+    let text: String
+    var order: Order
+
+    /// Nil for text that is only white space: an empty field is no search.
+    init?(text: String, order: Order = .relevance) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        self.text = trimmed
+        self.order = order
+    }
+}
+
 nonisolated struct CatalogQueryDescriptor: Hashable {
     var scope: SidebarSelection
     var filter: MediaFilter
     var sort: MediaSortOrder
+    var search: CatalogSearch?
 
     static let `default` = CatalogQueryDescriptor(scope: .allMedia)
 
     init(
         scope: SidebarSelection,
         filter: MediaFilter = .all,
-        sort: MediaSortOrder = .defaultOrder
+        sort: MediaSortOrder = .defaultOrder,
+        search: CatalogSearch? = nil
     ) {
         self.scope = scope
         self.filter = filter
         self.sort = sort
+        self.search = search
+    }
+
+    /// Whether the grid groups by day (DES-069): under Date sort, unless a search orders it
+    /// by relevance.
+    var groupsByDay: Bool {
+        sort.field == .bestDate && search?.order != .relevance
     }
 
     var diagnosticDescription: String {
@@ -257,7 +289,8 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
         sort=\(sort.field.rawValue):\(sort.direction.rawValue) \
         kinds=\(kindList.isEmpty ? "all" : kindList) \
         formats=\(formatList.isEmpty ? "all" : formatList) \
-        choices=\(choiceList.isEmpty ? "all" : choiceList)
+        choices=\(choiceList.isEmpty ? "all" : choiceList) \
+        search=\(search.map { "\($0.text.count)chars:\($0.order)" } ?? "none")
         """
     }
 }

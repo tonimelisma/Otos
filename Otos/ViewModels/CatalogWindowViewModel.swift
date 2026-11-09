@@ -59,6 +59,11 @@ final class CatalogWindowViewModel {
     private(set) var sidebarSelection: SidebarSelection = .allMedia
     private(set) var queryDescriptor: CatalogQueryDescriptor = .default
     private(set) var isFilterPresented = false
+    /// The toolbar search field's text, as typed (ADR 0048); `queryDescriptor.search` is the
+    /// search it makes.
+    private(set) var searchText = ""
+    /// Bumped by Edit ▸ Find; the window focuses its search field on each change.
+    private(set) var searchFocusRequest: UInt64 = 0
     private(set) var ejectingSourceIdentities: Set<DeviceIdentity> = []
     var ejectAlertMessage: String?
     /// A removal that waits for the library to be free, shown once as an alert in Settings.
@@ -351,6 +356,9 @@ final class CatalogWindowViewModel {
     /// Reads Immich stills' faces from their stored previews (ADR 0047); starts with
     /// enrichment.
     @ObservationIgnored let previewFaceReader: PreviewFaceReader?
+    /// Keyword search's index (ADR 0048), paired with the live enrichment pipeline like the
+    /// render signature refresher: it reads the thumbnails enrichment writes.
+    @ObservationIgnored let photoSearchIndex: PhotoSearchIndex?
     @ObservationIgnored let materializationCoordinator: MaterializationCoordinator
     @ObservationIgnored let deviceStagingRegistry: DeviceStagingRegistry
     @ObservationIgnored private let mediaTileDetailReader: MediaTileDetailReader
@@ -660,6 +668,13 @@ final class CatalogWindowViewModel {
         previewFaceReader = startsEnrichment && enrichmentCoordinator == nil
             ? PreviewFaceReader(store: catalogStore, thumbnailDirectory: catalogStore.thumbnailDirectory, analyzeFaces: analyzeFaces)
             : nil
+        photoSearchIndex = startsEnrichment && enrichmentCoordinator == nil
+            ? PhotoSearchIndex(
+                store: catalogStore,
+                thumbnailDirectory: catalogStore.thumbnailDirectory,
+                bundle: Bundle(for: CatalogWindowViewModel.self)
+            )
+            : nil
         self.stallMonitor = stallMonitor
         self.startsStallMonitor = startsStallMonitor
         self.startsEnrichment = startsEnrichment
@@ -930,7 +945,7 @@ extension CatalogWindowViewModel {
         // `store.start()` is idempotent and shared, so this awaits the same load
         // `startCatalog` runs.
         enrichmentStartTask = Task { [
-            coordinator, materializationCoordinator, metadataRefresher, renderSignatureRefresher, previewFaceReader,
+            coordinator, materializationCoordinator, metadataRefresher, renderSignatureRefresher, previewFaceReader, photoSearchIndex,
             store = catalogStore
         ] in
             do {
@@ -943,12 +958,17 @@ extension CatalogWindowViewModel {
             await coordinator.start()
             await renderSignatureRefresher?.start()
             await previewFaceReader?.start()
+            await photoSearchIndex?.start()
             await metadataRefresher?.refresh()
         }
     }
 
     private func startQueryForwarding(projection: CatalogProjection) {
-        queryForwardingTask = Task { [projection, queryStream] in
+        queryForwardingTask = Task { [projection, queryStream, photoSearchIndex] in
+            // Before the first request, so no search reaches a projection without its index.
+            if let photoSearchIndex {
+                await projection.attachSearchIndex(photoSearchIndex)
+            }
             for await request in queryStream {
                 await projection.updateQueryRequest(request)
             }
@@ -1175,7 +1195,8 @@ extension CatalogWindowViewModel {
         setQueryDescriptor(CatalogQueryDescriptor(
             scope: selection,
             filter: queryDescriptor.filter,
-            sort: queryDescriptor.sort
+            sort: queryDescriptor.sort,
+            search: queryDescriptor.search
         ))
     }
 
@@ -1183,7 +1204,8 @@ extension CatalogWindowViewModel {
         setQueryDescriptor(CatalogQueryDescriptor(
             scope: queryDescriptor.scope,
             filter: filter,
-            sort: queryDescriptor.sort
+            sort: queryDescriptor.sort,
+            search: queryDescriptor.search
         ))
     }
 
@@ -1220,11 +1242,46 @@ extension CatalogWindowViewModel {
         setMediaFilter(queryDescriptor.filter.settingChoice(choice, included: included))
     }
 
+    /// Choosing a sort while searching orders the results by it instead of by relevance.
     func setSortOrder(_ sort: MediaSortOrder) {
+        var search = queryDescriptor.search
+        search?.order = .sort
         setQueryDescriptor(CatalogQueryDescriptor(
             scope: queryDescriptor.scope,
             filter: queryDescriptor.filter,
-            sort: sort
+            sort: sort,
+            search: search
+        ))
+    }
+
+    /// Search menu's Relevance: the results best match first. Only offered while searching.
+    func orderSearchByRelevance() {
+        guard var search = queryDescriptor.search else { return }
+        search.order = .relevance
+        setQueryDescriptor(CatalogQueryDescriptor(
+            scope: queryDescriptor.scope,
+            filter: queryDescriptor.filter,
+            sort: queryDescriptor.sort,
+            search: search
+        ))
+    }
+
+    func focusSearch() {
+        searchFocusRequest &+= 1
+    }
+
+    /// The search field's text (ADR 0048). Typing a new search orders by relevance; editing
+    /// one keeps the order chosen for it; an empty field ends the search.
+    func setSearchText(_ text: String) {
+        searchText = text
+        let order = queryDescriptor.search?.order ?? .relevance
+        let search = CatalogSearch(text: text, order: order)
+        guard search != queryDescriptor.search else { return }
+        setQueryDescriptor(CatalogQueryDescriptor(
+            scope: queryDescriptor.scope,
+            filter: queryDescriptor.filter,
+            sort: queryDescriptor.sort,
+            search: search
         ))
     }
 }
@@ -1240,7 +1297,8 @@ extension CatalogWindowViewModel {
         setQueryDescriptor(CatalogQueryDescriptor(
             scope: selection,
             filter: queryDescriptor.filter,
-            sort: queryDescriptor.sort
+            sort: queryDescriptor.sort,
+            search: queryDescriptor.search
         ))
     }
 

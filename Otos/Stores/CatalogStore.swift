@@ -6876,14 +6876,14 @@ extension CatalogStore {
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT library_root_id, relative_path, thumbnail_path, \(RenderSignatureSQL.source("media_asset")) AS source
+                SELECT library_root_id, relative_path, thumbnail_path, \(StoredThumbnailSQL.identity("media_asset")) AS source
                 FROM media_asset
                 WHERE library_root_id IN (\(placeholders))
                   AND thumbnail_path IS NOT NULL
                   AND kind IN ('image', 'raw')
                   AND pending_trash_batch_unix_ms IS NULL
                   AND trash_path IS NULL
-                  AND render_signature_source IS NOT \(RenderSignatureSQL.source("media_asset"))
+                  AND render_signature_source IS NOT \(StoredThumbnailSQL.identity("media_asset"))
                 ORDER BY library_root_id, relative_path
                 LIMIT ?
                 """,
@@ -6912,7 +6912,7 @@ extension CatalogStore {
                     UPDATE media_asset
                     SET render_dhash = ?, render_gray = ?, render_signature_source = ?
                     WHERE library_root_id = ? AND relative_path = ?
-                      AND \(RenderSignatureSQL.source("media_asset")) = ?
+                      AND \(StoredThumbnailSQL.identity("media_asset")) = ?
                     """,
                     arguments: [
                         result.signature.map { Int64(bitPattern: $0.differenceHash) },
@@ -6931,6 +6931,143 @@ extension CatalogStore {
             notifyCatalogChanged()
         }
         return written
+    }
+
+    /// Assets whose stored thumbnail has no current search embedding (ADR 0048), newest
+    /// capture first so the photos a person is likeliest to look for are searchable first.
+    /// Every available root is read: search covers whatever scope is shown. A Live Photo's
+    /// movie is left out, because its still stands for the item.
+    func searchEmbeddingCandidates(limit: Int) async throws -> [SearchEmbeddingCandidate] {
+        let rootIDs = availableRootRowIDs()
+        guard !rootIDs.isEmpty else {
+            return []
+        }
+        let pathsByRowID = roots.pathsByRowID
+        return try await database().read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT a.library_root_id, a.relative_path, a.thumbnail_path,
+                       \(SearchEmbeddingStorage.currentSource("a")) AS source
+                \(SearchEmbeddingStorage.owedFrom(rootCount: rootIDs.count))
+                ORDER BY a.best_capture_unix DESC, a.library_root_id, a.relative_path
+                LIMIT ?
+                """,
+                arguments: StatementArguments(rootIDs + [limit])
+            ).compactMap { row in
+                guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
+                return SearchEmbeddingCandidate(
+                    id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"])),
+                    thumbnailPath: row["thumbnail_path"],
+                    source: row["source"]
+                )
+            }
+        }
+    }
+
+    /// How many assets are owed a search embedding: what the empty search result says
+    /// search has not read yet.
+    func searchEmbeddingPendingCount() async throws -> Int {
+        let rootIDs = availableRootRowIDs()
+        guard !rootIDs.isEmpty else {
+            return 0
+        }
+        return try await database().read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) \(SearchEmbeddingStorage.owedFrom(rootCount: rootIDs.count))",
+                arguments: StatementArguments(rootIDs)
+            ) ?? 0
+        }
+    }
+
+    private func availableRootRowIDs() -> [Int64] {
+        roots.values.filter { $0.availability == .available }.map(\.rowID).sorted()
+    }
+
+    /// Writes search embeddings for assets whose thumbnail is still the one they were read
+    /// from, and returns the ones written. No change notification: nothing the catalog
+    /// publishes depends on an embedding; `PhotoSearchIndex` keeps what it wrote.
+    func applySearchEmbeddings(_ results: [SearchEmbeddingResult]) async throws -> [SearchEmbeddingResult] {
+        let rowIDs = roots.rowIDSnapshot()
+        return try await database().write { db -> [SearchEmbeddingResult] in
+            var written: [SearchEmbeddingResult] = []
+            for result in results {
+                guard let rootID = rowIDs[result.id.libraryRootPath] else { continue }
+                let path = result.id.relativePath.rawValue
+                guard try Bool.fetchOne(
+                    db,
+                    sql: """
+                    SELECT \(SearchEmbeddingStorage.currentSource("media_asset")) = ?
+                    FROM media_asset WHERE library_root_id = ? AND relative_path = ?
+                    """,
+                    arguments: [result.source, rootID, path]
+                ) == true else {
+                    continue
+                }
+                try db.execute(
+                    sql: """
+                    INSERT INTO search_embedding (library_root_id, relative_path, source, embedding)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT (library_root_id, relative_path)
+                    DO UPDATE SET source = excluded.source, embedding = excluded.embedding
+                    """,
+                    arguments: [rootID, path, result.source, result.embedding.map(SearchEmbeddingStorage.data)]
+                )
+                written.append(result)
+            }
+            return written
+        }
+    }
+
+    /// The assets in available roots that have a current search embedding, without the
+    /// vectors: what `PhotoSearchIndex` reconciles its memory against after a catalog change.
+    func currentSearchEmbeddingIDs() async throws -> Set<MediaAssetID> {
+        try await readSearchEmbeddings(vectors: false).reduce(into: Set()) { $0.insert($1.id) }
+    }
+
+    /// Current search embeddings, all of them or those of `ids`.
+    func currentSearchEmbeddings(for ids: Set<MediaAssetID>? = nil) async throws -> [StoredSearchEmbedding] {
+        try await readSearchEmbeddings(vectors: true, only: ids)
+    }
+
+    private func readSearchEmbeddings(vectors: Bool, only ids: Set<MediaAssetID>? = nil) async throws -> [StoredSearchEmbedding] {
+        let rootIDs = availableRootRowIDs()
+        guard !rootIDs.isEmpty, ids?.isEmpty != true else {
+            return []
+        }
+        let pathsByRowID = roots.pathsByRowID
+        let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
+        return try await database().read { db in
+            let rows = try Row.fetchCursor(
+                db,
+                sql: """
+                SELECT e.library_root_id, e.relative_path\(vectors ? ", e.embedding" : "")
+                FROM search_embedding AS e
+                JOIN media_asset AS a
+                    ON a.library_root_id = e.library_root_id AND a.relative_path = e.relative_path
+                WHERE e.library_root_id IN (\(placeholders))
+                  AND e.embedding IS NOT NULL
+                  AND e.source = \(SearchEmbeddingStorage.currentSource("a"))
+                """,
+                arguments: StatementArguments(rootIDs)
+            )
+            var out: [StoredSearchEmbedding] = []
+            while let row = try rows.next() {
+                guard let root = pathsByRowID[row[0]] else { continue }
+                let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1]))
+                if let ids, !ids.contains(id) {
+                    continue
+                }
+                if vectors {
+                    guard let data: Data = row[2], let embedding = SearchEmbeddingStorage.embedding(from: data) else { continue }
+                    out.append(StoredSearchEmbedding(id: id, embedding: embedding))
+                } else {
+                    out.append(StoredSearchEmbedding(id: id, embedding: []))
+                }
+            }
+            return out
+        }
     }
 
     /// Visible stills with a current render signature, with the column facts the same-photo

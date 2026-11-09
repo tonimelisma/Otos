@@ -111,7 +111,33 @@ nonisolated enum CatalogWindowPolicy {
                 importBatches: importBatches
             ),
             filter: descriptor.filter,
-            sort: descriptor.sort
+            sort: descriptor.sort,
+            search: descriptor.search
+        )
+    }
+
+    /// The scope narrowed to what a search matched (ADR 0048), with its index-paired
+    /// companions. Ordered by `order`: best match first (ties keep the scope's order, and
+    /// the grid is one ungrouped section, so `dayBuckets` comes back empty), or the scope's
+    /// own order.
+    static func searched(
+        ids: [MediaAssetID],
+        dayBuckets: [Date?],
+        coordinates: [PlaceCoordinate],
+        scores: [MediaAssetID: Float],
+        order: CatalogSearch.Order
+    ) -> (ids: [MediaAssetID], dayBuckets: [Date?], coordinates: [PlaceCoordinate]) {
+        var kept = ids.indices.filter { scores[ids[$0]] != nil }
+        if order == .relevance {
+            kept.sort { left, right in
+                let a = scores[ids[left]]!, b = scores[ids[right]]!
+                return a != b ? a > b : left < right
+            }
+        }
+        return (
+            kept.map { ids[$0] },
+            order == .relevance || dayBuckets.isEmpty ? [] : kept.map { dayBuckets[$0] },
+            coordinates.isEmpty ? [] : kept.map { coordinates[$0] }
         )
     }
 
@@ -209,9 +235,13 @@ nonisolated enum CatalogWindowPolicy {
         libraries: [CatalogLibraryState],
         allAssetCount: Int,
         unfilteredVisibleAssetCount: Int,
-        selectedAssetCount: Int
+        selectedAssetCount: Int,
+        search: CatalogSearchOutcome? = nil
     ) -> CatalogMediaEmptyState {
         guard selectedAssetCount == 0 else { return .noMedia }
+        if let search, let text = descriptor.search?.text, search.unsearchedScopeCount > 0 {
+            return .noSearchResults(text, stillReading: search.stillReadingCount)
+        }
         if descriptor.filter.isActive, unfilteredVisibleAssetCount > 0 {
             return .noFilterMatches
         }

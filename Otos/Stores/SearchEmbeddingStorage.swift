@@ -1,0 +1,84 @@
+import Foundation
+import GRDB
+
+/// Search embedding storage guide (ADR 0048)
+///
+/// A photo's or video's search embedding is overlay on its asset, in `search_embedding`
+/// (one row per asset; a move carries it, a proven deletion ends it, both by cascade). It is
+/// read from the asset's **stored thumbnail**, never from an original, so making one never
+/// downloads anything, and a card's, camera's or Immich account's items are searchable as
+/// soon as their thumbnails are.
+///
+/// Each row records the thumbnail it was read from and the model revision
+/// (`source`, `StoredThumbnailSQL.identity` then `|s` and `SearchEmbedding.revision`).
+/// When enrichment writes a new thumbnail, or the model changes, the row's source no longer
+/// matches and the asset is offered again; no thumbnail write site knows search exists. A
+/// thumbnail that does not decode is recorded with no embedding, so it is not offered
+/// again until it changes.
+///
+/// An embedding is `SearchEmbedding.dimensions` little-endian Float32 values.
+nonisolated enum SearchEmbeddingStorage {
+    /// The source an asset's embedding must name to be current, for `row` (a table or alias).
+    static func currentSource(_ row: String) -> String {
+        "(\(StoredThumbnailSQL.identity(row)) || '|s\(SearchEmbedding.revision)')"
+    }
+
+    /// `FROM … WHERE …` over the assets owed an embedding in `rootCount` roots (bound in
+    /// order): a stored thumbnail whose current embedding is missing, not waiting for or in
+    /// the Trash, and not a Live Photo's movie, whose still stands for the item.
+    static func owedFrom(rootCount: Int) -> String {
+        """
+        FROM media_asset AS a
+        LEFT JOIN search_embedding AS e
+            ON e.library_root_id = a.library_root_id AND e.relative_path = a.relative_path
+        WHERE a.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
+          AND a.thumbnail_path IS NOT NULL
+          AND a.pending_trash_batch_unix_ms IS NULL
+          AND a.trash_path IS NULL
+          AND NOT \(LivePhotoSQL.isPairedMotion("a"))
+          AND e.source IS NOT \(currentSource("a"))
+        """
+    }
+
+    static func data(_ embedding: [Float]) -> Data {
+        var data = Data(count: embedding.count * 4)
+        data.withUnsafeMutableBytes { raw in
+            for (index, value) in embedding.enumerated() {
+                raw.storeBytes(of: value.bitPattern.littleEndian, toByteOffset: index * 4, as: UInt32.self)
+            }
+        }
+        return data
+    }
+
+    /// Nil unless `data` holds exactly one embedding.
+    static func embedding(from data: Data) -> [Float]? {
+        guard data.count == SearchEmbedding.dimensions * 4 else { return nil }
+        return data.withUnsafeBytes { raw in
+            (0 ..< SearchEmbedding.dimensions).map { index in
+                Float(bitPattern: UInt32(littleEndian: raw.loadUnaligned(fromByteOffset: index * 4, as: UInt32.self)))
+            }
+        }
+    }
+}
+
+/// An asset whose stored thumbnail has no current search embedding.
+nonisolated struct SearchEmbeddingCandidate: Equatable, Sendable {
+    let id: MediaAssetID
+    let thumbnailPath: String
+    /// The source the embedding will record.
+    let source: String
+}
+
+/// What reading one candidate's thumbnail produced: the embedding, or nil when the thumbnail
+/// could not be decoded.
+nonisolated struct SearchEmbeddingResult: Equatable, Sendable {
+    let id: MediaAssetID
+    let source: String
+    let embedding: [Float]?
+}
+
+/// One stored, current embedding.
+nonisolated struct StoredSearchEmbedding: Sendable {
+    let id: MediaAssetID
+    let embedding: [Float]
+}
