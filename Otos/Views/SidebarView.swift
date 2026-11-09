@@ -10,6 +10,8 @@ struct SidebarView: View {
     /// How many photos have duplicates (ADR 0042); nil until the groups are first built.
     let duplicatesCount: Int?
     let libraries: [CatalogLibraryState]
+    /// What each Immich account's server last answered (ADR 0046 §6).
+    let accountStatuses: [LibraryRootPath: ImmichAccountStatus]
     let importBatches: [ImportBatchSummary]
     let removableSources: [CatalogLibraryState]
     let importPresentations: [MediaOperationSourcePresentation]
@@ -25,6 +27,7 @@ struct SidebarView: View {
         showsDuplicates: Bool = false,
         duplicatesCount: Int? = nil,
         libraries: [CatalogLibraryState],
+        accountStatuses: [LibraryRootPath: ImmichAccountStatus] = [:],
         importBatches: [ImportBatchSummary],
         removableSources: [CatalogLibraryState],
         importPresentations: [MediaOperationSourcePresentation] = [],
@@ -38,6 +41,7 @@ struct SidebarView: View {
         self.showsDuplicates = showsDuplicates
         self.duplicatesCount = duplicatesCount
         self.libraries = libraries
+        self.accountStatuses = accountStatuses
         self.importBatches = importBatches
         self.removableSources = removableSources
         self.importPresentations = importPresentations
@@ -70,7 +74,7 @@ struct SidebarView: View {
                 Section("Libraries") {
                     ForEach(libraries) { library in
                         SidebarRow(systemImage: library.kind.sidebarSystemImage, title: library.displayName) {
-                            EmptyView()
+                            AccountStatusGlyph(status: accountStatuses[library.path])
                         }
                         .tag(SidebarSelection.library(library.path))
                     }
@@ -218,6 +222,30 @@ struct SidebarView: View {
     }
 }
 
+/// An account the server is not answering for, as a glyph with its reason: offline still
+/// shows what Otos stored, and signed out waits for Settings' Sign In… (DES-029: a glyph,
+/// never color alone).
+private struct AccountStatusGlyph: View {
+    let status: ImmichAccountStatus?
+
+    var body: some View {
+        switch status {
+        case .offline:
+            Image(systemName: "wifi.slash")
+                .foregroundStyle(.secondary)
+                .help("The server can’t be reached. Otos shows the photos it has stored.")
+                .accessibilityLabel("Offline")
+        case .signedOut:
+            Image(systemName: "person.crop.circle.badge.exclamationmark")
+                .foregroundStyle(.secondary)
+                .help("Signed out. Sign in again in Settings ▸ Libraries.")
+                .accessibilityLabel("Signed out")
+        case .online, .connecting, nil:
+            EmptyView()
+        }
+    }
+}
+
 private struct SidebarRow<Trailing: View>: View {
     let systemImage: String
     let title: String
@@ -254,6 +282,7 @@ private struct SidebarRow<Trailing: View>: View {
                 activity: .idle
             ),
         ],
+        accountStatuses: [:],
         importBatches: [
             ImportBatchSummary(
                 batchID: ImportBatchID(unixMilliseconds: 1_704_067_200_000),

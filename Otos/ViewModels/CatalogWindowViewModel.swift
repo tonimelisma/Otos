@@ -212,6 +212,18 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let exportStream: AsyncStream<ExportRequest>
     @ObservationIgnored let exportContinuation: AsyncStream<ExportRequest>.Continuation
     @ObservationIgnored var exportTask: Task<Void, Never>?
+    /// Immich accounts (ADR 0046): the one owner of their sessions and syncs. Nil for a
+    /// window that starts no background work.
+    @ObservationIgnored let immichAccounts: ImmichAccounts?
+    @ObservationIgnored let immichIntentStream: AsyncStream<ImmichAccountIntent>
+    @ObservationIgnored let immichIntentContinuation: AsyncStream<ImmichAccountIntent>.Continuation
+    @ObservationIgnored var immichIntentTask: Task<Void, Never>?
+    @ObservationIgnored var immichStatusTask: Task<Void, Never>?
+    /// What each account's server last answered, for the sidebar and Settings.
+    var immichAccountStatuses: [LibraryRootPath: ImmichAccountStatus] = [:]
+    /// The Add Immich Account sheet while it is open.
+    var immichAccountSheet: ImmichAccountSheetState?
+    @ObservationIgnored var immichAddRequested: UInt64 = 0
     @ObservationIgnored var exportRequested: UInt64 = 0
     @ObservationIgnored var exportCancelledThrough: UInt64 = 0
     @ObservationIgnored var submittedExportCount = 0
@@ -501,6 +513,7 @@ final class CatalogWindowViewModel {
         catalogProjection: CatalogProjection = CatalogProjection(),
         enrichmentCoordinator: EnrichmentCoordinator? = nil,
         metadataRefresher: MetadataRefresher? = nil,
+        immichAccounts: ImmichAccounts? = nil,
         stallMonitor: MainRunLoopStallMonitor = MainRunLoopStallMonitor(),
         startsStallMonitor: Bool = true,
         startsEnrichment: Bool = true,
@@ -676,6 +689,12 @@ final class CatalogWindowViewModel {
         self.handOffContinuation = handOffContinuation
         self.exportStream = exportStream
         self.exportContinuation = exportContinuation
+        self.immichAccounts = immichAccounts ?? (startsEnrichment ? ImmichAccounts(store: catalogStore) : nil)
+        let (immichIntentStream, immichIntentContinuation) = AsyncStream<ImmichAccountIntent>.makeStream(
+            bufferingPolicy: .unbounded
+        )
+        self.immichIntentStream = immichIntentStream
+        self.immichIntentContinuation = immichIntentContinuation
         // The restored query is the first one Projection sees (APP-043), so launch never
         // flashes the default collection before the user's own.
         if let place = Self.loadBrowserPlace(from: preferences) {
@@ -705,6 +724,8 @@ final class CatalogWindowViewModel {
         editAnalysisTask?.cancel()
         handOffTask?.cancel()
         exportTask?.cancel()
+        immichIntentTask?.cancel()
+        immichStatusTask?.cancel()
         mediaTrashTask?.cancel()
         mediaTrashEventTask?.cancel()
         mediaTrashIntentTask?.cancel()
@@ -743,6 +764,7 @@ final class CatalogWindowViewModel {
         editAnalysisContinuation.finish()
         handOffContinuation.finish()
         exportContinuation.finish()
+        immichIntentContinuation.finish()
         viewportContinuation.finish()
         // The owners below must be told to stop or their own loops would keep them, and
         // the store, alive past this window: the enrichment supervisor strongly retains
@@ -755,9 +777,11 @@ final class CatalogWindowViewModel {
         let enrichment = enrichmentCoordinator
         let materialization = materializationCoordinator
         let refresher = metadataRefresher
+        let immich = immichAccounts
         // swiftlint:disable:next unowned_view_model_task
         Task {
             await withDiscardingTaskGroup { group in
+                group.addTask { await immich?.shutdown() }
                 group.addTask { await mediaOps?.shutdown() }
                 group.addTask { await mediaTrash.shutdown() }
                 group.addTask { await refresher?.shutdown() }
@@ -827,6 +851,7 @@ extension CatalogWindowViewModel {
         }
         startMediaOperationsIfNeeded()
         if startsEnrichment {
+            startImmichAccounts(store: store)
             startEnrichment()
         }
     }
@@ -935,7 +960,8 @@ extension CatalogWindowViewModel {
                     store: store,
                     coordinator: coordinator,
                     previewLoader: previewLoader,
-                    importer: self?.mediaOperationCoordinator
+                    importer: self?.mediaOperationCoordinator,
+                    immichAccounts: self?.immichAccounts
                 )
                 if let report {
                     self?.handleMutationReport(report, for: intent)

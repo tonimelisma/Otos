@@ -105,6 +105,11 @@ struct ContentView: View {
             )
     }
 
+    /// The libraries an import may copy into now.
+    private var importDestinations: [CatalogLibraryState] {
+        viewModel.state.libraries.filter { $0.kind.isImportDestination && $0.availability == .available }
+    }
+
     var body: some View {
         NavigationSplitView {
             SidebarView(
@@ -113,6 +118,7 @@ struct ContentView: View {
                 showsDuplicates: viewModel.showsDuplicatesRow,
                 duplicatesCount: viewModel.duplicatesCount,
                 libraries: viewModel.state.libraries,
+                accountStatuses: viewModel.immichAccountStatuses,
                 importBatches: viewModel.state.importBatches,
                 removableSources: viewModel.state.removableSources,
                 importPresentations: viewModel.importPresentations,
@@ -143,9 +149,7 @@ struct ContentView: View {
                 if let presentation = viewModel.selectedImportPresentation {
                     ImportPlanFooter(
                         presentation: presentation,
-                        fixedLibraries: viewModel.state.libraries.filter {
-                            $0.kind.isImportDestination && $0.availability == .available
-                        },
+                        fixedLibraries: importDestinations,
                         sourceDisplayName: viewModel.state.removableSources
                             .first { $0.path == presentation.sourcePath }?.displayName ?? "",
                         isCancelling: viewModel.cancellingImportSources.contains(presentation.sourcePath),

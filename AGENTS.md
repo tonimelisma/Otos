@@ -1,7 +1,8 @@
 # Otos Agent Instructions
 
-Otos is a native macOS Lightroom-style application. The user's filesystem is the
-single source of truth for what media exists and where it lives. Otos overlays
+Otos is a native macOS Lightroom-style application. The user's filesystem — or, for
+an Immich account, its server — is the single source of truth for what media exists
+and where it lives. Otos overlays
 organization, metadata, previews, and editing intent on top of user-owned media
 that stays on disk wherever the user chose to keep it, including cloud-synced
 folders. Originals are read-only, and Otos never takes the user's media hostage:
@@ -49,9 +50,11 @@ design rules for user-facing surfaces; per-screen specs live beside it in
 - One user action has one implementation path. Buttons, menus, shortcuts,
   gestures, automation hooks, and tests call the same owner intent, not parallel
   behavior paths.
-- The filesystem is the single source of truth. The catalog and every overlay Otos
-  stores are a subordinate, rebuildable projection; when they disagree, the
-  filesystem wins and the catalog reconciles.
+- Each source's own listing is the single source of truth: a folder's or card's
+  filesystem, a camera's ImageCapture listing, an Immich account's sync stream
+  (ADR 0046). The catalog and every overlay Otos stores are a subordinate,
+  rebuildable projection; when they disagree, the source wins and the catalog
+  reconciles. Otos never writes to an Immich server.
 - Otos never takes media hostage: no opaque app-owned vault. Everything Otos
   derives or authors lives in Application Support, never in the user's media
   folders, and it generates no sidecar files for identity or authored overlay. The
@@ -63,11 +66,15 @@ design rules for user-facing surfaces; per-screen specs live beside it in
   default is that nothing on disk changes.
 - Overlay has one lifecycle. Every overlay Otos holds for an item is kept as long
   as that item exists and is purged in full only when the item is proven deleted
-  (absent from a reachable, fully enumerated root) or the user removes its root.
+  (absent from a reachable, fully enumerated root; for an Immich account, a deletion
+  its server reports or a completed resync that no longer lists it) or the user
+  removes its root.
   A temporarily missing original is never a deletion. The one time-based removal is
   removable-source retention: a card or camera unseen for 90 days is forgotten as if
   the user had removed it (ADR 0013). Asset identity is the
-  filesystem path; Otos invents no durable IDs, content fingerprints, or sidecars.
+  path; for a source whose originals Otos stages, the path is named by the source's
+  own ID (an Immich asset's folder). Otos invents no durable IDs, content
+  fingerprints, or sidecars.
   See `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md`.
 - The media grid never blanks a thumbnail already displayed for the same on-screen
   asset in the current process. A tile may show placeholder content only before

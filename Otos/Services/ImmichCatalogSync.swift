@@ -89,13 +89,14 @@ actor ImmichCatalogSync {
         ring.finish()
     }
 
-    /// The loop: one pass per doorbell ring, until `finish()` or cancellation.
-    func run() async {
+    /// The loop: one pass per doorbell ring, until `finish()` or cancellation. `onPass`
+    /// hears each pass's outcome before the next ring is read.
+    func run(onPass: @Sendable (ImmichSyncPassOutcome) async -> Void = { _ in }) async {
         for await _ in doorbell {
             guard !Task.isCancelled else {
                 return
             }
-            _ = await pass()
+            await onPass(pass())
         }
     }
 
