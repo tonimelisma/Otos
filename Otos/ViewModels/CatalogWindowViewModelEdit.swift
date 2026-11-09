@@ -184,9 +184,10 @@ extension CatalogWindowViewModel {
         OtosLog.ui.noticeOperation("edit.trim", phase: "requested", fields: ["id": id.relativePath.rawValue])
     }
 
-    /// A video the loupe shows — not a Live Photo's motion, which plays under its still.
+    /// A video the loupe shows — not a Live Photo's motion, which plays under its still, and
+    /// not one a story plays, whose pane draws no player controls to trim with (ADR 0049).
     var canTrimVideo: Bool {
-        viewMode == .loupe && focusedAssetKind == .video && loupeVideoState != nil
+        viewMode == .loupe && story == nil && focusedAssetKind == .video && loupeVideoState != nil
             && loupeVideoState?.id == focusedAssetID
     }
 
@@ -238,7 +239,7 @@ extension CatalogWindowViewModel {
     }
 
     var canPickNeutral: Bool {
-        editPhotoFacts != nil && viewMode == .loupe && !isCropping
+        editPhotoFacts != nil && viewMode == .loupe && story == nil && !isCropping
     }
 
     /// The loupe was clicked while the picker was armed.

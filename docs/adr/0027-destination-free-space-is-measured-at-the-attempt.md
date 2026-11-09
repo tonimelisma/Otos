@@ -39,8 +39,12 @@ floor was guarding a run is in its log.
 Free space is never a property of a plan, never gates a control, and an import never
 observes it on a timer. `FreeSpaceFloor` is one constant and one check
 (`FreeSpaceFloor.admits`) with one home, used by the import executor, by Move to
-Trash's downloads, and by `MaterializationCoordinator` for every background and device
-download. A held download is offered again after the enrichment schedule's 60 s space
+Trash's downloads, by `MaterializationCoordinator` for every background and device
+download, by export, and by an Immich account's products. Each of those owners takes the
+volume's free space from an injected reader (`volumeCapacity` / `capacity`, defaulting to
+`FreeSpaceFloor.availableBytes(onVolumeOf:)`), and `CatalogWindowViewModel` hands its one
+reader to every owner it builds, so a test decides how full a volume is and no outcome
+depends on the disk of the machine that runs it. A held download is offered again after the enrichment schedule's 60 s space
 recheck (`time: poll`), because macOS reports no free-space change at an app-defined
 threshold.
 

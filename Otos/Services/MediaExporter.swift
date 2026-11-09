@@ -57,7 +57,8 @@ nonisolated enum MediaExporter {
         _ item: EditedMediaItem,
         settings: ExportSettings,
         to folder: URL,
-        materialization: any MaterializationRequesting
+        materialization: any MaterializationRequesting,
+        volumeCapacity: @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:)
     ) async -> ExportOutcome {
         let start = ContinuousClock.now
         let original = item.id.fileURL
@@ -66,7 +67,7 @@ nonisolated enum MediaExporter {
                 throw ExportError.folderUnavailable
             }
             if await materialization.locality(of: item.id) == .fetchable {
-                try requireRoom(item.sourceSize ?? fileSize(original), onVolumeOf: item.id.libraryRootPath.url)
+                try requireRoom(item.sourceSize ?? fileSize(original), onVolumeOf: item.id.libraryRootPath.url, volumeCapacity)
             }
             guard await materialization.ensureLocal(.init(
                 id: item.id, sourceSize: item.sourceSize, isVideo: item.isVideo, priority: .interactive
@@ -77,7 +78,9 @@ nonisolated enum MediaExporter {
                 for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: folder, create: true
             )
             defer { removeScratch(scratch) }
-            let (staged, fileExtension) = try await write(item, settings: settings, into: scratch, folder: folder)
+            let (staged, fileExtension) = try await write(
+                item, settings: settings, into: scratch, folder: folder, volumeCapacity: volumeCapacity
+            )
             let published = try publish(
                 staged, stem: original.deletingPathExtension().lastPathComponent, fileExtension: fileExtension, in: folder
             )
@@ -117,14 +120,15 @@ nonisolated enum MediaExporter {
         _ item: EditedMediaItem,
         settings: ExportSettings,
         into scratch: URL,
-        folder: URL
+        folder: URL,
+        volumeCapacity: @Sendable (URL) -> Int64?
     ) async throws -> (URL, String) {
         let original = item.id.fileURL
         if item.isVideo {
             let trimmed = item.recipe.trimStart != nil || item.recipe.trimEnd != nil
             if settings.shapesRenderedFile, trimmed || settings.removesLocation {
                 // A range copied without re-encoding is never larger than the original.
-                try requireRoom(item.sourceSize ?? fileSize(original), onVolumeOf: folder)
+                try requireRoom(item.sourceSize ?? fileSize(original), onVolumeOf: folder, volumeCapacity)
                 let staged = scratch.appending(path: "export.mov")
                 try await MediaFileWriter.writeVideo(
                     original, recipe: item.recipe, removingLocation: settings.removesLocation, to: staged
@@ -136,7 +140,7 @@ nonisolated enum MediaExporter {
                 original, longEdge: settings.outputLongEdge, recipe: item.recipe
             ).image
             // The uncompressed size bounds the encoded file from above.
-            try requireRoom(Int64(image.width) * Int64(image.height) * 3, onVolumeOf: folder)
+            try requireRoom(Int64(image.width) * Int64(image.height) * 3, onVolumeOf: folder, volumeCapacity)
             let staged = scratch.appending(path: "export.\(rendered.fileExtension)")
             try await MediaFileWriter.writeImage(
                 image,
@@ -148,7 +152,7 @@ nonisolated enum MediaExporter {
             )
             return (staged, rendered.fileExtension)
         }
-        try requireRoom(item.sourceSize ?? fileSize(original), onVolumeOf: folder)
+        try requireRoom(item.sourceSize ?? fileSize(original), onVolumeOf: folder, volumeCapacity)
         let staged = scratch.appending(path: "export")
         try FileManager.default.copyItem(at: original, to: staged)
         return (staged, original.pathExtension)
@@ -173,8 +177,12 @@ nonisolated enum MediaExporter {
         throw ExportError.namesExhausted
     }
 
-    private static func requireRoom(_ bytes: Int64, onVolumeOf url: URL) throws {
-        guard FreeSpaceFloor.admits(bytes, available: FreeSpaceFloor.availableBytes(onVolumeOf: url)) else {
+    /// `volumeCapacity` reads a volume's free space; the app passes the system's reading,
+    /// a test its own, so no outcome depends on how full the machine running it is.
+    private static func requireRoom(
+        _ bytes: Int64, onVolumeOf url: URL, _ volumeCapacity: (URL) -> Int64?
+    ) throws {
+        guard FreeSpaceFloor.admits(bytes, available: volumeCapacity(url)) else {
             throw ExportError.belowFloor
         }
     }

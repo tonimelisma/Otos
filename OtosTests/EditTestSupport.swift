@@ -52,6 +52,10 @@ func withEditableLibrary(
 }
 
 /// A view model over `store` whose grid holds `ids`, with its edit lanes started.
+/// A volume with a terabyte free, for tests that write: the free-space floor (ADR 0027)
+/// reads this instead of the disk the tests run on, which parallel checks fill and drain.
+nonisolated let ampleVolumeCapacity: @Sendable (URL) -> Int64? = { _ in 1 << 40 }
+
 @MainActor
 func makeEditModel(store: CatalogStore, ids: [MediaAssetID]) -> CatalogWindowViewModel {
     let model = CatalogWindowViewModel(
@@ -60,6 +64,7 @@ func makeEditModel(store: CatalogStore, ids: [MediaAssetID]) -> CatalogWindowVie
         startsEnrichment: false,
         startsSourceMonitoring: false,
         preferencesDomain: .suite(UUID().uuidString),
+        volumeCapacity: ampleVolumeCapacity,
         trashFiles: .refusing
     )
     model.applyState(CatalogWindowState(

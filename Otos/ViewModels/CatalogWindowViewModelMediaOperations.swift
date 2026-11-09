@@ -46,6 +46,7 @@ extension CatalogWindowViewModel {
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: preferencesDomain,
+            volumeCapacity: volumeCapacity,
             cameraImport: cameraImport,
             materializationRequester: materializationCoordinator,
             // One eject, one path: the same intent the sidebar's eject control

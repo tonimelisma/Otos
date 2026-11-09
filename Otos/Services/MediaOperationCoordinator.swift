@@ -123,11 +123,13 @@ actor MediaOperationCoordinator {
             let capturedStore = store
             let capturedCamera = cameraImport
             let capturedMaterialization = materializationRequester
-            self.makeExecutor = { _ in
+            // The executor's floor reads the same volumes the plan's presentation does.
+            self.makeExecutor = { [volumeCapacity] _ in
                 LiveImportExecutor(
                     store: capturedStore,
                     cameraImport: capturedCamera,
-                    materializationRequester: capturedMaterialization
+                    materializationRequester: capturedMaterialization,
+                    volumeCapacity: volumeCapacity
                 )
             }
         }

@@ -3,6 +3,17 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
+Plan 0114 (On This Day and its story player) is complete in one increment and was removed
+at closure. It opened 2026-11-09 from the survey
+`docs/research/2026-11-07-memories-and-highlights.md`. Its decisions live in ADR 0049,
+`docs/design/on-this-day.md`, DES-112 and APP-069 to APP-071; the layout research is
+`docs/research/2026-11-09-on-this-day-layouts.md`. **Owner decisions.** On This Day is a
+sidebar row under Places (chosen from a row, a strip above the grid, a menu command only,
+and a row plus a strip); its pane is a grid of landscape photo cards, one per earlier year
+(chosen from cards, story balls, a by-year feed, and a hero with smaller cards); a single
+click on a card plays that year's story, an Immich-style player with segments, photos held
+5 s and videos played to their end.
+
 Plan 0111 (every duplicate group has a default) is complete in two increments and was
 removed at closure. It opened 2026-11-01, when the owner compared Duplicates with Photos,
 Lightroom Classic 15.4, Lightroom on the web, PhotoSweeper, Gemini 2 and Mylio and asked

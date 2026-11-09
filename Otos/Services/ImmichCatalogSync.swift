@@ -83,13 +83,21 @@ actor ImmichCatalogSync {
     let rootPath: LibraryRootPath
     private let source: any ImmichSyncSource
     private let store: CatalogStore
+    /// Reads a volume's free space for the floor its products keep (ADR 0027).
+    private let volumeCapacity: @Sendable (URL) -> Int64?
     private let doorbell: AsyncStream<Void>
     private let ring: AsyncStream<Void>.Continuation
 
-    init(rootPath: LibraryRootPath, source: any ImmichSyncSource, store: CatalogStore) {
+    init(
+        rootPath: LibraryRootPath,
+        source: any ImmichSyncSource,
+        store: CatalogStore,
+        volumeCapacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:)
+    ) {
         self.rootPath = rootPath
         self.source = source
         self.store = store
+        self.volumeCapacity = volumeCapacity
         (doorbell, ring) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
     }
 
@@ -454,7 +462,7 @@ actor ImmichCatalogSync {
     ) async -> ProductPassOutcome? {
         var results: [EnrichmentResult] = []
         for candidate in page {
-            guard await Self.admitsProducts(onVolumeOf: directory) else {
+            guard await Self.admitsProducts(onVolumeOf: directory, volumeCapacity) else {
                 await apply(results)
                 OtosLog.thumbnails.noticeOperation("immich.products", phase: "floorHeld", fields: [
                     "rootPath": rootPath.rawValue, "made": "\(tally.made)",
@@ -492,8 +500,10 @@ actor ImmichCatalogSync {
     /// The free-space floor every background download keeps (ADR 0027), with a megabyte
     /// for the images about to be written.
     @concurrent
-    private static func admitsProducts(onVolumeOf directory: URL) async -> Bool {
-        FreeSpaceFloor.admits(1_000_000, available: FreeSpaceFloor.availableBytes(onVolumeOf: directory))
+    private static func admitsProducts(
+        onVolumeOf directory: URL, _ volumeCapacity: @Sendable (URL) -> Int64?
+    ) async -> Bool {
+        FreeSpaceFloor.admits(1_000_000, available: volumeCapacity(directory))
     }
 
     /// Decodes the server's preview and stages Otos's products from it, off the actor: a

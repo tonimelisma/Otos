@@ -88,7 +88,7 @@ struct MediaChoiceTests {
             filter: MediaFilter(choices: [.liked, .disliked]),
             sort: .filenameAscending
         )
-        let query = try #require(CatalogQueryGateway.orderedAssetIDQuery(
+        let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
             descriptor: descriptor,
             scope: CatalogScopePredicate(rootIDs: [7])
         ))

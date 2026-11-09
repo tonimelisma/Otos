@@ -277,7 +277,24 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
     /// Whether the grid groups by day (DES-069): under Date sort, unless a search orders it
     /// by relevance.
     var groupsByDay: Bool {
-        sort.field == .bestDate && search?.order != .relevance
+        effectiveSort.field == .bestDate && effectiveSearch?.order != .relevance
+    }
+
+    /// The search the scope's reads apply. A scope that fixes its order keeps it under a
+    /// search, which then only narrows: On This Day's years stay contiguous runs
+    /// (ADR 0049). The user's `search.order` is kept as chosen for when they leave.
+    var effectiveSearch: CatalogSearch? {
+        guard var search else { return nil }
+        if scope.fixedSort != nil {
+            search.order = .sort
+        }
+        return search
+    }
+
+    /// The order the scope's reads use: the scope's own when it fixes one, else the user's
+    /// `sort`, which is kept as chosen so leaving such a scope restores it.
+    var effectiveSort: MediaSortOrder {
+        scope.fixedSort ?? sort
     }
 
     var diagnosticDescription: String {

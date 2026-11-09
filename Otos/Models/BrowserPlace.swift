@@ -29,14 +29,16 @@ nonisolated struct BrowserPlace: Equatable {
     /// The selection in display order. In compare mode this is the pair.
     var selection: [MediaAssetID]
 
-    static func load(from preferences: any PreferenceStore) -> BrowserPlace? {
+    /// `today` is the day an On This Day scope reopens on: the scope is saved without its
+    /// day, because the question it asks is always about today (ADR 0049).
+    static func load(from preferences: any PreferenceStore, today: CalendarDay) -> BrowserPlace? {
         guard let json = preferences.string(forKey: defaultsKey),
               let data = json.data(using: .utf8),
               let record = try? JSONDecoder().decode(Record.self, from: data)
         else {
             return nil
         }
-        return BrowserPlace(record: record)
+        return BrowserPlace(record: record, today: today)
     }
 
     func save(to preferences: any PreferenceStore) {
@@ -56,8 +58,8 @@ private nonisolated extension BrowserPlace {
     /// persistence conformances and this file is the whole schema.
     nonisolated struct Record: Codable {
         nonisolated struct Scope: Codable {
-            /// `allMedia`, `places`, `mapArea`, `duplicates`, `library`, `importBatch`, or
-            /// `allImports`.
+            /// `allMedia`, `places`, `mapArea`, `onThisDay`, `duplicates`, `library`,
+            /// `importBatch`, or `allImports`.
             var kind: String
             var path: String?
             var batchUnixMilliseconds: Int64?
@@ -85,9 +87,9 @@ private nonisolated extension BrowserPlace {
         var selection: [Asset]
     }
 
-    init?(record: Record) {
+    init?(record: Record, today: CalendarDay) {
         guard record.version == Self.currentVersion,
-              let scope = Self.scope(record.scope),
+              let scope = Self.scope(record.scope, today: today),
               let field = MediaSortField(rawValue: record.sortField),
               let direction = MediaSortDirection(rawValue: record.sortDirection),
               let viewMode = BrowserViewMode(rawValue: record.viewMode)
@@ -118,12 +120,14 @@ private nonisolated extension BrowserPlace {
         )
     }
 
-    static func scope(_ scope: Record.Scope) -> SidebarSelection? {
+    static func scope(_ scope: Record.Scope, today: CalendarDay) -> SidebarSelection? {
         switch scope.kind {
         case "allMedia":
             .allMedia
         case "places":
             .places
+        case "onThisDay":
+            .onThisDay(today)
         case "duplicates":
             .duplicates
         case "mapArea":
@@ -176,6 +180,10 @@ private nonisolated extension BrowserPlace.Record {
             Scope(kind: "places")
         case let .mapArea(area):
             Scope(kind: "mapArea", south: area.south, north: area.north, west: area.west, east: area.east)
+        case .onThisDay:
+            // The day is not written: the scope always asks about today, so a window
+            // reopened tomorrow shows tomorrow's (ADR 0049).
+            Scope(kind: "onThisDay")
         case .duplicates, .duplicateGroup:
             // A group is named by its digest, which is never written out (ADR 0018); the
             // window reopens on the list it was reached from.

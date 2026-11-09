@@ -1,5 +1,4 @@
 import MapKit
-import OSLog
 import SwiftUI
 
 // Places map guide (ADR 0040, `docs/design/places.md`)
@@ -232,43 +231,18 @@ private struct MapClusterStackView: View {
     }
 
     private func loadThumbnail() async {
-        if let cached = tileContentStore?.image(for: cluster.id) {
-            image = cached
+        // The placeholder stays when nothing decodes; the next stack with this
+        // representative reads again.
+        guard let decoded = await ThumbnailLoad.image(
+            for: cluster.id,
+            tileContentStore: tileContentStore,
+            thumbnailDirectory: thumbnailDirectory,
+            detailReader: detailReader,
+            operation: "map.thumbnail"
+        ) else {
             return
         }
-        guard let detailReader else {
-            return
-        }
-        let detail: MediaTileDetail?
-        do {
-            detail = try await detailReader.detail(for: cluster.id)
-        } catch {
-            // The placeholder stays; the next stack with this representative reads again.
-            OtosLog.ui.errorOperation("map.thumbnail", phase: "detailFailed", fields: [
-                "path": cluster.id.relativePath.rawValue,
-                "error": String(describing: error),
-            ])
-            return
-        }
-        guard let detail, detail.thumbnailPath != nil, !Task.isCancelled else {
-            return
-        }
-        guard let decoded = await MapThumbnailDecode.decode(detail: detail, thumbnailDirectory: thumbnailDirectory),
-              !Task.isCancelled
-        else {
-            return
-        }
-        tileContentStore?.warm(id: cluster.id, image: decoded, detail: detail)
         image = decoded
-    }
-}
-
-/// Decodes a stack's thumbnail away from the main actor (ENR-010), through the grid's
-/// own loader so the two cannot disagree about where a thumbnail is.
-private nonisolated enum MapThumbnailDecode {
-    @concurrent
-    static func decode(detail: MediaTileDetail, thumbnailDirectory: URL?) async -> CGImage? {
-        MediaAssetTilePresentation.decodedThumbnailImage(detail: detail, thumbnailDirectory: thumbnailDirectory)
     }
 }
 
