@@ -101,6 +101,14 @@ floor, make the stop a designed and resumable outcome.
   why no forecast is needed.
 - With `workerCount = 8`, the floor check must count in-flight bytes; a check that
   looks only at the next entry can overshoot the floor by eight items.
+- In-flight bytes are counted at their planned size whatever the figure has already
+  seen of them. Copies run beside the admission check, so an entry still in flight may
+  have written some or all of its bytes when the figure is read, and those bytes are
+  then counted twice. A fresh figure therefore stops a run up to the in-flight
+  entries' bytes early. It is the conservative direction, and it keeps a lagging
+  figure safe. How far a run gets before it stops depends on how the copies are
+  scheduled. A test that asserts an exact stopping point holds its capacity figure
+  still.
 - The figure's unreliability is now in the conservative direction only: a stale-low
   capacity stops a little early, and the remainder is offered again; a stale-high
   one is caught by the `ENOSPC` backstop one entry later.
