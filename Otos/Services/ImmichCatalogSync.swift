@@ -67,7 +67,8 @@ nonisolated enum ImmichSyncPassOutcome: Equatable, Sendable {
 ///   `<asset id>/<original file name>`;
 /// - one in Immich's trash is the same row, hidden by its source, with its overlay kept;
 /// - one in the locked folder is never synced: a row it had is purged;
-/// - a Live Photo's motion part (`hidden`) is not listed yet (plan 0112, increment 9);
+/// - a Live Photo's motion part (`hidden`) is a row in its still's folder, listed with the
+///   still that links it and named by its own asset ID;
 /// - `AssetDeleteV1` purges the asset's rows: proof of deletion;
 /// - `SyncResetV1` means the server lost this cursor's history: the reset is acknowledged
 ///   and the stream read again in full, and its completion purges every row it no longer
