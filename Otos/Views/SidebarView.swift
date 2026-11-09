@@ -8,6 +8,9 @@ struct SidebarView: View {
     let showsPlaces: Bool
     /// People (ADR 0047): one row, under Places, whenever a fixed library exists.
     let showsPeople: Bool
+    /// Today, while the On This Day row exists (it shows whenever Places does); the row's
+    /// tag is today's scope (ADR 0049).
+    let onThisDay: CalendarDay?
     let showsDuplicates: Bool
     /// How many photos have duplicates (ADR 0042); nil until the groups are first built.
     let duplicatesCount: Int?
@@ -27,6 +30,7 @@ struct SidebarView: View {
         showsAllMedia: Bool,
         showsPlaces: Bool,
         showsPeople: Bool = false,
+        onThisDay: CalendarDay? = nil,
         showsDuplicates: Bool = false,
         duplicatesCount: Int? = nil,
         libraries: [CatalogLibraryState],
@@ -42,6 +46,7 @@ struct SidebarView: View {
         self.showsAllMedia = showsAllMedia
         self.showsPlaces = showsPlaces
         self.showsPeople = showsPeople
+        self.onThisDay = onThisDay
         self.showsDuplicates = showsDuplicates
         self.duplicatesCount = duplicatesCount
         self.libraries = libraries
@@ -78,6 +83,14 @@ struct SidebarView: View {
                     EmptyView()
                 }
                 .tag(SidebarSelection.people)
+            }
+            if let onThisDay {
+                // Items captured on today's month and day in earlier years (ADR 0049). No
+                // count, as Places carries none.
+                SidebarRow(systemImage: "calendar", title: "On This Day") {
+                    EmptyView()
+                }
+                .tag(SidebarSelection.onThisDay(onThisDay))
             }
 
             // A header with no rows under it is a claim about nothing; before the catalog

@@ -1605,29 +1605,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         prefs.destinationNamePolicy = .original
         ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
 
-        /// A volume with room for two of the three files above the floor,
-        /// shrinking as copies land — what a real capacity figure does.
-        @Sendable func bytesLanded() -> Int64 {
-            guard let enumerator = FileManager.default.enumerator(
-                at: destURL,
-                includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
-            ) else {
-                return 0
-            }
-            var total: Int64 = 0
-            for case let url as URL in enumerator {
-                let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-                if values?.isRegularFile == true {
-                    total += Int64(values?.fileSize ?? 0)
-                }
-            }
-            return total
-        }
+        // A volume with room for two of the three files above the floor. The figure
+        // holds still: the executor counts the bytes it has in flight itself, so it
+        // admits two and refuses the third whenever the copies get ahead. A figure
+        // that walked the destination would also see a copy still in flight, count
+        // its bytes twice, and stop after one.
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
             makeExecutor: { _ in
-                LiveImportExecutor(store: store, volumeCapacity: { _ in FreeSpaceFloor.bytes + 2500 - bytesLanded() })
+                LiveImportExecutor(store: store, volumeCapacity: { _ in FreeSpaceFloor.bytes + 2500 })
             }
         )
         await coordinator.start()

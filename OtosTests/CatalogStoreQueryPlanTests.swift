@@ -47,11 +47,11 @@ struct CatalogStoreQueryPlanTests {
         let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
-        let rootOrderQuery = try #require(CatalogQueryGateway.orderedAssetIDQuery(
+        let rootOrderQuery = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
             descriptor: .default,
             scope: CatalogScopePredicate(rootIDs: [rootID1])
         ))
-        let globalOrderQuery = try #require(CatalogQueryGateway.orderedAssetIDQuery(
+        let globalOrderQuery = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
             descriptor: .default,
             scope: CatalogScopePredicate(rootIDs: [rootID1, rootID2])
         ))
@@ -110,15 +110,15 @@ struct CatalogStoreQueryPlanTests {
                 arguments: [rootID1, "a.jpg", 60.17, 24.94]
             )
         }
-        let rootLocated = try #require(CatalogQueryGateway.orderedAssetIDQuery(
+        let rootLocated = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
             descriptor: .default,
             scope: CatalogScopePredicate(rootIDs: [rootID1], location: .located)
         ))
-        let globalLocated = try #require(CatalogQueryGateway.orderedAssetIDQuery(
+        let globalLocated = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
             descriptor: .default,
             scope: CatalogScopePredicate(rootIDs: [rootID1, rootID2], location: .located)
         ))
-        let onePlace = try #require(CatalogQueryGateway.orderedAssetIDQuery(
+        let onePlace = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
             descriptor: .default,
             scope: CatalogScopePredicate(
                 rootIDs: [rootID1, rootID2],

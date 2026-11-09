@@ -3,7 +3,7 @@ import OSLog
 
 // Browser place on relaunch (APP-043, ADR 0031)
 //
-// The ViewModel is the single owner of `BrowserPlace`: `loadBrowserPlace(from:)` runs once
+// The ViewModel is the single owner of `BrowserPlace`: `loadBrowserPlace(from:today:)` runs once
 // at the end of init, `persistBrowserPlace()` once at quit, and `restoreBrowserPlaceIfReady()`
 // after every state apply until it has restored once or been dropped.
 //
@@ -17,8 +17,8 @@ import OSLog
 extension CatalogWindowViewModel {
     /// Reads the stored place. `init` adopts its query — `queryDescriptor` is
     /// `private(set)` there — and keeps the rest pending for the restore.
-    static func loadBrowserPlace(from preferences: any PreferenceStore) -> BrowserPlace? {
-        guard let place = BrowserPlace.load(from: preferences) else {
+    static func loadBrowserPlace(from preferences: any PreferenceStore, today: CalendarDay) -> BrowserPlace? {
+        guard let place = BrowserPlace.load(from: preferences, today: today) else {
             OtosLog.ui.notice("op=browserPlace.load result=none")
             return nil
         }

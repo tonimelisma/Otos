@@ -39,8 +39,12 @@ floor was guarding a run is in its log.
 Free space is never a property of a plan, never gates a control, and an import never
 observes it on a timer. `FreeSpaceFloor` is one constant and one check
 (`FreeSpaceFloor.admits`) with one home, used by the import executor, by Move to
-Trash's downloads, and by `MaterializationCoordinator` for every background and device
-download. A held download is offered again after the enrichment schedule's 60 s space
+Trash's downloads, by `MaterializationCoordinator` for every background and device
+download, by export, and by an Immich account's products. Each of those owners takes the
+volume's free space from an injected reader (`volumeCapacity` / `capacity`, defaulting to
+`FreeSpaceFloor.availableBytes(onVolumeOf:)`), and `CatalogWindowViewModel` hands its one
+reader to every owner it builds, so a test decides how full a volume is and no outcome
+depends on the disk of the machine that runs it. A held download is offered again after the enrichment schedule's 60 s space
 recheck (`time: poll`), because macOS reports no free-space change at an app-defined
 threshold.
 
@@ -101,6 +105,14 @@ floor, make the stop a designed and resumable outcome.
   why no forecast is needed.
 - With `workerCount = 8`, the floor check must count in-flight bytes; a check that
   looks only at the next entry can overshoot the floor by eight items.
+- In-flight bytes are counted at their planned size whatever the figure has already
+  seen of them. Copies run beside the admission check, so an entry still in flight may
+  have written some or all of its bytes when the figure is read, and those bytes are
+  then counted twice. A fresh figure therefore stops a run up to the in-flight
+  entries' bytes early. It is the conservative direction, and it keeps a lagging
+  figure safe. How far a run gets before it stops depends on how the copies are
+  scheduled. A test that asserts an exact stopping point holds its capacity figure
+  still.
 - The figure's unreliability is now in the conservative direction only: a stale-low
   capacity stops a little early, and the remainder is offered again; a stale-high
   one is caught by the `ENOSPC` backstop one entry later.

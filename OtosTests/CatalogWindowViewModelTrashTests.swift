@@ -66,6 +66,7 @@ struct CatalogWindowViewModelTrashTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: domain,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
         #expect(model.asksBeforeLargeTrashDownload)
@@ -76,6 +77,7 @@ struct CatalogWindowViewModelTrashTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: domain,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
         #expect(!reloaded.asksBeforeLargeTrashDownload)
@@ -153,6 +155,7 @@ private func makeTrashModel(store: CatalogStore, trash: URL?) -> CatalogWindowVi
         startsEnrichment: false,
         startsSourceMonitoring: false,
         preferencesDomain: .suite(UUID().uuidString),
+        volumeCapacity: ampleVolumeCapacity,
         trashFiles: trash.map { .folder($0) } ?? .refusing
     )
 }

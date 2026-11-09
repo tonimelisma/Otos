@@ -1381,7 +1381,7 @@ extension CatalogStore {
         roots[rootPath]?.skippedPackageCount ?? 0
     }
 
-    /// `dayBuckets` is empty unless `descriptor.sort.field == .bestDate`
+    /// `dayBuckets` is empty unless `descriptor.effectiveSort.field == .bestDate`
     /// (day-contiguity — and so grouping — only holds under that sort), else
     /// index-paired with the returned IDs (DES-069; see
     /// `CatalogMediaGridState.dayBuckets`).
@@ -1425,7 +1425,7 @@ extension CatalogStore {
         let validRootPathsByRowID = roots.pathsByRowID.filter { rowID, path in
             scope.rootIDs.contains(rowID) && availableLibraryPaths.contains(path)
         }
-        let groupsByDate = descriptor.sort.field == .bestDate
+        let groupsByDate = descriptor.effectiveSort.field == .bestDate
         var ids: [MediaAssetID] = []
         var dayBuckets: [Date?] = []
         var coordinates: [PlaceCoordinate] = []
@@ -1467,6 +1467,13 @@ extension CatalogStore {
             execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)
             """
         )
+        if case let .anniversary(day) = scope.date {
+            OtosLog.catalog.noticeOperation("onThisDay.query", phase: "finish", fields: [
+                "day": day.diagnosticDescription,
+                "count": "\(ids.count)",
+                "queryMs": "\(queryMs)",
+            ])
+        }
         OtosLog.catalog.notice(
             "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )

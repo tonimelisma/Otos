@@ -25,7 +25,8 @@ nonisolated protocol WorkspaceOpening: Sendable {
     /// One launch-services call for the whole list; the app decides how to present it.
     func open(_ urls: [URL], withApplicationAt applicationURL: URL) async throws
     /// Shows `urls` selected in Finder. Passes URLs only, so a dataless original is
-    /// never materialized.
+    /// never materialized; a staged original not copied yet is fetched by the hand-off
+    /// lane before it gets here (ADR 0046 §4).
     func revealInFinder(_ urls: [URL])
 }
 

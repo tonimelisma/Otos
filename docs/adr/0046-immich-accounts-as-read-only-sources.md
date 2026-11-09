@@ -211,11 +211,11 @@ account's session, loop and status.
 - Stored thumbnails and previews, Immich's or Otos's (§7), serve the grid, loupe,
   compare, curation, and every filter.
 - Work that needs original bytes reports that the server is offline instead of waiting
-  silently: full-resolution zoom, a new edit, export, hand-off, drag of the original,
-  and a digest. The executor reports a download the server did not answer as
+  silently: full-resolution zoom, a new edit, export, hand-off, Reveal in Finder, drag
+  of the original, and a digest. The executor reports a download the server did not answer as
   `serverUnreachable`, a state of the source like a disconnected camera's
-  `deviceUnavailable`, never a file provider's failure. Hand-off names the account in its
-  alert (ADR 0037).
+  `deviceUnavailable`, never a file provider's failure. Hand-off and Reveal in Finder name
+  the account in their alert (ADR 0037).
 - Reachability is learned from requests (a request answers or fails with a transport
   error); it is never assumed from elapsed time.
 
@@ -238,7 +238,7 @@ products (ADR 0035) from an original that is local for another reason:
 
 - full-resolution zoom;
 - a new edit, whose rendering only Otos can make;
-- export, hand-off, drag of the original;
+- export, hand-off, Reveal in Finder, drag of the original;
 - a digest (ADR 0018), which needs the original's bytes because Immich offers only SHA-1.
 
 That one read writes every product the row is missing, as ADR 0009 requires: rendering,

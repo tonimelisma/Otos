@@ -49,28 +49,32 @@ struct HandOffTests {
 
     /// A hand-off that failed for space says so, and never blames the original for it.
     @Test func aHandOffThatFailedForSpaceSaysSo() {
-        #expect(HandOffFailures(outOfSpace: 0, other: 1).alertMessage
+        #expect(HandOffFailures(outOfSpace: 0, other: 1).alertMessage(for: .openDefault)
             == "One photo couldn’t be prepared, so nothing was handed over. Its original may be unavailable.")
-        #expect(HandOffFailures(outOfSpace: 1, other: 0).alertMessage
+        #expect(HandOffFailures(outOfSpace: 1, other: 0).alertMessage(for: .openDefault)
             == "There isn’t enough disk space to prepare one photo, so nothing was handed over. Free up space and try again.")
-        #expect(HandOffFailures(outOfSpace: 2, other: 1).alertMessage
+        #expect(HandOffFailures(outOfSpace: 2, other: 1).alertMessage(for: .openDefault)
             == "There isn’t enough disk space to prepare 2 photos, and one photo couldn’t be prepared because its "
             + "original may be unavailable. Nothing was handed over. Free up space and try again.")
     }
 
     /// ADR 0046 §6: a source that cannot send an original is named, by the name the sidebar
-    /// shows, in its own terms; other causes keep their own wording after it.
+    /// shows, in its own terms; other causes keep their own wording after it. A reveal says
+    /// nothing was revealed.
     @Test func aHandOffThatFailedOfflineNamesTheSource() {
         let family = LibraryRootPath(rawValue: "/RemoteStaging/family")
         let camera = LibraryRootPath(rawValue: "/DeviceStaging/eos")
         var failures = HandOffFailures()
         failures.recordUnavailable(rootPath: family, name: "Family", reason: .serverNotAnswering)
-        #expect(failures.alertMessage == "“Family” isn’t answering, so one photo couldn’t be downloaded. Nothing was handed over.")
+        #expect(failures.alertMessage(for: .openDefault)
+            == "“Family” isn’t answering, so one photo couldn’t be downloaded. Nothing was handed over.")
+        #expect(failures.alertMessage(for: .revealInFinder)
+            == "“Family” isn’t answering, so one photo couldn’t be downloaded. Nothing was revealed.")
         failures.recordUnavailable(rootPath: family, name: "Family", reason: .serverNotAnswering)
         failures.recordUnavailable(rootPath: camera, name: "EOS R5", reason: .cameraDisconnected)
         failures.other = 1
         #expect(failures.count == 4)
-        #expect(failures.alertMessage
+        #expect(failures.alertMessage(for: .openDefault)
             == "“Family” isn’t answering, so 2 photos couldn’t be downloaded. “EOS R5” isn’t connected, so one photo "
             + "couldn’t be copied from it. One photo couldn’t be prepared, so nothing was handed over. "
             + "Its original may be unavailable.")
@@ -140,6 +144,49 @@ struct HandOffTests {
         #expect(FileManager.default.contents(atPath: dropped.path(percentEncoded: false)) == Data("jpeg".utf8))
         // A staged original is fetched once; after that it is handed over as it is.
         #expect(requests.withLock { $0 } == 4)
+    }
+
+    /// Reveal in Finder takes the original, never the file a hand-off gives: an edited
+    /// photo not yet staged is fetched as its original, and nothing is rendered for it.
+    @Test func aRevealFetchesTheStagedOriginalOfAnEditedPhoto() async throws {
+        let directory = try makeTestDirectory()
+        let staged = directory.appending(path: "a1/IMG_2.JPG")
+        let id = try MediaAssetID(
+            libraryRootPath: CatalogPath.normalizedExistingDirectoryPath(for: directory),
+            relativePath: MediaRelativePath(rawValue: "a1/IMG_2.JPG")
+        )
+        let outcome = Mutex(MaterializationOutcome.deviceUnavailable)
+        let source = ClosureMaterializationRequester(status: { url in
+            FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) ? .materialized : .dataless
+        }) { url in
+            let answer = outcome.withLock { $0 }
+            if answer == .materialized {
+                do {
+                    try FileManager.default.createDirectory(
+                        at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+                    )
+                    try writeGradientJPEG(to: url)
+                } catch {
+                    return MaterializationResult(outcome: .requestFailed, rerequestCount: 0, elapsedMs: 0)
+                }
+            }
+            return MaterializationResult(outcome: answer, rerequestCount: 0, elapsedMs: 0)
+        }
+        let handOff = directory.appending(path: "HandOff")
+        let preparer = HandOffPreparer(directory: handOff, materialization: source)
+        let item = EditedMediaItem(id: id, isVideo: false, recipe: EditRecipe(exposure: 1), sourceSize: nil)
+        #expect(item.handOffForm == .renderedStill)
+        #expect(preparer.readyOriginalURL(for: item) == nil)
+
+        await #expect(throws: HandOffPreparer.PrepareError.sourceUnavailable(.cameraDisconnected)) {
+            try await preparer.original(for: item)
+        }
+
+        outcome.withLock { $0 = .materialized }
+        #expect(try await preparer.original(for: item) == staged)
+        #expect(preparer.readyOriginalURL(for: item) == staged)
+        #expect(preparer.readyURL(for: item) == nil)
+        #expect(!FileManager.default.fileExists(atPath: handOff.path(percentEncoded: false)))
     }
 
     /// A write that fails for a reason other than space keeps that reason: writing into a

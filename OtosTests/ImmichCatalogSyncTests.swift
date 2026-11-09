@@ -151,7 +151,9 @@ struct ImmichCatalogSyncTests {
             Self.exif("b", size: 2_414_759),
             Self.complete,
         ]])
-        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
 
         #expect(await sync.pass() == .synced(listed: 2, deleted: 1, full: false))
         #expect(try await fixture.visible() == ["a/IMG_1.JPG", "b/CLIP.MOV"])
@@ -172,7 +174,9 @@ struct ImmichCatalogSyncTests {
             [Self.asset("a"), Self.complete],
             [.assetDeleted(assetID: "a", ack: "AssetDeleteV1|a"), Self.complete],
         ])
-        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
         let id = MediaAssetID(libraryRootPath: fixture.rootPath, relativePath: MediaRelativePath(rawValue: "a/IMG.JPG"))
 
         _ = await sync.pass()
@@ -198,7 +202,9 @@ struct ImmichCatalogSyncTests {
             [Self.asset("a"), Self.complete],
             [Self.exif("a", size: 42), Self.complete],
         ])
-        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
         _ = await sync.pass()
         #expect(try await fixture.size(of: "a/IMG.JPG") == nil)
         _ = await sync.pass()
@@ -215,7 +221,9 @@ struct ImmichCatalogSyncTests {
             [.reset(ack: "SyncResetV1|1")],
             [Self.asset("a"), Self.complete],
         ])
-        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
         _ = await sync.pass()
         #expect(try await fixture.visible() == ["a/IMG.JPG", "b/IMG.JPG"])
 
@@ -244,7 +252,9 @@ struct ImmichCatalogSyncTests {
                 heldAtAck.withLock { $0.append(ids.map(\.relativePath.rawValue)) }
             }
         )
-        let sync = ImmichCatalogSync(rootPath: rootPath, source: server, store: store)
+        let sync = ImmichCatalogSync(
+            rootPath: rootPath, source: server, store: store, volumeCapacity: ampleVolumeCapacity
+        )
 
         #expect(await sync.pass() == .serverFailed(.unreachable(.networkConnectionLost)))
         #expect(server.acknowledgements.count == 1)
@@ -260,7 +270,9 @@ struct ImmichCatalogSyncTests {
     @Test func eachRequestedSyncRunsOnePass() async throws {
         let fixture = try await Fixture.make()
         let server = ScriptedServer([[Self.asset("a"), Self.complete], [Self.asset("b"), Self.complete]])
-        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
         let loop = Task { await sync.run() }
         sync.requestSync()
         try await waitUntil { await (try? fixture.visible()) == ["a/IMG.JPG"] }
@@ -338,7 +350,9 @@ struct ImmichCatalogSyncTests {
             ],
             previews: { _ in preview }
         )
-        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
 
         _ = await sync.pass()
         #expect(server.requestedPreviews.sorted() == ["a", "v"])
@@ -377,7 +391,9 @@ struct ImmichCatalogSyncTests {
                 }
             }
         )
-        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
         _ = await sync.pass()
         #expect(await sync.fetchProducts() == .serverFailed(made: 0))
         let owed = try await fixture.store.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
@@ -411,7 +427,9 @@ struct ImmichCatalogSyncTests {
             Self.exif("s", size: 1000),
             Self.complete,
         ]])
-        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
 
         #expect(await sync.pass() == .synced(listed: 2, deleted: 0, full: false))
         #expect(try await fixture.visible() == ["s/IMG_1.HEIC", "s/IMG_1.MOV"])
@@ -438,7 +456,9 @@ struct ImmichCatalogSyncTests {
             ],
             details: ["m": Self.detail("m", size: 2000)]
         )
-        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
 
         _ = await sync.pass()
         #expect(try await fixture.visible().isEmpty)
@@ -466,7 +486,9 @@ struct ImmichCatalogSyncTests {
             [Self.asset("s", name: "IMG_1.HEIC", motion: "m"), Self.complete],
             [.assetDeleted(assetID: "m", ack: "AssetDeleteV1|m"), Self.complete],
         ], details: ["m": Self.detail("m", size: 2)])
-        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
 
         _ = await sync.pass()
         _ = await sync.pass()

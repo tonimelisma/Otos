@@ -56,9 +56,9 @@ nonisolated enum CatalogWindowPolicy {
                     removableSources: removableSources
                 )
             }
-        case .places, .mapArea, .duplicates, .duplicateGroup, .people, .peopleReview, .person, .reviewPhotos:
-            // Places, Duplicates and People exist with the fixed libraries they span; a leaf
-            // under any of them goes with it. Each resolves to the default once the last fixed
+        case .places, .mapArea, .onThisDay, .duplicates, .duplicateGroup, .people, .peopleReview, .person, .reviewPhotos:
+            // Places, On This Day, Duplicates and People exist with the fixed libraries they
+            // span; a leaf under any of them goes with it. Each resolves to the default once the last fixed
             // library is removed.
             if SidebarSelectionPolicy.showsPlaces(libraries: libraries) {
                 return sidebarSelection
@@ -161,7 +161,7 @@ nonisolated enum CatalogWindowPolicy {
                 return false
             }
             switch sidebarSelection {
-            case .allMedia, .places, .mapArea, .importBatch, .allImports, .duplicates, .duplicateGroup,
+            case .allMedia, .places, .mapArea, .onThisDay, .importBatch, .allImports, .duplicates, .duplicateGroup,
                  .people, .peopleReview, .person, .reviewPhotos:
                 // These scopes span the fixed libraries. Batch and location *membership*
                 // are applied by Store.orderedAssetIDs; this pass only re-applies the
@@ -214,10 +214,31 @@ nonisolated enum CatalogWindowPolicy {
         )
     }
 
+    /// On This Day's years for a resolved `.onThisDay` scope, from the scoped IDs and
+    /// their day buckets. Nil for every other scope, and when the buckets do not pair.
+    static func onThisDayState(
+        for descriptor: CatalogQueryDescriptor,
+        scopedAssetIDs: [MediaAssetID],
+        scopedDayBuckets: [Date?]
+    ) -> CatalogOnThisDayState? {
+        guard case let .onThisDay(day) = descriptor.scope,
+              let years = OnThisDayYearPolicy.years(
+                  day: day,
+                  orderedIDs: scopedAssetIDs,
+                  dayBuckets: scopedDayBuckets
+              )
+        else {
+            return nil
+        }
+        return CatalogOnThisDayState(day: day, years: years)
+    }
+
     static func title(for sidebarSelection: SidebarSelection, libraries: [CatalogLibraryState]) -> String {
         switch sidebarSelection {
         case .allMedia:
             "All Media"
+        case .onThisDay:
+            "On This Day"
         case .places, .mapArea:
             "Places"
         case .duplicates, .duplicateGroup:
@@ -281,6 +302,17 @@ nonisolated enum CatalogWindowPolicy {
                 return .noAvailableMedia
             }
             return .noLocatedMedia
+        case let .onThisDay(day):
+            // The fixed libraries again: reachable libraries with nothing on this day mean
+            // no earlier year holds a match, never that there is no media.
+            let fixedLibraries = libraries.filter(\.kind.isMemberOfAllMedia)
+            if fixedLibraries.contains(where: { $0.availability == .unknown }) {
+                return .checkingLibraries
+            }
+            if allAssetCount > 0, !fixedLibraries.contains(where: \.isAvailable) {
+                return .noAvailableMedia
+            }
+            return .nothingOnThisDay(day)
         case let .library(path):
             let library = libraries.first { $0.path == path }
             switch library?.kind {
@@ -325,6 +357,7 @@ nonisolated enum CatalogWindowPolicy {
                 roots: parts.removableSources
             ),
             map: parts.map,
+            onThisDay: parts.onThisDay,
             queryGeneration: parts.queryGeneration
         )
     }

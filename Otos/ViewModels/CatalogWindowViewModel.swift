@@ -342,8 +342,8 @@ final class CatalogWindowViewModel {
     /// Decoded-image owner shared by grid, strip, and loupe/compare panes.
     /// Single owner per docs/architecture:83. The ViewModel, not the grid
     /// controller, owns it so loupe/compare panes hit the grid's decoded cache
-    /// without re-decoding.
-    @ObservationIgnored let tileContentStore = TileContentStore()
+    /// without re-decoding. Injected so a test can give it a small budget.
+    @ObservationIgnored let tileContentStore: TileContentStore
 
     var tileDetailReader: MediaTileDetailReader {
         mediaTileDetailReader
@@ -368,6 +368,10 @@ final class CatalogWindowViewModel {
     /// render signature refresher: it reads the thumbnails enrichment writes.
     @ObservationIgnored let photoSearchIndex: PhotoSearchIndex?
     @ObservationIgnored let materializationCoordinator: MaterializationCoordinator
+    /// Reads a volume's free space for every free-space floor this window's owners keep
+    /// (ADR 0027): the system's reading in the app, a test's own so no outcome depends on
+    /// how full the machine running it is.
+    @ObservationIgnored let volumeCapacity: @Sendable (URL) -> Int64?
     @ObservationIgnored let deviceStagingRegistry: DeviceStagingRegistry
     @ObservationIgnored private let mediaTileDetailReader: MediaTileDetailReader
     @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
@@ -531,6 +535,35 @@ final class CatalogWindowViewModel {
     /// read's answer belongs to an asset no longer focused.
     @ObservationIgnored var focusedKindTask: Task<Void, Never>?
 
+    /// Today in the user's calendar: the day On This Day asks about (ADR 0049). Read at
+    /// init and replaced only by `applyCalendarDay(_:)`, when the platform reports the day
+    /// or the time zone changed (`CatalogWindowViewModelStory.swift`).
+    var today: CalendarDay
+    /// Reads today when the platform reports a change; tests inject a fixed answer.
+    @ObservationIgnored let calendarDayReader: @Sendable () -> CalendarDay
+    /// Where the platform's day and time-zone reports are observed.
+    @ObservationIgnored let calendarNotificationCenter: NotificationCenter
+    @ObservationIgnored var calendarDayObservers: [any NSObjectProtocol] = []
+    @ObservationIgnored var calendarDayContinuation: AsyncStream<Void>.Continuation?
+    /// The one consumer of the day reports: a newest-wins doorbell, since only today's
+    /// value matters, read after the report arrives.
+    @ObservationIgnored var calendarDayTask: Task<Void, Never>?
+    /// The story playing over On This Day, nil when none is (ADR 0049). Written only by
+    /// the story intents in `CatalogWindowViewModelStory.swift`.
+    var story: StoryPlayback?
+    /// The year the On This Day collection should bring keyboard focus to: the year a
+    /// closed story was on. The view applies each request once, by its revision.
+    var onThisDayFocusRequest: OnThisDayFocusRequest?
+    /// Counts focus changes: `setFocus` adds one on every call, the same item included. A
+    /// story's state and every report made for it carry the visit they belong to.
+    @ObservationIgnored var focusVisit: UInt64 = 0
+    /// The current still's hold. Cancelled when the item changes or the story pauses or
+    /// closes; a hold that wakes for another visit does nothing.
+    @ObservationIgnored var storyHoldTask: Task<Void, Never>?
+    /// Waits for the current video's end or failure report.
+    @ObservationIgnored var storyVideoWatchTask: Task<Void, Never>?
+    @ObservationIgnored var storySignpost: OSSignpostIntervalState?
+
     init(
         catalogStore: CatalogStore,
         catalogProjection: CatalogProjection = CatalogProjection(),
@@ -545,9 +578,18 @@ final class CatalogWindowViewModel {
         previewLoader: (any PreviewLoading)? = nil,
         videoLoader: VideoPreviewLoader? = nil,
         workspace: any WorkspaceOpening = LaunchServicesWorkspace(),
+        calendarDayReader: @escaping @Sendable () -> CalendarDay = { CalendarDay.today() },
+        calendarNotificationCenter: NotificationCenter = .default,
+        tileContentStore: TileContentStore = TileContentStore(),
+        volumeCapacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:),
         trashFiles: MediaTrashCoordinator.FileOperations
     ) {
+        self.volumeCapacity = volumeCapacity
         self.workspace = workspace
+        self.tileContentStore = tileContentStore
+        self.calendarDayReader = calendarDayReader
+        self.calendarNotificationCenter = calendarNotificationCenter
+        today = calendarDayReader()
         // Curation undo entries are registered from store completions, outside any
         // AppKit event; groups are opened and closed explicitly (APP-039).
         windowUndoManager.groupsByEvent = false
@@ -610,7 +652,7 @@ final class CatalogWindowViewModel {
         mediaTileDetailReader = MediaTileDetailReader(store: catalogStore)
         let deviceStagingRegistry = DeviceStagingRegistry()
         self.deviceStagingRegistry = deviceStagingRegistry
-        let immichAccounts = immichAccounts ?? (startsEnrichment ? ImmichAccounts(store: catalogStore) : nil)
+        let immichAccounts = immichAccounts ?? (startsEnrichment ? ImmichAccounts(store: catalogStore, volumeCapacity: volumeCapacity) : nil)
         self.immichAccounts = immichAccounts
         let materializationCoordinator = MaterializationCoordinator(
             store: catalogStore,
@@ -641,7 +683,8 @@ final class CatalogWindowViewModel {
                         persistence: .forPriority(request.priority)
                     )
                 }
-            }
+            },
+            capacity: volumeCapacity
         )
         self.materializationCoordinator = materializationCoordinator
         handOffPreparer = HandOffPreparer(
@@ -651,7 +694,8 @@ final class CatalogWindowViewModel {
         mediaTrashCoordinator = MediaTrashCoordinator(
             store: catalogStore,
             materializationRequester: materializationCoordinator,
-            files: trashFiles
+            files: trashFiles,
+            capacity: volumeCapacity
         )
         // One face analyser, so the model loads once, read by enrichment (fixed libraries'
         // originals) and the preview face reader (Immich accounts' previews).
@@ -740,7 +784,7 @@ final class CatalogWindowViewModel {
         self.immichIntentContinuation = immichIntentContinuation
         // The restored query is the first one Projection sees (APP-043), so launch never
         // flashes the default collection before the user's own.
-        if let place = Self.loadBrowserPlace(from: preferences) {
+        if let place = Self.loadBrowserPlace(from: preferences, today: today) {
             pendingPlaceRestore = place
             queryDescriptor = place.descriptor
             sidebarSelection = place.descriptor.scope
@@ -755,6 +799,13 @@ final class CatalogWindowViewModel {
             NotificationCenter.default.removeObserver(terminationObserver)
         }
         stateConsumptionTask?.cancel()
+        for observer in calendarDayObservers {
+            calendarNotificationCenter.removeObserver(observer)
+        }
+        calendarDayTask?.cancel()
+        calendarDayContinuation?.finish()
+        storyHoldTask?.cancel()
+        storyVideoWatchTask?.cancel()
         mapClusterTask?.cancel()
         mapClusterContinuation?.finish()
         catalogStartupTask?.cancel()
@@ -882,6 +933,7 @@ extension CatalogWindowViewModel {
         startHandOff(store: store)
         startExport()
         startMapClustering()
+        startCalendarDayMonitoring()
         startStateConsumption(
             projection: projection,
             store: store,
@@ -1137,6 +1189,7 @@ extension CatalogWindowViewModel {
         // focus must already carry its new identity, or the prune below would drop it.
         applyPendingIdentityRemaps(nextState.pendingIdentityRemaps)
         applyMapState(previous: previousState, next: nextState)
+        applyOnThisDayState(previous: previousState, next: nextState)
         applyDuplicatesState(nextState)
         applyPeopleState(previous: previousState, next: nextState)
 
@@ -1265,6 +1318,10 @@ extension CatalogWindowViewModel {
 
     /// Choosing a sort while searching orders the results by it instead of by relevance.
     func setSortOrder(_ sort: MediaSortOrder) {
+        // A scope that fixes its order disables the control; a stray call changes nothing.
+        guard canChangeSort else {
+            return
+        }
         var search = queryDescriptor.search
         search?.order = .sort
         setQueryDescriptor(CatalogQueryDescriptor(
@@ -1424,7 +1481,7 @@ extension CatalogWindowViewModel {
                 && !nextState.removableSources.contains { $0.path == path }
         case let .importBatch(batchID):
             !nextState.importBatches.contains { $0.batchID == batchID }
-        case .places, .mapArea:
+        case .places, .mapArea, .onThisDay:
             !SidebarSelectionPolicy.showsPlaces(libraries: nextState.libraries)
         case let .duplicateGroup(group):
             // The group is gone — resolved, or its copies moved — so its leaf is too. Groups

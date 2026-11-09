@@ -16,7 +16,9 @@ import UniformTypeIdentifiers
 ///   Nothing is read; a cloud-only original is downloaded by the app that reads it, as
 ///   with Finder. An original a source stages (an Immich account's, a camera's) has no file
 ///   until Otos copies it, so one not yet staged — `locality(of:)` says `.fetchable` for a
-///   path with no file — is fetched first, as the user's work (ADR 0046 §4).
+///   path with no file — is fetched first, as the user's work (ADR 0046 §4). Reveal in
+///   Finder takes this form for every photo (`original(for:)`): it shows where the photo
+///   lives, not what is handed over.
 /// - **An edited still or any RAW:** a full-size JPEG rendered from the original with its
 ///   recipe (RAW9 defaults for an unedited RAW). It keeps the original's metadata, with
 ///   the orientation reset because the pixels are already upright.
@@ -78,22 +80,7 @@ actor HandOffPreparer {
     /// this launch.
     func prepare(_ item: EditedMediaItem) async throws -> URL {
         guard item.handOffForm != .original else {
-            // A file that is there, a cloud placeholder included, is handed over as it is,
-            // and so is a path with no file that no source can send: what Finder would do.
-            // Only a staged original its source has not sent yet is fetched.
-            guard !Self.exists(item.id.fileURL),
-                  await materialization.locality(of: item.id) == .fetchable
-            else {
-                return item.id.fileURL
-            }
-            let start = ContinuousClock.now
-            try await ensureLocal(item)
-            OtosLog.mediaIO.noticeOperation("handOff.prepare", phase: "finish", fields: [
-                "id": item.id.relativePath.rawValue,
-                "form": "fetchedOriginal",
-                "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
-            ])
-            return item.id.fileURL
+            return try await original(for: item)
         }
         try await clearOnce()
         let target = try Self.preparedURL(for: item, in: directory)
@@ -149,6 +136,26 @@ actor HandOffPreparer {
         return target
     }
 
+    /// The original's file, whatever form a hand-off would give: what Reveal in Finder
+    /// shows. A file that is there, a cloud placeholder included, is returned as it is, and
+    /// so is a path with no file that no source can send: what Finder would do. Only a
+    /// staged original its source has not sent yet is fetched, as the user's work.
+    func original(for item: EditedMediaItem) async throws -> URL {
+        guard !Self.exists(item.id.fileURL),
+              await materialization.locality(of: item.id) == .fetchable
+        else {
+            return item.id.fileURL
+        }
+        let start = ContinuousClock.now
+        try await ensureLocal(item)
+        OtosLog.mediaIO.noticeOperation("handOff.prepare", phase: "finish", fields: [
+            "id": item.id.relativePath.rawValue,
+            "form": "fetchedOriginal",
+            "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
+        return item.id.fileURL
+    }
+
     /// Brings the original's bytes here as the user's work, or says why they cannot come.
     private func ensureLocal(_ item: EditedMediaItem) async throws {
         let outcome = await materialization.ensureLocal(.init(
@@ -177,7 +184,7 @@ actor HandOffPreparer {
     /// a ready file to a receiver that cannot wait for one.
     nonisolated func readyURL(for item: EditedMediaItem) -> URL? {
         guard item.handOffForm != .original else {
-            return Self.exists(item.id.fileURL) ? item.id.fileURL : nil
+            return readyOriginalURL(for: item)
         }
         guard let url = try? Self.preparedURL(for: item, in: directory),
               FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
@@ -185,6 +192,12 @@ actor HandOffPreparer {
             return nil
         }
         return url
+    }
+
+    /// The original's file if it has one now, or nil: a cloud placeholder has one, a staged
+    /// original not yet copied does not.
+    nonisolated func readyOriginalURL(for item: EditedMediaItem) -> URL? {
+        Self.exists(item.id.fileURL) ? item.id.fileURL : nil
     }
 
     /// `<directory>/<digest of path and recipe>/<original name>.jpg` (or `.mov`): one file

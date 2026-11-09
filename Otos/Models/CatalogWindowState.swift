@@ -22,6 +22,9 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
     /// publishes it with no name; the view model names the person, whom People knows
     /// (`CatalogWindowViewModel.mediaEmptyState`).
     case noPersonPhotos(String?)
+    /// The On This Day scope holds nothing: no item in the fixed libraries was captured on
+    /// this day's month and day in an earlier year (ADR 0049).
+    case nothingOnThisDay(CalendarDay)
     case noFilterMatches
     /// A search matched nothing in a scope that holds items (ADR 0048). Carries the text and
     /// how many items search has not read yet, which may still match.
@@ -53,6 +56,8 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
             "noLocatedMedia"
         case .noPersonPhotos:
             "noPersonPhotos"
+        case .nothingOnThisDay:
+            "nothingOnThisDay"
         case .noFilterMatches:
             "noFilterMatches"
         case let .noSearchResults(_, stillReading):
@@ -95,6 +100,9 @@ nonisolated struct CatalogWindowState: Equatable {
     /// The Places map's content: the located items in display order and the count left
     /// off the map. Set only while the resolved scope is `.places` (ADR 0040).
     var map: CatalogMapState?
+    /// On This Day's years in play order. Set only while the resolved scope is
+    /// `.onThisDay` (ADR 0049).
+    var onThisDay: CatalogOnThisDayState?
     /// Duplicate groups across the fixed libraries (ADR 0042), in every scope: the sidebar's
     /// Duplicates row exists while any group is active, and the list draws under `.duplicates`.
     /// Nil until Projection has built them once: they are built after the rest of the

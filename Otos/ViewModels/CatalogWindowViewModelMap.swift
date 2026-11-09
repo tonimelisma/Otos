@@ -41,9 +41,10 @@ extension CatalogWindowViewModel {
     /// to have reported where it is; a viewport kept from an earlier visit is not one.
     /// Read from the intent, unlike `showsPlacesMap`: opening a group or an area in Compare
     /// or Loupe changes the scope and then the mode, before Projection publishes the scope.
+    /// On This Day's years and its story are that scope's one presentation (ADR 0049).
     var canChangeViewMode: Bool {
         switch sidebarSelection {
-        case .duplicates, .people, .peopleReview: false
+        case .duplicates, .onThisDay, .people, .peopleReview: false
         case .places: showsPlacesMap && mapViewport != nil
         default: true
         }

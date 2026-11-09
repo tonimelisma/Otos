@@ -15,6 +15,9 @@ import SwiftUI
 /// reports nothing.
 struct LoupeVideoPlayerView: NSViewRepresentable {
     let state: LoupeVideoState
+    /// The story player shows a video with no player chrome (DES-112); the loupe keeps
+    /// AVKit's inline bar.
+    var showsControls = true
     var trimCommand: VideoTrimCommand?
     var onTrimmed: @MainActor (MediaAssetID) -> Void = { _ in }
 
@@ -28,7 +31,7 @@ struct LoupeVideoPlayerView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView()
-        view.controlsStyle = .inline
+        view.controlsStyle = showsControls ? .inline : .none
         view.showsFrameSteppingButtons = true
         view.showsSharingServiceButton = false
         view.showsFullScreenToggleButton = true

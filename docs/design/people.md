@@ -1,12 +1,12 @@
 # People
 
 Status: approved by the owner in chat, 2026-11-10, with the changes noted as owner decisions;
-built (APP-069). Its rules are DES-109 to DES-112.
+built (APP-072). Its rules are DES-109 to DES-111 and DES-113.
 
 The surfaces for finding and naming the people in the user's photos (ADR 0047). Three views share one sidebar row: the **People list**, a **person's scope**
 (that person's photos in the ordinary browser), and the **review**, where suggestions are
 confirmed, rejected, merged and split, grouped by year. Cites `docs/design/design-system.md`
-by ID; rules are not restated. Proposed new rules are marked **[proposed DES-109]** to **[proposed DES-112]**. The
+by ID; rules are not restated. Proposed new rules are marked **[proposed DES-109]** to **[proposed DES-111]** and **[proposed DES-113]**. The
 owner's answers to the spec's questions (2026-11-09) are folded in and listed at the end
 under **Owner decisions**; items still open are marked **[Q n]**.
 
@@ -306,7 +306,7 @@ All of these, from buttons, menus, keys, drags and VoiceOver, call one owner int
 In **Unsure**, ⌘[ and ⌘] confirm the selected faces as the row's first or second candidate,
 and Return confirms nothing.
 
-**[proposed DES-112]** extends DES-093's Lightroom keys with ⇧O (Name…) in the review.
+**[proposed DES-113]** extends DES-093's Lightroom keys with ⇧O (Name…) in the review.
 **[deviation:** a key without ⌘, which DES-093 already allows for Lightroom's own keys;
 the source is Lightroom Classic**]**. Return and Delete are ordinary keys.
 
@@ -429,7 +429,7 @@ from the review receipt's `Undo`.
 - **DES-111 (suggestions are never facts):** a suggested name appears only in the review,
   always as a suggestion. It never appears in a person's scope, the Info pane, a tile or a
   count of a person's photos.
-- **DES-112 (review keys):** Return confirms, Delete rejects, ⇧O names, Space opens the
+- **DES-113 (review keys):** Return confirms, Delete rejects, ⇧O names, Space opens the
   photo, ⌘1/⌘2 pick Suggestions or Unsure, ⌘[ / ⌘] pick an Unsure row's first or second
   candidate, and ⌘⌫ is disabled in the review. The ⇧O part is a deviation extending DES-093.
 

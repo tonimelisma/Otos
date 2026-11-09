@@ -31,12 +31,19 @@ extension CatalogWindowViewModel {
     /// It also reconciles the pane slots, so no focus change can leave the loupe
     /// showing — or waiting on — another asset's decode. Set `viewMode` first when
     /// both change: the reconcile reads it.
+    ///
+    /// Every call is a new visit (`focusVisit`). A playing story's item is this focus, so
+    /// every writer — the story's own moves, Move to Trash's successor, a reorganization's
+    /// remap — moves the story by moving focus, and the story starts the visit over.
     func setFocus(_ id: MediaAssetID?) {
         focusedAssetID = id
+        focusVisit &+= 1
+        let visit = focusVisit
         focusedAssetKind = nil
         focusedLivePhotoMotion = nil
         resetLoupeZoomForFocusChange()
         refreshPanePreviews()
+        beginStoryVisit()
         focusedKindTask?.cancel()
         guard let id else { return }
         let reader = tileDetailReader
@@ -48,10 +55,12 @@ extension CatalogWindowViewModel {
             } catch {
                 // The kind stays unknown, as it has been since focus moved, and the next
                 // focus change reads again.
+                self?.storyStalled(visit: visit, reason: "kindReadFailed", error: error)
                 return
             }
             guard let self, !Task.isCancelled, focusedAssetID == id else { return }
             focusedAssetKind = detail?.bestKind
+            storyKindResolved(visit: visit)
             // Opening a video prepares it, exactly as opening an image decodes it: no
             // click stands between the user and a playable asset. Kind is only known
             // here, so this is the one place that can start it.
@@ -236,6 +245,12 @@ extension CatalogWindowViewModel {
         previousOrderedIDs: [MediaAssetID],
         scopeChanged: Bool
     ) {
+        // A playing story keeps its item or moves focus to the survivor itself, and closes
+        // when nothing remains (ADR 0049).
+        if story != nil {
+            reconcileStoryAfterGridChange(previousOrderedIDs: previousOrderedIDs)
+            return
+        }
         let ordered = state.mediaGrid.orderedAssetIDs
         if ordered.isEmpty {
             if viewMode != .grid {
@@ -381,6 +396,7 @@ extension CatalogWindowViewModel {
         if displayedPanePreview(slot)?.id != id {
             downloadingSlots.insert(slot)
         }
+        let visit = focusVisit
         paneRequestTasks[slot] = Task(priority: .userInitiated) { [weak self] in
             let detail: MediaTileDetail?
             do {
@@ -397,6 +413,9 @@ extension CatalogWindowViewModel {
                 downloadingSlots.remove(slot)
                 if target == PreviewImageLoader.fullResolution {
                     fullResolutionRequestedIDs.remove(id)
+                }
+                if slot == .loupe {
+                    storyStalled(visit: visit, reason: "paneDetailFailed", error: error)
                 }
                 return
             }
@@ -450,7 +469,10 @@ extension CatalogWindowViewModel {
                     )
                     if slot == .loupe {
                         self.requestFullResolutionIfNeeded()
+                        self.storyPaneSettled(visit: visit, pane: .shown)
                     }
+                } else if slot == .loupe {
+                    self.storyPaneSettled(visit: visit, pane: .none)
                 }
             }
         }
@@ -483,6 +505,7 @@ extension CatalogWindowViewModel {
         }
         let detailReader = tileDetailReader
         let loader = videoLoader
+        let visit = focusVisit
         loupeVideoPrepareTask?.cancel()
         loupeVideoPrepareTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -491,13 +514,18 @@ extension CatalogWindowViewModel {
                 detail = try await detailReader.detail(for: id)
             } catch {
                 // Nothing is prepared; the next focus change or the play glyph asks again.
+                storyStalled(visit: visit, reason: "videoDetailFailed", error: error)
                 return
             }
             guard !Task.isCancelled, detail?.bestKind == .video else { return }
             guard let state = await loader.preparePlayer(id: id, detail: detail) else {
+                // A preparation cancelled by a focus move found nothing out about this
+                // video; only one that ran to its answer reports it unavailable.
+                guard !Task.isCancelled, focusedAssetID == id else { return }
                 OtosLog.ui.notice(
                     "op=loupe.video phase=unavailable id=\(id.relativePath.rawValue, privacy: .public)"
                 )
+                storyVideoUnavailable(visit: visit)
                 return
             }
             // Revalidate after every await: focus may have moved while bytes arrived.
@@ -511,6 +539,7 @@ extension CatalogWindowViewModel {
                 prepared.isPlaying = true
             }
             loupeVideoState = prepared
+            storyVideoReady(prepared, visit: visit)
             OtosLog.ui.notice(
                 """
                 op=loupe.video phase=\(startPlaying ? "play" : "ready", privacy: .public) \
@@ -528,7 +557,7 @@ extension CatalogWindowViewModel {
     /// Whether the loupe can play the focused Live Photo's motion now: it shows one, and
     /// is not already playing it.
     var canPlayLivePhoto: Bool {
-        viewMode == .loupe && focusedLivePhotoMotion != nil && loupeVideoState == nil
+        viewMode == .loupe && story == nil && focusedLivePhotoMotion != nil && loupeVideoState == nil
     }
 
     /// Plays the focused Live Photo's motion in place of its still, once, then shows the
@@ -610,7 +639,7 @@ extension CatalogWindowViewModel {
         }
     }
 
-    private func clearLoupeVideo() {
+    func clearLoupeVideo() {
         loupeVideoPrepareTask?.cancel()
         loupeVideoPrepareTask = nil
         if let state = loupeVideoState {

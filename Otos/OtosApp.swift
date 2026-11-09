@@ -392,6 +392,14 @@ public struct OtosApp: App {
                         || catalogViewModel.comparePair.members.count != 2
                 )
                 Divider()
+                // Lightroom Classic's Impromptu Slideshow key; On This Day's cards are the
+                // other way in (ADR 0049).
+                Button("Play Story") {
+                    catalogViewModel.playStory()
+                }
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(!catalogViewModel.canPlayStory)
+                Divider()
                 Menu("Sort") {
                     CatalogSortMenuContent(
                         sort: catalogViewModel.queryDescriptor.sort,
@@ -400,6 +408,7 @@ public struct OtosApp: App {
                         orderByRelevance: catalogViewModel.orderSearchByRelevance
                     )
                 }
+                .disabled(!catalogViewModel.canChangeSort)
                 Divider()
                 Button("Show Filter") {
                     catalogViewModel.showFilter()

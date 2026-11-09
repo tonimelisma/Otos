@@ -14,7 +14,9 @@
     /// bar and the stacks are the real views.
     ///
     /// The capture waits on a fact, never on time (ADR 0033): for the Places map, the
-    /// first non-empty set of stacks; for any grid, the first non-empty order. Both are
+    /// first non-empty set of stacks; for On This Day, its published years or its known
+    /// emptiness, or with `OTOS_SMOKE_PLAY_STORY` the story's first settled picture; for
+    /// any grid, the first non-empty order. Both are
     /// published state the ViewModel owns. Thumbnails decode after that moment, so a
     /// capture may show placeholders; the run's log says which asset painted when.
     ///
@@ -41,6 +43,8 @@
             duplicateGroupCount: Int = 0,
             showsPeople: Bool = false,
             peopleAreBuilt: Bool = false,
+            showsOnThisDay: Bool = false,
+            onThisDaySettled: Bool = false,
             gridCount: Int
         ) -> Bool {
             if showsPlacesMap {
@@ -48,6 +52,9 @@
             }
             if showsPeople {
                 return peopleAreBuilt
+            }
+            if showsOnThisDay {
+                return onThisDaySettled
             }
             if showsDuplicates {
                 return duplicateGroupCount > 0
@@ -80,6 +87,7 @@
             OtosLog.app.notice(
                 "op=smoke.capture phase=start path=\(path, privacy: .public) settleSeconds=\(settleSeconds, privacy: .public)"
             )
+            let awaitsStory = environment[SmokeLibrarySelection.playStoryVariable] == "1"
             let readiness = Observations { @MainActor [weak viewModel] in
                 viewModel.map {
                     isReady(
@@ -89,6 +97,8 @@
                         duplicateGroupCount: $0.state.duplicates?.groups.count ?? 0,
                         showsPeople: $0.showsPeopleList || $0.showsPeopleReview,
                         peopleAreBuilt: $0.state.people != nil,
+                        showsOnThisDay: $0.showsOnThisDay,
+                        onThisDaySettled: onThisDaySettled($0, awaitsStory: awaitsStory),
                         gridCount: $0.state.mediaGrid.orderedAssetIDs.count
                     )
                 }
@@ -117,6 +127,19 @@
                     return
                 }
             }
+        }
+
+        /// On This Day has something to show: the story's picture settled, or else the
+        /// years, or the scope known to hold none.
+        @MainActor
+        private static func onThisDaySettled(_ viewModel: CatalogWindowViewModel, awaitsStory: Bool) -> Bool {
+            if awaitsStory {
+                return viewModel.story.map { $0.pane != .awaited } ?? false
+            }
+            if case .nothingOnThisDay = viewModel.state.mediaEmptyState {
+                return true
+            }
+            return viewModel.state.onThisDay?.years.isEmpty == false
         }
 
         /// Scrolls every scroll view in the main window to the given fraction of its

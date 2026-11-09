@@ -70,7 +70,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
 
     /// Reveal acts on the same targets as Open, Share and Copy: in Loupe that is the
     /// focused item, never a grid multi-selection left behind it (APP-037).
-    @Test func revealUsesTheCurrentTargetsInEveryMode() {
+    @Test func revealUsesTheCurrentTargetsInEveryMode() async throws {
         let workspace = MenuRecordingWorkspace()
         let model = makeMenuModel(workspace: workspace)
         let ids = makeIDs(count: 3)
@@ -82,8 +82,29 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         model.openLoupe(id: ids[1])
         #expect(model.mediaItemMenuModel().canReveal)
         model.revealCurrentTargetsInFinder()
+        try await waitUntil { model.hasSettledHandOffs }
 
         #expect(workspace.revealed == [[ids[0].fileURL, ids[2].fileURL], [ids[1].fileURL]])
+    }
+
+    /// Reveal shows where a photo lives, not what a hand-off gives: an edited photo is
+    /// revealed as its original, and nothing is rendered for it (ADR 0037).
+    @Test(.testDirectory) func revealShowsTheOriginalOfAnEditedPhoto() async throws {
+        try await withEditableLibrary(fileCount: 2) { library in
+            _ = try await library.store.setEditRecipe(EditRecipe(exposure: 1), for: library.ids[1])
+            let workspace = MenuRecordingWorkspace()
+            let model = makeMenuModel(workspace: workspace, store: library.store)
+            defer { model.handOffTask?.cancel() }
+            model.applyState(menuWindowState(ids: library.ids))
+            model.selectAll()
+
+            model.revealCurrentTargetsInFinder()
+            try await waitUntil { model.hasSettledHandOffs }
+
+            #expect(workspace.revealed == [library.ids.map(\.fileURL)])
+            #expect(model.handOffAlertMessage == nil)
+            #expect(!FileManager.default.fileExists(atPath: library.store.handOffDirectory.path(percentEncoded: false)))
+        }
     }
 
     @Test func noTargetsBuildNoMenu() {
@@ -134,10 +155,13 @@ struct CatalogWindowViewModelMediaItemMenuTests {
 }
 
 @MainActor
-private func makeMenuModel(workspace: MenuRecordingWorkspace) -> CatalogWindowViewModel {
-    // Open, Open With, Share and Copy are hand-offs, consumed by the hand-off lane.
+private func makeMenuModel(
+    workspace: MenuRecordingWorkspace,
+    store: CatalogStore = CatalogStore(location: .inMemory)
+) -> CatalogWindowViewModel {
+    // Open, Open With, Share, Copy and Reveal are hand-offs, consumed by the hand-off lane.
     let model = CatalogWindowViewModel(
-        catalogStore: CatalogStore(location: .inMemory),
+        catalogStore: store,
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,

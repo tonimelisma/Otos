@@ -275,7 +275,7 @@ struct PeopleReviewView: View {
     }
 }
 
-/// The review's keys (DES-112): arrows, ⌘A, Return, Delete, ⇧O, Space, ⌘[ / ⌘], ⌘1 / ⌘2
+/// The review's keys (DES-113): arrows, ⌘A, Return, Delete, ⇧O, Space, ⌘[ / ⌘], ⌘1 / ⌘2
 /// and Escape.
 private struct ListKeys: ViewModifier {
     let session: PeopleSession

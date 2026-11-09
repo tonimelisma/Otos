@@ -42,7 +42,7 @@ nonisolated enum CatalogQueryGateway {
         scope: CatalogScopePredicate,
         db: Database
     ) throws -> [OrderedAssetIDRow] {
-        guard let query = orderedAssetIDQuery(descriptor: descriptor, scope: scope) else {
+        guard let query = try orderedAssetIDQuery(descriptor: descriptor, scope: scope, db: db) else {
             return []
         }
         return try Row.fetchAll(
@@ -76,14 +76,17 @@ nonisolated enum CatalogQueryGateway {
         let coordinate: PlaceCoordinate?
     }
 
+    /// `db` is the read's own transaction: a scope with a date dimension reads its year
+    /// floor there (`scopeClause`), so the ranges and the rows come from one snapshot.
     static func orderedAssetIDQuery(
         descriptor: CatalogQueryDescriptor,
-        scope: CatalogScopePredicate
-    ) -> SQLQuery? {
-        guard let scopeClause = scopeClause(scope) else {
+        scope: CatalogScopePredicate,
+        db: Database
+    ) throws -> SQLQuery? {
+        guard let scopeClause = try scopeClause(scope, db: db) else {
             return nil
         }
-        let order = orderPlan(for: descriptor.sort, rootLocal: scope.rootIDs.count == 1)
+        let order = orderPlan(for: descriptor.effectiveSort, rootLocal: scope.rootIDs.count == 1)
         var arguments = scopeClause.arguments
         let filter = filterPredicate(for: descriptor.filter)
         arguments.append(contentsOf: filter.arguments)
@@ -103,7 +106,7 @@ nonisolated enum CatalogQueryGateway {
     }
 
     static func filterOptions(scope: CatalogScopePredicate, db: Database) throws -> CatalogFilterOptions {
-        guard let query = distinctFilterableTypesQuery(scope: scope) else {
+        guard let query = try distinctFilterableTypesQuery(scope: scope, db: db) else {
             return .empty
         }
         let rows = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments)
@@ -125,8 +128,8 @@ nonisolated enum CatalogQueryGateway {
         )
     }
 
-    static func distinctFilterableTypesQuery(scope: CatalogScopePredicate) -> SQLQuery? {
-        guard let scopeClause = scopeClause(scope) else {
+    static func distinctFilterableTypesQuery(scope: CatalogScopePredicate, db: Database) throws -> SQLQuery? {
+        guard let scopeClause = try scopeClause(scope, db: db) else {
             return nil
         }
         return SQLQuery(
@@ -147,7 +150,7 @@ nonisolated enum CatalogQueryGateway {
         filter: MediaFilter = .all,
         db: Database
     ) throws -> Int {
-        guard let scopeClause = scopeClause(scope) else {
+        guard let scopeClause = try scopeClause(scope, db: db) else {
             return 0
         }
         var arguments = scopeClause.arguments
@@ -482,12 +485,30 @@ private nonisolated func orderPlan(
 /// single-root scope uses `=` so the root-local ordering indexes stay usable. A scope
 /// that requires a location joins `asset_metadata`, where the primary location lives,
 /// so the same read can also carry each row's coordinate; columns are qualified with
-/// their table so the join introduces no ambiguity.
+/// their table so the join introduces no ambiguity. A scope with a date dimension reads
+/// its year floor — the earliest capture its roots hold — in `db`, the caller's read, so the
+/// anniversary ranges and the rows they select come from one snapshot (ADR 0049).
 private nonisolated func scopeClause(
-    _ scope: CatalogScopePredicate
-) -> (join: String, sql: String, arguments: [any DatabaseValueConvertible])? {
+    _ scope: CatalogScopePredicate,
+    db: Database
+) throws -> (join: String, sql: String, arguments: [any DatabaseValueConvertible])? {
     guard !scope.selectsNothing else {
         return nil
+    }
+    let captureRanges: [Range<Double>]?
+    switch scope.date {
+    case .any:
+        captureRanges = nil
+    case let .anniversary(day):
+        let ranges = try AnniversaryRanges.ranges(
+            for: day,
+            earliestCaptureUnix: earliestCaptureUnix(rootIDs: scope.rootIDs, db: db)
+        )
+        // No earlier year holds a dated row: nothing can match, and SQLite is not asked.
+        guard !ranges.isEmpty else {
+            return nil
+        }
+        captureRanges = ranges
     }
     var arguments: [any DatabaseValueConvertible] = []
     let rootPredicate: String
@@ -572,6 +593,17 @@ private nonisolated func scopeClause(
             arguments.append(person.rawValue)
         }
     }
+    if let captureRanges {
+        let clauses = Array(
+            repeating: "(media_asset.best_capture_unix >= ? AND media_asset.best_capture_unix < ?)",
+            count: captureRanges.count
+        )
+        predicate += "\n  AND (\(clauses.joined(separator: " OR ")))"
+        for range in captureRanges {
+            arguments.append(range.lowerBound)
+            arguments.append(range.upperBound)
+        }
+    }
     var join = ""
     switch scope.location {
     case .any:
@@ -592,6 +624,20 @@ private nonisolated func scopeClause(
         predicate += "\n  AND (asset_metadata.primary_longitude >= ? \(longitude) asset_metadata.primary_longitude <= ?)"
     }
     return (join, predicate, arguments)
+}
+
+/// The earliest capture instant the roots hold, the floor of an anniversary scope's years.
+/// Every row of the roots counts, hidden or not: a lower floor only adds a range that
+/// matches nothing.
+private nonisolated func earliestCaptureUnix(rootIDs: [Int64], db: Database) throws -> Double? {
+    try Double.fetchOne(
+        db,
+        sql: """
+        SELECT MIN(best_capture_unix) FROM media_asset
+        WHERE library_root_id IN (\(sqlPlaceholders(count: rootIDs.count)))
+        """,
+        arguments: StatementArguments(rootIDs)
+    )
 }
 
 private nonisolated let locationJoin = """

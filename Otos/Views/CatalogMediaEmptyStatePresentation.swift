@@ -19,6 +19,8 @@ extension CatalogMediaEmptyState {
             "No Located Media"
         case let .noPersonPhotos(name):
             "No Photos of \(name ?? "This Person")"
+        case .nothingOnThisDay:
+            "Nothing on This Day"
         case .noFilterMatches:
             "No Matching Media"
         case let .noSearchResults(text, _):
@@ -50,6 +52,8 @@ extension CatalogMediaEmptyState {
             "Photos and videos with location information appear here as they are cataloged."
         case let .noPersonPhotos(name):
             "Confirm faces of \(name ?? "this person") in Review Suggestions."
+        case let .nothingOnThisDay(day):
+            OnThisDayPresentation.emptyMessage(day)
         case .noFilterMatches:
             "No media in this scope matches the active filters."
         case let .noSearchResults(_, stillReading) where stillReading > 0:
@@ -86,6 +90,8 @@ extension CatalogMediaEmptyState {
             "map"
         case .noPersonPhotos:
             "person.crop.square"
+        case .nothingOnThisDay:
+            "calendar"
         case .noFilterMatches:
             "line.3.horizontal.decrease.circle"
         case .noSearchResults:
