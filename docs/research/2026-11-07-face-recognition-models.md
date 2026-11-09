@@ -116,6 +116,20 @@ plain flatten-to-RGB read such a crop differently:
 The build fills the area outside the photo with one defined colour, so Core ML always receives
 an opaque crop.
 
+**Pair quality with its face by identity (found 2026-11-09).** Vision's capture-quality results
+do not keep the input's order. In 22 of 38 multi-face photos the order differed, while each
+result's `uuid` always kept its own face's box. The study's tool paired them by position, so in
+multi-face photos some faces took a neighbour's quality. A face with quality 0.03 in the study
+read 0.41 when paired by `uuid`.
+
+What that changes:
+- **The model ranking: nothing.** Embeddings were unaffected, and every model was scored on the
+  same faces.
+- **The quality filter:** it decided some faces on another face's quality.
+
+The shipped analyser pairs by `uuid`. Its embeddings match the study's: on run 1's photos,
+cosine ≥ 0.9984 (median 0.9997) for every face both kept, the int8 model against fp32.
+
 ## 4. Ground truth: the owner's labels
 
 Labelling 3,293 faces one by one is too slow, so they were first grouped (`tools/cluster.py`):

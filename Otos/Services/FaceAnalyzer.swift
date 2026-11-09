@@ -1,0 +1,209 @@
+import CoreGraphics
+import CoreImage
+import Foundation
+import OSLog
+import Vision
+
+/// One face found in a photo and read by the embedding model (ADR 0047).
+nonisolated struct DetectedFace: Sendable, Equatable {
+    /// The face's box as fractions of the upright photo, top-left origin.
+    let box: CGRect
+    /// The five alignment points as fractions of the upright photo, top-left origin: left eye
+    /// centre, right eye centre, nose tip, left mouth corner, right mouth corner.
+    let landmarks: [CGPoint]
+    /// Vision's face capture quality, 0 to 1.
+    let quality: Float
+    /// The unit-length embedding (`FaceEmbeddingModel.dimensions` values).
+    let embedding: [Float]
+}
+
+/// Every face Vision found in one photo, split into those the model read and the reasons the
+/// rest were not.
+nonisolated struct FaceAnalysis: Sendable, Equatable {
+    let faces: [DetectedFace]
+    /// Below `FaceAnalyzer.minimumQuality`.
+    let rejectedForQuality: Int
+    /// Box height × alignment scale outside `FaceAlignment.admittedScaledHeight`: the landmarks
+    /// were not one face.
+    let rejectedForAlignment: Int
+    /// Vision returned no eyes, nose crest or lips to align by.
+    let rejectedForLandmarks: Int
+}
+
+/// Face analyzer guide
+///
+/// Finds the faces in one upright photo and reads each with the embedding model (ADR 0047):
+/// Vision's face landmarks and capture quality, the admission rules, the five-point alignment
+/// (`FaceAlignment`), an opaque 112 × 112 crop, and `FaceEmbeddingModel`.
+///
+/// Every step is blocking CPU work and the model is 66 MB, so the actor runs on its own serial
+/// queue rather than the shared pool (ADR 0032 rule 6), loads the model on first use, and the
+/// model never leaves it. The caller hands it the original's pixels at full resolution, already
+/// oriented upright; a face is never read from a downscaled preview.
+///
+/// The settings are the ones the bake-off measured
+/// (`docs/research/2026-11-07-face-recognition-models.md`), and `revision` names them: Vision's
+/// landmark and quality revision 3, the admission thresholds, the alignment and the model. A
+/// change to any of them is a new revision, which makes every stored face stale.
+actor FaceAnalyzer {
+    /// The analysis these settings produce; stored with every face.
+    static let revision = 1
+
+    /// Vision's capture quality below which a face is not read: the admission rule every
+    /// measured face passed.
+    static let minimumQuality: Float = 0.3
+
+    private let queue = DispatchSerialQueue(label: "net.melisma.Otos.face.analysis", qos: .utility)
+    private let bundle: Bundle
+    private let context = CIContext()
+    private var model: FaceEmbeddingModel?
+
+    nonisolated var unownedExecutor: UnownedSerialExecutor {
+        queue.asUnownedSerialExecutor()
+    }
+
+    init(bundle: Bundle) {
+        self.bundle = bundle
+    }
+
+    /// The faces in `image`, an upright photo at full resolution.
+    func analyze(_ image: CGImage) throws -> FaceAnalysis {
+        let start = ContinuousClock.now
+        let size = CGSize(width: image.width, height: image.height)
+        let (observations, qualities) = try Self.detect(image)
+        let visionElapsed = ContinuousClock.now - start
+
+        let source = CIImage(cgImage: image)
+        var faces: [DetectedFace] = []
+        var lowQuality = 0, misaligned = 0, noLandmarks = 0
+        for observation in observations {
+            guard let quality = qualities[observation.uuid], quality >= Self.minimumQuality else {
+                lowQuality += 1
+                continue
+            }
+            guard let points = Self.alignmentPoints(observation, imageSize: size),
+                  let transform = FaceAlignment.similarity(from: points, to: FaceAlignment.template)
+            else {
+                noLandmarks += 1
+                continue
+            }
+            let boxHeight = observation.boundingBox.height * size.height
+            guard FaceAlignment.admits(boxHeight: boxHeight, transform: transform) else {
+                misaligned += 1
+                continue
+            }
+            guard let crop = Self.alignedCrop(of: source, transform: transform, context: context) else {
+                throw AnalysisError.cropFailed
+            }
+            let embedding = try embeddingModel().embedding(of: crop)
+            faces.append(DetectedFace(
+                box: Self.topLeft(observation.boundingBox),
+                landmarks: points.map { CGPoint(x: $0.x / size.width, y: 1 - $0.y / size.height) },
+                quality: quality,
+                embedding: embedding
+            ))
+        }
+        OtosLog.metadata.noticeOperation("face.analyse", phase: "finish", fields: [
+            "width": "\(image.width)",
+            "height": "\(image.height)",
+            "detected": "\(observations.count)",
+            "faces": "\(faces.count)",
+            "lowQuality": "\(lowQuality)",
+            "misaligned": "\(misaligned)",
+            "noLandmarks": "\(noLandmarks)",
+            "visionMs": "\(DiagnosticsTiming.milliseconds(visionElapsed))",
+            "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
+        return FaceAnalysis(
+            faces: faces,
+            rejectedForQuality: lowQuality,
+            rejectedForAlignment: misaligned,
+            rejectedForLandmarks: noLandmarks
+        )
+    }
+
+    /// Vision's faces in `image`, with each face's capture quality by its `uuid`.
+    private static func detect(_ image: CGImage) throws -> ([VNFaceObservation], [UUID: Float]) {
+        let landmarksRequest = VNDetectFaceLandmarksRequest()
+        landmarksRequest.revision = VNDetectFaceLandmarksRequestRevision3
+        let handler = VNImageRequestHandler(cgImage: image)
+        try handler.perform([landmarksRequest])
+        let observations = landmarksRequest.results ?? []
+        guard !observations.isEmpty else { return ([], [:]) }
+        let qualityRequest = VNDetectFaceCaptureQualityRequest()
+        qualityRequest.revision = VNDetectFaceCaptureQualityRequestRevision3
+        qualityRequest.inputFaceObservations = observations
+        try handler.perform([qualityRequest])
+        // Paired by uuid, never by position: Vision returns these in its own order, which
+        // differed from the input's on 22 of 38 multi-face photos measured.
+        var qualities: [UUID: Float] = [:]
+        for observation in qualityRequest.results ?? [] {
+            if let quality = observation.faceCaptureQuality {
+                qualities[observation.uuid] = quality
+            }
+        }
+        return (observations, qualities)
+    }
+
+    enum AnalysisError: Error {
+        case cropFailed
+    }
+
+    private func embeddingModel() throws -> FaceEmbeddingModel {
+        if let model {
+            return model
+        }
+        let start = ContinuousClock.now
+        let loaded = try FaceEmbeddingModel(bundle: bundle)
+        model = loaded
+        OtosLog.metadata.noticeOperation("face.model", phase: "loaded", fields: [
+            "model": "AdaFaceIR101", "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
+        return loaded
+    }
+
+    /// The five alignment points in the photo's pixels, bottom-left origin: the two eye centres
+    /// (left to right in the image), the lowest nose-crest point as the nose tip, and the
+    /// leftmost and rightmost outer-lip points as the mouth corners.
+    static func alignmentPoints(_ observation: VNFaceObservation, imageSize: CGSize) -> [CGPoint]? {
+        guard let landmarks = observation.landmarks,
+              let leftEye = landmarks.leftEye, let rightEye = landmarks.rightEye,
+              let noseCrest = landmarks.noseCrest, let lips = landmarks.outerLips
+        else {
+            return nil
+        }
+        func centre(_ region: VNFaceLandmarkRegion2D) -> CGPoint? {
+            let points = region.pointsInImage(imageSize: imageSize)
+            guard !points.isEmpty else { return nil }
+            let count = Double(points.count)
+            return CGPoint(x: points.map(\.x).reduce(0, +) / count, y: points.map(\.y).reduce(0, +) / count)
+        }
+        let lipPoints = lips.pointsInImage(imageSize: imageSize)
+        guard let left = centre(leftEye), let right = centre(rightEye),
+              let nose = noseCrest.pointsInImage(imageSize: imageSize).min(by: { $0.y < $1.y }),
+              let mouthLeft = lipPoints.min(by: { $0.x < $1.x }),
+              let mouthRight = lipPoints.max(by: { $0.x < $1.x })
+        else {
+            return nil
+        }
+        let eyes = [left, right].sorted { $0.x < $1.x }
+        return [eyes[0], eyes[1], nose, mouthLeft, mouthRight]
+    }
+
+    /// The aligned 112 × 112 crop of `source` under `transform`, made opaque: where the face
+    /// reaches past the photo's edge the crop is black, never transparent. A crop with
+    /// transparent pixels embeds differently depending on how it is read (cosine as low as
+    /// 0.92 measured against the same crop flattened another way), so the model is only ever
+    /// handed opaque pixels.
+    static func alignedCrop(of source: CIImage, transform: CGAffineTransform, context: CIContext) -> CGImage? {
+        let frame = CGRect(x: 0, y: 0, width: FaceAlignment.side, height: FaceAlignment.side)
+        let black = CIImage(color: .black).cropped(to: frame)
+        let aligned = source.transformed(by: transform).composited(over: black).cropped(to: frame)
+        return context.createCGImage(aligned, from: frame)
+    }
+
+    /// Vision's bottom-left normalized box as a top-left one.
+    private static func topLeft(_ box: CGRect) -> CGRect {
+        CGRect(x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height)
+    }
+}
