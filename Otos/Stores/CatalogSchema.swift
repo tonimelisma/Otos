@@ -436,6 +436,28 @@ nonisolated enum CatalogSchema {
         "CREATE INDEX idx_face_rejection_person ON face_rejection(person_id)",
     ]
 
+    /// The source's own ID for the item a row is: an Immich asset's ID (ADR 0046 §2). A Live
+    /// Photo's motion part lives in its still's folder, so a folder names only its still;
+    /// every request Otos makes for an item, and every size and deletion the source reports
+    /// for one, finds its row by this. Null for every kind that reads its files in place
+    /// or names them by path. Existing account rows are all stills, named by their folder.
+    static let sourceItemIDMigrationIdentifier = "v20_media_asset_source_item_id"
+
+    static let sourceItemIDStatements: [String] = [
+        "ALTER TABLE media_asset ADD COLUMN source_item_id TEXT",
+        """
+        UPDATE media_asset SET source_item_id = substr(relative_path, 1, instr(relative_path, '/') - 1)
+        WHERE instr(relative_path, '/') > 1
+          AND library_root_id IN (
+              SELECT id FROM library_root WHERE kind = '\(LibraryRootKind.immichAccount.rawValue)'
+          )
+        """,
+        """
+        CREATE INDEX idx_media_asset_source_item ON media_asset(library_root_id, source_item_id)
+        WHERE source_item_id IS NOT NULL
+        """,
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (

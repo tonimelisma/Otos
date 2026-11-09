@@ -103,6 +103,7 @@ struct RemoteRangeEnrichmentTests {
                 byteSize: Int64(data.count), createdAt: Date(timeIntervalSince1970: 1_700_000_000),
                 contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
             ),
+            sourceItemID: "asset-1",
             isHiddenBySource: false
         )]), scan: scan)
         await store.endSourceListing(scan: scan)

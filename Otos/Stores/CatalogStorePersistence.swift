@@ -163,6 +163,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.sourceItemIDMigrationIdentifier) { db in
+            for statement in CatalogSchema.sourceItemIDStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

@@ -1206,6 +1206,9 @@ nonisolated struct SourceListedItem: Hashable, Sendable {
     /// The item's facts. A nil size is one this report does not carry, and leaves the
     /// size the catalog already holds.
     let file: ScannedMediaFile
+    /// The source's own ID for the item (an Immich asset's ID), which every later report
+    /// and request about it uses.
+    let sourceItemID: String
     /// The source holds the item but hides it: an Immich asset in Immich's trash.
     let isHiddenBySource: Bool
 }
@@ -1214,28 +1217,31 @@ nonisolated struct SourceListedItem: Hashable, Sendable {
 /// (ADR 0046 §7).
 nonisolated struct SourceProductCandidate: Equatable, Sendable {
     let id: MediaAssetID
+    /// The source's own ID for the item, which its images are asked for by.
+    let sourceItemID: String
     let kind: MediaKind?
     let byteSize: Int64
     let contentModifiedAtSeconds: Int?
-
-    /// The item's folder: an Immich asset's ID (ADR 0046 §2).
-    var itemFolder: String {
-        String(id.relativePath.rawValue.split(separator: "/", maxSplits: 1).first ?? "")
-    }
 }
 
-/// One batch of a source's change stream, applied in one transaction. A source that
-/// names each item by a folder of its own (an Immich asset ID, ADR 0046 §2) reports a
-/// size and a permanent deletion by that folder.
+/// One batch of a source's change stream, applied in one transaction. Each item is named
+/// by the source's own ID for it (an Immich asset's ID, ADR 0046 §2); a size or a
+/// permanent deletion the source reports apart from an item's facts names only that ID.
 nonisolated struct SourceListingChanges: Sendable, Equatable {
     var listed: [SourceListedItem] = []
-    /// Sizes reported apart from the item's own facts, by the item's folder.
-    var sizesByItemFolder: [String: Int64] = [:]
-    /// Folders of items the source proves deleted. Their rows and overlay are purged.
-    var deletedItemFolders: [String] = []
+    /// Folders listed in full: each holds exactly the items this batch lists in it, so a
+    /// row there that the batch does not list — a Live Photo motion part its still no
+    /// longer links — is purged.
+    var completeFolders: [String] = []
+    /// Sizes reported apart from the item's own facts, by the source's ID for the item.
+    var sizesBySourceItem: [String: Int64] = [:]
+    /// Items the source proves deleted, by its ID. Their rows and overlay are purged, and
+    /// so is every row in a deleted item's own folder: a deleted still takes its motion
+    /// part with it.
+    var deletedSourceItems: [String] = []
 
     var isEmpty: Bool {
-        listed.isEmpty && sizesByItemFolder.isEmpty && deletedItemFolders.isEmpty
+        listed.isEmpty && completeFolders.isEmpty && sizesBySourceItem.isEmpty && deletedSourceItems.isEmpty
     }
 }
 

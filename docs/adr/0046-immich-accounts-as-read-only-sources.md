@@ -102,6 +102,17 @@ unreachable is never a deletion.
 - **Live Photos:** the motion part of a Live Photo is placed under the still's asset
   folder, `<still id>/<motion original file name>`, so the existing pairing rule (same
   folder, same `content_identifier`, ADR 0041) pairs them unchanged.
+- **The row's own ID:** because a folder can hold a motion part, a folder names only its
+  still. Every account row stores Immich's ID for its own file (`source_item_id`,
+  migration v20). The original's download, its ranged reads, its preview, and every size
+  and deletion the stream reports apart from an asset's line find the row by that ID,
+  never by parsing its path.
+- **Motion part facts:** the stream reports a motion part as its own `hidden` asset,
+  linked from its still's `livePhotoVideoId`. A still's line lists its folder in full:
+  the still, and the motion part it links. The motion part's facts come from its own line
+  and size in the same pass, or else from `GET /api/assets/{id}`. A still that no longer
+  links its motion part drops it. A motion part's own line refreshes its facts only
+  through its still's next line, and its size arrives by its own ID.
 - **Server and credentials:** `library_root.remote_base_url` holds the server URL that Settings
   shows. The session token lives in the Keychain, never in SQLite.
 

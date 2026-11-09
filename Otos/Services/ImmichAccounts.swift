@@ -248,9 +248,14 @@ actor ImmichAccounts {
             ])
             return result(.requestFailed)
         }
-        guard let account = accounts[id.libraryRootPath],
-              let assetID = id.relativePath.rawValue.split(separator: "/", maxSplits: 1).first
-        else {
+        guard let assetID = await sourceItemID(for: id) else {
+            OtosLog.mediaIO.noticeOperation("immich.original", phase: "refused", fields: [
+                "reason": "notListed", "relativePath": id.relativePath.rawValue,
+            ])
+            return result(.requestFailed)
+        }
+        // Read after the lookup's await, so the session is the one current now.
+        guard let account = accounts[id.libraryRootPath] else {
             OtosLog.mediaIO.noticeOperation("immich.original", phase: "refused", fields: [
                 "reason": "noSession", "relativePath": id.relativePath.rawValue,
             ])
@@ -258,7 +263,7 @@ actor ImmichAccounts {
         }
         let downloaded: URL
         do {
-            downloaded = try await account.client.downloadOriginal(assetID: String(assetID), token: account.token)
+            downloaded = try await account.client.downloadOriginal(assetID: assetID, token: account.token)
         } catch {
             return result(downloadFailed(error, for: id))
         }
@@ -314,17 +319,32 @@ actor ImmichAccounts {
         accounts[rootPath] != nil && status[rootPath] == .online
     }
 
-    private func rangeReader(for id: MediaAssetID, size: UInt64) -> RemoteRangeReader? {
-        guard let account = accounts[id.libraryRootPath], status[id.libraryRootPath] == .online,
-              let assetID = id.relativePath.rawValue.split(separator: "/", maxSplits: 1).first
-        else {
+    private func rangeReader(for id: MediaAssetID, size: UInt64) async -> RemoteRangeReader? {
+        guard let asset = await sourceItemID(for: id) else {
+            return nil
+        }
+        // Read after the lookup's await, so the session and status are the current ones.
+        guard let account = accounts[id.libraryRootPath], status[id.libraryRootPath] == .online else {
             return nil
         }
         let client = account.client
         let token = account.token
-        let asset = String(assetID)
         return RemoteRangeReader(size: size) { offset, length, completion in
             client.originalRange(assetID: asset, token: token, offset: offset, length: length, completion: completion)
+        }
+    }
+
+    /// The Immich asset a row is (ADR 0046 §2): its stored source item ID, never parsed
+    /// from its path, because a Live Photo's motion part lives in its still's folder. Nil,
+    /// logged, when the catalog cannot say.
+    private func sourceItemID(for id: MediaAssetID) async -> String? {
+        do {
+            return try await store.sourceItemID(for: id)
+        } catch {
+            OtosLog.mediaIO.errorOperation("immich.sourceItem", phase: "readFailed", fields: [
+                "relativePath": id.relativePath.rawValue, "error": String(describing: error),
+            ])
+            return nil
         }
     }
 

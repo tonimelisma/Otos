@@ -178,6 +178,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.sourceProductsMigrationIdentifier,
             CatalogSchema.facesMigrationIdentifier,
             CatalogSchema.peopleMigrationIdentifier,
+            CatalogSchema.sourceItemIDMigrationIdentifier,
         ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
@@ -270,6 +271,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.sourceProductsMigrationIdentifier,
             CatalogSchema.facesMigrationIdentifier,
             CatalogSchema.peopleMigrationIdentifier,
+            CatalogSchema.sourceItemIDMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -362,6 +364,46 @@ struct CatalogStoreSchemaMigrationTests {
     /// row the rendering stamp it already had in effect — except a card's or camera's still
     /// or RAW without a preview, whose thumbnail was QuickLook's or the camera's, not a
     /// rendering, and which is rendered again.
+    /// v20 (ADR 0046 §2): an account's existing rows are stills, each named by its asset's
+    /// folder, so each takes its folder as its source item ID; no other kind gets one.
+    @Test func theSourceItemMigrationNamesAccountRowsByTheirFolder() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.sourceProductsMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (2, '/RemoteStaging/family', 'immichAccount')")
+            for (root, path) in [(1, "2026/a.jpg"), (2, "a1/IMG_1.JPG"), (2, "b2/IMG_2.HEIC")] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
+                        name_sort_key, kind)
+                    VALUES (?, ?, ?, ?, ?, 'image')
+                    """,
+                    arguments: [root, path, path, path, path]
+                )
+            }
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
+
+        let named = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try Row.fetchAll(db, sql: "SELECT relative_path, source_item_id FROM media_asset ORDER BY relative_path")
+                .map { row -> String in
+                    let path: String = row["relative_path"]
+                    let item: String? = row["source_item_id"]
+                    return "\(path)=\(item ?? "nil")"
+                }
+        }
+        #expect(named == ["2026/a.jpg=nil", "a1/IMG_1.JPG=a1", "b2/IMG_2.HEIC=b2"])
+    }
+
     @Test func theProductStampsMigrationStampsRenderingsExceptProvisionalOnes() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
