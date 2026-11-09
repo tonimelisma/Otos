@@ -43,6 +43,28 @@ field, menu item and empty state, and Lightroom's two orders. It adds nothing of
   search. They appear here if they match.` (the honest-numbers principle: a count, never a percentage). A
   scope that holds nothing keeps its own empty state.
 
+## What a query can say
+
+- **The picture:** what is in it, in any language ("koira", "kids on a swing").
+- **Words in the photo:** a sign's or a screenshot's text, typed as it reads; such photos
+  come first.
+- **When:** "in September", "July 2024", "2025", "last week", alone or with a picture
+  ("beach in September"). A query of dates or places only keeps the scope's order and day
+  sections.
+- **Where:** a town, a city or an area ("dog in San Francisco", "Lake Tahoe"), by the photos'
+  locations.
+- **Who:** a person named in People ("Abby at the beach").
+
+Nothing on screen marks which reading a query got; the results are the answer (DES-012: no
+L3 is needed for a surface to say what it does).
+
+## Settings
+
+Settings ▸ General gains one row, `Search Languages`, a pop-up of checkable languages
+(Translation's, named in the user's language) whose title lists the chosen ones
+(`English, Finnish`). It starts as the system's preferred languages; one stays chosen. Its
+tooltip: `Searches in these languages are understood best`.
+
 ## Levels
 
 | String | Level |

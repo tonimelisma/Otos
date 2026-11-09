@@ -244,13 +244,17 @@ nonisolated struct CatalogSearch: Hashable, Sendable {
     /// What the user typed, trimmed; never empty.
     let text: String
     var order: Order
+    /// The languages the user searches in (`SearchLanguages`), which recognising the text's
+    /// language favours; part of the search, so changing them searches again.
+    var languages: [String]
 
     /// Nil for text that is only white space: an empty field is no search.
-    init?(text: String, order: Order = .relevance) {
+    init?(text: String, order: Order = .relevance, languages: [String] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         self.text = trimmed
         self.order = order
+        self.languages = languages
     }
 }
 

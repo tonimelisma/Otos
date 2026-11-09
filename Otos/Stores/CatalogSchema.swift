@@ -481,6 +481,31 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// Search reads more of each picture (ADR 0048):
+    /// - `search_embedding.labels`: the thumbnail's scene labels, read with its embedding
+    ///   (`SearchEmbeddingStorage`); `SearchEmbedding.revision` 2 makes every row owed again.
+    /// - `search_text`: the text Vision recognised in the asset's stored preview, overlay on
+    ///   the asset like an embedding (cascade on move and deletion). `source` names the preview
+    ///   and the recognition revision it was read from (`SearchTextStorage.currentSource`);
+    ///   `text` is the recognised lines, empty when the preview holds none.
+    static let searchTextMigrationIdentifier = "v22_search_labels_and_text"
+
+    static let searchTextStatements: [String] = [
+        "ALTER TABLE search_embedding ADD COLUMN labels TEXT",
+        """
+        CREATE TABLE search_text (
+            library_root_id INTEGER NOT NULL,
+            relative_path TEXT NOT NULL,
+            source TEXT NOT NULL,
+            text TEXT NOT NULL,
+            PRIMARY KEY (library_root_id, relative_path),
+            FOREIGN KEY (library_root_id, relative_path)
+                REFERENCES media_asset(library_root_id, relative_path)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        )
+        """,
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (

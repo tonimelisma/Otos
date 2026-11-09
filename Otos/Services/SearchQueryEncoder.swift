@@ -19,9 +19,32 @@ nonisolated struct SearchQueryEncoding: Sendable, Equatable {
     /// The recognised language's identifier, nil when none was recognised.
     let language: String?
     let reading: Reading
-    /// The English the model read; the typed text when `reading` is `.asTyped`.
+    /// The English reading of the query, without the people it named; the typed text when
+    /// `reading` is `.asTyped`.
     let modelText: String
-    let embedding: [Float]
+    /// What the query asks for besides the picture.
+    let facts: SearchFacts
+    /// What the picture is searched for: the reading without its facts.
+    let pictureText: String
+    /// `pictureText`'s embedding; nil when the query is only facts ("in September").
+    let embedding: [Float]?
+}
+
+/// The facts a query names (ADR 0048): when, where, and who.
+nonisolated struct SearchFacts: Hashable, Sendable {
+    var date: SearchDateSpan?
+    var place: SearchPlace?
+    var people: [PersonID] = []
+
+    var isEmpty: Bool {
+        date == nil && place == nil && people.isEmpty
+    }
+}
+
+/// A person the user named, as search matches them in a query.
+nonisolated struct SearchPerson: Hashable, Sendable {
+    let id: PersonID
+    let name: String
 }
 
 /// Search query encoder guide (ADR 0048)
@@ -50,6 +73,7 @@ actor SearchQueryEncoder {
     private var tokenizer: SearchTextTokenizer?
     private var model: SearchTextModel?
     private var supported: [NLLanguage: Locale.Language]?
+    private var places: [String: SearchPlace?] = [:]
     private var installed: Set<NLLanguage> = []
     private var recent: [String: SearchQueryEncoding] = [:]
     private var recentOrder: [String] = []
@@ -63,39 +87,121 @@ actor SearchQueryEncoder {
         self.bundle = bundle
     }
 
-    func encode(_ text: String) async throws -> SearchQueryEncoding {
-        if let known = recent[text] {
+    /// `preferred`: the languages the user searches in (`NLLanguage` raw values), which
+    /// recognition favours. `people`: the people the user has named, matched in the typed
+    /// text before anything translates it, because translation mangles names.
+    func encode(
+        _ text: String,
+        preferring preferred: [String] = [],
+        people: [SearchPerson] = []
+    ) async throws -> SearchQueryEncoding {
+        let key = ([text] + preferred + people.map { "\($0.id.rawValue)=\($0.name)" }).joined(separator: "\u{0}")
+        if let known = recent[key] {
             return known
         }
         let start = ContinuousClock.now
+        let (named, typedRest) = Self.takePeople(people, from: text)
+        var rest = typedRest
         if supported == nil {
             supported = await Self.supportedLanguages()
         }
         let candidates = supported ?? [:]
-        let language = Self.recognize(text, among: candidates)
-        let reading: SearchQueryEncoding.Reading
-        let modelText: String
-        if language == .english {
-            reading = .english
-            modelText = text
-        } else if let language, let source = candidates[language], await isInstalled(language, source) {
-            modelText = try await Self.translate(text, from: source)
-            reading = .translated
-        } else {
-            reading = .asTyped
-            modelText = text
+        var language: NLLanguage?
+        var reading = SearchQueryEncoding.Reading.english
+        var modelText = ""
+        // A language the user searches in that Translation cannot read (Estonian) is not even
+        // recognised: the recogniser takes it for a neighbour and translation garbles it. Its
+        // month names, from Foundation, say the query is in it; the rest is then read as typed.
+        var untranslatable: [String] = []
+        for code in preferred where code != NLLanguage.english.rawValue {
+            let language = NLLanguage(rawValue: code)
+            if let source = candidates[language], await isInstalled(language, source) {
+                continue
+            }
+            untranslatable.append(code)
         }
-        let embedding = try embed(modelText)
+        var nativeMonth: SearchDateSpan?
+        if let native = SearchQueryParser.takeNativeMonth(rest, languages: untranslatable) {
+            nativeMonth = native.span
+            rest = native.rest
+            reading = .asTyped
+            modelText = rest
+        } else if !rest.isEmpty {
+            language = Self.recognize(rest, among: candidates, preferring: preferred.map(NLLanguage.init(rawValue:)))
+            if language == .english {
+                modelText = rest
+            } else if let language, let source = candidates[language], await isInstalled(language, source) {
+                modelText = try await Self.translate(rest, from: source)
+                reading = .translated
+            } else {
+                reading = .asTyped
+                modelText = rest
+            }
+        }
+        var parse = SearchQueryParser.parse(modelText)
+        if let native = nativeMonth {
+            parse.date = native
+        }
+        var place: SearchPlace?
+        if let name = parse.placeName {
+            place = await locate(name)
+            if place == nil {
+                parse = SearchQueryParser.parse(modelText, takesPlace: false)
+            }
+        }
+        let facts = SearchFacts(date: parse.date, place: place, people: named)
+        let embedding = parse.pictureText.isEmpty ? nil : try embed(parse.pictureText)
         let encoding = SearchQueryEncoding(
-            text: text, language: language?.rawValue, reading: reading, modelText: modelText, embedding: embedding
+            text: text, language: language?.rawValue, reading: reading, modelText: modelText,
+            facts: facts, pictureText: parse.pictureText, embedding: embedding
         )
-        remember(encoding)
+        remember(encoding, as: key)
         OtosLog.catalog.noticeOperation("search.encode", phase: "done", fields: [
             "language": language?.rawValue ?? "none",
             "reading": reading.rawValue,
+            "date": "\(facts.date != nil)",
+            "place": "\(facts.place != nil)",
+            "people": "\(facts.people.count)",
+            "picture": "\(embedding != nil)",
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
         return encoding
+    }
+
+    /// A place is asked of Maps once per name; a name that is nowhere is remembered too.
+    private func locate(_ name: String) async -> SearchPlace? {
+        if let known = places[name] {
+            return known
+        }
+        let found = await SearchPlaces.locate(name)
+        places[name] = .some(found)
+        return found
+    }
+
+    /// The people whose names `text` holds as whole words, ignoring case and diacritics, and
+    /// the text without them. Longer names first, so "Abby Rose" is not read as "Abby".
+    static func takePeople(_ people: [SearchPerson], from text: String) -> (people: [PersonID], rest: String) {
+        var rest = text
+        var found: [PersonID] = []
+        for person in people.sorted(by: { $0.name.count > $1.name.count }) where !person.name.isEmpty {
+            let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+            var searchRange = rest.startIndex ..< rest.endIndex
+            while let range = rest.range(of: person.name, options: options, range: searchRange) {
+                let startsWord = range.lowerBound == rest.startIndex || !rest[rest.index(before: range.lowerBound)].isLetter
+                let endsWord = range.upperBound == rest.endIndex || !rest[range.upperBound].isLetter
+                if startsWord, endsWord {
+                    rest.removeSubrange(range)
+                    if !found.contains(person.id) {
+                        found.append(person.id)
+                    }
+                    searchRange = rest.startIndex ..< rest.endIndex
+                } else {
+                    searchRange = range.upperBound ..< rest.endIndex
+                }
+            }
+        }
+        let words = rest.split(whereSeparator: \.isWhitespace).map(String.init)
+        return (found, words.joined(separator: " ").trimmingCharacters(in: .punctuationCharacters.union(.whitespaces)))
     }
 
     private func embed(_ text: String) throws -> [Float] {
@@ -115,9 +221,9 @@ actor SearchQueryEncoder {
         try await TranslationSession(installedSource: source, target: english).translate(text).targetText
     }
 
-    private func remember(_ encoding: SearchQueryEncoding) {
-        recent[encoding.text] = encoding
-        recentOrder.append(encoding.text)
+    private func remember(_ encoding: SearchQueryEncoding, as key: String) {
+        recent[key] = encoding
+        recentOrder.append(key)
         if recentOrder.count > Self.recentLimit {
             recent.removeValue(forKey: recentOrder.removeFirst())
         }
@@ -169,9 +275,27 @@ actor SearchQueryEncoder {
         return NLLanguage(rawValue: code)
     }
 
-    static func recognize(_ text: String, among candidates: [NLLanguage: Locale.Language]) -> NLLanguage? {
+    /// The prior a preferred language gets against every other candidate: ten to one.
+    /// Measured over 17 languages (research §9): a user's own languages were recognised
+    /// 95% of the time instead of 80%, and a third language 83% instead of 85%.
+    static let preferredPrior = 0.2
+    static let otherPrior = 0.02
+
+    static func recognize(
+        _ text: String,
+        among candidates: [NLLanguage: Locale.Language],
+        preferring preferred: [NLLanguage] = []
+    ) -> NLLanguage? {
         let recognizer = NLLanguageRecognizer()
-        recognizer.languageConstraints = [.english] + Array(candidates.keys)
+        let constraints = [NLLanguage.english] + Array(candidates.keys)
+        recognizer.languageConstraints = constraints
+        if !preferred.isEmpty {
+            var hints = Dictionary(uniqueKeysWithValues: constraints.map { ($0, otherPrior) })
+            for language in preferred where hints[language] != nil {
+                hints[language] = preferredPrior
+            }
+            recognizer.languageHints = hints
+        }
         recognizer.processString(text)
         return recognizer.dominantLanguage
     }

@@ -7279,12 +7279,15 @@ extension CatalogStore {
                 }
                 try db.execute(
                     sql: """
-                    INSERT INTO search_embedding (library_root_id, relative_path, source, embedding)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO search_embedding (library_root_id, relative_path, source, embedding, labels)
+                    VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT (library_root_id, relative_path)
-                    DO UPDATE SET source = excluded.source, embedding = excluded.embedding
+                    DO UPDATE SET source = excluded.source, embedding = excluded.embedding, labels = excluded.labels
                     """,
-                    arguments: [rootID, path, result.source, result.embedding.map(SearchEmbeddingStorage.data)]
+                    arguments: [
+                        rootID, path, result.source, result.embedding.map(SearchEmbeddingStorage.data),
+                        SearchEmbeddingStorage.labelsText(result.labels),
+                    ]
                 )
                 written.append(result)
             }
@@ -7314,7 +7317,7 @@ extension CatalogStore {
             let rows = try Row.fetchCursor(
                 db,
                 sql: """
-                SELECT e.library_root_id, e.relative_path\(vectors ? ", e.embedding" : "")
+                SELECT e.library_root_id, e.relative_path\(vectors ? ", e.embedding, e.labels" : "")
                 FROM search_embedding AS e
                 JOIN media_asset AS a
                     ON a.library_root_id = e.library_root_id AND a.relative_path = e.relative_path
@@ -7333,12 +7336,157 @@ extension CatalogStore {
                 }
                 if vectors {
                     guard let data: Data = row[2], let embedding = SearchEmbeddingStorage.embedding(from: data) else { continue }
-                    out.append(StoredSearchEmbedding(id: id, embedding: embedding))
+                    out.append(StoredSearchEmbedding(id: id, embedding: embedding, labels: SearchEmbeddingStorage.labels(from: row[3])))
                 } else {
                     out.append(StoredSearchEmbedding(id: id, embedding: []))
                 }
             }
             return out
+        }
+    }
+
+    /// The people the user has named, for search to match in a query (ADR 0048).
+    func namedPeople() async throws -> [SearchPerson] {
+        try await database().read { db in
+            try Row.fetchAll(db, sql: "SELECT id, name FROM person WHERE name IS NOT NULL AND name <> ''").map { row in
+                SearchPerson(id: PersonID(rawValue: row["id"]), name: row["name"])
+            }
+        }
+    }
+
+    /// The assets in available roots that `facts` allow (ADR 0048): captured within the date
+    /// span, located within the place, holding a face confirmed as every person named.
+    func searchFactMatches(_ facts: SearchFacts) async throws -> Set<MediaAssetID> {
+        let rootIDs = availableRootRowIDs()
+        guard !rootIDs.isEmpty else { return [] }
+        let pathsByRowID = roots.pathsByRowID
+        var clauses = ["a.library_root_id IN (\(Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")))"]
+        var arguments: [DatabaseValue] = rootIDs.map(\.databaseValue)
+        if let date = facts.date {
+            clauses.append("a.best_capture_unix >= ? AND a.best_capture_unix < ?")
+            arguments += [date.start.timeIntervalSince1970.databaseValue, date.end.timeIntervalSince1970.databaseValue]
+        }
+        if let place = facts.place {
+            // A box first, so SQLite reads few rows; the exact distance after.
+            let latitudeDelta = place.radiusMeters / 111_000
+            let longitudeDelta = latitudeDelta / max(cos(place.latitude * .pi / 180), 0.01)
+            clauses.append("m.primary_latitude BETWEEN ? AND ? AND m.primary_longitude BETWEEN ? AND ?")
+            arguments += [
+                place.latitude - latitudeDelta, place.latitude + latitudeDelta,
+                place.longitude - longitudeDelta, place.longitude + longitudeDelta,
+            ].map(\.databaseValue)
+        }
+        for person in facts.people {
+            clauses.append("""
+            EXISTS (SELECT 1 FROM face AS f WHERE f.library_root_id = a.library_root_id
+                AND f.relative_path = a.relative_path AND f.person_id = ?)
+            """)
+            arguments.append(person.rawValue.databaseValue)
+        }
+        let sql = """
+        SELECT a.library_root_id, a.relative_path, m.primary_latitude, m.primary_longitude
+        FROM media_asset AS a
+        LEFT JOIN asset_metadata AS m ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
+        WHERE \(clauses.joined(separator: " AND "))
+        """
+        let place = facts.place
+        let statementArguments = StatementArguments(arguments)
+        return try await database().read { db in
+            let rows = try Row.fetchCursor(db, sql: sql, arguments: statementArguments)
+            var allowed: Set<MediaAssetID> = []
+            while let row = try rows.next() {
+                guard let root = pathsByRowID[row[0]] else { continue }
+                if let place {
+                    guard let latitude: Double = row[2], let longitude: Double = row[3],
+                          place.contains(latitude: latitude, longitude: longitude) else { continue }
+                }
+                allowed.insert(MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1])))
+            }
+            return allowed
+        }
+    }
+
+    /// Stills whose stored preview has no current text reading (ADR 0048), newest first.
+    func searchTextCandidates(limit: Int) async throws -> [SearchTextCandidate] {
+        let rootIDs = availableRootRowIDs()
+        guard !rootIDs.isEmpty else { return [] }
+        let pathsByRowID = roots.pathsByRowID
+        return try await database().read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT a.library_root_id, a.relative_path, a.preview_path, \(SearchTextStorage.currentSource("a")) AS source
+                \(SearchTextStorage.owedFrom(rootCount: rootIDs.count))
+                ORDER BY a.best_capture_unix DESC, a.library_root_id, a.relative_path
+                LIMIT ?
+                """,
+                arguments: StatementArguments(rootIDs + [limit])
+            ).compactMap { row in
+                guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
+                return SearchTextCandidate(
+                    id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"])),
+                    previewPath: row["preview_path"],
+                    source: row["source"]
+                )
+            }
+        }
+    }
+
+    /// Writes text readings for stills whose preview is still the one read; returns those written.
+    func applySearchTexts(_ results: [SearchTextResult]) async throws -> [SearchTextResult] {
+        let rowIDs = roots.rowIDSnapshot()
+        return try await database().write { db -> [SearchTextResult] in
+            var written: [SearchTextResult] = []
+            for result in results {
+                guard let rootID = rowIDs[result.id.libraryRootPath] else { continue }
+                let path = result.id.relativePath.rawValue
+                guard try Bool.fetchOne(
+                    db,
+                    sql: """
+                    SELECT \(SearchTextStorage.currentSource("media_asset")) = ?
+                    FROM media_asset WHERE library_root_id = ? AND relative_path = ?
+                    """,
+                    arguments: [result.source, rootID, path]
+                ) == true else {
+                    continue
+                }
+                try db.execute(
+                    sql: """
+                    INSERT INTO search_text (library_root_id, relative_path, source, text) VALUES (?, ?, ?, ?)
+                    ON CONFLICT (library_root_id, relative_path) DO UPDATE SET source = excluded.source, text = excluded.text
+                    """,
+                    arguments: [rootID, path, result.source, result.text]
+                )
+                written.append(result)
+            }
+            return written
+        }
+    }
+
+    /// The current, non-empty text readings in available roots.
+    func currentSearchTexts() async throws -> [MediaAssetID: String] {
+        let rootIDs = availableRootRowIDs()
+        guard !rootIDs.isEmpty else { return [:] }
+        let pathsByRowID = roots.pathsByRowID
+        let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
+        return try await database().read { db in
+            let rows = try Row.fetchCursor(
+                db,
+                sql: """
+                SELECT t.library_root_id, t.relative_path, t.text
+                FROM search_text AS t
+                JOIN media_asset AS a ON a.library_root_id = t.library_root_id AND a.relative_path = t.relative_path
+                WHERE t.library_root_id IN (\(placeholders)) AND t.text <> ''
+                  AND t.source = \(SearchTextStorage.currentSource("a"))
+                """,
+                arguments: StatementArguments(rootIDs)
+            )
+            var texts: [MediaAssetID: String] = [:]
+            while let row = try rows.next() {
+                guard let root = pathsByRowID[row[0]] else { continue }
+                texts[MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1]))] = row[2]
+            }
+            return texts
         }
     }
 

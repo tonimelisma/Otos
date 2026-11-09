@@ -97,13 +97,14 @@ extension CatalogProjection {
         guard let searchIndex else {
             throw CatalogProjectionSearchUnavailable()
         }
-        let matches = try await searchIndex.matches(for: search.text)
+        let matches = try await searchIndex.matches(for: search.text, preferring: search.languages)
         let unsearched = facts.scopedAssetIDs.count
         let searched = CatalogWindowPolicy.searched(
             ids: facts.scopedAssetIDs,
             dayBuckets: facts.scopedDayBuckets,
             coordinates: facts.scopedCoordinates,
             scores: matches.scores,
+            allowed: matches.allowed,
             order: search.order
         )
         facts.scopedAssetIDs = searched.ids

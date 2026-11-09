@@ -179,6 +179,26 @@ struct BenchmarkTests {
             #expect(embedding.count == SearchEmbedding.dimensions)
         }
 
+        let vocabulary = try SearchLabelVocabulary(bundle: bundle)
+        let dog = try text.embedding(of: tokenizer.tokenIDs(for: "dog"))
+        try await Benchmark.measure("search.nameLabels") {
+            #expect(vocabulary.labels(namedBy: dog).contains("dog"))
+        }
+
+        // A library's readings: 5,000 photos' text, one in fifty holding the word.
+        let readings = (0 ..< 5000).map { index in
+            index % 50 == 0 ? "Proof of Insurance · Policy \(index)" : "Menu \(index) · Café crème 4,50 € · Open daily"
+        }
+        try await Benchmark.measure("search.textMatch.5k") {
+            #expect(readings.count { SearchTextReading.matches(query: "insurance", in: $0) } == 100)
+        }
+
+        let sign = try #require(SearchReadingTests.picture(saying: "OTOS SEARCH 2026"))
+        try await Benchmark.measure("search.readText") {
+            let read = try SearchTextReading.read(sign)
+            #expect(!read.isEmpty)
+        }
+
         var generator = SplitMix64(seed: 11)
         let count = 20000
         let vectors = (0 ..< count * SearchEmbedding.dimensions).map { _ in Float(generator.next() % 2001) / 1000 - 1 }

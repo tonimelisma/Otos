@@ -113,7 +113,67 @@ Measured on the judged queries in 16 languages:
 About 65% of what the cut shows is relevant, measured on judged photos including a random
 sample from inside it. A query for something the library hardly holds (soccer, a bath) still
 shows photos, nearly all wrong: their best scores overlap those of queries with hundreds of
-right answers, so no cut can tell them apart. Relevance order puts the best first.
+right answers, so no cut on the cosine can tell them apart. The label gate below narrows that.
+
+### A second reading of each picture: scene labels gate a query that names a thing
+
+Vision's scene classifier (1,303 labels, built in) reads the same stored thumbnail as the
+embedding, and its labels are stored with it (`SearchEmbedding.revision` 2). A query names a
+label when SigLIP's text tower puts the label's name within cosine 0.95 of the query's English
+(`SearchLabelVocabulary`, the names embedded ahead of time by the shipped text path): "cat"
+names cat, kitten and feline; a phrase names none. A named query keeps a photo only where the
+classifier saw one of its labels at 0.05 or more, or SigLIP scores it within 0.02 of the best
+(`SearchLabelGate`). Measured on the judged queries: precision inside the cut 0.65 → 0.70,
+relevant photos kept 87% → 81%, the top 10 unchanged (recall@10 84.6 either way); horse showed
+150 photos, two of them right, and shows 27. Rejected: a hand-made list of labels too generic to
+gate on (same result, a list to keep), the classifier's confidence added to the cosine (smaller
+gain), and a stricter cut (less precision for the same loss).
+
+### Text in the photo
+
+Searched for a word Vision reads in the owner's photos, SigLIP alone put a photo holding it in
+its top 10 for 21% of them. So each still's stored preview is read for text (`search_text`,
+`SearchTextReading`), and a photo whose text holds every typed word, at the start of a word,
+ignoring case and diacritics, matches whatever the cut. It ranks first only for a query that
+names no scene label: on 49 judged word queries recall@10 rose from 0.13 to 0.84, while
+picture queries kept 0.846; ranking text matches first for every query dropped picture
+queries to 0.739 ("cat" and "lake" are written on many signs and screens). Vision's fast
+level on the 2,560 px preview reads 0.07 s a photo and read the owner's screenshots cleanly; the
+accurate level failed on macOS 27 for every image after a process's first (`e5rt` error 13),
+pinned to the CPU or not; at 512 px the fast level read noise. Text is read after every
+embedding is made.
+
+### Facts in the query: when, where, who
+
+A query is read for facts before the picture (`SearchQueryParser`, `SearchPlaces`):
+- **Who:** a person the user named, matched in the typed text before translation (translation
+  mangles names), as whole words ignoring case and diacritics.
+- **When:** from the English reading, a month (the most recent), a month and year, a year, or
+  today, yesterday, this or last week, month or year. "May" is the month only beside "in", "of"
+  or a year. A language Translation cannot read (Estonian) has its months found by
+  Foundation's month names in the user's languages, on the stem, before recognition.
+- **Where:** the first name `NLTagger` finds in the English reading (it often calls a place a
+  person), located by Apple Maps (`MKLocalSearch`, addresses and areas): a place only when Maps
+  names it exactly so and it covers 0.03° or more, a photo in it within 1.5 times the area's
+  half-diagonal and at least 15 km. A name that is nowhere stays a picture word.
+
+The Store answers the facts (`searchFactMatches`: capture time, GPS, confirmed faces); the rest
+of the query searches the picture, and a query of facts only keeps the scope's order and day
+sections. On 204 queries in 17 languages ("beach in September", "dog in San Francisco"),
+precision@10 was 0.82 against 0.56 for the whole phrase as a picture query.
+
+### The user's languages
+
+Recognising a query's language favours the languages the user searches in (Settings ▸ General
+▸ Search Languages, default the system's preferred languages) ten to one: a user's own were
+recognised 95% of the time instead of 80%, a third language 83% instead of 85%, and mean
+recall@10 across 16 languages rose from 75.0 to 76.0 (told the language: 77.1).
+
+### Reading while hidden
+
+Otos holds one process activity for the session (`BackgroundReading`,
+`.userInitiatedAllowingIdleSystemSleep`): with the owner away, App Nap had every Otos thread at
+priority 4 and indexing stopped. It does not keep the Mac awake, and an idle Otos does no work.
 
 ### The surface
 
@@ -129,9 +189,10 @@ right answers, so no cut can tell them apart. Relevance order puts the best firs
 ## Consequences
 
 - **App size:** about 380 MB more.
-- **First indexing:** about 20 minutes for 15,000 items in the dev build, newest first. Like
-  enrichment, it is App Napped when Otos is hidden and the owner is away, and resumes when the
-  window is seen.
+- **First indexing:** about 20 minutes for 15,000 items in the dev build, newest first, then
+  their previews' text, while hidden too.
+- **Network:** a query naming a place asks Apple Maps where it is; offline, the name searches
+  the picture instead.
 - **Unread items:** until indexing finishes, a search shows only what has been read. The
   empty state counts what has not.
 - **A language Translation lacks** is searched by the multilingual tower: weaker (Estonian

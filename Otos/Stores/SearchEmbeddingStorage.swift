@@ -16,7 +16,10 @@ import GRDB
 /// thumbnail that does not decode is recorded with no embedding, so it is not offered
 /// again until it changes.
 ///
-/// An embedding is `SearchEmbedding.dimensions` little-endian Float32 values.
+/// An embedding is `SearchEmbedding.dimensions` little-endian Float32 values. The row also
+/// holds the thumbnail's scene labels, Vision's classification of the same picture, as
+/// `identifier:confidence` pairs at or above `SearchSceneLabels.minimumConfidence`, comma
+/// separated — what the label gate reads (`SearchLabelGate`).
 nonisolated enum SearchEmbeddingStorage {
     /// The source an asset's embedding must name to be current, for `row` (a table or alias).
     static func currentSource(_ row: String) -> String {
@@ -38,6 +41,22 @@ nonisolated enum SearchEmbeddingStorage {
           AND NOT \(LivePhotoSQL.isPairedMotion("a"))
           AND e.source IS NOT \(currentSource("a"))
         """
+    }
+
+    static func labelsText(_ labels: [String: Float]) -> String {
+        labels.sorted { $0.key < $1.key }.map { "\($0.key):\(String(format: "%.3f", $0.value))" }.joined(separator: ",")
+    }
+
+    static func labels(from text: String?) -> [String: Float] {
+        guard let text, !text.isEmpty else { return [:] }
+        var labels: [String: Float] = [:]
+        for pair in text.split(separator: ",") {
+            let parts = pair.split(separator: ":")
+            if parts.count == 2, let confidence = Float(parts[1]) {
+                labels[String(parts[0])] = confidence
+            }
+        }
+        return labels
     }
 
     static func data(_ embedding: [Float]) -> Data {
@@ -75,10 +94,12 @@ nonisolated struct SearchEmbeddingResult: Equatable, Sendable {
     let id: MediaAssetID
     let source: String
     let embedding: [Float]?
+    var labels: [String: Float] = [:]
 }
 
-/// One stored, current embedding.
+/// One stored, current embedding and the scene labels read with it.
 nonisolated struct StoredSearchEmbedding: Sendable {
     let id: MediaAssetID
     let embedding: [Float]
+    var labels: [String: Float] = [:]
 }

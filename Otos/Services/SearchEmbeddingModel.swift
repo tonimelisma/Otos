@@ -26,9 +26,9 @@ nonisolated enum SearchEmbedding {
     /// The length of an embedding.
     static let dimensions = 768
 
-    /// The model and its preprocessing; stored with every image embedding, so a change makes
-    /// every stored one stale.
-    static let revision = 1
+    /// The model, its preprocessing and the scene labels read with it; stored with every
+    /// image embedding, so a change makes every stored one stale.
+    static let revision = 2
 
     static let computeUnits = MLComputeUnits.cpuOnly
 

@@ -1,0 +1,60 @@
+import CoreLocation
+import Foundation
+import MapKit
+
+/// A place a query named, located: a centre and the distance from it a photo may be.
+nonisolated struct SearchPlace: Hashable, Sendable {
+    let name: String
+    let latitude: Double
+    let longitude: Double
+    let radiusMeters: Double
+
+    func contains(latitude other: Double, longitude otherLongitude: Double) -> Bool {
+        CLLocation(latitude: latitude, longitude: longitude)
+            .distance(from: CLLocation(latitude: other, longitude: otherLongitude)) <= radiusMeters
+    }
+}
+
+/// Search places guide (ADR 0048)
+///
+/// Where a name a query holds is, from Apple Maps (`MKLocalSearch`, addresses and areas only).
+/// It is a place only when Maps names it exactly so and it covers a town or more, at least
+/// 0.03° across: the tagger hands over names that are not places ("City view", "Panorama"),
+/// and Maps answers those with a street of the same name somewhere. A photo is in the place
+/// within 1.5 times the area's half-diagonal, at least 15 km, because Maps' area for a lake
+/// or a mountain is its town, not the shore or the slopes the photos were taken on.
+///
+/// Asking needs the network. A name Maps cannot place, or a lookup that fails, is no place:
+/// its words stay part of what the picture is searched for.
+nonisolated enum SearchPlaces {
+    static let minimumSpanDegrees = 0.03
+    static let minimumRadiusMeters = 15000.0
+
+    @concurrent
+    static func locate(_ name: String) async -> SearchPlace? {
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = name
+        request.resultTypes = [.address]
+        guard let response = try? await MKLocalSearch(request: request).start(),
+              let item = response.mapItems.first,
+              let found = item.name,
+              found.compare(name, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+        else {
+            return nil
+        }
+        let span = response.boundingRegion.span
+        guard max(span.latitudeDelta, span.longitudeDelta) >= minimumSpanDegrees else { return nil }
+        let center = item.location.coordinate
+        let corner = CLLocation(
+            latitude: center.latitude + span.latitudeDelta / 2,
+            longitude: center.longitude + span.longitudeDelta / 2
+        )
+        let halfDiagonal = CLLocation(latitude: center.latitude, longitude: center.longitude).distance(from: corner)
+        return SearchPlace(
+            name: found,
+            latitude: center.latitude,
+            longitude: center.longitude,
+            radiusMeters: max(1.5 * halfDiagonal, minimumRadiusMeters)
+        )
+    }
+}

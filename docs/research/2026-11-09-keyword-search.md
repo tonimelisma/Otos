@@ -434,6 +434,107 @@ Safari: every thread runs at priority 4 and indexing, like enrichment, all but s
 window is seen again. The measurement run turned App Nap off for the dev build
 (`NSAppSleepDisabled`) and removed the setting afterwards.
 
+## 9. Raising precision, and searching by what else a photo holds
+
+Run 2026-11-10 on the same library, with the shipped code wherever the app does the work.
+
+### The user's languages
+
+A user of language L who also uses English, simulated for each of 16 languages, with
+`NLLanguageRecognizer`'s hints favouring L and English:
+
+| Hint ratio (own : other) | Own languages recognised | A third language recognised |
+| --- | --- | --- |
+| none | 80.1% | 85.3% |
+| 2:1 | 86.4% | 84.9% |
+| 6:1 | 93.3% | 83.5% |
+| 10:1 (shipped) | 95.3% | 82.5% |
+| 50:1 | 96.9% | 78.7% |
+
+Through the shipped encoder at 10:1, wrong recognitions fell from 180 to 101 of 884 queries, and
+recall@10 rose from 83 to 85 in English and from 75.0 to 76.0 across the 16 other languages
+(told the language: 77.1). Polish gained most (72 → 80: "kot" is read as cat, not as Finnish).
+This Mac lists only `en-US`, which is why the languages are a setting.
+
+### Precision: Vision's scene labels as a gate
+
+Score statistics cannot tell a query for something absent from one with many answers: the
+best match's cosine (0.101–0.188) and its z-score over the library (3.2–8.0) overlap
+completely, soccer (one relevant photo) at z 6.1 among concepts with hundreds. So a second,
+independent reading was tried: `VNClassifyImageRequest` on the stored thumbnail (31 ms).
+
+| Rule | Recall inside the cut | Precision inside the cut | Median shown | 90th pct |
+| --- | --- | --- | --- | --- |
+| cut alone (§8) | 0.866 | 0.651 | 141 | 368 |
+| cut best − 0.03 | 0.72 | 0.73 | 78 | 274 |
+| + label confidence added to the cosine (×0.02) | 0.829 | 0.692 | 95 | 298 |
+| + gate, labels named lexically, a stoplist | 0.799 | 0.717 | 88 | 299 |
+| + gate, labels named by text cosine ≥ 0.95 (shipped) | 0.810 | 0.700 | 92 | 296 |
+
+The top 10 is untouched (recall@10 0.846, precision@10 0.786 → 0.796). The gate helps where the
+library lacks the thing: horse 150 shown → 27, cat 105 → 44, Christmas tree 45 → 16, and dog
+225 → 135 with 82 of 87 relevant kept. It costs where the classifier is weak at a concept:
+museum kept 9 of 27, train 39 of 76. Labels from the 256 px thumbnail gate as well as from a
+512 px render (0.810 / 0.700 against 0.811 / 0.701).
+
+### Text in the photo: needed
+
+Words Vision reads in the owner's photos, searched with SigLIP alone: a photo holding the word
+reached the top 10 for 21% of 74 words, names and brands included. So text is read.
+Recognition on macOS 27: the accurate level failed for every image after a process's first
+(`e5rt_execution_stream_operation_create_precompiled_compute_operation_with_options`, error
+13), pinned to the CPU or not, while the fast level never failed and reads a 2,560 px preview in
+0.07 s, cleanly on screenshots. At 512 px the fast level read noise. The shipped reader uses the
+fast level on the preview.
+
+Read over all 10,065 previews with the shipped reader, 5,322 held some text. 60 words sampled
+from the readings (in 2–25 photos each, in the dictionary or capitalised), every top 10 and
+every text match judged for whether the word is visibly written (one judge also ran Vision on
+its 512 px copies to read tiles too small to see, which leans toward the reader):
+
+| Text matches rank | Picture queries (51 concepts) recall@10 | Word queries (49 with a visible match) recall@10 |
+| --- | --- | --- |
+| not lifted (picture only) | 0.846 | 0.132 |
+| + 0.05 | 0.822 | 0.712 |
+| first, every query | 0.739 | 0.982 |
+| first when the query names no scene label (shipped) | 0.846 | 0.842 |
+
+Of the photos a reading matched, 72% visibly hold the word; the rest are misreadings, and
+the fast level's line confidence (mostly 0.5) does not tell them apart. 8 of the 49 word
+queries name a scene label ("kitchen", "gloves") and so are ranked as pictures.
+
+### Facts in the query
+
+204 queries, 12 concepts × 17 languages, each a concept word from §7's hand-written queries with
+a month or a place in that language's own grammar ("ranta syyskuussa", "9月のビーチ",
+"koer San Franciscos"). Ground truth: the judged relevant photos captured that month, or within a
+fixed circle of the place by GPS.
+
+| | Precision@10 = recall@10 |
+| --- | --- |
+| The whole phrase as a picture query | 0.558 |
+| Facts read out and applied, the rest as the picture (shipped) | 0.820 |
+
+By language: en 92, fi 92, de 88, fr 87, it 87, nl 87, ru 87, hi 87, ja 85, ko 85, ar 84, es 83,
+zh 82, tr 80, pl 79, sv 78, et 32. Estonian rose from 24 when its months were read by
+Foundation's month names in the user's languages; its places are still not read (the name
+arrives inflected, "San Franciscos"). The parser's misses were translations that mangle a
+name ("Lake Taihao") and a possessive ("October's swing", fixed). Of the place candidates the
+tagger returned, Maps answered the false ones ("City view", "Panorama") with a street of that
+name somewhere; requiring an exact name and an area of 0.03° or more rejected all of them.
+Generating the test queries with Translation (English → each language) was tried first and
+discarded: it produced wrong words ("heilua", to sway, for a swing; "mantelit", almonds, for
+pumpkins).
+
+### The app with all of it
+
+The dev build re-read its catalog with labels (14,885 assets) and the text of its 2,002
+previews (978 with text), at about 15 and 7 a second. Its own stored data through the
+shipped encoder, each language's user also listing English, over the photos it holds:
+recall@10 83 in English and 75.3 across 16 other languages (§8's app: 82 / 74.4). Its catalog
+holds a fifth of the installed catalog's previews, so word queries are measured above, on the
+installed catalog's previews.
+
 ## Sources
 
 - Immich per-language benchmark and model guidance: <https://docs.immich.app/features/searching>

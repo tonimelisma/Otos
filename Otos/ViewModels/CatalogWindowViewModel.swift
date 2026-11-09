@@ -62,6 +62,11 @@ final class CatalogWindowViewModel {
     /// The toolbar search field's text, as typed (ADR 0048); `queryDescriptor.search` is the
     /// search it makes.
     private(set) var searchText = ""
+    /// The languages the user searches in (`SearchLanguages`): stored, else the system's
+    /// preferred languages.
+    private(set) var searchLanguages: [String] = []
+    /// What Settings offers: the languages search can recognise and translate.
+    private(set) var searchLanguageChoices: [SearchLanguageChoice] = []
     /// Bumped by Edit ▸ Find; the window focuses its search field on each change.
     private(set) var searchFocusRequest: UInt64 = 0
     private(set) var ejectingSourceIdentities: Set<DeviceIdentity> = []
@@ -225,6 +230,8 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let exportStream: AsyncStream<ExportRequest>
     @ObservationIgnored let exportContinuation: AsyncStream<ExportRequest>.Continuation
     @ObservationIgnored var exportTask: Task<Void, Never>?
+    /// Reads the languages Settings offers for search, once per session.
+    @ObservationIgnored var searchLanguageChoicesTask: Task<Void, Never>?
     /// Immich accounts (ADR 0046): the one owner of their sessions and syncs. Nil for a
     /// window that starts no background work.
     @ObservationIgnored let immichAccounts: ImmichAccounts?
@@ -641,6 +648,10 @@ final class CatalogWindowViewModel {
         advanceAfterMediaChoice = preferences.bool(forKey: Self.advanceAfterMediaChoiceDefaultsKey)
         asksBeforeLargeTrashDownload = preferences.object(forKey: Self.asksBeforeLargeTrashDownloadDefaultsKey)
             as? Bool ?? true
+        searchLanguages = SearchLanguages.resolved(
+            stored: preferences.object(forKey: Self.searchLanguagesDefaultsKey) as? [String],
+            systemPreferred: Locale.preferredLanguages
+        )
         let storedDismissedIdentities = preferences.string(forKey: Self.dismissedCameraBannersDefaultsKey)
         dismissedCameraBannerIdentities = Set(
             (storedDismissedIdentities ?? "").split(separator: "\n").map { DeviceIdentity(rawValue: String($0)) }
@@ -932,6 +943,10 @@ extension CatalogWindowViewModel {
         startEditing(store: store)
         startHandOff(store: store)
         startExport()
+        searchLanguageChoicesTask = Task { [weak self] in
+            let choices = await SearchLanguages.choices()
+            self?.searchLanguageChoices = choices
+        }
         startMapClustering()
         startCalendarDayMonitoring()
         startStateConsumption(
@@ -1344,6 +1359,22 @@ extension CatalogWindowViewModel {
         ))
     }
 
+    /// Settings ▸ General ▸ Search Languages: the languages recognition favours. Stored; a
+    /// search on screen is searched again with them.
+    func setSearchLanguages(_ languages: [String]) {
+        guard languages != searchLanguages else { return }
+        searchLanguages = languages
+        preferences.set(languages, forKey: Self.searchLanguagesDefaultsKey)
+        guard var search = queryDescriptor.search else { return }
+        search.languages = languages
+        setQueryDescriptor(CatalogQueryDescriptor(
+            scope: queryDescriptor.scope,
+            filter: queryDescriptor.filter,
+            sort: queryDescriptor.sort,
+            search: search
+        ))
+    }
+
     func focusSearch() {
         searchFocusRequest &+= 1
     }
@@ -1353,7 +1384,7 @@ extension CatalogWindowViewModel {
     func setSearchText(_ text: String) {
         searchText = text
         let order = queryDescriptor.search?.order ?? .relevance
-        let search = CatalogSearch(text: text, order: order)
+        let search = CatalogSearch(text: text, order: order, languages: searchLanguages)
         guard search != queryDescriptor.search else { return }
         setQueryDescriptor(CatalogQueryDescriptor(
             scope: queryDescriptor.scope,
@@ -1514,6 +1545,7 @@ extension CatalogWindowViewModel {
     static let stripTileEdgeDefaultsKey = "mediaStripTileEdge"
     static let advanceAfterMediaChoiceDefaultsKey = "advanceAfterMediaChoice"
     static let asksBeforeLargeTrashDownloadDefaultsKey = "trash.asksBeforeLargeDownload"
+    static let searchLanguagesDefaultsKey = "search.languages"
     static let dismissedCameraBannersDefaultsKey = "dismissedCameraConnectionBannerIdentities"
 
     /// Clamps into 3–9, persists, and publishes; a no-op re-request does not re-persist.

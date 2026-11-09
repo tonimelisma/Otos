@@ -180,6 +180,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.peopleMigrationIdentifier,
             CatalogSchema.sourceItemIDMigrationIdentifier,
             CatalogSchema.searchEmbeddingsMigrationIdentifier,
+            CatalogSchema.searchTextMigrationIdentifier,
         ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
@@ -187,7 +188,7 @@ struct CatalogStoreSchemaMigrationTests {
             "active_reorganization_component", "active_reorganization_member",
             "active_reorganization_step", "active_reorganization_directory",
             "pending_identity_remap_batch", "pending_identity_remap", "duplicate_kept_pair", "face",
-            "person", "face_rejection", "search_embedding",
+            "person", "face_rejection", "search_embedding", "search_text",
         ])
     }
 
@@ -274,6 +275,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.peopleMigrationIdentifier,
             CatalogSchema.sourceItemIDMigrationIdentifier,
             CatalogSchema.searchEmbeddingsMigrationIdentifier,
+            CatalogSchema.searchTextMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)

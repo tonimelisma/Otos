@@ -19,6 +19,9 @@ struct SettingsView: View {
     let setAdvanceAfterMediaChoice: (Bool) -> Void
     let asksBeforeLargeTrashDownload: Bool
     let setAsksBeforeLargeTrashDownload: (Bool) -> Void
+    let searchLanguages: [String]
+    let searchLanguageChoices: [SearchLanguageChoice]
+    let setSearchLanguages: ([String]) -> Void
     let immichAccounts: ImmichAccountControls
 
     var body: some View {
@@ -38,9 +41,14 @@ struct SettingsView: View {
                         set: { value in setAsksBeforeLargeTrashDownload(value) }
                     )
                 )
+                SearchLanguagesPicker(
+                    selected: searchLanguages,
+                    choices: searchLanguageChoices,
+                    setSelected: setSearchLanguages
+                )
             }
             .formStyle(.grouped)
-            .frame(width: 520, height: 170)
+            .frame(width: 520, height: 210)
             .tabItem {
                 Label("General", systemImage: "gearshape")
             }
@@ -461,6 +469,12 @@ private struct LibrariesSettingsView: View {
         setAdvanceAfterMediaChoice: { _ in },
         asksBeforeLargeTrashDownload: true,
         setAsksBeforeLargeTrashDownload: { _ in },
+        searchLanguages: ["fi", "en"],
+        searchLanguageChoices: [
+            SearchLanguageChoice(code: "en", name: "English"),
+            SearchLanguageChoice(code: "fi", name: "Finnish"),
+        ],
+        setSearchLanguages: { _ in },
         immichAccounts: ImmichAccountControls(
             isAvailable: true, statuses: [:], sheet: nil, begin: { _ in }, add: { _, _, _ in }, cancel: {}
         )
@@ -532,5 +546,39 @@ private extension LibraryRootKind {
         case .immichAccount:
             "Immich"
         }
+    }
+}
+
+/// Settings ▸ General ▸ Search Languages (DES-108): the languages the user searches in, as a
+/// pop-up of checkable languages whose title lists the chosen ones. At least one stays chosen.
+struct SearchLanguagesPicker: View {
+    let selected: [String]
+    let choices: [SearchLanguageChoice]
+    let setSelected: ([String]) -> Void
+
+    var body: some View {
+        LabeledContent("Search Languages") {
+            Menu(title) {
+                ForEach(choices) { choice in
+                    Toggle(choice.name, isOn: Binding(
+                        get: { selected.contains(choice.code) },
+                        set: { isOn in
+                            let next = isOn ? selected + [choice.code] : selected.filter { $0 != choice.code }
+                            if !next.isEmpty {
+                                setSelected(next)
+                            }
+                        }
+                    ))
+                }
+            }
+            .fixedSize()
+            .disabled(choices.isEmpty)
+            .help("Searches in these languages are understood best")
+        }
+    }
+
+    private var title: String {
+        let names = selected.map { code in choices.first { $0.code == code }?.name ?? Locale.current.localizedString(forIdentifier: code) ?? code }
+        return ListFormatter.localizedString(byJoining: names)
     }
 }

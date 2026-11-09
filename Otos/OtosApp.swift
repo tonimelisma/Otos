@@ -33,6 +33,8 @@ import SwiftUI
 /// instead of waiting for the frame and then for the catalog (APP-044).
 private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
     private var clearingWindow: NSWindow?
+    /// Held for the whole session: Otos reads the library in the background (`BackgroundReading`).
+    private var backgroundReading: NSObjectProtocol?
 
     /// The one place in the app that names the production catalog location,
     /// UserDefaults.standard and the system Trash — every other type takes them as
@@ -47,6 +49,7 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
     )
 
     func applicationWillFinishLaunching(_: Notification) {
+        backgroundReading = BackgroundReading.begin()
         catalogViewModel.start()
         OtosLog.app.notice(
             "op=sessionStart session=\(RunContext.sessionID, privacy: .public) kind=\(RunContext.runKind, privacy: .public)"
@@ -475,6 +478,9 @@ public struct OtosApp: App {
                 setAdvanceAfterMediaChoice: catalogViewModel.setAdvanceAfterMediaChoice,
                 asksBeforeLargeTrashDownload: catalogViewModel.asksBeforeLargeTrashDownload,
                 setAsksBeforeLargeTrashDownload: catalogViewModel.setAsksBeforeLargeTrashDownload,
+                searchLanguages: catalogViewModel.searchLanguages,
+                searchLanguageChoices: catalogViewModel.searchLanguageChoices,
+                setSearchLanguages: catalogViewModel.setSearchLanguages,
                 immichAccounts: ImmichAccountControls(
                     isAvailable: catalogViewModel.immichAccounts != nil,
                     statuses: catalogViewModel.immichAccountStatuses,

@@ -135,8 +135,8 @@ struct PhotoSearchIndexTests {
         let matches = try await index.matches(for: "a red picture")
         #expect(matches.searchedCount == 2)
         #expect(matches.encoding.reading == .english)
-        let red = try #require(matches.scores[catalog.red])
-        let blue = try #require(matches.scores[catalog.blue])
+        let red = try #require(matches.scores?[catalog.red])
+        let blue = try #require(matches.scores?[catalog.blue])
         #expect(red > blue)
         #expect(try await catalog.store.searchEmbeddingPendingCount() == 0)
         await index.shutdown()
@@ -198,6 +198,35 @@ struct PhotoSearchIndexTests {
         await index.shutdown()
         await nothing.shutdown()
         await catalog.store.shutdown()
+    }
+
+    /// A query about words puts the photo whose text holds them first; the picture alone
+    /// would not find it.
+    @Test func aWordQueryRanksThePhotoHoldingTheWordFirst() async throws {
+        let catalog = try await makeCatalog()
+        let store = catalog.store
+        let blue = try #require(catalog.assets.first { $0.id == catalog.blue })
+        _ = await store.applyEnrichmentBatch([EnrichmentResult(
+            id: blue.id, metadata: AssetMetadata(), enrichedKind: .image, thumbnailPath: "blue-thumb.jpg",
+            sourceSize: blue.byteSize ?? 0, sourceMTimeSeconds: MediaAsset.mtimeSeconds(blue.contentModifiedAt), contentHash: nil,
+            previewPath: "blue-preview.heic"
+        )])
+        let candidate = try #require(try await store.searchTextCandidates(limit: 10).first { $0.id == catalog.blue })
+        _ = try await store.applySearchTexts([SearchTextResult(id: blue.id, source: candidate.source, text: "Proof of Insurance")])
+        let index = PhotoSearchIndex(
+            store: store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
+        )
+        let changes = await index.changes()
+        await index.start()
+        for await _ in changes where await index.embeddedCount == 2 {
+            break
+        }
+        let matches = try await index.matches(for: "insurance")
+        let scores = try #require(matches.scores)
+        #expect(try #require(scores[catalog.blue]) > PhotoSearchIndex.textMatchScore - 1)
+        #expect(try #require(scores[catalog.blue]) > (scores[catalog.red] ?? -1))
+        await index.shutdown()
+        await store.shutdown()
     }
 
     /// Relevance order is best match first, ties in the scope's order, and ungrouped; the

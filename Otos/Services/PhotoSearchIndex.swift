@@ -28,8 +28,11 @@ nonisolated struct SearchCutoff: Sendable, Equatable {
 /// The photos a query matches, and how well.
 nonisolated struct SearchMatches: Sendable, Equatable {
     let encoding: SearchQueryEncoding
-    /// Every searched asset the index's cutoff keeps, with its score.
-    let scores: [MediaAssetID: Float]
+    /// Every asset the picture's words match, with its score; nil when the query has no
+    /// picture words ("in September"), so the picture does not narrow it.
+    let scores: [MediaAssetID: Float]?
+    /// The assets the query's facts allow (when, where, who); nil when it names none.
+    let allowed: Set<MediaAssetID>?
     /// The assets compared: those with a current embedding.
     let searchedCount: Int
 }
@@ -65,6 +68,13 @@ actor PhotoSearchIndex {
     private var ids: [MediaAssetID] = []
     private var rowOf: [MediaAssetID: Int] = [:]
     private var vectors: [Float] = []
+    /// Each row's scene labels, index-paired with `ids`.
+    private var labels: [[String: Float]] = []
+    private var vocabulary: SearchLabelVocabulary?
+    /// Every non-empty text reading, by asset (`SearchTextReading`).
+    private var texts: [MediaAssetID: String] = [:]
+    private let textReader = SearchTextReader()
+    private let bundle: Bundle
     private var loaded = false
 
     private var loop: Task<Void, Never>?
@@ -79,6 +89,7 @@ actor PhotoSearchIndex {
         cutoff: SearchCutoff = .calibrated
     ) {
         self.store = store
+        self.bundle = bundle
         self.cutoff = cutoff
         self.thumbnailDirectory = thumbnailDirectory
         embedder = SearchImageEmbedder(bundle: bundle)
@@ -130,24 +141,57 @@ actor PhotoSearchIndex {
     }
 
     /// The assets `text` matches among those with a current embedding.
-    func matches(for text: String) async throws -> SearchMatches {
-        let encoding = try await encoder.encode(text)
+    /// `preferring`: the languages the user searches in, favoured when recognising the text's.
+    func matches(for text: String, preferring languages: [String] = []) async throws -> SearchMatches {
+        let people = try await store.namedPeople()
+        let encoding = try await encoder.encode(text, preferring: languages, people: people)
         let start = ContinuousClock.now
         let count = ids.count
-        let scores = Self.scores(vectors, count: count, query: encoding.embedding)
-        let threshold = cutoff.threshold(best: scores.max() ?? 0)
-        var matched: [MediaAssetID: Float] = [:]
-        for (row, score) in scores.enumerated() where score >= threshold {
-            matched[ids[row]] = score
+        var matched: [MediaAssetID: Float]?
+        var named: [String] = []
+        var textMatches = 0
+        if let query = encoding.embedding {
+            let scores = Self.scores(vectors, count: count, query: query)
+            let best = scores.max() ?? 0
+            let threshold = cutoff.threshold(best: best)
+            named = labelVocabulary()?.labels(namedBy: query) ?? []
+            var picture: [MediaAssetID: Float] = [:]
+            for (row, score) in scores.enumerated()
+                where score >= threshold && SearchLabelGate.keeps(score: score, best: best, labels: labels[row], named: named)
+            {
+                picture[ids[row]] = score
+            }
+            // A photo showing the words matches, whatever the cut. A query naming no scene label
+            // ("according", "presenting") is about the words, so those photos rank first; one
+            // naming a thing ("dog", "lake") is about the picture, and a sign saying DOG keeps
+            // its picture's place (research §9: word queries 0.13 → 0.84 recall@10, picture
+            // queries unchanged at 0.846). The words are tried as typed and as the English.
+            let lift = named.isEmpty ? Self.textMatchScore : 0
+            for (id, reading) in texts
+                where SearchTextReading.matches(query: encoding.text, in: reading)
+                || SearchTextReading.matches(query: encoding.pictureText, in: reading)
+            {
+                picture[id] = lift + (rowOf[id].map { scores[$0] } ?? 0)
+                textMatches += 1
+            }
+            matched = picture
         }
+        let allowed = encoding.facts.isEmpty ? nil : try await store.searchFactMatches(encoding.facts)
         OtosLog.catalog.noticeOperation("search.match", phase: "done", fields: [
             "searched": "\(count)",
-            "matched": "\(matched.count)",
+            "matched": "\(matched.map { "\($0.count)" } ?? "unnarrowed")",
+            "allowed": "\(allowed.map { "\($0.count)" } ?? "unnarrowed")",
+            "labels": "\(named.count)",
+            "textMatches": "\(textMatches)",
             "reading": encoding.reading.rawValue,
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
-        return SearchMatches(encoding: encoding, scores: matched, searchedCount: count)
+        return SearchMatches(encoding: encoding, scores: matched, allowed: allowed, searchedCount: count)
     }
+
+    /// Added to a text match's picture score for a query about words, so it ranks above every
+    /// cosine.
+    static let textMatchScore: Float = 2
 
     /// Every row's cosine with `query`: one matrix–vector product over the row-major matrix.
     static func scores(_ vectors: [Float], count: Int, query: [Float]) -> [Float] {
@@ -156,6 +200,18 @@ actor PhotoSearchIndex {
             vDSP_mmul(vectors, 1, query, 1, &scores, 1, vDSP_Length(count), 1, vDSP_Length(SearchEmbedding.dimensions))
         }
         return scores
+    }
+
+    /// Loaded on first use; a vocabulary that does not load gates nothing, and says so.
+    private func labelVocabulary() -> SearchLabelVocabulary? {
+        if vocabulary == nil {
+            do {
+                vocabulary = try SearchLabelVocabulary(bundle: bundle)
+            } catch {
+                OtosLog.catalog.errorOperation("search.labels", phase: "loadFailed", fields: ["error": String(describing: error)])
+            }
+        }
+        return vocabulary
     }
 
     /// The embeddings in memory: what a test waits on.
@@ -167,6 +223,8 @@ actor PhotoSearchIndex {
         do {
             try await reconcile()
             try await drain()
+            try await reconcileTexts()
+            try await drainTexts()
         } catch {
             OtosLog.thumbnails.errorOperation("search.index", phase: "failed", fields: [
                 "error": String(describing: error),
@@ -181,6 +239,7 @@ actor PhotoSearchIndex {
             ids = []
             rowOf = [:]
             vectors = []
+            labels = []
             insert(all)
             loaded = true
             OtosLog.thumbnails.noticeOperation("search.index", phase: "loaded", fields: ["count": "\(all.count)"])
@@ -210,7 +269,7 @@ actor PhotoSearchIndex {
             let written = try await store.applySearchEmbeddings(results)
             guard !written.isEmpty else { break }
             let stored = written.compactMap { result in
-                result.embedding.map { StoredSearchEmbedding(id: result.id, embedding: $0) }
+                result.embedding.map { StoredSearchEmbedding(id: result.id, embedding: $0, labels: result.labels) }
             }
             remove(Set(stored.map(\.id)))
             insert(stored)
@@ -226,12 +285,50 @@ actor PhotoSearchIndex {
         }
     }
 
+    private func reconcileTexts() async throws {
+        let current = try await store.currentSearchTexts()
+        guard current != texts else { return }
+        texts = current
+        announce()
+    }
+
+    /// Reads every owed preview for text, a page at a time, after every embedding is made: a
+    /// photo is searchable by picture first, and a reading costs far more.
+    private func drainTexts() async throws {
+        var read = 0, withText = 0
+        let start = ContinuousClock.now
+        while !Task.isCancelled {
+            let page = try await store.searchTextCandidates(limit: 8)
+            guard !page.isEmpty else { break }
+            let results = await textReader.read(page, directory: thumbnailDirectory)
+            let written = try await store.applySearchTexts(results)
+            guard !written.isEmpty else { break }
+            for result in written {
+                texts[result.id] = result.text.isEmpty ? nil : result.text
+                withText += result.text.isEmpty ? 0 : 1
+            }
+            announce()
+            read += written.count
+            // New embeddings come first: a thumbnail written meanwhile is embedded before more
+            // previews are read.
+            if try await !store.searchEmbeddingCandidates(limit: 1).isEmpty {
+                break
+            }
+        }
+        if read > 0 {
+            OtosLog.thumbnails.noticeOperation("search.text", phase: "read", fields: [
+                "count": "\(read)", "withText": "\(withText)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+            ])
+        }
+    }
+
     private func insert(_ embeddings: [StoredSearchEmbedding]) {
         vectors.reserveCapacity(vectors.count + embeddings.count * SearchEmbedding.dimensions)
         for embedding in embeddings where rowOf[embedding.id] == nil {
             rowOf[embedding.id] = ids.count
             ids.append(embedding.id)
             vectors.append(contentsOf: embedding.embedding)
+            labels.append(embedding.labels)
         }
     }
 
@@ -244,6 +341,7 @@ actor PhotoSearchIndex {
             if row != last {
                 let moved = ids[last]
                 ids[row] = moved
+                labels[row] = labels[last]
                 rowOf[moved] = row
                 vectors.withUnsafeMutableBufferPointer { buffer in
                     for index in 0 ..< dimensions {
@@ -252,6 +350,7 @@ actor PhotoSearchIndex {
                 }
             }
             ids.removeLast()
+            labels.removeLast()
             vectors.removeLast(dimensions)
         }
     }
@@ -267,8 +366,9 @@ actor PhotoSearchIndex {
     }
 }
 
-/// Reads stored thumbnails with the image tower, on its own serial queue: every prediction
-/// blocks (ADR 0032 rule 6), and the 93 MB model loads on first use and never leaves it.
+/// Reads stored thumbnails with the image tower and Vision's scene classifier, on its own
+/// serial queue: every prediction blocks (ADR 0032 rule 6), and the 94 MB model loads on first
+/// use and never leaves it.
 actor SearchImageEmbedder {
     private let queue = DispatchSerialQueue(label: "net.melisma.Otos.search.image", qos: .utility)
     private let bundle: Bundle
@@ -282,7 +382,8 @@ actor SearchImageEmbedder {
         self.bundle = bundle
     }
 
-    /// One result per candidate: its embedding, or none when its thumbnail does not decode.
+    /// One result per candidate: its embedding and scene labels, or none when its thumbnail
+    /// does not decode.
     /// A model that does not load embeds nothing and records nothing, so the candidates stay
     /// owed.
     func embed(_ page: [SearchEmbeddingCandidate], thumbnailDirectory: URL?) -> [SearchEmbeddingResult] {
@@ -305,7 +406,12 @@ actor SearchImageEmbedder {
                 return SearchEmbeddingResult(id: candidate.id, source: candidate.source, embedding: nil)
             }
             do {
-                return try SearchEmbeddingResult(id: candidate.id, source: candidate.source, embedding: model.embedding(of: image))
+                return try SearchEmbeddingResult(
+                    id: candidate.id,
+                    source: candidate.source,
+                    embedding: model.embedding(of: image),
+                    labels: SearchSceneLabels.classify(image)
+                )
             } catch {
                 // A prediction that fails is not a fact about the thumbnail: nothing is
                 // recorded, and the asset stays owed.

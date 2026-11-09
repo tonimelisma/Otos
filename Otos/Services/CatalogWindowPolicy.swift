@@ -124,11 +124,17 @@ nonisolated enum CatalogWindowPolicy {
         ids: [MediaAssetID],
         dayBuckets: [Date?],
         coordinates: [PlaceCoordinate],
-        scores: [MediaAssetID: Float],
+        scores: [MediaAssetID: Float]?,
+        allowed: Set<MediaAssetID>? = nil,
         order: CatalogSearch.Order
     ) -> (ids: [MediaAssetID], dayBuckets: [Date?], coordinates: [PlaceCoordinate]) {
-        var kept = ids.indices.filter { scores[ids[$0]] != nil }
-        if order == .relevance {
+        var kept = ids.indices.filter { index in
+            (scores.map { $0[ids[index]] != nil } ?? true) && (allowed.map { $0.contains(ids[index]) } ?? true)
+        }
+        // Relevance needs a picture to be relevant to: a query of facts only keeps the scope's
+        // order and its day sections.
+        let byRelevance = order == .relevance && scores != nil
+        if byRelevance, let scores {
             kept.sort { left, right in
                 let a = scores[ids[left]]!, b = scores[ids[right]]!
                 return a != b ? a > b : left < right
@@ -136,7 +142,7 @@ nonisolated enum CatalogWindowPolicy {
         }
         return (
             kept.map { ids[$0] },
-            order == .relevance || dayBuckets.isEmpty ? [] : kept.map { dayBuckets[$0] },
+            byRelevance || dayBuckets.isEmpty ? [] : kept.map { dayBuckets[$0] },
             coordinates.isEmpty ? [] : kept.map { coordinates[$0] }
         )
     }
