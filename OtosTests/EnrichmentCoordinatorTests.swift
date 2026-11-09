@@ -273,13 +273,13 @@ struct EnrichmentCoordinatorTests {
         await coordinator.start()
 
         let enriched = try await waitForCatalogStoreState(store) { snapshot in
-            snapshot.testAssets.count == 2 && snapshot.testAssets.allSatisfy { !$0.needsEnrichment(everyProduct: true) }
+            snapshot.testAssets.count == 2 && snapshot.testAssets.allSatisfy { !$0.needsEnrichment(.library) }
         }
         await coordinator.shutdown()
 
         let visible = try #require(enriched.testAssets.first { $0.relativePath.rawValue == "a.jpg" })
         #expect(visible.thumbnailPath?.hasPrefix("thumb-") == true)
-        #expect(enriched.testAssets.allSatisfy { !$0.needsEnrichment(everyProduct: true) })
+        #expect(enriched.testAssets.allSatisfy { !$0.needsEnrichment(.library) })
     }
 
     @Test func enrichesMaterializedAndDownloadsThenEnrichesDataless() async throws {
@@ -315,7 +315,8 @@ struct EnrichmentCoordinatorTests {
                     thumbnailPath: "t.jpg",
                     sourceSize: size,
                     sourceMTimeSeconds: mtime,
-                    contentHash: .empty
+                    contentHash: .empty,
+                    faces: .noneFound
                 )
             )
         }
@@ -331,7 +332,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.start()
 
         let enriched = try await waitForCatalogStoreState(store) { snapshot in
-            snapshot.testAssets.count == 3 && snapshot.testAssets.allSatisfy { !$0.needsEnrichment(everyProduct: true) }
+            snapshot.testAssets.count == 3 && snapshot.testAssets.allSatisfy { !$0.needsEnrichment(.library) }
         }
         await coordinator.shutdown()
 
@@ -345,13 +346,13 @@ struct EnrichmentCoordinatorTests {
         await context.coordinator.start()
 
         let enriched = try await waitForCatalogStoreState(context.store) { snapshot in
-            snapshot.testAssets.first?.needsEnrichment(everyProduct: true) == false
+            snapshot.testAssets.first?.needsEnrichment(.library) == false
         }
         await context.coordinator.shutdown()
 
         let asset = try #require(enriched.testAssets.first)
         #expect(asset.thumbnailPath == "t.jpg")
-        #expect(asset.needsEnrichment(everyProduct: true) == false)
+        #expect(asset.needsEnrichment(.library) == false)
     }
 
     @Test func transientOutcomeIsRetriedUntilComplete() async throws {
@@ -377,7 +378,8 @@ struct EnrichmentCoordinatorTests {
                     thumbnailPath: "t.jpg",
                     sourceSize: size,
                     sourceMTimeSeconds: mtime,
-                    contentHash: .empty
+                    contentHash: .empty,
+                    faces: .noneFound
                 )
             )
         }
@@ -390,7 +392,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.start()
 
         let enriched = try await waitForCatalogStoreState(store) { snapshot in
-            snapshot.testAssets.first?.needsEnrichment(everyProduct: true) == false
+            snapshot.testAssets.first?.needsEnrichment(.library) == false
         }
         await coordinator.shutdown()
         #expect(enriched.testAssets.first?.thumbnailPath == "t.jpg")
@@ -421,7 +423,8 @@ struct EnrichmentCoordinatorTests {
                     thumbnailPath: "t.jpg",
                     sourceSize: reportedSize,
                     sourceMTimeSeconds: mtime,
-                    contentHash: .empty
+                    contentHash: .empty,
+                    faces: .noneFound
                 )
             )
         }
@@ -434,7 +437,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.start()
 
         let enriched = try await waitForCatalogStoreState(store) { snapshot in
-            snapshot.testAssets.first?.needsEnrichment(everyProduct: true) == false
+            snapshot.testAssets.first?.needsEnrichment(.library) == false
         }
         await coordinator.shutdown()
         #expect(enriched.testAssets.first?.thumbnailPath == "t.jpg")
@@ -459,7 +462,7 @@ struct EnrichmentCoordinatorTests {
             #expect(id.relativePath.rawValue == "ok.jpg")
             return .complete(EnrichmentResult(
                 id: id, metadata: AssetMetadata(), thumbnailPath: "t.jpg",
-                sourceSize: size, sourceMTimeSeconds: mtime, contentHash: .empty
+                sourceSize: size, sourceMTimeSeconds: mtime, contentHash: .empty, faces: .noneFound
             ))
         }
         let coordinator = EnrichmentCoordinator(
@@ -474,7 +477,7 @@ struct EnrichmentCoordinatorTests {
         )
         await coordinator.start()
         let enriched = try await waitForCatalogStoreState(store) {
-            $0.testAssets.count == 2 && $0.testAssets.allSatisfy { !$0.needsEnrichment(everyProduct: true) }
+            $0.testAssets.count == 2 && $0.testAssets.allSatisfy { !$0.needsEnrichment(.library) }
         }
         await coordinator.shutdown()
 
@@ -484,9 +487,9 @@ struct EnrichmentCoordinatorTests {
         #expect(empty.thumbnailPath == nil)
         #expect(empty.metadataSourceSize == 0)
         #expect(empty.metadataSourceMTimeSeconds == 1000)
-        #expect(!empty.needsEnrichment(everyProduct: true))
+        #expect(!empty.needsEnrichment(.library))
         #expect(ok.thumbnailPath == "t.jpg")
-        #expect(!ok.needsEnrichment(everyProduct: true))
+        #expect(!ok.needsEnrichment(.library))
         #expect(await enrichCalls.total == 1)
         #expect(await materializeCalls.total == 0)
     }
@@ -971,7 +974,8 @@ struct EnrichmentCoordinatorTests {
                 rendering: EnrichedRendering(thumbnailPath: "t.jpg"),
                 sourceSize: size,
                 sourceMTimeSeconds: mtime,
-                contentHash: digest
+                contentHash: digest,
+                faces: .noneFound
             ))
         }
         let coordinator = EnrichmentCoordinator(
@@ -1044,7 +1048,8 @@ struct EnrichmentCoordinatorTests {
                     rendering: scope.contains(.rendering) ? EnrichedRendering(thumbnailPath: "t.jpg") : nil,
                     sourceSize: size,
                     sourceMTimeSeconds: mtime,
-                    contentHash: scope.contains(.hash) ? digest : nil
+                    contentHash: scope.contains(.hash) ? digest : nil,
+                    faces: scope.contains(.faces) ? .noneFound : nil
                 )
             )
         }
@@ -1066,7 +1071,7 @@ struct EnrichmentCoordinatorTests {
         }
         await coordinator.shutdown()
 
-        #expect(await recorder.scopes(name: "fixed.jpg") == [[.metadata, .rendering, .hash]])
+        #expect(await recorder.scopes(name: "fixed.jpg") == [[.metadata, .rendering, .hash, .faces]])
         #expect(await recorder.scopes(name: "card.jpg") == [[.metadata, .provisionalThumbnail], [.rendering, .hash]])
     }
 }
@@ -1299,7 +1304,8 @@ private func visibleLifecycleEnricher() -> MediaEnricher {
                 thumbnailPath: "thumb-\(id.relativePath.rawValue)",
                 sourceSize: size,
                 sourceMTimeSeconds: mtime,
-                contentHash: .empty
+                contentHash: .empty,
+                faces: .noneFound
             )
         )
     }

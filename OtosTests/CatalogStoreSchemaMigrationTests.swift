@@ -176,13 +176,14 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.remoteBaseURLMigrationIdentifier,
             CatalogSchema.hiddenBySourceMigrationIdentifier,
             CatalogSchema.sourceProductsMigrationIdentifier,
+            CatalogSchema.facesMigrationIdentifier,
         ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
             "active_file_operation", "active_file_operation_companion_staging", "active_source_erase",
             "active_reorganization_component", "active_reorganization_member",
             "active_reorganization_step", "active_reorganization_directory",
-            "pending_identity_remap_batch", "pending_identity_remap", "duplicate_kept_pair",
+            "pending_identity_remap_batch", "pending_identity_remap", "duplicate_kept_pair", "face",
         ])
     }
 
@@ -265,6 +266,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.remoteBaseURLMigrationIdentifier,
             CatalogSchema.hiddenBySourceMigrationIdentifier,
             CatalogSchema.sourceProductsMigrationIdentifier,
+            CatalogSchema.facesMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)

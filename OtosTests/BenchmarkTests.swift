@@ -99,18 +99,28 @@ struct BenchmarkTests {
 
     /// The work enrichment does for each face it reads (ADR 0047): aligning five points, cutting
     /// the opaque 112 px crop out of a 12-megapixel photo, and the embedding model's prediction.
+    /// Alignment and cropping are batched (1,000 and 16) so each case retires enough
+    /// instructions to be steady; one alignment alone is lost in the measurement's own cost.
     @Test func faceCases() async throws {
         let moved = CGAffineTransform(rotationAngle: 0.2).scaledBy(x: 5.5, y: 5.5).translatedBy(x: 380, y: 250)
         let points = FaceAlignment.template.map { $0.applying(moved) }
-        try await Benchmark.measure("face.align") {
-            #expect(FaceAlignment.similarity(from: points, to: FaceAlignment.template) != nil)
+        try await Benchmark.measure("face.align.x1000") {
+            var aligned = 0
+            for _ in 0 ..< 1000 where FaceAlignment.similarity(from: points, to: FaceAlignment.template) != nil {
+                aligned += 1
+            }
+            #expect(aligned == 1000)
         }
 
         let photo = try CIImage(cgImage: FaceAnalyzerTests.patternImage(seed: 4, size: 4000))
         let transform = try #require(FaceAlignment.similarity(from: points, to: FaceAlignment.template))
         let context = CIContext()
-        try await Benchmark.measure("face.crop") {
-            #expect(FaceAnalyzer.alignedCrop(of: photo, transform: transform, context: context) != nil)
+        try await Benchmark.measure("face.crop.x16") {
+            var crops = 0
+            for _ in 0 ..< 16 where FaceAnalyzer.alignedCrop(of: photo, transform: transform, context: context) != nil {
+                crops += 1
+            }
+            #expect(crops == 16)
         }
 
         let model = try FaceEmbeddingModel(bundle: Bundle(for: CatalogWindowViewModel.self))

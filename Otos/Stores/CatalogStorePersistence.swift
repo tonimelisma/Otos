@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import GRDB
 import OSLog
@@ -149,6 +150,11 @@ extension CatalogStore {
         }
         migrator.registerMigration(CatalogSchema.sourceProductsMigrationIdentifier) { db in
             for statement in CatalogSchema.sourceProductsStatements {
+                try db.execute(sql: statement)
+            }
+        }
+        migrator.registerMigration(CatalogSchema.facesMigrationIdentifier) { db in
+            for statement in CatalogSchema.facesStatements {
                 try db.execute(sql: statement)
             }
         }
@@ -618,6 +624,42 @@ extension CatalogStore {
         if let metadata = result.metadata {
             try writeMetadata(metadata, stamp: (result.sourceSize, result.sourceMTimeSeconds), row: row, db: db)
         }
+        if let faces = result.faces {
+            try writeFaces(faces, stamp: (result.sourceSize, result.sourceMTimeSeconds), row: row, db: db)
+        }
+    }
+
+    /// A still's faces (ADR 0047): the reading replaces every face the asset held, and its
+    /// stamp names the bytes it read, so a still with no face in it is not read again until
+    /// it changes.
+    private static func writeFaces(_ faces: EnrichedFaces, stamp: ProductStamp, row: ProductRow, db: Database) throws {
+        try db.execute(
+            sql: "DELETE FROM face WHERE library_root_id = ? AND relative_path = ?",
+            arguments: [row.rootID, row.relativePath.rawValue]
+        )
+        for (index, face) in faces.faces.enumerated() {
+            try db.execute(
+                sql: """
+                INSERT INTO face (
+                    library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
+                    landmarks, quality, analysis_revision, embedding
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    row.rootID, row.relativePath.rawValue, index,
+                    Double(face.box.minX), Double(face.box.minY), Double(face.box.width), Double(face.box.height),
+                    FaceStorage.landmarksData(face.landmarks), Double(face.quality), faces.analysisRevision,
+                    FaceStorage.embeddingData(face.embedding),
+                ]
+            )
+        }
+        try db.execute(
+            sql: """
+            UPDATE media_asset SET faces_source_size = ?, faces_source_mtime = ?
+            WHERE library_root_id = ? AND relative_path = ?
+            """,
+            arguments: [stamp.size, stamp.mtimeSeconds, row.rootID, row.relativePath.rawValue]
+        )
     }
 
     /// The row a product write targets.

@@ -1,16 +1,24 @@
 # Keyword search: which models and mechanisms could find "dog on the beach" in the library
 
-Date: 2026-11-09. Question: how could Otos let the owner type a word or a phrase, in Finnish or
-English, and get the photos and videos that show it? Which current models can do it under about
-500 MB, and what does Apple already provide?
+Date: 2026-11-09 to 2026-11-10. Question: how could Otos let the owner type a word or a phrase,
+in any of many languages, and get the photos and videos that show it? Which current models can
+do it under about 500 MB, and what does Apple already provide?
 
 **Answer:** search by a contrastive image–text embedding (the CLIP family) is the only approach
 that finds long-tail phrases. Apple provides no such embedding, so it needs a model of Otos's
-own. Two Apple APIs complement it at no download cost: Vision's 1,303-label scene classifier and
-Vision's text recognition, which reads Finnish. The model is not chosen here. Finnish quality
-separates the candidates more than anything else does, and only the published Crossmodal-3600
-numbers measure it so far. The next step is a measured bake-off on the owner's own photos with
-Finnish and English queries (section 7), as the face-recognition research did.
+own. The bake-off on the owner's library (section 7) found one clear best design:
+
+- **Translate the query to English with Apple's on-device Translation, then search with
+  SigLIP 2 B/16-256.**
+- **Quality:** it found 85% of the attainable relevant photos in its top 10 for English queries,
+  and 72–84% (mean 80%) for queries in 15 other languages.
+- **Against the alternatives:** every multilingual model searched with the untranslated query
+  did worse (at best a mean of 66–68%), and so did a distilled cross-lingual text encoder (44%).
+- **Languages Translation cannot read** (Estonian in the test): SigLIP 2's own multilingual text
+  tower still reached 50%.
+
+Two Apple APIs complement it at no download cost: Vision's 1,303-label scene classifier and
+Vision's text recognition.
 
 Sources marked **[measured]** were run on this Mac (M1 Pro, macOS 27, Xcode 27.2 SDK) during this
 research. The probes live in the session scratchpad, not in the repository. **[source]** is a
@@ -92,11 +100,12 @@ No 2026 release in this family turned up: no SigLIP 3, MobileCLIP 3, Perception 
 MetaCLIP 3. The newest are MetaCLIP 2's distilled models and FG-CLIP 2. TULIP (Mar 2025) starts
 above 1B parameters.
 
-**What the table says:**
-- **Finnish is decided by the text tower.** The models that do well on Finnish carry a large
-  multilingual text encoder (NLLB, XLM-R, mSigLIP's 250k vocabulary). Its token-embedding table
-  is most of the download. SigLIP 2 is multilingual in name, but at B size it scores 40 on
-  Finnish against 66 on Swedish.
+**What the table says** (published numbers; section 7 measures them on the owner's library):
+- **Untranslated Finnish follows the text tower.** The models that do well on Finnish carry a
+  large multilingual text encoder (NLLB, XLM-R, mSigLIP's 250k vocabulary). Its token-embedding
+  table is most of the download. SigLIP 2 is multilingual in name, but at B size it scores 40 on
+  Finnish against 66 on Swedish. The bake-off reproduced that gap (41 against 60), and showed
+  that translating the query first closes it.
 - **Licences are not the barrier they would be elsewhere.** Otos is non-commercial (owner
   decision, ADR 0047), so CC-BY-NC models are acceptable. The Apple ML Research licence
   (`apple-amlr`) on MobileCLIP2 and FastVLM is narrower: it covers research use, and whether a
@@ -182,30 +191,151 @@ with OCR or filename hits), reciprocal rank fusion, Σ 1/(60 + rank), needs no s
 - **Engine.** Core ML on the CPU, owned like `EditAnalyzer`; the measured scan above needs only
   Accelerate.
 
-## 7. What must be measured before an ADR
+## 7. Bake-off on the owner's library
 
-The published numbers cannot decide this. Crossmodal-3600 captions are not the owner's queries,
-and none of the candidates has Finnish numbers on photos like the owner's. The face research
-showed that a measured run on the owner's library can overturn the published ranking.
+The published numbers could not decide this. Crossmodal-3600 captions are not the owner's
+queries, and the face research had already shown that a measured run on the owner's library can
+overturn a published ranking. The material lives in `~/Development/Otos-search-research`, outside
+the repository, because it holds the owner's photos. This section keeps the method and the
+numbers.
 
-1. **A query set** of about 50 queries the owner would actually type, each in Finnish and in
-   English ("sauna", "lumiukko", "syntymäpäiväkakku", "koira rannalla", "Lapland", "boat"),
-   with the relevant photos labelled among a few thousand of the owner's assets.
-2. **Candidates:**
-   - NLLB-CLIP base, the Finnish ceiling;
-   - mSigLIP B/16 i18n and XLM-R B/32, permissive multilingual;
-   - SigLIP 2 B/16, the only one with a Core ML port;
-   - MobileCLIP2-S2 or v1 S2 with Finnish queries translated by Apple Translation, the smallest.
+### Method
 
-   Vision tags with a Finnish table are a baseline.
-3. **Metrics:**
-   - recall at 10 and 50 per query and language;
-   - precision at each candidate's best single cutoff;
-   - drift from fp32 after 8-bit weights (memory `core-ml-in-otos`: half precision shifted
-     FocalNet's top choice 3.6% of the time);
-   - per-image time on the CPU from the stored 2560 px preview.
-4. **Size:** whether vocabulary trimming brings a multilingual text tower under 100 MB per file
-   with no change in Finnish results.
+- **Corpus:** all 19,221 non-trashed assets of the installed catalog that have a stored
+  rendering. Each is downscaled to a 512 px long edge: the 2560 px preview where there is one
+  (10,065 assets), otherwise the 256 px thumbnail (videos and un-rendered stills). No original
+  was read.
+- **Queries:**
+  - 52 concepts chosen from what a random sample of the library shows: beach, swing, bouncy
+    castle, child riding a bike, birthday cake, phone screenshot, restaurant menu, Golden Gate
+    Bridge, child wearing a red hat, and so on.
+  - Each concept was written as a person would type it in 17 languages: en, fi, sv, de, fr, es,
+    it, nl, pl, ru, ja, zh, ko, ar, hi, tr, et.
+  - Single words and phrases are mixed.
+- **Two ways to handle a language:**
+  - **Native:** the query as typed goes to the model's own text encoder.
+  - **Translated:** Apple Translation (`TranslationSession(installedSource:target:)`) turns it into
+    English first. Every test language except Estonian had an installed pack; Estonian is
+    unsupported, so it stays untranslated.
+  - The translations were good with realistic slips: Arabic "bouncy castle" became "Nattata
+    Castle", and Japanese became "Fluffy playground equipment".
+- **Candidates** (PyTorch fp32, open_clip weights):
+  - SigLIP 2 B/16-256;
+  - mSigLIP B/16-256 i18n;
+  - CLIP B/32 + XLM-R base;
+  - NLLB-CLIP base SigLIP;
+  - MobileCLIP2-S2 and MobileCLIP v1 S2 (Ente's model);
+  - PE-Core B16;
+  - OpenAI CLIP B/32 (Immich's default);
+  - the cross-lingual idea itself: `sentence-transformers/clip-ViT-B-32-multilingual-v1`, a
+    multilingual text encoder distilled into CLIP B/32's text space, used with B/32's image
+    tower.
+- **Relevance:**
+  - Judged once per concept, by pooling: the union of every run's top 10 (model × mode ×
+    language), 23,603 photos plus 1,107 more from a first pool.
+  - Judged on shuffled contact sheets against a one-line written criterion per concept.
+  - Judging agents did the sheets. On two sheets judged independently by a second judge, 96
+    photos with 16 relevant, the two agreed on every photo.
+  - Every run's top 10 is therefore fully judged.
+- **Metric:**
+  - **Pooled recall@10:** the relevant photos in the top 10, divided by the smaller of 10 and the
+    number of relevant photos any run found. Averaged over the 51 concepts that have at least
+    one.
+  - "Child in the bathtub" had none.
+  - Several concepts have only 1–8 relevant photos (sushi, soccer ball, horse, Christmas tree,
+    cat, plane, rain), so a single hit moves them a lot.
+- **Harness defect found and fixed:** open_clip's `set_language` does not change NLLB's
+  language-prefix token, so every NLLB query was first encoded as English ("dog"/"koira"
+  cosine 0.47 → 0.99 once fixed). NLLB was re-run with `tokenizer.src_lang`, and the 283 photos
+  its new top 10 brought in were judged.
+
+### Results
+
+Pooled recall@10, %. "Translated mean" covers the 15 languages Translation handled; Estonian is
+always untranslated.
+
+| Model | en | Translated mean (min) | Untranslated mean (min) | fi untranslated / translated | et |
+| --- | --- | --- | --- | --- | --- |
+| **SigLIP 2 B/16-256** | **85** | **79.7** (72) | 66.0 (41) | 41 / 78 | 50 |
+| MobileCLIP2-S2 | 81 | 76.0 (72) | 38.8 (0) | 15 / 74 | 11 |
+| mSigLIP B/16 i18n | 79 | 73.0 (66) | 65.8 (50) | 60 / 73 | **53** |
+| CLIP B/32 + XLM-R | 76 | 70.8 (66) | **67.5** (52) | 60 / 69 | 47 |
+| MobileCLIP v1 S2 | 75 | 69.9 (64) | 24.9 (0) | 7 / 69 | 11 |
+| OpenAI CLIP B/32 | 73 | 67.6 (59) | 19.2 (0) | 11 / 68 | 7 |
+| Distilled multilingual CLIP B/32 | 71 | 66.8 (64) | 44.3 (32) | 37 / 66 | 32 |
+| PE-Core B16 | 71 | 65.9 (60) | 26.7 (1) | 16 / 65 | 17 |
+| NLLB-CLIP base SigLIP | 63 | 59.1 (52) | 55.3 (50) | 50 / 60 | 49 |
+
+**SigLIP 2 + translation against the rest** (paired bootstrap over concepts, translated
+languages, 5,000 resamples):
+
+| Against | Difference | 95% interval |
+| --- | --- | --- |
+| MobileCLIP2-S2 | +3.8 points | −0.2 to 8.2 |
+| mSigLIP i18n | +6.7 points | 2.1 to 11.5 |
+| CLIP B/32 + XLM-R | +9.0 points | 3.8 to 14.5 |
+| MobileCLIP v1 S2 | +9.9 points | 4.6 to 15.8 |
+| OpenAI CLIP B/32 | +12.1 points | 6.8 to 18.0 |
+| PE-Core B16 | +13.9 points | 7.8 to 20.7 |
+
+**What the results say:**
+
+1. **Translation beats every cross-lingual embedding.** Each model does better on translated
+   queries than on its own multilingual encoding of them. The best untranslated score (CLIP
+   B/32 + XLM-R, 67.5) is below the best translated one (79.7) by 12 points. Distilling a
+   multilingual encoder into CLIP's text space (the "embedding between the languages" idea)
+   reached 44 untranslated, and SigLIP 2 B/16's own Finnish only 41. A sentence translator also
+   covers the word-for-word case, since a single word is a sentence to it.
+2. **The image side decides the ranking once queries are English.** The translated order
+   follows the English order. SigLIP 2 B/16 leads clearly against every candidate but
+   MobileCLIP2-S2, whose interval touches zero.
+3. **Published multilingual numbers did not carry over.** NLLB-CLIP leads Crossmodal-3600 on
+   Finnish, but it was last here in English and in every translated language. It led no
+   language untranslated either, though it was the most even.
+4. **Translation has a gap.** A language Apple Translation cannot read falls back to the model's
+   own text tower. There SigLIP 2 (50) and mSigLIP (53) hold up, and the English-only models
+   collapse (7–17).
+
+### Cost of the two leaders
+
+Measured in PyTorch fp32 on this Mac's CPU, one image at a time. Core ML numbers come with the
+conversion.
+
+| | SigLIP 2 B/16-256 | MobileCLIP2-S2 |
+| --- | --- | --- |
+| Parameters | 93M image + 282M text, of which 197M is the 256k-token vocabulary table | 36M image + 63M text |
+| Size at 8-bit | ~375 MB | ~99 MB |
+| CPU image encode | 55 ms | 649 ms (not reparameterized here; it is designed for the Neural Engine) |
+| CPU text encode | 28 ms | 25 ms |
+| GPU (MPS) batch throughput | 19,221 images in 429 s, 22 ms an image | 19,221 in 257 s |
+| Licence | Apache-2.0 | Apple ML Research (research use) |
+
+**The English-only text side:**
+- With translation, SigLIP 2's text tower only ever sees English. Every word in the system
+  English dictionary (235,976 words, in three casings) tokenizes into 58,183 of the 256,000
+  vocabulary entries.
+- Keeping only those would shrink the table from 197M to about 45M parameters, and the model to
+  roughly 225 MB at 8-bit. It would also bring each file under GitHub's 100 MB limit when split
+  by tower.
+- **Not tested here:** whether a trimmed tokenizer reproduces the full one's embeddings for every
+  query. It also gives up the 50% untranslated fallback for languages Translation lacks.
+
+**Also measured:** PyTorch's MPS backend hung in `MTLCommandBuffer waitUntilCompleted` when two
+processes used the GPU at once (NLLB image encoding next to text encoding). The run was idle at
+0% CPU for 13 minutes. This is the same failure that made Otos run Core ML on the CPU (memory
+`core-ml-in-otos`).
+
+### Open before an ADR
+
+- **The query's language.** In the test, Translation was told each query's language. A typed
+  query does not say it, and a one-word query ("pizza", "sushi", "lumi") is often ambiguous.
+  `NLLanguageRecognizer` constrained to the user's preferred languages, or translating from each
+  preferred language, are the candidates. Both are untested.
+- **Core ML conversion, 8-bit drift and Core ML CPU time** for SigLIP 2 B/16, against these
+  fp32 rankings (memory `core-ml-in-otos`: half precision moved FocalNet's top choice 3.6% of
+  the time).
+- **A match cutoff:** where the ranked list stops, as Ente's 0.175 does for MobileCLIP. It needs
+  calibrating on these judgments for the chosen model.
 
 ## Sources
 
@@ -244,3 +374,5 @@ showed that a measured run on the owner's library can overturn the published ran
   CLIP request <https://bugs.kde.org/show_bug.cgi?id=515936>
 - Google Ask Photos: <https://blog.google/products/photos/ask-photos-google-io-2024/>
 - Video frame sampling: <https://arxiv.org/abs/2408.03340>
+- Distilled multilingual CLIP: <https://huggingface.co/sentence-transformers/clip-ViT-B-32-multilingual-v1>
+- Apple Translation: <https://developer.apple.com/documentation/translation/translationsession>

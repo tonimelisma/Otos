@@ -80,7 +80,7 @@ struct CatalogWindowViewModelEnrichmentTests {
         let firstScan = try await waitForCatalogStoreState(firstStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.count == 1
         }
-        #expect(firstScan.testAssets.first?.needsEnrichment(everyProduct: true) == true)
+        #expect(firstScan.testAssets.first?.needsEnrichment(.library) == true)
         await firstStore.shutdown()
 
         // Relaunch: a fresh store reloads the persisted, un-enriched asset from SQLite; its
@@ -149,7 +149,8 @@ private func completeEnricher(captureDate: Date, thumbnailPath: String = "t.jpg"
                 thumbnailPath: thumbnailPath,
                 sourceSize: size,
                 sourceMTimeSeconds: mtime,
-                contentHash: .empty
+                contentHash: .empty,
+                faces: .noneFound
             )
         )
     }
@@ -174,7 +175,7 @@ private func waitForFirstAsset(
             return asset
         }
     }
-    let need = String(describing: lastAsset?.needsEnrichment(everyProduct: true))
+    let need = String(describing: lastAsset?.needsEnrichment(.library))
     let cap = String(describing: lastAsset?.bestCaptureDate)
     let size = String(describing: lastAsset?.byteSize)
     Issue.record("waitForFirstAsset stream ended: needsEnrichment=\(need) bestCaptureDate=\(cap) byteSize=\(size)")

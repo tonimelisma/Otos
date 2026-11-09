@@ -73,6 +73,33 @@ final nonisolated class ImageRenderer: Sendable {
     /// `longEdge`, or at full size when nil. A cropped photo is developed from a frame
     /// large enough for its crop to reach that size.
     func render(_ url: URL, longEdge: Int?, recipe: EditRecipe = .neutral) async throws -> Rendered {
+        let products = try await read(url, rendering: RenderRequest(longEdge: longEdge, recipe: recipe), upright: false)
+        guard let rendered = products.rendered else {
+            throw RenderError.renderFailed
+        }
+        return rendered
+    }
+
+    /// A rendering to make from a read: the edited photo's long edge, nil for full size.
+    struct RenderRequest: Sendable {
+        let longEdge: Int?
+        let recipe: EditRecipe
+    }
+
+    /// What one read of a still made.
+    struct StillProducts: Sendable {
+        /// The rendering, when one was asked for.
+        let rendered: Rendered?
+        /// The original at full resolution, turned upright, with no recipe, when asked for:
+        /// what face analysis reads (ADR 0047). A face is read from the photo's own pixels,
+        /// never from a preview or an edit.
+        let upright: CGImage?
+    }
+
+    /// Reads `url` once and makes from those bytes the rendering asked for and, when
+    /// `upright`, the full-resolution upright original (ADR 0009: one read makes every
+    /// product a row owes).
+    func read(_ url: URL, rendering: RenderRequest?, upright: Bool) async throws -> StillProducts {
         let lane = lane
         let enqueued = ContinuousClock.now
         let queue = Self.isRAW(url) ? rawQueue : imageQueue
@@ -84,23 +111,28 @@ final nonisolated class ImageRenderer: Sendable {
                 do {
                     let source = try StillSource.read(url)
                     let developStart = ContinuousClock.now
-                    let rendered = try Self.renderNow(source, longEdge: longEdge, recipe: recipe)
+                    let rendered = try rendering.map { try Self.renderNow(source, longEdge: $0.longEdge, recipe: $0.recipe) }
+                    let developMs = DiagnosticsTiming.milliseconds(since: developStart)
+                    let uprightStart = ContinuousClock.now
+                    let uprightImage = upright ? try Self.uprightOriginal(source) : nil
                     // The lane's time splits into reading the original and developing it, so
                     // a slow render says whether its source or its decoder set the pace;
                     // `queueWaitMs` is the backlog in front of it on this lane.
                     OtosLog.rendering.noticeOperation("render.still", phase: "finish", fields: [
                         "lane": lane,
-                        "decoder": rendered.decoder.rawValue,
-                        "width": "\(rendered.image.width)",
-                        "height": "\(rendered.image.height)",
+                        "decoder": rendered?.decoder.rawValue ?? "none",
+                        "width": "\(rendered?.image.width ?? 0)",
+                        "height": "\(rendered?.image.height ?? 0)",
+                        "upright": uprightImage.map { "\($0.width)x\($0.height)" } ?? "none",
                         "bytes": "\(source.data.count)",
                         "queueWaitMs": "\(DiagnosticsTiming.milliseconds(from: enqueued, to: start))",
                         "readMs": "\(DiagnosticsTiming.milliseconds(source.readDuration))",
-                        "developMs": "\(DiagnosticsTiming.milliseconds(since: developStart))",
+                        "developMs": "\(developMs)",
+                        "uprightMs": "\(upright ? DiagnosticsTiming.milliseconds(since: uprightStart) : 0)",
                         "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
                         "path": url.path(percentEncoded: false),
                     ])
-                    continuation.resume(returning: rendered)
+                    continuation.resume(returning: StillProducts(rendered: rendered, upright: uprightImage))
                 } catch {
                     OtosLog.rendering.errorOperation("render.still", phase: "failed", fields: [
                         "lane": lane,
@@ -111,6 +143,33 @@ final nonisolated class ImageRenderer: Sendable {
                 }
             }
         }
+    }
+
+    /// The original decoded whole by Image I/O and turned upright by its orientation, with
+    /// no recipe. A RAW is decoded the same way, by Image I/O's own RAW support: faces need
+    /// the photo's geometry and detail, not its development.
+    static func uprightOriginal(_ still: StillSource) throws -> CGImage {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(still.data as CFData, sourceOptions),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        else {
+            throw RenderError.unreadable
+        }
+        let width = properties[kCGImagePropertyPixelWidth] as? Int ?? 0
+        let height = properties[kCGImagePropertyPixelHeight] as? Int ?? 0
+        guard max(width, height) > 0 else {
+            throw RenderError.unreadable
+        }
+        let options = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(width, height),
+        ] as CFDictionary
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else {
+            throw RenderError.renderFailed
+        }
+        return image
     }
 
     /// A still's original, read whole in one timed read before anything decodes it. The
