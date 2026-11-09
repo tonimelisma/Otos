@@ -849,6 +849,78 @@ extension CatalogStore {
         }
     }
 
+    /// Immich stills whose faces have not been read from their stored preview, or were read
+    /// from an older one (ADR 0047): the faces stamp is compared with the source stamp the
+    /// preview was made for. Videos are never read for faces.
+    func previewFaceCandidates(limit: Int) async throws -> [PreviewFaceCandidate] {
+        let accounts = roots.values.filter { $0.root.kind == .immichAccount }
+        guard !accounts.isEmpty else { return [] }
+        let rootIDs = accounts.map(\.rowID).sorted()
+        let pathsByRowID = roots.pathsByRowID
+        let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
+        return try await database().read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT library_root_id, relative_path, preview_path, source_products_size, source_products_mtime
+                FROM media_asset
+                WHERE library_root_id IN (\(placeholders))
+                  AND preview_path IS NOT NULL
+                  AND source_products_size IS NOT NULL
+                  AND kind IN ('image', 'raw')
+                  AND trash_path IS NULL
+                  AND (faces_source_size IS NOT source_products_size
+                       OR faces_source_mtime IS NOT source_products_mtime)
+                ORDER BY library_root_id, relative_path
+                LIMIT ?
+                """,
+                arguments: StatementArguments(rootIDs + [limit])
+            ).compactMap { row in
+                guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
+                return PreviewFaceCandidate(
+                    id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"])),
+                    previewPath: row["preview_path"],
+                    sourceSize: row["source_products_size"],
+                    sourceMTimeSeconds: row["source_products_mtime"]
+                )
+            }
+        }
+    }
+
+    /// Writes faces read from stored previews, for rows whose preview is still the one read;
+    /// the faces are stamped with the preview's source stamp. Returns the rows written.
+    @discardableResult
+    func applyPreviewFaces(_ results: [PreviewFaceResult]) async throws -> Int {
+        let rowIDs = roots.rowIDSnapshot()
+        return try await database().write { db -> Int in
+            var written = 0
+            for result in results {
+                guard let rootID = rowIDs[result.candidate.id.libraryRootPath] else { continue }
+                let current = try Row.fetchOne(
+                    db,
+                    sql: """
+                    SELECT 1 FROM media_asset
+                    WHERE library_root_id = ? AND relative_path = ? AND preview_path IS ?
+                      AND source_products_size IS ? AND source_products_mtime IS ?
+                    """,
+                    arguments: [
+                        rootID, result.candidate.id.relativePath.rawValue, result.candidate.previewPath,
+                        result.candidate.sourceSize, result.candidate.sourceMTimeSeconds,
+                    ]
+                )
+                guard current != nil else { continue }
+                try Self.writeFaces(
+                    result.faces,
+                    stamp: (result.candidate.sourceSize, result.candidate.sourceMTimeSeconds),
+                    row: (rootID, result.candidate.id.relativePath),
+                    db: db
+                )
+                written += 1
+            }
+            return written
+        }
+    }
+
     /// Adds a person, named or not (a split makes one to be named later).
     func addPerson(name: String?, birthday: String?) async throws -> PersonID {
         let dbWriter = try database()

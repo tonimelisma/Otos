@@ -348,6 +348,9 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let metadataRefresher: MetadataRefresher?
     /// Signs stored thumbnails for same-photo duplicates (ADR 0042); starts with enrichment.
     @ObservationIgnored let renderSignatureRefresher: RenderSignatureRefresher?
+    /// Reads Immich stills' faces from their stored previews (ADR 0047); starts with
+    /// enrichment.
+    @ObservationIgnored let previewFaceReader: PreviewFaceReader?
     @ObservationIgnored let materializationCoordinator: MaterializationCoordinator
     @ObservationIgnored let deviceStagingRegistry: DeviceStagingRegistry
     @ObservationIgnored private let mediaTileDetailReader: MediaTileDetailReader
@@ -627,13 +630,17 @@ final class CatalogWindowViewModel {
             materializationRequester: materializationCoordinator,
             files: trashFiles
         )
+        // One face analyser, so the model loads once, read by enrichment (fixed libraries'
+        // originals) and the preview face reader (Immich accounts' previews).
+        let analyzeFaces = MediaEnricher.bundledFaceAnalysis()
         self.enrichmentCoordinator = enrichmentCoordinator ?? (
             startsEnrichment
                 ? EnrichmentCoordinator(
                     store: catalogStore,
                     enricher: .live(
                         thumbnailDirectory: catalogStore.thumbnailDirectory
-                            ?? FileManager.default.temporaryDirectory
+                            ?? FileManager.default.temporaryDirectory,
+                        analyzeFaces: analyzeFaces
                     ),
                     materializationRequester: materializationCoordinator,
                     cameraRangeAccess: deviceStagingRegistry.makeCameraRangeAccess(),
@@ -649,6 +656,9 @@ final class CatalogWindowViewModel {
         )
         renderSignatureRefresher = startsEnrichment && enrichmentCoordinator == nil
             ? RenderSignatureRefresher(store: catalogStore, thumbnailDirectory: catalogStore.thumbnailDirectory)
+            : nil
+        previewFaceReader = startsEnrichment && enrichmentCoordinator == nil
+            ? PreviewFaceReader(store: catalogStore, thumbnailDirectory: catalogStore.thumbnailDirectory, analyzeFaces: analyzeFaces)
             : nil
         self.stallMonitor = stallMonitor
         self.startsStallMonitor = startsStallMonitor
@@ -920,7 +930,8 @@ extension CatalogWindowViewModel {
         // `store.start()` is idempotent and shared, so this awaits the same load
         // `startCatalog` runs.
         enrichmentStartTask = Task { [
-            coordinator, materializationCoordinator, metadataRefresher, renderSignatureRefresher, store = catalogStore
+            coordinator, materializationCoordinator, metadataRefresher, renderSignatureRefresher, previewFaceReader,
+            store = catalogStore
         ] in
             do {
                 try await store.start()
@@ -931,6 +942,7 @@ extension CatalogWindowViewModel {
             await materializationCoordinator.start()
             await coordinator.start()
             await renderSignatureRefresher?.start()
+            await previewFaceReader?.start()
             await metadataRefresher?.refresh()
         }
     }

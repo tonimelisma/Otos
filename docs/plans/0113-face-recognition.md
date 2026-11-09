@@ -68,7 +68,7 @@ Each increment lands on `main` with its own DoD.
    - **Analysis:** `MediaEnricher` reads faces from the same read as the rendering.
    - **Requirements:** rows for analysis, staleness, cascade on move and delete, and purge.
    - **Logs:** `op=face.analyse` with the counts admitted and rejected, and the reasons.
-4. **Grouping, no UI.** *(this PR; the projection moves to increment 6, its first consumer)*
+4. **Grouping, no UI.** *(done, #604; the projection moves to increment 6, its first consumer)*
    - **Policy:** `FacePeoplePolicy` (pure):
      - a time window around each face's capture date;
      - best-person-beats-second acceptance;
@@ -98,9 +98,8 @@ Each increment lands on `main` with its own DoD.
      suggestions, and is never awaited by a window pass. It gets the store's people-change
      signal.
 
-7. **Faces for Immich accounts,** read from the stored Immich preview (ADR 0047): the claim
-   that owes them, the read from the stored preview instead of the original, and the
-   requirement row changing ENR-022's exclusion of Immich accounts.
+7. **Faces for Immich accounts,** read from the stored Immich preview (ADR 0047) by
+   `PreviewFaceReader`, stamped with the preview's source stamp (ENR-026). *(this PR)*
 8. **MediaMetadata: face regions, if the owner's photos have named ones.**
    - **Measured 2026-11-09:** of 20 local photos, 2 carry MWG regions, both written by the
      iPhone camera, unnamed (`apple-fi` face IDs only). The libraries hold no `.xmp` sidecars.

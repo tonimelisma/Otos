@@ -644,7 +644,7 @@ extension CatalogStore {
     /// it changes. The user's acts on the faces it replaces — a confirmed person, an ignored
     /// group, rejections — move to the new face each overlaps (`FaceCarryOver`); "not a face"
     /// does not, because a changed file is read afresh.
-    private static func writeFaces(_ faces: EnrichedFaces, stamp: ProductStamp, row: ProductRow, db: Database) throws {
+    static func writeFaces(_ faces: EnrichedFaces, stamp: ProductStamp, row: ProductRow, db: Database) throws {
         let key: StatementArguments = [row.rootID, row.relativePath.rawValue]
         let previous = try Row.fetchAll(
             db,

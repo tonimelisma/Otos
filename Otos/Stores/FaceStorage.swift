@@ -149,3 +149,19 @@ nonisolated enum PeopleRuleViolation: Error, Equatable {
     /// The face's library is not cataloged.
     case unknownFace
 }
+
+/// An Immich still whose faces are owed from its stored preview (ADR 0047): the preview's
+/// file under the thumbnail directory, and the source stamp it was made for.
+nonisolated struct PreviewFaceCandidate: Equatable, Sendable {
+    let id: MediaAssetID
+    let previewPath: String
+    let sourceSize: Int64?
+    let sourceMTimeSeconds: Int?
+}
+
+/// The faces read from one candidate's preview; none when the preview does not decode, which
+/// is recorded so the row is not offered again until a new preview arrives.
+nonisolated struct PreviewFaceResult: Equatable, Sendable {
+    let candidate: PreviewFaceCandidate
+    let faces: EnrichedFaces
+}

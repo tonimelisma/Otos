@@ -6,11 +6,10 @@ Proposed, 2026-11-09. The model, precision and face-admission rules are decided 
 evidence (`docs/research/2026-11-07-face-recognition-models.md`).
 
 - **Built:** detection, the analyser and the model (#593), faces as a stored enrichment
-  product (#601), and the stored acts, the people and the grouping policy (plan 0113,
-  increment 4).
+  product (#601), the stored acts, the people and the grouping policy (#604), and faces for
+  Immich accounts from their stored previews (`PreviewFaceReader`, plan 0113 increment 7).
 - **Still Proposed:** the People UI and the projection that publishes suggestions to it
-  (specified in `docs/design/people.md`), and faces for Immich accounts, until plan 0113 builds
-  them.
+  (specified in `docs/design/people.md`), until plan 0113 builds them.
 
 ## Context
 
