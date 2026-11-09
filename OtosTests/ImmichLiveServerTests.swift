@@ -72,7 +72,9 @@ struct ImmichLiveServerTests {
                 store: store
             )
             outcome = await sync.pass()
-            try await expectRangedMetadataRead(store: store, rootPath: rootPath, client: client, token: login.accessToken)
+            try await expectRangedMetadataRead(
+                store: store, rootPath: rootPath, client: client, token: login.accessToken
+            )
             let ids = try await store.orderedAssetIDs(
                 for: CatalogQueryDescriptor(scope: .library(rootPath)), availableLibraryPaths: [rootPath]
             ).ids
@@ -118,5 +120,11 @@ struct ImmichLiveServerTests {
         }
         let parsed = await RemoteMetadataReader.read(reader, filenameHint: first.relativePath.rawValue)
         #expect(!parsed.outcome.shouldRetry)
+        // The whole original downloads, at the size the sync reported (ADR 0046 §4).
+        let downloaded = try await client.downloadOriginal(assetID: assetID, token: token)
+        defer { try? FileManager.default.removeItem(at: downloaded) }
+        let path = downloaded.path(percentEncoded: false)
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+        #expect((attributes[.size] as? NSNumber)?.int64Value == size)
     }
 }

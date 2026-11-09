@@ -319,7 +319,7 @@ extension EnrichmentCoordinator {
     /// reads *and* its session is still attached. Both conditions are checked here rather
     /// than assumed at seeding time, because a camera can leave between the two.
     func byteAccess(for work: EnrichWork) async -> EnrichmentByteAccess {
-        if let remoteRangeAccess, let size = work.sourceSize, size > 0,
+        if work.scope.isReadableInRanges, let remoteRangeAccess, let size = work.sourceSize, size > 0,
            let reader = await remoteRangeAccess.reader(for: work.id, size: UInt64(size))
         {
             return .remoteRanges(reader, relativePath: work.id.relativePath)

@@ -104,6 +104,44 @@ nonisolated struct ImmichClient: Sendable {
         return try await send(request)
     }
 
+    /// Downloads an asset's original to a temporary file the caller moves into place
+    /// (ADR 0046 §4). A read.
+    func downloadOriginal(assetID: String, token: String) async throws -> URL {
+        var request = URLRequest(
+            url: server.appending(path: "api").appending(path: "assets").appending(path: assetID)
+                .appending(path: "original")
+        )
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let file: URL
+        let response: URLResponse
+        do {
+            (file, response) = try await session.download(for: request)
+        } catch {
+            throw ImmichClientError(transport: error)
+        }
+        do {
+            try Self.check(response)
+        } catch {
+            // The body was an error page, not the original: it is not kept. The file is
+            // URLSession's own temporary download, never anything of the user's.
+            let temporary = FileManager.default.temporaryDirectory.standardizedFileURL.path(percentEncoded: false)
+            guard file.standardizedFileURL.path(percentEncoded: false).hasPrefix(temporary) else {
+                throw error
+            }
+            do {
+                try FileManager.default.removeItem(at: file)
+            } catch where ErrorDiagnostics.isMissingFile(error) {
+                // Already gone.
+            } catch let removal {
+                OtosLog.mediaIO.errorOperation("immich.original", phase: "cleanupFailed", fields: [
+                    "path": file.path(percentEncoded: false), "error": String(describing: removal),
+                ])
+            }
+            throw error
+        }
+        return file
+    }
+
     /// One byte range of an asset's original (`/original` honours `Range`, answering 206),
     /// completion-based for a byte source that blocks its own thread while it waits. A
     /// range past the end comes back clipped; the caller treats that as a short read.

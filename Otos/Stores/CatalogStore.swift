@@ -257,11 +257,13 @@ actor CatalogStore {
     private var startupTask: Task<Void, Error>?
     private var unrequestedLoadedRootPaths: [LibraryRootPath] = []
     private var roots = RootRegistry()
-    /// Copies an import settled that still owe a product, in landing order. Their bytes are
-    /// local now, and a cloud-synced library may evict them once uploaded, so background
-    /// claims offer them before any other row (ADR 0009 §9). Runtime only: after a
-    /// relaunch they wait in the ordinary order.
-    private var landedAwaitingProducts: [MediaAssetID] = []
+    /// Rows whose bytes just became local and still owe a product, in landing order: copies
+    /// an import settled, and originals a source's download staged (an Immich account's,
+    /// ADR 0046 §7). Their bytes may not stay — a cloud-synced library evicts uploaded
+    /// files, a staging folder is swept at launch — so background claims offer them before
+    /// any other row, for every product their bytes can give (ADR 0009 §9). Runtime only:
+    /// after a relaunch they wait in the ordinary order.
+    private var localBytesAwaitingProducts: [MediaAssetID] = []
     /// What each duplicates Move to Trash carried onto kept copies, by its batch, so the
     /// command's undo puts back exactly what the kept copies held (ADR 0042). In memory:
     /// it lives as long as the undo stack that names the batch.
@@ -1763,16 +1765,18 @@ extension CatalogStore {
         }
         // Each landed copy is offered once, ahead of the tiers; one not claimed now (already
         // claimed, or current) is enriched or done, and otherwise waits in the tiers' order.
-        let landed = Array(landedAwaitingProducts.prefix(limit))
-        landedAwaitingProducts.removeFirst(landed.count)
-        let landedClaims = try await priorityEnrichmentCandidates(ids: landed, limit: landed.count)
+        let landed = Array(localBytesAwaitingProducts.prefix(limit))
+        localBytesAwaitingProducts.removeFirst(landed.count)
+        let landedClaims = try await priorityEnrichmentCandidates(
+            ids: landed, limit: landed.count, claimsEveryProduct: true
+        )
         if !landed.isEmpty {
             // Whether a fresh copy was enriched while its bytes were local: each claim's
             // `enrichment.item` line names the file; this says the queue offered it first.
             OtosLog.catalog.noticeOperation("enrichment.candidates", phase: "landed", fields: [
                 "offered": "\(landed.count)",
                 "claimed": "\(landedClaims.value.count)",
-                "waiting": "\(landedAwaitingProducts.count)",
+                "waiting": "\(localBytesAwaitingProducts.count)",
             ])
         }
         var claims = landedClaims
@@ -1849,9 +1853,12 @@ extension CatalogStore {
         }
     }
 
+    /// `claimsEveryProduct` claims every stale product of each row, whatever its root claims
+    /// by default: the rows whose bytes just became local.
     private func priorityEnrichmentCandidates(
         ids: [MediaAssetID],
-        limit: Int
+        limit: Int,
+        claimsEveryProduct: Bool = false
     ) async throws -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]> {
         let priorityAssetsByID = try await mediaAssets(for: ids)
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
@@ -1861,7 +1868,9 @@ extension CatalogStore {
             assetsByID: priorityAssetsByID,
             rootIDsByPath: rootIDsByPathBeforeWrite,
             isRootEnrichable: { [roots] path in roots[path]?.isEnrichable == true },
-            claimsEveryProduct: { [roots] path in roots[path]?.root.claimsEveryProductTogether == true }
+            claimsEveryProduct: { [roots] path in
+                claimsEveryProduct || roots[path]?.root.claimsEveryProductTogether == true
+            }
         )
         guard !eligibleClaims.isEmpty else {
             return DatabaseTimedValue(value: [], waitMs: 0, execMs: 0)
@@ -3433,6 +3442,20 @@ extension CatalogStore {
 
     /// The roots enrichment may claim on now: one answer, read by the claim queries and
     /// by the coordinator's queue alike.
+    /// Offers a row whose original a source's download just staged to enrichment ahead of
+    /// other work, for every product it still owes (ADR 0046 §7): its rendering — RAW9
+    /// for a RAW, lazily, when the user's work downloaded it — and its digest.
+    func originalBecameLocal(_ id: MediaAssetID) {
+        guard !localBytesAwaitingProducts.contains(id) else {
+            return
+        }
+        localBytesAwaitingProducts.append(id)
+        OtosLog.catalog.noticeOperation("enrichment.candidates", phase: "originalLocal", fields: [
+            "rootPath": id.libraryRootPath.rawValue, "relativePath": id.relativePath.rawValue,
+        ])
+        notifyCatalogChanged()
+    }
+
     /// Records whether the source behind `path` answers reads now (`RootRuntimeState.isSourceAnswering`).
     /// A source that stops answering has its enrichment claims released, so no read
     /// waits on it; one that answers again is claimable at the next pass.
@@ -5775,7 +5798,7 @@ extension CatalogStore {
     /// enrichment applies to every row. Failing a rendering, the source's thumbnail is
     /// carried as a provisional one. Nothing is made here: a product the copy still lacks
     /// stays owed, and the copy is offered to enrichment ahead of other background work
-    /// while its bytes are local (`landedAwaitingProducts`).
+    /// while its bytes are local (`localBytesAwaitingProducts`).
     @discardableResult
     func settleImportedAsset(
         operation: ActiveFileOperation,
@@ -5882,7 +5905,7 @@ extension CatalogStore {
             try Self.deleteActiveFileOperation(key: operation.operationKey, db: db)
         }
         if metadataOrigin != .reused || renderingOrigin != .reused {
-            landedAwaitingProducts.append(destinationID)
+            localBytesAwaitingProducts.append(destinationID)
         }
         _ = bumpNamespaceRevision(for: operation.destinationRootPath)
         notifyCatalogChanged()

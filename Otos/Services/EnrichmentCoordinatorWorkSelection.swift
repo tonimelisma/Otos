@@ -163,7 +163,9 @@ extension EnrichmentCoordinator {
             }
             // An account row's bytes are its server's, read in ranges while it answers; the
             // filesystem has no file for it, so asking it would defer the row forever.
-            if await remoteRangeAccess?.serves(asset.id.libraryRootPath) == true {
+            if candidate.scope.isReadableInRanges,
+               await remoteRangeAccess?.serves(asset.id.libraryRootPath) == true
+            {
                 enqueueReadyCandidate(candidate)
                 routing.readinessCounts["remoteReady", default: 0] += 1
                 continue
