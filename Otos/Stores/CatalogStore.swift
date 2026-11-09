@@ -3662,8 +3662,9 @@ extension CatalogStore {
         OtosLog.catalog.noticeOperation("catalog.source.changes", phase: "finish", fields: [
             "rootPath": scan.rootPath.rawValue,
             "listed": "\(changes.listed.count)",
-            "sizes": "\(changes.sizesByItemFolder.count)",
-            "deleted": "\(changes.deletedItemFolders.count)",
+            "completeFolders": "\(changes.completeFolders.count)",
+            "sizes": "\(changes.sizesBySourceItem.count)",
+            "deleted": "\(changes.deletedSourceItems.count)",
             "changed": "\(timed.value.changed)",
             "waitMs": "\(timed.waitMs)",
             "execMs": "\(timed.execMs)",
@@ -3695,28 +3696,93 @@ extension CatalogStore {
                 arguments: [item.isHiddenBySource, rootRowID, file.relativePath.rawValue, item.isHiddenBySource]
             )
             changed += db.changesCount
+            // The source's name for the row: not shown, so not a change the window hears.
+            try db.execute(
+                sql: """
+                UPDATE media_asset SET source_item_id = ?
+                WHERE library_root_id = ? AND relative_path = ? AND source_item_id IS NOT ?
+                """,
+                arguments: [item.sourceItemID, rootRowID, file.relativePath.rawValue, item.sourceItemID]
+            )
         }
-        for (folder, size) in changes.sizesByItemFolder {
+        for (item, size) in changes.sizesBySourceItem {
             try db.execute(
                 sql: """
                 UPDATE media_asset SET byte_size = ?
-                WHERE library_root_id = ? AND relative_path LIKE ? ESCAPE '\\' AND byte_size IS NOT ?
+                WHERE library_root_id = ? AND source_item_id = ? AND byte_size IS NOT ?
                 """,
-                arguments: [size, rootRowID, sqlSubtreePrefixPattern(MediaRelativePath(rawValue: folder)), size]
+                arguments: [size, rootRowID, item, size]
             )
             changed += db.changesCount
         }
-        var purgedImages: [String] = []
-        for folder in changes.deletedItemFolders {
-            let rows = try fetchExistingAssetRows(
+        var purged: [ExistingAssetRow] = []
+        let listedPaths = Set(changes.listed.map(\.file.relativePath))
+        for folder in changes.completeFolders {
+            purged += try fetchExistingAssetRows(
                 libraryRootID: rootRowID, underSubtree: MediaRelativePath(rawValue: folder), db: db
+            ).filter { !listedPaths.contains($0.relativePath) }
+        }
+        for item in changes.deletedSourceItems {
+            let named = try String.fetchAll(
+                db,
+                sql: "SELECT relative_path FROM media_asset WHERE library_root_id = ? AND source_item_id = ?",
+                arguments: [rootRowID, item]
             )
-            purgedImages += rows.flatMap(\.derivedImagePaths)
-            for row in rows {
-                changed += try deleteAssetRow(rootRowID: rootRowID, relativePath: row.relativePath, db: db) ? 1 : 0
+            for path in [item] + named {
+                purged += try fetchExistingAssetRows(
+                    libraryRootID: rootRowID, underSubtree: MediaRelativePath(rawValue: path), db: db
+                )
             }
         }
+        var purgedImages: [String] = []
+        var purgedPaths: Set<MediaRelativePath> = []
+        for row in purged where purgedPaths.insert(row.relativePath).inserted {
+            purgedImages += row.derivedImagePaths
+            changed += try deleteAssetRow(rootRowID: rootRowID, relativePath: row.relativePath, db: db) ? 1 : 0
+        }
         return (changed, purgedImages)
+    }
+
+    /// The source's own ID for the item `id` is (ADR 0046 §2), which a request for its
+    /// bytes names; nil for a row the source never listed.
+    func sourceItemID(for id: MediaAssetID) async throws -> String? {
+        guard let rootID = roots.rowIDSnapshot()[id.libraryRootPath] else {
+            return nil
+        }
+        return try await database().read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT source_item_id FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                arguments: [rootID, id.relativePath.rawValue]
+            )
+        }
+    }
+
+    /// The rows of `rootPath` named by each of `sourceItemIDs`, by that ID: where an item
+    /// a source reports apart from its folder's own line already lives.
+    func paths(
+        ofSourceItems sourceItemIDs: Set<String>,
+        in rootPath: LibraryRootPath
+    ) async throws -> [String: MediaRelativePath] {
+        guard let rootID = roots.rowIDSnapshot()[rootPath], !sourceItemIDs.isEmpty else {
+            return [:]
+        }
+        let ids = sourceItemIDs.sorted()
+        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ", ")
+        return try await database().read { db in
+            var paths: [String: MediaRelativePath] = [:]
+            for row in try Row.fetchAll(
+                db,
+                sql: """
+                SELECT source_item_id, relative_path FROM media_asset
+                WHERE library_root_id = ? AND source_item_id IN (\(placeholders))
+                """,
+                arguments: StatementArguments([rootID] as [any DatabaseValueConvertible] + ids)
+            ) {
+                paths[row["source_item_id"]] = MediaRelativePath(rawValue: row["relative_path"])
+            }
+            return paths
+        }
     }
 
     /// Rows of `rootPath` owed their source's own thumbnail and preview: visible, sized,
@@ -3734,10 +3800,12 @@ extension CatalogStore {
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT relative_path, kind, byte_size, CAST(content_modified_at_unix AS INTEGER) AS mtime
+                SELECT relative_path, source_item_id, kind, byte_size,
+                       CAST(content_modified_at_unix AS INTEGER) AS mtime
                 FROM media_asset
                 WHERE library_root_id = ?
                   AND relative_path > ?
+                  AND source_item_id IS NOT NULL
                   AND hidden_by_source = 0
                   AND byte_size IS NOT NULL
                   AND rendered_source_size IS NULL
@@ -3755,6 +3823,7 @@ extension CatalogStore {
                     id: MediaAssetID(
                         libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: row["relative_path"])
                     ),
+                    sourceItemID: row["source_item_id"],
                     kind: kind.flatMap(MediaKind.init(rawValue:)),
                     byteSize: row["byte_size"],
                     contentModifiedAtSeconds: row["mtime"]

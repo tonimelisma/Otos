@@ -12,6 +12,8 @@ nonisolated protocol ImmichSyncSource: Sendable {
     func acknowledge(_ acks: [String]) async throws
     /// The server's own preview of an asset.
     func preview(assetID: String) async throws -> Data
+    /// One asset's own facts, for a Live Photo's motion part not in this pass's stream.
+    func asset(id: String) async throws -> ImmichAssetDetail
 }
 
 /// The server, through one logged-in session.
@@ -29,6 +31,10 @@ nonisolated struct ImmichSessionSyncSource: ImmichSyncSource {
 
     func preview(assetID: String) async throws -> Data {
         try await client.preview(assetID: assetID, token: token)
+    }
+
+    func asset(id: String) async throws -> ImmichAssetDetail {
+        try await client.asset(id: id, token: token)
     }
 }
 
@@ -197,6 +203,7 @@ actor ImmichCatalogSync {
     /// after it.
     private func read(scan: CatalogStore.ActiveScan, into tally: inout Tally) async throws -> Bool {
         var batch = Batch()
+        var pass = PassMemory()
         for try await event in try await source.events() {
             switch event {
             case let .reset(ack):
@@ -209,22 +216,38 @@ actor ImmichCatalogSync {
                 batch.add(event)
             }
             if batch.lineCount >= Self.batchSize {
-                try await apply(&batch, scan: scan, into: &tally)
+                try await apply(&batch, pass: &pass, scan: scan, into: &tally)
             }
         }
-        try await apply(&batch, scan: scan, into: &tally)
+        try await apply(&batch, pass: &pass, scan: scan, into: &tally)
         return false
     }
 
-    /// Applies the batch to the Store, then acknowledges its lines, then empties it.
-    private func apply(_ batch: inout Batch, scan: CatalogStore.ActiveScan, into tally: inout Tally) async throws {
-        let changes = batch.changes
+    /// Applies the batch to the Store, then acknowledges its lines, then empties it. A
+    /// still that links a motion part lists it in the still's folder, from the motion's
+    /// own line and size in this pass, or else from the server (ADR 0046 §2).
+    private func apply(
+        _ batch: inout Batch,
+        pass: inout PassMemory,
+        scan: CatalogStore.ActiveScan,
+        into tally: inout Tally
+    ) async throws {
+        pass.remember(batch)
+        var motions: [String: ImmichAssetDetail] = [:]
+        for motionID in batch.linkedMotions {
+            if let known = pass.motionDetail(motionID) {
+                motions[motionID] = known
+            } else {
+                motions[motionID] = try await source.asset(id: motionID)
+            }
+        }
+        let changes = batch.changes(motions: motions)
         if !changes.isEmpty {
             try await store.applySourceListingChanges(changes, scan: scan)
         }
         try await source.acknowledge(batch.acks)
         tally.observed.formUnion(changes.listed.map(\.file.relativePath))
-        tally.deleted += changes.deletedItemFolders.count
+        tally.deleted += changes.deletedSourceItems.count
         batch = Batch()
     }
 
@@ -238,11 +261,40 @@ actor ImmichCatalogSync {
         }
     }
 
+    /// What a pass has read of motion parts and sizes across its batches, so a still in
+    /// a later batch than its motion's own lines lists the motion without asking the
+    /// server again.
+    private struct PassMemory {
+        private var motionLines: [String: ImmichAsset] = [:]
+        private var sizes: [String: Int64] = [:]
+
+        mutating func remember(_ batch: Batch) {
+            motionLines.merge(batch.motionLines) { _, newer in newer }
+            sizes.merge(batch.sizes) { _, newer in newer }
+        }
+
+        /// The motion part's facts from this pass, when its line and its size are both here.
+        func motionDetail(_ id: String) -> ImmichAssetDetail? {
+            guard let line = motionLines[id], let size = sizes[id],
+                  let created = line.fileCreatedAt, let modified = line.fileModifiedAt
+            else {
+                return nil
+            }
+            return ImmichAssetDetail(
+                id: id, originalFileName: line.originalFileName, type: line.type,
+                fileCreatedAt: created, fileModifiedAt: modified, fileSize: size
+            )
+        }
+    }
+
     /// Lines read since the last apply, folded per asset: the newest line about an asset
     /// decides what it is, and an asset's size joins its row when both are in the batch.
     private struct Batch {
-        private var listedByAsset: [String: SourceListedItem] = [:]
-        private var sizes: [String: Int64] = [:]
+        /// Assets listed in a folder of their own: a still, or a video that is no motion part.
+        private var listedByAsset: [String: ImmichAsset] = [:]
+        /// Live Photo motion parts' own lines (`hidden`), by the motion's ID.
+        private(set) var motionLines: [String: ImmichAsset] = [:]
+        private(set) var sizes: [String: Int64] = [:]
         private var deletedAssets: Set<String> = []
         /// The newest ack of each line type: the cursor moves per type.
         private var acksByType: [String: String] = [:]
@@ -252,11 +304,34 @@ actor ImmichCatalogSync {
             acksByType.keys.sorted().compactMap { acksByType[$0] }
         }
 
-        var changes: SourceListingChanges {
-            SourceListingChanges(
-                listed: listedByAsset.keys.sorted().compactMap { listedByAsset[$0] },
-                sizesByItemFolder: sizes,
-                deletedItemFolders: deletedAssets.sorted()
+        /// The motion parts the batch's stills link.
+        var linkedMotions: Set<String> {
+            Set(listedByAsset.values.compactMap(\.livePhotoVideoID))
+        }
+
+        /// The batch as catalog changes. Each listed still's folder is listed in full: the
+        /// still, and the motion part it links (from `motions`), under its own name and ID.
+        func changes(motions: [String: ImmichAssetDetail]) -> SourceListingChanges {
+            var listed: [SourceListedItem] = []
+            var joined: Set<String> = []
+            for id in listedByAsset.keys.sorted() {
+                guard let asset = listedByAsset[id] else {
+                    continue
+                }
+                listed.append(ImmichCatalogSync.listedItem(for: asset, size: sizes[id]))
+                joined.insert(id)
+                if let motionID = asset.livePhotoVideoID, let motion = motions[motionID] {
+                    listed.append(ImmichCatalogSync.motionItem(
+                        motion, in: asset, size: sizes[motionID] ?? motion.fileSize
+                    ))
+                    joined.insert(motionID)
+                }
+            }
+            return SourceListingChanges(
+                listed: listed,
+                completeFolders: listedByAsset.keys.sorted(),
+                sizesBySourceItem: sizes.filter { !joined.contains($0.key) },
+                deletedSourceItems: deletedAssets.sorted()
             )
         }
 
@@ -273,16 +348,11 @@ actor ImmichCatalogSync {
             case let .assetDeleted(assetID, ack):
                 acknowledge(ack, type: "AssetDeleteV1")
                 listedByAsset[assetID] = nil
-                sizes[assetID] = nil
+                motionLines[assetID] = nil
                 deletedAssets.insert(assetID)
             case let .exif(assetID, fileSize, ack):
                 acknowledge(ack, type: "AssetExifV1")
-                guard let fileSize else {
-                    return
-                }
-                if let item = listedByAsset[assetID] {
-                    listedByAsset[assetID] = item.withSize(fileSize)
-                } else {
+                if let fileSize {
                     sizes[assetID] = fileSize
                 }
             case let .unrequested(type, ack):
@@ -297,17 +367,21 @@ actor ImmichCatalogSync {
         private mutating func listAsset(_ asset: ImmichAsset) {
             switch (asset.type, asset.visibility) {
             case (.image, .locked), (.video, .locked):
-                // The locked folder is never synced: a row an earlier pass made goes.
+                // The locked folder is never synced: a row an earlier pass made goes, and
+                // with a still, its motion part.
                 listedByAsset[asset.id] = nil
-                sizes[asset.id] = nil
+                motionLines[asset.id] = nil
                 deletedAssets.insert(asset.id)
             case (.image, .timeline), (.image, .archive), (.video, .timeline), (.video, .archive):
                 deletedAssets.remove(asset.id)
-                let item = ImmichCatalogSync.listedItem(for: asset, size: sizes.removeValue(forKey: asset.id))
-                listedByAsset[asset.id] = item
-            case (.image, .hidden), (.video, .hidden), (.audio, _), (.other, _):
-                // A Live Photo's motion part comes with increment 9; audio and other
-                // types are never Otos media (product rule).
+                listedByAsset[asset.id] = asset
+            case (.video, .hidden):
+                // A Live Photo's motion part: listed in its still's folder when the still
+                // is listed (ADR 0046 §2), never in a folder of its own.
+                motionLines[asset.id] = asset
+            case (.image, .hidden), (.audio, _), (.other, _):
+                // Only a motion part is hidden; audio and other types are never Otos
+                // media (product rule).
                 break
             }
         }
@@ -388,7 +462,7 @@ actor ImmichCatalogSync {
             }
             let data: Data
             do {
-                data = try await source.preview(assetID: candidate.itemFolder)
+                data = try await source.preview(assetID: candidate.sourceItemID)
             } catch {
                 await apply(results)
                 OtosLog.thumbnails.noticeOperation("immich.products", phase: "serverFailed", fields: [
@@ -477,7 +551,27 @@ actor ImmichCatalogSync {
                 createdAt: asset.fileCreatedAt,
                 contentModifiedAt: asset.fileModifiedAt
             ),
+            sourceItemID: asset.id,
             isHiddenBySource: asset.deletedAt != nil
+        )
+    }
+
+    /// A Live Photo's motion part: `<still id>/<motion original file name>` (ADR 0046 §2),
+    /// in its still's folder so the pairing rule (ADR 0041) pairs them, named by its own
+    /// asset ID, and hidden with its still.
+    static func motionItem(_ motion: ImmichAssetDetail, in still: ImmichAsset, size: Int64?) -> SourceListedItem {
+        let name = fileName(motion.originalFileName, fallback: motion.id)
+        return SourceListedItem(
+            file: ScannedMediaFile(
+                relativePath: MediaRelativePath(rawValue: "\(still.id)/\(name)"),
+                name: name,
+                contentTypeIdentifier: UTType(filenameExtension: (name as NSString).pathExtension)?.identifier,
+                byteSize: size,
+                createdAt: motion.fileCreatedAt,
+                contentModifiedAt: motion.fileModifiedAt
+            ),
+            sourceItemID: motion.id,
+            isHiddenBySource: still.deletedAt != nil
         )
     }
 
@@ -485,24 +579,5 @@ actor ImmichCatalogSync {
     static func fileName(_ original: String, fallback: String) -> String {
         let component = original.replacingOccurrences(of: "/", with: ":")
         return component.isEmpty || component == "." || component == ".." ? fallback : component
-    }
-}
-
-private extension SourceListedItem {
-    nonisolated func withSize(_ size: Int64) -> SourceListedItem {
-        SourceListedItem(
-            file: ScannedMediaFile(
-                relativePath: file.relativePath,
-                name: file.name,
-                contentTypeIdentifier: file.contentTypeIdentifier,
-                byteSize: size,
-                createdAt: file.createdAt,
-                contentModifiedAt: file.contentModifiedAt,
-                kind: file.kind,
-                format: file.format,
-                fileIdentifier: file.fileIdentifier
-            ),
-            isHiddenBySource: isHiddenBySource
-        )
     }
 }

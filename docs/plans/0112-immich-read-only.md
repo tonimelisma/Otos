@@ -76,8 +76,10 @@ Each increment lands on `main` with its own DoD.
    - **7c** *(done: #595)*: render signatures keyed by pipeline (ADR 0042).
 8. **Feature** *(done)*: hand-off, drag, clipboard, Share and Open With for an original not yet
    downloaded, and what each one says while offline.
-9. **Feature:** Live Photo placement, and Duplicates presentation and refused resolutions
-   for account copies.
+9. **Feature**, in two PRs:
+   - **9a** *(done)*: Live Photo motion placement in the still's folder, and each row's
+     own source item ID (v18).
+   - **9b:** Duplicates presentation and refused resolutions for account copies.
 
 ## Test server
 

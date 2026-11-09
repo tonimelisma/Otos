@@ -331,6 +331,16 @@ struct ImmichAccountsTests {
         // ADR 0046 §6: a server that does not answer is a state of the source, not a
         // provider failure, and is reported as one.
         let silent = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "silent/IMG_2.JPG"))
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
+        try await store.applySourceListingChanges(SourceListingChanges(listed: [SourceListedItem(
+            file: ScannedMediaFile(
+                relativePath: silent.relativePath, name: "IMG_2.JPG", contentTypeIdentifier: "public.jpeg",
+                byteSize: 1, createdAt: nil, contentModifiedAt: nil
+            ),
+            sourceItemID: "silent",
+            isHiddenBySource: false
+        )]), scan: scan)
+        await store.endSourceListing(scan: scan)
         let unanswered = await accounts.downloadOriginal(
             MaterializationCoordinator.Request(id: silent, sourceSize: 1, isVideo: false, priority: .interactive)
         )

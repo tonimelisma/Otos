@@ -109,6 +109,29 @@ struct ImmichClientTests {
         }
     }
 
+    /// `GET /api/assets/{id}` decodes as Immich 3.3.6 writes an asset: a Live Photo's
+    /// motion part, read on its own (ADR 0046 §2).
+    @Test func anAssetsOwnFactsDecode() async throws {
+        let body: [String: Any] = [
+            "id": "m1", "originalFileName": "IMG_1.MOV", "type": "VIDEO", "visibility": "hidden",
+            "fileCreatedAt": "2025-06-13T00:48:36.603Z", "fileModifiedAt": "2026-01-01T00:00:00.000Z",
+            "isTrashed": false, "livePhotoVideoId": NSNull(), "exifInfo": ["fileSizeInByte": 2_414_759, "make": NSNull()],
+        ]
+        let reply = try JSONSerialization.data(withJSONObject: body)
+        let session = ImmichStubProtocol.session(host: "asset.test") { request, _ in
+            #expect(request.url?.path == "/api/assets/m1")
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer tok")
+            return (200, reply)
+        }
+        let client = try ImmichClient(server: #require(URL(string: "http://asset.test")), session: session)
+        let detail = try await client.asset(id: "m1", token: "tok")
+        #expect(detail.id == "m1")
+        #expect(detail.originalFileName == "IMG_1.MOV")
+        #expect(detail.type == .video)
+        #expect(detail.fileSize == 2_414_759)
+        #expect(detail.fileModifiedAt == Date(timeIntervalSince1970: 1_767_225_600))
+    }
+
     @Test func theSyncStreamIsReadAsLines() async throws {
         let asset: [String: Any] = [
             "id": "24d2", "ownerId": "o", "originalFileName": "jpeg.jpg",
@@ -155,6 +178,7 @@ struct ImmichClientTests {
         let created = try #require(asset.fileCreatedAt).timeIntervalSince1970
         #expect(abs(created - 1_749_775_716.603) < 0.001)
         #expect(asset.fileModifiedAt == Date(timeIntervalSince1970: 1_767_225_600))
+        #expect(asset.livePhotoVideoID == nil)
         #expect(Array(events.dropFirst()) == [
             .exif(assetID: "24d2", fileSize: 5_099_275, ack: "AssetExifV1|02"),
             .assetDeleted(assetID: "gone", ack: "AssetDeleteV1|03"),

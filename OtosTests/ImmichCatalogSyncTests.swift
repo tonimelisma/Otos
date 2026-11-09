@@ -21,17 +21,33 @@ struct ImmichCatalogSyncTests {
         private let onAck: @Sendable ([String]) async -> Void
         private let previews: @Sendable (String) throws -> Data
         private let previewRequests = Mutex<[String]>([])
+        private let details: [String: ImmichAssetDetail]
+        private let detailRequests = Mutex<[String]>([])
 
         init(
             _ passes: [[ImmichSyncEvent]],
             failAfter: [Int?] = [],
             onAck: @escaping @Sendable ([String]) async -> Void = { _ in },
-            previews: @escaping @Sendable (String) throws -> Data = { _ in throw URLError(.badServerResponse) }
+            previews: @escaping @Sendable (String) throws -> Data = { _ in throw URLError(.badServerResponse) },
+            details: [String: ImmichAssetDetail] = [:]
         ) {
             self.passes = Mutex(passes)
             failures = Mutex(failAfter)
             self.onAck = onAck
             self.previews = previews
+            self.details = details
+        }
+
+        var requestedDetails: [String] {
+            detailRequests.withLock { $0 }
+        }
+
+        func asset(id: String) async throws -> ImmichAssetDetail {
+            detailRequests.withLock { $0.append(id) }
+            guard let detail = details[id] else {
+                throw ImmichClientError.refused(status: 404)
+            }
+            return detail
         }
 
         var requestedPreviews: [String] {
@@ -102,7 +118,8 @@ struct ImmichCatalogSyncTests {
         type: ImmichAsset.AssetType = .image,
         visibility: ImmichAsset.Visibility = .timeline,
         trashed: Bool = false,
-        modified: TimeInterval = 1_700_000_000
+        modified: TimeInterval = 1_700_000_000,
+        motion: String? = nil
     ) -> ImmichSyncEvent {
         .asset(ImmichAsset(
             id: id,
@@ -111,7 +128,8 @@ struct ImmichCatalogSyncTests {
             visibility: visibility,
             deletedAt: trashed ? Date(timeIntervalSince1970: 1_700_000_500) : nil,
             fileCreatedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            fileModifiedAt: Date(timeIntervalSince1970: modified)
+            fileModifiedAt: Date(timeIntervalSince1970: modified),
+            livePhotoVideoID: motion
         ), ack: "AssetV2|\(id)")
     }
 
@@ -363,7 +381,100 @@ struct ImmichCatalogSyncTests {
         _ = await sync.pass()
         #expect(await sync.fetchProducts() == .serverFailed(made: 0))
         let owed = try await fixture.store.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
-        #expect(owed.map(\.itemFolder) == ["a", "c"])
+        #expect(owed.map(\.sourceItemID) == ["a", "c"])
+        await fixture.store.shutdown()
+    }
+
+    // MARK: - Live Photos (ADR 0046 §2)
+
+    private static func motion(_ id: String, name: String = "IMG_1.MOV") -> ImmichSyncEvent {
+        asset(id, name: name, type: .video, visibility: .hidden)
+    }
+
+    private static func detail(_ id: String, name: String = "IMG_1.MOV", size: Int64) -> ImmichAssetDetail {
+        ImmichAssetDetail(
+            id: id, originalFileName: name, type: .video,
+            fileCreatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            fileModifiedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            fileSize: size
+        )
+    }
+
+    /// A motion part is listed in its still's folder under its own name, with its own
+    /// size: the still's size never lands on it, nor its size on the still.
+    @Test func aLivePhotosMotionPartIsListedInItsStillsFolder() async throws {
+        let fixture = try await Fixture.make()
+        let server = ScriptedServer([[
+            Self.motion("m"),
+            Self.exif("m", size: 2000),
+            Self.asset("s", name: "IMG_1.HEIC", motion: "m"),
+            Self.exif("s", size: 1000),
+            Self.complete,
+        ]])
+        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+
+        #expect(await sync.pass() == .synced(listed: 2, deleted: 0, full: false))
+        #expect(try await fixture.visible() == ["s/IMG_1.HEIC", "s/IMG_1.MOV"])
+        #expect(try await fixture.size(of: "s/IMG_1.HEIC") == 1000)
+        #expect(try await fixture.size(of: "s/IMG_1.MOV") == 2000)
+        #expect(server.requestedDetails.isEmpty)
+        let motionRow = MediaAssetID(libraryRootPath: fixture.rootPath, relativePath: MediaRelativePath(rawValue: "s/IMG_1.MOV"))
+        #expect(try await fixture.store.sourceItemID(for: motionRow) == "m")
+        await fixture.store.shutdown()
+    }
+
+    /// A still whose motion part's own lines were acknowledged in an earlier pass lists it
+    /// from the server's facts. A later size for the motion reaches its row by its own ID.
+    /// A still that no longer links it takes it out; deleting the still takes the rest.
+    @Test func aStillListsAMotionPartFromAnEarlierPassAndDropsItWhenUnlinked() async throws {
+        let fixture = try await Fixture.make()
+        let server = ScriptedServer(
+            [
+                [Self.motion("m"), Self.exif("m", size: 2000), Self.complete],
+                [Self.asset("s", name: "IMG_1.HEIC", motion: "m"), Self.exif("s", size: 1000), Self.complete],
+                [Self.exif("m", size: 2500), Self.complete],
+                [Self.asset("s", name: "IMG_1.HEIC"), Self.complete],
+                [.assetDeleted(assetID: "s", ack: "AssetDeleteV1|s"), Self.complete],
+            ],
+            details: ["m": Self.detail("m", size: 2000)]
+        )
+        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+
+        _ = await sync.pass()
+        #expect(try await fixture.visible().isEmpty)
+        _ = await sync.pass()
+        #expect(try await fixture.visible() == ["s/IMG_1.HEIC", "s/IMG_1.MOV"])
+        #expect(server.requestedDetails == ["m"])
+        #expect(try await fixture.size(of: "s/IMG_1.MOV") == 2000)
+        _ = await sync.pass()
+        #expect(try await fixture.size(of: "s/IMG_1.MOV") == 2500)
+        #expect(try await fixture.size(of: "s/IMG_1.HEIC") == 1000)
+        _ = await sync.pass()
+        #expect(try await fixture.visible() == ["s/IMG_1.HEIC"])
+        _ = await sync.pass()
+        #expect(try await fixture.visible().isEmpty)
+        await fixture.store.shutdown()
+    }
+
+    /// A trashed still hides its motion part with it; a motion part deleted on its own
+    /// leaves the still.
+    @Test func aMotionPartFollowsItsStillIntoTheTrashAndGoesAloneWhenDeletedAlone() async throws {
+        let fixture = try await Fixture.make()
+        let server = ScriptedServer([
+            [Self.motion("m"), Self.exif("m", size: 2), Self.asset("s", name: "IMG_1.HEIC", motion: "m"), Self.complete],
+            [Self.asset("s", name: "IMG_1.HEIC", trashed: true, motion: "m"), Self.complete],
+            [Self.asset("s", name: "IMG_1.HEIC", motion: "m"), Self.complete],
+            [.assetDeleted(assetID: "m", ack: "AssetDeleteV1|m"), Self.complete],
+        ], details: ["m": Self.detail("m", size: 2)])
+        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+
+        _ = await sync.pass()
+        _ = await sync.pass()
+        #expect(try await fixture.visible().isEmpty)
+        _ = await sync.pass()
+        #expect(try await fixture.visible() == ["s/IMG_1.HEIC", "s/IMG_1.MOV"])
+        _ = await sync.pass()
+        #expect(try await fixture.visible() == ["s/IMG_1.HEIC"])
         await fixture.store.shutdown()
     }
 }

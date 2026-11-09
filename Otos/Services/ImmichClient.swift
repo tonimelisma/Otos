@@ -104,6 +104,52 @@ nonisolated struct ImmichClient: Sendable {
         return try await send(request)
     }
 
+    /// One asset's own facts (`GET /api/assets/{id}`): what a Live Photo's motion part is
+    /// listed with when its own sync line was acknowledged in an earlier pass (ADR 0046
+    /// §2). A read.
+    func asset(id: String, token: String) async throws -> ImmichAssetDetail {
+        let data = try await send(request("assets/\(id)", method: "GET", token: token))
+        let body: AssetBody
+        do {
+            body = try JSONDecoder().decode(AssetBody.self, from: data)
+        } catch {
+            throw ImmichClientError.malformedResponse
+        }
+        guard let type = ImmichAsset.AssetType(rawValue: body.type) else {
+            throw ImmichClientError.malformedResponse
+        }
+        return try ImmichAssetDetail(
+            id: body.id,
+            originalFileName: body.originalFileName,
+            type: type,
+            fileCreatedAt: Self.date(body.fileCreatedAt),
+            fileModifiedAt: Self.date(body.fileModifiedAt),
+            fileSize: body.exifInfo?.fileSizeInByte
+        )
+    }
+
+    /// An ISO 8601 timestamp as Immich writes it, with fractional seconds.
+    static func date(_ text: String) throws -> Date {
+        do {
+            return try Date(text, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true))
+        } catch {
+            throw ImmichClientError.malformedResponse
+        }
+    }
+
+    private struct AssetBody: Decodable {
+        struct Exif: Decodable {
+            let fileSizeInByte: Int64?
+        }
+
+        let id: String
+        let originalFileName: String
+        let type: String
+        let fileCreatedAt: String
+        let fileModifiedAt: String
+        let exifInfo: Exif?
+    }
+
     /// Downloads an asset's original to a temporary file the caller moves into place
     /// (ADR 0046 §4). A read.
     func downloadOriginal(assetID: String, token: String) async throws -> URL {
@@ -303,6 +349,19 @@ nonisolated struct ImmichAsset: Equatable, Sendable {
     let deletedAt: Date?
     let fileCreatedAt: Date?
     let fileModifiedAt: Date?
+    /// A Live Photo still's motion part, an asset of its own (`visibility: hidden`).
+    var livePhotoVideoID: String?
+}
+
+/// One asset's own facts, read on their own rather than from the sync stream.
+nonisolated struct ImmichAssetDetail: Equatable, Sendable {
+    let id: String
+    let originalFileName: String
+    let type: ImmichAsset.AssetType
+    let fileCreatedAt: Date
+    let fileModifiedAt: Date
+    /// Nil until the server has read the file's size.
+    let fileSize: Int64?
 }
 
 /// One line of the sync stream. Every line carries the `ack` that moves the cursor past it.
@@ -350,7 +409,8 @@ nonisolated enum ImmichSyncEvent: Equatable, Sendable {
                 visibility: visibility,
                 deletedAt: data.deletedAt.map(Self.date),
                 fileCreatedAt: data.fileCreatedAt.map(Self.date),
-                fileModifiedAt: data.fileModifiedAt.map(Self.date)
+                fileModifiedAt: data.fileModifiedAt.map(Self.date),
+                livePhotoVideoID: data.livePhotoVideoId
             ), ack: ack)
         case "AssetDeleteV1":
             self = try .assetDeleted(assetID: Self.decode(DeleteLine.self, line).assetId, ack: ack)
@@ -384,6 +444,7 @@ nonisolated enum ImmichSyncEvent: Equatable, Sendable {
         let deletedAt: String?
         let fileCreatedAt: String?
         let fileModifiedAt: String?
+        let livePhotoVideoId: String?
     }
 
     private struct DeleteLine: Decodable {
@@ -404,10 +465,6 @@ nonisolated enum ImmichSyncEvent: Equatable, Sendable {
     }
 
     private static func date(_ text: String) throws -> Date {
-        do {
-            return try Date(text, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true))
-        } catch {
-            throw ImmichClientError.malformedResponse
-        }
+        try ImmichClient.date(text)
     }
 }
