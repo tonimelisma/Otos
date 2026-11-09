@@ -169,18 +169,14 @@ extension CatalogWindowViewModel {
         setFocus(ids.first)
     }
 
-    /// Edit ▸ Copy, ⌘C and the context menu's Copy: writes the current targets' file
-    /// URLs in display order — the Grid selection, the Loupe focus, or the active
-    /// Compare pane, the same targets every other Photo command acts on.
-    /// Reveals the current targets in Finder — the Grid selection, the Loupe focus, or
-    /// the active Compare pane, the same targets Open, Share and Copy act on. Reads no
-    /// bytes and never materializes a dataless original.
+    /// Reveals the current targets' originals in Finder — the Grid selection, the Loupe
+    /// focus, or the active Compare pane, the same targets Open, Share and Copy act on. A
+    /// hand-off to Finder, so it travels the hand-off lane: an original a source stages and
+    /// has not copied yet is fetched first, and a source that cannot send one fails the
+    /// reveal with the alert that names it. A cloud placeholder is revealed as it is, so a
+    /// folder's dataless original is never materialized.
     func revealCurrentTargetsInFinder() {
-        let urls = currentTargetFileURLs
-        guard !urls.isEmpty else { return }
-        workspace.revealInFinder(urls)
-        let mode = viewMode.rawValue
-        OtosLog.ui.notice("op=ui.revealInFinder count=\(urls.count, privacy: .public) mode=\(mode, privacy: .public)")
+        handOff(.revealInFinder)
     }
 }
 

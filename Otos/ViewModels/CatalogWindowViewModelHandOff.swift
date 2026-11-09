@@ -5,14 +5,16 @@ import OSLog
 /// Hand-off intents guide
 ///
 /// Copy (⌘C), Share and Open / Open With hand the current targets to another app as one
-/// full-size file per photo (ADR 0037; `HandOffPreparer`). An edited photo
-/// or a RAW needs a file rendered first, so every hand-off travels one ordered lane with
-/// one consumer (`handOffStream`, lossless). The consumer:
+/// full-size file per photo (ADR 0037; `HandOffPreparer`). Reveal in Finder hands Finder
+/// the originals themselves, never a rendered file. An edited photo or a RAW needs a file
+/// rendered first, and an original a source stages (an Immich account's, a camera's) needs
+/// fetching before it has a file, so every hand-off travels one ordered lane with one
+/// consumer (`handOffStream`, lossless). The consumer:
 /// 1. reads the targets' details;
 /// 2. prepares what needs preparing, publishing `handOffProgress` (the status bar's
 ///    "Preparing 3 photos to copy", M of N, with Cancel);
 /// 3. performs the action with the files: writes the pasteboard, shows the share picker,
-///    or opens the files.
+///    opens the files, or reveals them in Finder.
 ///
 /// A hand-off whose targets need nothing prepared completes as soon as its details are
 /// read, with no progress shown. Cancel stops the preparation in flight between photos and
@@ -28,6 +30,7 @@ nonisolated enum HandOffAction: Equatable, Sendable {
     case share(ShareOrigin)
     case openDefault
     case openWith(URL)
+    case revealInFinder
 
     /// The verb the status bar uses: "Preparing 3 photos to copy".
     var verb: String {
@@ -35,7 +38,19 @@ nonisolated enum HandOffAction: Equatable, Sendable {
         case .copy: "copy"
         case .share: "share"
         case .openDefault, .openWith: "open"
+        case .revealInFinder: "reveal"
         }
+    }
+
+    /// What the alert says did not happen: "nothing was handed over".
+    var refusedOutcome: String {
+        self == .revealInFinder ? "nothing was revealed" : "nothing was handed over"
+    }
+
+    /// Whether the action takes each photo's original rather than the file a hand-off gives
+    /// for it: Reveal in Finder shows where the photo lives, not what is handed over.
+    var takesOriginals: Bool {
+        self == .revealInFinder
     }
 }
 
@@ -111,7 +126,11 @@ extension CatalogWindowViewModel {
                     continue
                 }
                 let items = request.ids.map { EditedMediaItem(id: $0, detail: details[$0]) }
-                let pending = items.filter { preparer.readyURL(for: $0) == nil }.count
+                let originals = request.action.takesOriginals
+                let ready = { (item: EditedMediaItem) in
+                    originals ? preparer.readyOriginalURL(for: item) : preparer.readyURL(for: item)
+                }
+                let pending = items.filter { ready($0) == nil }.count
                 self?.beginHandOffProgress(request, total: pending)
                 var urls: [URL] = []
                 var failures = HandOffFailures()
@@ -121,9 +140,9 @@ extension CatalogWindowViewModel {
                         cancelled = true
                         break
                     }
-                    let needed = preparer.readyURL(for: item) == nil
+                    let needed = ready(item) == nil
                     do {
-                        try await urls.append(preparer.prepare(item))
+                        try await urls.append(originals ? preparer.original(for: item) : preparer.prepare(item))
                     } catch HandOffPreparer.PrepareError.outOfSpace {
                         failures.outOfSpace += 1
                     } catch let HandOffPreparer.PrepareError.sourceUnavailable(reason) {
@@ -178,7 +197,7 @@ extension CatalogWindowViewModel {
 
     private func failHandOff(_ request: HandOffRequest, failures: HandOffFailures) {
         endHandOffProgress(request)
-        handOffAlertMessage = failures.alertMessage
+        handOffAlertMessage = failures.alertMessage(for: request.action)
         OtosLog.ui.errorOperation("handOff.complete", phase: "failed", fields: [
             "failed": "\(failures.count)",
             "outOfSpace": "\(failures.outOfSpace)",
@@ -213,6 +232,9 @@ extension CatalogWindowViewModel {
             }
         case let .openWith(application):
             open(urls, with: application, origin: "openWith")
+        case .revealInFinder:
+            workspace.revealInFinder(urls)
+            OtosLog.ui.notice("op=ui.revealInFinder count=\(urls.count, privacy: .public)")
         }
         OtosLog.ui.noticeOperation("handOff.complete", phase: "handedOver", fields: [
             "count": "\(urls.count)", "action": request.action.verb, "generation": "\(request.generation)",
@@ -286,29 +308,32 @@ nonisolated struct HandOffFailures: Equatable, Sendable {
         outOfSpace == 0 && other == 0 && unavailable.isEmpty
     }
 
-    var alertMessage: String {
+    /// The alert's message for `action`, which says what did not happen.
+    func alertMessage(for action: HandOffAction) -> String {
+        let nothing = action.refusedOutcome
         let sources = unavailable.map(\.sentence).joined(separator: " ")
         guard outOfSpace + other > 0 else {
-            return sources + " Nothing was handed over."
+            return sources + " " + nothing.prefix(1).uppercased() + nothing.dropFirst() + "."
         }
-        return sources.isEmpty ? preparationMessage : sources + " " + preparationMessage
+        let preparation = preparationMessage(nothing: nothing)
+        return sources.isEmpty ? preparation : sources + " " + preparation
     }
 
     /// What the alert says about the photos that failed on this Mac.
-    private var preparationMessage: String {
+    private func preparationMessage(nothing: String) -> String {
         let photos = { (count: Int) in count == 1 ? "one photo" : "\(count) photos" }
         switch (outOfSpace, other) {
         case (0, 1):
-            return "One photo couldn’t be prepared, so nothing was handed over. Its original may be unavailable."
+            return "One photo couldn’t be prepared, so \(nothing). Its original may be unavailable."
         case let (0, other):
-            return "\(other) photos couldn’t be prepared, so nothing was handed over. Their originals may be unavailable."
+            return "\(other) photos couldn’t be prepared, so \(nothing). Their originals may be unavailable."
         case let (outOfSpace, 0):
-            return "There isn’t enough disk space to prepare \(photos(outOfSpace)), so nothing was handed over. "
+            return "There isn’t enough disk space to prepare \(photos(outOfSpace)), so \(nothing). "
                 + "Free up space and try again."
         case let (outOfSpace, other):
             return "There isn’t enough disk space to prepare \(photos(outOfSpace)), and \(photos(other)) couldn’t be "
                 + "prepared because \(other == 1 ? "its original" : "their originals") may be unavailable. "
-                + "Nothing was handed over. Free up space and try again."
+                + "\(nothing.prefix(1).uppercased() + nothing.dropFirst()). Free up space and try again."
         }
     }
 }

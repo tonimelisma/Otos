@@ -77,7 +77,17 @@ Measured (`2026-10-25-browser-multi-file-paste-and-drop.md`):
   cannot display, exactly as it would from Finder; converting would make the hand-off
   something Finder's is not.
 - **Reveal in Finder still reveals the original:** it shows where the photo lives, not
-  what is handed over.
+  what is handed over, so an edited photo or a RAW is revealed as its original and nothing
+  is rendered for it. It is a hand-off to Finder and travels the same lane: an original a
+  source stages and has not copied yet (an Immich account's, a camera's) is fetched first
+  at interactive priority (`HandOffPreparer.original(for:)`), because Finder can show
+  only a file that is there, and then revealed in its staging folder. A source that
+  cannot send it fails the reveal with the same alert, naming the source and ending
+  "Nothing was revealed."; a partial reveal would silently leave out photos the person
+  chose. A cloud placeholder is revealed as it is, as Finder shows it, and never
+  materialized. Disabling the item for an unstaged original was rejected: whether it is
+  staged is not a reason the person can act on, and every other act on the same targets
+  fetches it.
 
 ## Consequences
 
