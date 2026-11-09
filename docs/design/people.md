@@ -1,6 +1,6 @@
 # People
 
-Status: proposed, for the owner's review before any UI code (plan 0113).
+Status: approved by the owner in chat, 2026-11-10, with the changes noted as owner decisions.
 
 The surfaces for finding and naming the people in the user's photos (ADR 0047, plan 0113
 increment 5). Three views share one sidebar row: the **People list**, a **person's scope**
@@ -61,8 +61,8 @@ review (suggestions).
   same age sit side by side.
 - **No collapsed stacks, and no S.** Every suggested face is shown. A wrong sibling inside
   a collapsed stack is exactly the error the owner needs to see.
-- **Merging asks nothing.** Lightroom asks `Are these the same person?`. In Otos a merge
-  is undoable (HIG: no alert for a common, undoable act; DES-076's reasoning).
+- **Merging asks first,** as Lightroom desktop does: `Are these the same person?` with
+  `Merge` and `Cancel` (owner decision, 2026-11-10). The merge is also undoable.
 - **No face regions drawn by hand, and no keywords.** Lightroom writes person keywords into
   photos' metadata. Otos writes nothing into media folders (ADR 0008): names are overlay.
 - **A suggestion is shown only when one person clearly wins.** Lightroom suggests freely.
@@ -147,7 +147,7 @@ L3 sentence, never a `.title2` title. The bar's L1 is the surface's one primary 
 | --- | --- |
 | Click | Selects the person. |
 | Double-click, or Return | Opens the person's scope. |
-| Drag a person onto another | Merges the dragged person into the target, which keeps its name and birthday (Lightroom desktop's gesture; no alert). |
+| Drag a person onto another | Asks `Are these the same person?` (`Merge`, `Cancel`), then merges the dragged person into the target, which keeps its name and birthday (Lightroom desktop's gesture and alert; owner decision). `Merge Into ▸` asks the same. |
 | Context menu | `Rename…`, `Set Birthday…`, `Merge Into ▸` (the other selected people; present only when two or more are selected), `Remove Person`, then `Review Suggestions`. |
 | Remove Person | Undoable. The person is gone; every face that was theirs returns to the review as unnamed, and their rejections are forgotten (owner decision). Nothing on disk changes. |
 
@@ -333,7 +333,7 @@ names.
 | String | Level |
 | --- | --- |
 | Title: the name, or `New Person` | L1, as DES-095's sheet title |
-| `Name` (text field), `Birthday` (a checkbox `Known` beside a date picker, which is disabled, never removed, while unchecked; DES-053, DES-054) | L2 controls, `.callout` field labels on one label column (DES-016) |
+| `Name` (text field), `Birthday`: a year field, empty when the year is unknown, then a checkbox `Exact date` beside a date picker, disabled, never removed, while unchecked (DES-053, DES-054). A year alone is enough (owner decision, 2026-11-10): it counts from 1 January, and sets the age from which the person's faces are compared across all years. | L2 controls, `.callout` field labels on one label column (DES-016) |
 | Footnote: `Faces from before this date are never suggested as Sam.` | L3 |
 
 - **Buttons:** `Save` (default) and `Cancel` (cancel action).
@@ -432,8 +432,6 @@ from the review receipt's `Undo`.
 - **DES-111 (review keys):** Return confirms, Delete rejects, ⇧O names, Space opens the
   photo, ⌘1/⌘2 pick Suggestions or Unsure, ⌘[ / ⌘] pick an Unsure row's first or second
   candidate, and ⌘⌫ is disabled in the review. The ⇧O part is a deviation extending DES-093.
-- **Deviation recorded, not a row:** merging asks nothing, against Lightroom desktop's
-  `Are these the same person?`.
 
 ## Consequences for ADR 0047 (to amend before code)
 
@@ -464,7 +462,8 @@ from the review receipt's `Undo`.
 
 - Face boxes drawn on the loupe, and drawing a face region by hand.
 - People in the Info pane, and searching or filtering by person.
-- Writing names into exported copies (plan 0113's open decision).
+- Reading or writing face regions in files' XMP, or names into exported copies: never
+  (owner decision, 2026-11-10).
 - Pets.
 - Hiding a named person (an unnamed group can be ignored; a named person can be removed).
 

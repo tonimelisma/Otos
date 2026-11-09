@@ -117,20 +117,35 @@ nonisolated struct FaceRowKey: Hashable {
     }
 }
 
-/// A person's birthday as the catalog stores it, `YYYY-MM-DD`.
+/// A person's birthday as the catalog stores it: `YYYY-MM-DD`, or `YYYY` when only the year
+/// is known.
 nonisolated enum PersonBirthday {
-    /// Midnight UTC of the day, seconds since 1970; nil unless the text is a valid date.
+    /// Midnight UTC of the day, or of 1 January when only the year is known, seconds since
+    /// 1970; nil unless the text is one of the two forms and a valid date. A year alone counts
+    /// from its first day, so no face from that year is ever excluded by it.
     static func seconds(_ text: String) -> Double? {
-        let parts = text.split(separator: "-").compactMap { Int($0) }
-        guard parts.count == 3 else { return nil }
+        let parts = text.split(separator: "-", omittingEmptySubsequences: false).map { Int($0) }
+        guard parts.allSatisfy({ $0 != nil }), parts.count == 1 || parts.count == 3,
+              text.split(separator: "-").first?.count == 4
+        else {
+            return nil
+        }
         var components = DateComponents()
         components.year = parts[0]
-        components.month = parts[1]
-        components.day = parts[2]
+        components.month = parts.count == 3 ? parts[1] : 1
+        components.day = parts.count == 3 ? parts[2] : 1
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
         guard components.isValidDate(in: calendar), let date = calendar.date(from: components) else { return nil }
         return date.timeIntervalSince1970
+    }
+
+    /// Refuses a birthday that is neither form, so a mistyped one is never stored and
+    /// silently ignored.
+    static func validate(_ text: String?) throws {
+        if let text, seconds(text) == nil {
+            throw PeopleRuleViolation.invalidBirthday
+        }
     }
 }
 
@@ -148,6 +163,8 @@ nonisolated enum PeopleRuleViolation: Error, Equatable {
     case bothInPhotos(count: Int)
     /// The face's library is not cataloged.
     case unknownFace
+    /// A birthday that is neither `YYYY-MM-DD` nor `YYYY`.
+    case invalidBirthday
 }
 
 /// An Immich still whose faces are owed from its stored preview (ADR 0047): the preview's

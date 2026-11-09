@@ -35,6 +35,24 @@ struct FacePeoplePolicyTests {
     }
 
     /// Sam and Ian match the face equally: it is unsure, with both as candidates.
+    /// An adult's face is compared with their confirmed faces from any year; a child's only
+    /// within two years.
+    @Test func anAdultIsComparedAcrossAllYearsAndAChildIsNot() {
+        let people = [
+            PersonFact(id: Self.sam, birthdaySeconds: Self.epoch - 3 * Self.year),
+            PersonFact(id: Self.ian, birthdaySeconds: Self.epoch - 30 * Self.year),
+        ]
+        let child = Self.face("child.jpg", toward: [0: 1], at: 0, person: Self.sam)
+        let adult = Self.face("adult.jpg", toward: [1: 1], at: 0, person: Self.ian)
+        let childLater = Self.face("child6.jpg", toward: [0: 1], at: 6 * Self.year)
+        let adultLater = Self.face("adult6.jpg", toward: [1: 1], at: 6 * Self.year)
+
+        let result = FacePeoplePolicy.suggestions(faces: [child, adult, childLater, adultLater], people: people)
+
+        #expect(result.suggestions.map(\.face) == [adultLater.id])
+        #expect(result.suggestions.first?.person == Self.ian)
+    }
+
     @Test func aFaceTwoPeopleMatchEquallyIsUnsure() {
         let sam = Self.face("s.jpg", toward: [0: 1], at: 0, person: Self.sam)
         let ian = Self.face("i.jpg", toward: [1: 1], at: 0, person: Self.ian)
@@ -122,7 +140,12 @@ struct FacePeoplePolicyTests {
     @Test func theVectorisedPolicyMatchesABruteForceReading() {
         var generator = SplitMix64(seed: 11)
         let people = (1 ... 5).map { index in
-            PersonFact(id: PersonID(rawValue: Int64(index)), birthdaySeconds: index == 3 ? Self.epoch + 4 * Self.year : nil)
+            let birthday: Double? = switch index {
+            case 3: Self.epoch + 4 * Self.year
+            case 4: Self.epoch - 20 * Self.year
+            default: nil
+            }
+            return PersonFact(id: PersonID(rawValue: Int64(index)), birthdaySeconds: birthday)
         }
         let faces = (0 ..< 400).map { index -> FaceFact in
             let owner = Int(generator.next() % 6)
@@ -168,7 +191,8 @@ struct FacePeoplePolicyTests {
             for candidate in confirmed {
                 guard let person = candidate.person, birthdays.keys.contains(person), !face.rejected.contains(person),
                       !confirmed.contains(where: { $0.person == person && $0.id.asset == face.id.asset }),
-                      FacePeoplePolicy.within(face.captureSeconds, candidate.captureSeconds),
+                      face.captureSeconds.map({ FacePeoplePolicy.isAdult(at: $0, birthday: birthdays[person] ?? nil) }) ?? false
+                      || FacePeoplePolicy.within(face.captureSeconds, candidate.captureSeconds),
                       FacePeoplePolicy.notBeforeBirthday(face.captureSeconds, birthdays[person] ?? nil)
                 else { continue }
                 let similarity = zip(face.embedding, candidate.embedding).map(*).reduce(0, +)

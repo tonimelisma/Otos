@@ -34,6 +34,22 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    /// A birthday may be a full date or only a year, which counts from 1 January; anything
+    /// else is refused rather than stored and ignored.
+    @Test func aBirthdayIsADateOrAYear() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
+        let tyler = try await library.store.addPerson(name: "Tyler", birthday: "2025")
+        #expect(try await library.store.peopleFacts().people.first { $0.id == tyler }?.birthdaySeconds
+            == PersonBirthday.seconds("2025-01-01"))
+        await #expect(throws: PeopleRuleViolation.invalidBirthday) {
+            _ = try await library.store.addPerson(name: "Typo", birthday: "25")
+        }
+        await #expect(throws: PeopleRuleViolation.invalidBirthday) {
+            try await library.store.updatePerson(tyler, name: "Tyler", birthday: "2025-13-01")
+        }
+        await library.store.shutdown()
+    }
+
     /// The hard rules hold at the store, whoever asks: one photo holds a person once.
     @Test func aPersonIsConfirmedInAPhotoOnce() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])

@@ -103,15 +103,19 @@ grouping had put with the right child.
 - **People** are catalog rows: a name, an optional birthday, and a stable row ID. A person is
   not a media asset, so this is not an asset identity, which stays the path. A person is the set
   of their confirmed faces, each with its capture date. No average face is stored.
-- **Media folders:** nothing is written to them. Names exist only in the catalog. Export may
-  later write MWG face regions into exported copies, which are new files.
-- **Existing regions:** face regions already in a file's XMP (MWG `mwg-rs:Regions`) are read by
-  MediaMetadata (ADR 0039). A region the user named in another tool seeds that person.
+- **Media folders:** nothing is written to them. Names exist only in the catalog. Otos never
+  reads or writes face regions in files' XMP, and export writes no names (owner decision,
+  2026-11-10).
 
 ### Grouping
 
-- **Comparison:** every new face against the confirmed faces, mainly those captured within
-  about two years of it, by exact cosine with Accelerate. No index and no vector database: a
+- **Comparison:** every new face against the confirmed faces, by exact cosine with Accelerate.
+  For a person who was an adult (18 or older) on the face's date, all their confirmed faces
+  count; otherwise, and whenever the age is unknown, only those within two years. Measured: an
+  adult's face pairs ten or more years apart still reach the threshold 84% of the time, a
+  child's six or more years apart 5%, and dropping the window gave adults full coverage with no
+  wrong match, while for children it added two sibling first choices (owner question,
+  2026-11-10). No index and no vector database: a
   family library holds tens of thousands of faces.
 - **Acceptance:** a suggestion is made only when the best person reaches the threshold and beats
   the second-best person by a margin: threshold 0.434 (0.1% of different-person pairs
@@ -120,7 +124,8 @@ grouping had put with the right child.
   note, section 8).
 - **Hard rules:**
   - Two faces in one photo are never the same person.
-  - A face from before a person's birthday is never theirs.
+  - A face from before a person's birthday is never theirs. A birthday may be only a year,
+    which counts from 1 January (owner decision, 2026-11-10).
 - **Years:** a child across three or more years is reached by chaining through the years between
   them. Chained matches are suggestions that the user confirms, never automatic assignments.
 - **Unsure faces:** a face whose best person reaches the threshold but whose runner-up is within
@@ -188,6 +193,7 @@ grouping had put with the right child.
 - **A vector database or an approximate index:** exact comparison over a family's faces is cheap,
   and an index adds an owner and a staleness problem for no measured need.
 - **Writing names into the user's files or sidecars:** forbidden by ADR 0008. Names are overlay.
+- **Reading face regions from files' XMP (MWG):** never (owner decision, 2026-11-10).
 
 ## Consequences
 

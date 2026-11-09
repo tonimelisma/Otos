@@ -318,6 +318,19 @@ At 0.434 and 0.05, the 14 wrong suggestions were:
 Each is rejected once and stays rejected. Naming more people gives those faces a better
 match.
 
+**The window by age (2026-11-10).** The owner asked whether adults need a two-year window.
+Identification against other days, same rules, at each window:
+
+| Faces | 2 years: matchable / wrong accepted | No window: matchable / wrong accepted |
+| --- | --- | --- |
+| Adults (1,452) | 1,441 / 0 | 1,452 / 0 |
+| Children (744) | 744 / 0 (0 wrong first choices) | 744 / 0 (2 wrong first choices, both siblings) |
+
+An adult's same-person pairs are accepted 90% under a year apart, 88% at about 5 years and 84%
+at 10 or more; a child's fall to 5% by 6 years. The window applies to children only: from age
+18 a person's faces are compared across all years, and without a birthday the two-year window
+stays.
+
 **Links per face** (`tools/grouping_topk.py`): keeping only each face's strongest links of
 0.65 or more, joined strongest first under the one-photo rule:
 

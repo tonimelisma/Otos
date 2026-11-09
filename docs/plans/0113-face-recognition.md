@@ -27,13 +27,12 @@ labelled faces outside the repository. It is never committed.
   - unnamed groups only when seen on two or more days, with `Ignore`;
   - `Remove Person`, and splits named later;
   - removing a name (`Not Sam`) apart from removing a face (`Not a Face`).
+- **No XMP (2026-11-10):** Otos never reads or writes face regions in files' XMP.
+- **Approved defaults (2026-11-10):** everything listed to the owner in chat was approved,
+  except: dragging one person onto another asks `Are these the same person?` first; adults
+  are compared across all years; a birthday may be a year alone.
 - **Immich (2026-11-09):** Immich photos get faces. Measured 2026-11-10 (research note §7),
   they are read from the stored Immich preview, with no original download.
-
-## Open owner decisions
-
-- Whether export writes MWG face regions with names into exported copies. Until decided,
-  export writes no face regions.
 
 ## Increments
 
@@ -91,25 +90,18 @@ Each increment lands on `main` with its own DoD.
    - the birthday.
 
    The `DES-*` rules come first; the owner reviews it before any UI code.
-6. **People UI:** built to that spec, after the owner's review. Every action is one owner
+6. **People UI:** built to that spec (approved 2026-11-10). Every action is one owner
    intent on `CatalogWindowViewModel`, the same for menus, keys and buttons.
+   - **Spec status:** `docs/design/people.md` holds the approved decisions; the owner does
+     not read specs, so any new decision is put to him in chat.
    - **Projection:** `PeopleProjection`, an actor with its own loop, like
      `DuplicatesProjection`: it runs `FacePeoplePolicy` off every actor and publishes
      suggestions, and is never awaited by a window pass. It gets the store's people-change
      signal.
 
 7. **Faces for Immich accounts,** read from the stored Immich preview (ADR 0047) by
-   `PreviewFaceReader`, stamped with the preview's source stamp (ENR-026). *(this PR)*
-8. **MediaMetadata: face regions, if the owner's photos have named ones.**
-   - **Measured 2026-11-09:** of 20 local photos, 2 carry MWG regions, both written by the
-     iPhone camera, unnamed (`apple-fi` face IDs only). The libraries hold no `.xmp` sidecars.
-     Unnamed regions add nothing Vision does not find.
-   - **Before building:** count named regions (`mwg-rs:Name`) across the archive on the home
-     server when it is reachable.
-   - **If there are some:** a reader for `mwg-rs:Regions` in MediaMetadata: each region's name,
-     type and normalised area, with `AppliedToDimensions` and orientation resolved by the
-     library, released and taken by version bump (ADR 0039). Named regions then seed people.
-
+   `PreviewFaceReader`, stamped with the preview's source stamp (ENR-026). *(done, #605;
+   grouping scaled to 10,000 faces in #606)*
 ## Verification across increments
 
 - **Ground truth:** the research folder's `tools/score.py` and the owner's labels

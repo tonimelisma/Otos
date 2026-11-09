@@ -70,8 +70,12 @@ nonisolated struct PeopleSuggestions: Sendable, Equatable {
 ///
 /// The rules and values were measured on the owner's labelled faces with the shipped model
 /// (`docs/research/2026-11-07-face-recognition-models.md`, section 8):
-/// - **A suggestion:** an unconfirmed face is compared with each person's confirmed faces
-///   taken within `window` of it. The best person's best similarity must reach `threshold`
+/// - **A suggestion:** an unconfirmed face is compared with each person's confirmed faces:
+///   all of them when the person was an adult (`adultAge`) on the face's date, those taken
+///   within `window` of it otherwise, including when the person's age is unknown. A child's
+///   face changes from year to year and an adult's hardly: measured, an adult's face pairs
+///   ten or more years apart still reach the threshold 84% of the time, a child's six or more
+///   years apart 5%, and dropping the window gave adults full coverage with no wrong match. The best person's best similarity must reach `threshold`
 ///   and beat the runner-up's by `margin`. Measured: from one confirmed year per child, every
 ///   one of the three children's 744 faces is reached by chaining, with 9 wrong suggestions
 ///   out of 521 (each rejected once by the user).
@@ -92,6 +96,8 @@ nonisolated enum FacePeoplePolicy {
     static let groupLinks = 10
     /// Two years, in seconds.
     static let window: Double = 2 * 365.2425 * 86400
+    /// The age from which a person's face is compared across all years, in seconds.
+    static let adultAge: Double = 18 * 365.2425 * 86400
     /// Rows compared at once, which bounds the similarity block in memory.
     static let blockRows = 512
 
@@ -194,6 +200,13 @@ nonisolated enum FacePeoplePolicy {
         return abs(a - b) <= window
     }
 
+    /// Whether a person born at `birthday` was an adult at `capture`; unknown without a
+    /// birthday, which counts as not.
+    static func isAdult(at capture: Double, birthday: Double?) -> Bool {
+        guard let birthday else { return false }
+        return capture - birthday >= adultAge
+    }
+
     static func notBeforeBirthday(_ capture: Double?, _ birthday: Double?) -> Bool {
         guard let capture, let birthday else { return true }
         return capture >= birthday
@@ -254,7 +267,7 @@ private nonisolated struct PersonColumns {
             return nil
         }
         var runs: [Range<Int>] = []
-        if let capture = face.captureSeconds {
+        if let capture = face.captureSeconds, !FacePeoplePolicy.isAdult(at: capture, birthday: birthdaySeconds) {
             let low = times.partitioningIndex { $0 >= capture - FacePeoplePolicy.window }
             let high = times.partitioningIndex { $0 > capture + FacePeoplePolicy.window }
             runs.append(low ..< high)

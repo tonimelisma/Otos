@@ -923,6 +923,7 @@ extension CatalogStore {
 
     /// Adds a person, named or not (a split makes one to be named later).
     func addPerson(name: String?, birthday: String?) async throws -> PersonID {
+        try PersonBirthday.validate(birthday)
         let dbWriter = try database()
         return try await dbWriter.write { db in
             try db.execute(sql: "INSERT INTO person (name, birthday) VALUES (?, ?)", arguments: [name, birthday])
@@ -933,6 +934,7 @@ extension CatalogStore {
     /// Changes a person's name and birthday. A birthday after any of the person's confirmed
     /// photos is refused: a saved birthday never silently drops a confirmed face.
     func updatePerson(_ person: PersonID, name: String?, birthday: String?) async throws {
+        try PersonBirthday.validate(birthday)
         let dbWriter = try database()
         try await dbWriter.write { db in
             if let birthdaySeconds = birthday.flatMap(PersonBirthday.seconds) {
