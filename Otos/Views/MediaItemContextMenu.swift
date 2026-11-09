@@ -44,6 +44,20 @@ enum MediaItemContextMenu {
                 item.submenu = submenu
                 item.isEnabled = enabled
                 menu.addItem(item)
+            case let .thisIs(choices, enabled):
+                let item = NSMenuItem(title: "This Is", action: nil, keyEquivalent: "")
+                let submenu = NSMenu(title: "This Is")
+                submenu.autoenablesItems = false
+                for choice in choices {
+                    submenu.addItem(ClosureMenuItem(title: choice.title) { perform(.thisIs(choice.person)) })
+                }
+                if !choices.isEmpty {
+                    submenu.addItem(.separator())
+                }
+                submenu.addItem(ClosureMenuItem(title: "New Person") { perform(.newPerson) })
+                item.submenu = submenu
+                item.isEnabled = enabled
+                menu.addItem(item)
             case .separator:
                 menu.addItem(.separator())
             }

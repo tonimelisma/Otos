@@ -18,6 +18,10 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
     /// The Places scope holds nothing: no cataloged item in the fixed libraries carries
     /// a location yet (ADR 0040).
     case noLocatedMedia
+    /// A person's scope holds nothing: no face is confirmed as them (ADR 0047). Projection
+    /// publishes it with no name; the view model names the person, whom People knows
+    /// (`CatalogWindowViewModel.mediaEmptyState`).
+    case noPersonPhotos(String?)
     /// The On This Day scope holds nothing: no item in the fixed libraries was captured on
     /// this day's month and day in an earlier year (ADR 0049).
     case nothingOnThisDay(CalendarDay)
@@ -50,6 +54,8 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
             "noMedia"
         case .noLocatedMedia:
             "noLocatedMedia"
+        case .noPersonPhotos:
+            "noPersonPhotos"
         case .nothingOnThisDay:
             "nothingOnThisDay"
         case .noFilterMatches:
@@ -102,6 +108,10 @@ nonisolated struct CatalogWindowState: Equatable {
     /// Nil until Projection has built them once: they are built after the rest of the
     /// window state is published, so detection never holds back the sidebar or the grid.
     var duplicates: CatalogDuplicatesState?
+    /// People (ADR 0047): the list, the review's two lists and the unchecked tally, from
+    /// `PeopleProjection`; nil until the first build. Like the duplicate groups, the same in
+    /// every scope.
+    var people: CatalogPeopleState?
     var queryGeneration: UInt64 = 0
     /// Remaps committed but not yet acknowledged by the window, read with the ordered
     /// IDs. The window applies each batch once, before it shows the new identities.

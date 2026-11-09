@@ -32,12 +32,14 @@ extension CatalogWindowViewModel {
             applyOpenWithMenu(openWith)
             OtosLog.ui.notice("op=ui.contextMenu.openWithSync count=\(targets.count, privacy: .public)")
         }
-        return MediaItemMenuModel(
+        var model = MediaItemMenuModel(
             openWith: openWith,
             shareItems: targets,
             canReveal: !targets.isEmpty,
             canTrash: canMoveTargetedMediaToTrash
         )
+        model.personCorrections = personCorrectionsMenu()
+        return model
     }
 
     /// The `NSMenu` for the current targets; grid, filmstrip, loupe and compare all
@@ -70,6 +72,14 @@ extension CatalogWindowViewModel {
             submitMediaChoice(choice, origin: .contextMenu)
         case .moveToTrash:
             moveTargetedMediaToTrash()
+        case .notPerson:
+            rejectShownPersonFaces()
+        case .notAFace:
+            markNotFaces(shownPersonSelectedFaces)
+        case let .thisIs(person):
+            moveFaces(shownPersonSelectedFaces, to: person)
+        case .newPerson:
+            splitFaces(shownPersonSelectedFaces)
         }
     }
 }

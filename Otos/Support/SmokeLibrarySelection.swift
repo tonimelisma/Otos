@@ -28,6 +28,9 @@
         static let placesValue = "places"
         static let onThisDayValue = "onThisDay"
         static let duplicatesValue = "duplicates"
+        /// The People list and its review (ADR 0047).
+        static let peopleValue = "people"
+        static let peopleReviewValue = "people-review"
         /// With `onThisDay`: once its years publish, play the story from the newest year
         /// through the ordinary intent, so a capture shows the player (ADR 0049).
         static let playStoryVariable = "OTOS_SMOKE_PLAY_STORY"
@@ -38,6 +41,8 @@
             case places
             case onThisDay
             case duplicates
+            case people
+            case peopleReview
 
             var diagnosticDescription: String {
                 switch self {
@@ -45,6 +50,8 @@
                 case .places: SmokeLibrarySelection.placesValue
                 case .onThisDay: SmokeLibrarySelection.onThisDayValue
                 case .duplicates: SmokeLibrarySelection.duplicatesValue
+                case .people: SmokeLibrarySelection.peopleValue
+                case .peopleReview: SmokeLibrarySelection.peopleReviewValue
                 }
             }
         }
@@ -59,6 +66,8 @@
             /// Duplicates was asked for, but the groups are not built yet or none is active;
             /// the seam keeps following, since groups arrive as digests do.
             case noDuplicatesYet
+            /// People was asked for, but it is not built yet; the seam keeps following.
+            case noPeopleYet
         }
 
         /// The request: `places`, or a root normalized the same way `CatalogStore`
@@ -79,6 +88,12 @@
             if rawValue == duplicatesValue {
                 return .duplicates
             }
+            if rawValue == peopleValue {
+                return .people
+            }
+            if rawValue == peopleReviewValue {
+                return .peopleReview
+            }
             if rawValue == onThisDayValue {
                 return .onThisDay
             }
@@ -93,6 +108,7 @@
             requested: Request,
             among sources: [CatalogLibraryState],
             activeDuplicateGroups: Int = 0,
+            peopleAreBuilt: Bool = false,
             today: CalendarDay = .today()
         ) -> Resolution {
             let registered = sources.map(\.path).sorted { $0.rawValue < $1.rawValue }
@@ -114,6 +130,14 @@
                 return .noFixedLibrary(registered: registered)
             case .duplicates:
                 return activeDuplicateGroups > 0 ? .select(.duplicates) : .noDuplicatesYet
+            case .people, .peopleReview:
+                guard SidebarSelectionPolicy.showsPlaces(libraries: sources) else {
+                    return .noFixedLibrary(registered: registered)
+                }
+                guard peopleAreBuilt else {
+                    return .noPeopleYet
+                }
+                return .select(requested == .people ? .people : .peopleReview)
             }
         }
 
@@ -131,6 +155,7 @@
                 requested: requested,
                 among: state.libraries + state.removableSources,
                 activeDuplicateGroups: state.duplicates?.activeGroups.count ?? 0,
+                peopleAreBuilt: state.people != nil,
                 today: today
             )
         }
@@ -193,7 +218,7 @@
                         OtosLog.app.error(
                             "op=smoke.select phase=report outcome=notRegistered requestedPath=\(requested.diagnosticDescription, privacy: .public) registeredRoots=[\(names, privacy: .public)] hint=a smoke run never adds a root; pass one that is already registered, or places with a fixed library registered"
                         )
-                    case .notRegistered, .noFixedLibrary, .noDuplicatesYet:
+                    case .notRegistered, .noFixedLibrary, .noDuplicatesYet, .noPeopleYet:
                         continue
                     }
                 }

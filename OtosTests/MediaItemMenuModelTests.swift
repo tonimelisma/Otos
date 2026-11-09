@@ -47,6 +47,8 @@ struct MediaItemMenuModelTests {
             case let .openWith(applications, enabled):
                 #expect(applications.isEmpty)
                 #expect(!enabled)
+            case let .thisIs(_, enabled):
+                #expect(!enabled)
             case .separator:
                 break
             }

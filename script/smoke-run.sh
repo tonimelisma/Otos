@@ -14,18 +14,19 @@ CATALOG_DB="$HOME/Library/Application Support/net.melisma.Otos.dev/Catalog/catal
 MODE="${1:---jank}"
 if [[ "$MODE" == "--help" || "$MODE" == "help" ]]; then
   cat >&2 <<'USAGE'
-usage: script/smoke-run.sh [--jank|--verify] <library-root|places|onThisDay|duplicates>
+usage: script/smoke-run.sh [--jank|--verify] <library-root|places|onThisDay|duplicates|people|people-review>
 
 The root must already be registered in the catalog. A smoke run selects an
 existing root; it never adds, removes, or otherwise changes what libraries
 exist (ADR 0020). There is no default: a machine's registered roots
 are never guessable, so pass the root explicitly, every time.
 
-`places` selects the Places map (ADR 0040), `onThisDay` On This Day (ADR 0049) and
-`duplicates` the duplicates list (ADR 0042); each needs a registered fixed library.
+`places` selects the Places map (ADR 0040), `onThisDay` On This Day (ADR 0049),
+`duplicates` the duplicates list (ADR 0042), and `people` the People list and
+`people-review` its review (ADR 0047); each needs a registered fixed library.
 
 Environment:
-  OTOS_SMOKE_SELECT_ROOT       an already-registered root, places, onThisDay, or duplicates, if not an argument
+  OTOS_SMOKE_SELECT_ROOT       an already-registered root, places, onThisDay, duplicates, people or people-review, if not an argument
   OTOS_SMOKE_CAPTURE_PATH      with --verify: write the window's own rendering to this
                                PNG once it shows the selection, then quit
   OTOS_SMOKE_APPEARANCE        light|dark: the app's appearance for that capture
@@ -66,23 +67,24 @@ APP_PID=""
 
 # A scope with no root to name: the values SmokeLibrarySelection accepts besides a path.
 is_scope_value() {
-  [[ "$1" == "places" || "$1" == "onThisDay" || "$1" == "duplicates" ]]
+  [[ "$1" == "places" || "$1" == "onThisDay" || "$1" == "duplicates" || "$1" == "people" || "$1" == "people-review" ]]
 }
 
 usage() {
   cat >&2 <<'USAGE'
-usage: script/smoke-run.sh [--jank|--verify] <library-root|places|onThisDay|duplicates>
+usage: script/smoke-run.sh [--jank|--verify] <library-root|places|onThisDay|duplicates|people|people-review>
 
 The root must already be registered in the catalog. A smoke run selects an
 existing root; it never adds, removes, or otherwise changes what libraries
 exist (ADR 0020). There is no default: a machine's registered roots
 are never guessable, so pass the root explicitly, every time.
 
-`places` selects the Places map (ADR 0040), `onThisDay` On This Day (ADR 0049) and
-`duplicates` the duplicates list (ADR 0042); each needs a registered fixed library.
+`places` selects the Places map (ADR 0040), `onThisDay` On This Day (ADR 0049),
+`duplicates` the duplicates list (ADR 0042), and `people` the People list and
+`people-review` its review (ADR 0047); each needs a registered fixed library.
 
 Environment:
-  OTOS_SMOKE_SELECT_ROOT       an already-registered root, places, onThisDay, or duplicates, if not an argument
+  OTOS_SMOKE_SELECT_ROOT       an already-registered root, places, onThisDay, duplicates, people or people-review, if not an argument
   OTOS_SMOKE_CAPTURE_PATH      with --verify: write the window's own rendering to this
                                PNG once it shows the selection, then quit
   OTOS_SMOKE_APPEARANCE        light|dark: the app's appearance for that capture

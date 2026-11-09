@@ -6,6 +6,8 @@ import SwiftUI
 struct SidebarView: View {
     let showsAllMedia: Bool
     let showsPlaces: Bool
+    /// People (ADR 0047): one row, under Places, whenever a fixed library exists.
+    let showsPeople: Bool
     /// Today, while the On This Day row exists (it shows whenever Places does); the row's
     /// tag is today's scope (ADR 0049).
     let onThisDay: CalendarDay?
@@ -27,6 +29,7 @@ struct SidebarView: View {
     init(
         showsAllMedia: Bool,
         showsPlaces: Bool,
+        showsPeople: Bool = false,
         onThisDay: CalendarDay? = nil,
         showsDuplicates: Bool = false,
         duplicatesCount: Int? = nil,
@@ -42,6 +45,7 @@ struct SidebarView: View {
     ) {
         self.showsAllMedia = showsAllMedia
         self.showsPlaces = showsPlaces
+        self.showsPeople = showsPeople
         self.onThisDay = onThisDay
         self.showsDuplicates = showsDuplicates
         self.duplicatesCount = duplicatesCount
@@ -71,6 +75,14 @@ struct SidebarView: View {
                     EmptyView()
                 }
                 .tag(SidebarSelection.places)
+            }
+            if showsPeople {
+                // The People list (ADR 0047); the row stays highlighted while a person or
+                // the review under it is open.
+                SidebarRow(systemImage: "person.crop.square", title: "People") {
+                    EmptyView()
+                }
+                .tag(SidebarSelection.people)
             }
             if let onThisDay {
                 // Items captured on today's month and day in earlier years (ADR 0049). No

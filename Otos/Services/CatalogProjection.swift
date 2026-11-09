@@ -17,12 +17,13 @@ import OSLog
 /// the doorbell directly; other store changes wait for `cadenceTask`, which rings it
 /// every `cadence` while the projection is behind.
 ///
-/// The duplicate groups have their own owner, `DuplicatesProjection`, with its own loop. A
-/// pass publishes the window with the groups last built and, when it took up a catalog
-/// change (`duplicatesRequested`), asks that owner for a build; it never waits for one.
-/// Built groups come back on `duplicatesTask` and go out by republishing the last state
-/// with them. So detection never holds back the sidebar or the grid, and a change of scope,
-/// filter or sort never rebuilds the groups, which do not depend on it.
+/// The duplicate groups and People have their own owners, `DuplicatesProjection` and
+/// `PeopleProjection`, each with its own loop. A pass publishes the window with what they
+/// last built and, when it took up a catalog change (`derivedRequested`), asks both owners
+/// for a build; it never waits for one. Builds come back on `duplicatesTask` and
+/// `peopleTask` and go out by republishing the last state with them. So detection and
+/// grouping never hold back the sidebar or the grid, and a change of scope, filter or sort
+/// never rebuilds them, since neither depends on it.
 ///
 /// Nothing cancels a build that newer work supersedes: GRDB reads throw
 /// `CancellationError` in a cancelled task, so a cancelled build would hold errors, and the
@@ -55,6 +56,8 @@ actor CatalogProjection {
     let stateBuilder: WindowStateBuilder?
     /// Tests replace the duplicates build to hold it at its suspension; production builds them.
     let duplicatesBuilder: DuplicatesProjection.Builder?
+    /// Tests replace the People build to hold it at its suspension; production builds it.
+    let peopleBuilder: PeopleProjection.Builder?
 
     private var queryRequest: CatalogQueryRequest = .initial
     /// Distinguishes one projection's diagnostics from another's in a shared log.
@@ -77,15 +80,21 @@ actor CatalogProjection {
     /// The duplicate groups the last successful duplicates build produced; nil until one has.
     private var duplicates: CatalogDuplicatesState?
     private var duplicatesProjection: DuplicatesProjection?
+    /// What the last successful People build produced; nil until one has.
+    private var people: CatalogPeopleState?
+    private var peopleProjection: PeopleProjection?
+    private var peopleTask: Task<Void, Never>?
     /// Answers a descriptor's search (ADR 0048); nil where nothing indexes (tests that do
     /// not search), and a search then publishes nothing.
     private(set) var searchIndex: PhotoSearchIndex?
     private var searchTask: Task<Void, Never>?
     private var duplicatesTask: Task<Void, Never>?
-    /// Bumped by every catalog change and by a new subscription: the groups may differ.
-    private var duplicatesRequested: UInt64 = 0
-    /// The `duplicatesRequested` value last passed on to `duplicatesProjection`.
-    private var duplicatesForwarded: UInt64 = 0
+    /// Bumped by every catalog change and by a new subscription: the duplicate groups and
+    /// People may differ.
+    private var derivedRequested: UInt64 = 0
+    /// The `derivedRequested` value last passed on to `duplicatesProjection` and
+    /// `peopleProjection`.
+    private var derivedForwarded: UInt64 = 0
     /// The last publication was the pre-load `.loadingCatalog` state. The next store
     /// change is the load itself (or something after it), so it publishes immediately
     /// rather than leaving the window blank for a cadence tick (APP-044).
@@ -113,6 +122,13 @@ actor CatalogProjection {
         }
     }
 
+    /// Whether the People owner has built every request it was given.
+    var peopleAreQuiescent: Bool {
+        get async {
+            await peopleProjection?.isQuiescent ?? true
+        }
+    }
+
     /// Whether any consumer still holds a stream. Teardown happens when the last one ends.
     var hasSubscribers: Bool {
         !continuations.isEmpty
@@ -121,11 +137,13 @@ actor CatalogProjection {
     init(
         cadence: Duration = .seconds(1),
         stateBuilder: WindowStateBuilder? = nil,
-        duplicatesBuilder: DuplicatesProjection.Builder? = nil
+        duplicatesBuilder: DuplicatesProjection.Builder? = nil,
+        peopleBuilder: PeopleProjection.Builder? = nil
     ) {
         self.cadence = cadence
         self.stateBuilder = stateBuilder
         self.duplicatesBuilder = duplicatesBuilder
+        self.peopleBuilder = peopleBuilder
     }
 
     func states(
@@ -275,10 +293,13 @@ private extension CatalogProjection {
             }
         }
 
-        // A new subscription knows no groups yet, so its first loaded pass asks for them.
+        // A new subscription knows no groups or people yet, so its first loaded pass asks for
+        // them.
         let duplicatesProjection = DuplicatesProjection(store: store, builder: duplicatesBuilder)
         self.duplicatesProjection = duplicatesProjection
-        duplicatesRequested &+= 1
+        let peopleProjection = PeopleProjection(store: store, builder: peopleBuilder)
+        self.peopleProjection = peopleProjection
+        derivedRequested &+= 1
         duplicatesTask = Task { [weak self, duplicatesProjection] in
             await duplicatesProjection.start()
             for await built in duplicatesProjection.builds {
@@ -288,15 +309,25 @@ private extension CatalogProjection {
                 await publishDuplicates(built)
             }
         }
+        peopleTask = Task { [weak self, peopleProjection] in
+            await peopleProjection.start()
+            for await built in peopleProjection.builds {
+                guard let self else {
+                    return
+                }
+                await publishPeople(built)
+            }
+        }
 
         // The cadence task is the one that notices the owner is gone, so it also ends the
-        // doorbell and the duplicates owner on every exit: `loopTask` and `duplicatesTask`
-        // wait indefinitely, and a wait nothing can end keeps `store` alive through its
-        // closure.
-        cadenceTask = Task { [weak self, continuation, duplicatesProjection] in
+        // doorbell and the derived owners on every exit: `loopTask`, `duplicatesTask` and
+        // `peopleTask` wait indefinitely, and a wait nothing can end keeps `store` alive
+        // through its closure.
+        cadenceTask = Task { [weak self, continuation, duplicatesProjection, peopleProjection] in
             defer {
                 continuation.finish()
                 duplicatesProjection.stop()
+                peopleProjection.stop()
             }
             while !Task.isCancelled {
                 do {
@@ -344,7 +375,7 @@ private extension CatalogProjection {
             }
         }
         detailRefreshGeneration &+= 1
-        duplicatesRequested &+= 1
+        derivedRequested &+= 1
         if case .assetsDetailChanged = change {
             requestPublication(.detailOnly, ringNow: false)
         } else {
@@ -362,7 +393,7 @@ private extension CatalogProjection {
         runningPasses += 1
         defer { runningPasses -= 1 }
         let startedFrom = requested
-        let duplicatesStartedFrom = duplicatesRequested
+        let derivedStartedFrom = derivedRequested
         let kind = pendingKind
         pendingKind = .none
         let selectedRequest = queryRequest
@@ -453,6 +484,7 @@ private extension CatalogProjection {
         // The window goes out now, with the groups last built.
         var window = completed.state
         window.duplicates = duplicates
+        window.people = people
         let diagnostics = publish(
             CatalogProjectionCompletedPublication(
                 state: window,
@@ -463,22 +495,34 @@ private extension CatalogProjection {
             selectedRequest: selectedRequest
         )
         await diagnostics.emit()
-        // A cancelled pass is a teardown: the counters and the duplicates owner it would
-        // touch now belong to no subscription, or to the next one.
+        // A cancelled pass is a teardown: the counters and the derived owners it would touch
+        // now belong to no subscription, or to the next one.
         guard !Task.isCancelled else {
             return
         }
         covered = startedFrom
         ringIfBehind()
-        // An injected test builder derives no duplicates. Otherwise a pass that took up a
-        // catalog change asks for a build, and does not wait for it.
-        guard stateBuilder == nil, duplicatesStartedFrom != duplicatesForwarded,
-              let duplicatesProjection
+        // An injected test builder derives nothing. Otherwise a pass that took up a catalog
+        // change asks both owners for a build, and waits for neither.
+        guard stateBuilder == nil, derivedStartedFrom != derivedForwarded,
+              let duplicatesProjection, let peopleProjection
         else {
             return
         }
-        duplicatesForwarded = duplicatesStartedFrom
+        derivedForwarded = derivedStartedFrom
         await duplicatesProjection.request()
+        await peopleProjection.request()
+    }
+
+    /// Takes in a fresh People build and republishes the last state with it when it differs
+    /// from what it carries. Synchronous.
+    func publishPeople(_ built: CatalogPeopleState) {
+        people = built
+        guard var state = lastPublishedState, state.people != built else {
+            return
+        }
+        state.people = built
+        yield(state)
     }
 
     /// Takes in freshly built groups and republishes the last state with them when they
@@ -571,8 +615,12 @@ private extension CatalogProjection {
         duplicatesProjection = nil
         duplicatesTask?.cancel()
         duplicatesTask = nil
-        duplicatesRequested = 0
-        duplicatesForwarded = 0
+        peopleProjection?.stop()
+        peopleProjection = nil
+        peopleTask?.cancel()
+        peopleTask = nil
+        derivedRequested = 0
+        derivedForwarded = 0
         changeTask?.cancel()
         changeTask = nil
         loopTask?.cancel()
@@ -586,6 +634,7 @@ private extension CatalogProjection {
         pendingKind = .none
         lastPublishedState = nil
         duplicates = nil
+        people = nil
         orderQueryCount = 0
     }
 }

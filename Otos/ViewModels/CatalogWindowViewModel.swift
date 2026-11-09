@@ -125,6 +125,14 @@ final class CatalogWindowViewModel {
     /// The user's marks and the on-screen groups while working through Duplicates
     /// (ADR 0042). Window state, not catalog state: marks are a decision in progress.
     var duplicatesSession = DuplicatesSession()
+    /// What the user is doing in People (ADR 0047): the people and faces selected, the
+    /// review list shown, the faces on their way out, the last act's receipt and the open
+    /// sheet or question. Window state, not catalog state.
+    var peopleSession = PeopleSession()
+    /// Lookups over the last People state, rebuilt when it changes (`applyPeopleState`).
+    @ObservationIgnored var peopleIndex = PeopleIndex(.empty)
+    /// Face crops decoded this process, shared by every face tile (DES-110).
+    @ObservationIgnored let faceTileImages = FaceTileImages()
 
     /// Media kind of `focusedAssetID`, read once per focus change through the same
     /// `tileDetailReader` the panes use. Views must not guess kind: guessing is what
@@ -456,6 +464,10 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let duplicatesIntentStream: AsyncStream<DuplicatesIntent>
     @ObservationIgnored let duplicatesIntentContinuation: AsyncStream<DuplicatesIntent>.Continuation
     @ObservationIgnored var duplicatesIntentTask: Task<Void, Never>?
+    /// People acts and their undo, in the order the user acted (ADR 0032 rule 5).
+    @ObservationIgnored let peopleIntentStream: AsyncStream<PeopleIntent>
+    @ObservationIgnored let peopleIntentContinuation: AsyncStream<PeopleIntent>.Continuation
+    @ObservationIgnored var peopleIntentTask: Task<Void, Never>?
 
     @ObservationIgnored private var stateConsumptionTask: Task<Void, Never>?
     @ObservationIgnored private var catalogStartupTask: Task<Void, Never>?
@@ -596,6 +608,9 @@ final class CatalogWindowViewModel {
             bufferingPolicy: .unbounded
         )
         let (duplicatesIntentStream, duplicatesIntentContinuation) = AsyncStream<DuplicatesIntent>.makeStream(
+            bufferingPolicy: .unbounded
+        )
+        let (peopleIntentStream, peopleIntentContinuation) = AsyncStream<PeopleIntent>.makeStream(
             bufferingPolicy: .unbounded
         )
         let (mediaChoiceStream, mediaChoiceContinuation) = AsyncStream<MediaChoiceCommand>.makeStream(
@@ -746,6 +761,8 @@ final class CatalogWindowViewModel {
         self.mediaTrashIntentContinuation = mediaTrashIntentContinuation
         self.duplicatesIntentStream = duplicatesIntentStream
         self.duplicatesIntentContinuation = duplicatesIntentContinuation
+        self.peopleIntentStream = peopleIntentStream
+        self.peopleIntentContinuation = peopleIntentContinuation
         self.mediaChoiceStream = mediaChoiceStream
         self.mediaChoiceContinuation = mediaChoiceContinuation
         self.viewportStream = viewportStream
@@ -807,6 +824,7 @@ final class CatalogWindowViewModel {
         mediaTrashEventTask?.cancel()
         mediaTrashIntentTask?.cancel()
         duplicatesIntentTask?.cancel()
+        peopleIntentTask?.cancel()
         openWithMenuTask?.cancel()
         photoInfoTask?.cancel()
         focusedKindTask?.cancel()
@@ -835,6 +853,7 @@ final class CatalogWindowViewModel {
         importIntentContinuation.finish()
         mediaTrashIntentContinuation.finish()
         duplicatesIntentContinuation.finish()
+        peopleIntentContinuation.finish()
         mediaChoiceContinuation.finish()
         editRenderContinuation.finish()
         editCommandContinuation.finish()
@@ -923,6 +942,7 @@ extension CatalogWindowViewModel {
         startCatalog(store: store)
         startMediaTrash()
         startDuplicatesIntentConsumer()
+        startPeopleIntentConsumer()
         if startsSourceMonitoring {
             startRemovableVolumeMonitoring()
             startDeviceStagingSweepThenCameraMonitoring()
@@ -1171,6 +1191,7 @@ extension CatalogWindowViewModel {
         applyMapState(previous: previousState, next: nextState)
         applyOnThisDayState(previous: previousState, next: nextState)
         applyDuplicatesState(nextState)
+        applyPeopleState(previous: previousState, next: nextState)
 
         // A new scope is a different collection, so the user's place in the old one means
         // nothing there. A filter or sort change narrows or reorders the same collection,
@@ -1466,9 +1487,13 @@ extension CatalogWindowViewModel {
             // The group is gone — resolved, or its copies moved — so its leaf is too. Groups
             // not built yet say nothing about it.
             nextState.duplicates.map { !$0.groups.contains { $0.id == group } } ?? false
-        case .duplicates:
-            // Stays while selected, empty or not (ADR 0042), while libraries exist.
+        case .duplicates, .people, .peopleReview, .reviewPhotos:
+            // Stays while selected, empty or not (ADR 0042, ADR 0047), while libraries exist.
             !SidebarSelectionPolicy.showsPlaces(libraries: nextState.libraries)
+        case let .person(person):
+            // A removed or merged person's leaf goes; People not built yet says nothing.
+            !SidebarSelectionPolicy.showsPlaces(libraries: nextState.libraries)
+                || nextState.people.map { $0.person(person) == nil } ?? false
         case .allMedia, .allImports:
             false
         }

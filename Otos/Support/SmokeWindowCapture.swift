@@ -41,12 +41,17 @@
             clusterCount: Int,
             showsDuplicates: Bool = false,
             duplicateGroupCount: Int = 0,
+            showsPeople: Bool = false,
+            peopleAreBuilt: Bool = false,
             showsOnThisDay: Bool = false,
             onThisDaySettled: Bool = false,
             gridCount: Int
         ) -> Bool {
             if showsPlacesMap {
                 return clusterCount > 0
+            }
+            if showsPeople {
+                return peopleAreBuilt
             }
             if showsOnThisDay {
                 return onThisDaySettled
@@ -90,6 +95,8 @@
                         clusterCount: $0.mapClusters.count,
                         showsDuplicates: $0.showsDuplicatesList,
                         duplicateGroupCount: $0.state.duplicates?.groups.count ?? 0,
+                        showsPeople: $0.showsPeopleList || $0.showsPeopleReview,
+                        peopleAreBuilt: $0.state.people != nil,
                         showsOnThisDay: $0.showsOnThisDay,
                         onThisDaySettled: onThisDaySettled($0, awaitsStory: awaitsStory),
                         gridCount: $0.state.mediaGrid.orderedAssetIDs.count
