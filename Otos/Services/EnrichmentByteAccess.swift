@@ -22,6 +22,11 @@ nonisolated enum EnrichmentByteAccess: Sendable {
     /// no filesystem entry to stat.
     case cameraRanges(session: DeviceCameraSession, relativePath: MediaRelativePath, size: UInt64)
 
+    /// Bytes are reachable only as ranges from a server that answers now: an Immich
+    /// account's original (ADR 0046). Enrichment reads its metadata this way and nothing
+    /// else; its images are the server's own until Otos renders the original.
+    case remoteRanges(RemoteRangeReader, relativePath: MediaRelativePath)
+
     /// Where the bytes would be on disk, when that is a meaningful question.
     ///
     /// Readiness, hashing and thumbnail generation all still need a real file. A camera row
@@ -31,7 +36,7 @@ nonisolated enum EnrichmentByteAccess: Sendable {
     var localURL: URL? {
         switch self {
         case let .localFile(url): url
-        case .cameraRanges: nil
+        case .cameraRanges, .remoteRanges: nil
         }
     }
 }

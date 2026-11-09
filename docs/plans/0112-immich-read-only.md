@@ -66,11 +66,14 @@ Each increment lands on `main` with its own DoD.
    - **6c:** Immich's preview downloaded after each sync pass for every asset owed one,
      with Otos's preview and thumbnail drawn from it as source-provisional products
      (v17 stamp), sizes and profiles read from each file.
-7. **Feature:** original download in the executor branch, for work that needs the bytes
-   (full-resolution zoom, edit, export, digest), with every missing product, Otos's
-   rendering included, written from that one read. Render signatures keyed by pipeline.
-   Includes ranged metadata reads and the free-space floor. RAW9 renders lazily (owner
-   decision above).
+7. **Feature**, in three PRs:
+   - **7a:** metadata in byte ranges of the original while the server answers (the
+     Store's answering fact, `RemoteRangeAccess`, pacing an unanswered row).
+   - **7b:** original download in the executor branch, for work that needs the bytes
+     (full-resolution zoom, edit, export, hand-off), with every missing product, Otos's
+     rendering and the digest included, written from that one read, under the free-space
+     floor. RAW9 renders lazily (owner decision above).
+   - **7c:** render signatures keyed by pipeline (ADR 0042).
 8. **Feature:** hand-off, drag, clipboard, Share and Open With for an original not yet
    downloaded, and what each one says while offline.
 9. **Feature:** Live Photo placement, and Duplicates presentation and refused resolutions

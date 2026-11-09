@@ -1,4 +1,5 @@
 import Foundation
+import MediaMetadata
 @testable import OtosKit
 import Testing
 
@@ -71,6 +72,7 @@ struct ImmichLiveServerTests {
                 store: store
             )
             outcome = await sync.pass()
+            try await expectRangedMetadataRead(store: store, rootPath: rootPath, client: client, token: login.accessToken)
             let ids = try await store.orderedAssetIDs(
                 for: CatalogQueryDescriptor(scope: .library(rootPath)), availableLibraryPaths: [rootPath]
             ).ids
@@ -94,5 +96,27 @@ struct ImmichLiveServerTests {
         await #expect(throws: ImmichClientError.unauthorized) {
             for try await _ in try await client.syncEvents(token: login.accessToken) {}
         }
+    }
+
+    /// The server answers ranged reads of an original, enough for MediaMetadata to read
+    /// its format from a few chunks (ADR 0046 §5).
+    private func expectRangedMetadataRead(
+        store: CatalogStore,
+        rootPath: LibraryRootPath,
+        client: ImmichClient,
+        token: String
+    ) async throws {
+        let first = try #require(try await store.orderedAssetIDs(
+            for: CatalogQueryDescriptor(scope: .library(rootPath)), availableLibraryPaths: [rootPath]
+        ).ids.first)
+        let size = try #require(try await store.mediaAssets(for: [first])[first]?.byteSize)
+        let assetID = String(first.relativePath.rawValue.split(separator: "/").first ?? "")
+        let reader = RemoteRangeReader(size: UInt64(size)) { offset, length, completion in
+            client.originalRange(
+                assetID: assetID, token: token, offset: offset, length: length, completion: completion
+            )
+        }
+        let parsed = await RemoteMetadataReader.read(reader, filenameHint: first.relativePath.rawValue)
+        #expect(!parsed.outcome.shouldRetry)
     }
 }

@@ -104,6 +104,43 @@ nonisolated struct ImmichClient: Sendable {
         return try await send(request)
     }
 
+    /// One byte range of an asset's original (`/original` honours `Range`, answering 206),
+    /// completion-based for a byte source that blocks its own thread while it waits. A
+    /// range past the end comes back clipped; the caller treats that as a short read.
+    func originalRange(
+        assetID: String,
+        token: String,
+        offset: UInt64,
+        length: Int,
+        completion: @escaping @Sendable (Result<Data, any Error>) -> Void
+    ) {
+        var request = URLRequest(
+            url: server.appending(path: "api").appending(path: "assets").appending(path: assetID)
+                .appending(path: "original")
+        )
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("bytes=\(offset)-\(offset + UInt64(length) - 1)", forHTTPHeaderField: "Range")
+        session.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(ImmichClientError(transport: error)))
+                return
+            }
+            guard let http = response as? HTTPURLResponse else {
+                completion(.failure(ImmichClientError.malformedResponse))
+                return
+            }
+            switch http.statusCode {
+            case 206:
+                completion(.success(data ?? Data()))
+            case 401:
+                completion(.failure(ImmichClientError.unauthorized))
+            default:
+                // A 200 is the whole file, not the range asked for; anything else a refusal.
+                completion(.failure(ImmichClientError.refused(status: http.statusCode)))
+            }
+        }.resume()
+    }
+
     // MARK: - Transport
 
     private func request(_ path: String, method: String, token: String? = nil, body: Data? = nil) throws -> URLRequest {

@@ -58,6 +58,12 @@ nonisolated struct MediaEnricher {
             // filesystem — cannot speak for it. It is routed here precisely because its
             // bytes are reachable another way, and answering `.notMaterialized` would send
             // it back to be downloaded, which is the cost this path exists to avoid.
+            if case let .remoteRanges(reader, relativePath) = access {
+                return await Self.enrichFromRemoteRanges(
+                    id: id, reader: reader, relativePath: relativePath,
+                    sourceSize: sourceSize, sourceMTimeSeconds: sourceMTimeSeconds
+                )
+            }
             guard case let .localFile(url) = access else {
                 return await Self.enrichFromRanges(
                     id: id,
@@ -163,6 +169,47 @@ nonisolated struct MediaEnricher {
     /// outcome here would stamp "this file has no capture date", and ARC-057 would then name
     /// it from its filesystem mtime — a name that is also the dedupe key, so a detached
     /// camera would produce duplicate imports rather than a retry.
+    /// Reads an account row's metadata from its server in ranges (ADR 0046 §5). Metadata
+    /// only: the row's thumbnail and preview are the server's own (§7), and its digest and
+    /// rendering wait for the original. A read the server did not answer is `.unanswered`,
+    /// never a definitive "no capture date".
+    private static func enrichFromRemoteRanges(
+        id: MediaAssetID,
+        reader: RemoteRangeReader,
+        relativePath: MediaRelativePath,
+        sourceSize: Int64?,
+        sourceMTimeSeconds: Int?
+    ) async -> EnrichmentOutcome {
+        let started = ContinuousClock.now
+        let result = await RemoteMetadataReader.read(reader, filenameHint: relativePath.rawValue)
+        guard !result.outcome.shouldRetry else {
+            OtosLog.metadata.noticeOperation("remote.rangedRead", phase: "unanswered", fields: [
+                "rootPath": id.libraryRootPath.rawValue, "relativePath": relativePath.rawValue,
+            ])
+            return .unanswered
+        }
+        OtosLog.metadata.noticeOperation("remote.rangedRead", phase: "finish", fields: [
+            "rootPath": id.libraryRootPath.rawValue,
+            "relativePath": relativePath.rawValue,
+            "transportReads": "\(result.readCost.transportReadCount)",
+            "uniqueBytes": "\(result.readCost.uniqueBytesRead)",
+            "fileBytes": "\(reader.size)",
+            "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: started))",
+        ])
+        return .complete(EnrichmentResult(
+            id: id,
+            metadata: EnrichedMetadata(
+                metadata: Self.map(result),
+                kind: Self.normalizedKind(result.format),
+                format: MediaFormatToken.normalize(result.format)
+            ),
+            rendering: nil,
+            sourceSize: sourceSize ?? -1,
+            sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
+            contentHash: nil
+        ))
+    }
+
     private static func enrichFromRanges(
         id: MediaAssetID,
         access: EnrichmentByteAccess,
@@ -541,4 +588,7 @@ nonisolated enum EnrichmentOutcome {
     case hashed(ContentHashResult)
     case transient
     case notMaterialized
+    /// A server that serves the bytes in ranges did not answer this read. The row is
+    /// paced rather than claimed again at once, so an outage is never a storm of claims.
+    case unanswered
 }
