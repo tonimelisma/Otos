@@ -116,6 +116,7 @@ struct ContentView: View {
             SidebarView(
                 showsAllMedia: viewModel.showsAllMediaRow,
                 showsPlaces: viewModel.showsPlacesRow,
+                showsPeople: viewModel.showsPeopleRow,
                 showsDuplicates: viewModel.showsDuplicatesRow,
                 duplicatesCount: viewModel.duplicatesCount,
                 libraries: viewModel.state.libraries,
@@ -144,7 +145,8 @@ struct ContentView: View {
                         // never the filter glyph's color alone). The duplicates list
                         // ignores the filter, so it never claims to be filtered.
                         .navigationSubtitle(
-                            viewModel.queryDescriptor.filter.isActive && !viewModel.showsDuplicatesList ? "Filtered" : ""
+                            viewModel.queryDescriptor.filter.isActive && !viewModel.showsDuplicatesList
+                                && !viewModel.showsPeopleList && !viewModel.showsPeopleReview ? "Filtered" : ""
                         )
                 }
                 if let presentation = viewModel.selectedImportPresentation {
@@ -236,6 +238,28 @@ struct ContentView: View {
                         Label("Back to Map", systemImage: "chevron.left")
                     }
                     .help("Back to Map")
+                }
+            }
+            // Back to People, while the browser shows one person's photos; Back to Review,
+            // while it shows one review row's photos (ADR 0047).
+            if viewModel.showsPersonLeaf {
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        viewModel.returnToPeople()
+                    } label: {
+                        Label("Back to People", systemImage: "chevron.left")
+                    }
+                    .help("Back to People")
+                }
+            }
+            if viewModel.showsReviewPhotosLeaf {
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        viewModel.returnToReview()
+                    } label: {
+                        Label("Back to Review", systemImage: "chevron.left")
+                    }
+                    .help("Back to Review")
                 }
             }
             // Back to Duplicates, while the browser shows one duplicate group (ADR 0042).
@@ -360,6 +384,8 @@ struct ContentView: View {
                 Text(message)
             }
         }
+        // Rename… and Set Birthday…, and the new person a split makes (ADR 0047).
+        .modifier(PersonSheetHost(viewModel: viewModel))
         .sheet(
             isPresented: Binding(
                 get: { viewModel.exportSheet != nil },
@@ -508,7 +534,41 @@ struct ContentView: View {
 
     @ViewBuilder
     var detailContent: some View {
-        if viewModel.showsDuplicatesList {
+        if viewModel.showsPeopleList {
+            // Until People is first built the pane claims nothing (APP-044).
+            if let people = viewModel.state.people {
+                PeopleView(
+                    people: people,
+                    session: viewModel.peopleSession,
+                    librariesState: viewModel.state.mediaEmptyState,
+                    images: viewModel.faceTileImages,
+                    derivedImageDirectory: viewModel.thumbnailDirectory,
+                    canReview: viewModel.canReviewSuggestions,
+                    actions: viewModel.peopleActions
+                )
+                .navigationTitle("People")
+            } else {
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        } else if viewModel.showsPeopleReview {
+            if let people = viewModel.state.people {
+                PeopleReviewView(
+                    people: people,
+                    layout: viewModel.peopleReviewLayout,
+                    session: viewModel.peopleSession,
+                    bar: viewModel.peopleReviewBarState,
+                    names: { viewModel.peopleIndex.name($0) },
+                    images: viewModel.faceTileImages,
+                    derivedImageDirectory: viewModel.thumbnailDirectory,
+                    actions: viewModel.peopleReviewActions
+                )
+                .navigationTitle("Review Suggestions")
+            } else {
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        } else if viewModel.showsDuplicatesList {
             // Until the groups are first built the pane claims nothing (APP-044).
             if let duplicates = viewModel.state.duplicates {
                 DuplicatesView(
@@ -550,10 +610,10 @@ struct ContentView: View {
         switch viewModel.viewMode {
         case .grid:
             MediaGridView(
-                title: viewModel.state.title,
+                title: viewModel.windowTitle,
                 grid: viewModel.state.mediaGrid,
                 tileContentStore: viewModel.tileContentStore,
-                emptyState: viewModel.state.mediaEmptyState,
+                emptyState: viewModel.mediaEmptyState,
                 deviceConnectionBanner: viewModel.state.deviceConnectionBanner,
                 thumbnailDirectory: viewModel.thumbnailDirectory,
                 detailReader: viewModel.tileDetailReader,
@@ -632,7 +692,7 @@ struct ContentView: View {
                 canPlayLivePhoto: viewModel.canPlayLivePhoto,
                 onPlayLivePhoto: { viewModel.playLivePhoto() }
             )
-            .navigationTitle(viewModel.state.title)
+            .navigationTitle(viewModel.windowTitle)
         case .compare:
             CompareView(
                 grid: viewModel.state.mediaGrid,
@@ -668,7 +728,7 @@ struct ContentView: View {
                 onPaneActivated: viewModel.activateComparePane,
                 contextMenu: viewModel.makeMediaItemContextMenu
             )
-            .navigationTitle(viewModel.state.title)
+            .navigationTitle(viewModel.windowTitle)
         }
     }
 }
@@ -721,4 +781,29 @@ private struct AllImportsListView: View {
             trashFiles: .refusing
         )
     )
+}
+
+/// Presents the Person sheet for the person the view model names.
+private struct PersonSheetHost: ViewModifier {
+    let viewModel: CatalogWindowViewModel
+
+    func body(content: Content) -> some View {
+        content.sheet(item: Binding(
+            get: { viewModel.peopleSession.sheet },
+            set: {
+                if $0 == nil {
+                    viewModel.cancelEditingPerson()
+                }
+            }
+        )) { request in
+            if let person = viewModel.peopleIndex.summaries[request.person] {
+                PersonSheetView(
+                    person: person,
+                    refusal: { name, birthday in viewModel.personSheetRefusal(request.person, name: name, birthday: birthday) },
+                    save: { name, birthday in viewModel.savePerson(request.person, name: name, birthday: birthday) },
+                    cancel: viewModel.cancelEditingPerson
+                )
+            }
+        }
+    }
 }

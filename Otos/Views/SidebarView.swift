@@ -6,6 +6,8 @@ import SwiftUI
 struct SidebarView: View {
     let showsAllMedia: Bool
     let showsPlaces: Bool
+    /// People (ADR 0047): one row, under Places, whenever a fixed library exists.
+    let showsPeople: Bool
     let showsDuplicates: Bool
     /// How many photos have duplicates (ADR 0042); nil until the groups are first built.
     let duplicatesCount: Int?
@@ -24,6 +26,7 @@ struct SidebarView: View {
     init(
         showsAllMedia: Bool,
         showsPlaces: Bool,
+        showsPeople: Bool = false,
         showsDuplicates: Bool = false,
         duplicatesCount: Int? = nil,
         libraries: [CatalogLibraryState],
@@ -38,6 +41,7 @@ struct SidebarView: View {
     ) {
         self.showsAllMedia = showsAllMedia
         self.showsPlaces = showsPlaces
+        self.showsPeople = showsPeople
         self.showsDuplicates = showsDuplicates
         self.duplicatesCount = duplicatesCount
         self.libraries = libraries
@@ -66,6 +70,14 @@ struct SidebarView: View {
                     EmptyView()
                 }
                 .tag(SidebarSelection.places)
+            }
+            if showsPeople {
+                // The People list (ADR 0047); the row stays highlighted while a person or
+                // the review under it is open.
+                SidebarRow(systemImage: "person.crop.square", title: "People") {
+                    EmptyView()
+                }
+                .tag(SidebarSelection.people)
             }
 
             // A header with no rows under it is a claim about nothing; before the catalog

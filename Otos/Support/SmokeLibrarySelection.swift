@@ -27,18 +27,25 @@
         /// which have no root to name.
         static let placesValue = "places"
         static let duplicatesValue = "duplicates"
+        /// The People list and its review (ADR 0047).
+        static let peopleValue = "people"
+        static let peopleReviewValue = "people-review"
 
         /// What the environment asked the window to show.
         enum Request: Equatable {
             case root(LibraryRootPath)
             case places
             case duplicates
+            case people
+            case peopleReview
 
             var diagnosticDescription: String {
                 switch self {
                 case let .root(path): path.rawValue
                 case .places: SmokeLibrarySelection.placesValue
                 case .duplicates: SmokeLibrarySelection.duplicatesValue
+                case .people: SmokeLibrarySelection.peopleValue
+                case .peopleReview: SmokeLibrarySelection.peopleReviewValue
                 }
             }
         }
@@ -53,6 +60,8 @@
             /// Duplicates was asked for, but the groups are not built yet or none is active;
             /// the seam keeps following, since groups arrive as digests do.
             case noDuplicatesYet
+            /// People was asked for, but it is not built yet; the seam keeps following.
+            case noPeopleYet
         }
 
         /// The request: `places`, or a root normalized the same way `CatalogStore`
@@ -73,6 +82,12 @@
             if rawValue == duplicatesValue {
                 return .duplicates
             }
+            if rawValue == peopleValue {
+                return .people
+            }
+            if rawValue == peopleReviewValue {
+                return .peopleReview
+            }
             let url = URL(fileURLWithPath: NSString(string: rawValue).expandingTildeInPath, isDirectory: true)
             return (try? CatalogPath.normalizedDirectoryPath(for: url)).map(Request.root)
         }
@@ -83,7 +98,8 @@
         static func resolve(
             requested: Request,
             among sources: [CatalogLibraryState],
-            activeDuplicateGroups: Int = 0
+            activeDuplicateGroups: Int = 0,
+            peopleAreBuilt: Bool = false
         ) -> Resolution {
             let registered = sources.map(\.path).sorted { $0.rawValue < $1.rawValue }
             switch requested {
@@ -99,6 +115,14 @@
                 return .noFixedLibrary(registered: registered)
             case .duplicates:
                 return activeDuplicateGroups > 0 ? .select(.duplicates) : .noDuplicatesYet
+            case .people, .peopleReview:
+                guard SidebarSelectionPolicy.showsPlaces(libraries: sources) else {
+                    return .noFixedLibrary(registered: registered)
+                }
+                guard peopleAreBuilt else {
+                    return .noPeopleYet
+                }
+                return .select(requested == .people ? .people : .peopleReview)
             }
         }
 
@@ -114,7 +138,8 @@
             return resolve(
                 requested: requested,
                 among: state.libraries + state.removableSources,
-                activeDuplicateGroups: state.duplicates?.activeGroups.count ?? 0
+                activeDuplicateGroups: state.duplicates?.activeGroups.count ?? 0,
+                peopleAreBuilt: state.people != nil
             )
         }
 
@@ -162,7 +187,7 @@
                         OtosLog.app.error(
                             "op=smoke.select phase=report outcome=notRegistered requestedPath=\(requested.diagnosticDescription, privacy: .public) registeredRoots=[\(names, privacy: .public)] hint=a smoke run never adds a root; pass one that is already registered, or places with a fixed library registered"
                         )
-                    case .notRegistered, .noFixedLibrary, .noDuplicatesYet:
+                    case .notRegistered, .noFixedLibrary, .noDuplicatesYet, .noPeopleYet:
                         continue
                     }
                 }

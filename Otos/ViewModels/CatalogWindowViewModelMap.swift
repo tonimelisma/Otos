@@ -43,7 +43,7 @@ extension CatalogWindowViewModel {
     /// or Loupe changes the scope and then the mode, before Projection publishes the scope.
     var canChangeViewMode: Bool {
         switch sidebarSelection {
-        case .duplicates: false
+        case .duplicates, .people, .peopleReview: false
         case .places: showsPlacesMap && mapViewport != nil
         default: true
         }

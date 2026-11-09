@@ -1,12 +1,12 @@
 # People
 
-Status: approved by the owner in chat, 2026-11-10, with the changes noted as owner decisions.
+Status: approved by the owner in chat, 2026-11-10, with the changes noted as owner decisions;
+built (APP-069). Its rules are DES-109 to DES-112.
 
-The surfaces for finding and naming the people in the user's photos (ADR 0047, plan 0113
-increment 5). Three views share one sidebar row: the **People list**, a **person's scope**
+The surfaces for finding and naming the people in the user's photos (ADR 0047). Three views share one sidebar row: the **People list**, a **person's scope**
 (that person's photos in the ordinary browser), and the **review**, where suggestions are
 confirmed, rejected, merged and split, grouped by year. Cites `docs/design/design-system.md`
-by ID; rules are not restated. Proposed new rules are marked **[proposed DES-108]** to **[proposed DES-111]**. The
+by ID; rules are not restated. Proposed new rules are marked **[proposed DES-109]** to **[proposed DES-112]**. The
 owner's answers to the spec's questions (2026-11-09) are folded in and listed at the end
 under **Owner decisions**; items still open are marked **[Q n]**.
 
@@ -119,7 +119,7 @@ ties by name in the locale's comparison (owner decision). Counts change only whe
 confirmed, merged or removed, never while photos are checked, because a person's count is
 of confirmed faces: a cell moves only after the user's own act. Each person is one cell:
 
-- **The face:** a 128 pt square face tile (**[proposed DES-109]**) of the person's newest
+- **The face:** a 128 pt square face tile (**[proposed DES-110]**) of the person's newest
   confirmed face, so a child looks as they do now; there is no cover picker (owner
   decision).
 - **The name:** under the face, `.body` L2, one line, tail-truncated.
@@ -171,7 +171,7 @@ added: the ordinary browser carries no status surface.
   under Date sort, DES-069). It holds every photo, in the fixed libraries, that has a
   **confirmed** face of the person.
 - **Suggestions are not shown here.** A person's photos are only the photos the user
-  confirmed (**[proposed DES-110]**).
+  confirmed (**[proposed DES-111]**).
 - **Back:** `Back to People` (`chevron.left`) sits at the toolbar's leading edge, as `Back
   to Map` does. It returns to the list as it was left.
 
@@ -228,7 +228,7 @@ No confirmation alert: every act is undoable, and nothing on disk changes (ADR 0
 
 ### The list
 
-The list is grouped by year (**[proposed DES-108]**), on the `content` backdrop. Its order
+The list is grouped by year (**[proposed DES-109]**), on the `content` backdrop. Its order
 is the year of each face's photo capture date, newest first (owner decision). Faces with no
 capture date go last, under `No Date`. The whole review is one scrolling list.
 
@@ -246,7 +246,7 @@ capture date go last, under `No Date`. The whole review is one scrolling list.
     as a 96 pt face tile with no selection, a hairline frame, and its date as L3 under it.
     It is the evidence: telling a sibling apart needs that year's face beside the suggested
     one. It is not a Tab stop and not selectable.
-  - **The faces:** 96 pt face tiles (**[proposed DES-109]**), 8 pt apart, wrapping. They
+  - **The faces:** 96 pt face tiles (**[proposed DES-110]**), 8 pt apart, wrapping. They
     go in capture order, newest first, each with its date as `.subheadline` L3 under it,
     for example `Mar 4`.
 - **An unnamed group row:** the same layout, with no reference face. The header reads L2
@@ -306,7 +306,7 @@ All of these, from buttons, menus, keys, drags and VoiceOver, call one owner int
 In **Unsure**, ⌘[ and ⌘] confirm the selected faces as the row's first or second candidate,
 and Return confirms nothing.
 
-**[proposed DES-111]** extends DES-093's Lightroom keys with ⇧O (Name…) in the review.
+**[proposed DES-112]** extends DES-093's Lightroom keys with ⇧O (Name…) in the review.
 **[deviation:** a key without ⌘, which DES-093 already allows for Lightroom's own keys;
 the source is Lightroom Classic**]**. Return and Delete are ordinary keys.
 
@@ -355,7 +355,7 @@ names.
 
 Two weights at most per surface (DES-004).
 
-## Face tiles [proposed DES-109]
+## Face tiles [proposed DES-110]
 
 - **The crop:** a square, aspect-filled from the photo's stored preview (ADR 0035), about
   the face box enlarged by 1.6 and clamped to the photo, at radius 4.
@@ -421,15 +421,15 @@ from the review receipt's `Undo`.
 
 ## Proposed design-system rows
 
-- **DES-108 (People surfaces):** a 52 pt list bar, L1 the people count, L3 the tally of
+- **DES-109 (People surfaces):** a 52 pt list bar, L1 the people count, L3 the tally of
   photos not yet checked. A person's scope is the ordinary browser of confirmed photos,
   with `Back to People`. The review is grouped by year over the duplicates bar's layout,
   L1 the faces to review, its one prominent act `Confirm N Faces` on Return.
-- **DES-109 (face tiles):** the face tile above, with its deviation from DES-060A.
-- **DES-110 (suggestions are never facts):** a suggested name appears only in the review,
+- **DES-110 (face tiles):** the face tile above, with its deviation from DES-060A.
+- **DES-111 (suggestions are never facts):** a suggested name appears only in the review,
   always as a suggestion. It never appears in a person's scope, the Info pane, a tile or a
   count of a person's photos.
-- **DES-111 (review keys):** Return confirms, Delete rejects, ⇧O names, Space opens the
+- **DES-112 (review keys):** Return confirms, Delete rejects, ⇧O names, Space opens the
   photo, ⌘1/⌘2 pick Suggestions or Unsure, ⌘[ / ⌘] pick an Unsure row's first or second
   candidate, and ⌘⌫ is disabled in the review. The ⇧O part is a deviation extending DES-093.
 
@@ -482,7 +482,7 @@ from the review receipt's `Undo`.
    later; removing a name from a face (`Not Sam`) and removing a face (`Not a Face`) are
    separate acts.
 8. **Immich:** Immich photos are read for faces. How (from originals downloaded for it, or
-   from the preview Immich already supplies) is decided on measurement in plan 0113 [Q 7].
+   from the preview Immich already supplies) was decided on measurement: from the stored preview (ENR-026).
 
 **Defaults taken, not yet confirmed by the owner:** no count on the `People` row (as Places);
 no bare `O` key; no per-person review (the review is one surface).

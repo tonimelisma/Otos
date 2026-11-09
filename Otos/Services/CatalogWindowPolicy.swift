@@ -56,9 +56,9 @@ nonisolated enum CatalogWindowPolicy {
                     removableSources: removableSources
                 )
             }
-        case .places, .mapArea, .duplicates, .duplicateGroup:
-            // Places and Duplicates exist with the fixed libraries they span; a leaf under
-            // either goes with it. Each resolves to the default once the last fixed
+        case .places, .mapArea, .duplicates, .duplicateGroup, .people, .peopleReview, .person, .reviewPhotos:
+            // Places, Duplicates and People exist with the fixed libraries they span; a leaf
+            // under any of them goes with it. Each resolves to the default once the last fixed
             // library is removed.
             if SidebarSelectionPolicy.showsPlaces(libraries: libraries) {
                 return sidebarSelection
@@ -161,7 +161,8 @@ nonisolated enum CatalogWindowPolicy {
                 return false
             }
             switch sidebarSelection {
-            case .allMedia, .places, .mapArea, .importBatch, .allImports, .duplicates, .duplicateGroup:
+            case .allMedia, .places, .mapArea, .importBatch, .allImports, .duplicates, .duplicateGroup,
+                 .people, .peopleReview, .person, .reviewPhotos:
                 // These scopes span the fixed libraries. Batch and location *membership*
                 // are applied by Store.orderedAssetIDs; this pass only re-applies the
                 // root-kind rule, which also holds for IDs carried over from a reused
@@ -221,6 +222,10 @@ nonisolated enum CatalogWindowPolicy {
             "Places"
         case .duplicates, .duplicateGroup:
             "Duplicates"
+        case .people, .peopleReview, .person, .reviewPhotos:
+            // A person's scope is titled with their name, which People knows
+            // (`CatalogWindowViewModel.windowTitle`).
+            "People"
         case let .library(path):
             libraries.first { $0.path == path }?.displayName ?? "Library"
         case let .importBatch(batchID):
@@ -247,7 +252,15 @@ nonisolated enum CatalogWindowPolicy {
         }
         let sidebarSelection = descriptor.scope
         switch sidebarSelection {
-        case .allMedia, .importBatch, .allImports, .duplicates, .duplicateGroup:
+        case .person:
+            // A person whose every confirmed face was taken away (`docs/design/people.md`);
+            // a person is never removed implicitly.
+            let fixedLibraries = libraries.filter(\.kind.isMemberOfAllMedia)
+            if fixedLibraries.contains(where: { $0.availability == .unknown }) {
+                return .checkingLibraries
+            }
+            return .noPersonPhotos(nil)
+        case .allMedia, .importBatch, .allImports, .duplicates, .duplicateGroup, .people, .peopleReview, .reviewPhotos:
             // These span the fixed libraries, so they answer emptiness the same way: a
             // batch whose rows exist but whose libraries are offline is unreachable,
             // not absent.

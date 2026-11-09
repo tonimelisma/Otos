@@ -14,17 +14,19 @@ CATALOG_DB="$HOME/Library/Application Support/net.melisma.Otos.dev/Catalog/catal
 MODE="${1:---jank}"
 if [[ "$MODE" == "--help" || "$MODE" == "help" ]]; then
   cat >&2 <<'USAGE'
-usage: script/smoke-run.sh [--jank|--verify] <library-root|places>
+usage: script/smoke-run.sh [--jank|--verify] <library-root|places|duplicates|people|people-review>
 
 The root must already be registered in the catalog. A smoke run selects an
 existing root; it never adds, removes, or otherwise changes what libraries
 exist (ADR 0020). There is no default: a machine's registered roots
 are never guessable, so pass the root explicitly, every time.
 
-`places` selects the Places map (ADR 0040), which needs a registered fixed library.
+`places` selects the Places map (ADR 0040), which needs a registered fixed library;
+`duplicates` the Duplicates list (ADR 0042); `people` the People list and
+`people-review` its review (ADR 0047).
 
 Environment:
-  OTOS_SMOKE_SELECT_ROOT       an already-registered root, places, or duplicates, if not an argument
+  OTOS_SMOKE_SELECT_ROOT       an already-registered root, places, duplicates, people or people-review, if not an argument
   OTOS_SMOKE_CAPTURE_PATH      with --verify: write the window's own rendering to this
                                PNG once it shows the selection, then quit
   OTOS_SMOKE_APPEARANCE        light|dark: the app's appearance for that capture
@@ -64,17 +66,19 @@ APP_PID=""
 
 usage() {
   cat >&2 <<'USAGE'
-usage: script/smoke-run.sh [--jank|--verify] <library-root>
+usage: script/smoke-run.sh [--jank|--verify] <library-root|places|duplicates|people|people-review>
 
 The root must already be registered in the catalog. A smoke run selects an
 existing root; it never adds, removes, or otherwise changes what libraries
 exist (ADR 0020). There is no default: a machine's registered roots
 are never guessable, so pass the root explicitly, every time.
 
-`places` selects the Places map (ADR 0040), which needs a registered fixed library.
+`places` selects the Places map (ADR 0040), which needs a registered fixed library;
+`duplicates` the Duplicates list (ADR 0042); `people` the People list and
+`people-review` its review (ADR 0047).
 
 Environment:
-  OTOS_SMOKE_SELECT_ROOT       an already-registered root, places, or duplicates, if not an argument
+  OTOS_SMOKE_SELECT_ROOT       an already-registered root, places, duplicates, people or people-review, if not an argument
   OTOS_SMOKE_CAPTURE_PATH      with --verify: write the window's own rendering to this
                                PNG once it shows the selection, then quit
   OTOS_SMOKE_APPEARANCE        light|dark: the app's appearance for that capture
@@ -200,8 +204,16 @@ verify_selection_applied() {
 }
 
 
+# The views named by a word rather than a root path (SmokeLibrarySelection).
+is_named_view() {
+  case "$1" in
+    places|duplicates|people|people-review) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 run_verify() {
-  if [[ "$SMOKE_ROOT" != "places" ]]; then
+  if ! is_named_view "$SMOKE_ROOT"; then
     check_provider_readiness
   fi
   QUIT_ON_EXIT=1
@@ -321,14 +333,14 @@ if [[ -z "$SMOKE_ROOT" ]]; then
   exit 1
 fi
 
-if [[ "$SMOKE_ROOT" != "places" && ! -d "$SMOKE_ROOT" ]]; then
+if ! is_named_view "$SMOKE_ROOT" && [[ ! -d "$SMOKE_ROOT" ]]; then
   echo "Smoke library root is not a directory: $SMOKE_ROOT" >&2
   echo "Pass a root path or set OTOS_SMOKE_SELECT_ROOT." >&2
   echo >&2
   registered_roots_message >&2
   exit 1
 fi
-if [[ "$SMOKE_ROOT" != "places" ]]; then
+if ! is_named_view "$SMOKE_ROOT"; then
   SMOKE_ROOT="$(cd "$SMOKE_ROOT" && pwd -P)"
 fi
 

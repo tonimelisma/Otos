@@ -557,6 +557,20 @@ private nonisolated func scopeClause(
             arguments.append(key.rootID)
             arguments.append(key.relativePath)
         }
+    case let .confirmed(person):
+        predicate += """
+
+          AND EXISTS (
+              SELECT 1 FROM face
+              WHERE face.library_root_id = media_asset.library_root_id
+                AND face.relative_path = media_asset.relative_path
+                AND face.is_not_face = 0
+                AND \(person == nil ? "face.person_id IS NOT NULL" : "face.person_id = ?")
+          )
+        """
+        if let person {
+            arguments.append(person.rawValue)
+        }
     }
     var join = ""
     switch scope.location {

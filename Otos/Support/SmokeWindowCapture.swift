@@ -39,10 +39,15 @@
             clusterCount: Int,
             showsDuplicates: Bool = false,
             duplicateGroupCount: Int = 0,
+            showsPeople: Bool = false,
+            peopleAreBuilt: Bool = false,
             gridCount: Int
         ) -> Bool {
             if showsPlacesMap {
                 return clusterCount > 0
+            }
+            if showsPeople {
+                return peopleAreBuilt
             }
             if showsDuplicates {
                 return duplicateGroupCount > 0
@@ -82,6 +87,8 @@
                         clusterCount: $0.mapClusters.count,
                         showsDuplicates: $0.showsDuplicatesList,
                         duplicateGroupCount: $0.state.duplicates?.groups.count ?? 0,
+                        showsPeople: $0.showsPeopleList || $0.showsPeopleReview,
+                        peopleAreBuilt: $0.state.people != nil,
                         gridCount: $0.state.mediaGrid.orderedAssetIDs.count
                     )
                 }

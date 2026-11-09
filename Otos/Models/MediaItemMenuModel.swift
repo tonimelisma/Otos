@@ -12,6 +12,29 @@ nonisolated enum MediaItemCommand: Equatable, Sendable {
     case revealInFinder
     case choice(MediaChoice)
     case moveToTrash
+    /// In a person's scope (ADR 0047): the selected photos' faces are not this person.
+    case notPerson
+    /// The selected photos' faces of this person are not faces.
+    case notAFace
+    /// The selected photos' faces of this person are someone else's.
+    case thisIs(PersonID)
+    /// They are one new person's.
+    case newPerson
+}
+
+/// A person's scope's corrections on the selected photos, each acting on the one face of
+/// that person in each photo (`docs/design/people.md`).
+nonisolated struct PersonCorrectionsMenu: Equatable, Sendable {
+    struct Choice: Equatable, Sendable {
+        let person: PersonID
+        let title: String
+    }
+
+    /// The person whose scope it is.
+    let name: String
+    /// The people the faces may move to.
+    let choices: [Choice]
+    let enabled: Bool
 }
 
 /// Media context menu model guide
@@ -28,6 +51,8 @@ nonisolated struct MediaItemMenuModel: Equatable, Sendable {
     enum Entry: Equatable, Sendable {
         case command(MediaItemCommand, title: String, enabled: Bool)
         case openWith(applications: [OpenWithApplication], enabled: Bool)
+        /// This Is ▸: the people, a separator, New Person.
+        case thisIs(choices: [PersonCorrectionsMenu.Choice], enabled: Bool)
         case separator
     }
 
@@ -39,6 +64,8 @@ nonisolated struct MediaItemMenuModel: Equatable, Sendable {
     var canReveal: Bool
     var canChoose: Bool
     var canTrash: Bool
+    /// Present in a person's scope.
+    var personCorrections: PersonCorrectionsMenu?
 
     static let empty = MediaItemMenuModel(
         openTitle: "Open",
@@ -85,7 +112,7 @@ nonisolated struct MediaItemMenuModel: Equatable, Sendable {
     }
 
     var entries: [Entry] {
-        [
+        var entries: [Entry] = [
             .command(.open, title: openTitle, enabled: canOpen),
             .openWith(applications: openWithApplications, enabled: canOpenWith),
             .command(.copy, title: "Copy", enabled: !shareItems.isEmpty),
@@ -93,11 +120,22 @@ nonisolated struct MediaItemMenuModel: Equatable, Sendable {
             .separator,
             .command(.revealInFinder, title: "Reveal in Finder", enabled: canReveal),
             .separator,
+        ]
+        if let people = personCorrections {
+            entries += [
+                .command(.notPerson, title: "Not \(people.name)", enabled: people.enabled),
+                .thisIs(choices: people.choices, enabled: people.enabled),
+                .command(.notAFace, title: "Not a Face", enabled: people.enabled),
+                .separator,
+            ]
+        }
+        entries += [
             .command(.choice(.liked), title: MediaChoice.liked.actionLabel, enabled: canChoose),
             .command(.choice(.notRated), title: MediaChoice.notRated.actionLabel, enabled: canChoose),
             .command(.choice(.disliked), title: MediaChoice.disliked.actionLabel, enabled: canChoose),
             .separator,
             .command(.moveToTrash, title: "Move to Trash", enabled: canTrash),
         ]
+        return entries
     }
 }

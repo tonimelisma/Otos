@@ -56,8 +56,8 @@ private nonisolated extension BrowserPlace {
     /// persistence conformances and this file is the whole schema.
     nonisolated struct Record: Codable {
         nonisolated struct Scope: Codable {
-            /// `allMedia`, `places`, `mapArea`, `duplicates`, `library`, `importBatch`, or
-            /// `allImports`.
+            /// `allMedia`, `places`, `mapArea`, `duplicates`, `people`, `peopleReview`,
+            /// `person`, `library`, `importBatch`, or `allImports`.
             var kind: String
             var path: String?
             var batchUnixMilliseconds: Int64?
@@ -66,6 +66,8 @@ private nonisolated extension BrowserPlace {
             var north: Double?
             var west: Double?
             var east: Double?
+            /// A `person`'s row id.
+            var person: Int64?
         }
 
         nonisolated struct Asset: Codable {
@@ -126,6 +128,12 @@ private nonisolated extension BrowserPlace {
             .places
         case "duplicates":
             .duplicates
+        case "people":
+            .people
+        case "peopleReview":
+            .peopleReview
+        case "person":
+            scope.person.map { .person(PersonID(rawValue: $0)) }
         case "mapArea":
             if let south = scope.south, let north = scope.north, let west = scope.west, let east = scope.east {
                 .mapArea(MapArea(south: south, north: north, west: west, east: east))
@@ -180,6 +188,14 @@ private nonisolated extension BrowserPlace.Record {
             // A group is named by its digest, which is never written out (ADR 0018); the
             // window reopens on the list it was reached from.
             Scope(kind: "duplicates")
+        case .people:
+            Scope(kind: "people")
+        case .peopleReview, .reviewPhotos:
+            // One row's photos are named by what the review showed then; the window reopens
+            // on the review.
+            Scope(kind: "peopleReview")
+        case let .person(person):
+            Scope(kind: "person", person: person.rawValue)
         case .allImports:
             Scope(kind: "allImports")
         case let .library(path):

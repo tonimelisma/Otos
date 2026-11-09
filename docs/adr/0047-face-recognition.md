@@ -2,14 +2,15 @@
 
 ## Status
 
-Proposed, 2026-11-09. The model, precision and face-admission rules are decided on measured
+Accepted, 2026-11-10. The model, precision and face-admission rules are decided on measured
 evidence (`docs/research/2026-11-07-face-recognition-models.md`).
 
-- **Built:** detection, the analyser and the model (#593), faces as a stored enrichment
-  product (#601), the stored acts, the people and the grouping policy (#604), and faces for
-  Immich accounts from their stored previews (`PreviewFaceReader`, plan 0113 increment 7).
-- **Still Proposed:** the People UI and the projection that publishes suggestions to it
-  (specified in `docs/design/people.md`), until plan 0113 builds them.
+Built: detection, the analyser and the model (#593), faces as a stored enrichment product
+(#601), the stored acts, the people and the grouping policy (#604), faces for Immich
+accounts from their stored previews (`PreviewFaceReader`, #605), and People itself: the
+list, a person's scope and the review (`docs/design/people.md`), published by
+`PeopleProjection`, with every act one `PeopleAct` that `CatalogStore.perform` applies in
+one transaction and returns the record that undoes it.
 
 ## Context
 
@@ -197,6 +198,9 @@ grouping had put with the right child.
 
 ## Consequences
 
+- **Accuracy is checked on the owner's labels:** a change to the model, the analysis or the
+  grouping rules runs `script/face-accuracy.sh` on the labelled set (research note §9) and
+  reports its suggestions, wrong suggestions and unnamed groups against the last run.
 - **App size:** the app grows by 66 MB.
 - **Downloads and time:** analysing a library means downloading and decoding every original
   photo once: about 1.5 s a photo, mostly decode, in the background.

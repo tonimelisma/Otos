@@ -125,6 +125,25 @@ nonisolated struct RootRegistry {
                     }
                 })
             )
+        case .people, .peopleReview:
+            return CatalogScopePredicate(
+                rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
+                content: .confirmed(nil)
+            )
+        case let .person(person):
+            return CatalogScopePredicate(
+                rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
+                content: .confirmed(person)
+            )
+        case let .reviewPhotos(members):
+            return CatalogScopePredicate(
+                rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
+                content: .members(members.compactMap { id in
+                    statesByPath[id.libraryRootPath].map {
+                        CatalogScopePredicate.MemberKey(rootID: $0.rowID, relativePath: id.relativePath.rawValue)
+                    }
+                })
+            )
         case let .library(path):
             guard availableLibraryPaths.contains(path),
                   let rootID = statesByPath[path]?.rowID
