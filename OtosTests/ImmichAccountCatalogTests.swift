@@ -122,6 +122,12 @@ struct ImmichAccountCatalogTests {
         let available = await CatalogWindowPolicy.availablePaths(from: store.currentLibraries())
         let copies = try await store.duplicateCopies(availableLibraryPaths: available).copies
         #expect(Set(copies.map(\.copy.id.libraryRootPath)) == [library, rootPath])
+        // ADR 0046 §8: the account's copy is never moved to the Trash, and its asset folder
+        // is no folder of the user's.
+        let accountCopy = try #require(copies.first { $0.copy.id.libraryRootPath == rootPath }?.copy)
+        #expect(!accountCopy.canMoveToTrash)
+        #expect(accountCopy.folder.isEmpty)
+        #expect(copies.first { $0.copy.id.libraryRootPath == library }?.copy.canMoveToTrash == true)
         await store.shutdown()
     }
 

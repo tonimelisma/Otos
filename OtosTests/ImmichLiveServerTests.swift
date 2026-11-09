@@ -5,7 +5,9 @@ import MediaMetadata
 @testable import OtosKit
 import Testing
 
-/// Against a real, disposable Immich server (plan 0112, "Test server"). Runs only when
+/// Against a real, disposable Immich server: the release's own `docker-compose.yml` with no
+/// machine-learning container, its test user's credentials made per run, and the stack
+/// removed with its volumes afterwards (`docker compose down -v`). Runs only when
 /// asked: `OTOS_IMMICH_LIVE` names a file of `IMMICH_URL=`, `IMMICH_EMAIL=` and
 /// `IMMICH_PASSWORD=` lines, passed as a build setting the scheme substitutes:
 ///

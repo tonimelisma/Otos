@@ -270,7 +270,18 @@ Each refused feature is refused through the capability table, and its UI says wh
 - Move to Trash;
 - Duplicates' "move copies to Trash" resolution for an account's copy.
 
-Duplicates still finds groups that include an account's photos.
+Duplicates still finds groups that include an account's photos. In them, an account's copy
+is never tagged Trash (`DuplicateCopy.canMoveToTrash`, from the capability table):
+
+- Whatever a click, a folder rule or the keeper rule chooses, the account's copy stays and
+  only a library's copies move (`DuplicateResolution.stays`).
+- The group's header says why: `Otos never removes copies in “Family”`. When nothing
+  moves, that is the whole header.
+- An account's asset folders are no folders of the user's, so its copies are one folder
+  to a rule. A rule row never offers to keep a library's side over an account's, since
+  that would move the account's copies; the row's detail says why. A folder set whose
+  copies none can move has no row.
+- The copy's Move to Trash Now is disabled, and its tooltip reads `Removed only in Immich`.
 
 ## Alternatives Considered
 
@@ -366,7 +377,7 @@ Cons:
 
 - `AGENTS.md` (also `CLAUDE.md`): the source-of-truth, identity, deletion-proof, and
   byte-read principles are restated for sources that are not folders, each in the
-  increment that implements it (plan 0112).
+  increment that implemented it.
 - ADR 0005: unreachable roots that `showsRowsWhileUnreachable` stay browsable.
 - ADR 0008: proof of deletion for a server listing.
 - ADR 0013: capabilities replace kind checks; retention applies to `isRemovable` only.

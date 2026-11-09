@@ -122,14 +122,18 @@ nonisolated struct DuplicateFolderRulePresentation: Equatable, Sendable, Identif
         let things = "\(count) \(noun.string(count: count))"
         if folders.count == 2 {
             let spansLibraries = folders[0].library != folders[1].library
+            // Keeping one folder's copies moves the other's to the Trash, which Otos never
+            // does to an Immich account's copies (ADR 0046 §8): that choice is not offered,
+            // and the row says why.
+            let keepable = folders.indices.filter { folders[1 - $0].canMoveToTrash }
+            let staying = folders.filter { !$0.canMoveToTrash }.map(\.libraryDisplayName)
+            let refusal = staying.isEmpty ? nil : "Otos never removes copies in \(Self.quoted(staying))"
             return DuplicateFolderRulePresentation(
                 folderSet: summary.folderSet,
                 title: "\(names[0]) and \(names[1])",
-                detail: "\(things) in both",
+                detail: (["\(things) in both"] + [refusal].compactMap(\.self)).joined(separator: " · "),
                 prompt: "Keep the copies in",
-                options: [
-                    Option(rule: .folder(folders[0]), title: names[0]),
-                    Option(rule: .folder(folders[1]), title: names[1]),
+                options: keepable.map { Option(rule: .folder(folders[$0]), title: names[$0]) } + [
                     // Across libraries the keeper rule keeps each library's copy.
                     Option(rule: .automatic, title: spansLibraries ? "Both" : "Otos decides"),
                 ],
@@ -149,6 +153,17 @@ nonisolated struct DuplicateFolderRulePresentation: Equatable, Sendable, Identif
             ],
             selected: rule ?? .automatic
         )
+    }
+}
+
+extension DuplicateFolderRulePresentation {
+    /// Library names as a list reads them: `“Family”`, `“Family” and “Work”`.
+    nonisolated static func quoted(_ names: [String]) -> String {
+        let quoted = names.map { "“\($0)”" }
+        guard quoted.count > 1, let last = quoted.last else {
+            return quoted.first ?? ""
+        }
+        return quoted.dropLast().joined(separator: ", ") + " and " + last
     }
 }
 
@@ -172,6 +187,11 @@ nonisolated struct DuplicateCopyTilePresentation: Equatable, Sendable, Identifia
     /// The size, at the precision that tells this group's copies apart (DES-005A).
     let size: String?
     let choice: MediaChoice
+    /// Whether Keep This Copy would change anything: not for the copy already chosen. A
+    /// copy kept only because Otos may not move it can still be chosen over the others.
+    let canKeep: Bool
+    /// Whether its context menu offers Move to Trash Now: never for an Immich account's copy.
+    let canMoveToTrash: Bool
     /// Where it is and what it is, for the tooltip.
     let help: String
     /// What VoiceOver reads: the file, its fate, then the facts (DES-082).
@@ -218,7 +238,19 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
         } else {
             ""
         }
-        let reason = [place, why].compactMap(\.self).filter { !$0.isEmpty }.joined(separator: " · ")
+        // A copy Otos may not move stays whatever was chosen (ADR 0046 §8), and the header
+        // says so; when nothing moves, that is the whole of why.
+        var staying: [String] = []
+        for copy in copies where resolution?.stays.contains(copy.id) == true && !staying.contains(copy.libraryDisplayName) {
+            staying.append(copy.libraryDisplayName)
+        }
+        let stay: String? = staying.isEmpty
+            ? nil
+            : "Otos never removes copies in \(DuplicateFolderRulePresentation.quoted(staying))"
+        // When nothing moves because of it, the refusal is the whole line: it names the
+        // library already, so the folder is not repeated before it.
+        let decided: [String?] = resolution?.moving.isEmpty == true && stay != nil ? [stay] : [place, why, stay]
+        let reason = decided.compactMap(\.self).filter { !$0.isEmpty }.joined(separator: " · ")
 
         let dates = DuplicateDateFormat(calendar: calendar)
         let sizes = DuplicateTileFacts.distinguishingSizes(of: copies)
@@ -253,7 +285,11 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
             if copy.hasCompanions {
                 facts.append("Has an .xmp or .srt file")
             }
-            let location = "\(copy.libraryDisplayName) ▸ \(copy.id.relativePath.rawValue)"
+            if !copy.canMoveToTrash {
+                facts.append("Removed only in Immich")
+            }
+            let inside = [copy.folder, copy.id.relativePath.fileName].filter { !$0.isEmpty }.joined(separator: "/")
+            let location = "\(copy.libraryDisplayName) ▸ \(inside)"
             let fateWords = switch fate {
             case .keep: "keep"
             case .trash: "goes to the Trash"
@@ -266,6 +302,8 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
                 folder: folders.count > 1 ? DuplicateFolderName.string(DuplicateFolder(copy), withLibrary: withLibrary) : nil,
                 size: sizes[copy.id],
                 choice: copy.mediaChoice,
+                canKeep: !(resolution.map { $0.keep.contains(copy.id) && !$0.stays.contains(copy.id) } ?? false),
+                canMoveToTrash: copy.canMoveToTrash,
                 help: ([location] + [facts.joined(separator: " · ")].filter { !$0.isEmpty }).joined(separator: "\n"),
                 accessibilityLabel: ([copy.id.relativePath.fileName, fateWords] + facts).joined(separator: ", ")
             )

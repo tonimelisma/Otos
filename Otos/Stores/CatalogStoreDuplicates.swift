@@ -28,9 +28,9 @@ nonisolated enum DuplicatesGateway {
 
         func facts(
             pathsByRowID: [Int64: LibraryRootPath],
-            namesByPath: [LibraryRootPath: String]
+            librariesByPath: [LibraryRootPath: DuplicateLibrary]
         ) -> DuplicateCopyFacts? {
-            guard let digest, let copy = copy(pathsByRowID: pathsByRowID, namesByPath: namesByPath) else {
+            guard let digest, let copy = copy(pathsByRowID: pathsByRowID, librariesByPath: librariesByPath) else {
                 return nil
             }
             return DuplicateCopyFacts(copy: copy, digest: digest)
@@ -38,14 +38,14 @@ nonisolated enum DuplicatesGateway {
 
         func copy(
             pathsByRowID: [Int64: LibraryRootPath],
-            namesByPath: [LibraryRootPath: String]
+            librariesByPath: [LibraryRootPath: DuplicateLibrary]
         ) -> DuplicateCopy? {
-            guard let root = pathsByRowID[rootID], let name = namesByPath[root] else {
+            guard let root = pathsByRowID[rootID], let library = librariesByPath[root] else {
                 return nil
             }
             return DuplicateCopy(
                 id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: relativePath)),
-                libraryDisplayName: name,
+                libraryDisplayName: library.displayName, libraryKind: library.kind,
                 kind: kind.flatMap(MediaKind.init(rawValue:)),
                 captureDate: captureDate.map(Date.init(timeIntervalSince1970:)),
                 byteSize: byteSize,
@@ -158,6 +158,18 @@ nonisolated enum DuplicatesGateway {
                 secondPath: row["second_path"]
             )
         }
+    }
+}
+
+/// What a copy needs of its library: the name the list shows, and the kind that says what
+/// Otos may do with the copy. Only these two, because a build looks one up per row.
+nonisolated struct DuplicateLibrary: Sendable {
+    let displayName: String
+    let kind: LibraryRootKind
+
+    init(_ root: LibraryRoot) {
+        displayName = root.displayName
+        kind = root.kind
     }
 }
 
@@ -306,7 +318,7 @@ nonisolated extension DuplicatesGateway {
     static func fetchSamePhotoDetail(
         rootID: Int64,
         id: MediaAssetID,
-        libraryDisplayName: String,
+        library: DuplicateLibrary,
         db: Database
     ) throws -> SamePhotoDetail? {
         let statement = try db.cachedStatement(sql: """
@@ -356,7 +368,7 @@ nonisolated extension DuplicatesGateway {
         return SamePhotoDetail(
             copy: DuplicateCopy(
                 id: id,
-                libraryDisplayName: libraryDisplayName,
+                libraryDisplayName: library.displayName, libraryKind: library.kind,
                 kind: kind.flatMap(MediaKind.init(rawValue:)),
                 captureDate: captureDate.map(Date.init(timeIntervalSince1970:)),
                 byteSize: row[Column.byteSize],
