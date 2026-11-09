@@ -53,12 +53,14 @@ and is never shown at full size except when zoomed to 100%.
   files live in the existing derived-image directory and follow the thumbnail's whole
   lifecycle: staged, promoted only after the row validates, superseded files deleted,
   purged with the row, moved when a root's path changes, and copied by import reuse.
-- **Source-provisional products** (lands with ADR 0046, Proposed). A source that
-  serves its own derived images can supply both products before Otos renders. An Immich
-  account's thumbnail and preview are Immich's own (250 px and 1440 px on the short
-  edge by default; sizes are read from each file, never assumed), downloaded on sync.
-  They are written without a rendering stamp, like a card's Quick Look thumbnail, but
-  unlike it they are not a claim on enrichment: the row is rendered only when its
+- **Source-provisional products** (ADR 0046). A source that serves its own derived
+  images can supply both products before Otos renders. An Immich account's are drawn
+  from Immich's own preview (1440 px on the short edge by default; its size is read from
+  each file, never assumed), downloaded after each sync pass: the preview kept at that
+  size, the thumbnail drawn from it, through the same staging and promotion as a
+  rendering. They are stamped as source products (`source_products_*`), never as the
+  rendering, like a card's Quick Look thumbnail, but unlike it they are not a claim on
+  enrichment: the row is rendered only when its
   original is local for work that needs its bytes, and that one read writes Otos's
   rendering over them (ADR 0046 §7). Re-downloading 350 GB of originals to replace a
   6 GB set of usable images is the cost this state avoids

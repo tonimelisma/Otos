@@ -1,4 +1,6 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 @testable import OtosKit
 import Synchronization
 import Testing
@@ -17,15 +19,28 @@ struct ImmichCatalogSyncTests {
         private let failures: Mutex<[Int?]>
         private let acked = Mutex<[[String]]>([])
         private let onAck: @Sendable ([String]) async -> Void
+        private let previews: @Sendable (String) throws -> Data
+        private let previewRequests = Mutex<[String]>([])
 
         init(
             _ passes: [[ImmichSyncEvent]],
             failAfter: [Int?] = [],
-            onAck: @escaping @Sendable ([String]) async -> Void = { _ in }
+            onAck: @escaping @Sendable ([String]) async -> Void = { _ in },
+            previews: @escaping @Sendable (String) throws -> Data = { _ in throw URLError(.badServerResponse) }
         ) {
             self.passes = Mutex(passes)
             failures = Mutex(failAfter)
             self.onAck = onAck
+            self.previews = previews
+        }
+
+        var requestedPreviews: [String] {
+            previewRequests.withLock { $0 }
+        }
+
+        func preview(assetID: String) async throws -> Data {
+            previewRequests.withLock { $0.append(assetID) }
+            return try previews(assetID)
         }
 
         var acknowledgements: [[String]] {
@@ -86,7 +101,8 @@ struct ImmichCatalogSyncTests {
         name: String = "IMG.JPG",
         type: ImmichAsset.AssetType = .image,
         visibility: ImmichAsset.Visibility = .timeline,
-        trashed: Bool = false
+        trashed: Bool = false,
+        modified: TimeInterval = 1_700_000_000
     ) -> ImmichSyncEvent {
         .asset(ImmichAsset(
             id: id,
@@ -95,7 +111,7 @@ struct ImmichCatalogSyncTests {
             visibility: visibility,
             deletedAt: trashed ? Date(timeIntervalSince1970: 1_700_000_500) : nil,
             fileCreatedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            fileModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
+            fileModifiedAt: Date(timeIntervalSince1970: modified)
         ), ack: "AssetV2|\(id)")
     }
 
@@ -242,5 +258,112 @@ struct ImmichCatalogSyncTests {
         #expect(ImmichCatalogSync.fileName("a/b.jpg", fallback: "id") == "a:b.jpg")
         #expect(ImmichCatalogSync.fileName("", fallback: "id") == "id")
         #expect(ImmichCatalogSync.fileName("..", fallback: "id") == "id")
+    }
+
+    // MARK: - Source products (ADR 0046 §7)
+
+    /// A JPEG of `width` × `height`, as Immich's preview endpoint serves.
+    private static func jpeg(width: Int, height: Int) throws -> Data {
+        let context = try #require(CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.setFillColor(red: 0.3, green: 0.5, blue: 0.7, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let image = try #require(context.makeImage())
+        let data = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(data, "public.jpeg" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
+    private struct FileFixture {
+        let store: CatalogStore
+        let rootPath: LibraryRootPath
+        let directory: URL
+
+        static func make() async throws -> FileFixture {
+            let temp = try makeTestDirectory()
+            let store = CatalogStore(location: .databaseFile(temp.appending(path: "Catalog.sqlite")))
+            try await store.start(scansSavedLibraries: false)
+            let rootPath = try await store.addImmichAccount(
+                server: ImmichCatalogSyncTests.server, userID: "user-1", displayName: "Family",
+                stagingContainer: temp.appending(path: "RemoteStaging")
+            )
+            return try FileFixture(store: store, rootPath: rootPath, directory: #require(store.thumbnailDirectory))
+        }
+
+        func id(_ path: String) -> MediaAssetID {
+            MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: path))
+        }
+
+        func image(_ name: String) -> CGImage? {
+            ThumbnailStore.load(name, in: directory)
+        }
+    }
+
+    /// A pass fetches the server's preview once for each row owed one: a still gets the
+    /// preview at the server's size and a thumbnail drawn from it, a video only the
+    /// thumbnail. A file that changes is owed new ones; nothing else is asked for again.
+    @Test func aPassFetchesTheServersPreviewForEveryRowOwedOne() async throws {
+        let fixture = try await FileFixture.make()
+        let preview = try Self.jpeg(width: 600, height: 400)
+        let server = ScriptedServer(
+            [
+                [
+                    Self.asset("a", name: "IMG_1.JPG"), Self.asset("v", name: "CLIP.MOV", type: .video),
+                    Self.exif("a", size: 10), Self.exif("v", size: 20), Self.complete,
+                ],
+                [Self.complete],
+                [Self.asset("a", name: "IMG_1.JPG", modified: 1_700_000_900), Self.complete],
+            ],
+            previews: { _ in preview }
+        )
+        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+
+        _ = await sync.pass()
+        #expect(server.requestedPreviews.sorted() == ["a", "v"])
+        let still = fixture.id("a/IMG_1.JPG")
+        let video = fixture.id("v/CLIP.MOV")
+        let assets = try await fixture.store.mediaAssets(for: [still, video])
+        #expect(assets[still]?.thumbnailPath == ThumbnailStore.relativeName(for: still))
+        #expect(assets[video]?.thumbnailPath == ThumbnailStore.relativeName(for: video))
+        // The server's size, not upscaled to Otos's 2560 px; the thumbnail Otos's 256 px.
+        #expect(fixture.image(ThumbnailStore.previewRelativeName(for: still))?.width == 600)
+        #expect(fixture.image(ThumbnailStore.relativeName(for: still))?.width == 256)
+        #expect(fixture.image(ThumbnailStore.previewRelativeName(for: video)) == nil)
+        // Not a rendering: the row still owes Otos's own.
+        #expect(assets[still]?.renderedSourceSize == nil)
+
+        _ = await sync.pass()
+        #expect(server.requestedPreviews.count == 2)
+        _ = await sync.pass()
+        #expect(server.requestedPreviews.sorted() == ["a", "a", "v"])
+        await fixture.store.shutdown()
+    }
+
+    /// A preview that is no image is skipped and asked for again next pass; a server that
+    /// stops answering ends the product pass, and the rest stay owed.
+    @Test func productsTheServerCannotGiveStayOwed() async throws {
+        let fixture = try await FileFixture.make()
+        let preview = try Self.jpeg(width: 300, height: 200)
+        let server = ScriptedServer(
+            [[Self.asset("a"), Self.asset("b"), Self.asset("c"), Self.exif("a", size: 1), Self.exif("b", size: 1),
+              Self.exif("c", size: 1), Self.complete]],
+            previews: { id in
+                switch id {
+                case "a": Data("not an image".utf8)
+                case "b": preview
+                default: throw URLError(.networkConnectionLost)
+                }
+            }
+        )
+        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+        _ = await sync.pass()
+        #expect(await sync.fetchProducts() == .serverFailed(made: 0))
+        let owed = try await fixture.store.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
+        #expect(owed.map(\.itemFolder) == ["a", "c"])
+        await fixture.store.shutdown()
     }
 }

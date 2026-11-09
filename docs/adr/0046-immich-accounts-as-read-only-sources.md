@@ -189,11 +189,17 @@ account's session, loop and status.
 
 ### 7. Immich's images until the original is local
 
-When the sync adds or changes an asset, Otos downloads Immich's `thumbnail` and `preview`
-of it into the derived-image store (ADR 0035). They are **source-provisional products**:
-the grid thumbnail and loupe preview, kept as overlay for the asset's life, but not an
-Otos rendering. Otos reads each image's pixel size and colour profile from the file it
-receives and never assumes Immich's defaults, because they are admin configuration.
+After each sync pass, Otos downloads Immich's `preview` of every asset still owed one and
+writes Otos's own two products from it into the derived-image store (ADR 0035): the
+preview at Immich's size, for a still, and the 256 px grid thumbnail drawn from it — one
+request per asset, so Immich's separate thumbnail is never needed. They are
+**source-provisional products**: kept as overlay for the asset's life, but not an Otos
+rendering. They are stamped with the `(size, mtime)` they were made for
+(`source_products_*`, migration v17), so an asset whose file changes is owed new ones,
+which replace the shown images only when they arrive (APP-015). Otos reads each image's
+pixel size and colour profile from the file it receives and never assumes Immich's
+defaults, because they are admin configuration. The fetch keeps the free-space floor
+(ADR 0027) and stops when the server stops answering; what it did not fetch stays owed.
 
 Enrichment never downloads an account's original only to render it. Otos renders its own
 products (ADR 0035) from an original that is local for another reason:

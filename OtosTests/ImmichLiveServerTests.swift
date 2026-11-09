@@ -45,7 +45,8 @@ enum ImmichLiveServer {
 @Suite(.testDirectory, .enabled(if: ImmichLiveServer.credentials != nil))
 struct ImmichLiveServerTests {
     /// A login and one pass bring every owned asset into an account's root, each with
-    /// its EXIF size; the session is logged out afterwards.
+    /// its EXIF size and a thumbnail from the server's preview; the session is logged out
+    /// afterwards.
     @Test func aPassOverTheLiveServerListsItsAssets() async throws {
         let credentials = try #require(ImmichLiveServer.credentials)
         let client = ImmichClient(server: credentials.server)
@@ -55,7 +56,10 @@ struct ImmichLiveServerTests {
         let outcome: ImmichSyncPassOutcome
         let listed: [MediaAsset]
         do {
-            let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+            let store = try CatalogStore(
+                location: .databaseFile(makeTestDirectory().appending(path: "Catalog.sqlite")),
+                scanCadence: .milliseconds(10)
+            )
             try await store.start(scansSavedLibraries: false)
             let rootPath = try await store.addImmichAccount(
                 server: credentials.server, userID: login.userID, displayName: login.name,
@@ -85,6 +89,8 @@ struct ImmichLiveServerTests {
         #expect(count == listed.count)
         #expect(!listed.isEmpty)
         #expect(listed.allSatisfy { ($0.byteSize ?? 0) > 0 })
+        // Each asset's grid thumbnail came from the server's own preview (ADR 0046 §7).
+        #expect(listed.allSatisfy { $0.thumbnailPath != nil })
         await #expect(throws: ImmichClientError.unauthorized) {
             for try await _ in try await client.syncEvents(token: login.accessToken) {}
         }

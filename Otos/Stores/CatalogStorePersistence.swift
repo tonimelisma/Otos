@@ -147,6 +147,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.sourceProductsMigrationIdentifier) { db in
+            for statement in CatalogSchema.sourceProductsStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -571,7 +576,15 @@ extension CatalogStore {
     /// A provisional thumbnail replaces the shown thumbnail without stamping a rendering.
     static func writeEnrichmentOverlay(_ result: EnrichmentResult, libraryRootID: Int64, db: Database) throws {
         let row = (rootID: libraryRootID, relativePath: result.id.relativePath)
-        if let rendering = result.rendering {
+        if let rendering = result.rendering, rendering.origin == .source {
+            try writeSourceProducts(
+                thumbnailPath: rendering.thumbnailPath,
+                previewPath: rendering.previewPath,
+                stamp: (result.sourceSize, result.sourceMTimeSeconds),
+                row: row,
+                db: db
+            )
+        } else if let rendering = result.rendering {
             try writeRendering(
                 thumbnailPath: rendering.thumbnailPath,
                 previewPath: rendering.previewPath,
@@ -635,6 +648,33 @@ extension CatalogStore {
             """,
             arguments: [
                 thumbnailPath, previewPath, renderedRevision, stamp.size, stamp.mtimeSeconds,
+                row.rootID, row.relativePath.rawValue,
+            ]
+        )
+    }
+
+    /// A source's own thumbnail and preview (ADR 0035, ADR 0046 §7): they replace the shown
+    /// images and are stamped as source products, never as the rendering, which stays
+    /// owed until Otos renders the original.
+    private static func writeSourceProducts(
+        thumbnailPath: String?,
+        previewPath: String?,
+        stamp: ProductStamp,
+        row: ProductRow,
+        db: Database
+    ) throws {
+        try db.execute(
+            sql: """
+            UPDATE media_asset SET
+                thumbnail_path = ?,
+                preview_path = ?,
+                source_products_size = ?,
+                source_products_mtime = ?
+            WHERE library_root_id = ?
+                AND relative_path = ?
+            """,
+            arguments: [
+                thumbnailPath, previewPath, stamp.size, stamp.mtimeSeconds,
                 row.rootID, row.relativePath.rawValue,
             ]
         )

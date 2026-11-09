@@ -225,23 +225,34 @@ nonisolated struct EnrichedMetadata: Equatable {
 /// a still no renderer could read falls back to QuickLook's with no preview; either can be
 /// nil when nothing could be drawn, which is still a definitive outcome and is stamped.
 nonisolated struct EnrichedRendering: Equatable {
+    /// Who drew the images (ADR 0035). Otos's rendering is stamped as the row's
+    /// rendering; a source's own images (an Immich account's thumbnail and preview,
+    /// ADR 0046 §7) are stamped as source products, and leave the rendering owed.
+    enum Origin: Equatable {
+        case otos
+        case source
+    }
+
     let thumbnailPath: String?
     let generatedThumbnail: StagedDerivedImage?
     /// nil for videos and for stills no renderer could read, which then fall back to
     /// decoding the original.
     let previewPath: String?
     let generatedPreview: StagedDerivedImage?
+    let origin: Origin
 
     init(
         thumbnailPath: String? = nil,
         generatedThumbnail: StagedDerivedImage? = nil,
         previewPath: String? = nil,
-        generatedPreview: StagedDerivedImage? = nil
+        generatedPreview: StagedDerivedImage? = nil,
+        origin: Origin = .otos
     ) {
         self.thumbnailPath = generatedThumbnail?.finalRelativePath ?? thumbnailPath
         self.generatedThumbnail = generatedThumbnail
         self.previewPath = generatedPreview?.finalRelativePath ?? previewPath
         self.generatedPreview = generatedPreview
+        self.origin = origin
     }
 }
 
