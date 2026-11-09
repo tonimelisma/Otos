@@ -350,7 +350,30 @@ not their pairs: on a generated 10,000-face library, one pass in the Debug build
 **Chosen:** threshold 0.434, margin 0.08, a ± 2-year window, unnamed groups from each face's
 ten strongest links at 0.65.
 
-## 9. Conclusions
+## 9. The accuracy check (2026-11-10)
+
+`script/face-accuracy.sh <accuracy-set.json>` runs Otos's own `FacePeoplePolicy` on the owner's
+labels (`tools/export_accuracy_set.py` writes the set from run 2: 3,293 faces with their int8
+embeddings, dates and labels, and the birthdays; it stays in the research folder). It
+simulates the review: every named person's most-photographed year is confirmed; then each
+round every suggestion is accepted when the label agrees and rejected when it does not,
+until nothing new is accepted. It also groups every face as if nobody were named. First run,
+on `main` with the age rule (`9d713d6`):
+
+| Measure | Result |
+| --- | --- |
+| Rounds until nothing new is accepted | 8 |
+| Suggestions accepted / rejected as wrong | 1,538 / 76 |
+| Labelled faces left unsure | 1 |
+| Children reached | Sam 487/487, Ian 224/225, Tyler 32/32 |
+| Unnamed groups, nobody named | 102 groups, 1,983 faces, 0 wrong, 0 mixing children |
+
+Most of the 76 rejections are unlabelled faces (strangers) suggested as a named person,
+rejected once each. Only the children have birthdays in the labels, so every adult kept the
+two-year window in this run. Re-run it whenever the model, the analysis or the grouping rules
+change, and compare with this table.
+
+## 10. Conclusions
 
 1. **Model:** AdaFace IR-101 (WebFace12M).
 2. **Precision and engine:** int8 weights, on the CPU.

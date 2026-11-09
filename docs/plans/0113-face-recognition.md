@@ -106,6 +106,9 @@ Each increment lands on `main` with its own DoD.
 
 - **Ground truth:** the research folder's `tools/score.py` and the owner's labels
   (`run2/labels.json`).
+- **Accuracy check:** `script/face-accuracy.sh` runs the shipped grouping on the labelled set
+  (`run2/accuracy-set.json`, research note §9), whenever the model, analysis or grouping
+  rules change.
 - **Increment 2:** the shipped analyser reproduces the study's embeddings on run 1's photos
   (cosine ≥ 0.9984 for every face both kept).
 - **Increment 4:** reports grouping precision and coverage on the same labels.
