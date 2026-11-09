@@ -802,6 +802,244 @@ extension CatalogStore {
         }
     }
 
+    // MARK: - People (ADR 0047)
+
+    /// Every face and person grouping reads: each face with its photo's capture instant and
+    /// the user's acts on it. Faces of libraries no longer cataloged are left out.
+    func peopleFacts() async throws -> (faces: [FaceFact], people: [PersonFact]) {
+        let pathsByRowID = roots.pathsByRowID
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            var rejections: [FaceRowKey: Set<PersonID>] = [:]
+            for row in try Row.fetchAll(db, sql: "SELECT library_root_id, relative_path, face_index, person_id FROM face_rejection") {
+                rejections[FaceRowKey(row), default: []].insert(PersonID(rawValue: row["person_id"]))
+            }
+            var faces: [FaceFact] = []
+            for row in try Row.fetchAll(
+                db,
+                sql: """
+                SELECT f.library_root_id, f.relative_path, f.face_index, f.embedding, f.person_id,
+                       f.is_not_face, f.is_ignored, m.best_capture_unix
+                FROM face f
+                JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
+                WHERE m.trash_path IS NULL
+                ORDER BY f.library_root_id, f.relative_path, f.face_index
+                """
+            ) {
+                let key = FaceRowKey(row)
+                guard let rootPath = pathsByRowID[key.rootID] else { continue }
+                let data: Data = row["embedding"]
+                guard let embedding = FaceStorage.embedding(from: data) else {
+                    throw CatalogStoreError.malformedFaceRow(MediaAssetID(libraryRootPath: rootPath, relativePath: key.path))
+                }
+                faces.append(FaceFact(
+                    id: FaceID(asset: MediaAssetID(libraryRootPath: rootPath, relativePath: key.path), index: key.index),
+                    captureSeconds: row["best_capture_unix"],
+                    embedding: embedding,
+                    person: (row["person_id"] as Int64?).map(PersonID.init(rawValue:)),
+                    isNotFace: (row["is_not_face"] as Int) != 0,
+                    isIgnored: (row["is_ignored"] as Int) != 0,
+                    rejected: rejections[key] ?? []
+                ))
+            }
+            let people = try Row.fetchAll(db, sql: "SELECT id, birthday FROM person ORDER BY id").map { row in
+                PersonFact(id: PersonID(rawValue: row["id"]), birthdaySeconds: (row["birthday"] as String?).flatMap(PersonBirthday.seconds))
+            }
+            return (faces, people)
+        }
+    }
+
+    /// Adds a person, named or not (a split makes one to be named later).
+    func addPerson(name: String?, birthday: String?) async throws -> PersonID {
+        let dbWriter = try database()
+        return try await dbWriter.write { db in
+            try db.execute(sql: "INSERT INTO person (name, birthday) VALUES (?, ?)", arguments: [name, birthday])
+            return PersonID(rawValue: db.lastInsertedRowID)
+        }
+    }
+
+    /// Changes a person's name and birthday. A birthday after any of the person's confirmed
+    /// photos is refused: a saved birthday never silently drops a confirmed face.
+    func updatePerson(_ person: PersonID, name: String?, birthday: String?) async throws {
+        let dbWriter = try database()
+        try await dbWriter.write { db in
+            if let birthdaySeconds = birthday.flatMap(PersonBirthday.seconds) {
+                let earlier = try Int.fetchOne(
+                    db,
+                    sql: """
+                    SELECT COUNT(*) FROM face f
+                    JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
+                    WHERE f.person_id = ? AND m.best_capture_unix < ?
+                    """,
+                    arguments: [person.rawValue, birthdaySeconds]
+                ) ?? 0
+                guard earlier == 0 else { throw PeopleRuleViolation.confirmedBeforeBirthday(count: earlier) }
+            }
+            try db.execute(
+                sql: "UPDATE person SET name = ?, birthday = ? WHERE id = ?",
+                arguments: [name, birthday, person.rawValue]
+            )
+        }
+    }
+
+    /// Removes a person: their faces return to unnamed and their rejections are forgotten.
+    func removePerson(_ person: PersonID) async throws {
+        let dbWriter = try database()
+        try await dbWriter.write { db in
+            try db.execute(sql: "DELETE FROM person WHERE id = ?", arguments: [person.rawValue])
+        }
+    }
+
+    /// Confirms `faces` as `person`, or returns them to unnamed with nil. Refused when two of
+    /// the faces share a photo, when the person is already confirmed in one of their photos,
+    /// or when a photo was taken before the person's birthday (ADR 0047's hard rules).
+    func setPerson(_ person: PersonID?, for faces: [FaceID]) async throws {
+        let rowIDs = roots.rowIDSnapshot()
+        let dbWriter = try database()
+        try await dbWriter.write { db in
+            let keys = try faces.map { try FaceRowKey($0, rowIDs: rowIDs) }
+            if let person {
+                guard Set(keys.map(\.photo)).count == keys.count else { throw PeopleRuleViolation.twoFacesOfOnePhoto }
+                let birthday = try String.fetchOne(db, sql: "SELECT birthday FROM person WHERE id = ?", arguments: [person.rawValue])
+                    .flatMap(PersonBirthday.seconds)
+                for key in keys {
+                    let elsewhere = try Int.fetchOne(
+                        db,
+                        sql: """
+                        SELECT COUNT(*) FROM face WHERE library_root_id = ? AND relative_path = ?
+                          AND person_id = ? AND face_index <> ?
+                        """,
+                        arguments: [key.rootID, key.path.rawValue, person.rawValue, key.index]
+                    ) ?? 0
+                    guard elsewhere == 0 else { throw PeopleRuleViolation.personAlreadyInPhoto }
+                    if let birthday, let capture = try Double.fetchOne(
+                        db,
+                        sql: "SELECT best_capture_unix FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                        arguments: [key.rootID, key.path.rawValue]
+                    ), capture < birthday {
+                        throw PeopleRuleViolation.beforeBirthday
+                    }
+                }
+            }
+            for key in keys {
+                try db.execute(
+                    sql: "UPDATE face SET person_id = ? WHERE library_root_id = ? AND relative_path = ? AND face_index = ?",
+                    arguments: [person?.rawValue, key.rootID, key.path.rawValue, key.index]
+                )
+                if let person {
+                    try db.execute(
+                        sql: """
+                        DELETE FROM face_rejection WHERE library_root_id = ? AND relative_path = ?
+                          AND face_index = ? AND person_id = ?
+                        """,
+                        arguments: [key.rootID, key.path.rawValue, key.index, person.rawValue]
+                    )
+                }
+            }
+        }
+    }
+
+    /// Records, or forgets, that `faces` are not `person`; a recorded rejection also takes
+    /// the faces from the person if they were confirmed as them.
+    func setRejected(_ rejected: Bool, person: PersonID, for faces: [FaceID]) async throws {
+        let rowIDs = roots.rowIDSnapshot()
+        let dbWriter = try database()
+        try await dbWriter.write { db in
+            for key in try faces.map({ try FaceRowKey($0, rowIDs: rowIDs) }) {
+                let arguments: StatementArguments = [key.rootID, key.path.rawValue, key.index, person.rawValue]
+                if rejected {
+                    try db.execute(
+                        sql: """
+                        INSERT OR IGNORE INTO face_rejection (library_root_id, relative_path, face_index, person_id)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        arguments: arguments
+                    )
+                    try db.execute(
+                        sql: """
+                        UPDATE face SET person_id = NULL WHERE library_root_id = ? AND relative_path = ?
+                          AND face_index = ? AND person_id = ?
+                        """,
+                        arguments: arguments
+                    )
+                } else {
+                    try db.execute(
+                        sql: """
+                        DELETE FROM face_rejection WHERE library_root_id = ? AND relative_path = ?
+                          AND face_index = ? AND person_id = ?
+                        """,
+                        arguments: arguments
+                    )
+                }
+            }
+        }
+    }
+
+    /// Marks `faces` as not faces (out of People until the photo changes), or undoes it.
+    func setNotAFace(_ value: Bool, for faces: [FaceID]) async throws {
+        try await setFaceFlag("is_not_face", value, for: faces)
+    }
+
+    /// Marks `faces` as ignored (a stranger's group), or undoes it.
+    func setIgnored(_ value: Bool, for faces: [FaceID]) async throws {
+        try await setFaceFlag("is_ignored", value, for: faces)
+    }
+
+    private func setFaceFlag(_ column: String, _ value: Bool, for faces: [FaceID]) async throws {
+        let rowIDs = roots.rowIDSnapshot()
+        let dbWriter = try database()
+        try await dbWriter.write { db in
+            for key in try faces.map({ try FaceRowKey($0, rowIDs: rowIDs) }) {
+                try db.execute(
+                    sql: "UPDATE face SET \(column) = ? WHERE library_root_id = ? AND relative_path = ? AND face_index = ?",
+                    arguments: [value ? 1 : 0, key.rootID, key.path.rawValue, key.index]
+                )
+            }
+        }
+    }
+
+    /// Moves every face of `from` to `into` and removes `from`, keeping `into`'s name and
+    /// birthday. Refused when both are confirmed in one photo or a face of `from` predates
+    /// `into`'s birthday. `from`'s rejections become `into`'s.
+    func mergePerson(_ from: PersonID, into: PersonID) async throws {
+        let dbWriter = try database()
+        try await dbWriter.write { db in
+            let shared = try Int.fetchOne(
+                db,
+                sql: """
+                SELECT COUNT(*) FROM face a JOIN face b
+                  ON a.library_root_id = b.library_root_id AND a.relative_path = b.relative_path
+                WHERE a.person_id = ? AND b.person_id = ?
+                """,
+                arguments: [from.rawValue, into.rawValue]
+            ) ?? 0
+            guard shared == 0 else { throw PeopleRuleViolation.bothInPhotos(count: shared) }
+            if let birthday = try String.fetchOne(db, sql: "SELECT birthday FROM person WHERE id = ?", arguments: [into.rawValue])
+                .flatMap(PersonBirthday.seconds)
+            {
+                let earlier = try Int.fetchOne(
+                    db,
+                    sql: """
+                    SELECT COUNT(*) FROM face f
+                    JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
+                    WHERE f.person_id = ? AND m.best_capture_unix < ?
+                    """,
+                    arguments: [from.rawValue, birthday]
+                ) ?? 0
+                guard earlier == 0 else { throw PeopleRuleViolation.confirmedBeforeBirthday(count: earlier) }
+            }
+            try db.execute(sql: "UPDATE face SET person_id = ? WHERE person_id = ?", arguments: [into.rawValue, from.rawValue])
+            try db.execute(
+                sql: """
+                INSERT OR IGNORE INTO face_rejection (library_root_id, relative_path, face_index, person_id)
+                SELECT library_root_id, relative_path, face_index, ? FROM face_rejection WHERE person_id = ?
+                """,
+                arguments: [into.rawValue, from.rawValue]
+            )
+            try db.execute(sql: "DELETE FROM person WHERE id = ?", arguments: [from.rawValue])
+        }
+    }
+
     func skippedPackageCount(for rootPath: LibraryRootPath) -> Int {
         roots[rootPath]?.skippedPackageCount ?? 0
     }

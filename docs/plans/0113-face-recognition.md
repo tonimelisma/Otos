@@ -68,7 +68,7 @@ Each increment lands on `main` with its own DoD.
    - **Analysis:** `MediaEnricher` reads faces from the same read as the rendering.
    - **Requirements:** rows for analysis, staleness, cascade on move and delete, and purge.
    - **Logs:** `op=face.analyse` with the counts admitted and rejected, and the reasons.
-4. **Grouping, no UI:**
+4. **Grouping, no UI.** *(this PR; the projection moves to increment 6, its first consumer)*
    - **Policy:** `FacePeoplePolicy` (pure):
      - a time window around each face's capture date;
      - best-person-beats-second acceptance;
@@ -79,11 +79,10 @@ Each increment lands on `main` with its own DoD.
      (ADR 0047).
    - **Unnamed groups and unsure faces:** grouping among unconfirmed faces (two or more
      days), and the faces whose best two people are within the margin.
-   - **Projection:** `PeopleProjection`, an actor with its own loop, like
-     `DuplicatesProjection`. It publishes suggestions and is never awaited by a window pass.
-   - **Re-measuring:** the threshold and margin are measured again on the owner's labels,
-     using the app's own embeddings.
-5. **Design spec:** `docs/design/people.md` *(this PR; the owner's answers folded in, the
+   - **Carry-over:** a new reading of a photo moves the user's acts to the face each overlaps.
+   - **Measured** on the owner's labels with the shipped model (research note §8): threshold
+     0.434, margin 0.08, unnamed groups linked at 0.65.
+5. **Design spec:** `docs/design/people.md` *(done, #603; the owner's answers folded in, the
    whole spec awaiting the owner's review)*. It covers:
    - the People sidebar entry;
    - a person's scope;
@@ -92,8 +91,12 @@ Each increment lands on `main` with its own DoD.
    - the birthday.
 
    The `DES-*` rules come first; the owner reviews it before any UI code.
-6. **People UI:** built to that spec. Every action is one owner intent on
-   `CatalogWindowViewModel`, the same for menus, keys and buttons.
+6. **People UI:** built to that spec, after the owner's review. Every action is one owner
+   intent on `CatalogWindowViewModel`, the same for menus, keys and buttons.
+   - **Projection:** `PeopleProjection`, an actor with its own loop, like
+     `DuplicatesProjection`: it runs `FacePeoplePolicy` off every actor and publishes
+     suggestions, and is never awaited by a window pass. It gets the store's people-change
+     signal.
 
 7. **Faces for Immich accounts,** read from the stored Immich preview (ADR 0047): the claim
    that owes them, the read from the stored preview instead of the original, and the

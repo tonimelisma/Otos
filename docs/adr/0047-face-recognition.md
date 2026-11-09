@@ -5,10 +5,12 @@
 Proposed, 2026-11-09. The model, precision and face-admission rules are decided on measured
 evidence (`docs/research/2026-11-07-face-recognition-models.md`).
 
-- **Built:** detection, the analyser and the model (#593), and faces as a stored enrichment
-  product (plan 0113, increment 3).
-- **Still Proposed:** people and grouping, the People UI (specified in
-  `docs/design/people.md`), and faces for Immich accounts, until plan 0113 builds them.
+- **Built:** detection, the analyser and the model (#593), faces as a stored enrichment
+  product (#601), and the stored acts, the people and the grouping policy (plan 0113,
+  increment 4).
+- **Still Proposed:** the People UI and the projection that publishes suggestions to it
+  (specified in `docs/design/people.md`), and faces for Immich accounts, until plan 0113 builds
+  them.
 
 ## Context
 
@@ -113,20 +115,23 @@ grouping had put with the right child.
   about two years of it, by exact cosine with Accelerate. No index and no vector database: a
   family library holds tens of thousands of faces.
 - **Acceptance:** a suggestion is made only when the best person reaches the threshold and beats
-  the second-best person by a margin. Starting values are the measured threshold 0.434
-  (0.1% of different-person pairs accepted) and margin 0.05, which grouping re-measures when it
-  is built.
+  the second-best person by a margin: threshold 0.434 (0.1% of different-person pairs
+  accepted), margin 0.08, faces compared within ± 2 years. Measured by simulating the review
+  on the owner's labels: every child face reached, 9 wrong suggestions out of 521 (research
+  note, section 8).
 - **Hard rules:**
   - Two faces in one photo are never the same person.
   - A face from before a person's birthday is never theirs.
 - **Years:** a child across three or more years is reached by chaining through the years between
   them. Chained matches are suggestions that the user confirms, never automatic assignments.
-- **Unsure faces:** a face whose best two people are both above the threshold but within the
-  margin of each other is not a suggestion. It is an *unsure* face, offered in a list of its own
+- **Unsure faces:** a face whose best person reaches the threshold but whose runner-up is within
+  the margin is not a suggestion. It is an *unsure* face, offered in a list of its own
   with both candidates and no answer (owner decision, 2026-11-10; `docs/design/people.md`).
-- **Unnamed groups:** faces that match no person are grouped among themselves, by the same rules
-  (threshold, margin, the same-photo rule), so a library with nobody named yet gets something to
-  name. A group is offered only when its faces come from at least two different days, so a
+- **Unnamed groups:** faces that match no person are grouped among themselves, so a library with
+  nobody named yet gets something to name. Two faces are linked when their similarity reaches
+  0.65, strongest first, never two faces of one photo; hierarchical linkage was as pure but
+  cannot hold a large library's pairs in memory (measured: 100 groups, 1,988 faces, none
+  wrong). A group is offered only when its faces come from at least two different days, so a
   stranger caught once never enters the review (owner decision).
 - **What the user's acts store** (overlay, ADR 0008; undoable):
   - a confirmed face's person;

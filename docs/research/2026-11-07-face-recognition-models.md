@@ -275,7 +275,52 @@ the user to confirm, but it never produced a wrong match. Immich's real preview 
 the one tested. An Immich account's photos are read for faces from their stored preview, with
 no original download.
 
-## 8. Conclusions
+## 8. Grouping rules (2026-11-10)
+
+`tools/grouping_sim.py`, on the 3,293 run-2 faces (unlabelled strangers included) with the
+shipped model's int8 embeddings, scored against the owner's labels.
+
+**Unnamed groups, nobody named yet.** A group is offered only when its faces span two or more
+days, and two faces of one photo are never grouped together.
+
+| Rule | Groups offered | Faces in them | Wrong faces |
+| --- | --- | --- | --- |
+| Single linkage at 0.45 / 0.55 | 119 / 111 | 2,657 / 2,502 | 318 / 259 |
+| Average linkage at 0.45 / 0.50 | 182 / 198 | 2,548 / 2,419 | 1 / 1 |
+| Complete linkage at 0.50 | 382 | 2,334 | 0 |
+| Faces linked at similarity ≥ 0.60 | 106 | 2,340 | 238 |
+| **Faces linked at similarity ≥ 0.65** | **100** | **1,988** | **0** |
+| Mutual 5 nearest at ≥ 0.50 | 244 | 1,879 | 6 |
+
+Hierarchical linkage needs every pair of faces in memory, which a library of tens of
+thousands of faces cannot hold. Linking faces at 0.65 is computed in blocks, is as pure as
+complete linkage, and makes fewer, larger groups. Lower links chain people together.
+
+**Suggestions across years.** One year of each child (their most photographed year) was
+confirmed. Then rounds were simulated: each unconfirmed face is compared with each person's
+confirmed faces within ± 2 years, a simulated user confirms right suggestions and rejects wrong
+ones, and the next round starts from the larger set.
+
+| Threshold | Margin | Rounds | Confirmed | Wrong suggestions | Unsure child faces | Reached |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.400 | 0.05 | 4 | 512 | 26 | 0 | all 744 |
+| 0.434 | 0.03 | 4 | 512 | 16 | 0 | all 744 |
+| 0.434 | 0.05 | 4 | 512 | 14 | 0 | all 744 |
+| **0.434** | **0.08** | **4** | **512** | **9** | **0** | **all 744** |
+| 0.470 | 0.08 | 4 | 509 | 6 | 0 | 741 |
+
+At 0.434 and 0.05, the 14 wrong suggestions were:
+- 8 of people the owner had not named;
+- 3 of another child, Milo, also not named;
+- 2 of Ian suggested as Sam, the sibling case;
+- 1 of an unnamed face suggested as Tyler.
+
+Each is rejected once and stays rejected. Naming more people gives those faces a better
+match.
+
+**Chosen:** threshold 0.434, margin 0.08, a ± 2-year window, unnamed groups linked at 0.65.
+
+## 9. Conclusions
 
 1. **Model:** AdaFace IR-101 (WebFace12M).
 2. **Precision and engine:** int8 weights, on the CPU.
@@ -288,10 +333,10 @@ no original download.
    - the alignment check, box height × scale between 50 and 150;
    - an opaque crop.
 4. **Matching:**
-   - **Compare:** confirmed faces, mainly within about two years of the new face.
+   - **Compare:** confirmed faces within two years of the new face.
    - **Accept:** only when the best person beats the second.
-   - **Starting values:** threshold 0.434 (FAR 10⁻³ on these labels) and margin 0.05, to be
-     re-measured when grouping is built.
+   - **Values (section 8):** threshold 0.434 (FAR 10⁻³ on these labels) and margin 0.08;
+     unnamed groups linked at 0.65.
    - **Years apart:** a gap of three or more years needs chaining through the years between,
      confirmed by the user.
 5. **Immich accounts:** read faces from the stored Immich preview (section 7), not the

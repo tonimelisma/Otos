@@ -395,6 +395,47 @@ nonisolated enum CatalogSchema {
         ]
     }
 
+    /// People (ADR 0047). What the user decides about faces is overlay, and it outlives a
+    /// new reading of the same photo: `writeFaces` carries each act to the new face it
+    /// overlaps.
+    /// - `person`: a name (optional until the user gives one) and an optional birthday, as
+    ///   `YYYY-MM-DD`.
+    /// - `face.person_id`: the person the user confirmed the face as; removing the person
+    ///   returns the face to unnamed (`ON DELETE SET NULL`).
+    /// - `face.is_not_face`: the user said this detection is not a face. Not carried to a new
+    ///   reading: a changed file is read afresh.
+    /// - `face.is_ignored`: the face belongs to a group the user ignored.
+    /// - `face_rejection`: "not this person", so the suggestion never returns; removing the
+    ///   person forgets them.
+    static let peopleMigrationIdentifier = "v19_people"
+
+    static let peopleStatements: [String] = [
+        """
+        CREATE TABLE person (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            birthday TEXT
+        )
+        """,
+        "ALTER TABLE face ADD COLUMN person_id INTEGER REFERENCES person(id) ON DELETE SET NULL",
+        "ALTER TABLE face ADD COLUMN is_not_face INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE face ADD COLUMN is_ignored INTEGER NOT NULL DEFAULT 0",
+        "CREATE INDEX idx_face_person ON face(person_id) WHERE person_id IS NOT NULL",
+        """
+        CREATE TABLE face_rejection (
+            library_root_id INTEGER NOT NULL,
+            relative_path TEXT NOT NULL,
+            face_index INTEGER NOT NULL,
+            person_id INTEGER NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+            PRIMARY KEY (library_root_id, relative_path, face_index, person_id),
+            FOREIGN KEY (library_root_id, relative_path, face_index)
+                REFERENCES face(library_root_id, relative_path, face_index)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        )
+        """,
+        "CREATE INDEX idx_face_rejection_person ON face_rejection(person_id)",
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (
