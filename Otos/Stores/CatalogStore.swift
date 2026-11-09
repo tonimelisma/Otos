@@ -3678,6 +3678,50 @@ extension CatalogStore {
         return (changed, purgedImages)
     }
 
+    /// Rows of `rootPath` owed their source's own thumbnail and preview: visible, sized,
+    /// not yet rendered by Otos, and with no source products or older ones than the file
+    /// (ADR 0046 §7). In path order after `cursor`, so a caller pages through them.
+    func sourceProductCandidates(
+        rootPath: LibraryRootPath,
+        after cursor: MediaRelativePath?,
+        limit: Int
+    ) async throws -> [SourceProductCandidate] {
+        guard let rootID = roots.rowIDSnapshot()[rootPath] else {
+            return []
+        }
+        return try await database().read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT relative_path, kind, byte_size, CAST(content_modified_at_unix AS INTEGER) AS mtime
+                FROM media_asset
+                WHERE library_root_id = ?
+                  AND relative_path > ?
+                  AND hidden_by_source = 0
+                  AND byte_size IS NOT NULL
+                  AND rendered_source_size IS NULL
+                  AND (
+                      source_products_size IS NOT byte_size
+                      OR source_products_mtime IS NOT CAST(content_modified_at_unix AS INTEGER)
+                  )
+                ORDER BY relative_path
+                LIMIT ?
+                """,
+                arguments: [rootID, cursor?.rawValue ?? "", limit]
+            ).map { row in
+                let kind: String? = row["kind"]
+                return SourceProductCandidate(
+                    id: MediaAssetID(
+                        libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: row["relative_path"])
+                    ),
+                    kind: kind.flatMap(MediaKind.init(rawValue:)),
+                    byteSize: row["byte_size"],
+                    contentModifiedAtSeconds: row["mtime"]
+                )
+            }
+        }
+    }
+
     /// `file` with the size its row already holds when the report carries none.
     private nonisolated static func keepingStoredSize(
         _ file: ScannedMediaFile,

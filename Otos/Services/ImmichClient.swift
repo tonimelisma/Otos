@@ -86,6 +86,24 @@ nonisolated struct ImmichClient: Sendable {
         _ = try await send(request("sync/ack", method: "POST", token: token, body: body))
     }
 
+    // MARK: - Images
+
+    /// Immich's own preview of an asset (`size=preview`): a JPEG at the server's
+    /// configured size, orientation applied (`docs/research/2026-11-07-immich-derived-assets.md`).
+    /// A read; the size and colour profile are whatever the file says.
+    func preview(assetID: String, token: String) async throws -> Data {
+        let endpoint = server.appending(path: "api").appending(path: "assets")
+            .appending(path: assetID).appending(path: "thumbnail")
+        var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "size", value: "preview")]
+        guard let url = components?.url else {
+            throw ImmichClientError.malformedResponse
+        }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return try await send(request)
+    }
+
     // MARK: - Transport
 
     private func request(_ path: String, method: String, token: String? = nil, body: Data? = nil) throws -> URLRequest {

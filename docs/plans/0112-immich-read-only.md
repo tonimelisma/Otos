@@ -59,12 +59,13 @@ Each increment lands on `main` with its own DoD.
      `ImmichCatalogSync` with acks after the Store applies a batch, trash
      (`hidden_by_source`, v16), permanent delete, locked and reset. Tested with a
      `URLProtocol` stub, a scripted stream, and against the disposable local server.
-   - **6b:** the Add Immich Account sheet (server URL, email, password, with validation);
+   - **6b** *(done: #587)*: the Add Immich Account sheet (server URL, email, password, with validation);
      the sync started at launch, on add, and when the server becomes reachable, then on a
      poll schedule; reachability and the sidebar's offline state; removal deletes the
      Keychain item and logs the session out. The `AGENTS.md` restatements land here.
-   - **6c:** Immich's thumbnail and preview downloaded on sync as source-provisional
-     products, sizes and profiles read from each file.
+   - **6c:** Immich's preview downloaded after each sync pass for every asset owed one,
+     with Otos's preview and thumbnail drawn from it as source-provisional products
+     (v17 stamp), sizes and profiles read from each file.
 7. **Feature:** original download in the executor branch, for work that needs the bytes
    (full-resolution zoom, edit, export, digest), with every missing product, Otos's
    rendering included, written from that one read. Render signatures keyed by pipeline.

@@ -343,6 +343,17 @@ nonisolated enum CatalogSchema {
         "ALTER TABLE media_asset ADD COLUMN hidden_by_source INTEGER NOT NULL DEFAULT 0",
     ]
 
+    /// The `(size, mtime)` a source's own thumbnail and preview were made for (ADR 0035's
+    /// source-provisional products, ADR 0046 §7): a row whose file has changed since is
+    /// owed newer ones. Separate from the rendering stamp, which only Otos's rendering
+    /// writes.
+    static let sourceProductsMigrationIdentifier = "v17_media_asset_source_products"
+
+    static let sourceProductsStatements: [String] = [
+        "ALTER TABLE media_asset ADD COLUMN source_products_size INTEGER",
+        "ALTER TABLE media_asset ADD COLUMN source_products_mtime INTEGER",
+    ]
+
     static let baselineStatements: [String] = [
         """
         CREATE TABLE library_root (

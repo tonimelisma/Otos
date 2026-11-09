@@ -1192,6 +1192,20 @@ nonisolated struct SourceListedItem: Hashable, Sendable {
     let isHiddenBySource: Bool
 }
 
+/// A row whose source's own thumbnail and preview are missing or older than its file
+/// (ADR 0046 §7).
+nonisolated struct SourceProductCandidate: Equatable, Sendable {
+    let id: MediaAssetID
+    let kind: MediaKind?
+    let byteSize: Int64
+    let contentModifiedAtSeconds: Int?
+
+    /// The item's folder: an Immich asset's ID (ADR 0046 §2).
+    var itemFolder: String {
+        String(id.relativePath.rawValue.split(separator: "/", maxSplits: 1).first ?? "")
+    }
+}
+
 /// One batch of a source's change stream, applied in one transaction. A source that
 /// names each item by a folder of its own (an Immich asset ID, ADR 0046 §2) reports a
 /// size and a permanent deletion by that folder.

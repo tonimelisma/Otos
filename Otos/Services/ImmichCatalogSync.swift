@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import OSLog
 import UniformTypeIdentifiers
 
@@ -9,6 +10,8 @@ nonisolated protocol ImmichSyncSource: Sendable {
     func events() async throws -> any AsyncSequence<ImmichSyncEvent, any Error>
     /// Moves the cursor past `acks`.
     func acknowledge(_ acks: [String]) async throws
+    /// The server's own preview of an asset.
+    func preview(assetID: String) async throws -> Data
 }
 
 /// The server, through one logged-in session.
@@ -22,6 +25,10 @@ nonisolated struct ImmichSessionSyncSource: ImmichSyncSource {
 
     func acknowledge(_ acks: [String]) async throws {
         try await client.acknowledge(acks, token: token)
+    }
+
+    func preview(assetID: String) async throws -> Data {
+        try await client.preview(assetID: assetID, token: token)
     }
 }
 
@@ -100,8 +107,19 @@ actor ImmichCatalogSync {
         }
     }
 
-    /// One pass, applied to its end. A reset turns it into one full resync.
+    /// One pass: the stream applied to its end, then the server's own images fetched for
+    /// every row still owed them (ADR 0046 §7). The pass's outcome is the stream's; a
+    /// product that could not be fetched stays owed and is asked for again next pass.
     func pass() async -> ImmichSyncPassOutcome {
+        let outcome = await syncListing()
+        if case .synced = outcome {
+            _ = await fetchProducts()
+        }
+        return outcome
+    }
+
+    /// The stream applied to its end. A reset turns it into one full resync.
+    private func syncListing() async -> ImmichSyncPassOutcome {
         switch await stream(full: false) {
         case let .done(outcome):
             return outcome
@@ -292,6 +310,157 @@ actor ImmichCatalogSync {
                 // types are never Otos media (product rule).
                 break
             }
+        }
+    }
+
+    // MARK: - Source products (ADR 0046 §7)
+
+    /// What a product pass did.
+    enum ProductPassOutcome: Equatable, Sendable {
+        /// Every owed row was tried; `made` got images, `unreadable` did not decode.
+        case finished(made: Int, unreadable: Int)
+        /// The server stopped answering; the rest stay owed.
+        case serverFailed(made: Int)
+        /// The images' volume is at its free-space floor (ADR 0027); the rest stay owed.
+        case floorHeld(made: Int)
+    }
+
+    /// Rows read from the Store per page.
+    static let productPageSize = 64
+
+    /// Fetches Immich's preview for every row owed the server's own images and writes
+    /// Otos's two products from it, unstamped as a rendering (ADR 0035): the preview at
+    /// the server's size, for a still, and the grid thumbnail drawn from it. One request
+    /// per asset; Immich's separate thumbnail is never needed.
+    func fetchProducts() async -> ProductPassOutcome {
+        guard let directory = store.thumbnailDirectory else {
+            return .finished(made: 0, unreadable: 0)
+        }
+        var tally = ProductTally()
+        var cursor: MediaRelativePath?
+        while true {
+            let page: [SourceProductCandidate]
+            do {
+                page = try await store.sourceProductCandidates(
+                    rootPath: rootPath, after: cursor, limit: Self.productPageSize
+                )
+            } catch {
+                OtosLog.thumbnails.errorOperation("immich.products", phase: "readFailed", fields: [
+                    "rootPath": rootPath.rawValue, "error": String(describing: error),
+                ])
+                break
+            }
+            guard let last = page.last else {
+                break
+            }
+            cursor = last.id.relativePath
+            if let stop = await fetch(page, into: directory, tally: &tally) {
+                return stop
+            }
+        }
+        OtosLog.thumbnails.noticeOperation("immich.products", phase: "finished", fields: [
+            "rootPath": rootPath.rawValue, "made": "\(tally.made)", "unreadable": "\(tally.unreadable)",
+        ])
+        return .finished(made: tally.made, unreadable: tally.unreadable)
+    }
+
+    private struct ProductTally {
+        var made = 0
+        var unreadable = 0
+    }
+
+    /// One page of owed rows: each preview fetched and staged, then the page applied in
+    /// one batch. A stop — the floor, or the server not answering — applies what was made
+    /// and ends the pass.
+    private func fetch(
+        _ page: [SourceProductCandidate],
+        into directory: URL,
+        tally: inout ProductTally
+    ) async -> ProductPassOutcome? {
+        var results: [EnrichmentResult] = []
+        for candidate in page {
+            guard await Self.admitsProducts(onVolumeOf: directory) else {
+                await apply(results)
+                OtosLog.thumbnails.noticeOperation("immich.products", phase: "floorHeld", fields: [
+                    "rootPath": rootPath.rawValue, "made": "\(tally.made)",
+                ])
+                return .floorHeld(made: tally.made)
+            }
+            let data: Data
+            do {
+                data = try await source.preview(assetID: candidate.itemFolder)
+            } catch {
+                await apply(results)
+                OtosLog.thumbnails.noticeOperation("immich.products", phase: "serverFailed", fields: [
+                    "rootPath": rootPath.rawValue, "made": "\(tally.made)", "error": String(describing: error),
+                ])
+                return .serverFailed(made: tally.made)
+            }
+            if let result = await Self.products(from: data, for: candidate, in: directory) {
+                results.append(result)
+                tally.made += 1
+            } else {
+                tally.unreadable += 1
+            }
+        }
+        await apply(results)
+        return nil
+    }
+
+    private func apply(_ results: [EnrichmentResult]) async {
+        guard !results.isEmpty else {
+            return
+        }
+        _ = await store.applyEnrichmentBatch(results)
+    }
+
+    /// The free-space floor every background download keeps (ADR 0027), with a megabyte
+    /// for the images about to be written.
+    @concurrent
+    private static func admitsProducts(onVolumeOf directory: URL) async -> Bool {
+        FreeSpaceFloor.admits(1_000_000, available: FreeSpaceFloor.availableBytes(onVolumeOf: directory))
+    }
+
+    /// Decodes the server's preview and stages Otos's products from it, off the actor: a
+    /// still gets the preview at the server's size and the thumbnail drawn from it; a
+    /// video, whose preview is one frame, gets only the thumbnail (ADR 0035: videos have no
+    /// stored preview). Nil, logged, when the data is no image.
+    @concurrent
+    static func products(
+        from data: Data,
+        for candidate: SourceProductCandidate,
+        in directory: URL
+    ) async -> EnrichmentResult? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else {
+            OtosLog.thumbnails.noticeOperation("immich.products", phase: "unreadable", fields: [
+                "relativePath": candidate.id.relativePath.rawValue, "bytes": "\(data.count)",
+            ])
+            return nil
+        }
+        do {
+            let preview = candidate.kind == .video ? nil : try ThumbnailStore.stagePreview(
+                image, finalRelativeName: ThumbnailStore.previewRelativeName(for: candidate.id), in: directory
+            )
+            let thumbnail = try ThumbnailStore.stage(
+                ThumbnailStore.scaled(image, toLongEdge: ThumbnailStore.maxPixelSize),
+                finalRelativeName: ThumbnailStore.relativeName(for: candidate.id),
+                in: directory
+            )
+            return EnrichmentResult(
+                id: candidate.id,
+                metadata: nil,
+                rendering: EnrichedRendering(generatedThumbnail: thumbnail, generatedPreview: preview, origin: .source),
+                sourceSize: candidate.byteSize,
+                sourceMTimeSeconds: candidate.contentModifiedAtSeconds,
+                contentHash: nil
+            )
+        } catch {
+            OtosLog.thumbnails.errorOperation("immich.products", phase: "stageFailed", fields: [
+                "relativePath": candidate.id.relativePath.rawValue, "error": String(describing: error),
+            ])
+            return nil
         }
     }
 
