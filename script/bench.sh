@@ -193,7 +193,7 @@ def load(path):
     return {row["name"]: row for row in (json.loads(line) for line in open(path) if line.strip())}
 before, after = load(sys.argv[4]), load(sys.argv[5])
 flagged = []
-print("base %s  head %s  flag above +%.1f%% instructions" % (base[:9], head[:9], threshold))
+print("base %s  head %s  flag above +%.1f%% instructions, beyond both runs' spread" % (base[:9], head[:9], threshold))
 print("%-36s %14s %14s %9s %10s %10s" % ("case", "base M instr", "head M instr", "change", "base ms", "head ms"))
 for name in sorted(after):
     new = after[name]
@@ -202,9 +202,20 @@ for name in sorted(after):
         print("%-36s %14s %14.1f %9s %10s %10.1f  new case" % (name, "-", new["instructions"] / 1e6, "-", "-", new["medianMilliseconds"]))
         continue
     change = (new["instructions"] - old["instructions"]) / old["instructions"] * 100
-    mark = "  FLAG" if change > threshold else ""
-    if mark:
+    # A rise counts only when it is beyond both runs' own noise: each record's spread is
+    # its samples' range over its median, so no base sample exceeds median × (1 + spread)
+    # and no head sample is below median × (1 − spread). A rise whose ranges overlap is
+    # one the cases' own variation could make, and is reported, not flagged.
+    base_highest = old["instructions"] * (1 + old.get("instructionSpread", 0))
+    head_lowest = new["instructions"] * (1 - new.get("instructionSpread", 0))
+    if change > threshold and head_lowest > base_highest:
+        mark = "  FLAG"
         flagged.append(name)
+    elif change > threshold:
+        mark = "  within noise (spread %.1f%% / %.1f%%)" % (
+            old.get("instructionSpread", 0) * 100, new.get("instructionSpread", 0) * 100)
+    else:
+        mark = ""
     print("%-36s %14.1f %14.1f %+8.1f%% %10.1f %10.1f%s" % (
         name, old["instructions"] / 1e6, new["instructions"] / 1e6, change,
         old["medianMilliseconds"], new["medianMilliseconds"], mark))

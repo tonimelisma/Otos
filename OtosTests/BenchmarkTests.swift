@@ -99,18 +99,36 @@ struct BenchmarkTests {
 
     /// The work enrichment does for each face it reads (ADR 0047): aligning five points, cutting
     /// the opaque 112 px crop out of a 12-megapixel photo, and the embedding model's prediction.
+    /// Alignment and cropping are batched (1,000 and 16) so each case retires enough
+    /// instructions to be steady; one alignment alone is lost in the measurement's own cost.
     @Test func faceCases() async throws {
         let moved = CGAffineTransform(rotationAngle: 0.2).scaledBy(x: 5.5, y: 5.5).translatedBy(x: 380, y: 250)
         let points = FaceAlignment.template.map { $0.applying(moved) }
-        try await Benchmark.measure("face.align") {
-            #expect(FaceAlignment.similarity(from: points, to: FaceAlignment.template) != nil)
+        try await Benchmark.measure("face.align.x1000") {
+            var aligned = 0
+            for _ in 0 ..< 1000 where FaceAlignment.similarity(from: points, to: FaceAlignment.template) != nil {
+                aligned += 1
+            }
+            #expect(aligned == 1000)
         }
 
         let photo = try CIImage(cgImage: FaceAnalyzerTests.patternImage(seed: 4, size: 4000))
         let transform = try #require(FaceAlignment.similarity(from: points, to: FaceAlignment.template))
         let context = CIContext()
-        try await Benchmark.measure("face.crop") {
-            #expect(FaceAnalyzer.alignedCrop(of: photo, transform: transform, context: context) != nil)
+        try await Benchmark.measure("face.crop.x16") {
+            var crops = 0
+            for _ in 0 ..< 16 where FaceAnalyzer.alignedCrop(of: photo, transform: transform, context: context) != nil {
+                crops += 1
+            }
+            #expect(crops == 16)
+        }
+
+        // Grouping over a library the size of the bake-off's: 3,000 faces, 300 of them
+        // confirmed across 10 people, the rest open (ADR 0047).
+        let (faces, people) = Self.groupingLibrary(faces: 3000, people: 10, confirmedEach: 30)
+        try await Benchmark.measure("people.suggestions") {
+            let result = FacePeoplePolicy.suggestions(faces: faces, people: people)
+            #expect(!result.suggestions.isEmpty)
         }
 
         let model = try FaceEmbeddingModel(bundle: Bundle(for: CatalogWindowViewModel.self))
@@ -119,5 +137,32 @@ struct BenchmarkTests {
             let embedding = try model.embedding(of: crop)
             #expect(embedding.count == FaceEmbeddingModel.dimensions)
         }
+    }
+
+    /// Faces of `people` people, each a direction in embedding space with small per-face
+    /// variation, spread over ten years; the first `confirmedEach` of each person confirmed.
+    static func groupingLibrary(faces count: Int, people: Int, confirmedEach: Int) -> ([FaceFact], [PersonFact]) {
+        var generator = SplitMix64(seed: 7)
+        let root = LibraryRootPath(rawValue: "/Bench")
+        var faces: [FaceFact] = []
+        for index in 0 ..< count {
+            let person = index % people
+            var vector = [Float](repeating: 0, count: FaceEmbeddingModel.dimensions)
+            vector[person] = 1
+            for _ in 0 ..< 8 {
+                vector[people + Int(generator.next() % UInt64(FaceEmbeddingModel.dimensions - people))] += 0.15
+            }
+            let length = vector.map { $0 * $0 }.reduce(0, +).squareRoot()
+            faces.append(FaceFact(
+                id: FaceID(asset: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "\(index).jpg")), index: 0),
+                captureSeconds: 1_300_000_000 + Double(index) * 105_000,
+                embedding: vector.map { $0 / length },
+                person: index / people < confirmedEach ? PersonID(rawValue: Int64(person + 1)) : nil,
+                isNotFace: false,
+                isIgnored: false,
+                rejected: []
+            ))
+        }
+        return (faces, (1 ... people).map { PersonFact(id: PersonID(rawValue: Int64($0)), birthdaySeconds: nil) })
     }
 }

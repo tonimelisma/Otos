@@ -367,6 +367,11 @@ nonisolated struct LibraryRoot: Identifiable, Hashable {
         kind.claimsEveryProductTogether
     }
 
+    /// `LibraryRootKind.firstClaim`.
+    var firstClaim: EnrichmentClaim {
+        kind.firstClaim
+    }
+
     /// `LibraryRootKind.producesAfterMetadata`.
     var producesAfterMetadata: Bool {
         kind.producesAfterMetadata
@@ -512,6 +517,13 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
         case .library: true
         case .removableVolume, .deviceMTP, .immichAccount: false
         }
+    }
+
+    /// The claim a row of this kind is first enriched under (ADR 0018, ADR 0047): a fixed
+    /// library's every product, faces included, or metadata first. A card's renderings and
+    /// digests come later, under `EnrichmentClaim.cardProducts`.
+    var firstClaim: EnrichmentClaim {
+        claimsEveryProductTogether ? .library : .metadata
     }
 
     /// The kinds that have `capability`, as a SQL list of quoted `library_root.kind`
@@ -787,8 +799,9 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     // Filesystem facts (scan) and enrichment overlay have disjoint writers: the scan
     // refreshes facts and preserves these fields, while enrichment writes these and
     // preserves facts. Staleness is derived, never stored, per product (ADR 0009): the
-    // metadata, the rendering and the digest each record the `(size, mtime-seconds)` they
-    // were made from, and each is stale when the file's current pair differs.
+    // metadata, the rendering, the digest and the faces each record the
+    // `(size, mtime-seconds)` they were made from, and each is stale when the file's
+    // current pair differs.
     let thumbnailPath: String?
     let bestCaptureDate: Date?
     let bestKind: MediaKind?
@@ -801,6 +814,8 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     let contentHash: XXH3Digest128?
     let contentHashSourceSize: Int64?
     let contentHashSourceMTimeSeconds: Int?
+    let facesSourceSize: Int64?
+    let facesSourceMTimeSeconds: Int?
     let mediaChoice: MediaChoice
 
     init(
@@ -823,6 +838,8 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         contentHash: XXH3Digest128? = nil,
         contentHashSourceSize: Int64? = nil,
         contentHashSourceMTimeSeconds: Int? = nil,
+        facesSourceSize: Int64? = nil,
+        facesSourceMTimeSeconds: Int? = nil,
         mediaChoice: MediaChoice = .default
     ) {
         self.libraryRootPath = libraryRootPath
@@ -844,6 +861,8 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         self.contentHash = contentHash
         self.contentHashSourceSize = contentHashSourceSize
         self.contentHashSourceMTimeSeconds = contentHashSourceMTimeSeconds
+        self.facesSourceSize = facesSourceSize
+        self.facesSourceMTimeSeconds = facesSourceMTimeSeconds
         self.mediaChoice = mediaChoice
         sortKey = MediaSortKey.make(libraryRootPath: libraryRootPath, relativePath: relativePath)
     }
@@ -876,12 +895,19 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     /// True when the persisted content hash is missing, malformed, or does not match
     /// the current filesystem signature. Meaningless on its own: a root that never
     /// hashes (`.removableVolume`, see ADR 0018) must not be judged stale by this
-    /// alone. Callers gate it behind `everyProduct`.
+    /// alone. Callers gate it behind the claim.
     var hashStale: Bool {
         contentHash == nil
             || contentHashSourceSize == nil
             || contentHashSourceMTimeSeconds == nil
             || !stampIsCurrent(size: contentHashSourceSize, mtimeSeconds: contentHashSourceMTimeSeconds)
+    }
+
+    /// True when the faces stamp (`FaceAnalyzer`'s reading of a still, ADR 0047) is not valid
+    /// for the current filesystem signature. Owed only by a row claimed under
+    /// `EnrichmentClaim.library`; callers gate it behind the claim.
+    var facesStale: Bool {
+        !stampIsCurrent(size: facesSourceSize, mtimeSeconds: facesSourceMTimeSeconds)
     }
 
     /// Whether a product's stamp names the file's current `(size, mtime-seconds)`: the one
@@ -890,13 +916,16 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         size == (byteSize ?? -1) && mtimeSeconds == Self.mtimeSeconds(contentModifiedAt)
     }
 
-    /// True when metadata is stale, or — only when the row is claimed for every product —
-    /// its rendering or digest is. `everyProduct` is the claim predicate the Store chose
-    /// for the row's root and pass (ADR 0018); this pure value type never derives it
-    /// itself, so a caller cannot forget to supply it and silently fall back to a wrong
-    /// default. The Swift twin of `EnrichmentClaimGateway.stalenessSQLPredicate`.
-    func needsEnrichment(everyProduct: Bool) -> Bool {
-        metadataStale || (everyProduct && (renderingStale || hashStale))
+    /// True when a product `claim` covers is stale. The claim is the one the Store chose for
+    /// the row's root and pass (ADR 0018); this pure value type never derives it itself, so a
+    /// caller cannot forget to supply it and silently fall back to a wrong default. The Swift
+    /// twin of `EnrichmentClaimGateway.stalenessSQLPredicate(_:)`.
+    func needsEnrichment(_ claim: EnrichmentClaim) -> Bool {
+        switch claim {
+        case .metadata: metadataStale
+        case .cardProducts: metadataStale || renderingStale || hashStale
+        case .library: metadataStale || renderingStale || hashStale || facesStale
+        }
     }
 }
 
@@ -1235,6 +1264,8 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
     case outOfSpace
     /// An Immich server address that is not an http or https URL with a host.
     case invalidRemoteServer
+    /// A stored face whose landmarks or embedding are not the size the catalog writes.
+    case malformedFaceRow(MediaAssetID)
 
     var errorDescription: String? {
         switch self {
@@ -1259,6 +1290,8 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
             "The disk is full."
         case .invalidRemoteServer:
             "Enter the server’s web address, starting with http:// or https://."
+        case .malformedFaceRow:
+            "A face stored in the catalog could not be read."
         }
     }
 }

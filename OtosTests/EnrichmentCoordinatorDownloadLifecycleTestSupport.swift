@@ -45,7 +45,8 @@ private func datalessLifecycleEnricher(state: FakeMaterialization) -> MediaEnric
                 thumbnailPath: "t.jpg",
                 sourceSize: size,
                 sourceMTimeSeconds: mtime,
-                contentHash: .empty
+                contentHash: .empty,
+                faces: .noneFound
             )
         )
     }

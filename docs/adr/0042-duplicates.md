@@ -176,10 +176,13 @@ captures by capture metadata (`SamePhotoPolicy`):
 
 Other rules:
 - A RAW is never grouped with a processed file.
+- A thumbnail an Immich account drew (ADR 0046 §7) is never paired with one made on this
+  Mac. The two pipelines draw one photo differently enough to break gate 2, so a pair is
+  proposed only within one (`SamePhotoCandidate.drawnBy`).
 - Copies already in an identical group are left to that group.
 - Same-photo groups keep the camera original by the keeper rule above. Keep All Copies sets
   them aside by the same per-pair memory.
-- Candidates are blocked by kind, display aspect and whole-second instant, so a library is
+- Candidates are blocked by kind, pipeline, display aspect and whole-second instant, so a library is
   never compared all against all. Pairs are proposed from column facts alone, read as
   pairing facts only (`SamePhotoCandidate`). The copy a group lists, the grayscale
   render and the sub-seconds — which live in the stored metadata record — are read only for the stills a proposed pair names
@@ -196,8 +199,9 @@ Other rules:
 `RenderSignatureRefresher` is the one producer of signatures:
 - It reads stored thumbnails only, so it never opens an original or downloads one.
 - It records the thumbnail each signature came from (`render_signature_source`: path,
-  rendered revision, enrichment stamps). A re-rendered thumbnail makes the signature stale
-  with no write site having to know.
+  rendered revision, enrichment stamps, and a source-drawn thumbnail's source-products
+  stamp). A re-rendered thumbnail makes the signature stale with no write site having to
+  know, and so do a changed file's new source images, which land at the same path.
 - It is one loop woken by the Store's change notifications (ADR 0032).
 
 MediaMetadata 0.9's new fields are backfilled the way new library fields always are

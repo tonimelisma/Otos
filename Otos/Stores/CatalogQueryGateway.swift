@@ -192,6 +192,7 @@ nonisolated enum CatalogQueryGateway {
                        created_at_unix, content_modified_at_unix,
                        metadata_source_size, metadata_source_mtime, rendered_source_size, rendered_source_mtime,
                        content_hash_xxh3_128, content_hash_source_size, content_hash_source_mtime,
+                       faces_source_size, faces_source_mtime,
                        thumbnail_path,
                        duration_seconds,
                        best_capture_unix, best_kind, best_format, media_choice
@@ -659,6 +660,8 @@ private nonisolated func storedAsset(from row: Row) -> StoredAsset {
         contentHash: (row["content_hash_xxh3_128"] as Data?).flatMap(XXH3Digest128.init(data:)),
         contentHashSourceSize: row["content_hash_source_size"],
         contentHashSourceMTimeSeconds: row["content_hash_source_mtime"],
+        facesSourceSize: row["faces_source_size"],
+        facesSourceMTimeSeconds: row["faces_source_mtime"],
         mediaChoice: MediaChoice(rawValue: row["media_choice"] ?? "") ?? .default
     )
 }

@@ -29,6 +29,7 @@ struct SamePhotoTests {
     private static func still(
         _ path: String,
         raw: Bool = false,
+        drawnBy: EnrichedRendering.Origin = .otos,
         instant: Double? = 1000,
         subsecond: String? = nil,
         model: String? = "ILCE-6700",
@@ -40,6 +41,7 @@ struct SamePhotoTests {
             candidate: SamePhotoCandidate(
                 id: id,
                 isRaw: raw,
+                drawnBy: drawnBy,
                 captureInstant: instant,
                 cameraModel: instant == nil ? nil : model,
                 serialNumber: nil,
@@ -169,6 +171,21 @@ struct SamePhotoTests {
             Self.still("DSC_1.JPG", subsecond: "123"),
         ]
         #expect(Self.groups(candidates, signatures: ["DSC_1.ARW": Self.gray(90), "DSC_1.JPG": Self.gray(90)]).isEmpty)
+    }
+
+    /// ADR 0046 §7: an account's thumbnail is Immich's image until Otos renders the
+    /// original, and the two pipelines' images of one photo are not compared.
+    @Test func aSourceDrawnAndAnOtosRenderedThumbnailNeverPair() {
+        let candidates = [
+            Self.still("Pictures/IMG_1.JPG", subsecond: "123"),
+            Self.still("asset-1/IMG_1.JPG", drawnBy: .source, subsecond: "123"),
+        ]
+        #expect(SamePhotoPolicy.candidatePairs(candidates.map(\.candidate), excluding: []).isEmpty)
+        let sameSource = [
+            Self.still("asset-1/IMG_1.JPG", drawnBy: .source, subsecond: "123"),
+            Self.still("asset-2/IMG_1.JPG", drawnBy: .source, subsecond: "123"),
+        ]
+        #expect(SamePhotoPolicy.candidatePairs(sameSource.map(\.candidate), excluding: []).count == 1)
     }
 
     @Test func farHashesAreNotEvenCompared() {

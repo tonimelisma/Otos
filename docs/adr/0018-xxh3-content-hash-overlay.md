@@ -47,11 +47,12 @@ hold. A card Erase re-confirms each content match against the catalog before del
 
 Hash production is gated on **byte locality**: a digest is read only from bytes that
 are local without a download made for the digest's sake. Each enrichment claim carries
-one scope the Store decides from the claim predicate and the row's three product stamps
-(`EnrichmentScope`, ADR 0009): the set of its stale products the claim covers.
+one scope the Store decides from its claim (`EnrichmentClaim`: metadata, a card's
+products, or a library's every product) and the row's product stamps (`EnrichmentScope`,
+ADR 0009): the set of its stale products the claim covers.
 
 - A **fixed library** row is claimed for every stale product at once — metadata,
-  rendering, digest — and read once for all of them, with the deliberate background
+  rendering, digest, and its faces (ADR 0047) — and read once for all of them, with the deliberate background
   materialization libraries already get (ADR 0008). A row whose only stale product is
   its digest gets the digest alone: nothing is parsed or rendered again, and no planning
   revision moves, because a digest names no file.

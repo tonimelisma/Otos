@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import GRDB
 import MediaMetadata
@@ -761,6 +762,281 @@ extension CatalogStore {
         let dbWriter = try database()
         return try await dbWriter.read { db in
             try Self.fetchCompanions(libraryRootID: rootRowID, db: db)
+        }
+    }
+
+    /// The faces stored for `id`, in the order its reading found them. Empty when the asset
+    /// has none, has not been read for faces yet, or its library is no longer cataloged.
+    func faces(of id: MediaAssetID) async throws -> [DetectedFace] {
+        guard let rootRowID = roots[id.libraryRootPath]?.rowID else {
+            return []
+        }
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT box_x, box_y, box_width, box_height, landmarks, quality, embedding
+                FROM face
+                WHERE library_root_id = ? AND relative_path = ?
+                ORDER BY face_index
+                """,
+                arguments: [rootRowID, id.relativePath.rawValue]
+            ).map { row in
+                let landmarks: Data = row["landmarks"]
+                let embedding: Data = row["embedding"]
+                guard let points = FaceStorage.landmarks(from: landmarks),
+                      let vector = FaceStorage.embedding(from: embedding)
+                else {
+                    throw CatalogStoreError.malformedFaceRow(id)
+                }
+                let quality: Double = row["quality"]
+                return DetectedFace(
+                    box: CGRect(x: row["box_x"] as Double, y: row["box_y"] as Double,
+                                width: row["box_width"] as Double, height: row["box_height"] as Double),
+                    landmarks: points,
+                    quality: Float(quality),
+                    embedding: vector
+                )
+            }
+        }
+    }
+
+    // MARK: - People (ADR 0047)
+
+    /// Every face and person grouping reads: each face with its photo's capture instant and
+    /// the user's acts on it. Faces of libraries no longer cataloged are left out.
+    func peopleFacts() async throws -> (faces: [FaceFact], people: [PersonFact]) {
+        let pathsByRowID = roots.pathsByRowID
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            var rejections: [FaceRowKey: Set<PersonID>] = [:]
+            for row in try Row.fetchAll(db, sql: "SELECT library_root_id, relative_path, face_index, person_id FROM face_rejection") {
+                rejections[FaceRowKey(row), default: []].insert(PersonID(rawValue: row["person_id"]))
+            }
+            var faces: [FaceFact] = []
+            for row in try Row.fetchAll(
+                db,
+                sql: """
+                SELECT f.library_root_id, f.relative_path, f.face_index, f.embedding, f.person_id,
+                       f.is_not_face, f.is_ignored, m.best_capture_unix
+                FROM face f
+                JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
+                WHERE m.trash_path IS NULL
+                ORDER BY f.library_root_id, f.relative_path, f.face_index
+                """
+            ) {
+                let key = FaceRowKey(row)
+                guard let rootPath = pathsByRowID[key.rootID] else { continue }
+                let data: Data = row["embedding"]
+                guard let embedding = FaceStorage.embedding(from: data) else {
+                    throw CatalogStoreError.malformedFaceRow(MediaAssetID(libraryRootPath: rootPath, relativePath: key.path))
+                }
+                faces.append(FaceFact(
+                    id: FaceID(asset: MediaAssetID(libraryRootPath: rootPath, relativePath: key.path), index: key.index),
+                    captureSeconds: row["best_capture_unix"],
+                    embedding: embedding,
+                    person: (row["person_id"] as Int64?).map(PersonID.init(rawValue:)),
+                    isNotFace: (row["is_not_face"] as Int) != 0,
+                    isIgnored: (row["is_ignored"] as Int) != 0,
+                    rejected: rejections[key] ?? []
+                ))
+            }
+            let people = try Row.fetchAll(db, sql: "SELECT id, birthday FROM person ORDER BY id").map { row in
+                PersonFact(id: PersonID(rawValue: row["id"]), birthdaySeconds: (row["birthday"] as String?).flatMap(PersonBirthday.seconds))
+            }
+            return (faces, people)
+        }
+    }
+
+    /// Adds a person, named or not (a split makes one to be named later).
+    func addPerson(name: String?, birthday: String?) async throws -> PersonID {
+        let dbWriter = try database()
+        return try await dbWriter.write { db in
+            try db.execute(sql: "INSERT INTO person (name, birthday) VALUES (?, ?)", arguments: [name, birthday])
+            return PersonID(rawValue: db.lastInsertedRowID)
+        }
+    }
+
+    /// Changes a person's name and birthday. A birthday after any of the person's confirmed
+    /// photos is refused: a saved birthday never silently drops a confirmed face.
+    func updatePerson(_ person: PersonID, name: String?, birthday: String?) async throws {
+        let dbWriter = try database()
+        try await dbWriter.write { db in
+            if let birthdaySeconds = birthday.flatMap(PersonBirthday.seconds) {
+                let earlier = try Int.fetchOne(
+                    db,
+                    sql: """
+                    SELECT COUNT(*) FROM face f
+                    JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
+                    WHERE f.person_id = ? AND m.best_capture_unix < ?
+                    """,
+                    arguments: [person.rawValue, birthdaySeconds]
+                ) ?? 0
+                guard earlier == 0 else { throw PeopleRuleViolation.confirmedBeforeBirthday(count: earlier) }
+            }
+            try db.execute(
+                sql: "UPDATE person SET name = ?, birthday = ? WHERE id = ?",
+                arguments: [name, birthday, person.rawValue]
+            )
+        }
+    }
+
+    /// Removes a person: their faces return to unnamed and their rejections are forgotten.
+    func removePerson(_ person: PersonID) async throws {
+        let dbWriter = try database()
+        try await dbWriter.write { db in
+            try db.execute(sql: "DELETE FROM person WHERE id = ?", arguments: [person.rawValue])
+        }
+    }
+
+    /// Confirms `faces` as `person`, or returns them to unnamed with nil. Refused when two of
+    /// the faces share a photo, when the person is already confirmed in one of their photos,
+    /// or when a photo was taken before the person's birthday (ADR 0047's hard rules).
+    func setPerson(_ person: PersonID?, for faces: [FaceID]) async throws {
+        let rowIDs = roots.rowIDSnapshot()
+        let dbWriter = try database()
+        try await dbWriter.write { db in
+            let keys = try faces.map { try FaceRowKey($0, rowIDs: rowIDs) }
+            if let person {
+                guard Set(keys.map(\.photo)).count == keys.count else { throw PeopleRuleViolation.twoFacesOfOnePhoto }
+                let birthday = try String.fetchOne(db, sql: "SELECT birthday FROM person WHERE id = ?", arguments: [person.rawValue])
+                    .flatMap(PersonBirthday.seconds)
+                for key in keys {
+                    let elsewhere = try Int.fetchOne(
+                        db,
+                        sql: """
+                        SELECT COUNT(*) FROM face WHERE library_root_id = ? AND relative_path = ?
+                          AND person_id = ? AND face_index <> ?
+                        """,
+                        arguments: [key.rootID, key.path.rawValue, person.rawValue, key.index]
+                    ) ?? 0
+                    guard elsewhere == 0 else { throw PeopleRuleViolation.personAlreadyInPhoto }
+                    if let birthday, let capture = try Double.fetchOne(
+                        db,
+                        sql: "SELECT best_capture_unix FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                        arguments: [key.rootID, key.path.rawValue]
+                    ), capture < birthday {
+                        throw PeopleRuleViolation.beforeBirthday
+                    }
+                }
+            }
+            for key in keys {
+                try db.execute(
+                    sql: "UPDATE face SET person_id = ? WHERE library_root_id = ? AND relative_path = ? AND face_index = ?",
+                    arguments: [person?.rawValue, key.rootID, key.path.rawValue, key.index]
+                )
+                if let person {
+                    try db.execute(
+                        sql: """
+                        DELETE FROM face_rejection WHERE library_root_id = ? AND relative_path = ?
+                          AND face_index = ? AND person_id = ?
+                        """,
+                        arguments: [key.rootID, key.path.rawValue, key.index, person.rawValue]
+                    )
+                }
+            }
+        }
+    }
+
+    /// Records, or forgets, that `faces` are not `person`; a recorded rejection also takes
+    /// the faces from the person if they were confirmed as them.
+    func setRejected(_ rejected: Bool, person: PersonID, for faces: [FaceID]) async throws {
+        let rowIDs = roots.rowIDSnapshot()
+        let dbWriter = try database()
+        try await dbWriter.write { db in
+            for key in try faces.map({ try FaceRowKey($0, rowIDs: rowIDs) }) {
+                let arguments: StatementArguments = [key.rootID, key.path.rawValue, key.index, person.rawValue]
+                if rejected {
+                    try db.execute(
+                        sql: """
+                        INSERT OR IGNORE INTO face_rejection (library_root_id, relative_path, face_index, person_id)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        arguments: arguments
+                    )
+                    try db.execute(
+                        sql: """
+                        UPDATE face SET person_id = NULL WHERE library_root_id = ? AND relative_path = ?
+                          AND face_index = ? AND person_id = ?
+                        """,
+                        arguments: arguments
+                    )
+                } else {
+                    try db.execute(
+                        sql: """
+                        DELETE FROM face_rejection WHERE library_root_id = ? AND relative_path = ?
+                          AND face_index = ? AND person_id = ?
+                        """,
+                        arguments: arguments
+                    )
+                }
+            }
+        }
+    }
+
+    /// Marks `faces` as not faces (out of People until the photo changes), or undoes it.
+    func setNotAFace(_ value: Bool, for faces: [FaceID]) async throws {
+        try await setFaceFlag("is_not_face", value, for: faces)
+    }
+
+    /// Marks `faces` as ignored (a stranger's group), or undoes it.
+    func setIgnored(_ value: Bool, for faces: [FaceID]) async throws {
+        try await setFaceFlag("is_ignored", value, for: faces)
+    }
+
+    private func setFaceFlag(_ column: String, _ value: Bool, for faces: [FaceID]) async throws {
+        let rowIDs = roots.rowIDSnapshot()
+        let dbWriter = try database()
+        try await dbWriter.write { db in
+            for key in try faces.map({ try FaceRowKey($0, rowIDs: rowIDs) }) {
+                try db.execute(
+                    sql: "UPDATE face SET \(column) = ? WHERE library_root_id = ? AND relative_path = ? AND face_index = ?",
+                    arguments: [value ? 1 : 0, key.rootID, key.path.rawValue, key.index]
+                )
+            }
+        }
+    }
+
+    /// Moves every face of `from` to `into` and removes `from`, keeping `into`'s name and
+    /// birthday. Refused when both are confirmed in one photo or a face of `from` predates
+    /// `into`'s birthday. `from`'s rejections become `into`'s.
+    func mergePerson(_ from: PersonID, into: PersonID) async throws {
+        let dbWriter = try database()
+        try await dbWriter.write { db in
+            let shared = try Int.fetchOne(
+                db,
+                sql: """
+                SELECT COUNT(*) FROM face a JOIN face b
+                  ON a.library_root_id = b.library_root_id AND a.relative_path = b.relative_path
+                WHERE a.person_id = ? AND b.person_id = ?
+                """,
+                arguments: [from.rawValue, into.rawValue]
+            ) ?? 0
+            guard shared == 0 else { throw PeopleRuleViolation.bothInPhotos(count: shared) }
+            if let birthday = try String.fetchOne(db, sql: "SELECT birthday FROM person WHERE id = ?", arguments: [into.rawValue])
+                .flatMap(PersonBirthday.seconds)
+            {
+                let earlier = try Int.fetchOne(
+                    db,
+                    sql: """
+                    SELECT COUNT(*) FROM face f
+                    JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
+                    WHERE f.person_id = ? AND m.best_capture_unix < ?
+                    """,
+                    arguments: [from.rawValue, birthday]
+                ) ?? 0
+                guard earlier == 0 else { throw PeopleRuleViolation.confirmedBeforeBirthday(count: earlier) }
+            }
+            try db.execute(sql: "UPDATE face SET person_id = ? WHERE person_id = ?", arguments: [into.rawValue, from.rawValue])
+            try db.execute(
+                sql: """
+                INSERT OR IGNORE INTO face_rejection (library_root_id, relative_path, face_index, person_id)
+                SELECT library_root_id, relative_path, face_index, ? FROM face_rejection WHERE person_id = ?
+                """,
+                arguments: [into.rawValue, from.rawValue]
+            )
+            try db.execute(sql: "DELETE FROM person WHERE id = ?", arguments: [from.rawValue])
         }
     }
 
@@ -1768,7 +2044,7 @@ extension CatalogStore {
         let landed = Array(localBytesAwaitingProducts.prefix(limit))
         localBytesAwaitingProducts.removeFirst(landed.count)
         let landedClaims = try await priorityEnrichmentCandidates(
-            ids: landed, limit: landed.count, claimsEveryProduct: true
+            ids: landed, limit: landed.count, bytesAreLocal: true
         )
         if !landed.isEmpty {
             // Whether a fresh copy was enriched while its bytes were local: each claim's
@@ -1853,12 +2129,14 @@ extension CatalogStore {
         }
     }
 
-    /// `claimsEveryProduct` claims every stale product of each row, whatever its root claims
-    /// by default: the rows whose bytes just became local.
+    /// `bytesAreLocal` marks rows whose bytes just became local: a root first claimed for
+    /// metadata alone (a card, a camera, an Immich account) is claimed for its rendering and
+    /// digest too (`EnrichmentClaim.cardProducts`), while a fixed library keeps its own claim.
+    /// Faces stay a library's product (ADR 0047).
     private func priorityEnrichmentCandidates(
         ids: [MediaAssetID],
         limit: Int,
-        claimsEveryProduct: Bool = false
+        bytesAreLocal: Bool = false
     ) async throws -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]> {
         let priorityAssetsByID = try await mediaAssets(for: ids)
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
@@ -1868,8 +2146,9 @@ extension CatalogStore {
             assetsByID: priorityAssetsByID,
             rootIDsByPath: rootIDsByPathBeforeWrite,
             isRootEnrichable: { [roots] path in roots[path]?.isEnrichable == true },
-            claimsEveryProduct: { [roots] path in
-                claimsEveryProduct || roots[path]?.root.claimsEveryProductTogether == true
+            firstClaim: { [roots] path in
+                let first = roots[path]?.root.firstClaim ?? .metadata
+                return bytesAreLocal && first == .metadata ? .cardProducts : first
             }
         )
         guard !eligibleClaims.isEmpty else {
@@ -1878,21 +2157,21 @@ extension CatalogStore {
         let timedClaim = try await timedWrite(dbWriter) { db in
             var candidates: [ClaimedEnrichmentCandidate] = []
             candidates.reserveCapacity(min(limit, eligibleClaims.count))
-            for (asset, rootID, everyProduct) in eligibleClaims {
+            for (asset, rootID, claim) in eligibleClaims {
                 guard candidates.count < limit else {
                     break
                 }
                 guard try EnrichmentClaimGateway.claimEnrichmentAsset(
                     libraryRootID: rootID,
                     relativePath: asset.relativePath,
-                    everyProduct: everyProduct,
+                    claim: claim,
                     db: db
                 ) else {
                     continue
                 }
                 candidates.append(ClaimedEnrichmentCandidate(
                     asset: asset,
-                    scope: EnrichmentScope(everyProduct: everyProduct, asset: asset)
+                    scope: EnrichmentScope(claim: claim, asset: asset)
                 ))
             }
             return candidates
@@ -1922,47 +2201,48 @@ extension CatalogStore {
         -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]>
     {
         let prioritizedRootIDs = roots.enrichableRootIDsByRemovablePriority()
-        let (everyProductRootIDs, metadataFirstRootIDs) = roots.enrichableRootIDsByProductClaim()
+        let (libraryClaimRootIDs, metadataFirstRootIDs) = roots.enrichableRootIDsByProductClaim()
         let cardRootIDs = roots.enrichableCardRootIDs()
         let dbWriter = try database()
         let timedStoredAssets = try await timedWrite(dbWriter) { db in
-            var storedAssets: [(asset: StoredAsset, everyProduct: Bool)] = []
-            // The fallback spans roots of mixed kinds (ADR 0018): a root claimed for every
-            // product at once (`.library`) uses the broad predicate and index, the others
-            // (`.removableVolume`, `.deviceMTP`) the metadata-only one. `INDEXED BY`
-            // forbids one statement across both, so partition by claim shape within each
-            // priority tier: removable roots first (ENR-011), then a card's
+            var storedAssets: [(asset: StoredAsset, claim: EnrichmentClaim)] = []
+            // The fallback spans roots of mixed kinds (ADR 0018): a fixed library's rows are
+            // claimed for every product they owe at once (`EnrichmentClaim.library`), the
+            // others (`.removableVolume`, `.deviceMTP`, `.immichAccount`) for metadata first.
+            // `INDEXED BY` forbids one statement across claims, so partition by claim within
+            // each priority tier: removable roots first (ENR-011), then a card's
             // rendering-and-digest pass, then fixed libraries.
             let removableRoots = Set(prioritizedRootIDs.removable)
             let fixedRoots = Set(prioritizedRootIDs.fixed)
             // A card's renderings and digests come in a pass of their own, offered only once
             // no row of that card still needs metadata, so developing and checksumming
             // every byte never delays the import (ADR 0009). Claimed under the broad
-            // predicate, those rows' metadata is current, so their scope is the rendering
-            // and the digest, made from one read.
+            // products, those rows' metadata is current, so their scope is the rendering and
+            // the digest, made from one read. A card's rows are never read for faces: they
+            // are analysed once imported into a library.
             let cardsReadyForProducts = try cardRootIDs.filter { rootID in
                 try !EnrichmentClaimGateway.hasRowsNeedingMetadata(rootID: rootID, db: db)
             }
-            let claimGroups: [(rootIDs: [Int64], everyProduct: Bool)] = [
-                (removableRoots.intersection(everyProductRootIDs).sorted(), true),
-                (removableRoots.intersection(metadataFirstRootIDs).sorted(), false),
-                (cardsReadyForProducts, true),
-                (fixedRoots.intersection(everyProductRootIDs).sorted(), true),
-                (fixedRoots.intersection(metadataFirstRootIDs).sorted(), false),
+            let claimGroups: [(rootIDs: [Int64], claim: EnrichmentClaim)] = [
+                (removableRoots.intersection(libraryClaimRootIDs).sorted(), .library),
+                (removableRoots.intersection(metadataFirstRootIDs).sorted(), .metadata),
+                (cardsReadyForProducts, .cardProducts),
+                (fixedRoots.intersection(libraryClaimRootIDs).sorted(), .library),
+                (fixedRoots.intersection(metadataFirstRootIDs).sorted(), .metadata),
             ]
             for group in claimGroups where storedAssets.count < limit && !group.rootIDs.isEmpty {
                 let remaining = limit - storedAssets.count
                 let claimed = try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                     rootIDs: group.rootIDs,
                     limit: remaining,
-                    everyProduct: group.everyProduct,
+                    claim: group.claim,
                     db: db
                 )
-                storedAssets.append(contentsOf: claimed.map { (asset: $0, everyProduct: group.everyProduct) })
+                storedAssets.append(contentsOf: claimed.map { (asset: $0, claim: group.claim) })
             }
             return storedAssets
         }
-        // `everyProduct` here is the claim predicate the row was just claimed under
+        // `claim` here is the claim the row was just claimed under
         // (carried from the `claimGroups` entry above), not re-derived from current
         // root kind. A root's kind cannot change between the claim
         // above and this mapping since both run inside the same actor-isolated call, but
@@ -1977,7 +2257,7 @@ extension CatalogStore {
             let asset = mediaAsset(from: entry.asset, rootPath: rootPath)
             return ClaimedEnrichmentCandidate(
                 asset: asset,
-                scope: EnrichmentScope(everyProduct: entry.everyProduct, asset: asset)
+                scope: EnrichmentScope(claim: entry.claim, asset: asset)
             )
         }
         let result = DatabaseTimedValue(
@@ -4288,6 +4568,8 @@ private extension CatalogStore {
             contentHash: storedAsset.contentHash,
             contentHashSourceSize: storedAsset.contentHashSourceSize,
             contentHashSourceMTimeSeconds: storedAsset.contentHashSourceMTimeSeconds,
+            facesSourceSize: storedAsset.facesSourceSize,
+            facesSourceMTimeSeconds: storedAsset.facesSourceMTimeSeconds,
             mediaChoice: storedAsset.mediaChoice
         )
     }

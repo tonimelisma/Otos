@@ -863,9 +863,9 @@ nonisolated struct DuplicateCarry: Hashable, Sendable {
 /// A RAW is never grouped with a processed file, and copies already in an identical group
 /// are left to that group.
 nonisolated enum SamePhotoPolicy {
-    /// Pairs worth reading details for: same kind, same display aspect, a near hash, and the
-    /// column half of gate 1. Blocked by aspect and instant, so a library is never compared
-    /// all against all.
+    /// Pairs worth reading details for: same kind, same pipeline, same display aspect, a near
+    /// hash, and the column half of gate 1. Blocked by aspect and instant, so a library is
+    /// never compared all against all.
     ///
     /// A file without capture metadata is tested against every member of its aspect bucket —
     /// hundreds of thousands of tests on a real library — so those loops walk indices and
@@ -876,7 +876,7 @@ nonisolated enum SamePhotoPolicy {
     ) -> [SamePhotoPair] {
         let eligible = candidates.filter { !excluded.contains($0.id) && $0.aspectRatio != nil }
         let buckets = Dictionary(grouping: eligible) { candidate in
-            AspectBucket(isRaw: candidate.isRaw, aspect: Int(((candidate.aspectRatio ?? 0) * 100).rounded()))
+            AspectBucket(isRaw: candidate.isRaw, drawnBy: candidate.drawnBy, aspect: Int(((candidate.aspectRatio ?? 0) * 100).rounded()))
         }
         var pairs: [SamePhotoPair] = []
         for members in buckets.values where members.count > 1 {
@@ -939,6 +939,7 @@ nonisolated enum SamePhotoPolicy {
     static func isCandidate(_ left: SamePhotoCandidate, _ right: SamePhotoCandidate) -> Bool {
         guard isNear(left.differenceHash, right.differenceHash),
               left.isRaw == right.isRaw,
+              left.drawnBy == right.drawnBy,
               let leftAspect = left.aspectRatio, let rightAspect = right.aspectRatio,
               abs(log(leftAspect / rightAspect)) < 0.01
         else {
@@ -1043,6 +1044,7 @@ nonisolated enum SamePhotoPolicy {
 
     private struct AspectBucket: Hashable {
         let isRaw: Bool
+        let drawnBy: EnrichedRendering.Origin
         let aspect: Int
     }
 }
