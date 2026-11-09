@@ -16,6 +16,8 @@ labelled faces outside the repository. It is never committed.
   age.
 - **Labels (2026-11-09):** the owner labelled the bake-off faces and gave the children's
   birthdays. These labels are the ground truth that later increments re-measure against.
+- **Model (2026-11-09):** AdaFace IR-101, chosen by the owner from the final four-model
+  comparison in the research note (ADR 0047).
 
 ## Open owner decisions
 
