@@ -19,6 +19,7 @@ struct SettingsView: View {
     let setAdvanceAfterMediaChoice: (Bool) -> Void
     let asksBeforeLargeTrashDownload: Bool
     let setAsksBeforeLargeTrashDownload: (Bool) -> Void
+    let immichAccounts: ImmichAccountControls
 
     var body: some View {
         TabView {
@@ -48,7 +49,8 @@ struct SettingsView: View {
                 libraries: libraries,
                 addLibrary: addLibrary,
                 removeLibrary: removeLibrary,
-                moveLibrary: moveLibrary
+                moveLibrary: moveLibrary,
+                immichAccounts: immichAccounts
             )
             .frame(width: 640, height: 360)
             .tabItem {
@@ -275,6 +277,7 @@ private struct LibrariesSettingsView: View {
     /// 0092 increment 4) — one user action, one path. Indices are positions in
     /// `libraries`' current (stored) order.
     let moveLibrary: (LibraryRootPath, LibraryOrderMove) -> Void
+    let immichAccounts: ImmichAccountControls
 
     @State private var showingImporter = false
     @State private var selectedPath: LibraryRootPath?
@@ -297,8 +300,13 @@ private struct LibrariesSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 TableColumn("Status") { library in
-                    Text(library.availability.label)
-                        .foregroundStyle(library.availability == .unavailable ? Color.orange : Color.secondary)
+                    if let status = immichAccounts.statuses[library.path] {
+                        Text(status.label)
+                            .foregroundStyle(status == .signedOut ? Color.orange : Color.secondary)
+                    } else {
+                        Text(library.availability.label)
+                            .foregroundStyle(library.availability == .unavailable ? Color.orange : Color.secondary)
+                    }
                 }
                 .width(min: 90, ideal: 100)
             } rows: {
@@ -342,6 +350,17 @@ private struct LibrariesSettingsView: View {
                     removalCandidate = selectedRoot
                 }
                 .disabled(selectedRoot == nil)
+                if immichAccounts.isAvailable {
+                    // A signed-out account signs in again through the same sheet, with
+                    // its server filled in.
+                    Button("Sign In…") {
+                        immichAccounts.begin(selectedRoot?.remoteBaseURL)
+                    }
+                    .disabled(selectedRoot.map { immichAccounts.statuses[$0.path] != .signedOut } ?? true)
+                    Button("Add Immich Account…") {
+                        immichAccounts.begin(nil)
+                    }
+                }
                 Button("Add Library…") {
                     showingImporter = true
                 }
@@ -351,6 +370,18 @@ private struct LibrariesSettingsView: View {
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.folder]) { result in
             if case let .success(url) = result {
                 addLibrary(url)
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { immichAccounts.sheet != nil },
+            set: { presented in
+                if !presented {
+                    immichAccounts.cancel()
+                }
+            }
+        )) {
+            if let sheet = immichAccounts.sheet {
+                ImmichAccountSheetView(state: sheet, add: immichAccounts.add, cancel: immichAccounts.cancel)
             }
         }
         .alert("Remove Library?", isPresented: removalAlertBinding, presenting: removalCandidate) { root in
@@ -429,8 +460,34 @@ private struct LibrariesSettingsView: View {
         advanceAfterMediaChoice: false,
         setAdvanceAfterMediaChoice: { _ in },
         asksBeforeLargeTrashDownload: true,
-        setAsksBeforeLargeTrashDownload: { _ in }
+        setAsksBeforeLargeTrashDownload: { _ in },
+        immichAccounts: ImmichAccountControls(
+            isAvailable: true, statuses: [:], sheet: nil, begin: { _ in }, add: { _, _, _ in }, cancel: {}
+        )
     )
+}
+
+/// What Settings shows and does for Immich accounts: their statuses, the Add Immich
+/// Account sheet, and the intents that open, submit and cancel it.
+struct ImmichAccountControls {
+    /// False for a window that runs no accounts; the buttons are then not offered.
+    let isAvailable: Bool
+    let statuses: [LibraryRootPath: ImmichAccountStatus]
+    let sheet: ImmichAccountSheetState?
+    let begin: @MainActor (URL?) -> Void
+    let add: @MainActor (String, String, String) -> Void
+    let cancel: @MainActor () -> Void
+}
+
+private extension ImmichAccountStatus {
+    var label: String {
+        switch self {
+        case .connecting: "Connecting"
+        case .online: "Online"
+        case .offline: "Offline"
+        case .signedOut: "Signed Out"
+        }
+    }
 }
 
 private extension LibraryAvailability {

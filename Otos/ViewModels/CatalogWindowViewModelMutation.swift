@@ -83,7 +83,8 @@ extension CatalogWindowViewModel {
         store: CatalogStore,
         coordinator: EnrichmentCoordinator?,
         previewLoader: (any PreviewLoading)?,
-        importer: MediaOperationCoordinator?
+        importer: MediaOperationCoordinator?,
+        immichAccounts: ImmichAccounts? = nil
     ) async -> CatalogMutationReport? {
         switch intent {
         case let .addLibrary(url):
@@ -93,6 +94,9 @@ extension CatalogWindowViewModel {
             await performEnsureLibrary(url, store: store)
             return nil
         case let .removeLibrary(root):
+            // An account's session and sync end before its root goes, so no pass holds
+            // the root's listing lease while it is removed (ADR 0046).
+            await immichAccounts?.forget(root)
             return await performRemoveLibrary(root, operation: "catalog.library.remove", store: store)
         case let .moveLibrary(path, move):
             await performMoveLibrary(path, move, store: store)

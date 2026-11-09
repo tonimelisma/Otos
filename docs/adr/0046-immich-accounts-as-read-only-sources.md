@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -167,10 +167,13 @@ marked `hidden_by_source` (migration v16), which the shared scope clause and Dup
 reads leave out. Restoring it in Immich shows it again. `AssetDeleteV1` purges the row. `SyncResetV1` runs a full
 resync: rows the resync does not list are purged only after it completes.
 
-The sync runs when the account is added, at launch, and whenever the server becomes
-reachable. While reachable, it runs again on a schedule (`time: poll`), because Immich
-offers no change notification a native client can subscribe to. The schedule polls the
-stream's cursor, never re-reads a full listing.
+The sync runs when the account is added and at launch. While its server answers, it
+runs again on a schedule (`time: poll`, every five minutes), because Immich offers no
+change notification a native client can subscribe to; while it does not, it tries
+again on a growing backoff (15 s to 5 min), which is how Otos learns the server is
+back. Each pass reads the stream from its cursor, never a full listing. A refused
+session stops the passes until the user signs in again. `ImmichAccounts` owns every
+account's session, loop and status.
 
 ### 6. Unreachable is a state, not an absence
 
@@ -208,9 +211,9 @@ Consequences per product:
 
 - A non-RAW still's loupe preview is Immich's 1920–2160 px long edge instead of 2560 until
   Otos renders it.
-- A RAW shows libvips's development until RAW9 renders it. **When RAW9 renders an
-  account's RAWs — on open or zoom, or as a background job while the server is reachable
-  — is an open owner decision.**
+- A RAW shows libvips's development until RAW9 renders it, which happens lazily: when its
+  original is downloaded for full-resolution zoom, an edit, export or hand-off. No
+  background job downloads RAWs to render them (owner decision, 2026-11-09).
 - An edited still always shows Otos's rendering.
 - Duplicates compares render signatures only within one pipeline (ADR 0042), so an
   Immich thumbnail and an Otos rendering of the same photo do not confirm a same-photo

@@ -15,12 +15,12 @@ Opened 2026-11-07. Decisions: ADR 0046. API facts: `docs/research/2026-11-07-imm
   sync, instead of downloading every original to render (owner proposal, 2026-11-07;
   ADR 0046 §7, `docs/research/2026-11-07-immich-derived-assets.md`).
 
-## Open owner decision
+- An account's RAWs get RAW9 lazily: a RAW Otos renders is one whose original is
+  downloaded for work that needs it (opened full size, zoomed, edited, exported); no
+  background job downloads RAWs to render them. Until then a RAW shows Immich's
+  libvips development (owner, 2026-11-09).
 
-- Whether an account's RAWs get RAW9 renders on open or zoom, or from a background job
-  while the server is reachable. Until then a RAW shows Immich's libvips development.
-
-## Defaults taken (not yet confirmed by the owner)
+## Defaults confirmed by the owner (2026-11-09)
 
 - Owned assets only. Partner and shared-album assets come later.
 - Archived assets are shown. Locked assets are never synced.
@@ -55,7 +55,7 @@ Each increment lands on `main` with its own DoD.
 
    Driven by a scripted source in tests.
 6. **Feature**, in three PRs, each with its own DoD:
-   - **6a:** `ImmichClient` (URLSession) and the Keychain session store;
+   - **6a** *(done: #586)*: `ImmichClient` (URLSession) and the Keychain session store;
      `ImmichCatalogSync` with acks after the Store applies a batch, trash
      (`hidden_by_source`, v16), permanent delete, locked and reset. Tested with a
      `URLProtocol` stub, a scripted stream, and against the disposable local server.
@@ -68,8 +68,8 @@ Each increment lands on `main` with its own DoD.
 7. **Feature:** original download in the executor branch, for work that needs the bytes
    (full-resolution zoom, edit, export, digest), with every missing product, Otos's
    rendering included, written from that one read. Render signatures keyed by pipeline.
-   Includes ranged metadata reads, the free-space floor, and the RAW9 timing the owner
-   decides.
+   Includes ranged metadata reads and the free-space floor. RAW9 renders lazily (owner
+   decision above).
 8. **Feature:** hand-off, drag, clipboard, Share and Open With for an original not yet
    downloaded, and what each one says while offline.
 9. **Feature:** Live Photo placement, and Duplicates presentation and refused resolutions

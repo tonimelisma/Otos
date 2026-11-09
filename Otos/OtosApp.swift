@@ -457,7 +457,15 @@ public struct OtosApp: App {
                 advanceAfterMediaChoice: catalogViewModel.advanceAfterMediaChoice,
                 setAdvanceAfterMediaChoice: catalogViewModel.setAdvanceAfterMediaChoice,
                 asksBeforeLargeTrashDownload: catalogViewModel.asksBeforeLargeTrashDownload,
-                setAsksBeforeLargeTrashDownload: catalogViewModel.setAsksBeforeLargeTrashDownload
+                setAsksBeforeLargeTrashDownload: catalogViewModel.setAsksBeforeLargeTrashDownload,
+                immichAccounts: ImmichAccountControls(
+                    isAvailable: catalogViewModel.immichAccounts != nil,
+                    statuses: catalogViewModel.immichAccountStatuses,
+                    sheet: catalogViewModel.immichAccountSheet,
+                    begin: { catalogViewModel.beginAddingImmichAccount(server: $0) },
+                    add: { catalogViewModel.addImmichAccount(server: $0, email: $1, password: $2) },
+                    cancel: { catalogViewModel.cancelImmichAccountSheet() }
+                )
             )
         }
     }
