@@ -48,6 +48,9 @@ extension MediaAssetID {
 nonisolated struct DuplicateCopy: Equatable, Sendable, Identifiable {
     let id: MediaAssetID
     let libraryDisplayName: String
+    /// What the copy's library is, which says what Otos may do with it: an Immich account's
+    /// copy is never moved to the Trash (ADR 0046 §8), and its folders are asset IDs.
+    let libraryKind: LibraryRootKind
     /// The catalog's best kind, which names the group (`2 identical videos`); nil before
     /// enrichment has read it.
     let kind: MediaKind?
@@ -67,9 +70,16 @@ nonisolated struct DuplicateCopy: Equatable, Sendable, Identifiable {
         id.relativePath.fileName
     }
 
-    /// The folder inside its library, empty at the library's top.
+    /// The folder inside its library, empty at the library's top. A library without a
+    /// folder tree of its own — an Immich account, whose folders are asset IDs — holds every
+    /// copy at its top, so its copies are one folder to a rule.
     var folder: String {
-        id.relativePath.folder
+        libraryKind.hasFilesystemNamespace ? id.relativePath.folder : ""
+    }
+
+    /// Otos may move this copy to the Trash: never an Immich account's (ADR 0046 §8).
+    var canMoveToTrash: Bool {
+        libraryKind.supportsMoveToTrash
     }
 
     /// Whether Otos or another app holds something authored for this copy.
@@ -516,11 +526,14 @@ nonisolated struct DuplicateFolder: Hashable, Sendable, Comparable {
     let libraryDisplayName: String
     /// The folder inside its library, empty at the library's top.
     let folder: String
+    /// Otos may move the folder's copies to the Trash: never an Immich account's.
+    let canMoveToTrash: Bool
 
     init(_ copy: DuplicateCopy) {
         library = copy.id.libraryRootPath
         libraryDisplayName = copy.libraryDisplayName
         folder = copy.folder
+        canMoveToTrash = copy.canMoveToTrash
     }
 
     static func < (left: Self, right: Self) -> Bool {
@@ -571,8 +584,12 @@ nonisolated enum DuplicateKeepReason: Equatable, Sendable {
 /// What one group keeps and moves, and why (ADR 0042). Pure, so what a tile shows, what
 /// the bar counts and what the act moves are one computation.
 nonisolated struct DuplicateResolution: Equatable, Sendable {
+    /// Every copy the group keeps: the chosen ones, and every copy Otos may not move.
     let keep: Set<MediaAssetID>
     let moving: [MediaAssetID]
+    /// Copies kept only because Otos may not move them (an Immich account's, ADR 0046 §8):
+    /// the click, rule or default chose another, and this one stays where it is.
+    let stays: [MediaAssetID]
     let carries: [DuplicateCarry]
     let bytes: PartialByteCount
     let reason: DuplicateKeepReason
@@ -632,7 +649,9 @@ nonisolated struct DuplicateResolution: Equatable, Sendable {
     /// has none, and its edit when the kept copy has none. The kept copy is the first kept
     /// in the moved copy's library, else the group's first kept copy. The Store re-reads
     /// both copies when it writes, so a carry only ever fills what is missing.
-    private static func make(_ group: DuplicateGroup, keep: Set<MediaAssetID>, reason: DuplicateKeepReason) -> DuplicateResolution {
+    private static func make(_ group: DuplicateGroup, keep chosen: Set<MediaAssetID>, reason: DuplicateKeepReason) -> DuplicateResolution {
+        let stays = group.copies.filter { !chosen.contains($0.id) && !$0.canMoveToTrash }
+        let keep = chosen.union(stays.map(\.id))
         let moving = group.copies.filter { !keep.contains($0.id) }
         let kept = group.copies.filter { keep.contains($0.id) }
         var carries: [DuplicateCarry] = []
@@ -654,6 +673,7 @@ nonisolated struct DuplicateResolution: Equatable, Sendable {
         return DuplicateResolution(
             keep: keep,
             moving: moving.map(\.id),
+            stays: stays.map(\.id),
             carries: carries,
             bytes: PartialByteCount(knownBytes: known.reduce(0, +), unknownCount: moving.count - known.count),
             reason: reason
@@ -716,12 +736,13 @@ nonisolated struct DuplicateFolderSetSummary: Equatable, Sendable, Identifiable 
     }
 
     /// The folder sets of the active groups, largest first; sets of three or more folders
-    /// are decided group by group.
+    /// are decided group by group, and a set whose copies Otos may not move (an Immich
+    /// account's alone) has nothing a rule could decide.
     static func summaries(of state: CatalogDuplicatesState) -> [DuplicateFolderSetSummary] {
         var counts: [DuplicateFolderSet: Int] = [:]
         for group in state.activeGroups {
             let set = DuplicateFolderSet(group)
-            if set.folders.count <= 2 {
+            if set.folders.count <= 2, set.folders.contains(where: \.canMoveToTrash) {
                 counts[set, default: 0] += 1
             }
         }

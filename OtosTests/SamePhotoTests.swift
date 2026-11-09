@@ -48,7 +48,7 @@ struct SamePhotoTests {
             ),
             copy: DuplicateCopy(
                 id: id,
-                libraryDisplayName: "Photos",
+                libraryDisplayName: "Photos", libraryKind: .library,
                 kind: .image,
                 captureDate: instant.map(Date.init(timeIntervalSince1970:)),
                 byteSize: 1000,

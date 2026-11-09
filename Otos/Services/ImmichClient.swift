@@ -52,7 +52,7 @@ nonisolated struct ImmichClient: Sendable {
 
     // MARK: - Sync
 
-    /// The types Otos syncs: owned assets and their EXIF (plan 0112: owned assets only).
+    /// The types Otos syncs: owned assets and their EXIF (ADR 0046 §5: owned assets only).
     static let syncTypes = ["AssetsV2", "AssetExifsV1"]
 
     /// One pass of the session's sync stream, as JSON Lines parsed one line at a time, so
@@ -337,7 +337,7 @@ nonisolated struct ImmichAsset: Equatable, Sendable {
         case archive
         /// A Live Photo's motion part, shown only through its still.
         case hidden
-        /// The user's locked folder: never synced (plan 0112).
+        /// The user's locked folder: never synced (ADR 0046 §5).
         case locked
     }
 

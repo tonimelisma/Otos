@@ -6427,10 +6427,10 @@ extension CatalogStore {
         }
         let rootIDs = libraries.map(\.rowID).sorted()
         let pathsByRowID = roots.pathsByRowID
-        let namesByPath = Dictionary(uniqueKeysWithValues: libraries.map { ($0.path, $0.root.displayName) })
+        let librariesByPath = Dictionary(uniqueKeysWithValues: libraries.map { ($0.path, $0.root) })
         return try await database().read { db in
             let copies = try DuplicatesGateway.fetchDuplicateCopies(rootIDs: rootIDs, db: db).compactMap { row in
-                row.facts(pathsByRowID: pathsByRowID, namesByPath: namesByPath)
+                row.facts(pathsByRowID: pathsByRowID, librariesByPath: librariesByPath)
             }
             let keptPairs = try DuplicatesGateway.fetchKeptPairs(rootIDs: rootIDs, db: db).compactMap { row in
                 row.pair(pathsByRowID: pathsByRowID)
@@ -6598,7 +6598,7 @@ extension CatalogStore {
     /// the render signature, and the capture facts kept in the metadata record. A still
     /// whose library is gone or that has no stored signature has no detail.
     func samePhotoDetails(for ids: [MediaAssetID]) async throws -> [MediaAssetID: SamePhotoDetail] {
-        let libraries = Dictionary(uniqueKeysWithValues: roots.values.map { ($0.path, (rowID: $0.rowID, name: $0.root.displayName)) })
+        let libraries = Dictionary(uniqueKeysWithValues: roots.values.map { ($0.path, (rowID: $0.rowID, root: $0.root)) })
         return try await database().read { db in
             var details: [MediaAssetID: SamePhotoDetail] = [:]
             for id in ids {
@@ -6606,7 +6606,7 @@ extension CatalogStore {
                       let detail = try DuplicatesGateway.fetchSamePhotoDetail(
                           rootID: library.rowID,
                           id: id,
-                          libraryDisplayName: library.name,
+                          library: library.root,
                           db: db
                       )
                 else {

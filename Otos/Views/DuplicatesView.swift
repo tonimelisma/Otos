@@ -347,10 +347,11 @@ private struct DuplicateCopyTile: View {
         .accessibilityAction { keep() }
         .contextMenu {
             Button("Keep This Copy", action: keep)
-                .disabled(tile.fate == .keep)
+                .disabled(!tile.canKeep)
             Button("Keep All Copies") { actions.keepAll(group) }
             Divider()
             Button("Move to Trash Now") { actions.moveToTrashNow(tile.id) }
+                .disabled(!tile.canMoveToTrash)
         }
     }
 }

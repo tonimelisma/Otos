@@ -41,6 +41,11 @@ largest first, each with a hairline under it (DES-023):
   the` beside `Best copy` | `Original name` | `Oldest` | `Largest`.
 - A group whose copies sit in three or more folders has no row: it is decided by its own
   photos.
+- **An Immich account's copies** are never moved (ADR 0046 §8). The account counts as one
+  folder, named by the account, since its folders are asset IDs. A set with a library
+  folder offers only the account's side and `Both`: keeping the library's side would move
+  the account's copies. Its L3 says why: `412 photos in both · Otos never removes copies
+  in “Family”`. A set that is all account copies has no row: no rule could move anything.
 - The rule applies at once to every group in that set; the photos re-tag as it changes.
   A click on one photo still outranks the rule for that group. A group whose copies hold
   work that cannot be combined (two edits, two with `.xmp` / `.srt` files, a like and a
@@ -57,7 +62,9 @@ groups, never above the first.
   the original name`, `Keeping the older file`, `Keeping the camera original` (the keeper
   rule's deciding criterion, ADR 0042); `Keeping the original name, as the folder rule
   says`; `You chose this one`; or, for a group that waits, `The copies have different
-  edits: click the one to keep`. A kept group (Keep All Copies) reads `Kept both copies`
+  edits: click the one to keep`. When a copy in an Immich account stays though another was
+  chosen, the line ends `Otos never removes copies in “Family”`; when nothing moves, it
+  reads that alone. A kept group (Keep All Copies) reads `Kept both copies`
   with a `Review Again` link, and shows no photos.
 - **The photos**: one per copy, 8 pt apart (DES-060), wrapping only when the pane is
   narrower than the group. Each is a 180 pt square cell with the copy's own thumbnail
@@ -80,7 +87,9 @@ groups, never above the first.
   - **A click keeps that copy** and tags every other copy of its group Trash. It also
     selects the photo (DES-061's 3 pt accent border). A double-click opens the group.
   - Context menu: `Keep This Copy`, `Keep All Copies`, then `Move to Trash Now` — the
-    ordinary act on this one copy, now.
+    ordinary act on this one copy, now. An Immich account's copy is always tagged
+    **Keep**. Its `Move to Trash Now` is disabled, its tooltip adds `Removed only in
+    Immich`, and its location reads `Family ▸ IMG_1.HEIC`, with no asset folder.
 
 **Bar.** Three zones at one fixed height (DES-018, DES-053):
 

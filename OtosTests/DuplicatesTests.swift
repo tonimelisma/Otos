@@ -7,6 +7,7 @@ import Testing
 struct DuplicatesTests {
     private static let photos = LibraryRootPath(rawValue: "/Users/me/Photos")
     private static let backup = LibraryRootPath(rawValue: "/Volumes/Backup/Photos")
+    private static let family = LibraryRootPath(rawValue: "/RemoteStaging/family")
     private static let digest = XXH3Digest128(data: Data(repeating: 1, count: 16))!
 
     private static func copy(
@@ -22,7 +23,8 @@ struct DuplicatesTests {
         DuplicateCopyFacts(
             copy: DuplicateCopy(
                 id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path)),
-                libraryDisplayName: root == photos ? "Photos" : "Backup",
+                libraryDisplayName: root == photos ? "Photos" : root == family ? "Family" : "Backup",
+                libraryKind: root == family ? .immichAccount : .library,
                 kind: kind,
                 captureDate: captured.map(Date.init(timeIntervalSince1970:)),
                 byteSize: 1000,
@@ -130,6 +132,55 @@ struct DuplicatesTests {
         )
         #expect(!withNewcomer.isKept)
         #expect(withNewcomer.defaultKeep == [print, dated])
+    }
+
+    /// ADR 0046 §8: an Immich account's copy is never moved to the Trash. Whatever a click,
+    /// a rule or the default chooses, it stays, and only the library's copies go; two
+    /// copies in one account move nothing, and the header says why.
+    @Test func anAccountsCopyStaysWhateverIsChosen() throws {
+        let library = Self.copy("2026/08/IMG_1.jpg").copy.id
+        let account = Self.copy("a1/IMG_1.jpg", in: Self.family).copy.id
+        let across = try Self.onlyGroup([Self.copy("2026/08/IMG_1.jpg"), Self.copy("a1/IMG_1.jpg", in: Self.family)])
+        var session = DuplicatesSession()
+        session.picks[across.id] = library
+        let picked = try #require(session.resolution(of: across))
+        #expect(picked.keep == [library, account])
+        #expect(picked.moving.isEmpty)
+        #expect(picked.stays == [account])
+        let header = DuplicateGroupPresentation.map(across, session: session)
+        #expect(header.reason == "Otos never removes copies in “Family”")
+        #expect(header.tiles.map(\.fate) == [.keep, .keep])
+        #expect(header.tiles.first { $0.id == account }?.canMoveToTrash == false)
+        #expect(header.tiles.first { $0.id == account }?.canKeep == true)
+        #expect(header.tiles.first { $0.id == account }?.help.hasPrefix("Family ▸ IMG_1.jpg") == true)
+        // Choosing the account's copy moves the library's.
+        session.picks[across.id] = account
+        #expect(session.resolution(of: across)?.moving == [library])
+
+        let inAccount = try Self.onlyGroup([
+            Self.copy("a1/IMG_1.jpg", in: Self.family), Self.copy("a2/IMG_1.jpg", in: Self.family, born: 200),
+        ])
+        #expect(DuplicatesSession().resolution(of: inAccount)?.moving == [])
+        #expect(DuplicateGroupPresentation.map(inAccount, session: DuplicatesSession()).reason
+            == "Otos never removes copies in “Family”")
+        // An account's copies are one folder, and a folder no rule can empty has no row.
+        #expect(DuplicateFolderSet(inAccount).folders.count == 1)
+        #expect(DuplicateFolderSetSummary.summaries(of: CatalogDuplicatesState(groups: [inAccount])).isEmpty)
+    }
+
+    /// A library folder that mirrors an account is one rule row; keeping the library's
+    /// side would move the account's copies, so it is not offered, and the row says why.
+    @Test func aRuleRowNeverOffersToRemoveAnAccountsCopies() throws {
+        let groups = try ["IMG_1.jpg", "IMG_2.jpg"].enumerated().map { index, name in
+            try Self.onlyGroup([Self.copy("2026/08/\(name)"), Self.copy("a\(index)/\(name)", in: Self.family)])
+        }
+        let summaries = DuplicateFolderSetSummary.summaries(of: CatalogDuplicatesState(groups: groups))
+        let pair = try #require(summaries.first)
+        #expect(summaries.count == 1)
+        #expect(pair.groupCount == 2)
+        let row = DuplicateFolderRulePresentation.map(pair, rule: nil, noun: .photos, withLibrary: true)
+        #expect(row.options.map(\.title) == ["Family", "Both"])
+        #expect(row.detail == "2 photos in both · Otos never removes copies in “Family”")
     }
 
     @Test func copySuffixesAreFindersAndBrowsers() {
@@ -291,7 +342,7 @@ struct DuplicatesTests {
         }
         func version(_ id: MediaAssetID, width: Int, bytes: Int64) -> DuplicateCopy {
             DuplicateCopy(
-                id: id, libraryDisplayName: "Photos", kind: .image, captureDate: nil, byteSize: bytes,
+                id: id, libraryDisplayName: "Photos", libraryKind: .library, kind: .image, captureDate: nil, byteSize: bytes,
                 createdAt: nil, pixelWidth: width, pixelHeight: width * 3 / 4, mediaChoice: .notRated,
                 isEdited: false, hasCompanions: false
             )
@@ -323,7 +374,7 @@ struct DuplicatesTests {
         let copies = bytes.enumerated().map { index, size in
             DuplicateCopy(
                 id: MediaAssetID(libraryRootPath: Self.photos, relativePath: MediaRelativePath(rawValue: "f\(index).arw")),
-                libraryDisplayName: "Photos", kind: .raw, captureDate: nil, byteSize: size, createdAt: nil,
+                libraryDisplayName: "Photos", libraryKind: .library, kind: .raw, captureDate: nil, byteSize: size, createdAt: nil,
                 pixelWidth: 6192, pixelHeight: 4128, mediaChoice: .notRated, isEdited: false, hasCompanions: false
             )
         }
@@ -332,7 +383,7 @@ struct DuplicatesTests {
 
         let twins = Array(copies.prefix(2)).map {
             DuplicateCopy(
-                id: $0.id, libraryDisplayName: "Photos", kind: .raw, captureDate: nil, byteSize: 39_133_184,
+                id: $0.id, libraryDisplayName: "Photos", libraryKind: .library, kind: .raw, captureDate: nil, byteSize: 39_133_184,
                 createdAt: nil, pixelWidth: 6192, pixelHeight: 4128, mediaChoice: .notRated, isEdited: false,
                 hasCompanions: false
             )

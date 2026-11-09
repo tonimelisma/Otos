@@ -28,9 +28,9 @@ nonisolated enum DuplicatesGateway {
 
         func facts(
             pathsByRowID: [Int64: LibraryRootPath],
-            namesByPath: [LibraryRootPath: String]
+            librariesByPath: [LibraryRootPath: LibraryRoot]
         ) -> DuplicateCopyFacts? {
-            guard let digest, let copy = copy(pathsByRowID: pathsByRowID, namesByPath: namesByPath) else {
+            guard let digest, let copy = copy(pathsByRowID: pathsByRowID, librariesByPath: librariesByPath) else {
                 return nil
             }
             return DuplicateCopyFacts(copy: copy, digest: digest)
@@ -38,14 +38,14 @@ nonisolated enum DuplicatesGateway {
 
         func copy(
             pathsByRowID: [Int64: LibraryRootPath],
-            namesByPath: [LibraryRootPath: String]
+            librariesByPath: [LibraryRootPath: LibraryRoot]
         ) -> DuplicateCopy? {
-            guard let root = pathsByRowID[rootID], let name = namesByPath[root] else {
+            guard let root = pathsByRowID[rootID], let library = librariesByPath[root] else {
                 return nil
             }
             return DuplicateCopy(
                 id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: relativePath)),
-                libraryDisplayName: name,
+                libraryDisplayName: library.displayName, libraryKind: library.kind,
                 kind: kind.flatMap(MediaKind.init(rawValue:)),
                 captureDate: captureDate.map(Date.init(timeIntervalSince1970:)),
                 byteSize: byteSize,
@@ -289,7 +289,7 @@ nonisolated extension DuplicatesGateway {
     static func fetchSamePhotoDetail(
         rootID: Int64,
         id: MediaAssetID,
-        libraryDisplayName: String,
+        library: LibraryRoot,
         db: Database
     ) throws -> SamePhotoDetail? {
         let statement = try db.cachedStatement(sql: """
@@ -339,7 +339,7 @@ nonisolated extension DuplicatesGateway {
         return SamePhotoDetail(
             copy: DuplicateCopy(
                 id: id,
-                libraryDisplayName: libraryDisplayName,
+                libraryDisplayName: library.displayName, libraryKind: library.kind,
                 kind: kind.flatMap(MediaKind.init(rawValue:)),
                 captureDate: captureDate.map(Date.init(timeIntervalSince1970:)),
                 byteSize: row[Column.byteSize],

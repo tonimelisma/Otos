@@ -209,3 +209,11 @@ The owner ruled these out (2026-10-31); they are not ideas to revisit.
 
 - Star ratings and color labels. Curation is Liked, Not Rated and Disliked only.
 - User albums or collections.
+
+## Immich accounts beyond read-only owned assets
+
+Ideas left after the read-only accounts of ADR 0046 (owner, 2026-11-07 and 2026-11-09):
+
+- Partner and shared-album assets (`PartnerAssetsV2`, `AlbumAssetsV2`), after owned assets.
+- OIDC sign-in, in its own increment after email and password.
+- Writing to Immich: anything that changes the server is out of the read-only scope.
