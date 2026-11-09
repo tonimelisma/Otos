@@ -318,7 +318,24 @@ At 0.434 and 0.05, the 14 wrong suggestions were:
 Each is rejected once and stays rejected. Naming more people gives those faces a better
 match.
 
-**Chosen:** threshold 0.434, margin 0.08, a ± 2-year window, unnamed groups linked at 0.65.
+**Links per face** (`tools/grouping_topk.py`): keeping only each face's strongest links of
+0.65 or more, joined strongest first under the one-photo rule:
+
+| Links kept per face | Links | Groups | Faces in groups | Wrong faces |
+| --- | --- | --- | --- | --- |
+| All | 46,079 | 102 | 1,983 | 0 |
+| 20 | 16,096 | 102 | 1,983 | 0 |
+| 10 | 10,366 | 102 | 1,983 | 0 |
+| 5 | 6,343 | 102 | 1,983 | 0 |
+| 3 | 4,255 | 103 | 1,979 | 0 |
+
+(102 groups, not the 100 above, because the one-photo rule is applied to whole groups here.)
+Ten links give the same groups as all of them. Grouping then costs in proportion to the faces,
+not their pairs: on a generated 10,000-face library, one pass in the Debug build fell from
+13.7 s to 0.65 s (`people.suggestions.10k`, 193,753 → 9,627 M instructions).
+
+**Chosen:** threshold 0.434, margin 0.08, a ± 2-year window, unnamed groups from each face's
+ten strongest links at 0.65.
 
 ## 9. Conclusions
 

@@ -116,6 +116,77 @@ struct FacePeoplePolicyTests {
         #expect(result.unnamedGroups == [twoDays.map(\.id)])
     }
 
+    /// The vectorised policy gives the same suggestions and unsure faces as the rules read
+    /// one comparison at a time, on random faces with every complication: undated faces,
+    /// birthdays, rejections, shared photos, ignored faces and non-faces.
+    @Test func theVectorisedPolicyMatchesABruteForceReading() {
+        var generator = SplitMix64(seed: 11)
+        let people = (1 ... 5).map { index in
+            PersonFact(id: PersonID(rawValue: Int64(index)), birthdaySeconds: index == 3 ? Self.epoch + 4 * Self.year : nil)
+        }
+        let faces = (0 ..< 400).map { index -> FaceFact in
+            let owner = Int(generator.next() % 6)
+            var weights: [Int: Float] = [owner: 1]
+            weights[6 + Int(generator.next() % 40)] = Float(generator.next() % 100) / 100
+            // Some faces look equally like two people: the unsure case.
+            if generator.next() % 6 == 0 {
+                weights[(owner + 1) % 5] = 1
+            }
+            let dated = generator.next() % 10 != 0
+            let confirmed = generator.next() % 4 == 0 && owner < 5
+            return Self.face(
+                "\(index / 2).jpg",
+                index: index % 2,
+                toward: weights,
+                at: Double(generator.next() % 3000) * 86400,
+                person: confirmed ? PersonID(rawValue: Int64(owner + 1)) : nil,
+                rejected: generator.next() % 8 == 0 ? [PersonID(rawValue: Int64(generator.next() % 5 + 1))] : [],
+                notAFace: generator.next() % 30 == 0,
+                ignored: generator.next() % 30 == 0,
+                dated: dated
+            )
+        }
+
+        let fast = FacePeoplePolicy.suggestions(faces: faces, people: people)
+        let slow = Self.bruteForce(faces: faces, people: people)
+
+        #expect(fast.suggestions.map(\.face) == slow.suggestions.map(\.face))
+        #expect(fast.suggestions.map(\.person) == slow.suggestions.map(\.person))
+        #expect(zip(fast.suggestions, slow.suggestions).allSatisfy { abs($0.similarity - $1.similarity) < 1e-5 })
+        #expect(fast.unsure.map(\.face) == slow.unsure.map(\.face))
+        #expect(!slow.suggestions.isEmpty && !slow.unsure.isEmpty)
+    }
+
+    /// The rules, one comparison at a time.
+    static func bruteForce(faces: [FaceFact], people: [PersonFact]) -> PeopleSuggestions {
+        let usable = faces.filter { !$0.isNotFace }
+        let confirmed = usable.filter { $0.person != nil }
+        let birthdays = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.birthdaySeconds) })
+        var suggestions: [PeopleSuggestions.Suggestion] = [], unsure: [PeopleSuggestions.Unsure] = []
+        for face in usable where face.person == nil && !face.isIgnored {
+            var best: [PersonID: (Float, FaceID)] = [:]
+            for candidate in confirmed {
+                guard let person = candidate.person, birthdays.keys.contains(person), !face.rejected.contains(person),
+                      !confirmed.contains(where: { $0.person == person && $0.id.asset == face.id.asset }),
+                      FacePeoplePolicy.within(face.captureSeconds, candidate.captureSeconds),
+                      FacePeoplePolicy.notBeforeBirthday(face.captureSeconds, birthdays[person] ?? nil)
+                else { continue }
+                let similarity = zip(face.embedding, candidate.embedding).map(*).reduce(0, +)
+                if similarity > best[person]?.0 ?? -2 {
+                    best[person] = (similarity, candidate.id)
+                }
+            }
+            let ranked = best.sorted { ($0.value.0, $1.key) > ($1.value.0, $0.key) }
+            guard let top = ranked.first, top.value.0 >= FacePeoplePolicy.threshold else { continue }
+            if ranked.count > 1, top.value.0 - ranked[1].value.0 < FacePeoplePolicy.margin {
+                unsure.append(.init(face: face.id, first: top.key, second: ranked[1].key))
+            } else {
+                suggestions.append(.init(face: face.id, person: top.key, reference: top.value.1, similarity: top.value.0))
+            }
+        }
+        return PeopleSuggestions(suggestions: suggestions, unsure: unsure, unnamedGroups: [])
+    }
+
     // MARK: - Fixtures
 
     static let people = [PersonFact(id: sam, birthdaySeconds: nil), PersonFact(id: ian, birthdaySeconds: nil)]
@@ -130,7 +201,8 @@ struct FacePeoplePolicyTests {
         person: PersonID? = nil,
         rejected: Set<PersonID> = [],
         notAFace: Bool = false,
-        ignored: Bool = false
+        ignored: Bool = false,
+        dated: Bool = true
     ) -> FaceFact {
         var vector = [Float](repeating: 0, count: FaceEmbeddingModel.dimensions)
         for (axis, weight) in weights {
@@ -142,7 +214,7 @@ struct FacePeoplePolicyTests {
                 asset: MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Lib"), relativePath: MediaRelativePath(rawValue: path)),
                 index: index
             ),
-            captureSeconds: epoch + seconds,
+            captureSeconds: dated ? epoch + seconds : nil,
             embedding: vector.map { $0 / length },
             person: person,
             isNotFace: notAFace,

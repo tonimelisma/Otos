@@ -78,14 +78,18 @@ nonisolated struct PeopleSuggestions: Sendable, Equatable {
 /// - **Unsure:** the best person reaches `threshold`, the runner-up is within `margin`.
 /// - **Hard rules:** a person never gets a face from a photo where they are already confirmed,
 ///   a face from before their birthday, or a face the user rejected for them.
-/// - **Unnamed groups:** the faces left are linked when their similarity reaches
-///   `groupLink`, strongest first, never two faces of one photo; a group is offered only when
-///   its faces span two or more days. Measured: 100 groups holding 1,988 faces, none wrong.
-///   Lower links chain different people together (238 wrong faces at 0.60).
+/// - **Unnamed groups:** each face left keeps its `groupLinks` strongest links that reach
+///   `groupLink`; they are joined strongest first, never two faces of one photo, and a group
+///   is offered only when its faces span two or more days. Measured: 102 groups holding 1,983
+///   faces, none wrong. Lower links chain different people together (238 wrong faces at 0.60).
 nonisolated enum FacePeoplePolicy {
     static let threshold: Float = 0.434
     static let margin: Float = 0.08
     static let groupLink: Float = 0.65
+    /// The strongest links each face keeps for grouping. Measured on the owner's labels: 10,
+    /// 20 or every link give the same groups (102, 1,983 faces, none wrong); fewer links make
+    /// grouping cost proportional to the faces, not their pairs.
+    static let groupLinks = 10
     /// Two years, in seconds.
     static let window: Double = 2 * 365.2425 * 86400
     /// Rows compared at once, which bounds the similarity block in memory.
@@ -93,47 +97,35 @@ nonisolated enum FacePeoplePolicy {
 
     static func suggestions(faces: [FaceFact], people: [PersonFact]) -> PeopleSuggestions {
         let usable = faces.filter { !$0.isNotFace }
-        let confirmed = usable.filter { $0.person != nil }
         let open = usable.filter { $0.person == nil && !$0.isIgnored }
-        let birthdays = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.birthdaySeconds) })
-        var confirmedPhotos: [PersonID: Set<MediaAssetID>] = [:]
-        for face in confirmed {
-            if let person = face.person {
-                confirmedPhotos[person, default: []].insert(face.id.asset)
-            }
-        }
+        let groups = PersonColumns.make(confirmed: usable.filter { $0.person != nil }, people: people)
+        let columns = groups.flatMap(\.faces)
 
         var suggestions: [PeopleSuggestions.Suggestion] = []
         var unsure: [PeopleSuggestions.Unsure] = []
         var leftover: [FaceFact] = []
-        BlockedSimilarity(rows: open, columns: confirmed).forEachBlock { rows, values in
-            for row in rows {
-                let face = open[row]
-                let offset = (row - rows.lowerBound) * confirmed.count
-                var best: [PersonID: (similarity: Float, reference: FaceID)] = [:]
-                for (column, candidate) in confirmed.enumerated() {
-                    guard let person = candidate.person, birthdays.keys.contains(person),
-                          !face.rejected.contains(person),
-                          !(confirmedPhotos[person]?.contains(face.id.asset) ?? false),
-                          within(face.captureSeconds, candidate.captureSeconds),
-                          notBeforeBirthday(face.captureSeconds, birthdays[person] ?? nil)
-                    else { continue }
-                    let similarity = values[offset + column]
-                    if similarity > best[person]?.similarity ?? -2 {
-                        best[person] = (similarity, candidate.id)
+        BlockedSimilarity(rows: open, columns: columns).forEachBlock { rows, values in
+            values.withUnsafeBufferPointer { buffer in
+                for row in rows {
+                    let face = open[row]
+                    let rowStart = (row - rows.lowerBound) * columns.count
+                    var ranked: [(person: PersonID, similarity: Float, reference: FaceID)] = []
+                    for group in groups {
+                        guard let best = group.best(for: face, row: buffer, rowStart: rowStart) else { continue }
+                        ranked.append((group.person, best.similarity, columns[best.column].id))
                     }
-                }
-                let ranked = best.sorted { ($0.value.similarity, $1.key) > ($1.value.similarity, $0.key) }
-                guard let top = ranked.first, top.value.similarity >= threshold else {
-                    leftover.append(face)
-                    continue
-                }
-                if let runnerUp = ranked.dropFirst().first, top.value.similarity - runnerUp.value.similarity < margin {
-                    unsure.append(.init(face: face.id, first: top.key, second: runnerUp.key))
-                } else {
-                    suggestions.append(.init(
-                        face: face.id, person: top.key, reference: top.value.reference, similarity: top.value.similarity
-                    ))
+                    ranked.sort { ($0.similarity, $1.person) > ($1.similarity, $0.person) }
+                    guard let top = ranked.first, top.similarity >= threshold else {
+                        leftover.append(face)
+                        continue
+                    }
+                    if ranked.count > 1, top.similarity - ranked[1].similarity < margin {
+                        unsure.append(.init(face: face.id, first: top.person, second: ranked[1].person))
+                    } else {
+                        suggestions.append(.init(
+                            face: face.id, person: top.person, reference: top.reference, similarity: top.similarity
+                        ))
+                    }
                 }
             }
         }
@@ -144,13 +136,26 @@ nonisolated enum FacePeoplePolicy {
     /// faces of one photo, keeping groups that span two or more days.
     static func unnamedGroups(_ faces: [FaceFact]) -> [[FaceID]] {
         var links: [(similarity: Float, a: Int, b: Int)] = []
+        var scratch = [Float](repeating: 0, count: faces.count)
         BlockedSimilarity(rows: faces, columns: faces).forEachBlock { rows, values in
             for row in rows {
+                // A face's `groupLinks` strongest links, each found by one vectorised maximum
+                // over the row; a found column is lowered out of the way, and so is the face
+                // itself. Links to a face of the same photo are skipped, never counted.
                 let offset = (row - rows.lowerBound) * faces.count
-                for column in (row + 1) ..< faces.count where values[offset + column] >= groupLink
-                    && faces[row].id.asset != faces[column].id.asset
-                {
-                    links.append((values[offset + column], row, column))
+                scratch.replaceSubrange(0 ..< faces.count, with: values[offset ..< offset + faces.count])
+                scratch[row] = -2
+                var kept = 0
+                while kept < groupLinks {
+                    var value: Float = 0
+                    var index: vDSP_Length = 0
+                    vDSP_maxvi(scratch, 1, &value, &index, vDSP_Length(faces.count))
+                    guard value >= groupLink else { break }
+                    let column = Int(index)
+                    scratch[column] = -2
+                    guard faces[row].id.asset != faces[column].id.asset else { continue }
+                    links.append((value, min(row, column), max(row, column)))
+                    kept += 1
                 }
             }
         }
@@ -197,6 +202,93 @@ nonisolated enum FacePeoplePolicy {
     /// The calendar day of a capture instant, UTC; nil without a date.
     static func day(_ seconds: Double?) -> Int? {
         seconds.map { Int(($0 / 86400).rounded(.down)) }
+    }
+}
+
+/// One person's confirmed faces, laid out for grouping: the dated ones sorted by capture, so
+/// a face's two-year window is one contiguous run found by binary search, then the undated
+/// ones, which every face is compared with. Each person's best similarity is then one
+/// vectorised maximum per run instead of a comparison per face.
+private nonisolated struct PersonColumns {
+    let person: PersonID
+    let birthdaySeconds: Double?
+    let photos: Set<MediaAssetID>
+    let faces: [FaceFact]
+    /// Where this person's faces start in the concatenated columns.
+    let start: Int
+    /// The dated faces' capture instants, ascending; `faces[0 ..< times.count]` are dated.
+    let times: [Double]
+
+    /// One group per person in `people` with confirmed faces, in person order.
+    static func make(confirmed: [FaceFact], people: [PersonFact]) -> [PersonColumns] {
+        let byPerson = Dictionary(grouping: confirmed) { $0.person }
+        var start = 0
+        var groups: [PersonColumns] = []
+        for person in people.sorted(by: { $0.id < $1.id }) {
+            guard let faces = byPerson[person.id], !faces.isEmpty else { continue }
+            let dated = faces
+                .compactMap { face in face.captureSeconds.map { (face: face, time: $0) } }
+                .sorted { $0.time < $1.time }
+            let ordered = dated.map(\.face) + faces.filter { $0.captureSeconds == nil }
+            groups.append(PersonColumns(
+                person: person.id,
+                birthdaySeconds: person.birthdaySeconds,
+                photos: Set(faces.map(\.id.asset)),
+                faces: ordered,
+                start: start,
+                times: dated.map(\.time)
+            ))
+            start += ordered.count
+        }
+        return groups
+    }
+
+    /// The best similarity of `face` to this person's eligible faces, and its column, or nil
+    /// when the person cannot be the face's: rejected, already in the photo, born after it,
+    /// or no confirmed face within the window.
+    func best(for face: FaceFact, row: UnsafeBufferPointer<Float>, rowStart: Int) -> (similarity: Float, column: Int)? {
+        guard !face.rejected.contains(person), !photos.contains(face.id.asset),
+              FacePeoplePolicy.notBeforeBirthday(face.captureSeconds, birthdaySeconds),
+              let base = row.baseAddress
+        else {
+            return nil
+        }
+        var runs: [Range<Int>] = []
+        if let capture = face.captureSeconds {
+            let low = times.partitioningIndex { $0 >= capture - FacePeoplePolicy.window }
+            let high = times.partitioningIndex { $0 > capture + FacePeoplePolicy.window }
+            runs.append(low ..< high)
+        } else {
+            runs.append(0 ..< times.count)
+        }
+        runs.append(times.count ..< faces.count)
+        var best: (similarity: Float, column: Int)?
+        for run in runs where !run.isEmpty {
+            var value: Float = 0
+            var index: vDSP_Length = 0
+            vDSP_maxvi(base + rowStart + start + run.lowerBound, 1, &value, &index, vDSP_Length(run.count))
+            if value > best?.similarity ?? -2 {
+                best = (value, start + run.lowerBound + Int(index))
+            }
+        }
+        return best
+    }
+}
+
+private extension Array {
+    /// The first index whose element satisfies `predicate`, for a predicate that is false
+    /// then true along the array.
+    nonisolated func partitioningIndex(where predicate: (Element) -> Bool) -> Int {
+        var low = 0, high = count
+        while low < high {
+            let middle = (low + high) / 2
+            if predicate(self[middle]) {
+                high = middle
+            } else {
+                low = middle + 1
+            }
+        }
+        return low
     }
 }
 

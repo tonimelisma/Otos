@@ -131,6 +131,18 @@ struct BenchmarkTests {
             #expect(!result.suggestions.isEmpty)
         }
 
+        // A family archive's scale: 10,000 faces, 1,000 confirmed across 20 people.
+        let (large, largePeople) = Self.groupingLibrary(faces: 10000, people: 20, confirmedEach: 50)
+        try await Benchmark.measure("people.suggestions.10k", iterations: 3) {
+            let result = FacePeoplePolicy.suggestions(faces: large, people: largePeople)
+            #expect(!result.suggestions.isEmpty)
+        }
+        // Its unnamed grouping alone, on the faces nobody is confirmed near.
+        let unconfirmed = large.filter { $0.person == nil }
+        try await Benchmark.measure("people.unnamedGroups.9k", iterations: 3) {
+            #expect(!FacePeoplePolicy.unnamedGroups(unconfirmed).isEmpty)
+        }
+
         let model = try FaceEmbeddingModel(bundle: Bundle(for: CatalogWindowViewModel.self))
         let crop = try FaceAnalyzerTests.patternImage(seed: 5)
         try await Benchmark.measure("face.embed") {

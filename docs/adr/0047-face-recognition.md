@@ -127,10 +127,11 @@ grouping had put with the right child.
   the margin is not a suggestion. It is an *unsure* face, offered in a list of its own
   with both candidates and no answer (owner decision, 2026-11-10; `docs/design/people.md`).
 - **Unnamed groups:** faces that match no person are grouped among themselves, so a library with
-  nobody named yet gets something to name. Two faces are linked when their similarity reaches
-  0.65, strongest first, never two faces of one photo; hierarchical linkage was as pure but
-  cannot hold a large library's pairs in memory (measured: 100 groups, 1,988 faces, none
-  wrong). A group is offered only when its faces come from at least two different days, so a
+  nobody named yet gets something to name. Each face keeps its ten strongest links of 0.65 or
+  more, joined strongest first, never two faces of one photo; hierarchical linkage was as pure
+  but cannot hold a large library's pairs in memory, and ten links per face give the same
+  groups as all of them (measured: 102 groups, 1,983 faces, none wrong), at a cost that grows
+  with the faces rather than their pairs. A group is offered only when its faces come from at least two different days, so a
   stranger caught once never enters the review (owner decision).
 - **What the user's acts store** (overlay, ADR 0008; undoable):
   - a confirmed face's person;
