@@ -297,6 +297,16 @@ nonisolated struct EnrichmentSchedule: Sendable {
 
     // MARK: - Pacing ledger
 
+    /// Holds a row whose bytes a server did not answer for, for `ledgerPacing`, so it is not
+    /// claimed again until then (`ledgerAdmits`).
+    mutating func pace(_ id: MediaAssetID, sourceSize: Int64?, now: ContinuousClock.Instant) {
+        retryLedger[id] = RetryLedgerEntry(
+            notBefore: now.advanced(by: retrySchedule.ledgerPacing),
+            attemptCount: (retryLedger[id]?.attemptCount ?? 0) + 1,
+            sourceSize: sourceSize
+        )
+    }
+
     /// Whether a row the Store just claimed may proceed at `now`. A row the ledger paces
     /// waits until its entry comes due, unless its `sourceSize` — the ledger's fragment of
     /// the `(size, mtime)` source signature (ENR-007) — changed since the entry was

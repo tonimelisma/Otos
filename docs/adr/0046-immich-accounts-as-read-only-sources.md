@@ -156,7 +156,15 @@ listing:
 - `fileSizeInByte` as size, which `AssetExifV1` carries apart from the asset's own line; a
   line without it keeps the size the catalog holds;
 - `fileModifiedAt` as content-modified time, so ADR 0009 staleness works unchanged;
-- `localDateTime` as capture date.
+- `fileCreatedAt` as created time.
+
+Its metadata — capture date, location, camera — is read from the original itself by
+MediaMetadata, which owns those facts (ADR 0039), in byte ranges of `/original` while the
+server answers: a few 128 KB chunks per file, never a download. Enrichment claims an
+account's rows for metadata only, and only while `ImmichAccounts` reports its server
+online (`CatalogStore.setSourceAnswering`); a read the server does not answer paces its
+row (`EnrichmentOutcome.unanswered`) rather than claiming it again at once. Immich's own
+EXIF is never used for these facts.
 
 Its thumbnail and preview are Immich's (§7).
 

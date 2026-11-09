@@ -626,6 +626,8 @@ final class CatalogWindowViewModel {
             materializationRequester: materializationCoordinator,
             files: trashFiles
         )
+        let immichAccounts = immichAccounts ?? (startsEnrichment ? ImmichAccounts(store: catalogStore) : nil)
+        self.immichAccounts = immichAccounts
         self.enrichmentCoordinator = enrichmentCoordinator ?? (
             startsEnrichment
                 ? EnrichmentCoordinator(
@@ -635,7 +637,8 @@ final class CatalogWindowViewModel {
                             ?? FileManager.default.temporaryDirectory
                     ),
                     materializationRequester: materializationCoordinator,
-                    cameraRangeAccess: deviceStagingRegistry.makeCameraRangeAccess()
+                    cameraRangeAccess: deviceStagingRegistry.makeCameraRangeAccess(),
+                    remoteRangeAccess: immichAccounts?.rangeAccess()
                 )
                 : nil
         )
@@ -689,7 +692,6 @@ final class CatalogWindowViewModel {
         self.handOffContinuation = handOffContinuation
         self.exportStream = exportStream
         self.exportContinuation = exportContinuation
-        self.immichAccounts = immichAccounts ?? (startsEnrichment ? ImmichAccounts(store: catalogStore) : nil)
         let (immichIntentStream, immichIntentContinuation) = AsyncStream<ImmichAccountIntent>.makeStream(
             bufferingPolicy: .unbounded
         )

@@ -189,6 +189,9 @@ actor EnrichmentCoordinator {
     /// ranges instead of from a downloaded copy. Nil when no camera is attached, or in
     /// tests that do not exercise the device path.
     let cameraRangeAccess: CameraRangeAccess?
+    /// Resolves an account row to its server's ranged reads while the server answers, so
+    /// its metadata is read without downloading the original (ADR 0046 §5).
+    let remoteRangeAccess: RemoteRangeAccess?
     /// Device roots proven to answer ranged reads, decided once per attach.
     ///
     /// `GetPartialObject` is optional in MTP and devices that advertise it are documented
@@ -215,6 +218,7 @@ actor EnrichmentCoordinator {
         enricher: MediaEnricher,
         materializationRequester: (any MaterializationRequesting)? = nil,
         cameraRangeAccess: CameraRangeAccess? = nil,
+        remoteRangeAccess: RemoteRangeAccess? = nil,
         materialize: @escaping @Sendable (URL) async -> MaterializationResult = { _ in .cancelled },
         readinessChecker: any EnrichmentReadinessChecking = LiveEnrichmentReadinessChecker(),
         enrichConcurrency: Int = EnrichmentAdmissionPolicy.production.enrichConcurrency,
@@ -227,6 +231,7 @@ actor EnrichmentCoordinator {
         self.store = store
         self.enricher = enricher
         self.cameraRangeAccess = cameraRangeAccess
+        self.remoteRangeAccess = remoteRangeAccess
         self.materializationRequester = materializationRequester
             ?? ClosureMaterializationRequester(operation: materialize)
         var policy = admissionPolicy
@@ -314,6 +319,11 @@ extension EnrichmentCoordinator {
     /// reads *and* its session is still attached. Both conditions are checked here rather
     /// than assumed at seeding time, because a camera can leave between the two.
     func byteAccess(for work: EnrichWork) async -> EnrichmentByteAccess {
+        if let remoteRangeAccess, let size = work.sourceSize, size > 0,
+           let reader = await remoteRangeAccess.reader(for: work.id, size: UInt64(size))
+        {
+            return .remoteRanges(reader, relativePath: work.id.relativePath)
+        }
         guard rangeCapableRootPaths.contains(work.id.libraryRootPath),
               let cameraRangeAccess,
               let session = await cameraRangeAccess.session(for: work.id.libraryRootPath),

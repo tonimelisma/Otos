@@ -76,6 +76,12 @@ nonisolated struct RootRuntimeState: Equatable {
     /// card work started now only slows the import it competes with (ARC-053, ENR-017).
     /// A camera keeps enriching, because import copies its enrichment staging (ARC-049).
     var importingBatches: Set<ImportBatchID> = []
+    /// Process-local: whether the source behind this root answers reads now. A folder or
+    /// card answers when it is available; a source whose rows stay browsable while it is
+    /// unreachable (an Immich account, ADR 0046 §6) answers only once its owner says its
+    /// server does, which `CatalogStore.setSourceAnswering` records. Enrichment claims a
+    /// root only while it answers, so an outage is never a stream of failed reads.
+    var isSourceAnswering: Bool
 
     var path: LibraryRootPath {
         root.path
@@ -86,10 +92,10 @@ nonisolated struct RootRuntimeState: Equatable {
         root.kind.pausesEnrichmentWhileImporting && !importingBatches.isEmpty
     }
 
-    /// Available, enriched from its originals, not quiesced, and not a card being
-    /// imported: enrichment may claim this root's assets.
+    /// Available, answering, not quiesced, and not a card being imported: enrichment may
+    /// claim this root's assets.
     var isEnrichable: Bool {
-        root.kind.enrichesFromOriginals && availability == .available && !isQuiesced && !isCardBeingImported
+        availability == .available && isSourceAnswering && !isQuiesced && !isCardBeingImported
     }
 
     init(
@@ -120,5 +126,6 @@ nonisolated struct RootRuntimeState: Equatable {
         self.namespaceRevision = namespaceRevision
         self.namingRevision = namingRevision
         self.namespaceMutationEpoch = namespaceMutationEpoch
+        isSourceAnswering = !root.kind.showsRowsWhileUnreachable
     }
 }

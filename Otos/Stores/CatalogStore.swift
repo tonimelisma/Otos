@@ -3433,6 +3433,24 @@ extension CatalogStore {
 
     /// The roots enrichment may claim on now: one answer, read by the claim queries and
     /// by the coordinator's queue alike.
+    /// Records whether the source behind `path` answers reads now (`RootRuntimeState.isSourceAnswering`).
+    /// A source that stops answering has its enrichment claims released, so no read
+    /// waits on it; one that answers again is claimable at the next pass.
+    func setSourceAnswering(_ answering: Bool, for path: LibraryRootPath) async {
+        guard var state = roots[path], state.isSourceAnswering != answering else {
+            return
+        }
+        state.isSourceAnswering = answering
+        upsert(state)
+        OtosLog.catalog.noticeOperation("catalog.source.answering", phase: "changed", fields: [
+            "rootPath": path.rawValue, "answering": "\(answering)",
+        ])
+        if !answering {
+            await releaseEnrichmentClaimsForRoot(state.rowID)
+        }
+        notifyCatalogChanged()
+    }
+
     func enrichableRootPaths() -> Set<LibraryRootPath> {
         Set(roots.values.filter(\.isEnrichable).map(\.path))
     }

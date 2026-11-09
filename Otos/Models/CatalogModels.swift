@@ -564,17 +564,6 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
         case .immichAccount: .available
         }
     }
-
-    /// Enrichment reads this kind's originals for its metadata and stored images. An
-    /// account's metadata comes from its server's sync stream and its thumbnail and
-    /// preview from the server, so enrichment never claims its rows to download an
-    /// original (ADR 0046 §5, §7).
-    var enrichesFromOriginals: Bool {
-        switch self {
-        case .library, .removableVolume, .deviceMTP: true
-        case .immichAccount: false
-        }
-    }
 }
 
 /// The one authored curation value for a cataloged image or video. It is overlay

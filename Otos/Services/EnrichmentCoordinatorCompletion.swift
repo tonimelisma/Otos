@@ -42,6 +42,14 @@ extension EnrichmentCoordinator {
                 id: id,
                 fields: ["sourceSize": "\(work.sourceSize ?? -1)"]
             )
+        case .unanswered:
+            // A server that serves this row in ranges did not answer. The row waits out
+            // the pacing ledger rather than being claimed again at once; an outage stops
+            // claims through the root's answering fact (`CatalogStore.setSourceAnswering`).
+            readyClaims[id] = nil
+            await releaseClaimIfOwned(record, id: id)
+            schedule.pace(id, sourceSize: work.sourceSize, now: ContinuousClock.now)
+            await recordVisibleThumbnailLifecycle(phase: "unanswered", id: id)
         case .transient:
             // `.transient` means the byte source could not be opened. The metadata
             // package's `shouldRetry` is a generic contract, honest for a network byte

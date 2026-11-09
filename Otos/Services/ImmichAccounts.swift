@@ -58,6 +58,8 @@ actor ImmichAccounts {
 
     private struct Account {
         let root: LibraryRoot
+        let client: ImmichClient
+        let token: String
         let sync: ImmichCatalogSync
         let loop: Task<Void, Never>
         var timer: Task<Void, Never>?
@@ -66,6 +68,10 @@ actor ImmichAccounts {
 
     nonisolated let statuses: AsyncStream<[LibraryRootPath: ImmichAccountStatus]>
     private let publish: AsyncStream<[LibraryRootPath: ImmichAccountStatus]>.Continuation
+    /// Answering facts for the Store, in the order the statuses changed: one consumer, so
+    /// an outage and a recovery never reach the Store reversed.
+    private let storeUpdates: AsyncStream<@Sendable () async -> Void>.Continuation
+    private let storeUpdateLoop: Task<Void, Never>
 
     private let store: CatalogStore
     private let sessions: any ImmichSessionStoring
@@ -86,6 +92,13 @@ actor ImmichAccounts {
         self.urlSession = urlSession
         self.schedule = schedule
         (statuses, publish) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let (updates, continuation) = AsyncStream<@Sendable () async -> Void>.makeStream(bufferingPolicy: .unbounded)
+        storeUpdates = continuation
+        storeUpdateLoop = Task {
+            for await update in updates {
+                await update()
+            }
+        }
     }
 
     /// Starts every saved account's sync: one with a saved session at once, one without
@@ -163,6 +176,7 @@ actor ImmichAccounts {
         stop(root.path)
         status[root.path] = nil
         publish.yield(status)
+        await store.setSourceAnswering(false, for: root.path)
         do {
             if let token = try sessions.token(for: identity) {
                 do {
@@ -199,14 +213,50 @@ actor ImmichAccounts {
             await loop.value
         }
         publish.finish()
+        storeUpdates.finish()
+        await storeUpdateLoop.value
+    }
+
+    // MARK: - Ranged reads (ADR 0046 §5)
+
+    /// How enrichment reads an account row's original in ranges: through the account's
+    /// session, and only while its server answers.
+    nonisolated func rangeAccess() -> RemoteRangeAccess {
+        RemoteRangeAccess(
+            serves: { [weak self] rootPath in
+                await self?.isAnswering(rootPath) ?? false
+            },
+            resolve: { [weak self] id, size in
+                await self?.rangeReader(for: id, size: size)
+            }
+        )
+    }
+
+    private func isAnswering(_ rootPath: LibraryRootPath) -> Bool {
+        accounts[rootPath] != nil && status[rootPath] == .online
+    }
+
+    private func rangeReader(for id: MediaAssetID, size: UInt64) -> RemoteRangeReader? {
+        guard let account = accounts[id.libraryRootPath], status[id.libraryRootPath] == .online,
+              let assetID = id.relativePath.rawValue.split(separator: "/", maxSplits: 1).first
+        else {
+            return nil
+        }
+        let client = account.client
+        let token = account.token
+        let asset = String(assetID)
+        return RemoteRangeReader(size: size) { offset, length, completion in
+            client.originalRange(assetID: asset, token: token, offset: offset, length: length, completion: completion)
+        }
     }
 
     // MARK: - Loops
 
     private func begin(_ root: LibraryRoot, token: String, server: URL) {
+        let client = ImmichClient(server: server, session: urlSession)
         let sync = ImmichCatalogSync(
             rootPath: root.path,
-            source: ImmichSessionSyncSource(client: ImmichClient(server: server, session: urlSession), token: token),
+            source: ImmichSessionSyncSource(client: client, token: token),
             store: store
         )
         let path = root.path
@@ -216,7 +266,7 @@ actor ImmichAccounts {
                 await self?.passEnded(outcome, for: path)
             }
         }
-        accounts[path] = Account(root: root, sync: sync, loop: loop)
+        accounts[path] = Account(root: root, client: client, token: token, sync: sync, loop: loop)
         setStatus(.connecting, for: path)
         sync.requestSync()
     }
@@ -281,6 +331,11 @@ actor ImmichAccounts {
         }
         status[path] = new
         publish.yield(status)
+        // Enrichment reads an account's originals in ranges only while its server answers;
+        // the Store's answering fact is what stops claims during an outage.
+        let answering = new == .online
+        let store = store
+        storeUpdates.yield { await store.setSourceAnswering(answering, for: path) }
         OtosLog.catalog.noticeOperation("immich.account.status", phase: "changed", fields: [
             "rootPath": path.rawValue, "status": String(describing: new),
         ])

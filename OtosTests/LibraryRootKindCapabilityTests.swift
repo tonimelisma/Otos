@@ -18,7 +18,6 @@ struct LibraryRootKindCapabilityTests {
         let stagesOriginals: Bool
         let pausesEnrichmentWhileImporting: Bool
         let rowsWhileUnreachable: Bool
-        let enrichesFromOriginals: Bool
 
         init(_ kind: LibraryRootKind) {
             userChosenFolder = kind.isUserChosenFolder
@@ -32,14 +31,13 @@ struct LibraryRootKindCapabilityTests {
             stagesOriginals = kind.stagesOriginals
             pausesEnrichmentWhileImporting = kind.pausesEnrichmentWhileImporting
             rowsWhileUnreachable = kind.showsRowsWhileUnreachable
-            enrichesFromOriginals = kind.enrichesFromOriginals
         }
 
         init(
             userChosenFolder: Bool, librariesSection: Bool, allMedia: Bool, importDestination: Bool,
             removable: Bool, filesystemNamespace: Bool, moveToTrash: Bool, sourceListing: Bool,
             stagesOriginals: Bool, pausesEnrichmentWhileImporting: Bool,
-            rowsWhileUnreachable: Bool = false, enrichesFromOriginals: Bool = true
+            rowsWhileUnreachable: Bool = false
         ) {
             self.userChosenFolder = userChosenFolder
             self.librariesSection = librariesSection
@@ -52,13 +50,12 @@ struct LibraryRootKindCapabilityTests {
             self.stagesOriginals = stagesOriginals
             self.pausesEnrichmentWhileImporting = pausesEnrichmentWhileImporting
             self.rowsWhileUnreachable = rowsWhileUnreachable
-            self.enrichesFromOriginals = enrichesFromOriginals
         }
 
         var description: String {
             "\(userChosenFolder) \(librariesSection) \(allMedia) \(importDestination) \(removable) "
                 + "\(filesystemNamespace) \(moveToTrash) \(sourceListing) \(stagesOriginals) "
-                + "\(pausesEnrichmentWhileImporting) \(rowsWhileUnreachable) \(enrichesFromOriginals)"
+                + "\(pausesEnrichmentWhileImporting) \(rowsWhileUnreachable)"
         }
     }
 
@@ -94,7 +91,7 @@ struct LibraryRootKindCapabilityTests {
             userChosenFolder: false, librariesSection: true, allMedia: true, importDestination: false,
             removable: false, filesystemNamespace: false, moveToTrash: false, sourceListing: true,
             stagesOriginals: true, pausesEnrichmentWhileImporting: false,
-            rowsWhileUnreachable: true, enrichesFromOriginals: false
+            rowsWhileUnreachable: true
         ))
         #expect(LibraryRootKind.allCases.filter(\.supportsReorganization) == [.library])
         #expect(LibraryRootKind.immichAccount.availabilityAtLaunch == .available)
