@@ -7,7 +7,8 @@ evidence (`docs/research/2026-11-07-face-recognition-models.md`).
 
 - **Built:** detection, the analyser and the model (#593), and faces as a stored enrichment
   product (plan 0113, increment 3).
-- **Still Proposed:** people and grouping, and the People UI, until plan 0113 builds them.
+- **Still Proposed:** people and grouping, the People UI (specified in
+  `docs/design/people.md`), and faces for Immich accounts, until plan 0113 builds them.
 
 ## Context
 
@@ -120,6 +121,26 @@ grouping had put with the right child.
   - A face from before a person's birthday is never theirs.
 - **Years:** a child across three or more years is reached by chaining through the years between
   them. Chained matches are suggestions that the user confirms, never automatic assignments.
+- **Unsure faces:** a face whose best two people are both above the threshold but within the
+  margin of each other is not a suggestion. It is an *unsure* face, offered in a list of its own
+  with both candidates and no answer (owner decision, 2026-11-10; `docs/design/people.md`).
+- **Unnamed groups:** faces that match no person are grouped among themselves, by the same rules
+  (threshold, margin, the same-photo rule), so a library with nobody named yet gets something to
+  name. A group is offered only when its faces come from at least two different days, so a
+  stranger caught once never enters the review (owner decision).
+- **What the user's acts store** (overlay, ADR 0008; undoable):
+  - a confirmed face's person;
+  - a rejection, `Not Sam`, as a (face, person) exclusion, so the same suggestion never
+    returns;
+  - `Not a Face`, which takes a detection out of People until the photo's file changes;
+  - an ignored unnamed group, whose faces are never grouped or suggested again.
+
+  Removing a person returns their faces to the review as unnamed and forgets their
+  rejections. A person's name is optional: a split creates an unnamed person, named later
+  (owner decision).
+- **Immich accounts:** their photos are read for faces from the stored Immich preview, never
+  the original (measured in the research note, section 7: no wrong match, about 7% of small
+  faces missed). Their originals are downloaded only for the user's own work (ADR 0046).
 
 ### Work and placement
 

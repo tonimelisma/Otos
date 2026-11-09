@@ -244,7 +244,38 @@ For AdaFace IR-101:
   fp16 and int8.
 - **Size:** 66 MB, under GitHub's 100 MB per-file limit. fp16 is 131 MB and fp32 261 MB.
 
-## 7. Conclusions
+## 7. Faces from a preview (Immich, 2026-11-10)
+
+Question: can an Immich account's photos be read for faces from the preview Otos already
+downloads on sync (ADR 0046 §7), instead of downloading every original?
+
+Immich's preview is a JPEG 1440 px on its **short** edge: 1920 × 1440 for a 4:3 photo,
+2160 × 1440 for 3:2. The test used the research run's cached copies, downscaled to 1440 px on
+the **long** edge, which is smaller than any Immich preview: a lower bound. Every photo
+holding a labelled face (1,706 photos) went through the shipped `FaceAnalyzer` source, and
+each labelled face was matched to its full-resolution embedding.
+
+- **Found:** 2,033 of 2,196 labelled faces (93%). The 163 lost are small faces that fall
+  under detection or the admission rules at preview size.
+- **Fidelity:** cosine to the full-resolution embedding, median 0.9925, p10 0.980, minimum
+  0.837.
+- **Decisions,** scored on the 2,033 found faces with the same rules as section 5:
+
+| Measure | Full resolution | 1440 px preview |
+| --- | --- | --- |
+| Children's faces matched to the wrong child | 0 | 0 |
+| Children's faces confidently assigned | 99.86% | 99.44% |
+| Hard child faces assigned (of 33 found) | 33 | 30, none wrong |
+| Same child ~1 / ~3 / ~5 years apart, accepted | 63% / 31% / 13% | 62% / 30% / 12% |
+| Own face years later beats a same-age sibling (~1 / ~3 / ~5 y) | 0.914 / 0.785 / 0.684 | 0.912 / 0.782 / 0.676 |
+| Decisions changed against full resolution | — | 7 of 2,033, all held back, none wrong |
+
+**Conclusion:** a preview costs coverage (small faces) and holds a few more faces back for
+the user to confirm, but it never produced a wrong match. Immich's real preview is larger than
+the one tested. An Immich account's photos are read for faces from their stored preview, with
+no original download.
+
+## 8. Conclusions
 
 1. **Model:** AdaFace IR-101 (WebFace12M).
 2. **Precision and engine:** int8 weights, on the CPU.
@@ -263,3 +294,5 @@ For AdaFace IR-101:
      re-measured when grouping is built.
    - **Years apart:** a gap of three or more years needs chaining through the years between,
      confirmed by the user.
+5. **Immich accounts:** read faces from the stored Immich preview (section 7), not the
+   original.

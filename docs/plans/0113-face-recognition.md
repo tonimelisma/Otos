@@ -18,6 +18,17 @@ labelled faces outside the repository. It is never committed.
   birthdays. These labels are the ground truth that later increments re-measure against.
 - **Model (2026-11-09):** AdaFace IR-101, chosen by the owner from the final four-model
   comparison in the research note (ADR 0047).
+- **People surfaces (2026-11-09/10)**, recorded in `docs/design/people.md`:
+  - one `People` sidebar row;
+  - the list ordered by photo count;
+  - the newest confirmed face as the cover;
+  - the review newest year first;
+  - unsure faces in their own list (`Unsure`), apart from decided suggestions;
+  - unnamed groups only when seen on two or more days, with `Ignore`;
+  - `Remove Person`, and splits named later;
+  - removing a name (`Not Sam`) apart from removing a face (`Not a Face`).
+- **Immich (2026-11-09):** Immich photos get faces. Measured 2026-11-10 (research note §7),
+  they are read from the stored Immich preview, with no original download.
 
 ## Open owner decisions
 
@@ -63,11 +74,17 @@ Each increment lands on `main` with its own DoD.
      - best-person-beats-second acceptance;
      - the same-photo and before-birthday exclusions;
      - chained suggestions across years.
+   - **Stored acts:** the `person` table (name optional, birthday), the face's confirmed
+     person, rejections as (face, person) exclusions, `Not a Face`, and ignored groups
+     (ADR 0047).
+   - **Unnamed groups and unsure faces:** grouping among unconfirmed faces (two or more
+     days), and the faces whose best two people are within the margin.
    - **Projection:** `PeopleProjection`, an actor with its own loop, like
      `DuplicatesProjection`. It publishes suggestions and is never awaited by a window pass.
    - **Re-measuring:** the threshold and margin are measured again on the owner's labels,
      using the app's own embeddings.
-5. **Design spec:** `docs/design/people.md`. It covers:
+5. **Design spec:** `docs/design/people.md` *(this PR; the owner's answers folded in, the
+   whole spec awaiting the owner's review)*. It covers:
    - the People sidebar entry;
    - a person's scope;
    - the review of suggestions grouped by year, with accept, merge and split;
@@ -78,7 +95,10 @@ Each increment lands on `main` with its own DoD.
 6. **People UI:** built to that spec. Every action is one owner intent on
    `CatalogWindowViewModel`, the same for menus, keys and buttons.
 
-7. **MediaMetadata: face regions, if the owner's photos have named ones.**
+7. **Faces for Immich accounts,** read from the stored Immich preview (ADR 0047): the claim
+   that owes them, the read from the stored preview instead of the original, and the
+   requirement row changing ENR-022's exclusion of Immich accounts.
+8. **MediaMetadata: face regions, if the owner's photos have named ones.**
    - **Measured 2026-11-09:** of 20 local photos, 2 carry MWG regions, both written by the
      iPhone camera, unnamed (`apple-fi` face IDs only). The libraries hold no `.xmp` sidecars.
      Unnamed regions add nothing Vision does not find.
