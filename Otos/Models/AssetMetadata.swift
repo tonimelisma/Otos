@@ -235,7 +235,7 @@ nonisolated struct EnrichedRendering: Equatable {
     /// Who drew the images (ADR 0035). Otos's rendering is stamped as the row's
     /// rendering; a source's own images (an Immich account's thumbnail and preview,
     /// ADR 0046 §7) are stamped as source products, and leave the rendering owed.
-    enum Origin: Equatable {
+    enum Origin: Hashable, Sendable {
         case otos
         case source
     }

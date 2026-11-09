@@ -18,14 +18,19 @@ struct ImmichAccountCatalogTests {
     }
 
     /// Lists `names` as the server would, each under its own asset folder.
-    private func list(_ names: [String], into rootPath: LibraryRootPath, store: CatalogStore) async throws {
+    private func list(
+        _ names: [String],
+        into rootPath: LibraryRootPath,
+        store: CatalogStore,
+        byteSize: Int64 = 42
+    ) async throws {
         let scan = try await store.beginSourceListing(rootPath: rootPath)
         let files = names.map { name in
             ScannedMediaFile(
                 relativePath: MediaRelativePath(rawValue: "asset-\(name)/\(name)"),
                 name: name,
                 contentTypeIdentifier: "public.jpeg",
-                byteSize: 42,
+                byteSize: byteSize,
                 createdAt: Date(timeIntervalSince1970: 1_700_000_000),
                 contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
             )
@@ -117,6 +122,64 @@ struct ImmichAccountCatalogTests {
         let available = await CatalogWindowPolicy.availablePaths(from: store.currentLibraries())
         let copies = try await store.duplicateCopies(availableLibraryPaths: available).copies
         #expect(Set(copies.map(\.copy.id.libraryRootPath)) == [library, rootPath])
+        await store.shutdown()
+    }
+
+    /// ADR 0042, ADR 0046 §7: a signature names the pipeline that drew its thumbnail. A
+    /// changed file's new Immich images land at the same path and still make the old
+    /// signature stale, and Otos's rendering moves the still to Otos's pipeline.
+    @Test func aSignatureFollowsTheSourceImagesAndTheRenderingThatReplacesThem() async throws {
+        let staging = try makeTestDirectory().appending(path: "RemoteStaging", directoryHint: .isDirectory)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        let rootPath = try await addAccount(store, staging: staging)
+        try await list(["IMG_1.JPG"], into: rootPath, store: store)
+        let still = id("IMG_1.JPG", in: rootPath)
+        let signature = try #require(RenderSignature(
+            differenceHash: 7, gray: [UInt8](repeating: 90, count: RenderSignature.grayEdge * RenderSignature.grayEdge)
+        ))
+
+        func applySourceImages(size: Int64) async {
+            _ = await store.applyEnrichmentBatch([EnrichmentResult(
+                id: still,
+                metadata: nil,
+                rendering: EnrichedRendering(thumbnailPath: "thumb.jpg", previewPath: "preview.jpg", origin: .source),
+                sourceSize: size,
+                sourceMTimeSeconds: 1_700_000_000,
+                contentHash: nil
+            )])
+        }
+        func signRead() async throws -> Int {
+            let candidates = try await store.renderSignatureCandidates(limit: 10)
+            return try await store.applyRenderSignatures(candidates.map {
+                RenderSignatureResult(id: $0.id, source: $0.source, signature: signature)
+            })
+        }
+        func drawnBy() async throws -> [EnrichedRendering.Origin] {
+            try await store.samePhotoCandidates(availableLibraryPaths: [rootPath]).map(\.drawnBy)
+        }
+
+        await applySourceImages(size: 42)
+        #expect(try await signRead() == 1)
+        #expect(try await drawnBy() == [.source])
+        #expect(try await store.renderSignatureCandidates(limit: 10).isEmpty)
+
+        try await list(["IMG_1.JPG"], into: rootPath, store: store, byteSize: 43)
+        await applySourceImages(size: 43)
+        #expect(try await store.renderSignatureCandidates(limit: 10).map(\.id) == [still])
+        #expect(try await signRead() == 1)
+
+        _ = await store.applyEnrichmentBatch([EnrichmentResult(
+            id: still,
+            metadata: nil,
+            rendering: EnrichedRendering(thumbnailPath: "thumb.jpg", previewPath: "preview.jpg"),
+            sourceSize: 43,
+            sourceMTimeSeconds: 1_700_000_000,
+            contentHash: nil
+        )])
+        #expect(try await store.renderSignatureCandidates(limit: 10).map(\.id) == [still])
+        #expect(try await signRead() == 1)
+        #expect(try await drawnBy() == [.otos])
         await store.shutdown()
     }
 
