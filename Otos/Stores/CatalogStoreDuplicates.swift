@@ -28,7 +28,7 @@ nonisolated enum DuplicatesGateway {
 
         func facts(
             pathsByRowID: [Int64: LibraryRootPath],
-            librariesByPath: [LibraryRootPath: LibraryRoot]
+            librariesByPath: [LibraryRootPath: DuplicateLibrary]
         ) -> DuplicateCopyFacts? {
             guard let digest, let copy = copy(pathsByRowID: pathsByRowID, librariesByPath: librariesByPath) else {
                 return nil
@@ -38,7 +38,7 @@ nonisolated enum DuplicatesGateway {
 
         func copy(
             pathsByRowID: [Int64: LibraryRootPath],
-            librariesByPath: [LibraryRootPath: LibraryRoot]
+            librariesByPath: [LibraryRootPath: DuplicateLibrary]
         ) -> DuplicateCopy? {
             guard let root = pathsByRowID[rootID], let library = librariesByPath[root] else {
                 return nil
@@ -158,6 +158,18 @@ nonisolated enum DuplicatesGateway {
                 secondPath: row["second_path"]
             )
         }
+    }
+}
+
+/// What a copy needs of its library: the name the list shows, and the kind that says what
+/// Otos may do with the copy. Only these two, because a build looks one up per row.
+nonisolated struct DuplicateLibrary: Sendable {
+    let displayName: String
+    let kind: LibraryRootKind
+
+    init(_ root: LibraryRoot) {
+        displayName = root.displayName
+        kind = root.kind
     }
 }
 
@@ -289,7 +301,7 @@ nonisolated extension DuplicatesGateway {
     static func fetchSamePhotoDetail(
         rootID: Int64,
         id: MediaAssetID,
-        library: LibraryRoot,
+        library: DuplicateLibrary,
         db: Database
     ) throws -> SamePhotoDetail? {
         let statement = try db.cachedStatement(sql: """
