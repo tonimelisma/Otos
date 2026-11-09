@@ -15,8 +15,8 @@ import UniformTypeIdentifiers
 /// - **An unedited still that is not a RAW, or an untrimmed video:** the original itself.
 ///   Nothing is read; a cloud-only original is downloaded by the app that reads it, as
 ///   with Finder. An original a source stages (an Immich account's, a camera's) has no file
-///   until Otos copies it, so one not yet staged is fetched first, as the user's work
-///   (ADR 0046 §4).
+///   until Otos copies it, so one not yet staged — `locality(of:)` says `.fetchable` for a
+///   path with no file — is fetched first, as the user's work (ADR 0046 §4).
 /// - **An edited still or any RAW:** a full-size JPEG rendered from the original with its
 ///   recipe (RAW9 defaults for an unedited RAW). It keeps the original's metadata, with
 ///   the orientation reset because the pixels are already upright.
@@ -78,7 +78,12 @@ actor HandOffPreparer {
     /// this launch.
     func prepare(_ item: EditedMediaItem) async throws -> URL {
         guard item.handOffForm != .original else {
-            if Self.exists(item.id.fileURL) {
+            // A file that is there, a cloud placeholder included, is handed over as it is,
+            // and so is a path with no file that no source can send: what Finder would do.
+            // Only a staged original its source has not sent yet is fetched.
+            guard !Self.exists(item.id.fileURL),
+                  await materialization.locality(of: item.id) == .fetchable
+            else {
                 return item.id.fileURL
             }
             let start = ContinuousClock.now
