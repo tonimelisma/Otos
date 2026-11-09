@@ -75,6 +75,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: temp,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
     }

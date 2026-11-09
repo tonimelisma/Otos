@@ -76,6 +76,8 @@ actor ImmichAccounts {
     private let store: CatalogStore
     private let sessions: any ImmichSessionStoring
     private let urlSession: URLSession
+    /// Reads a volume's free space for the floor every account's sync keeps (ADR 0027).
+    private let volumeCapacity: @Sendable (URL) -> Int64?
     private let schedule: Schedule
     /// Where new accounts' staging folders go: the app's Caches `RemoteStaging`, or a test's
     /// own folder.
@@ -89,8 +91,10 @@ actor ImmichAccounts {
         sessions: any ImmichSessionStoring = ImmichKeychainSessionStore(),
         urlSession: URLSession = .shared,
         schedule: Schedule = .production,
-        stagingContainer: URL = StagingLocation.containerURL(.remote)
+        stagingContainer: URL = StagingLocation.containerURL(.remote),
+        volumeCapacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:)
     ) {
+        self.volumeCapacity = volumeCapacity
         self.stagingContainer = stagingContainer
         self.store = store
         self.sessions = sessions
@@ -355,7 +359,8 @@ actor ImmichAccounts {
         let sync = ImmichCatalogSync(
             rootPath: root.path,
             source: ImmichSessionSyncSource(client: client, token: token),
-            store: store
+            store: store,
+            volumeCapacity: volumeCapacity
         )
         let path = root.path
         // The loop holds the sync, never this owner: a weak reference per pass report.

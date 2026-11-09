@@ -128,7 +128,8 @@ extension CatalogWindowViewModel {
     func startExport() {
         let reader = tileDetailReader
         let materialization = materializationCoordinator
-        exportTask = Task { [weak self, exportStream, reader, materialization] in
+        let volumeCapacity = volumeCapacity
+        exportTask = Task { [weak self, exportStream, reader, materialization, volumeCapacity] in
             for await request in exportStream {
                 defer { self?.handledExportCount += 1 }
                 guard !Task.isCancelled else { break }
@@ -157,7 +158,8 @@ extension CatalogWindowViewModel {
                         EditedMediaItem(id: id, detail: details[id]),
                         settings: request.settings,
                         to: request.folder,
-                        materialization: materialization
+                        materialization: materialization,
+                        volumeCapacity: volumeCapacity
                     )
                     switch outcome {
                     case let .exported(url):

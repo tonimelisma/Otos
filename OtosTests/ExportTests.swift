@@ -58,11 +58,13 @@ struct ExportTests {
         settings.limitsSize = true
         settings.longEdge = 48
 
-        let small = try await exportedImage(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals))
+        let small = try await exportedImage(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals,
+                                                                 volumeCapacity: ampleVolumeCapacity))
         #expect(small.width == 48 && small.height == 32)
 
         settings.longEdge = 4000
-        let full = try await exportedImage(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals))
+        let full = try await exportedImage(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals,
+                                                                volumeCapacity: ampleVolumeCapacity))
         #expect(full.width == 96 && full.height == 64)
     }
 
@@ -71,17 +73,35 @@ struct ExportTests {
         var settings = ExportSettings.default
         settings.format = .heic
 
-        let kept = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals)))
+        let kept = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals,
+                                                                       volumeCapacity: ampleVolumeCapacity)))
         #expect(kept.lastPathComponent == "placed.heic")
         #expect(try properties(of: kept)[kCGImagePropertyGPSDictionary] != nil)
         let source = try #require(CGImageSourceCreateWithURL(kept as CFURL, nil))
         #expect(CGImageSourceGetType(source) as String? == UTType.heic.identifier)
 
         settings.removesLocation = true
-        let removed = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals)))
+        let removed = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals,
+                                                                          volumeCapacity: ampleVolumeCapacity)))
         #expect(removed.lastPathComponent == "placed_001.heic")
         #expect(try properties(of: removed)[kCGImagePropertyGPSDictionary] == nil)
         #expect(try properties(of: removed)[kCGImagePropertyExifDictionary] != nil)
+    }
+
+    /// An export that would take the destination's volume below the floor writes nothing
+    /// and stops, whatever the machine running the test has free.
+    @Test func anExportThatWouldCrossTheFloorWritesNothing() async throws {
+        let (photo, folder) = try makePhoto(named: "tight.jpg")
+        let item = EditedMediaItem(id: photo.id, isVideo: false, recipe: .neutral, sourceSize: nil)
+        var settings = ExportSettings.default
+        settings.format = .original
+        let atTheFloor: @Sendable (URL) -> Int64? = { _ in FreeSpaceFloor.bytes }
+
+        let outcome = await MediaExporter.export(
+            item, settings: settings, to: folder, materialization: localOriginals, volumeCapacity: atTheFloor
+        )
+        #expect(outcome == .belowFloor)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)).isEmpty)
     }
 
     @Test func originalExportsTheFileAsItIsOnDisk() async throws {
@@ -90,7 +110,8 @@ struct ExportTests {
         var settings = ExportSettings.default
         settings.format = .original
 
-        let url = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals)))
+        let url = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals,
+                                                                      volumeCapacity: ampleVolumeCapacity)))
         #expect(url.lastPathComponent == "as-is.jpg")
         #expect(try Data(contentsOf: url) == Data(contentsOf: item.id.fileURL))
     }
@@ -112,12 +133,14 @@ struct ExportTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         var settings = ExportSettings.default
 
-        let kept = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals)))
+        let kept = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals,
+                                                                       volumeCapacity: ampleVolumeCapacity)))
         #expect(try await abs(AVURLAsset(url: kept).load(.duration).seconds - 0.4) < 0.15)
         #expect(try await hasLocation(kept))
 
         settings.removesLocation = true
-        let removed = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals)))
+        let removed = try #require(await exportedURL(MediaExporter.export(item, settings: settings, to: folder, materialization: localOriginals,
+                                                                          volumeCapacity: ampleVolumeCapacity)))
         #expect(removed.lastPathComponent == "clip_001.mov")
         #expect(try await !hasLocation(removed))
     }

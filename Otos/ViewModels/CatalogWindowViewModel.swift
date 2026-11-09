@@ -360,6 +360,10 @@ final class CatalogWindowViewModel {
     /// render signature refresher: it reads the thumbnails enrichment writes.
     @ObservationIgnored let photoSearchIndex: PhotoSearchIndex?
     @ObservationIgnored let materializationCoordinator: MaterializationCoordinator
+    /// Reads a volume's free space for every free-space floor this window's owners keep
+    /// (ADR 0027): the system's reading in the app, a test's own so no outcome depends on
+    /// how full the machine running it is.
+    @ObservationIgnored let volumeCapacity: @Sendable (URL) -> Int64?
     @ObservationIgnored let deviceStagingRegistry: DeviceStagingRegistry
     @ObservationIgnored private let mediaTileDetailReader: MediaTileDetailReader
     @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
@@ -565,8 +569,10 @@ final class CatalogWindowViewModel {
         calendarDayReader: @escaping @Sendable () -> CalendarDay = { CalendarDay.today() },
         calendarNotificationCenter: NotificationCenter = .default,
         tileContentStore: TileContentStore = TileContentStore(),
+        volumeCapacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:),
         trashFiles: MediaTrashCoordinator.FileOperations
     ) {
+        self.volumeCapacity = volumeCapacity
         self.workspace = workspace
         self.tileContentStore = tileContentStore
         self.calendarDayReader = calendarDayReader
@@ -631,7 +637,7 @@ final class CatalogWindowViewModel {
         mediaTileDetailReader = MediaTileDetailReader(store: catalogStore)
         let deviceStagingRegistry = DeviceStagingRegistry()
         self.deviceStagingRegistry = deviceStagingRegistry
-        let immichAccounts = immichAccounts ?? (startsEnrichment ? ImmichAccounts(store: catalogStore) : nil)
+        let immichAccounts = immichAccounts ?? (startsEnrichment ? ImmichAccounts(store: catalogStore, volumeCapacity: volumeCapacity) : nil)
         self.immichAccounts = immichAccounts
         let materializationCoordinator = MaterializationCoordinator(
             store: catalogStore,
@@ -662,7 +668,8 @@ final class CatalogWindowViewModel {
                         persistence: .forPriority(request.priority)
                     )
                 }
-            }
+            },
+            capacity: volumeCapacity
         )
         self.materializationCoordinator = materializationCoordinator
         handOffPreparer = HandOffPreparer(
@@ -672,7 +679,8 @@ final class CatalogWindowViewModel {
         mediaTrashCoordinator = MediaTrashCoordinator(
             store: catalogStore,
             materializationRequester: materializationCoordinator,
-            files: trashFiles
+            files: trashFiles,
+            capacity: volumeCapacity
         )
         // One face analyser, so the model loads once, read by enrichment (fixed libraries'
         // originals) and the preview face reader (Immich accounts' previews).
