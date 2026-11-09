@@ -1,6 +1,6 @@
 # Model notices
 
-Otos ships two converted models (ADR 0045):
+Otos ships three converted models (ADR 0045, ADR 0047):
 
 - `FocalNet.mlpackage` is Appwrite FocalNet's human-preference crop ranker
   (https://huggingface.co/appwrite/focalnet), converted to Core ML at full precision.
@@ -13,3 +13,9 @@ Otos ships two converted models (ADR 0045):
   https://creativecommons.org/licenses/by/4.0/legalcode. The conversion changes the weights' precision and is a
   modification under that licence. `Otos/Services/PerspectiveFieldSolver.swift` ports
   GeoCalib's Levenberg–Marquardt solver.
+- `AdaFaceIR101.mlpackage` is AdaFace IR-101 trained on WebFace12M, the CVLFace weights
+  (https://huggingface.co/minchul/cvlface_adaface_ir101_webface12m), from AdaFace: Quality
+  Adaptive Margin for Face Recognition, Minchul Kim, Anil K. Jain and Xiaoming Liu, CVPR 2022.
+  It is converted to Core ML with 8-bit linear per-channel weights. Code: MIT,
+  `AdaFace-LICENSE.txt`. The weights follow the training dataset's licence (WebFace260M,
+  non-commercial research); Otos is non-commercial.

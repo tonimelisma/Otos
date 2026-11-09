@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 import Foundation
 @testable import OtosKit
 import Testing
@@ -93,6 +94,30 @@ struct BenchmarkTests {
                 map.retention(of: AutoCropModel.pixelBox($0, width: width, height: height), width: width, height: height)
             }
             #expect(retention.contains { $0 > 0.99 })
+        }
+    }
+
+    /// The work enrichment does for each face it reads (ADR 0047): aligning five points, cutting
+    /// the opaque 112 px crop out of a 12-megapixel photo, and the embedding model's prediction.
+    @Test func faceCases() async throws {
+        let moved = CGAffineTransform(rotationAngle: 0.2).scaledBy(x: 5.5, y: 5.5).translatedBy(x: 380, y: 250)
+        let points = FaceAlignment.template.map { $0.applying(moved) }
+        try await Benchmark.measure("face.align") {
+            #expect(FaceAlignment.similarity(from: points, to: FaceAlignment.template) != nil)
+        }
+
+        let photo = try CIImage(cgImage: FaceAnalyzerTests.patternImage(seed: 4, size: 4000))
+        let transform = try #require(FaceAlignment.similarity(from: points, to: FaceAlignment.template))
+        let context = CIContext()
+        try await Benchmark.measure("face.crop") {
+            #expect(FaceAnalyzer.alignedCrop(of: photo, transform: transform, context: context) != nil)
+        }
+
+        let model = try FaceEmbeddingModel(bundle: Bundle(for: CatalogWindowViewModel.self))
+        let crop = try FaceAnalyzerTests.patternImage(seed: 5)
+        try await Benchmark.measure("face.embed") {
+            let embedding = try model.embedding(of: crop)
+            #expect(embedding.count == FaceEmbeddingModel.dimensions)
         }
     }
 }
