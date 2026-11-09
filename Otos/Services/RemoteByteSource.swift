@@ -72,9 +72,7 @@ final nonisolated class RemoteByteSource: MediaByteSource {
             settled.signal()
         }
         // time: deadline — a server that accepted the request may never answer it
-        let seconds = Double(readDeadline.components.seconds)
-            + Double(readDeadline.components.attoseconds) / 1e18
-        guard settled.wait(timeout: .now() + seconds) == .success else {
+        guard settled.wait(timeout: .now() + .milliseconds(DiagnosticsTiming.milliseconds(readDeadline))) == .success else {
             throw RemoteByteSourceError.timedOut
         }
         guard let result = outcome.withLock({ $0 }) else {
