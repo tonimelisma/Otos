@@ -158,6 +158,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.peopleMigrationIdentifier) { db in
+            for statement in CatalogSchema.peopleStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -631,27 +636,60 @@ extension CatalogStore {
 
     /// A still's faces (ADR 0047): the reading replaces every face the asset held, and its
     /// stamp names the bytes it read, so a still with no face in it is not read again until
-    /// it changes.
+    /// it changes. The user's acts on the faces it replaces — a confirmed person, an ignored
+    /// group, rejections — move to the new face each overlaps (`FaceCarryOver`); "not a face"
+    /// does not, because a changed file is read afresh.
     private static func writeFaces(_ faces: EnrichedFaces, stamp: ProductStamp, row: ProductRow, db: Database) throws {
-        try db.execute(
-            sql: "DELETE FROM face WHERE library_root_id = ? AND relative_path = ?",
-            arguments: [row.rootID, row.relativePath.rawValue]
+        let key: StatementArguments = [row.rootID, row.relativePath.rawValue]
+        let previous = try Row.fetchAll(
+            db,
+            sql: """
+            SELECT face_index, box_x, box_y, box_width, box_height, person_id, is_ignored
+            FROM face WHERE library_root_id = ? AND relative_path = ? ORDER BY face_index
+            """,
+            arguments: key
         )
+        var rejections: [Int: [Int64]] = [:]
+        for rejection in try Row.fetchAll(
+            db,
+            sql: "SELECT face_index, person_id FROM face_rejection WHERE library_root_id = ? AND relative_path = ?",
+            arguments: key
+        ) {
+            rejections[rejection["face_index"], default: []].append(rejection["person_id"])
+        }
+        let previousBoxes = previous.map { face in
+            CGRect(x: face["box_x"] as Double, y: face["box_y"] as Double,
+                   width: face["box_width"] as Double, height: face["box_height"] as Double)
+        }
+        let carried = FaceCarryOver.matches(previous: previousBoxes, new: faces.faces.map(\.box))
+        try db.execute(sql: "DELETE FROM face WHERE library_root_id = ? AND relative_path = ?", arguments: key)
         for (index, face) in faces.faces.enumerated() {
+            let prior = carried[index].map { previous[$0] }
+            let priorIndex: Int? = prior?["face_index"]
             try db.execute(
                 sql: """
                 INSERT INTO face (
                     library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
-                    landmarks, quality, analysis_revision, embedding
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    landmarks, quality, analysis_revision, embedding, person_id, is_ignored
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 arguments: [
                     row.rootID, row.relativePath.rawValue, index,
                     Double(face.box.minX), Double(face.box.minY), Double(face.box.width), Double(face.box.height),
                     FaceStorage.landmarksData(face.landmarks), Double(face.quality), faces.analysisRevision,
                     FaceStorage.embeddingData(face.embedding),
+                    prior?["person_id"] as Int64?, (prior?["is_ignored"] as Int?) ?? 0,
                 ]
             )
+            for person in priorIndex.flatMap({ rejections[$0] }) ?? [] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO face_rejection (library_root_id, relative_path, face_index, person_id)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    arguments: [row.rootID, row.relativePath.rawValue, index, person]
+                )
+            }
         }
         try db.execute(
             sql: """

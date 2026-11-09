@@ -123,11 +123,46 @@ struct BenchmarkTests {
             #expect(crops == 16)
         }
 
+        // Grouping over a library the size of the bake-off's: 3,000 faces, 300 of them
+        // confirmed across 10 people, the rest open (ADR 0047).
+        let (faces, people) = Self.groupingLibrary(faces: 3000, people: 10, confirmedEach: 30)
+        try await Benchmark.measure("people.suggestions") {
+            let result = FacePeoplePolicy.suggestions(faces: faces, people: people)
+            #expect(!result.suggestions.isEmpty)
+        }
+
         let model = try FaceEmbeddingModel(bundle: Bundle(for: CatalogWindowViewModel.self))
         let crop = try FaceAnalyzerTests.patternImage(seed: 5)
         try await Benchmark.measure("face.embed") {
             let embedding = try model.embedding(of: crop)
             #expect(embedding.count == FaceEmbeddingModel.dimensions)
         }
+    }
+
+    /// Faces of `people` people, each a direction in embedding space with small per-face
+    /// variation, spread over ten years; the first `confirmedEach` of each person confirmed.
+    static func groupingLibrary(faces count: Int, people: Int, confirmedEach: Int) -> ([FaceFact], [PersonFact]) {
+        var generator = SplitMix64(seed: 7)
+        let root = LibraryRootPath(rawValue: "/Bench")
+        var faces: [FaceFact] = []
+        for index in 0 ..< count {
+            let person = index % people
+            var vector = [Float](repeating: 0, count: FaceEmbeddingModel.dimensions)
+            vector[person] = 1
+            for _ in 0 ..< 8 {
+                vector[people + Int(generator.next() % UInt64(FaceEmbeddingModel.dimensions - people))] += 0.15
+            }
+            let length = vector.map { $0 * $0 }.reduce(0, +).squareRoot()
+            faces.append(FaceFact(
+                id: FaceID(asset: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "\(index).jpg")), index: 0),
+                captureSeconds: 1_300_000_000 + Double(index) * 105_000,
+                embedding: vector.map { $0 / length },
+                person: index / people < confirmedEach ? PersonID(rawValue: Int64(person + 1)) : nil,
+                isNotFace: false,
+                isIgnored: false,
+                rejected: []
+            ))
+        }
+        return (faces, (1 ... people).map { PersonFact(id: PersonID(rawValue: Int64($0)), birthdaySeconds: nil) })
     }
 }
