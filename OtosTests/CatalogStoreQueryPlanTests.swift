@@ -58,12 +58,12 @@ struct CatalogStoreQueryPlanTests {
         let rootEnrichmentQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID1],
             limit: 4,
-            everyProduct: true
+            claim: .cardProducts
         ))
         let globalEnrichmentQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID1, rootID2],
             limit: 4,
-            everyProduct: true
+            claim: .cardProducts
         ))
 
         let plans = try await dbQueue.read { db in
@@ -164,7 +164,7 @@ struct CatalogStoreQueryPlanTests {
         let claimQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID],
             limit: 4,
-            everyProduct: true
+            claim: .cardProducts
         ))
 
         let legacyQuery = legacyNotInEnrichmentQuery(rootID: rootID, excludedCount: 50)
@@ -204,7 +204,7 @@ struct CatalogStoreQueryPlanTests {
             try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [rootID],
                 limit: 2,
-                everyProduct: true,
+                claim: .cardProducts,
                 db: db
             )
         }
@@ -242,12 +242,12 @@ struct CatalogStoreQueryPlanTests {
         let rootMetadataOnlyQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID1],
             limit: 4,
-            everyProduct: false
+            claim: .metadata
         ))
         let globalMetadataOnlyQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID1, rootID2],
             limit: 4,
-            everyProduct: false
+            claim: .metadata
         ))
 
         let plans = try await dbQueue.read { db in
@@ -294,7 +294,7 @@ struct CatalogStoreQueryPlanTests {
             try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [rootID],
                 limit: 4,
-                everyProduct: false,
+                claim: .metadata,
                 db: db
             )
         }
@@ -304,7 +304,7 @@ struct CatalogStoreQueryPlanTests {
             try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [rootID],
                 limit: 4,
-                everyProduct: true,
+                claim: .cardProducts,
                 db: db
             )
         }

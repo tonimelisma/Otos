@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import GRDB
 import MediaMetadata
@@ -761,6 +762,43 @@ extension CatalogStore {
         let dbWriter = try database()
         return try await dbWriter.read { db in
             try Self.fetchCompanions(libraryRootID: rootRowID, db: db)
+        }
+    }
+
+    /// The faces stored for `id`, in the order its reading found them. Empty when the asset
+    /// has none, has not been read for faces yet, or its library is no longer cataloged.
+    func faces(of id: MediaAssetID) async throws -> [DetectedFace] {
+        guard let rootRowID = roots[id.libraryRootPath]?.rowID else {
+            return []
+        }
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT box_x, box_y, box_width, box_height, landmarks, quality, embedding
+                FROM face
+                WHERE library_root_id = ? AND relative_path = ?
+                ORDER BY face_index
+                """,
+                arguments: [rootRowID, id.relativePath.rawValue]
+            ).map { row in
+                let landmarks: Data = row["landmarks"]
+                let embedding: Data = row["embedding"]
+                guard let points = FaceStorage.landmarks(from: landmarks),
+                      let vector = FaceStorage.embedding(from: embedding)
+                else {
+                    throw CatalogStoreError.malformedFaceRow(id)
+                }
+                let quality: Double = row["quality"]
+                return DetectedFace(
+                    box: CGRect(x: row["box_x"] as Double, y: row["box_y"] as Double,
+                                width: row["box_width"] as Double, height: row["box_height"] as Double),
+                    landmarks: points,
+                    quality: Float(quality),
+                    embedding: vector
+                )
+            }
         }
     }
 
@@ -1768,7 +1806,7 @@ extension CatalogStore {
         let landed = Array(localBytesAwaitingProducts.prefix(limit))
         localBytesAwaitingProducts.removeFirst(landed.count)
         let landedClaims = try await priorityEnrichmentCandidates(
-            ids: landed, limit: landed.count, claimsEveryProduct: true
+            ids: landed, limit: landed.count, bytesAreLocal: true
         )
         if !landed.isEmpty {
             // Whether a fresh copy was enriched while its bytes were local: each claim's
@@ -1853,12 +1891,14 @@ extension CatalogStore {
         }
     }
 
-    /// `claimsEveryProduct` claims every stale product of each row, whatever its root claims
-    /// by default: the rows whose bytes just became local.
+    /// `bytesAreLocal` marks rows whose bytes just became local: a root first claimed for
+    /// metadata alone (a card, a camera, an Immich account) is claimed for its rendering and
+    /// digest too (`EnrichmentClaim.cardProducts`), while a fixed library keeps its own claim.
+    /// Faces stay a library's product (ADR 0047).
     private func priorityEnrichmentCandidates(
         ids: [MediaAssetID],
         limit: Int,
-        claimsEveryProduct: Bool = false
+        bytesAreLocal: Bool = false
     ) async throws -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]> {
         let priorityAssetsByID = try await mediaAssets(for: ids)
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
@@ -1868,8 +1908,9 @@ extension CatalogStore {
             assetsByID: priorityAssetsByID,
             rootIDsByPath: rootIDsByPathBeforeWrite,
             isRootEnrichable: { [roots] path in roots[path]?.isEnrichable == true },
-            claimsEveryProduct: { [roots] path in
-                claimsEveryProduct || roots[path]?.root.claimsEveryProductTogether == true
+            firstClaim: { [roots] path in
+                let first = roots[path]?.root.firstClaim ?? .metadata
+                return bytesAreLocal && first == .metadata ? .cardProducts : first
             }
         )
         guard !eligibleClaims.isEmpty else {
@@ -1878,21 +1919,21 @@ extension CatalogStore {
         let timedClaim = try await timedWrite(dbWriter) { db in
             var candidates: [ClaimedEnrichmentCandidate] = []
             candidates.reserveCapacity(min(limit, eligibleClaims.count))
-            for (asset, rootID, everyProduct) in eligibleClaims {
+            for (asset, rootID, claim) in eligibleClaims {
                 guard candidates.count < limit else {
                     break
                 }
                 guard try EnrichmentClaimGateway.claimEnrichmentAsset(
                     libraryRootID: rootID,
                     relativePath: asset.relativePath,
-                    everyProduct: everyProduct,
+                    claim: claim,
                     db: db
                 ) else {
                     continue
                 }
                 candidates.append(ClaimedEnrichmentCandidate(
                     asset: asset,
-                    scope: EnrichmentScope(everyProduct: everyProduct, asset: asset)
+                    scope: EnrichmentScope(claim: claim, asset: asset)
                 ))
             }
             return candidates
@@ -1922,47 +1963,48 @@ extension CatalogStore {
         -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]>
     {
         let prioritizedRootIDs = roots.enrichableRootIDsByRemovablePriority()
-        let (everyProductRootIDs, metadataFirstRootIDs) = roots.enrichableRootIDsByProductClaim()
+        let (libraryClaimRootIDs, metadataFirstRootIDs) = roots.enrichableRootIDsByProductClaim()
         let cardRootIDs = roots.enrichableCardRootIDs()
         let dbWriter = try database()
         let timedStoredAssets = try await timedWrite(dbWriter) { db in
-            var storedAssets: [(asset: StoredAsset, everyProduct: Bool)] = []
-            // The fallback spans roots of mixed kinds (ADR 0018): a root claimed for every
-            // product at once (`.library`) uses the broad predicate and index, the others
-            // (`.removableVolume`, `.deviceMTP`) the metadata-only one. `INDEXED BY`
-            // forbids one statement across both, so partition by claim shape within each
-            // priority tier: removable roots first (ENR-011), then a card's
+            var storedAssets: [(asset: StoredAsset, claim: EnrichmentClaim)] = []
+            // The fallback spans roots of mixed kinds (ADR 0018): a fixed library's rows are
+            // claimed for every product they owe at once (`EnrichmentClaim.library`), the
+            // others (`.removableVolume`, `.deviceMTP`, `.immichAccount`) for metadata first.
+            // `INDEXED BY` forbids one statement across claims, so partition by claim within
+            // each priority tier: removable roots first (ENR-011), then a card's
             // rendering-and-digest pass, then fixed libraries.
             let removableRoots = Set(prioritizedRootIDs.removable)
             let fixedRoots = Set(prioritizedRootIDs.fixed)
             // A card's renderings and digests come in a pass of their own, offered only once
             // no row of that card still needs metadata, so developing and checksumming
             // every byte never delays the import (ADR 0009). Claimed under the broad
-            // predicate, those rows' metadata is current, so their scope is the rendering
-            // and the digest, made from one read.
+            // products, those rows' metadata is current, so their scope is the rendering and
+            // the digest, made from one read. A card's rows are never read for faces: they
+            // are analysed once imported into a library.
             let cardsReadyForProducts = try cardRootIDs.filter { rootID in
                 try !EnrichmentClaimGateway.hasRowsNeedingMetadata(rootID: rootID, db: db)
             }
-            let claimGroups: [(rootIDs: [Int64], everyProduct: Bool)] = [
-                (removableRoots.intersection(everyProductRootIDs).sorted(), true),
-                (removableRoots.intersection(metadataFirstRootIDs).sorted(), false),
-                (cardsReadyForProducts, true),
-                (fixedRoots.intersection(everyProductRootIDs).sorted(), true),
-                (fixedRoots.intersection(metadataFirstRootIDs).sorted(), false),
+            let claimGroups: [(rootIDs: [Int64], claim: EnrichmentClaim)] = [
+                (removableRoots.intersection(libraryClaimRootIDs).sorted(), .library),
+                (removableRoots.intersection(metadataFirstRootIDs).sorted(), .metadata),
+                (cardsReadyForProducts, .cardProducts),
+                (fixedRoots.intersection(libraryClaimRootIDs).sorted(), .library),
+                (fixedRoots.intersection(metadataFirstRootIDs).sorted(), .metadata),
             ]
             for group in claimGroups where storedAssets.count < limit && !group.rootIDs.isEmpty {
                 let remaining = limit - storedAssets.count
                 let claimed = try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                     rootIDs: group.rootIDs,
                     limit: remaining,
-                    everyProduct: group.everyProduct,
+                    claim: group.claim,
                     db: db
                 )
-                storedAssets.append(contentsOf: claimed.map { (asset: $0, everyProduct: group.everyProduct) })
+                storedAssets.append(contentsOf: claimed.map { (asset: $0, claim: group.claim) })
             }
             return storedAssets
         }
-        // `everyProduct` here is the claim predicate the row was just claimed under
+        // `claim` here is the claim the row was just claimed under
         // (carried from the `claimGroups` entry above), not re-derived from current
         // root kind. A root's kind cannot change between the claim
         // above and this mapping since both run inside the same actor-isolated call, but
@@ -1977,7 +2019,7 @@ extension CatalogStore {
             let asset = mediaAsset(from: entry.asset, rootPath: rootPath)
             return ClaimedEnrichmentCandidate(
                 asset: asset,
-                scope: EnrichmentScope(everyProduct: entry.everyProduct, asset: asset)
+                scope: EnrichmentScope(claim: entry.claim, asset: asset)
             )
         }
         let result = DatabaseTimedValue(
@@ -4219,6 +4261,8 @@ private extension CatalogStore {
             contentHash: storedAsset.contentHash,
             contentHashSourceSize: storedAsset.contentHashSourceSize,
             contentHashSourceMTimeSeconds: storedAsset.contentHashSourceMTimeSeconds,
+            facesSourceSize: storedAsset.facesSourceSize,
+            facesSourceMTimeSeconds: storedAsset.facesSourceMTimeSeconds,
             mediaChoice: storedAsset.mediaChoice
         )
     }

@@ -31,6 +31,37 @@ struct EnrichmentClaimIndexContractTests {
            OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
               <> COALESCE(rendered_source_mtime, -1)
         """)
+        // v18's library indexes were created from this faces text (ADR 0047).
+        #expect(EnrichmentClaimGateway.facesStalenessSQLPredicate() == """
+        faces_source_size IS NULL
+           OR faces_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(faces_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(faces_source_mtime, -1)
+        """)
+    }
+
+    /// A fixed library's claim, faces included, walks its own pair of indexes (v18).
+    @Test func libraryIndexesImplyTheLibraryPredicate() async throws {
+        let dbQueue = try await Self.migratedDatabase()
+        let rootQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
+            rootIDs: [1],
+            limit: 4,
+            claim: .library
+        ))
+        let globalQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
+            rootIDs: [1, 2],
+            limit: 4,
+            claim: .library
+        ))
+        let plans = try await dbQueue.read { db in
+            try (
+                root: Self.explainPlan(db, query: rootQuery),
+                global: Self.explainPlan(db, query: globalQuery)
+            )
+        }
+        #expect(plans.root.contains(EnrichmentClaimGateway.libraryRootIndexName))
+        #expect(plans.global.contains(EnrichmentClaimGateway.libraryGlobalIndexName))
     }
 
     @Test func broadIndexesImplyCurrentHashRequiredPredicate() async throws {
@@ -38,12 +69,12 @@ struct EnrichmentClaimIndexContractTests {
         let rootQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [1],
             limit: 4,
-            everyProduct: true
+            claim: .cardProducts
         ))
         let globalQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [1, 2],
             limit: 4,
-            everyProduct: true
+            claim: .cardProducts
         ))
         let plans = try await dbQueue.read { db in
             try (
@@ -60,12 +91,12 @@ struct EnrichmentClaimIndexContractTests {
         let rootQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [1],
             limit: 4,
-            everyProduct: false
+            claim: .metadata
         ))
         let globalQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [1, 2],
             limit: 4,
-            everyProduct: false
+            claim: .metadata
         ))
         let plans = try await dbQueue.read { db in
             try (
