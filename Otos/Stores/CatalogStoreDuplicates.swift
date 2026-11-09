@@ -163,16 +163,26 @@ nonisolated enum DuplicatesGateway {
 
 // MARK: - Same photo (ADR 0042)
 
-/// The thumbnail a render signature is read from, named by what makes it that rendering:
-/// its path, the edit revision it was rendered with, and the file signature it was
-/// rendered from (its rendering stamp, empty for a provisional thumbnail). A signature
-/// whose source no longer matches is stale.
+/// The thumbnail a render signature is read from, named by what makes it that image: its
+/// path, the edit revision it was rendered with, the file signature it was rendered from
+/// (its rendering stamp, empty for a provisional thumbnail), and — for a thumbnail a
+/// source drew (ADR 0046 §7) — that source products' stamp, because a changed file gets new
+/// source products at the same path. A signature whose source no longer matches is stale.
 nonisolated enum RenderSignatureSQL {
     static func source(_ row: String) -> String {
         """
         (\(row).thumbnail_path || '|' || \(row).rendered_revision || '|'
-            || IFNULL(\(row).rendered_source_size, '') || '|' || IFNULL(\(row).rendered_source_mtime, ''))
+            || IFNULL(\(row).rendered_source_size, '') || '|' || IFNULL(\(row).rendered_source_mtime, '')
+            || CASE WHEN \(isSourceDrawn(row))
+                THEN '|source|' || \(row).source_products_size || '|' || IFNULL(\(row).source_products_mtime, '')
+                ELSE '' END)
         """
+    }
+
+    /// Whether the shown thumbnail is a source's own (ADR 0046 §7): the source products
+    /// are written and Otos has not rendered the original since.
+    static func isSourceDrawn(_ row: String) -> String {
+        "(\(row).rendered_source_size IS NULL AND \(row).source_products_size IS NOT NULL)"
     }
 }
 
@@ -198,6 +208,10 @@ nonisolated struct RenderSignatureResult: Equatable, Sendable {
 nonisolated struct SamePhotoCandidate: Equatable, Sendable {
     let id: MediaAssetID
     let isRaw: Bool
+    /// Who drew the thumbnail the signature was read from. A source's image and Otos's
+    /// rendering of the same photo differ by more than the pixel threshold allows, so pairs
+    /// never cross pipelines (ADR 0042, ADR 0046 §7).
+    let drawnBy: EnrichedRendering.Origin
     /// Whole-second capture instant, from the library's selection.
     let captureInstant: Double?
     let cameraModel: String?
@@ -235,7 +249,8 @@ nonisolated extension DuplicatesGateway {
             db,
             sql: """
             SELECT a.library_root_id, a.relative_path, a.kind, a.capture_instant_unix, a.render_dhash,
-                   m.pixel_width, m.pixel_height, m.orientation, m.camera_model, m.serial_number
+                   m.pixel_width, m.pixel_height, m.orientation, m.camera_model, m.serial_number,
+                   \(RenderSignatureSQL.isSourceDrawn("a"))
             FROM media_asset a
             LEFT JOIN asset_metadata m
               ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
@@ -254,6 +269,7 @@ nonisolated extension DuplicatesGateway {
         enum Column {
             static let rootID = 0, relativePath = 1, kind = 2, captureInstant = 3, renderHash = 4
             static let pixelWidth = 5, pixelHeight = 6, orientation = 7, cameraModel = 8, serialNumber = 9
+            static let isSourceDrawn = 10
         }
         var candidates: [SamePhotoCandidate] = []
         while let row = try rows.next() {
@@ -274,6 +290,7 @@ nonisolated extension DuplicatesGateway {
             candidates.append(SamePhotoCandidate(
                 id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[Column.relativePath])),
                 isRaw: kind == "raw",
+                drawnBy: row[Column.isSourceDrawn] as Bool ? .source : .otos,
                 captureInstant: row[Column.captureInstant],
                 cameraModel: row[Column.cameraModel],
                 serialNumber: row[Column.serialNumber],

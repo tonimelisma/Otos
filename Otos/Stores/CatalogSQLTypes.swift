@@ -29,6 +29,8 @@ nonisolated struct StoredAsset {
     var contentHash: XXH3Digest128?
     var contentHashSourceSize: Int64?
     var contentHashSourceMTimeSeconds: Int?
+    var facesSourceSize: Int64?
+    var facesSourceMTimeSeconds: Int?
     var mediaChoice: MediaChoice = .default
 }
 

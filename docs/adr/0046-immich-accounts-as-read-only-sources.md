@@ -104,7 +104,7 @@ unreachable is never a deletion.
   folder, same `content_identifier`, ADR 0041) pairs them unchanged.
 - **The row's own ID:** because a folder can hold a motion part, a folder names only its
   still. Every account row stores Immich's ID for its own file (`source_item_id`,
-  migration v18). The original's download, its ranged reads, its preview, and every size
+  migration v20). The original's download, its ranged reads, its preview, and every size
   and deletion the stream reports apart from an asset's line find the row by that ID,
   never by parsing its path.
 - **Motion part facts:** the stream reports a motion part as its own `hidden` asset,

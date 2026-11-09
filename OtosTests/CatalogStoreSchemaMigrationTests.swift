@@ -176,6 +176,8 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.remoteBaseURLMigrationIdentifier,
             CatalogSchema.hiddenBySourceMigrationIdentifier,
             CatalogSchema.sourceProductsMigrationIdentifier,
+            CatalogSchema.facesMigrationIdentifier,
+            CatalogSchema.peopleMigrationIdentifier,
             CatalogSchema.sourceItemIDMigrationIdentifier,
         ])
         #expect(tables == [
@@ -183,7 +185,8 @@ struct CatalogStoreSchemaMigrationTests {
             "active_file_operation", "active_file_operation_companion_staging", "active_source_erase",
             "active_reorganization_component", "active_reorganization_member",
             "active_reorganization_step", "active_reorganization_directory",
-            "pending_identity_remap_batch", "pending_identity_remap", "duplicate_kept_pair",
+            "pending_identity_remap_batch", "pending_identity_remap", "duplicate_kept_pair", "face",
+            "person", "face_rejection",
         ])
     }
 
@@ -266,6 +269,8 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.remoteBaseURLMigrationIdentifier,
             CatalogSchema.hiddenBySourceMigrationIdentifier,
             CatalogSchema.sourceProductsMigrationIdentifier,
+            CatalogSchema.facesMigrationIdentifier,
+            CatalogSchema.peopleMigrationIdentifier,
             CatalogSchema.sourceItemIDMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
@@ -359,7 +364,7 @@ struct CatalogStoreSchemaMigrationTests {
     /// row the rendering stamp it already had in effect — except a card's or camera's still
     /// or RAW without a preview, whose thumbnail was QuickLook's or the camera's, not a
     /// rendering, and which is rendered again.
-    /// v18 (ADR 0046 §2): an account's existing rows are stills, each named by its asset's
+    /// v20 (ADR 0046 §2): an account's existing rows are stills, each named by its asset's
     /// folder, so each takes its folder as its source item ID; no other kind gets one.
     @Test func theSourceItemMigrationNamesAccountRowsByTheirFolder() async throws {
         let temp = try makeTestDirectory()
