@@ -8,6 +8,8 @@ import Testing
 /// back to the launch defaults instead of being trusted.
 @MainActor
 struct BrowserPlaceTests {
+    private static let today = CalendarDay(year: 2026, month: 11, day: 9)
+
     // MARK: - Stored format
 
     @Test func aPlaceRoundTripsThroughPreferences() {
@@ -26,7 +28,7 @@ struct BrowserPlaceTests {
 
         place.save(to: preferences)
 
-        #expect(BrowserPlace.load(from: preferences) == place)
+        #expect(BrowserPlace.load(from: preferences, today: Self.today) == place)
     }
 
     @Test func everyScopeKindRoundTrips() {
@@ -34,6 +36,7 @@ struct BrowserPlaceTests {
             .allMedia,
             .places,
             .mapArea(MapArea(south: 60.1, north: 60.2, west: 24.9, east: 25)),
+            .onThisDay(Self.today),
             .allImports,
             .library(pictures),
             .importBatch(ImportBatchID(unixMilliseconds: 1_790_000_000_000)),
@@ -47,18 +50,39 @@ struct BrowserPlaceTests {
                 selection: []
             )
             place.save(to: preferences)
-            #expect(BrowserPlace.load(from: preferences) == place)
+            #expect(BrowserPlace.load(from: preferences, today: Self.today) == place)
         }
+    }
+
+    /// On This Day is saved without its day and reopens on the day it is reopened, since
+    /// it always asks about today (ADR 0049).
+    @Test func onThisDayReopensOnTheDayItIsLoaded() throws {
+        let preferences = PreferencesDomain.suite(UUID().uuidString).makeDefaults()
+        let saved = BrowserPlace(
+            descriptor: CatalogQueryDescriptor(scope: .onThisDay(Self.today), filter: MediaFilter(kinds: [.video])),
+            viewMode: .grid,
+            focus: nil,
+            selection: []
+        )
+        saved.save(to: preferences)
+
+        let tomorrow = CalendarDay(year: 2026, month: 11, day: 10)
+        let loaded = try #require(BrowserPlace.load(from: preferences, today: tomorrow))
+
+        #expect(loaded.descriptor.scope == .onThisDay(tomorrow))
+        #expect(loaded.descriptor.filter == MediaFilter(kinds: [.video]))
+        let json = try #require(preferences.string(forKey: BrowserPlace.defaultsKey))
+        #expect(!json.contains("2026"))
     }
 
     /// An unreadable place costs the user their position, never their launch: every way
     /// the stored value can be wrong loads as "nothing stored".
     @Test func anUnreadablePlaceLoadsAsNothing() throws {
         let preferences = PreferencesDomain.suite(UUID().uuidString).makeDefaults()
-        #expect(BrowserPlace.load(from: preferences) == nil)
+        #expect(BrowserPlace.load(from: preferences, today: Self.today) == nil)
 
         preferences.set("not json", forKey: BrowserPlace.defaultsKey)
-        #expect(BrowserPlace.load(from: preferences) == nil)
+        #expect(BrowserPlace.load(from: preferences, today: Self.today) == nil)
 
         BrowserPlace(descriptor: .default, viewMode: .grid, focus: nil, selection: []).save(to: preferences)
         let stored = try #require(preferences.string(forKey: BrowserPlace.defaultsKey))
@@ -70,7 +94,7 @@ struct BrowserPlaceTests {
         ] {
             #expect(stored.contains(valid), "fixture drifted: \(valid)")
             preferences.set(stored.replacingOccurrences(of: valid, with: invalid), forKey: BrowserPlace.defaultsKey)
-            #expect(BrowserPlace.load(from: preferences) == nil, "accepted \(invalid)")
+            #expect(BrowserPlace.load(from: preferences, today: Self.today) == nil, "accepted \(invalid)")
         }
     }
 
@@ -347,7 +371,7 @@ struct BrowserPlaceTests {
 
         model.persistBrowserPlace()
 
-        let saved = try #require(BrowserPlace.load(from: domain.makeDefaults()))
+        let saved = try #require(BrowserPlace.load(from: domain.makeDefaults(), today: Self.today))
         #expect(saved.descriptor == model.queryDescriptor)
         #expect(saved.viewMode == .grid)
         #expect(saved.selection == [ids[2], ids[5]], "selection is saved in display order")
@@ -364,7 +388,7 @@ struct BrowserPlaceTests {
 
         model.persistBrowserPlace()
 
-        #expect(BrowserPlace.load(from: domain.makeDefaults()) == place)
+        #expect(BrowserPlace.load(from: domain.makeDefaults(), today: Self.today) == place)
     }
 }
 

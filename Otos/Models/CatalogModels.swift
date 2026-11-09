@@ -1120,10 +1120,15 @@ nonisolated struct CatalogMediaGridState: Equatable {
 /// `.duplicates` is every copy in a duplicate group across the fixed libraries,
 /// presented as the duplicates list (ADR 0042); `.duplicateGroup` is the leaf under it —
 /// one group's copies in the ordinary Compare, Loupe or grid.
+///
+/// `.onThisDay` is every item in the fixed libraries captured on the day's month and day
+/// in an earlier year, presented as its years and played as a story (ADR 0049). The day is
+/// today, which the ViewModel owns; when today changes, the ViewModel selects the new day.
 nonisolated enum SidebarSelection: Hashable {
     case allMedia
     case places
     case mapArea(MapArea)
+    case onThisDay(CalendarDay)
     case duplicates
     case duplicateGroup(DuplicateGroupID)
     case library(LibraryRootPath)
@@ -1140,6 +1145,16 @@ nonisolated enum SidebarSelection: Hashable {
         }
     }
 
+    /// The order a scope fixes for itself, whatever the sort control says: On This Day plays
+    /// newest year first and newest item first within a year (ADR 0049), so its sort is not
+    /// the user's to choose. Nil for every scope the user sorts.
+    var fixedSort: MediaSortOrder? {
+        switch self {
+        case .onThisDay: .dateNewest
+        default: nil
+        }
+    }
+
     var diagnosticDescription: String {
         switch self {
         case .allMedia:
@@ -1148,6 +1163,8 @@ nonisolated enum SidebarSelection: Hashable {
             "places"
         case let .mapArea(area):
             "mapArea:\(area.diagnosticDescription)"
+        case let .onThisDay(day):
+            "onThisDay:\(day.diagnosticDescription)"
         case .duplicates:
             "duplicates"
         case let .duplicateGroup(group):

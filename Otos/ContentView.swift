@@ -116,6 +116,7 @@ struct ContentView: View {
             SidebarView(
                 showsAllMedia: viewModel.showsAllMediaRow,
                 showsPlaces: viewModel.showsPlacesRow,
+                onThisDay: viewModel.onThisDayRowDay,
                 showsDuplicates: viewModel.showsDuplicatesRow,
                 duplicatesCount: viewModel.duplicatesCount,
                 libraries: viewModel.state.libraries,
@@ -251,7 +252,8 @@ struct ContentView: View {
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 ViewModePicker(
-                    viewMode: viewModel.showsPlacesMap ? nil : viewModel.viewMode,
+                    // The map and On This Day are not view modes: no segment is selected.
+                    viewMode: viewModel.showsPlacesMap || viewModel.showsOnThisDay ? nil : viewModel.viewMode,
                     setViewMode: viewModel.setViewMode
                 )
                 // The duplicates list has one presentation (DES-053: disabled, never removed).
@@ -274,6 +276,10 @@ struct ContentView: View {
                     setOrder: viewModel.setSortOrder,
                     orderByRelevance: viewModel.orderSearchByRelevance
                 )
+                // On This Day fixes its own order (DES-053: disabled in place; DES-038: the
+                // reason is the tooltip).
+                .disabled(!viewModel.canChangeSort)
+                .help(viewModel.canChangeSort ? "Sort" : "On This Day always shows the newest year first")
             }
             ToolbarItem(placement: .primaryAction) {
                 CatalogZoomControl(
@@ -524,6 +530,44 @@ struct ContentView: View {
             } else {
                 Color.clear
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        } else if viewModel.showsOnThisDay {
+            if let story = viewModel.story, let item = viewModel.storyItem, let onThisDay = viewModel.state.onThisDay {
+                StoryPlayerView(
+                    story: story,
+                    item: item,
+                    onThisDay: onThisDay,
+                    orderedIDs: viewModel.state.mediaGrid.orderedAssetIDs,
+                    today: viewModel.today,
+                    kind: viewModel.focusedAssetKind,
+                    panePreview: viewModel.displayedPanePreview(.loupe),
+                    videoState: viewModel.loupeVideoState,
+                    isDownloading: viewModel.downloadingSlots.contains(.loupe),
+                    tileContentStore: viewModel.tileContentStore,
+                    thumbnailDirectory: viewModel.thumbnailDirectory,
+                    detailReader: viewModel.tileDetailReader,
+                    actions: StoryPlayerActions(
+                        canTogglePause: viewModel.canToggleStoryPause,
+                        canPrevious: viewModel.canStoryPrevious,
+                        canNext: viewModel.canStoryNext,
+                        togglePause: viewModel.toggleStoryPause,
+                        previous: viewModel.storyPrevious,
+                        next: viewModel.storyNext,
+                        close: viewModel.closeStory
+                    )
+                )
+            } else {
+                OnThisDayView(
+                    onThisDay: viewModel.state.onThisDay,
+                    today: viewModel.today,
+                    emptyState: viewModel.state.mediaEmptyState,
+                    focusRequest: viewModel.onThisDayFocusRequest,
+                    tileContentStore: viewModel.tileContentStore,
+                    thumbnailDirectory: viewModel.thumbnailDirectory,
+                    detailReader: viewModel.tileDetailReader,
+                    play: { viewModel.playStory(year: $0) },
+                    clearFilters: viewModel.clearMediaFilter
+                )
             }
         } else if viewModel.showsPlacesMap {
             PlacesMapView(

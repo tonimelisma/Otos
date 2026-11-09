@@ -57,7 +57,8 @@ extension CatalogWindowViewModel {
     }
 
     var canCrop: Bool {
-        canEdit && viewMode == .loupe
+        // The story's pane draws no crop tool (ADR 0049).
+        canEdit && viewMode == .loupe && story == nil
     }
 
     /// The crop moved: `dragging` while the pointer is down, false when it is let go, which

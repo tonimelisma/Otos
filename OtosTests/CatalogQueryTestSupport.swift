@@ -1,6 +1,20 @@
 import Foundation
+import GRDB
 import MediaMetadata
 @testable import OtosKit
+
+extension CatalogQueryGateway {
+    /// The ordered-ID SQL for a scope without a date dimension, whose clause reads
+    /// nothing from the catalog, so an empty database stands in for the read.
+    static func orderedAssetIDQuery(
+        descriptor: CatalogQueryDescriptor,
+        scope: CatalogScopePredicate
+    ) throws -> SQLQuery? {
+        try DatabaseQueue().read { db in
+            try orderedAssetIDQuery(descriptor: descriptor, scope: scope, db: db)
+        }
+    }
+}
 
 struct CatalogStoreTestState: Equatable {
     var libraries: [CatalogLibraryState]

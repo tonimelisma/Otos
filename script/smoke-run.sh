@@ -14,20 +14,22 @@ CATALOG_DB="$HOME/Library/Application Support/net.melisma.Otos.dev/Catalog/catal
 MODE="${1:---jank}"
 if [[ "$MODE" == "--help" || "$MODE" == "help" ]]; then
   cat >&2 <<'USAGE'
-usage: script/smoke-run.sh [--jank|--verify] <library-root|places>
+usage: script/smoke-run.sh [--jank|--verify] <library-root|places|onThisDay|duplicates>
 
 The root must already be registered in the catalog. A smoke run selects an
 existing root; it never adds, removes, or otherwise changes what libraries
 exist (ADR 0020). There is no default: a machine's registered roots
 are never guessable, so pass the root explicitly, every time.
 
-`places` selects the Places map (ADR 0040), which needs a registered fixed library.
+`places` selects the Places map (ADR 0040), `onThisDay` On This Day (ADR 0049) and
+`duplicates` the duplicates list (ADR 0042); each needs a registered fixed library.
 
 Environment:
-  OTOS_SMOKE_SELECT_ROOT       an already-registered root, places, or duplicates, if not an argument
+  OTOS_SMOKE_SELECT_ROOT       an already-registered root, places, onThisDay, or duplicates, if not an argument
   OTOS_SMOKE_CAPTURE_PATH      with --verify: write the window's own rendering to this
                                PNG once it shows the selection, then quit
   OTOS_SMOKE_APPEARANCE        light|dark: the app's appearance for that capture
+  OTOS_SMOKE_PLAY_STORY        1 with onThisDay: play the story once its years show
   OTOS_SMOKE_CAPTURE_SCROLL_FRACTION 0..1: scroll the window's lists this far down before the capture
   OTOS_SMOKE_CAPTURE_SETTLE_SECONDS  seconds to let map tiles and thumbnails land
                                before the capture (MapKit reports neither; default 0)
@@ -62,22 +64,29 @@ QUIT_ON_EXIT=0
 # this run's cleanup (ADR 0020).
 APP_PID=""
 
+# A scope with no root to name: the values SmokeLibrarySelection accepts besides a path.
+is_scope_value() {
+  [[ "$1" == "places" || "$1" == "onThisDay" || "$1" == "duplicates" ]]
+}
+
 usage() {
   cat >&2 <<'USAGE'
-usage: script/smoke-run.sh [--jank|--verify] <library-root>
+usage: script/smoke-run.sh [--jank|--verify] <library-root|places|onThisDay|duplicates>
 
 The root must already be registered in the catalog. A smoke run selects an
 existing root; it never adds, removes, or otherwise changes what libraries
 exist (ADR 0020). There is no default: a machine's registered roots
 are never guessable, so pass the root explicitly, every time.
 
-`places` selects the Places map (ADR 0040), which needs a registered fixed library.
+`places` selects the Places map (ADR 0040), `onThisDay` On This Day (ADR 0049) and
+`duplicates` the duplicates list (ADR 0042); each needs a registered fixed library.
 
 Environment:
-  OTOS_SMOKE_SELECT_ROOT       an already-registered root, places, or duplicates, if not an argument
+  OTOS_SMOKE_SELECT_ROOT       an already-registered root, places, onThisDay, or duplicates, if not an argument
   OTOS_SMOKE_CAPTURE_PATH      with --verify: write the window's own rendering to this
                                PNG once it shows the selection, then quit
   OTOS_SMOKE_APPEARANCE        light|dark: the app's appearance for that capture
+  OTOS_SMOKE_PLAY_STORY        1 with onThisDay: play the story once its years show
   OTOS_SMOKE_CAPTURE_SCROLL_FRACTION 0..1: scroll the window's lists this far down before the capture
   OTOS_SMOKE_CAPTURE_SETTLE_SECONDS  seconds to let map tiles and thumbnails land
                                before the capture (MapKit reports neither; default 0)
@@ -201,7 +210,7 @@ verify_selection_applied() {
 
 
 run_verify() {
-  if [[ "$SMOKE_ROOT" != "places" ]]; then
+  if ! is_scope_value "$SMOKE_ROOT"; then
     check_provider_readiness
   fi
   QUIT_ON_EXIT=1
@@ -321,14 +330,14 @@ if [[ -z "$SMOKE_ROOT" ]]; then
   exit 1
 fi
 
-if [[ "$SMOKE_ROOT" != "places" && ! -d "$SMOKE_ROOT" ]]; then
+if ! is_scope_value "$SMOKE_ROOT" && [[ ! -d "$SMOKE_ROOT" ]]; then
   echo "Smoke library root is not a directory: $SMOKE_ROOT" >&2
   echo "Pass a root path or set OTOS_SMOKE_SELECT_ROOT." >&2
   echo >&2
   registered_roots_message >&2
   exit 1
 fi
-if [[ "$SMOKE_ROOT" != "places" ]]; then
+if ! is_scope_value "$SMOKE_ROOT"; then
   SMOKE_ROOT="$(cd "$SMOKE_ROOT" && pwd -P)"
 fi
 

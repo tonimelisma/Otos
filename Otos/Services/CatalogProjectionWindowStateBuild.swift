@@ -199,6 +199,11 @@ extension CatalogProjection {
                     scopedAssetIDs: facts.scopedAssetIDs,
                     scopedCoordinates: facts.scopedCoordinates,
                     filteredFixedAssetCount: filteredFixedAssetCount
+                ),
+                onThisDay: CatalogWindowPolicy.onThisDayState(
+                    for: facts.resolvedDescriptor,
+                    scopedAssetIDs: facts.scopedAssetIDs,
+                    scopedDayBuckets: facts.scopedDayBuckets
                 )
             ),
             detailRefreshGeneration: detailRefreshGeneration

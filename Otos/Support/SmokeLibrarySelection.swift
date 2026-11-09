@@ -26,18 +26,24 @@
         /// The non-path values: the Places map (ADR 0040) and the Duplicates list (ADR 0042),
         /// which have no root to name.
         static let placesValue = "places"
+        static let onThisDayValue = "onThisDay"
         static let duplicatesValue = "duplicates"
+        /// With `onThisDay`: once its years publish, play the story from the newest year
+        /// through the ordinary intent, so a capture shows the player (ADR 0049).
+        static let playStoryVariable = "OTOS_SMOKE_PLAY_STORY"
 
         /// What the environment asked the window to show.
         enum Request: Equatable {
             case root(LibraryRootPath)
             case places
+            case onThisDay
             case duplicates
 
             var diagnosticDescription: String {
                 switch self {
                 case let .root(path): path.rawValue
                 case .places: SmokeLibrarySelection.placesValue
+                case .onThisDay: SmokeLibrarySelection.onThisDayValue
                 case .duplicates: SmokeLibrarySelection.duplicatesValue
                 }
             }
@@ -73,6 +79,9 @@
             if rawValue == duplicatesValue {
                 return .duplicates
             }
+            if rawValue == onThisDayValue {
+                return .onThisDay
+            }
             let url = URL(fileURLWithPath: NSString(string: rawValue).expandingTildeInPath, isDirectory: true)
             return (try? CatalogPath.normalizedDirectoryPath(for: url)).map(Request.root)
         }
@@ -83,7 +92,8 @@
         static func resolve(
             requested: Request,
             among sources: [CatalogLibraryState],
-            activeDuplicateGroups: Int = 0
+            activeDuplicateGroups: Int = 0,
+            today: CalendarDay = .today()
         ) -> Resolution {
             let registered = sources.map(\.path).sorted { $0.rawValue < $1.rawValue }
             switch requested {
@@ -97,6 +107,11 @@
                     return .select(.places)
                 }
                 return .noFixedLibrary(registered: registered)
+            case .onThisDay:
+                if SidebarSelectionPolicy.showsPlaces(libraries: sources) {
+                    return .select(.onThisDay(today))
+                }
+                return .noFixedLibrary(registered: registered)
             case .duplicates:
                 return activeDuplicateGroups > 0 ? .select(.duplicates) : .noDuplicatesYet
             }
@@ -106,7 +121,8 @@
         /// catalog's first load is unfinished, then a selection or the registered roots.
         static func resolution(
             requested: Request,
-            in state: CatalogWindowState
+            in state: CatalogWindowState,
+            today: CalendarDay = .today()
         ) -> Resolution? {
             guard state.mediaEmptyState != .loadingCatalog else {
                 return nil
@@ -114,7 +130,8 @@
             return resolve(
                 requested: requested,
                 among: state.libraries + state.removableSources,
-                activeDuplicateGroups: state.duplicates?.activeGroups.count ?? 0
+                activeDuplicateGroups: state.duplicates?.activeGroups.count ?? 0,
+                today: today
             )
         }
 
@@ -140,13 +157,24 @@
             let states = Observations { @MainActor [weak viewModel] in
                 viewModel?.state
             }
+            let playsStory = requested == .onThisDay && environment[playStoryVariable] == "1"
             Task { [weak viewModel] in
                 var reportedUnregistered = false
+                var selected = false
                 for await state in states {
                     guard let state, let viewModel else {
                         return
                     }
-                    switch resolution(requested: requested, in: state) {
+                    if selected {
+                        // Following only to start the story once the years are on screen.
+                        guard viewModel.canPlayStory else {
+                            continue
+                        }
+                        viewModel.playStory()
+                        OtosLog.app.notice("op=smoke.select phase=story outcome=playing")
+                        return
+                    }
+                    switch resolution(requested: requested, in: state, today: viewModel.today) {
                     case nil:
                         continue
                     case let .select(selection):
@@ -154,7 +182,10 @@
                         OtosLog.app.notice(
                             "op=smoke.select phase=finish outcome=selected path=\(requested.diagnosticDescription, privacy: .public)"
                         )
-                        return
+                        guard playsStory else {
+                            return
+                        }
+                        selected = true
                     case let .notRegistered(_, registered) where !reportedUnregistered,
                          let .noFixedLibrary(registered) where !reportedUnregistered:
                         reportedUnregistered = true

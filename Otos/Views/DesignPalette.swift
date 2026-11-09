@@ -55,6 +55,15 @@ nonisolated enum DesignPalette {
     /// separates from any map underneath it; the accent replaces it for selection.
     static let mapStackEdge = Color.white
 
+    // MARK: - DES-112 text on a photograph
+
+    /// The scrim under text set on a photograph — an On This Day card's year, the story's
+    /// date (DES-112): black at 40% at the text's edge, fading to clear across the photo,
+    /// in both appearances, because it sits on a photograph, not on chrome.
+    static let photoScrim = Color.black.opacity(0.40)
+    /// Text on `photoScrim`.
+    static let photoLabel = Color.white
+
     // MARK: - DES-023 hairline
 
     /// 8% black light / 10% white dark. DES-084: under Increase Contrast,

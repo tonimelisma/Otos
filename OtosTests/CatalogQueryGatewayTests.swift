@@ -4,8 +4,8 @@ import GRDB
 import Testing
 
 struct CatalogQueryGatewayTests {
-    @Test func orderedAssetIDQueryReturnsNilForScopeSelectingNothing() {
-        #expect(CatalogQueryGateway.orderedAssetIDQuery(descriptor: .default, scope: .nothing) == nil)
+    @Test func orderedAssetIDQueryReturnsNilForScopeSelectingNothing() throws {
+        #expect(try CatalogQueryGateway.orderedAssetIDQuery(descriptor: .default, scope: .nothing) == nil)
     }
 
     @Test func countAssetsReturnsZeroForScopeSelectingNothing() async throws {
@@ -60,7 +60,7 @@ struct CatalogQueryGatewayTests {
     /// The ordering query keeps the root-local index and `=` predicate for a
     /// single-root scope; the batch dimension is an added clause, not a replacement.
     @Test func singleRootBatchScopeKeepsRootLocalIndexAndAddsBatchClause() throws {
-        let query = try #require(CatalogQueryGateway.orderedAssetIDQuery(
+        let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
             descriptor: .default,
             scope: CatalogScopePredicate(rootIDs: [7], importBatchUnixMs: 100)
         ))
@@ -126,7 +126,7 @@ struct CatalogQueryGatewayTests {
             filter: MediaFilter(choices: [.liked, .disliked]),
             sort: .filenameAscending
         )
-        let query = try #require(CatalogQueryGateway.orderedAssetIDQuery(
+        let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
             descriptor: descriptor,
             scope: CatalogScopePredicate(rootIDs: [1])
         ))

@@ -17,6 +17,8 @@ extension CatalogMediaEmptyState {
             "No Media"
         case .noLocatedMedia:
             "No Located Media"
+        case .nothingOnThisDay:
+            "Nothing on This Day"
         case .noFilterMatches:
             "No Matching Media"
         case let .noSearchResults(text, _):
@@ -46,6 +48,8 @@ extension CatalogMediaEmptyState {
             "Add a library with media files to begin."
         case .noLocatedMedia:
             "Photos and videos with location information appear here as they are cataloged."
+        case let .nothingOnThisDay(day):
+            OnThisDayPresentation.emptyMessage(day)
         case .noFilterMatches:
             "No media in this scope matches the active filters."
         case let .noSearchResults(_, stillReading) where stillReading > 0:
@@ -80,6 +84,8 @@ extension CatalogMediaEmptyState {
             "photo.on.rectangle"
         case .noLocatedMedia:
             "map"
+        case .nothingOnThisDay:
+            "calendar"
         case .noFilterMatches:
             "line.3.horizontal.decrease.circle"
         case .noSearchResults:

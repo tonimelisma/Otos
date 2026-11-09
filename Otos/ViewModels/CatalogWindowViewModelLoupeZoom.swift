@@ -33,6 +33,10 @@ extension CatalogWindowViewModel {
         if showsPlacesMap {
             return mapViewport != nil
         }
+        // On This Day's years and its story have nothing to zoom (ADR 0049).
+        if showsOnThisDay {
+            return false
+        }
         switch viewMode {
         case .grid:
             return gridColumnCount > GridColumnCount.minimum
@@ -52,6 +56,9 @@ extension CatalogWindowViewModel {
         if showsPlacesMap {
             return mapViewport != nil
         }
+        if showsOnThisDay {
+            return false
+        }
         switch viewMode {
         case .grid: return gridColumnCount < GridColumnCount.maximum
         case .loupe: return loupeZoomReport.map { !$0.isFit } ?? false
@@ -65,6 +72,9 @@ extension CatalogWindowViewModel {
             zoomMap(by: 0.5)
             return
         }
+        guard canZoomIn else {
+            return
+        }
         switch viewMode {
         case .grid: zoomInGrid()
         case .loupe: stepLoupeZoom(1)
@@ -76,6 +86,9 @@ extension CatalogWindowViewModel {
     func zoomOut() {
         if showsPlacesMap {
             zoomMap(by: 2)
+            return
+        }
+        guard canZoomOut else {
             return
         }
         switch viewMode {

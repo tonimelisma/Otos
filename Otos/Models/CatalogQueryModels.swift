@@ -280,6 +280,12 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
         sort.field == .bestDate && search?.order != .relevance
     }
 
+    /// The order the scope's reads use: the scope's own when it fixes one, else the user's
+    /// `sort`, which is kept as chosen so leaving such a scope restores it.
+    var effectiveSort: MediaSortOrder {
+        scope.fixedSort ?? sort
+    }
+
     var diagnosticDescription: String {
         let kindList = filter.kinds.map(\.rawValue).sorted().joined(separator: ",")
         let formatList = filter.formats.map(\.rawValue).sorted().joined(separator: ",")

@@ -124,22 +124,34 @@ nonisolated struct CatalogScopePredicate: Equatable {
         let relativePath: String
     }
 
+    /// What a scope requires of a row's day bucket (ADR 0049).
+    enum DateConstraint: Equatable {
+        case any
+        /// The row's day bucket has this day's month and day in an earlier year: On This
+        /// Day. The gateway turns it into capture ranges inside the read
+        /// (`AnniversaryRanges`).
+        case anniversary(CalendarDay)
+    }
+
     let rootIDs: [Int64]
     /// Import-batch stamp the scope requires, when the selection is an Imports row.
     let importBatchUnixMs: Int64?
     let location: LocationConstraint
     let content: ContentConstraint
+    let date: DateConstraint
 
     init(
         rootIDs: [Int64],
         importBatchUnixMs: Int64? = nil,
         location: LocationConstraint = .any,
-        content: ContentConstraint = .any
+        content: ContentConstraint = .any,
+        date: DateConstraint = .any
     ) {
         self.rootIDs = rootIDs
         self.importBatchUnixMs = importBatchUnixMs
         self.location = location
         self.content = content
+        self.date = date
     }
 
     /// Whether reads over this scope join `asset_metadata`, and so can carry each

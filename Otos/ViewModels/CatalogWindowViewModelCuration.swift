@@ -353,8 +353,10 @@ extension CatalogWindowViewModel {
     }
 
     private func completeMediaChoice(_ command: MediaChoiceCommand) {
+        // A story moves itself; a choice made while it plays leaves its position alone.
         guard command.origin.isUserChoice,
               advanceAfterMediaChoice,
+              story == nil,
               let advanceTo = command.advanceTo,
               viewMode == command.mode,
               queryDescriptor == command.descriptor,

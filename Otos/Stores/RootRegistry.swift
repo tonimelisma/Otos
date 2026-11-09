@@ -106,6 +106,13 @@ nonisolated struct RootRegistry {
                 rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
                 location: .within(area)
             )
+        case let .onThisDay(day):
+            // The fixed libraries like All Media; membership is the extra day-bucket
+            // dimension (ADR 0049).
+            return CatalogScopePredicate(
+                rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
+                date: .anniversary(day)
+            )
         case .duplicates:
             return CatalogScopePredicate(
                 rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
