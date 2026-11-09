@@ -78,7 +78,7 @@ Each increment lands on `main` with its own DoD.
    downloaded, and what each one says while offline.
 9. **Feature**, in two PRs:
    - **9a** *(done)*: Live Photo motion placement in the still's folder, and each row's
-     own source item ID (v18).
+     own source item ID (v20).
    - **9b:** Duplicates presentation and refused resolutions for account copies.
 
 ## Test server
