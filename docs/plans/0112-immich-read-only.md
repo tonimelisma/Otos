@@ -67,7 +67,7 @@ Each increment lands on `main` with its own DoD.
      with Otos's preview and thumbnail drawn from it as source-provisional products
      (v17 stamp), sizes and profiles read from each file.
 7. **Feature**, in three PRs:
-   - **7a:** metadata in byte ranges of the original while the server answers (the
+   - **7a** *(done: #591)*: metadata in byte ranges of the original while the server answers (the
      Store's answering fact, `RemoteRangeAccess`, pacing an unanswered row).
    - **7b:** original download in the executor branch, for work that needs the bytes
      (full-resolution zoom, edit, export, hand-off), with every missing product, Otos's

@@ -68,11 +68,15 @@ struct ImmichAccountsTests {
                     return (200, Data(Self.stream.utf8))
                 case "/api/sync/ack", "/api/auth/logout":
                     return (204, Data())
+                case "/api/assets/a1/original":
+                    return (200, Self.original)
                 default:
                     return (404, Data())
                 }
             }
         }
+
+        static let original = Data((0 ..< 4096).map { UInt8($0 % 251) })
 
         private static let stream: String = {
             let asset: [String: Any] = [
@@ -129,8 +133,9 @@ struct ImmichAccountsTests {
         let server = FakeServer(host: "add.test")
         let store = try await makeStore()
         let sessions = MemorySessions()
-        let accounts = ImmichAccounts(
-            store: store, sessions: sessions, urlSession: server.session(), schedule: Self.quick
+        let accounts = try ImmichAccounts(
+            store: store, sessions: sessions, urlSession: server.session(), schedule: Self.quick,
+            stagingContainer: makeTestDirectory()
         )
 
         let outcome = try await accounts.add(
@@ -155,8 +160,12 @@ struct ImmichAccountsTests {
         let sessions = MemorySessions()
         let wrong = FakeServer(host: "wrong.test")
         let old = FakeServer(host: "old.test", major: 2)
-        let wrongAccounts = ImmichAccounts(store: store, sessions: sessions, urlSession: wrong.session())
-        let oldAccounts = ImmichAccounts(store: store, sessions: sessions, urlSession: old.session())
+        let wrongAccounts = try ImmichAccounts(
+            store: store, sessions: sessions, urlSession: wrong.session(), stagingContainer: makeTestDirectory()
+        )
+        let oldAccounts = try ImmichAccounts(
+            store: store, sessions: sessions, urlSession: old.session(), stagingContainer: makeTestDirectory()
+        )
 
         #expect(try await wrongAccounts.add(server: #require(URL(string: "http://wrong.test")), email: "a", password: "bad")
             == .wrongCredentials)
@@ -179,8 +188,9 @@ struct ImmichAccountsTests {
         // Nothing rings on its own: each pass here is asked for, so each status is read
         // before the next pass can replace it.
         let asked = ImmichAccounts.Schedule(poll: .seconds(3600), backoff: [.seconds(3600)])
-        let accounts = ImmichAccounts(
-            store: store, sessions: MemorySessions(), urlSession: server.session(), schedule: asked
+        let accounts = try ImmichAccounts(
+            store: store, sessions: MemorySessions(), urlSession: server.session(), schedule: asked,
+            stagingContainer: makeTestDirectory()
         )
         guard case let .added(rootPath) = try await accounts.add(
             server: #require(URL(string: "http://flaky.test")), email: "a", password: "right"
@@ -215,8 +225,9 @@ struct ImmichAccountsTests {
         )
         let identity = try #require(await store.currentLibraries().first { $0.path == saved }?.root.deviceIdentity)
         try sessions.saveToken("tok", for: identity)
-        let accounts = ImmichAccounts(
-            store: store, sessions: sessions, urlSession: server.session(), schedule: Self.quick
+        let accounts = try ImmichAccounts(
+            store: store, sessions: sessions, urlSession: server.session(), schedule: Self.quick,
+            stagingContainer: makeTestDirectory()
         )
 
         await accounts.start()
@@ -231,8 +242,9 @@ struct ImmichAccountsTests {
         let server = FakeServer(host: "forget.test")
         let store = try await makeStore()
         let sessions = MemorySessions()
-        let accounts = ImmichAccounts(
-            store: store, sessions: sessions, urlSession: server.session(), schedule: Self.quick
+        let accounts = try ImmichAccounts(
+            store: store, sessions: sessions, urlSession: server.session(), schedule: Self.quick,
+            stagingContainer: makeTestDirectory()
         )
         guard case let .added(rootPath) = try await accounts.add(
             server: #require(URL(string: "http://forget.test")), email: "a", password: "right"
@@ -272,5 +284,55 @@ struct ImmichAccountsTests {
         #expect(sheet.isAdding)
         #expect(sheet.title == "Add Immich Account")
         #expect(ImmichAccountSheetState(server: "http://nas.local", isSigningIn: true).actionTitle == "Sign In")
+    }
+
+    // MARK: - Originals (ADR 0046 §4, §7)
+
+    /// The user's work downloads an original into the account's staging folder and offers
+    /// it to enrichment for every product; background demand is refused, and a server that
+    /// does not answer is reported as unavailable.
+    @Test func anOriginalIsDownloadedOnlyForTheUsersWork() async throws {
+        let server = FakeServer(host: "original.test")
+        let store = try await makeStore()
+        let accounts = try ImmichAccounts(
+            store: store, sessions: MemorySessions(), urlSession: server.session(), schedule: Self.quick,
+            stagingContainer: makeTestDirectory()
+        )
+        guard case let .added(rootPath) = try await accounts.add(
+            server: #require(URL(string: "http://original.test")), email: "a", password: "right"
+        ) else {
+            Issue.record("Expected the account added")
+            return
+        }
+        await waitForStatus(.online, of: rootPath, in: accounts)
+        let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "a1/IMG_1.JPG"))
+        func request(_ priority: MaterializationCoordinator.Priority) -> MaterializationCoordinator.Request {
+            MaterializationCoordinator.Request(id: id, sourceSize: 42, isVideo: false, priority: priority)
+        }
+
+        #expect(await accounts.downloadOriginal(request(.background)).outcome == .requestFailed)
+        #expect(!FileManager.default.fileExists(atPath: id.fileURL.path(percentEncoded: false)))
+
+        #expect(await accounts.downloadOriginal(request(.interactive)).outcome == .materialized)
+        #expect(FileManager.default.contents(atPath: id.fileURL.path(percentEncoded: false)) == FakeServer.original)
+        // Offered ahead of other work, for every product it owes: a rendering, not just metadata.
+        let offered = try await store.enrichmentCandidates(limit: 4)
+        #expect(offered.map(\.asset.id) == [id])
+        #expect(offered.first?.scope.contains(.rendering) == true)
+
+        let missing = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "zz/NONE.JPG"))
+        let refused = await accounts.downloadOriginal(
+            MaterializationCoordinator.Request(id: missing, sourceSize: 1, isVideo: false, priority: .interactive)
+        )
+        #expect(refused.outcome == .requestFailed)
+        await accounts.shutdown()
+        await store.shutdown()
+    }
+
+    @Test func onlyMetadataIsReadInRanges() {
+        #expect(EnrichmentScope.metadata.isReadableInRanges)
+        #expect(EnrichmentScope([.metadata, .provisionalThumbnail]).isReadableInRanges)
+        #expect(!EnrichmentScope([.metadata, .rendering]).isReadableInRanges)
+        #expect(!EnrichmentScope.hash.isReadableInRanges)
     }
 }

@@ -134,9 +134,19 @@ It also owns `ensureLocal(_:priority:)`, which replaces `makeLocal`.
 export, hand-off, and the edit lanes all ask it. Each keeps its synchronous re-check
 immediately before the read. The executor gains an `immichAccount` branch:
 
-1. an HTTP download into a temporary file;
-2. an atomic move into the staging folder;
-3. the existing priorities, free-space floor, and per-root breaker throughout.
+1. an HTTP download into a temporary file, through `ImmichAccounts`, which holds the
+   account's session;
+2. a move into the asset's folder under a hidden name, then a rename over the final
+   name, so a reader never sees half a file;
+3. the existing priorities and per-root breaker throughout. Only the user's work —
+   interactive or command priority — downloads an original; background and device
+   demand is refused, because an account's originals are never downloaded to render the
+   library (owner, 2026-11-09).
+
+An original that lands is offered to enrichment ahead of other work, for every product it
+still owes (`CatalogStore.originalBecameLocal`, the list imported copies use): Otos's
+rendering — RAW9 for a RAW — replaces Immich's images, and its digest is taken. Ranged
+reads serve only claims that need metadata alone (`EnrichmentScope.isReadableInRanges`).
 
 ### 5. Rows arrive from the sync stream
 

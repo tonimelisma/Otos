@@ -164,6 +164,13 @@ nonisolated struct EnrichmentScope: OptionSet, Hashable, Sendable {
     /// metadata pass, or a camera's embedded preview, shown until the rendering lands.
     static let provisionalThumbnail = EnrichmentScope(rawValue: 1 << 3)
 
+    /// Whether the claim needs only what ranged reads can give: metadata, and a
+    /// provisional thumbnail a remote source already supplies. A rendering or a digest
+    /// needs the whole original, local (ADR 0046 §5, §7).
+    var isReadableInRanges: Bool {
+        isDisjoint(with: [.rendering, .hash])
+    }
+
     /// The scope for `asset` claimed under the every-product predicate (`everyProduct`)
     /// or the metadata-only one. Every stale product of a row claimed for all of them is
     /// made from one read, so a cloud-only original is downloaded once for all of them. A

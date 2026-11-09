@@ -584,6 +584,8 @@ final class CatalogWindowViewModel {
         mediaTileDetailReader = MediaTileDetailReader(store: catalogStore)
         let deviceStagingRegistry = DeviceStagingRegistry()
         self.deviceStagingRegistry = deviceStagingRegistry
+        let immichAccounts = immichAccounts ?? (startsEnrichment ? ImmichAccounts(store: catalogStore) : nil)
+        self.immichAccounts = immichAccounts
         let materializationCoordinator = MaterializationCoordinator(
             store: catalogStore,
             // Dispatch on what the root *is*, not on what its path looks like. The
@@ -593,7 +595,7 @@ final class CatalogWindowViewModel {
             // iCloud, which refused it as a permission error on a path that did not
             // exist. A device root is never servable by the cloud provider, and a
             // device root with no live session is a state, not a fallback (APP-018).
-            executor: { [weak catalogStore] request in
+            executor: { [weak catalogStore, weak immichAccounts] request in
                 switch await catalogStore?.rootKind(for: request.id.libraryRootPath) {
                 case .deviceMTP:
                     guard let result = await deviceStagingRegistry.materialize(request.id.fileURL) else {
@@ -601,13 +603,12 @@ final class CatalogWindowViewModel {
                     }
                     return result
                 case .immichAccount:
-                    // An account's originals arrive over HTTP from its server; until that
-                    // transfer exists, a request for one is refused, never routed to the
-                    // cloud provider (ADR 0046 §4).
-                    OtosLog.mediaIO.noticeOperation("materialization.immich", phase: "refused", fields: [
-                        "reason": "noTransfer", "relativePath": request.id.relativePath.rawValue,
-                    ])
-                    return MaterializationResult(outcome: .requestFailed, rerequestCount: 0, elapsedMs: 0)
+                    // An account's originals arrive over HTTP from its server, through the
+                    // owner of its session; never routed to the cloud provider (ADR 0046 §4).
+                    guard let immichAccounts else {
+                        return MaterializationResult(outcome: .requestFailed, rerequestCount: 0, elapsedMs: 0)
+                    }
+                    return await immichAccounts.downloadOriginal(request)
                 case .library, .removableVolume, nil:
                     return await FileMaterialization.materialize(
                         request.id.fileURL,
@@ -626,8 +627,6 @@ final class CatalogWindowViewModel {
             materializationRequester: materializationCoordinator,
             files: trashFiles
         )
-        let immichAccounts = immichAccounts ?? (startsEnrichment ? ImmichAccounts(store: catalogStore) : nil)
-        self.immichAccounts = immichAccounts
         self.enrichmentCoordinator = enrichmentCoordinator ?? (
             startsEnrichment
                 ? EnrichmentCoordinator(

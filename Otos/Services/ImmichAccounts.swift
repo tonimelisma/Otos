@@ -77,6 +77,9 @@ actor ImmichAccounts {
     private let sessions: any ImmichSessionStoring
     private let urlSession: URLSession
     private let schedule: Schedule
+    /// Where new accounts' staging folders go: the app's Caches `RemoteStaging`, or a test's
+    /// own folder.
+    private let stagingContainer: URL
     private let clock = ContinuousClock()
     private var accounts: [LibraryRootPath: Account] = [:]
     private var status: [LibraryRootPath: ImmichAccountStatus] = [:]
@@ -85,8 +88,10 @@ actor ImmichAccounts {
         store: CatalogStore,
         sessions: any ImmichSessionStoring = ImmichKeychainSessionStore(),
         urlSession: URLSession = .shared,
-        schedule: Schedule = .production
+        schedule: Schedule = .production,
+        stagingContainer: URL = StagingLocation.containerURL(.remote)
     ) {
+        self.stagingContainer = stagingContainer
         self.store = store
         self.sessions = sessions
         self.urlSession = urlSession
@@ -145,7 +150,9 @@ actor ImmichAccounts {
         }
         let rootPath: LibraryRootPath
         do {
-            rootPath = try await store.addImmichAccount(server: address, userID: login.userID, displayName: login.name)
+            rootPath = try await store.addImmichAccount(
+                server: address, userID: login.userID, displayName: login.name, stagingContainer: stagingContainer
+            )
             guard let root = await store.currentLibraries().first(where: { $0.path == rootPath })?.root,
                   let identity = root.deviceIdentity
             else {
@@ -215,6 +222,77 @@ actor ImmichAccounts {
         publish.finish()
         storeUpdates.finish()
         await storeUpdateLoop.value
+    }
+
+    // MARK: - Originals (ADR 0046 §4, §7)
+
+    /// Downloads an account row's original into its staging folder, for work that needs
+    /// its bytes: full-resolution zoom, an edit, export, hand-off. Background and device
+    /// demand is refused: an account's originals are downloaded only when the user's work
+    /// needs them, never to render a library (owner, 2026-11-09). A download that lands is
+    /// handed to enrichment, which makes every product the row still owes from it.
+    func downloadOriginal(_ request: MaterializationCoordinator.Request) async -> MaterializationResult {
+        let started = ContinuousClock.now
+        let id = request.id
+        func result(_ outcome: MaterializationOutcome) -> MaterializationResult {
+            MaterializationResult(
+                outcome: outcome, rerequestCount: 0, elapsedMs: DiagnosticsTiming.milliseconds(since: started)
+            )
+        }
+        switch request.priority {
+        case .interactive, .command:
+            break
+        case .background, .device:
+            OtosLog.mediaIO.noticeOperation("immich.original", phase: "refused", fields: [
+                "reason": "notUserWork", "relativePath": id.relativePath.rawValue,
+            ])
+            return result(.requestFailed)
+        }
+        guard let account = accounts[id.libraryRootPath],
+              let assetID = id.relativePath.rawValue.split(separator: "/", maxSplits: 1).first
+        else {
+            OtosLog.mediaIO.noticeOperation("immich.original", phase: "refused", fields: [
+                "reason": "noSession", "relativePath": id.relativePath.rawValue,
+            ])
+            return result(.requestFailed)
+        }
+        let downloaded: URL
+        do {
+            downloaded = try await account.client.downloadOriginal(assetID: String(assetID), token: account.token)
+        } catch {
+            return result(downloadFailed(error, for: id))
+        }
+        do {
+            try await StagingLocation.placeDownloaded(downloaded, at: id.fileURL, inside: id.libraryRootPath.url)
+        } catch {
+            OtosLog.mediaIO.errorOperation("immich.original", phase: "placeFailed", fields: [
+                "relativePath": id.relativePath.rawValue, "error": String(describing: error),
+            ])
+            return result(.requestFailed)
+        }
+        OtosLog.mediaIO.noticeOperation("immich.original", phase: "staged", fields: [
+            "relativePath": id.relativePath.rawValue,
+            "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: started))",
+        ])
+        await store.originalBecameLocal(id)
+        return result(.materialized)
+    }
+
+    /// What a failed download tells the materializer: a server that did not answer is
+    /// unavailable, a refused session signs the account out, anything else failed.
+    private func downloadFailed(_ error: any Error, for id: MediaAssetID) -> MaterializationOutcome {
+        OtosLog.mediaIO.noticeOperation("immich.original", phase: "failed", fields: [
+            "relativePath": id.relativePath.rawValue, "error": String(describing: error),
+        ])
+        switch error as? ImmichClientError {
+        case .unreachable:
+            return .providerUnavailable
+        case .unauthorized:
+            setStatus(.signedOut, for: id.libraryRootPath)
+            return .requestFailed
+        case .refused, .malformedResponse, .unsupportedVersion, nil:
+            return .requestFailed
+        }
     }
 
     // MARK: - Ranged reads (ADR 0046 §5)

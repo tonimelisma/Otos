@@ -337,7 +337,7 @@ Adjacent decisions requiring separate ADRs or specs:
    destination files and promoted through the same atomic path ordinary enrichment uses.
    Nothing is rendered or read during the import: a card renders its rows while it waits
    for Import to be pressed, and a copy that settles still owing a product is offered to
-   enrichment before every other background row (`landedAwaitingProducts`), because its
+   enrichment before every other background row (`localBytesAwaitingProducts`), because its
    bytes are local now and a cloud-synced library may evict it once uploaded. Source and
    destination overlay lifecycles are independent, and repeated journal recovery is
    idempotent.

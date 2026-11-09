@@ -247,6 +247,31 @@ nonisolated enum StagingLocation {
         }
     }
 
+    /// Moves a downloaded original to `destination` inside a staging container: into its
+    /// folder under a hidden name first, then renamed over the final name, so a reader
+    /// never sees half a file (ADR 0046 §4). Containment in `stagingRoot` — the root's own
+    /// staging folder, which is its path for a kind that stages originals — is proven
+    /// first, as for release: a path wrong by one component would be a write inside the
+    /// user's own media.
+    @concurrent
+    static func placeDownloaded(_ downloaded: URL, at destination: URL, inside stagingRoot: URL) async throws {
+        guard isInsideStaging(destination, inContainers: [stagingRoot]) else {
+            OtosLog.fileAccess.errorOperation("source.staging", phase: "placeRefused", fields: [
+                "reason": "outsideStagingRoot", "path": destination.path(percentEncoded: false),
+            ])
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        let folder = destination.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let partial = folder.appending(path: ".\(UUID().uuidString).partial")
+        try FileManager.default.moveItem(at: downloaded, to: partial)
+        if FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)) {
+            _ = try FileManager.default.replaceItemAt(destination, withItemAt: partial)
+        } else {
+            try FileManager.default.moveItem(at: partial, to: destination)
+        }
+    }
+
     /// Whether `url` lies inside a staging container.
     ///
     /// The guard on releasing staged bytes. Checked against the containers rather than one
