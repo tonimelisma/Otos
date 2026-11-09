@@ -277,4 +277,33 @@ struct OnThisDayPolicyTests {
         #expect(OnThisDayPresentation.emptyMessage(today, locale: british, calendar: gregorian)
             == "Photos and videos taken on 9 November in earlier years appear here.")
     }
+
+    // MARK: - Search
+
+    /// A search on On This Day only narrows: its order stays the scope's, so each year is
+    /// still one contiguous run; elsewhere relevance orders as chosen (ADR 0048, 0049).
+    @Test func aSearchOnOnThisDayNarrowsWithoutReorderingItsYears() throws {
+        let search = try #require(CatalogSearch(text: "beach"))
+        #expect(search.order == .relevance)
+        let onThisDay = CatalogQueryDescriptor(
+            scope: .onThisDay(CalendarDay(year: 2026, month: 11, day: 9)),
+            search: search
+        )
+        #expect(onThisDay.effectiveSearch?.order == .sort)
+        #expect(onThisDay.effectiveSearch?.text == "beach")
+        #expect(onThisDay.search?.order == .relevance)
+        let allMedia = CatalogQueryDescriptor(scope: .allMedia, search: search)
+        #expect(allMedia.effectiveSearch?.order == .relevance)
+        #expect(!allMedia.groupsByDay)
+
+        let ids = ["a", "b", "c"].map(Self.id)
+        let scores: [MediaAssetID: Float] = [ids[0]: 0.1, ids[1]: 0.9, ids[2]: 0.5]
+        let buckets: [Date?] = [Date(timeIntervalSince1970: 0), Date(timeIntervalSince1970: 0), Date(timeIntervalSince1970: 86400)]
+        let narrowed = try CatalogWindowPolicy.searched(
+            ids: ids, dayBuckets: buckets, coordinates: [], scores: scores,
+            order: #require(onThisDay.effectiveSearch).order
+        )
+        #expect(narrowed.ids == ids)
+        #expect(narrowed.dayBuckets == buckets)
+    }
 }

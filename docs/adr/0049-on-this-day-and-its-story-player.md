@@ -79,7 +79,9 @@ view mode for it.
    This Day, and every read uses `CatalogQueryDescriptor.effectiveSort`. The user's sort
    stays in the descriptor as chosen, so leaving the scope restores it. The sort control
    and View ▸ Sort are disabled in place there, with the reason as the tooltip (DES-053,
-   DES-038). The filter applies and narrows each year.
+   DES-038). The filter applies and narrows each year. A keyword search (ADR 0048) also
+   only narrows: `CatalogQueryDescriptor.effectiveSearch` orders a fixed-order scope's
+   results by that order, never by relevance, so each year stays one contiguous run.
 6. **Projection publishes the years.** `CatalogWindowState.onThisDay` is
    `CatalogOnThisDayState`: the day and one `OnThisDayYear` per earlier year with a match,
    newest first, each a contiguous run of the ordered IDs with its key item (the run's

@@ -68,7 +68,7 @@ extension CatalogProjection {
             ordered: (orderedAssetIDs, dayBuckets, coordinates),
             orderQueryMs: orderQueryMs
         )
-        if let search = resolvedDescriptor.search {
+        if let search = resolvedDescriptor.effectiveSearch {
             try await applySearch(search, to: &unsearched, store: store)
         }
         let facts = unsearched
