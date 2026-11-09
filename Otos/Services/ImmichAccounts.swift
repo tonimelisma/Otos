@@ -286,7 +286,7 @@ actor ImmichAccounts {
         ])
         switch error as? ImmichClientError {
         case .unreachable:
-            return .providerUnavailable
+            return .serverUnreachable
         case .unauthorized:
             setStatus(.signedOut, for: id.libraryRootPath)
             return .requestFailed

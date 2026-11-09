@@ -818,11 +818,12 @@ actor MaterializationCoordinator: MaterializationRequesting {
                 wake()
             }
         case .requestFailed, .timedOut, .insufficientLocalSpace, .cancelled, .statusUnavailable,
-             .deviceUnavailable:
+             .deviceUnavailable, .serverUnreachable:
             // Inconclusive / slow / cancelled: neither opens nor closes the breaker.
-            // `deviceUnavailable` belongs here rather than with the failures: an
-            // absent camera says nothing about a *provider's* health, and letting it
-            // open the breaker would suppress a root for a reason unrelated to it.
+            // `deviceUnavailable` and `serverUnreachable` belong here rather than with the
+            // failures: an absent camera or a silent server says nothing about a
+            // *provider's* health, and letting it open the breaker would suppress a root
+            // for a reason unrelated to it.
             break
         }
     }

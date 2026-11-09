@@ -201,7 +201,10 @@ account's session, loop and status.
   compare, curation, and every filter.
 - Work that needs original bytes reports that the server is offline instead of waiting
   silently: full-resolution zoom, a new edit, export, hand-off, drag of the original,
-  and a digest.
+  and a digest. The executor reports a download the server did not answer as
+  `serverUnreachable`, a state of the source like a disconnected camera's
+  `deviceUnavailable`, never a file provider's failure. Hand-off names the account in its
+  alert (ADR 0037).
 - Reachability is learned from requests (a request answers or fails with a transport
   error); it is never assumed from elapsed time.
 

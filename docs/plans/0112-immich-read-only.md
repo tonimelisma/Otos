@@ -73,8 +73,8 @@ Each increment lands on `main` with its own DoD.
      (full-resolution zoom, edit, export, hand-off), with every missing product, Otos's
      rendering and the digest included, written from that one read, under the free-space
      floor. RAW9 renders lazily (owner decision above).
-   - **7c** *(done)*: render signatures keyed by pipeline (ADR 0042).
-8. **Feature:** hand-off, drag, clipboard, Share and Open With for an original not yet
+   - **7c** *(done: #595)*: render signatures keyed by pipeline (ADR 0042).
+8. **Feature** *(done)*: hand-off, drag, clipboard, Share and Open With for an original not yet
    downloaded, and what each one says while offline.
 9. **Feature:** Live Photo placement, and Duplicates presentation and refused resolutions
    for account copies.

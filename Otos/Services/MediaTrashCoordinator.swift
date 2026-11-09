@@ -608,7 +608,7 @@ actor MediaTrashCoordinator {
             ])
             forget([id])
         case .timedOut, .providerUnavailable, .cancelled, .insufficientLocalSpace, .statusUnavailable,
-             .deviceUnavailable:
+             .deviceUnavailable, .serverUnreachable:
             let attempt = (attempts[id] ?? 0) + 1
             attempts[id] = attempt
             let delay = retryPolicy.delay(afterAttempt: attempt)

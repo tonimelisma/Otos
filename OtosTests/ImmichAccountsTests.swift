@@ -70,6 +70,8 @@ struct ImmichAccountsTests {
                     return (204, Data())
                 case "/api/assets/a1/original":
                     return (200, Self.original)
+                case "/api/assets/silent/original":
+                    throw URLError(.timedOut)
                 default:
                     return (404, Data())
                 }
@@ -325,6 +327,14 @@ struct ImmichAccountsTests {
             MaterializationCoordinator.Request(id: missing, sourceSize: 1, isVideo: false, priority: .interactive)
         )
         #expect(refused.outcome == .requestFailed)
+
+        // ADR 0046 §6: a server that does not answer is a state of the source, not a
+        // provider failure, and is reported as one.
+        let silent = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "silent/IMG_2.JPG"))
+        let unanswered = await accounts.downloadOriginal(
+            MaterializationCoordinator.Request(id: silent, sourceSize: 1, isVideo: false, priority: .interactive)
+        )
+        #expect(unanswered.outcome == .serverUnreachable)
         await accounts.shutdown()
         await store.shutdown()
     }

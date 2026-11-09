@@ -14,7 +14,9 @@ import UniformTypeIdentifiers
 /// photo. Which file depends on the photo (`HandOffForm`):
 /// - **An unedited still that is not a RAW, or an untrimmed video:** the original itself.
 ///   Nothing is read; a cloud-only original is downloaded by the app that reads it, as
-///   with Finder.
+///   with Finder. An original a source stages (an Immich account's, a camera's) has no file
+///   until Otos copies it, so one not yet staged — `locality(of:)` says `.fetchable` for a
+///   path with no file — is fetched first, as the user's work (ADR 0046 §4).
 /// - **An edited still or any RAW:** a full-size JPEG rendered from the original with its
 ///   recipe (RAW9 defaults for an unedited RAW). It keeps the original's metadata, with
 ///   the orientation reset because the pixels are already upright.
@@ -50,6 +52,17 @@ actor HandOffPreparer {
         case originalUnavailable
         /// The volume holding the hand-off folder refused the write for space.
         case outOfSpace
+        /// The original is not on this Mac, and the source that holds it cannot send it
+        /// now (ADR 0046 §6).
+        case sourceUnavailable(SourceUnavailability)
+    }
+
+    /// Why a source cannot send an original now, in the source's own terms.
+    enum SourceUnavailability: Hashable, Sendable {
+        /// An Immich account's server did not answer.
+        case serverNotAnswering
+        /// A camera's original was asked for while the camera is not connected.
+        case cameraDisconnected
     }
 
     let directory: URL
@@ -65,6 +78,21 @@ actor HandOffPreparer {
     /// this launch.
     func prepare(_ item: EditedMediaItem) async throws -> URL {
         guard item.handOffForm != .original else {
+            // A file that is there, a cloud placeholder included, is handed over as it is,
+            // and so is a path with no file that no source can send: what Finder would do.
+            // Only a staged original its source has not sent yet is fetched.
+            guard !Self.exists(item.id.fileURL),
+                  await materialization.locality(of: item.id) == .fetchable
+            else {
+                return item.id.fileURL
+            }
+            let start = ContinuousClock.now
+            try await ensureLocal(item)
+            OtosLog.mediaIO.noticeOperation("handOff.prepare", phase: "finish", fields: [
+                "id": item.id.relativePath.rawValue,
+                "form": "fetchedOriginal",
+                "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+            ])
             return item.id.fileURL
         }
         try await clearOnce()
@@ -73,11 +101,7 @@ actor HandOffPreparer {
             return target
         }
         let start = ContinuousClock.now
-        guard await materialization.ensureLocal(.init(
-            id: item.id, sourceSize: item.sourceSize, isVideo: item.isVideo, priority: .interactive
-        )).isLocal else {
-            throw PrepareError.originalUnavailable
-        }
+        try await ensureLocal(item)
         // Written beside the target and moved into place, so a reader never sees half a file.
         let staging = target.deletingLastPathComponent()
             .appending(path: ".\(UUID().uuidString).\(target.pathExtension)")
@@ -125,11 +149,35 @@ actor HandOffPreparer {
         return target
     }
 
-    /// The file already prepared for `item` this launch, or nil. Read without waiting, so a
-    /// drag can hand a ready file to a receiver that cannot wait for one.
+    /// Brings the original's bytes here as the user's work, or says why they cannot come.
+    private func ensureLocal(_ item: EditedMediaItem) async throws {
+        let outcome = await materialization.ensureLocal(.init(
+            id: item.id, sourceSize: item.sourceSize, isVideo: item.isVideo, priority: .interactive
+        ))
+        switch outcome {
+        case .local:
+            return
+        case .notMaterialized(.serverUnreachable):
+            throw PrepareError.sourceUnavailable(.serverNotAnswering)
+        case .notMaterialized(.deviceUnavailable):
+            throw PrepareError.sourceUnavailable(.cameraDisconnected)
+        case .unreachable, .notMaterialized:
+            throw PrepareError.originalUnavailable
+        }
+    }
+
+    /// Whether a file is at `url`. A cloud placeholder is: the app that reads it downloads
+    /// it. A staged original not yet copied is not.
+    private nonisolated static func exists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+    }
+
+    /// The file to hand over for `item` if it is ready this launch, or nil: the original when
+    /// it has a file, else the one prepared for it. Read without waiting, so a drag can hand
+    /// a ready file to a receiver that cannot wait for one.
     nonisolated func readyURL(for item: EditedMediaItem) -> URL? {
         guard item.handOffForm != .original else {
-            return item.id.fileURL
+            return Self.exists(item.id.fileURL) ? item.id.fileURL : nil
         }
         guard let url = try? Self.preparedURL(for: item, in: directory),
               FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
@@ -168,6 +216,23 @@ actor HandOffPreparer {
     }
 }
 
+/// What a receiver that asked for a promised file shows when it cannot have it: a drag
+/// has no alert of Otos's own, so the error says why, in the alert's terms.
+extension HandOffPreparer.PrepareError: LocalizedError {
+    nonisolated var errorDescription: String? {
+        switch self {
+        case .sourceUnavailable(.serverNotAnswering):
+            "The photo’s original isn’t on this Mac, and its Immich server isn’t answering."
+        case .sourceUnavailable(.cameraDisconnected):
+            "The photo’s original is on a camera that isn’t connected."
+        case .outOfSpace:
+            "There isn’t enough disk space to prepare the photo."
+        case .originalUnavailable:
+            "The photo couldn’t be prepared. Its original may be unavailable."
+        }
+    }
+}
+
 /// A dragged photo that must be prepared before it can be handed over: a file promise
 /// (ADR 0028, ADR 0037). Finder, Mail, Messages and Safari wait for it. Chrome
 /// never fulfils promises, so it receives such a photo only when its file was already
@@ -177,7 +242,8 @@ actor HandOffPreparer {
 /// The receiver asks on `queue`, a dedicated serial queue: preparing is async, so the
 /// callback waits for it there, never on a cooperative-pool thread. A photo whose details
 /// the grid did not hold is read first, then handed over as `EditedMediaItem.handOffForm` says,
-/// original included.
+/// original included. A photo that cannot be prepared fails the promise with
+/// `PrepareError`'s description, which is what the receiver shows.
 final nonisolated class HandOffPromise: NSFilePromiseProvider, NSFilePromiseProviderDelegate {
     private let item: EditedMediaItem?
     private let id: MediaAssetID
