@@ -28,7 +28,9 @@ Measured (`2026-10-25-browser-multi-file-paste-and-drop.md`):
 
 - **What is handed over** (`HandOffPreparer`, one owner for every path):
   - an unedited still that is not a RAW, or an untrimmed video: the original, unread, as
-    before;
+    before. An original a source stages — an Immich account's or a camera's (ADR 0046
+    §4) — has no file until Otos copies it, and no app can fetch it, so one not yet staged
+    is fetched first as the user's work, and is then handed over as itself;
   - an edited still or any RAW: a full-size JPEG rendered from the original with its
     recipe, which carries the original's Exif, GPS, TIFF and IPTC metadata with
     orientation and pixel size reset;
@@ -52,8 +54,11 @@ Measured (`2026-10-25-browser-multi-file-paste-and-drop.md`):
   the rest would silently drop a photo the person chose.
   The alert names the cause it knows: a write the hand-off folder's volume refused for
   space says the disk is full (`HandOffPreparer.PrepareError.outOfSpace`, classified by the
-  error's typed chain through `FreeSpaceFloor.refusedForSpace`); any other failure says the
-  original may be unavailable. `MediaFileWriter` encodes in memory and then writes the
+  error's typed chain through `FreeSpaceFloor.refusedForSpace`); a source that cannot send
+  an original is named by its sidebar name in its own terms (`“Family” isn’t answering`,
+  `“EOS R5” isn’t connected`; `PrepareError.sourceUnavailable`, from the executor's
+  `serverUnreachable` or `deviceUnavailable`); any other failure says the original may be
+  unavailable. `MediaFileWriter` encodes in memory and then writes the
   file, so the write's own error reaches the caller instead of Image I/O's bare failure.
 - **Drag cannot wait,** so its writer is chosen synchronously from the details the grid
   holds:
@@ -62,7 +67,12 @@ Measured (`2026-10-25-browser-multi-file-paste-and-drop.md`):
   - or a file promise, which prepares the photo when the receiver asks. Finder, Mail,
     Messages and Safari wait for it.
   A photo dragged into Chrome arrives only if its file is already prepared. ⌘C then paste
-  works in every case.
+  works in every case. A staged original not yet copied is promised, never offered as a
+  path with nothing there. A promise that cannot be kept fails with the reason
+  (`PrepareError`'s description), which is what the receiver shows, since a drag has no
+  alert of Otos's own.
+- **Open and Open With list apps by file type** for an original not on disk yet, because
+  LaunchServices answers nothing for a path with no file (`LaunchServicesWorkspace`).
 - **An unedited HEIC is handed over as itself,** as Finder does. Chrome receives a file it
   cannot display, exactly as it would from Finder; converting would make the hand-off
   something Finder's is not.

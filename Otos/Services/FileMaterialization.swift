@@ -585,13 +585,17 @@ nonisolated enum MaterializationOutcome: Equatable {
     /// not a provider failure, and never a reason to ask a *cloud* provider for a
     /// camera file (APP-018).
     case deviceUnavailable
+    /// The asset belongs to an Immich account whose server did not answer the download
+    /// request. Like `deviceUnavailable`, a state the source is in (ADR 0046 §6), not a
+    /// file provider's failure.
+    case serverUnreachable
 
     var isMaterialized: Bool {
         switch self {
         case .alreadyMaterialized, .materialized:
             true
         case .requestFailed, .timedOut, .providerUnavailable, .insufficientLocalSpace, .cancelled,
-             .statusUnavailable, .deviceUnavailable:
+             .statusUnavailable, .deviceUnavailable, .serverUnreachable:
             false
         }
     }
@@ -616,6 +620,8 @@ nonisolated enum MaterializationOutcome: Equatable {
             "statusUnavailable"
         case .deviceUnavailable:
             "deviceUnavailable"
+        case .serverUnreachable:
+            "serverUnreachable"
         }
     }
 }

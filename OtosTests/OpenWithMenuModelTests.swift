@@ -7,6 +7,16 @@ import Testing
 /// is a table-driven stand-in for LaunchServices so the tests assert the model's
 /// grouping, title, and intersection rules rather than what this Mac has installed.
 struct OpenWithMenuModelTests {
+    /// ADR 0046 §4: an account's original not yet staged has no file, and LaunchServices
+    /// answers nothing for a path with no file; the workspace asks by its type, so Open and
+    /// Open With offer the apps they will use once the hand-off fetches it.
+    @Test func aFileNotOnDiskYetIsAskedAboutByItsType() {
+        let absent = URL(fileURLWithPath: "/private/var/empty/otos-absent/a1/IMG_1.JPG")
+        let workspace = LaunchServicesWorkspace()
+        #expect(workspace.defaultApplicationURL(toOpen: absent) != nil)
+        #expect(!workspace.applicationURLs(toOpen: absent).isEmpty)
+    }
+
     @Test func emptyTargetsIsEmptyAndDisabled() {
         let model = OpenWithMenuModel.make(targets: [], workspace: TableWorkspace())
         #expect(model == .empty)

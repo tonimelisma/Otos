@@ -69,12 +69,12 @@ Each increment lands on `main` with its own DoD.
 7. **Feature**, in three PRs:
    - **7a** *(done: #591)*: metadata in byte ranges of the original while the server answers (the
      Store's answering fact, `RemoteRangeAccess`, pacing an unanswered row).
-   - **7b:** original download in the executor branch, for work that needs the bytes
+   - **7b** *(done: #594)*: original download in the executor branch, for work that needs the bytes
      (full-resolution zoom, edit, export, hand-off), with every missing product, Otos's
      rendering and the digest included, written from that one read, under the free-space
      floor. RAW9 renders lazily (owner decision above).
-   - **7c:** render signatures keyed by pipeline (ADR 0042).
-8. **Feature:** hand-off, drag, clipboard, Share and Open With for an original not yet
+   - **7c** *(done: #595)*: render signatures keyed by pipeline (ADR 0042).
+8. **Feature** *(done)*: hand-off, drag, clipboard, Share and Open With for an original not yet
    downloaded, and what each one says while offline.
 9. **Feature:** Live Photo placement, and Duplicates presentation and refused resolutions
    for account copies.

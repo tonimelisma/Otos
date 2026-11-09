@@ -107,25 +107,30 @@ extension CatalogWindowViewModel {
                     details = try await reader.details(for: request.ids)
                 } catch {
                     // The reader logged it; nothing is handed over for an unread target.
-                    self?.failHandOff(request, failures: HandOffFailures(outOfSpace: 0, other: request.ids.count))
+                    self?.failHandOff(request, failures: HandOffFailures(other: request.ids.count))
                     continue
                 }
                 let items = request.ids.map { EditedMediaItem(id: $0, detail: details[$0]) }
-                let pending = items.filter { $0.handOffForm != .original && preparer.readyURL(for: $0) == nil }.count
+                let pending = items.filter { preparer.readyURL(for: $0) == nil }.count
                 self?.beginHandOffProgress(request, total: pending)
                 var urls: [URL] = []
-                var failures = HandOffFailures(outOfSpace: 0, other: 0)
+                var failures = HandOffFailures()
                 var cancelled = false
                 for item in items {
                     if let through = self?.handOffCancelledThrough, through >= request.generation {
                         cancelled = true
                         break
                     }
-                    let needed = item.handOffForm != .original && preparer.readyURL(for: item) == nil
+                    let needed = preparer.readyURL(for: item) == nil
                     do {
                         try await urls.append(preparer.prepare(item))
                     } catch HandOffPreparer.PrepareError.outOfSpace {
                         failures.outOfSpace += 1
+                    } catch let HandOffPreparer.PrepareError.sourceUnavailable(reason) {
+                        let root = item.id.libraryRootPath
+                        failures.recordUnavailable(
+                            rootPath: root, name: self?.sourceName(for: root) ?? root.rawValue, reason: reason
+                        )
                     } catch {
                         failures.other += 1
                     }
@@ -177,6 +182,7 @@ extension CatalogWindowViewModel {
         OtosLog.ui.errorOperation("handOff.complete", phase: "failed", fields: [
             "failed": "\(failures.count)",
             "outOfSpace": "\(failures.outOfSpace)",
+            "sourceUnavailable": "\(failures.unavailable.reduce(0) { $0 + $1.count })",
             "count": "\(request.ids.count)",
             "action": request.action.verb,
         ])
@@ -213,6 +219,11 @@ extension CatalogWindowViewModel {
         ])
     }
 
+    /// The name the sidebar shows for a library or removable source.
+    private func sourceName(for rootPath: LibraryRootPath) -> String? {
+        (state.libraries + state.removableSources).first { $0.path == rootPath }?.displayName
+    }
+
     /// The drag pasteboard writer for one photo (ADR 0028, ADR 0037): the
     /// original's URL when it is handed over as itself, the file this launch already
     /// prepared when there is one, and otherwise a file promise that prepares it when the
@@ -232,20 +243,59 @@ extension CatalogWindowViewModel {
 }
 
 /// Why a hand-off's photos could not be prepared, counted by cause, and what the alert
-/// says about them: a full disk is named as one, never as an unavailable original.
+/// says about them: a full disk is named as one, never as an unavailable original, and a
+/// source that cannot send an original is named by the name the sidebar shows (ADR 0046 §6).
 nonisolated struct HandOffFailures: Equatable, Sendable {
-    var outOfSpace: Int
-    var other: Int
+    var outOfSpace = 0
+    var other = 0
+    /// Photos whose originals their source could not send, by source, in the order met.
+    private(set) var unavailable: [UnavailableSource] = []
+
+    struct UnavailableSource: Equatable, Sendable {
+        let rootPath: LibraryRootPath
+        let name: String
+        let reason: HandOffPreparer.SourceUnavailability
+        var count: Int
+
+        var sentence: String {
+            let photos = count == 1 ? "one photo" : "\(count) photos"
+            return switch reason {
+            case .serverNotAnswering: "“\(name)” isn’t answering, so \(photos) couldn’t be downloaded."
+            case .cameraDisconnected: "“\(name)” isn’t connected, so \(photos) couldn’t be copied from it."
+            }
+        }
+    }
+
+    mutating func recordUnavailable(
+        rootPath: LibraryRootPath,
+        name: String,
+        reason: HandOffPreparer.SourceUnavailability
+    ) {
+        if let index = unavailable.firstIndex(where: { $0.rootPath == rootPath && $0.reason == reason }) {
+            unavailable[index].count += 1
+        } else {
+            unavailable.append(UnavailableSource(rootPath: rootPath, name: name, reason: reason, count: 1))
+        }
+    }
 
     var count: Int {
-        outOfSpace + other
+        outOfSpace + other + unavailable.reduce(0) { $0 + $1.count }
     }
 
     var isEmpty: Bool {
-        outOfSpace == 0 && other == 0
+        outOfSpace == 0 && other == 0 && unavailable.isEmpty
     }
 
     var alertMessage: String {
+        let sources = unavailable.map(\.sentence).joined(separator: " ")
+        guard outOfSpace + other > 0 else {
+            return sources + " Nothing was handed over."
+        }
+        return sources.isEmpty ? preparationMessage : sources + " " + preparationMessage
+    }
+
+    /// What the alert says about the photos that failed on this Mac.
+    private var preparationMessage: String {
         let photos = { (count: Int) in count == 1 ? "one photo" : "\(count) photos" }
         switch (outOfSpace, other) {
         case (0, 1):

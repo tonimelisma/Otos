@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import Foundation
 @testable import OtosKit
+import Synchronization
 import Testing
 
 /// ADR 0037: a hand-off is one full-size file per photo — the original for an
@@ -55,6 +56,90 @@ struct HandOffTests {
         #expect(HandOffFailures(outOfSpace: 2, other: 1).alertMessage
             == "There isn’t enough disk space to prepare 2 photos, and one photo couldn’t be prepared because its "
             + "original may be unavailable. Nothing was handed over. Free up space and try again.")
+    }
+
+    /// ADR 0046 §6: a source that cannot send an original is named, by the name the sidebar
+    /// shows, in its own terms; other causes keep their own wording after it.
+    @Test func aHandOffThatFailedOfflineNamesTheSource() {
+        let family = LibraryRootPath(rawValue: "/RemoteStaging/family")
+        let camera = LibraryRootPath(rawValue: "/DeviceStaging/eos")
+        var failures = HandOffFailures()
+        failures.recordUnavailable(rootPath: family, name: "Family", reason: .serverNotAnswering)
+        #expect(failures.alertMessage == "“Family” isn’t answering, so one photo couldn’t be downloaded. Nothing was handed over.")
+        failures.recordUnavailable(rootPath: family, name: "Family", reason: .serverNotAnswering)
+        failures.recordUnavailable(rootPath: camera, name: "EOS R5", reason: .cameraDisconnected)
+        failures.other = 1
+        #expect(failures.count == 4)
+        #expect(failures.alertMessage
+            == "“Family” isn’t answering, so 2 photos couldn’t be downloaded. “EOS R5” isn’t connected, so one photo "
+            + "couldn’t be copied from it. One photo couldn’t be prepared, so nothing was handed over. "
+            + "Its original may be unavailable.")
+    }
+
+    /// An original a source stages has no file until Otos copies it: one not yet staged is
+    /// fetched as the user's work before it is handed over, and a drag promises it rather
+    /// than offering a path with nothing there. A source that cannot send it fails the
+    /// promise with a reason the receiver can show.
+    @Test func aStagedOriginalIsFetchedBeforeItIsHandedOver() async throws {
+        let directory = try makeTestDirectory()
+        let staged = directory.appending(path: "a1/IMG_1.JPG")
+        let id = try MediaAssetID(
+            libraryRootPath: CatalogPath.normalizedExistingDirectoryPath(for: directory),
+            relativePath: MediaRelativePath(rawValue: "a1/IMG_1.JPG")
+        )
+        let outcome = Mutex(MaterializationOutcome.serverUnreachable)
+        let requests = Mutex(0)
+        let source = ClosureMaterializationRequester(status: { url in
+            FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) ? .materialized : .dataless
+        }) { url in
+            requests.withLock { $0 += 1 }
+            let answer = outcome.withLock { $0 }
+            if answer == .materialized {
+                do {
+                    try FileManager.default.createDirectory(
+                        at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+                    )
+                    try Data("jpeg".utf8).write(to: url)
+                } catch {
+                    return MaterializationResult(outcome: .requestFailed, rerequestCount: 0, elapsedMs: 0)
+                }
+            }
+            return MaterializationResult(outcome: answer, rerequestCount: 0, elapsedMs: 0)
+        }
+        let preparer = HandOffPreparer(directory: directory.appending(path: "HandOff"), materialization: source)
+        let item = EditedMediaItem(id: id, isVideo: false, recipe: .neutral, sourceSize: 4)
+        #expect(item.handOffForm == .original)
+        #expect(preparer.readyURL(for: item) == nil)
+
+        await #expect(throws: HandOffPreparer.PrepareError.sourceUnavailable(.serverNotAnswering)) {
+            try await preparer.prepare(item)
+        }
+        let promise = HandOffPromise(item: item, preparer: preparer, reader: nil)
+        let dropped = directory.appending(path: "Dropped/IMG_1.JPG")
+        try FileManager.default.createDirectory(at: dropped.deletingLastPathComponent(), withIntermediateDirectories: true)
+        func deliver() async -> (any Error)? {
+            await withCheckedContinuation { continuation in
+                promise.operationQueue(for: promise).addOperation {
+                    promise.filePromiseProvider(promise, writePromiseTo: dropped) { continuation.resume(returning: $0) }
+                }
+            }
+        }
+        let refused = await deliver()
+        #expect(refused?.localizedDescription
+            == "The photo’s original isn’t on this Mac, and its Immich server isn’t answering.")
+
+        outcome.withLock { $0 = .deviceUnavailable }
+        await #expect(throws: HandOffPreparer.PrepareError.sourceUnavailable(.cameraDisconnected)) {
+            try await preparer.prepare(item)
+        }
+
+        outcome.withLock { $0 = .materialized }
+        #expect(try await preparer.prepare(item) == staged)
+        #expect(preparer.readyURL(for: item) == staged)
+        #expect(await deliver() == nil)
+        #expect(FileManager.default.contents(atPath: dropped.path(percentEncoded: false)) == Data("jpeg".utf8))
+        // A staged original is fetched once; after that it is handed over as it is.
+        #expect(requests.withLock { $0 } == 4)
     }
 
     /// A write that fails for a reason other than space keeps that reason: writing into a
