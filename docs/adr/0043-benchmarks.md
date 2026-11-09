@@ -64,11 +64,20 @@ The tooling found:
 - **An app-changing PR is compared with its base before it merges.**
   `script/bench.sh compare` sets the PR's record against its merge base with `origin/main`,
   measuring the base first in a detached checkout when it has none.
-  - A case that retired **more than 2% more instructions** than the base is flagged. The
+  - A case is flagged when it retired **more than 2% more instructions** than the base
+    **and** the rise is beyond both runs' own spread: the head's lowest sample,
+    median × (1 − spread), still exceeds the base's highest, median × (1 + spread). The
     owner decides whether it merges.
-  - A smaller change is only reported.
+  - A rise above 2% whose ranges overlap is reported as `within noise`, with both
+    spreads, and does not stop the merge. A smaller change is only reported.
   - 2% is four times the run-to-run variation measured on unchanged code (about ±0.5%).
-    It catches a real regression without flagging noise.
+    It catches a real regression in a steady case.
+  - **Why the spread test (2026-11-10):** the process-wide instruction count includes
+    other threads, so a case retiring well under 10 M instructions varies by tens of
+    percent. On unchanged code, `face.align` (0.1 M) read +26.6% with spreads of 20% and
+    25%, and blocked an unrelated PR. A steady case's spread stays under 1%, so a real
+    regression there is still flagged. A case that varies is itself reported, and is made
+    steady by doing more work per sample.
   - The owner chose permission over an automatic block. Some regressions are the price
     of a feature, and that trade is a product decision.
 - **A dirty tree records nothing.** A run on uncommitted changes prints its results only,
@@ -92,8 +101,8 @@ The tooling found:
 
 ## Consequences
 
-- A regression of more than 2% stops an app-changing PR before merge, until the owner
-  says whether it ships. Smaller drifts show in `bench.sh history`, against the commit
+- A regression of more than 2%, beyond both runs' spread, stops an app-changing PR before
+  merge, until the owner says whether it ships. A noisy case never blocks a merge. Smaller drifts show in `bench.sh history`, against the commit
   that caused each one.
 - Each app-changing PR costs one benchmark run before merge and one on `main` after it.
   A base without a record costs one more run, in a fresh checkout.
