@@ -14,10 +14,10 @@ struct CatalogStoreEnrichmentTests {
         let current = makeAsset(size: 100, modifiedAt: m1000, stampSize: 100, stampMtime: 1000)
         let resized = makeAsset(size: 200, modifiedAt: m1000, stampSize: 100, stampMtime: 1000)
         let touched = makeAsset(size: 100, modifiedAt: m2000, stampSize: 100, stampMtime: 1000)
-        #expect(unstamped.needsEnrichment(everyProduct: true))
-        #expect(!current.needsEnrichment(everyProduct: true))
-        #expect(resized.needsEnrichment(everyProduct: true))
-        #expect(touched.needsEnrichment(everyProduct: true))
+        #expect(unstamped.needsEnrichment(.cardProducts))
+        #expect(!current.needsEnrichment(.cardProducts))
+        #expect(resized.needsEnrichment(.cardProducts))
+        #expect(touched.needsEnrichment(.cardProducts))
     }
 
     @Test func missingOrMismatchedHashSignatureMakesCurrentAssetStale() {
@@ -29,7 +29,7 @@ struct CatalogStoreEnrichmentTests {
                 stampSize: 100,
                 stampMtime: 1000,
                 contentHash: nil
-            ).needsEnrichment(everyProduct: true)
+            ).needsEnrichment(.cardProducts)
         )
         #expect(
             makeAsset(
@@ -39,7 +39,7 @@ struct CatalogStoreEnrichmentTests {
                 stampMtime: 1000,
                 hashSourceSize: 99,
                 hashSourceMtime: 1000
-            ).needsEnrichment(everyProduct: true)
+            ).needsEnrichment(.cardProducts)
         )
         #expect(
             !makeAsset(
@@ -49,12 +49,12 @@ struct CatalogStoreEnrichmentTests {
                 stampMtime: 1000,
                 hashSourceSize: 100,
                 hashSourceMtime: 1000
-            ).needsEnrichment(everyProduct: true)
+            ).needsEnrichment(.cardProducts)
         )
     }
 
     /// ENR-007: a `.removableVolume` source is never hashed in place (ADR 0018), so
-    /// hash staleness is gated behind `everyProduct` — a metadata-current removable
+    /// hash staleness is gated behind the claim — a metadata-current removable
     /// asset with no digest is fully enriched, while the same asset on a library root
     /// still needs enrichment.
     @Test func hashStalenessIsGatedOnHashRequired() {
@@ -66,8 +66,8 @@ struct CatalogStoreEnrichmentTests {
             stampMtime: 1000,
             contentHash: nil
         )
-        #expect(noHash.needsEnrichment(everyProduct: false) == false)
-        #expect(noHash.needsEnrichment(everyProduct: true))
+        #expect(noHash.needsEnrichment(.metadata) == false)
+        #expect(noHash.needsEnrichment(.cardProducts))
         #expect(noHash.metadataStale == false)
         #expect(noHash.hashStale)
     }
@@ -161,7 +161,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(enriched.thumbnailPath == "thumb.jpg")
         #expect(enriched.bestCaptureDate == captureDate)
         #expect(enriched.durationSeconds == 42.5)
-        #expect(enriched.needsEnrichment(everyProduct: true) == false)
+        #expect(enriched.needsEnrichment(.cardProducts) == false)
 
         // Re-scan observing a changed mtime (same size): enrichment survives the merge,
         // and the changed (size, mtime) signature makes the asset stale again.
@@ -176,7 +176,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(asset.bestCaptureDate == captureDate)
         #expect(asset.durationSeconds == 42.5)
         #expect(asset.metadataSourceSize == 100)
-        #expect(asset.needsEnrichment(everyProduct: true) == true)
+        #expect(asset.needsEnrichment(.cardProducts) == true)
     }
 
     @Test func enrichmentPersistsAndReloads() async throws {
@@ -231,7 +231,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(asset.durationSeconds == 187.25)
         #expect(asset.metadataSourceSize == scannedSize)
         #expect(asset.metadataSourceMTimeSeconds == scannedMTime)
-        #expect(asset.needsEnrichment(everyProduct: true) == false)
+        #expect(asset.needsEnrichment(.cardProducts) == false)
     }
 
     @Test func malformedStoredHashIsUnavailableAndStale() async throws {
@@ -271,7 +271,7 @@ struct CatalogStoreEnrichmentTests {
             $0.libraryRootPath == rootPath
         })
         #expect(persisted.contentHash == nil)
-        #expect(persisted.needsEnrichment(everyProduct: true))
+        #expect(persisted.needsEnrichment(.cardProducts))
     }
 
     @Test func staleEnrichmentCompletionDoesNotStampChangedSourceCurrent() async throws {
@@ -320,7 +320,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(current.bestCaptureDate == Date(timeIntervalSince1970: 500))
         #expect(current.metadataSourceSize == nil)
         #expect(current.metadataSourceMTimeSeconds == nil)
-        #expect(current.needsEnrichment(everyProduct: true))
+        #expect(current.needsEnrichment(.cardProducts))
 
         let reloaded = CatalogStore(location: .databaseFile(databaseURL))
         try await reloaded.start(scansSavedLibraries: false)
@@ -329,7 +329,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(persisted.bestCaptureDate == Date(timeIntervalSince1970: 500))
         #expect(persisted.metadataSourceSize == nil)
         #expect(persisted.metadataSourceMTimeSeconds == nil)
-        #expect(persisted.needsEnrichment(everyProduct: true))
+        #expect(persisted.needsEnrichment(.cardProducts))
     }
 
     /// `structureChanged` must compare the STORED generated columns
@@ -635,7 +635,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(asset.thumbnailPath == nil)
         #expect(asset.metadataSourceSize == 100)
         #expect(asset.metadataSourceMTimeSeconds == 1000)
-        #expect(!asset.needsEnrichment(everyProduct: true))
+        #expect(!asset.needsEnrichment(.cardProducts))
 
         let details = try await store.mediaTileDetails(for: [id])
         let detail = try #require(details[id])
@@ -657,7 +657,7 @@ struct CatalogStoreEnrichmentTests {
         let copy = try #require(state.testAssets.first { $0.id.libraryRootPath == card.destinationPath })
         #expect(copy.bestCaptureDate == card.captureDate)
         #expect(copy.contentHash == card.copyDigest)
-        #expect(!copy.needsEnrichment(everyProduct: true))
+        #expect(!copy.needsEnrichment(.cardProducts))
     }
 
     /// ADR 0009: a card row with its metadata but no rendering yet (its first pass) gives
@@ -686,7 +686,7 @@ struct CatalogStoreEnrichmentTests {
         let claimed = try await card.store.enrichmentCandidates(limit: 1)
 
         #expect(claimed.map(\.asset.id) == [copyID])
-        #expect(claimed.first?.scope == .rendering)
+        #expect(claimed.first?.scope == [.rendering, .faces])
     }
 
     /// A catalog write SQLite refuses because the disk is full (`SQLITE_FULL`) is typed as
@@ -715,7 +715,7 @@ struct CatalogStoreEnrichmentTests {
         let state = try await catalogStoreTestState(card.store)
         let copy = try #require(state.testAssets.first { $0.id.libraryRootPath == card.destinationPath })
         #expect(copy.contentHash == card.copyDigest)
-        #expect(copy.needsEnrichment(everyProduct: true))
+        #expect(copy.needsEnrichment(.cardProducts))
     }
 }
 

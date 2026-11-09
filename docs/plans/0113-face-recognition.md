@@ -29,7 +29,7 @@ labelled faces outside the repository. It is never committed.
 Each increment lands on `main` with its own DoD.
 
 1. **Docs:** the research note, ADR 0047 (Proposed) and this plan. *(done, #589)*
-2. **The model and the analyser, not yet wired in.** *(this PR)*
+2. **The model and the analyser, not yet wired in.** *(done, #593)*
    - **The model:** `AdaFaceIR101.mlpackage` (int8, 66 MB) in `Otos/Resources`, with the MIT
      text, the AdaFace citation and the conversion statement in `Otos/Resources/Licenses`.
      Converted by the research folder's `tools/convert.py` and `tools/quantize.py`.
@@ -47,11 +47,14 @@ Each increment lands on `main` with its own DoD.
      real-face test in the repository waits on a face photo the owner approves as a fixture
      (`OtosTests/Fixtures/Media/README.md` rules).
    - **Benchmark:** a case for one face's analysis (ADR 0043).
-3. **Storage and the enrichment lane:**
-   - **Migration:** the `face` and `person` tables, with `face` cascading on the asset path.
+3. **Storage and the enrichment lane.** *(this PR)*
+   - **Migration v18:** the `face` table, cascading on the asset path, the faces stamp, and the
+     library claim's index pair. The `person` table comes with grouping, its first reader.
+   - **The claim:** `EnrichmentClaim` replaces the every-product flag, so only a fixed library
+     owes faces.
    - **Staleness:** a face product with its own `(size, mtime)` stamp and model revision
      (ADR 0009).
-   - **Analysis:** `MediaEnricher` analyses faces from the read that renders the photo.
+   - **Analysis:** `MediaEnricher` reads faces from the same read as the rendering.
    - **Requirements:** rows for analysis, staleness, cascade on move and delete, and purge.
    - **Logs:** `op=face.analyse` with the counts admitted and rejected, and the reasons.
 4. **Grouping, no UI:**

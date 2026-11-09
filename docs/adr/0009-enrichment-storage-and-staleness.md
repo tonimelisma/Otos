@@ -56,9 +56,9 @@ This ADR owns:
   scan upserts preserve enrichment overlay, and a stale
   in-flight enrichment completion must revalidate the source signature in SQLite
   before it can stamp a row current.
-- Staleness is per product: the metadata, the rendering (thumbnail and preview) and
-  the canonical XXH3-128 hash each record the `(size, mtime)` source signature they
-  were made from, and each is stale on its own; a missing, malformed, or
+- Staleness is per product: the metadata, the rendering (thumbnail and preview), the
+  canonical XXH3-128 hash and a library still's faces (ADR 0047) each record the
+  `(size, mtime)` source signature they were made from, and each is stale on its own; a missing, malformed, or
   signature-mismatched hash is stale. mtime-only changes count. One read of a file
   makes every product its row owes.
 - Timestamp role facts are stored; SQLite's generated `best_capture_unix` value

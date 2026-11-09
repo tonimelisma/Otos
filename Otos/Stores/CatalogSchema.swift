@@ -300,10 +300,10 @@ nonisolated enum CatalogSchema {
                 AND preview_path IS NULL
             )
             """,
-            claimIndex(EnrichmentClaimGateway.broadGlobalIndexName, global: true, everyProduct: true),
-            claimIndex(EnrichmentClaimGateway.broadRootIndexName, global: false, everyProduct: true),
-            claimIndex(EnrichmentClaimGateway.metadataOnlyGlobalIndexName, global: true, everyProduct: false),
-            claimIndex(EnrichmentClaimGateway.metadataOnlyRootIndexName, global: false, everyProduct: false),
+            claimIndex(EnrichmentClaimGateway.broadGlobalIndexName, global: true, claim: .cardProducts),
+            claimIndex(EnrichmentClaimGateway.broadRootIndexName, global: false, claim: .cardProducts),
+            claimIndex(EnrichmentClaimGateway.metadataOnlyGlobalIndexName, global: true, claim: .metadata),
+            claimIndex(EnrichmentClaimGateway.metadataOnlyRootIndexName, global: false, claim: .metadata),
         ]
     }
 
@@ -353,6 +353,47 @@ nonisolated enum CatalogSchema {
         "ALTER TABLE media_asset ADD COLUMN source_products_size INTEGER",
         "ALTER TABLE media_asset ADD COLUMN source_products_mtime INTEGER",
     ]
+
+    /// Faces (ADR 0047). `FaceAnalyzer` reads a fixed library's stills for faces: each face
+    /// it reads is a row of `face`, overlay on its asset, so a move carries it
+    /// (`ON UPDATE CASCADE`, the move witness of ADR 0034 included) and the asset's proven
+    /// deletion or its library's removal ends it (`ON DELETE CASCADE`). The faces stamp names
+    /// the `(size, mtime)` they were read from (ADR 0009); a new reading replaces every face
+    /// of the asset. Only `EnrichmentClaim.library` owes faces, so it gets its own pair of
+    /// claim indexes; the card-products and metadata pairs are unchanged.
+    ///
+    /// A face row holds the box and the five alignment points as fractions of the upright
+    /// photo (top-left origin), Vision's capture quality, the analysis revision that read it
+    /// (`FaceAnalyzer.revision`), and the embedding as 512 little-endian Float32 values.
+    static let facesMigrationIdentifier = "v18_faces"
+
+    static var facesStatements: [String] {
+        [
+            "ALTER TABLE media_asset ADD COLUMN faces_source_size INTEGER",
+            "ALTER TABLE media_asset ADD COLUMN faces_source_mtime INTEGER",
+            """
+            CREATE TABLE face (
+                library_root_id INTEGER NOT NULL,
+                relative_path TEXT NOT NULL,
+                face_index INTEGER NOT NULL,
+                box_x REAL NOT NULL,
+                box_y REAL NOT NULL,
+                box_width REAL NOT NULL,
+                box_height REAL NOT NULL,
+                landmarks BLOB NOT NULL,
+                quality REAL NOT NULL,
+                analysis_revision INTEGER NOT NULL,
+                embedding BLOB NOT NULL,
+                PRIMARY KEY (library_root_id, relative_path, face_index),
+                FOREIGN KEY (library_root_id, relative_path)
+                    REFERENCES media_asset(library_root_id, relative_path)
+                    ON UPDATE CASCADE ON DELETE CASCADE
+            )
+            """,
+            claimIndex(EnrichmentClaimGateway.libraryGlobalIndexName, global: true, claim: .library),
+            claimIndex(EnrichmentClaimGateway.libraryRootIndexName, global: false, claim: .library),
+        ]
+    }
 
     static let baselineStatements: [String] = [
         """
@@ -676,8 +717,8 @@ nonisolated enum CatalogSchema {
 
     /// A claim index over rows owing a product, newest first: the claim queries walk these
     /// by name with `INDEXED BY`, so the `WHERE` text is the gateway's predicate verbatim.
-    static func claimIndex(_ name: String, global: Bool, everyProduct: Bool) -> String {
-        claimIndex(name, global: global, predicate: EnrichmentClaimGateway.stalenessSQLPredicate(everyProduct: everyProduct))
+    static func claimIndex(_ name: String, global: Bool, claim: EnrichmentClaim) -> String {
+        claimIndex(name, global: global, predicate: EnrichmentClaimGateway.stalenessSQLPredicate(claim))
     }
 
     private static func v1ClaimIndex(_ name: String, global: Bool, broad: Bool) -> String {

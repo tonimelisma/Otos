@@ -13,21 +13,32 @@ import GRDB
 /// catalog, which is the one point where the previous owner is known to be gone. No
 /// expiry stands in for "the claimant is still alive".
 nonisolated enum EnrichmentClaimGateway {
-    /// Partial-index names for the claim queries' `INDEXED BY`. Two pairs: every product
-    /// (metadata, rendering, digest) for a root whose rows are read for all of them at once,
-    /// and metadata-only for a card's first pass and a camera, which leave that index as
-    /// soon as their metadata is current. See ADR 0009 and ADR 0018.
+    /// Partial-index names for the claim queries' `INDEXED BY`, one pair per
+    /// `EnrichmentClaim` (ADR 0009, ADR 0018, ADR 0047): metadata only, for a card's first
+    /// pass, a camera and an Immich account, which leave it as soon as their metadata is
+    /// current; the card products (metadata, rendering, digest), for a card's second pass;
+    /// and a library's every product, faces included.
     static let broadGlobalIndexName = "idx_media_asset_needs_enrichment_global"
     static let broadRootIndexName = "idx_media_asset_needs_enrichment_root"
     static let metadataOnlyGlobalIndexName = "idx_media_asset_needs_enrichment_global_metadata_only"
     static let metadataOnlyRootIndexName = "idx_media_asset_needs_enrichment_root_metadata_only"
+    static let libraryGlobalIndexName = "idx_media_asset_needs_enrichment_global_library"
+    static let libraryRootIndexName = "idx_media_asset_needs_enrichment_root_library"
 
-    static func globalIndexName(everyProduct: Bool) -> String {
-        everyProduct ? broadGlobalIndexName : metadataOnlyGlobalIndexName
+    static func globalIndexName(_ claim: EnrichmentClaim) -> String {
+        switch claim {
+        case .metadata: metadataOnlyGlobalIndexName
+        case .cardProducts: broadGlobalIndexName
+        case .library: libraryGlobalIndexName
+        }
     }
 
-    static func rootIndexName(everyProduct: Bool) -> String {
-        everyProduct ? broadRootIndexName : metadataOnlyRootIndexName
+    static func rootIndexName(_ claim: EnrichmentClaim) -> String {
+        switch claim {
+        case .metadata: metadataOnlyRootIndexName
+        case .cardProducts: broadRootIndexName
+        case .library: libraryRootIndexName
+        }
     }
 
     static func unclaimedPriorityIDs(
@@ -48,9 +59,9 @@ nonisolated enum EnrichmentClaimGateway {
         assetsByID: [MediaAssetID: MediaAsset],
         rootIDsByPath: [LibraryRootPath: Int64],
         isRootEnrichable: (LibraryRootPath) -> Bool,
-        claimsEveryProduct: (LibraryRootPath) -> Bool
-    ) -> [(asset: MediaAsset, rootID: Int64, everyProduct: Bool)] {
-        var eligibleClaims: [(asset: MediaAsset, rootID: Int64, everyProduct: Bool)] = []
+        firstClaim: (LibraryRootPath) -> EnrichmentClaim
+    ) -> [(asset: MediaAsset, rootID: Int64, claim: EnrichmentClaim)] {
+        var eligibleClaims: [(asset: MediaAsset, rootID: Int64, claim: EnrichmentClaim)] = []
         eligibleClaims.reserveCapacity(ids.count)
         for id in ids {
             guard let asset = assetsByID[id],
@@ -59,11 +70,11 @@ nonisolated enum EnrichmentClaimGateway {
             else {
                 continue
             }
-            let everyProduct = claimsEveryProduct(asset.libraryRootPath)
-            guard asset.needsEnrichment(everyProduct: everyProduct) else {
+            let claim = firstClaim(asset.libraryRootPath)
+            guard asset.needsEnrichment(claim) else {
                 continue
             }
-            eligibleClaims.append((asset, rootID, everyProduct))
+            eligibleClaims.append((asset, rootID, claim))
         }
         return eligibleClaims
     }
@@ -92,6 +103,12 @@ nonisolated enum EnrichmentClaimGateway {
         stampStalenessSQL(stamp: "rendered_source")
     }
 
+    /// The faces (`FaceAnalyzer`'s reading of a still, ADR 0047) were read from bytes other
+    /// than the current `(size, mtime)`, or never.
+    static func facesStalenessSQLPredicate() -> String {
+        stampStalenessSQL(stamp: "faces_source")
+    }
+
     static func hashStalenessSQLPredicate() -> String {
         """
         content_hash_xxh3_128 IS NULL
@@ -104,24 +121,34 @@ nonisolated enum EnrichmentClaimGateway {
         """
     }
 
-    /// The Swift-side twin of `MediaAsset.needsEnrichment(everyProduct:)`, and the `WHERE`
-    /// clause of the claim indexes `CatalogSchema` creates from it. `everyProduct == false`
-    /// yields the metadata-only predicate verbatim (not `OR FALSE`).
+    /// The Swift-side twin of `MediaAsset.needsEnrichment(_:)`, and the `WHERE` clause of
+    /// the claim indexes `CatalogSchema` creates from it. `.metadata` yields the metadata
+    /// predicate verbatim (not `OR FALSE`), and `.cardProducts` the text the v13 indexes
+    /// were made from, so those indexes still match it.
     ///
     /// The claim queries and the indexes share this one text because SQLite's `INDEXED
     /// BY` partial-index implication check is syntactic: re-parenthesizing the same
     /// OR-clauses (`(A) OR (B)` in place of `A OR B`) is rejected with `no query solution`
     /// at prepare time even though it is logically equivalent. Verified against SQLite
     /// 3.54.0.
-    static func stalenessSQLPredicate(everyProduct: Bool) -> String {
-        guard everyProduct else {
-            return metadataStalenessSQLPredicate()
+    static func stalenessSQLPredicate(_ claim: EnrichmentClaim) -> String {
+        switch claim {
+        case .metadata:
+            metadataStalenessSQLPredicate()
+        case .cardProducts:
+            """
+            \(metadataStalenessSQLPredicate())
+               OR \(renderingStalenessSQLPredicate())
+               OR \(hashStalenessSQLPredicate())
+            """
+        case .library:
+            """
+            \(metadataStalenessSQLPredicate())
+               OR \(renderingStalenessSQLPredicate())
+               OR \(hashStalenessSQLPredicate())
+               OR \(facesStalenessSQLPredicate())
+            """
         }
-        return """
-        \(metadataStalenessSQLPredicate())
-           OR \(renderingStalenessSQLPredicate())
-           OR \(hashStalenessSQLPredicate())
-        """
     }
 
     /// Whether any row of this root still needs its metadata — claimed or not, so a row in
@@ -133,7 +160,7 @@ nonisolated enum EnrichmentClaimGateway {
             SELECT EXISTS(
                 SELECT 1 FROM media_asset INDEXED BY \(metadataOnlyRootIndexName)
                 WHERE library_root_id = ?
-                  AND (\(stalenessSQLPredicate(everyProduct: false)))
+                  AND (\(stalenessSQLPredicate(.metadata)))
                   AND trash_path IS NULL
               AND awaiting_presence = 0
             )
@@ -145,13 +172,13 @@ nonisolated enum EnrichmentClaimGateway {
     static func fetchStoredAssetsNeedingEnrichment(
         rootIDs: [Int64],
         limit: Int,
-        everyProduct: Bool,
+        claim: EnrichmentClaim,
         db: Database
     ) throws -> [StoredAsset] {
         guard let query = enrichmentClaimQuery(
             rootIDs: rootIDs,
             limit: limit,
-            everyProduct: everyProduct
+            claim: claim
         ) else {
             return []
         }
@@ -161,7 +188,7 @@ nonisolated enum EnrichmentClaimGateway {
         }
         try claimStoredAssetsNeedingEnrichment(
             keys,
-            everyProduct: everyProduct,
+            claim: claim,
             db: db
         )
         let assets = try fetchStoredAssetsForEnrichmentCandidates(keys, db: db)
@@ -174,7 +201,7 @@ nonisolated enum EnrichmentClaimGateway {
     static func enrichmentClaimQuery(
         rootIDs: [Int64],
         limit: Int,
-        everyProduct: Bool
+        claim: EnrichmentClaim
     ) -> SQLQuery? {
         guard !rootIDs.isEmpty, limit > 0 else {
             return nil
@@ -183,21 +210,21 @@ nonisolated enum EnrichmentClaimGateway {
             return rootEnrichmentClaimQuery(
                 rootID: rootID,
                 limit: limit,
-                everyProduct: everyProduct
+                claim: claim
             )
         }
 
         return globalEnrichmentClaimQuery(
             rootIDs: rootIDs,
             limit: limit,
-            everyProduct: everyProduct
+            claim: claim
         )
     }
 
     static func claimEnrichmentAsset(
         libraryRootID: Int64,
         relativePath: MediaRelativePath,
-        everyProduct: Bool,
+        claim: EnrichmentClaim,
         db: Database
     ) throws -> Bool {
         try db.execute(
@@ -206,7 +233,7 @@ nonisolated enum EnrichmentClaimGateway {
             SET enrichment_claimed = 1
             WHERE library_root_id = ?
               AND relative_path = ?
-              AND (\(stalenessSQLPredicate(everyProduct: everyProduct)))
+              AND (\(stalenessSQLPredicate(claim)))
               AND enrichment_claimed IS NULL
               AND trash_path IS NULL
               AND awaiting_presence = 0
@@ -275,15 +302,15 @@ private nonisolated func enrichmentCandidateKey(from row: Row) -> EnrichmentCand
 private nonisolated func rootEnrichmentClaimQuery(
     rootID: Int64,
     limit: Int,
-    everyProduct: Bool
+    claim: EnrichmentClaim
 ) -> SQLQuery {
-    let indexName = EnrichmentClaimGateway.rootIndexName(everyProduct: everyProduct)
+    let indexName = EnrichmentClaimGateway.rootIndexName(claim)
     return SQLQuery(
         sql: """
         SELECT library_root_id, relative_path
         FROM media_asset INDEXED BY \(indexName)
         WHERE library_root_id = ?
-          AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(everyProduct: everyProduct)))
+          AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(claim)))
           AND enrichment_claimed IS NULL
           AND trash_path IS NULL
           AND awaiting_presence = 0
@@ -297,18 +324,18 @@ private nonisolated func rootEnrichmentClaimQuery(
 private nonisolated func globalEnrichmentClaimQuery(
     rootIDs: [Int64],
     limit: Int,
-    everyProduct: Bool
+    claim: EnrichmentClaim
 ) -> SQLQuery {
     let placeholders = sqlPlaceholders(count: rootIDs.count)
     var arguments = rootIDs.map { $0 as any DatabaseValueConvertible }
     arguments.append(limit)
-    let indexName = EnrichmentClaimGateway.globalIndexName(everyProduct: everyProduct)
+    let indexName = EnrichmentClaimGateway.globalIndexName(claim)
     return SQLQuery(
         sql: """
         SELECT library_root_id, relative_path
         FROM media_asset INDEXED BY \(indexName)
         WHERE library_root_id IN (\(placeholders))
-          AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(everyProduct: everyProduct)))
+          AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(claim)))
           AND enrichment_claimed IS NULL
           AND trash_path IS NULL
           AND awaiting_presence = 0
@@ -321,7 +348,7 @@ private nonisolated func globalEnrichmentClaimQuery(
 
 private nonisolated func claimStoredAssetsNeedingEnrichment(
     _ keys: [EnrichmentCandidateKey],
-    everyProduct: Bool,
+    claim: EnrichmentClaim,
     db: Database
 ) throws {
     guard !keys.isEmpty else {
@@ -333,7 +360,7 @@ private nonisolated func claimStoredAssetsNeedingEnrichment(
         UPDATE media_asset
         SET enrichment_claimed = 1
         WHERE (library_root_id, relative_path) IN (\(sqlTuplePlaceholders(rowCount: keys.count, columnCount: 2)))
-          AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(everyProduct: everyProduct)))
+          AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(claim)))
           AND enrichment_claimed IS NULL
           AND trash_path IS NULL
           AND awaiting_presence = 0
@@ -356,6 +383,7 @@ private nonisolated func fetchStoredAssetsForEnrichmentCandidates(
                created_at_unix, content_modified_at_unix,
                metadata_source_size, metadata_source_mtime, rendered_source_size, rendered_source_mtime,
                content_hash_xxh3_128, content_hash_source_size, content_hash_source_mtime,
+               faces_source_size, faces_source_mtime,
                thumbnail_path,
                duration_seconds,
                best_capture_unix, best_kind, best_format
@@ -391,7 +419,9 @@ private nonisolated func enrichmentCandidateStoredAsset(from row: Row) -> Stored
         renderedSourceMTimeSeconds: row["rendered_source_mtime"],
         contentHash: (row["content_hash_xxh3_128"] as Data?).flatMap(XXH3Digest128.init(data:)),
         contentHashSourceSize: row["content_hash_source_size"],
-        contentHashSourceMTimeSeconds: row["content_hash_source_mtime"]
+        contentHashSourceMTimeSeconds: row["content_hash_source_mtime"],
+        facesSourceSize: row["faces_source_size"],
+        facesSourceMTimeSeconds: row["faces_source_mtime"]
     )
 }
 
