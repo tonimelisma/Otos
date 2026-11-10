@@ -505,7 +505,9 @@ passes:
 
 1. Run `script/bench.sh run`, then `script/bench.sh compare`, both in the background.
 2. If `compare` exits 3, a case retired more than 2% more instructions than its base,
-   beyond both runs' spread (a rise within the spread is reported as `within noise`).
+   beyond every run's range in at least two runs a side (`compare` measures a side again
+   when a suspected rise has one run there; a rise within the ranges is reported as
+   `within noise`).
    Stop before merging and show the user the comparison table. Merge only with the
    user's explicit permission in chat, and quote that permission in the DoD report.
 3. Either way, include the comparison table in the DoD report.
