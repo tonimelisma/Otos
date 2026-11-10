@@ -18,7 +18,7 @@ nonisolated struct SearchPlace: Hashable, Sendable {
 /// Search places guide (ADR 0048)
 ///
 /// Where a name a query holds is, from Apple Maps (`MKLocalSearch`, addresses and areas only).
-/// It is a place only when Maps names it exactly so and it covers a town or more, at least
+/// It is a place only when Maps names it so, a case ending aside, and it covers a town or more, at least
 /// 0.03° across: the tagger hands over names that are not places ("City view", "Panorama"),
 /// and Maps answers those with a street of the same name somewhere. A photo is in the place
 /// within 1.5 times the area's half-diagonal, at least 15 km, because Maps' area for a lake
@@ -38,7 +38,7 @@ nonisolated enum SearchPlaces {
         guard let response = try? await MKLocalSearch(request: request).start(),
               let item = response.mapItems.first,
               let found = item.name,
-              found.compare(name, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+              names(found, as: name)
         else {
             return nil
         }
@@ -57,4 +57,17 @@ nonisolated enum SearchPlaces {
             radiusMeters: max(1.5 * halfDiagonal, minimumRadiusMeters)
         )
     }
+
+    /// Whether Maps' `found` is the place `typed` names: the same name, ignoring case and
+    /// diacritics, or that name with a case ending of at most `maximumEnding` letters on its
+    /// last word, because a language that inflects names writes "San Franciscos" (Estonian:
+    /// in San Francisco).
+    static func names(_ found: String, as typed: String) -> Bool {
+        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive, .anchored]
+        guard let range = typed.range(of: found, options: options) else { return false }
+        let ending = typed[range.upperBound...]
+        return ending.count <= maximumEnding && ending.allSatisfy(\.isLetter)
+    }
+
+    static let maximumEnding = 3
 }

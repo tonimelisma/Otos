@@ -154,8 +154,12 @@ A query is read for facts before the picture (`SearchQueryParser`, `SearchPlaces
   Foundation's month names in the user's languages, on the stem, before recognition.
 - **Where:** the first name `NLTagger` finds in the English reading (it often calls a place a
   person), located by Apple Maps (`MKLocalSearch`, addresses and areas): a place only when Maps
-  names it exactly so and it covers 0.03° or more, a photo in it within 1.5 times the area's
-  half-diagonal and at least 15 km. A name that is nowhere stays a picture word.
+  names it so, a case ending of up to three letters aside ("San Franciscos", Estonian for in
+  San Francisco), and it covers 0.03° or more, a photo in it within 1.5 times the area's
+  half-diagonal and at least 15 km. A name that is nowhere stays a picture word. A query
+  that may be in a language nothing recognises (not translated, from a user with such a
+  language) takes the run of capitalised words around the tagger's first name, or the first
+  such run, because the English tagger finds only "San" in "koer San Franciscos".
 
 The Store answers the facts (`searchFactMatches`: capture time, GPS, confirmed faces); the rest
 of the query searches the picture, and a query of facts only keeps the scope's order and day
@@ -168,6 +172,12 @@ Recognising a query's language favours the languages the user searches in (Setti
 ▸ Search Languages, default the system's preferred languages) ten to one: a user's own were
 recognised 95% of the time instead of 80%, a third language 83% instead of 85%, and mean
 recall@10 across 16 languages rose from 75.0 to 76.0 (told the language: 77.1).
+
+A language Translation cannot read is not one the recogniser knows either (Estonian is taken
+for Finnish). When the user searches in one, a recognition outside their languages is not
+trusted and the query is read as typed, so "jäätis" (ice cream) is not translated from
+Finnish as "I froze". On the facts queries Estonian rose from 32 to 53 with this and the
+inflected place names above; no other language moved.
 
 ### Reading while hidden
 
