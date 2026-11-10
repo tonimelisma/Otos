@@ -127,7 +127,10 @@ actor SearchQueryEncoder {
             reading = .asTyped
             modelText = rest
         } else if !rest.isEmpty {
-            language = Self.recognize(rest, among: candidates, preferring: preferred.map(NLLanguage.init(rawValue:)))
+            language = Self.trusted(
+                Self.recognize(rest, among: candidates, preferring: preferred.map(NLLanguage.init(rawValue:))),
+                preferring: preferred, untranslatable: untranslatable
+            )
             if language == .english {
                 modelText = rest
             } else if let language, let source = candidates[language], await isInstalled(language, source) {
@@ -138,16 +141,19 @@ actor SearchQueryEncoder {
                 modelText = rest
             }
         }
-        var parse = SearchQueryParser.parse(modelText)
-        if let native = nativeMonth {
-            parse.date = native
-        }
+        // A query not translated, from a user with a language nothing recognises, may be in
+        // that language, where the English tagger finds no whole name.
+        let mayBeUnrecognised = reading != .translated && !untranslatable.isEmpty
+        var parse = SearchQueryParser.parse(modelText, places: mayBeUnrecognised ? .capitalised : .tagged)
         var place: SearchPlace?
         if let name = parse.placeName {
             place = await locate(name)
             if place == nil {
-                parse = SearchQueryParser.parse(modelText, takesPlace: false)
+                parse = SearchQueryParser.parse(modelText, places: .notRead)
             }
+        }
+        if let native = nativeMonth {
+            parse.date = native
         }
         let facts = SearchFacts(date: parse.date, place: place, people: named)
         let embedding = parse.pictureText.isEmpty ? nil : try embed(parse.pictureText)
@@ -169,6 +175,15 @@ actor SearchQueryEncoder {
     }
 
     /// A place is asked of Maps once per name; a name that is nowhere is remembered too.
+    /// The recognised language, unless it is outside the user's languages while one of theirs
+    /// cannot be translated: nothing recognises that one, so the query is most likely in it
+    /// ("jäätis", Estonian ice cream, recognised as Finnish and translated "I froze"). Nil
+    /// reads the query as typed.
+    static func trusted(_ recognised: NLLanguage?, preferring preferred: [String], untranslatable: [String]) -> NLLanguage? {
+        guard let recognised, untranslatable.isEmpty || preferred.contains(recognised.rawValue) else { return nil }
+        return recognised
+    }
+
     private func locate(_ name: String) async -> SearchPlace? {
         if let known = places[name] {
             return known

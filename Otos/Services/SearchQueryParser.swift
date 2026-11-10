@@ -28,9 +28,12 @@ nonisolated struct SearchQueryParse: Hashable, Sendable {
 /// - **Dates:** a month (with or without a year), a year, and today, yesterday, this or last
 ///   week, month and year. "May" counts as the month only with "in", "of" or a year beside
 ///   it. A month without a year is the most recent one, this year's if it has begun.
-/// - **Places:** the first name `NLTagger` finds (it often tags a place as a person), with a
-///   leading "Lake", "Mount" or "Mt." kept. Whether it is a place, and where, is answered by
-///   `SearchPlaces`; one that is nowhere stays part of the picture's words.
+/// - **Places:** in an English reading, the first name `NLTagger` finds (it often tags a
+///   place as a person), with a leading "Lake", "Mount" or "Mt." kept. In a query read as
+///   typed (a language Translation cannot read), the first run of capitalised words, because
+///   the English tagger finds no name in "koer San Franciscos". Whether it is a place, and
+///   where, is answered by `SearchPlaces`; one that is nowhere stays part of the picture's
+///   words.
 /// - **The picture's words:** what is left, without the prepositions that tied the facts to
 ///   it.
 nonisolated enum SearchQueryParser {
@@ -40,11 +43,30 @@ nonisolated enum SearchQueryParser {
     ]
     private static let joiningWords: Set<String> = ["in", "on", "at", "from", "during", "of", "near", "around", "taken", "the"]
 
-    /// `takesPlace`: false reads no place, for a query whose name turned out to be nowhere.
-    static func parse(_ english: String, takesPlace: Bool = true, now: Date = Date(), calendar: Calendar = .current) -> SearchQueryParse {
+    /// How a query's place name is found.
+    enum Places: Sendable {
+        /// An English reading: the tagger's first name.
+        case tagged
+        /// A query that may be in a language the tagger does not know: the run of capitalised
+        /// words around its first name.
+        case capitalised
+        /// No place, for a query whose name turned out to be nowhere.
+        case notRead
+    }
+
+    static func parse(
+        _ english: String,
+        places: Places = .tagged,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> SearchQueryParse {
         var words = english.split(whereSeparator: \.isWhitespace).map(String.init)
         let date = takeDate(&words, now: now, calendar: calendar)
-        let place = takesPlace ? takePlace(&words) : nil
+        let place: String? = switch places {
+        case .tagged: takePlace(&words)
+        case .capitalised: takeCapitalised(&words)
+        case .notRead: nil
+        }
         trimJoiningWords(&words)
         return SearchQueryParse(date: date, placeName: place, pictureText: words.joined(separator: " "))
     }
@@ -152,7 +174,21 @@ nonisolated enum SearchQueryParser {
     }
 
     private static func takePlace(_ words: inout [String]) -> String? {
-        let text = words.joined(separator: " ")
+        guard let (text, found) = taggedName(in: words.joined(separator: " ")) else { return nil }
+        var range = found
+        // A leading feature word belongs to the name the tagger found ("Lake Tahoe").
+        let before = text[..<range.lowerBound].split(separator: " ")
+        if let last = before.last, ["lake", "mount", "mt", "mt."].contains(last.lowercased()) {
+            range = text.index(range.lowerBound, offsetBy: -(last.count + 1)) ..< range.upperBound
+        }
+        let name = String(text[range])
+        let remaining = (text[..<range.lowerBound] + " " + text[range.upperBound...]).split(whereSeparator: \.isWhitespace).map(String.init)
+        words = remaining
+        return name
+    }
+
+    /// The first name the English tagger finds in `text`, with the text it ranges over.
+    private static func taggedName(in text: String) -> (text: String, range: Range<String.Index>)? {
         let tagger = NLTagger(tagSchemes: [.nameType])
         tagger.string = text
         tagger.setLanguage(.english, range: text.startIndex ..< text.endIndex)
@@ -167,15 +203,27 @@ nonisolated enum SearchQueryParser {
             }
             return true
         }
-        guard var range = place else { return nil }
-        // A leading feature word belongs to the name the tagger found ("Lake Tahoe").
-        let before = text[..<range.lowerBound].split(separator: " ")
-        if let last = before.last, ["lake", "mount", "mt", "mt."].contains(last.lowercased()) {
-            range = text.index(range.lowerBound, offsetBy: -(last.count + 1)) ..< range.upperBound
+        return place.map { (text, $0) }
+    }
+
+    /// The run of capitalised words around the tagger's first name, or else the first run of
+    /// capitalised words, taken out of `words`. The English tagger, given "koer San
+    /// Franciscos", tags only "San".
+    private static func takeCapitalised(_ words: inout [String]) -> String? {
+        let capitalised = { (word: String) in word.first?.isUppercase == true }
+        let tagged = taggedName(in: words.joined(separator: " ")).map { text, range in
+            text[..<range.lowerBound].split(whereSeparator: \.isWhitespace).count
         }
-        let name = String(text[range])
-        let remaining = (text[..<range.lowerBound] + " " + text[range.upperBound...]).split(whereSeparator: \.isWhitespace).map(String.init)
-        words = remaining
+        guard let seed = tagged.flatMap({ words.indices.contains($0) && capitalised(words[$0]) ? $0 : nil })
+            ?? words.firstIndex(where: capitalised)
+        else { return nil }
+        var start = seed
+        while start > words.startIndex, capitalised(words[start - 1]) {
+            start -= 1
+        }
+        let end = words[seed...].firstIndex { !capitalised($0) } ?? words.endIndex
+        let name = words[start ..< end].joined(separator: " ")
+        words.removeSubrange(start ..< end)
         return name
     }
 
