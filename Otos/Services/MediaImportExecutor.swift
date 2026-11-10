@@ -468,17 +468,17 @@ actor MediaImportExecutor {
                 return tally
             }
             : nil
-        // ADR 0027: an entry is admitted only while the destination volume
-        // keeps the floor after it *and every entry still in flight* lands.
-        // With `workerCount` entries in flight, a check that looked only at
-        // the next one could overshoot the floor by that many items.
+        // ADR 0027: an entry is admitted only while the destination volume keeps
+        // the floor after it lands, checked against the run's `FreeSpaceLedger`,
+        // which counts every entry this run has started or landed without counting
+        // twice the ones the volume's figure already shows.
         // The stop is the group body's result rather than a captured variable
         // read after it: region isolation would otherwise see a value written
         // inside the actor-isolated closure and read after it as a race.
         let spaceStop: SpaceStop? = await withTaskGroup(of: EntryResult.self, returning: SpaceStop?.self) { group in
             var nextIndex = 0
-            var inFlightBytes: Int64 = 0
-            var inFlightByIndex: [Int: Int64] = [:]
+            var ledger = FreeSpaceLedger()
+            var committedByIndex: [Int: Int64] = [:]
             var spaceStop: SpaceStop?
             var reportedUnknownCapacity = false
             /// The entry's bytes the plan knows, and how many of its files it has no size
@@ -497,18 +497,16 @@ actor MediaImportExecutor {
                 guard spaceStop == nil else {
                     return false
                 }
-                guard let capacity = self.volumeCapacity(destinationURL) else {
-                    // The volume does not answer: admit, and let `ENOSPC` be the backstop.
-                    // Said once per run: the floor is not guarding this run.
-                    if !reportedUnknownCapacity {
-                        reportedUnknownCapacity = true
-                        OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "capacityUnknown", fields: [
-                            "run": context.runID,
-                            "batch": "\(context.batch.unixMilliseconds)",
-                            "index": "\(index)",
-                        ])
-                    }
-                    return true
+                let capacity = self.volumeCapacity(destinationURL)
+                if capacity == nil, !reportedUnknownCapacity {
+                    // The volume does not answer: the ledger admits on what it has already
+                    // projected, if anything, and `ENOSPC` is the backstop. Said once per run.
+                    reportedUnknownCapacity = true
+                    OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "capacityUnknown", fields: [
+                        "run": context.runID,
+                        "batch": "\(context.batch.unixMilliseconds)",
+                        "index": "\(index)",
+                    ])
                 }
                 let (entryBytes, unknownCount) = plannedBytes(index)
                 if unknownCount > 0 {
@@ -519,26 +517,25 @@ actor MediaImportExecutor {
                         "unknownSizeCount": "\(unknownCount)",
                     ])
                 }
-                guard FreeSpaceFloor.admits(entryBytes, committed: inFlightBytes, available: capacity) else {
+                guard ledger.admit(entryBytes, reported: capacity) else {
                     spaceStop = SpaceStop(bytesFree: capacity)
                     OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "diskFloor", fields: [
                         "run": context.runID,
                         "batch": "\(context.batch.unixMilliseconds)",
                         "nextIndex": "\(index)",
                         "entryBytes": "\(entryBytes)",
-                        "inFlightBytes": "\(inFlightBytes)",
-                        "capacity": "\(capacity)",
+                        "committedBytes": "\(ledger.committedBytes)",
+                        "capacity": capacity.map { "\($0)" } ?? "unknown",
+                        "available": ledger.available(reported: capacity).map { "\($0)" } ?? "unknown",
                         "floor": "\(FreeSpaceFloor.bytes)",
                     ])
                     return false
                 }
+                committedByIndex[index] = entryBytes
                 return true
             }
             func submit(_ index: Int) {
                 let entry = copyEntries[index]
-                let bytes = plannedBytes(index).known
-                inFlightBytes += bytes
-                inFlightByIndex[index] = bytes
                 group.addTask {
                     guard !self.cancelFlag.isCancelled else {
                         return EntryResult(index: index, outcome: .cancelled)
@@ -563,7 +560,19 @@ actor MediaImportExecutor {
                 nextIndex += 1
             }
             while let result = await group.next() {
-                inFlightBytes -= inFlightByIndex.removeValue(forKey: result.index) ?? 0
+                // An entry's bytes stay committed only for the files it left on the disk:
+                // a published entry returns the companions that did not copy, any other
+                // outcome returns everything.
+                let committed = committedByIndex.removeValue(forKey: result.index) ?? 0
+                if case let .published(_, _, companionsNotCopied) = result.outcome {
+                    let notCopied = Set(companionsNotCopied)
+                    ledger.release(copyEntries[result.index].source.companions
+                        .filter { notCopied.contains($0.relativePath) }
+                        .compactMap(\.byteSize)
+                        .reduce(0, +))
+                } else {
+                    ledger.release(committed)
+                }
                 switch result.outcome {
                 case let .published(products, bytes, companionsNotCopied):
                     let entry = copyEntries[result.index]

@@ -7,9 +7,25 @@
 
 An import never refuses to start because the whole source does not fit. It copies
 entries in plan order and, before submitting each one, requires the destination
-volume to keep at least the free-space floor after that entry and every entry still
-in flight lands: `capacity − inFlightBytes − entryBytes ≥ FreeSpaceFloor.bytes`,
-with capacity read fresh from `volumeAvailableCapacityForImportantUsage` each time.
+volume to keep at least the free-space floor after that entry lands:
+`available − entryBytes ≥ FreeSpaceFloor.bytes`. `available` is the run's
+`FreeSpaceLedger` view, the lesser of two figures:
+
+- the capacity read fresh from `volumeAvailableCapacityForImportantUsage` for this
+  entry, which shows every write that has reached the disk;
+- the run's first reading less every byte the run has committed since: entries in
+  flight and entries landed, with a refused, failed or cancelled entry's bytes
+  returned.
+
+The first catches everyone else's writes; the second catches the run's own writes the
+figure has not shown yet. `copyfile` reserves a file's whole size when it starts
+(research 2026-11-10), so a fresh figure already holds a started copy. Subtracting the
+in-flight bytes from it as well would count that copy twice and stop a run up to eight
+files early. Every owner with several writes at once checks the floor this way, each
+with its own ledger per volume: an import run, Move to Trash's downloads, and
+`MaterializationCoordinator`'s downloads. The last two hold a volume's ledger for as
+long as one of their downloads there is in flight, and read the figure afresh after.
+A single write (an export, an Immich sync file) checks `available − bytes` directly.
 The first entry that would breach the floor ends the run: nothing after it is
 attempted, entries already in flight finish, and the run settles as **stopped** —
 the same shape as a user Cancel, carrying `ImportStopReason.diskFloor(bytesFree:)`,
@@ -107,16 +123,15 @@ floor, make the stop a designed and resumable outcome.
   and already yields `skipCount` for what landed, so the next Import copies only the
   remainder. The cost of having no forecast is bounded and recoverable, which is
   why no forecast is needed.
-- With `workerCount = 8`, the floor check must count in-flight bytes; a check that
-  looks only at the next entry can overshoot the floor by eight items.
-- In-flight bytes are counted at their planned size whatever the figure has already
-  seen of them. Copies run beside the admission check, so an entry still in flight may
-  have written some or all of its bytes when the figure is read, and those bytes are
-  then counted twice. A fresh figure therefore stops a run up to the in-flight
-  entries' bytes early. It is the conservative direction, and it keeps a lagging
-  figure safe. How far a run gets before it stops depends on how the copies are
-  scheduled. A test that asserts an exact stopping point holds its capacity figure
-  still.
+- With `workerCount = 8`, the check must count what the run has committed: a check
+  that looks only at the next entry can overshoot the floor by eight items.
+- A fresh figure stops a run exactly at the floor, however far its copies have got
+  when an entry is admitted. A figure that lags or never moves still counts every entry
+  the run has started or landed, which a figure less the in-flight bytes alone would
+  forget as each entry lands.
+- Space freed by others during a run is not credited until the run ends, because the
+  projection never rises. A long-running downloader drops its ledger when nothing is in
+  flight, so its next stretch starts from a fresh reading.
 - The figure's unreliability is now in the conservative direction only: a stale-low
   capacity stops a little early, and the remainder is offered again; a stale-high
   one is caught by the `ENOSPC` backstop one entry later.
