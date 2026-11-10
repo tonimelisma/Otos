@@ -158,7 +158,9 @@ struct PeopleViewModelTests {
         fixture.show(restored, scope: .peopleReview)
         #expect(fixture.model.peopleReviewLayout.order == [fixture.suggested])
 
+        // Redo is the act again: the face leaves the review at once, as it did the first time.
         fixture.model.redoLastChange()
+        #expect(fixture.model.peopleReviewLayout.order.isEmpty)
         try await Self.waitForStore(fixture.store) { try await fixture.person(of: fixture.suggested) == fixture.sam }
         await fixture.store.shutdown()
     }
@@ -211,13 +213,35 @@ struct PeopleViewModelTests {
         try await fixture.show(fixture.people(), scope: .peopleReview)
         #expect(fixture.model.showsPeopleReview)
 
+        // Her scope opens once the restore has committed, so its photos are read with the
+        // face hers again; the first state of it holds the photo, selected.
         fixture.model.undoLastChange()
-        #expect(fixture.model.sidebarSelection == .person(fixture.sam))
         #expect(fixture.model.peopleSession.selectedFaces.isEmpty)
-        try await Self.waitForStore(fixture.store) { try await fixture.person(of: fixture.confirmed) == fixture.sam }
-        // Her scope's first state, holding the photo again, keeps it selected.
+        try await waitUntil { fixture.model.sidebarSelection == .person(fixture.sam) }
+        #expect(try await fixture.person(of: fixture.confirmed) == fixture.sam)
         try await fixture.show(fixture.people(), scope: .person(fixture.sam), grid: [fixture.confirmed.asset])
         #expect(fixture.model.orderedSelectedAssetIDs == [fixture.confirmed.asset])
+        await fixture.store.shutdown()
+    }
+
+    /// Undoing Not Sam while her photos are still shown: the photo comes back in a later
+    /// state than the undo, after a state without it, and is selected when it does.
+    @Test func undoingNotThisPersonInTheirPhotosSelectsItWhenItReturns() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let photo = fixture.confirmed.asset
+        try await fixture.show(fixture.people(), scope: .person(fixture.sam), grid: [photo])
+        fixture.model.selectAssets([photo])
+        fixture.model.rejectShownPersonFaces()
+        await waitForSession(fixture.model) { $0.receipt != nil }
+        try await fixture.show(fixture.people(), scope: .person(fixture.sam), grid: [])
+
+        fixture.model.undoLastChange()
+        try await Self.waitForStore(fixture.store) { try await fixture.person(of: fixture.confirmed) == fixture.sam }
+        try await waitUntil { fixture.model.scopeEntrySelection?.ids == [photo] }
+        // A state read before the restore, still without the photo, then the one with it.
+        try await fixture.show(fixture.people(), scope: .person(fixture.sam), grid: [])
+        try await fixture.show(fixture.people(), scope: .person(fixture.sam), grid: [photo])
+        #expect(fixture.model.orderedSelectedAssetIDs == [photo])
         await fixture.store.shutdown()
     }
 

@@ -87,10 +87,10 @@ nonisolated struct PeopleLeavingMark: Equatable, Sendable {
     let revision: UInt64?
 }
 
-/// A People act on its way to the store, or the undo of one. `act` numbers an act whose
-/// faces the window hid (`PeopleSession.leaving`); a redo hides none.
+/// A People act on its way to the store, or the undo of one. `act` numbers the act, whose
+/// faces the window may have hid (`PeopleSession.leaving`); a redo is the act again.
 nonisolated enum PeopleIntent: Sendable {
-    case perform(PeopleAct, receipt: PeopleReceipt?, act: UInt64?)
+    case perform(PeopleAct, receipt: PeopleReceipt?, act: UInt64)
     case restore(PeopleRestore, act: PeopleAct)
 }
 
@@ -410,7 +410,7 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// Back to People from a person.
+    /// Back to People from a person or the review.
     func returnToPeople() {
         setViewMode(.grid)
         selectSidebar(.people)
@@ -874,23 +874,20 @@ extension CatalogWindowViewModel {
                 case let .perform(act, receipt, number):
                     do {
                         let outcome = try await store.perform(act)
-                        if let number {
-                            self?.peopleSession.actCommitted(number, revision: outcome.revision)
-                        }
+                        self?.peopleSession.actCommitted(number, revision: outcome.revision)
                         self?.didPerformPeopleAct(act, outcome: outcome, receipt: receipt)
                     } catch {
                         OtosLog.ui.errorOperation("people.act", phase: "failed", fields: [
                             "act": act.undoName, "faces": "\(act.faceCount)", "error": String(describing: error),
                         ])
-                        if let number {
-                            self?.peopleSession.actFailed(number)
-                            self?.refreshPeopleLayout()
-                        }
+                        self?.peopleSession.actFailed(number)
+                        self?.refreshPeopleLayout()
                     }
                 case let .restore(record, act):
                     do {
                         try await store.restore(record)
                         OtosLog.ui.noticeOperation("people.act", phase: "undone", fields: ["act": act.undoName])
+                        self?.revealRestoredPerson(of: act, restore: record)
                     } catch {
                         OtosLog.ui.errorOperation("people.act", phase: "undoFailed", fields: [
                             "act": act.undoName, "error": String(describing: error),
@@ -927,7 +924,7 @@ extension CatalogWindowViewModel {
     /// writes back what the act changed.
     private func undoPeopleAct(_ act: PeopleAct, restore: PeopleRestore, receipt: PeopleReceipt?) {
         windowUndoManager.registerUndo(withTarget: self) { model in
-            model.submitPeopleIntent(.perform(act, receipt: receipt, act: nil))
+            model.submitPeopleAct(act, receipt: receipt)
         }
         windowUndoManager.setActionName(receipt?.undoName ?? act.undoName)
         peopleSession.receipt = nil
@@ -940,23 +937,31 @@ extension CatalogWindowViewModel {
         showUndoneFaces(of: act, restore: restore)
     }
 
-    /// Shows what an undone act on faces changed (HIG Undo, `docs/design/people.md` Undo).
-    /// Faces that return to one person are that person's again: their photos are selected in
-    /// the person's scope, which opens when the window shows another. Faces that return
-    /// unnamed are selected in the review when it is shown. A person-level act (Merge, Remove
-    /// Person, Rename) moves no selection: the People list shows both people as they were.
+    /// Shows what an undone act on faces changed in the review (HIG Undo,
+    /// `docs/design/people.md` Undo): faces that return unnamed are selected there when it
+    /// is shown. Faces that return to a person are shown by `revealRestoredPerson`, once the
+    /// restore has committed.
     private func showUndoneFaces(of act: PeopleAct, restore: PeopleRestore) {
+        guard act.faceCount > 0, !restore.faces.isEmpty, showsPeopleReview,
+              restore.faces.contains(where: { $0.person == nil })
+        else { return }
+        peopleSession.selectedFaces = Set(restore.faces.map(\.face))
+        peopleSession.faceCursor = restore.faces.first?.face
+    }
+
+    /// Faces an undone act returned to one person are theirs again: their photos are
+    /// selected in the person's scope, which opens when the window shows another. Called
+    /// once the restore has committed, so the scope's photos are read with them in it. A
+    /// person-level act (Merge, Remove Person, Rename) moves no selection: the People list
+    /// shows both people as they were.
+    private func revealRestoredPerson(of act: PeopleAct, restore: PeopleRestore) {
         guard act.faceCount > 0, !restore.faces.isEmpty else { return }
         let owners = Set(restore.faces.map(\.person))
-        if owners.count == 1, let person = owners.first ?? nil {
-            var seen: Set<MediaAssetID> = []
-            let photos = restore.faces.map(\.face.asset).filter { seen.insert($0).inserted }
-            OtosLog.ui.noticeOperation("people.undo", phase: "revealPerson", fields: ["photos": "\(photos.count)"])
-            openScope(.person(person), selecting: photos)
-        } else if showsPeopleReview {
-            peopleSession.selectedFaces = Set(restore.faces.map(\.face))
-            peopleSession.faceCursor = restore.faces.first?.face
-        }
+        guard owners.count == 1, let person = owners.first ?? nil else { return }
+        var seen: Set<MediaAssetID> = []
+        let photos = restore.faces.map(\.face.asset).filter { seen.insert($0).inserted }
+        OtosLog.ui.noticeOperation("people.undo", phase: "revealPerson", fields: ["photos": "\(photos.count)"])
+        openScope(.person(person), selecting: photos)
     }
 
     /// Whether the review's receipt may offer Undo: its act is the window's last change.

@@ -121,6 +121,14 @@ extension CatalogWindowViewModel {
     /// A scope change: a different collection, so the old selection means nothing there —
     /// unless the intent that opened this scope chose a selection for it
     /// (`scopeEntrySelection`), whose survivors in the new order become the selection.
+    /// Whether `next`, a state of the query an intent chose a selection for, now holds one
+    /// of its items: in the scope already shown, the chosen items may arrive after it opened.
+    func holdsScopeEntrySelection(_ next: CatalogWindowState) -> Bool {
+        guard let entry = scopeEntrySelection, entry.generation == next.queryGeneration else { return false }
+        let present = Set(next.mediaGrid.orderedAssetIDs)
+        return entry.ids.contains(where: present.contains)
+    }
+
     func applyScopeEntrySelection(_ next: CatalogWindowState) {
         guard let entry = scopeEntrySelection, entry.generation == next.queryGeneration else {
             clearGridSelection(reason: "scopeChange")

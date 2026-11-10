@@ -1214,7 +1214,7 @@ extension CatalogWindowViewModel {
         let descriptorChanged = previousState.mediaGrid.descriptor != nextState.mediaGrid.descriptor
         let scopeChanged = previousState.mediaGrid.descriptor.scope != nextState.mediaGrid.descriptor.scope
         let orderChanged = previousState.mediaGrid.orderedAssetIDs != nextState.mediaGrid.orderedAssetIDs
-        if scopeChanged {
+        if scopeChanged || (orderChanged && holdsScopeEntrySelection(nextState)) {
             applyScopeEntrySelection(nextState)
         } else if orderChanged {
             gridSelection = gridSelection.selection.isEmpty
@@ -1289,16 +1289,15 @@ extension CatalogWindowViewModel {
         ))
     }
 
-    /// Opens `scope` with `ids` selected. A new scope's first state replaces the selection
-    /// (`applyScopeEntrySelection`), so the items travel as the scope-entry selection and
-    /// survive that state; in the scope already shown they are selected at once.
+    /// Opens `scope` with `ids` selected. The items travel as the scope-entry selection
+    /// (`scopeEntrySelection`), which a state of this query applies once it holds them: a
+    /// new scope's first state would otherwise replace the selection, and in the scope
+    /// already shown the items may arrive in a later state than this call. They are also
+    /// selected at once, for the scope already shown when it holds them now.
     func openScope(_ scope: SidebarSelection, selecting ids: [MediaAssetID]) {
-        let opensScope = scope != queryDescriptor.scope
         selectSidebar(scope)
         guard !ids.isEmpty else { return }
-        if opensScope {
-            scopeEntrySelection = (queryGeneration, ids)
-        }
+        scopeEntrySelection = (queryGeneration, ids)
         selectAssets(ids)
     }
 

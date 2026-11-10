@@ -92,6 +92,13 @@ struct PeopleReviewView: View {
         }
         .background(DesignPalette.content(for: colorScheme))
         .onAppear { listFocused = true }
+        // The name popover took the keyboard; when it closes, committed or cancelled, the
+        // list has it again, so the review goes on from the keyboard (DES-080).
+        .onChange(of: session.naming == nil) { _, closed in
+            if closed {
+                listFocused = true
+            }
+        }
     }
 
     private var list: some View {
@@ -315,6 +322,10 @@ private struct ListKeys: ViewModifier {
     let session: PeopleSession
     let actions: PeopleReviewActions
 
+    /// Delete, as a Mac keyboard sends it: the Delete key is U+007F, which neither
+    /// `KeyEquivalent.delete` (U+0008) nor `.deleteForward` (U+F728, fn-Delete) is.
+    static let deleteKeys: Set<KeyEquivalent> = [KeyEquivalent("\u{7F}"), .delete, .deleteForward]
+
     /// Runs `act` unless a name is being typed.
     private func listKey(_ act: () -> KeyPress.Result) -> KeyPress.Result {
         session.naming == nil ? act() : .ignored
@@ -342,7 +353,7 @@ private struct ListKeys: ViewModifier {
                     return .handled
                 }
             }
-            .onKeyPress(keys: [.delete, .deleteForward]) { press in
+            .onKeyPress(keys: Self.deleteKeys) { press in
                 listKey {
                     // ⌘⌫ never moves a photo to the Trash from here: Delete means "not them".
                     guard !press.modifiers.contains(.command) else { return .handled }

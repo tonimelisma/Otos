@@ -226,6 +226,10 @@ layout and height (DES-018, DES-053).
 
 No confirmation alert: every act is undoable, and nothing on disk changes (ADR 0008).
 
+**Back:** `Back to People` (`chevron.left`) sits at the toolbar's leading edge, as in a
+person's scope: the review is under the People row, which stays highlighted while it is
+open.
+
 ### The list
 
 The list is grouped by year (**[proposed DES-109]**), on the `content` backdrop. Its order

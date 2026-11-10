@@ -241,9 +241,9 @@ struct ContentView: View {
                     .help("Back to Map")
                 }
             }
-            // Back to People, while the browser shows one person's photos; Back to Review,
-            // while it shows one review row's photos (ADR 0047).
-            if viewModel.showsPersonLeaf {
+            // Back to People, while the browser shows one person's photos or the review; Back
+            // to Review, while it shows one review row's photos (ADR 0047).
+            if viewModel.showsPersonLeaf || viewModel.showsPeopleReview {
                 ToolbarItem(placement: .navigation) {
                     Button {
                         viewModel.returnToPeople()
