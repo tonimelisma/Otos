@@ -210,8 +210,7 @@ struct RemovableEjectOutcomeTests {
 /// outcome. ExFAT, as camera cards are formatted.
 struct DiskEjectorLiveDiskImageTests {
     @Test func aHeldVolumeIsBusyAndAReleasedOneEjects() async throws {
-        // An ExFAT label holds at most 11 characters; a longer one fails the format.
-        let image = try MountedTestDiskImage.attach(named: "OtosEject", filesystem: "ExFAT")
+        let image = try MountedTestDiskImage.attach(filesystem: "ExFAT")
         defer { image.detach() }
         let held = image.mountURL.appending(path: "held.txt")
         try Data("held".utf8).write(to: held)
