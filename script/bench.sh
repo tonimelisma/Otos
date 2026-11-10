@@ -6,10 +6,12 @@
 #                                   is clean.
 #   script/bench.sh history [case]  Every recorded result, newest first, with the change in
 #                                   instructions from the previous record on the same machine.
-#   script/bench.sh compare [base]  HEAD's record against base's (default: the merge base with
+#   script/bench.sh compare [base]  HEAD's runs against base's (default: the merge base with
 #                                   origin/main), measuring base first when it has no record.
 #                                   Exits 3 when a case retired more than 2% more instructions
-#                                   (OTOS_BENCH_FLAG_PERCENT): the owner decides whether it merges.
+#                                   (OTOS_BENCH_FLAG_PERCENT) beyond every run's range, in at
+#                                   least two runs a side, measuring a side again when it has
+#                                   one: the owner decides whether it merges.
 #
 # Results are recorded as git notes on the commit they measured (refs/notes/benchmarks),
 # one JSON object per case. Instructions retired is the number to compare: it barely moves
@@ -138,15 +140,91 @@ records_for() {
 import json, subprocess, sys
 root, ref, commit, machine = sys.argv[1:5]
 shown = subprocess.run(["git", "-C", root, "notes", f"--ref={ref}", "show", commit], capture_output=True, text=True)
-newest = {}
+# Every run of this commit on this machine: each run is one test process, and the count
+# can drift between processes by more than it moves inside one (ADR 0043).
 for line in shown.stdout.splitlines():
     if line.startswith("{"):
         row = json.loads(line)
         if row["machine"] == machine and row["configuration"] == "Debug":
-            if row["name"] not in newest or row["measuredAt"] > newest[row["name"]]["measuredAt"]:
-                newest[row["name"]] = row
-for row in newest.values():
-    print(json.dumps(row, sort_keys=True))
+            print(json.dumps(row, sort_keys=True))
+PY
+}
+
+# Measures base again in its own detached checkout, which records it like any run.
+measure_base() {
+  local base="$1"
+  local base_tree="$ROOT_DIR/build/bench-base"
+  echo "op=bench phase=measureBase base=$base tree=$base_tree"
+  git -C "$ROOT_DIR" worktree remove --force "$base_tree" >/dev/null 2>&1 || true
+  git -C "$ROOT_DIR" worktree add --detach "$base_tree" "$base" >/dev/null
+  local measured=0
+  "$base_tree/script/bench.sh" run || measured=$?
+  git -C "$ROOT_DIR" worktree remove --force "$base_tree"
+  if [[ "$measured" -ne 0 ]]; then
+    echo "op=bench phase=compareFailed reason=baseRunFailed base=$base" >&2
+    exit 1
+  fi
+}
+
+# Sets each side's runs against the other's. Exits 3 when a case rose beyond every run's
+# range, and 4 when a case would flag but one side has fewer than two runs, so the caller
+# measures it again before deciding (with `final`, such a case flags).
+judge() {
+  local threshold="$1" base="$2" head="$3" before="$4" after="$5" final="$6"
+  /usr/bin/python3 -I - "$threshold" "$base" "$head" "$before" "$after" "$final" <<'PY'
+import json, statistics, sys
+threshold, base, head, final = float(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[6] == "1"
+def load(path):
+    runs = {}
+    for line in open(path):
+        if line.strip():
+            row = json.loads(line)
+            runs.setdefault(row["name"], []).append(row)
+    return runs
+before, after = load(sys.argv[4]), load(sys.argv[5])
+flagged, unconfirmed = [], []
+print("base %s  head %s  flag above +%.1f%% instructions, beyond every run's range" % (base[:9], head[:9], threshold))
+print("%-36s %14s %14s %9s %5s %10s %10s" % ("case", "base M instr", "head M instr", "change", "runs", "base ms", "head ms"))
+for name in sorted(after):
+    new_runs = after[name]
+    old_runs = before.get(name)
+    new = statistics.median(run["instructions"] for run in new_runs)
+    new_ms = statistics.median(run["medianMilliseconds"] for run in new_runs)
+    if not old_runs:
+        print("%-36s %14s %14.1f %9s %5s %10s %10.1f  new case" % (name, "-", new / 1e6, "-", "-", "-", new_ms))
+        continue
+    old = statistics.median(run["instructions"] for run in old_runs)
+    old_ms = statistics.median(run["medianMilliseconds"] for run in old_runs)
+    change = (new - old) / old * 100
+    # A rise counts only when it is beyond the noise of every run on both sides: a run's
+    # spread is its samples' range over its median, and the count also drifts from one
+    # test process to the next, which no single run's spread shows. So no base sample of
+    # any run may reach the lowest head sample of any run, and each side needs two runs.
+    base_highest = max(run["instructions"] * (1 + run.get("instructionSpread", 0)) for run in old_runs)
+    head_lowest = min(run["instructions"] * (1 - run.get("instructionSpread", 0)) for run in new_runs)
+    runs = "%d/%d" % (len(old_runs), len(new_runs))
+    if change > threshold and head_lowest > base_highest:
+        if final or (len(old_runs) >= 2 and len(new_runs) >= 2):
+            mark = "  FLAG"
+            flagged.append(name)
+        else:
+            mark = "  to confirm"
+            unconfirmed.append(name)
+    elif change > threshold:
+        mark = "  within noise"
+    else:
+        mark = ""
+    print("%-36s %14.1f %14.1f %+8.1f%% %5s %10.1f %10.1f%s" % (
+        name, old / 1e6, new / 1e6, change, runs, old_ms, new_ms, mark))
+for name in sorted(set(before) - set(after)):
+    print("%-36s  removed" % name)
+if unconfirmed:
+    print("op=bench phase=confirm cases=%s" % ",".join(unconfirmed))
+    sys.exit(4)
+if flagged:
+    print("op=bench phase=flagged cases=%s" % ",".join(flagged))
+    sys.exit(3)
+print("op=bench phase=compared flagged=0")
 PY
 }
 
@@ -168,66 +246,44 @@ compare() {
       echo "op=bench phase=compareSkipped reason=baseHasNoBenchmarks base=$base"
       return
     fi
-    # The base is measured in its own detached checkout, which records it like any run.
-    local base_tree="$ROOT_DIR/build/bench-base"
-    echo "op=bench phase=measureBase base=$base tree=$base_tree"
-    git -C "$ROOT_DIR" worktree remove --force "$base_tree" >/dev/null 2>&1 || true
-    git -C "$ROOT_DIR" worktree add --detach "$base_tree" "$base" >/dev/null
-    local measured=0
-    "$base_tree/script/bench.sh" run || measured=$?
-    git -C "$ROOT_DIR" worktree remove --force "$base_tree"
-    if [[ "$measured" -ne 0 ]]; then
-      echo "op=bench phase=compareFailed reason=baseRunFailed base=$base" >&2
-      exit 1
-    fi
+    measure_base "$base"
   fi
-  local before after status=0
+  local before after status=0 final=0
   before="$(mktemp -t otos-bench-base)"
   after="$(mktemp -t otos-bench-head)"
-  records_for "$base" > "$before"
-  records_for "$head" > "$after"
-  /usr/bin/python3 -I - "$threshold" "$base" "$head" "$before" "$after" <<'PY' || status=$?
-import json, sys
-threshold, base, head = float(sys.argv[1]), sys.argv[2], sys.argv[3]
-def load(path):
-    return {row["name"]: row for row in (json.loads(line) for line in open(path) if line.strip())}
-before, after = load(sys.argv[4]), load(sys.argv[5])
-flagged = []
-print("base %s  head %s  flag above +%.1f%% instructions, beyond both runs' spread" % (base[:9], head[:9], threshold))
-print("%-36s %14s %14s %9s %10s %10s" % ("case", "base M instr", "head M instr", "change", "base ms", "head ms"))
-for name in sorted(after):
-    new = after[name]
-    old = before.get(name)
-    if old is None:
-        print("%-36s %14s %14.1f %9s %10s %10.1f  new case" % (name, "-", new["instructions"] / 1e6, "-", "-", new["medianMilliseconds"]))
-        continue
-    change = (new["instructions"] - old["instructions"]) / old["instructions"] * 100
-    # A rise counts only when it is beyond both runs' own noise: each record's spread is
-    # its samples' range over its median, so no base sample exceeds median × (1 + spread)
-    # and no head sample is below median × (1 − spread). A rise whose ranges overlap is
-    # one the cases' own variation could make, and is reported, not flagged.
-    base_highest = old["instructions"] * (1 + old.get("instructionSpread", 0))
-    head_lowest = new["instructions"] * (1 - new.get("instructionSpread", 0))
-    if change > threshold and head_lowest > base_highest:
-        mark = "  FLAG"
-        flagged.append(name)
-    elif change > threshold:
-        mark = "  within noise (spread %.1f%% / %.1f%%)" % (
-            old.get("instructionSpread", 0) * 100, new.get("instructionSpread", 0) * 100)
-    else:
-        mark = ""
-    print("%-36s %14.1f %14.1f %+8.1f%% %10.1f %10.1f%s" % (
-        name, old["instructions"] / 1e6, new["instructions"] / 1e6, change,
-        old["medianMilliseconds"], new["medianMilliseconds"], mark))
-for name in sorted(set(before) - set(after)):
-    print("%-36s  removed" % name)
-if flagged:
-    print("op=bench phase=flagged cases=%s" % ",".join(flagged))
-    sys.exit(3)
-print("op=bench phase=compared flagged=0")
-PY
+  while true; do
+    records_for "$base" > "$before"
+    records_for "$head" > "$after"
+    status=0
+    judge "$threshold" "$base" "$head" "$before" "$after" "$final" || status=$?
+    [[ "$status" -eq 4 && "$final" -eq 0 ]] || break
+    # A case would flag on one side's single run: each side with one run is measured
+    # again, in a new test process, and the case judged once more.
+    final=1
+    if [[ "$(runs_of "$after")" -lt 2 ]]; then
+      echo "op=bench phase=confirm side=head commit=$head"
+      if [[ -n "$(git -C "$ROOT_DIR" status --porcelain)" ]]; then
+        echo "op=bench phase=compareFailed reason=headTreeDirty commit=$head" >&2
+        exit 1
+      fi
+      run
+    fi
+    if [[ "$(runs_of "$before")" -lt 2 ]]; then
+      echo "op=bench phase=confirm side=base commit=$base"
+      measure_base "$base"
+    fi
+  done
   rm -f "$before" "$after"
   return "$status"
+}
+
+# The fewest runs any case in a record file has.
+runs_of() {
+  /usr/bin/python3 -I - "$1" <<'PY'
+import collections, json, sys
+counts = collections.Counter(json.loads(line)["name"] for line in open(sys.argv[1]) if line.strip())
+print(min(counts.values()) if counts else 0)
+PY
 }
 
 case "${1:-}" in

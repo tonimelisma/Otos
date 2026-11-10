@@ -1,26 +1,28 @@
 import Foundation
 
-/// Mounts a scratch APFS disk image so a test can observe real
-/// `DiskArbitration` behavior against an actual disk image rather than a
-/// mocked resource-value fixture — the qualification predicate this supports
-/// (APP-017) is specifically about a live system fact
-/// (`kDADiskDescriptionDeviceProtocolKey`), not one `URLResourceValues` alone
-/// can answer, so a real mount is what proves the code path, not a stand-in.
 enum DiskImageTestSupportError: Error {
     case hdiutilFailed(String)
     case mountPathNotFound
 }
 
+/// Mounts a scratch disk image so a test can observe real `DiskArbitration` behavior
+/// against an actual disk rather than a mocked resource-value fixture: the facts these
+/// tests prove (APP-017's device model, an eject's typed refusal) are live system facts.
+///
+/// The mount path is shared machine state. `/Volumes/<label>` is chosen by the system
+/// from the volume label, and the moment one image leaves it the next image with that
+/// label is mounted there — by any process, including another worktree's test run.
+/// So every image gets a label of its own: its mount path then names only this image,
+/// and neither an assertion nor `detach()` can reach another run's volume.
 struct MountedTestDiskImage {
     let mountURL: URL
     private let dmgPath: URL
 
-    static func attach(
-        named name: String = "OtosTestDMG",
-        filesystem: String = "APFS"
-    ) throws -> MountedTestDiskImage {
+    static func attach(filesystem: String = "APFS") throws -> MountedTestDiskImage {
         let dmgPath = FileManager.default.temporaryDirectory
             .appending(path: "otos-test-dmg-\(UUID().uuidString).dmg", directoryHint: .notDirectory)
+        // An ExFAT label holds at most 11 characters: "Otos" and 7 random hex digits.
+        let name = "Otos" + UUID().uuidString.filter(\.isHexDigit).prefix(7)
 
         let create = Process()
         create.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")

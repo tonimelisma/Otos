@@ -308,7 +308,10 @@ like, the requirement row says it is implemented and points at the test.
 
 ## Toolchain
 
-Use full Xcode (not Command Line Tools). Install tools with `brew bundle`. The
+Use full Xcode (not Command Line Tools). Install tools with `brew bundle`;
+SwiftFormat and SwiftLint are not among them: `script/lint-tools.sh` pins them,
+checks their checksums, and fetches them on first use. Run `"$(script/lint-tools.sh
+swiftformat)" .` to format. The
 required local check is **`script/check.sh`** — the single entry point, run with
 `run_in_background: true`. It runs the seconds-long gates first, then the full
 verification (requirements-authority + lint + build + test), and prints a heartbeat
@@ -316,7 +319,7 @@ every 60 s carrying elapsed time and the running test count. Do not invoke
 `script/verify.sh`, `script/test.sh` or `script/build.sh` directly:
 `script/hooks/guard-long-checks.sh` denies it, because those skip the gates and
 emit no heartbeat, which is how a hung run is mistaken for a slow one. While
-iterating on one area, `script/check.sh --only <Suite>` (repeatable) runs the same
+iterating on one area, `script/check.sh --only <Suite>` (repeatable; a suite is a test type's name, not its file's, and one that runs no test fails) runs the same
 gates and build but only the named test suites; it prints `evidence=no` and never
 counts as verification. Check builds share one compilation cache across worktrees,
 with source paths mapped to `/^worktree` (ADR 0044): a test never locates a file
@@ -502,7 +505,9 @@ passes:
 
 1. Run `script/bench.sh run`, then `script/bench.sh compare`, both in the background.
 2. If `compare` exits 3, a case retired more than 2% more instructions than its base,
-   beyond both runs' spread (a rise within the spread is reported as `within noise`).
+   beyond every run's range in at least two runs a side (`compare` measures a side again
+   when a suspected rise has one run there; a rise within the ranges is reported as
+   `within noise`).
    Stop before merging and show the user the comparison table. Merge only with the
    user's explicit permission in chat, and quote that permission in the DoD report.
 3. Either way, include the comparison table in the DoD report.

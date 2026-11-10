@@ -112,13 +112,16 @@ fi
 # ── Stage 1: the seconds-long gates, first, so a nit never costs a build ──────
 echo "op=check.stage phase=start stage=fast-gates"
 fast_failed=0
-if ! swiftformat --lint "$ROOT_DIR" 2>&1 | tail -3; then fast_failed=1; fi
-if swiftformat --lint "$ROOT_DIR" 2>&1 | grep -q "require formatting"; then
-  if ! swiftformat --lint "$ROOT_DIR" 2>&1 | grep -q "^0/"; then
-    echo "op=check.stage phase=fail stage=fast-gates reason=formatting" >&2
-    echo "Run: swiftformat . — then re-run script/check.sh" >&2
-    fast_failed=1
-  fi
+# The pinned SwiftFormat by path, never from PATH (script/lint-tools.sh owns the pin).
+if ! SWIFTFORMAT="$("$ROOT_DIR/script/lint-tools.sh" swiftformat)"; then
+  echo "check: FAILED at fast-gates — the pinned SwiftFormat could not be fetched" >&2
+  exit 1
+fi
+# One pass over the tree: its exit status is the verdict, its tail the evidence.
+if ! "$SWIFTFORMAT" --lint "$ROOT_DIR" 2>&1 | tail -3; then
+  echo "op=check.stage phase=fail stage=fast-gates reason=formatting" >&2
+  echo "Run: \"\$(script/lint-tools.sh swiftformat)\" . — then re-run script/check.sh" >&2
+  fast_failed=1
 fi
 # Every wait on time names why nothing could report the fact instead (ADR 0033).
 if ! "$ROOT_DIR/script/time-guard.sh"; then

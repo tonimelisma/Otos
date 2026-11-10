@@ -270,6 +270,10 @@ actor CatalogStore {
     /// it lives as long as the undo stack that names the batch.
     private var carriedWorkByBatch: [MediaTrashBatchID: [DuplicateCarryRecord]] = [:]
     private var changeContinuations: [UUID: AsyncStream<CatalogStoreChange>.Continuation] = [:]
+    /// People writes committed this process (`perform`, `restore`), bumped after each commit.
+    /// A People snapshot carries the value it read under, so a reader can tell whether it
+    /// already includes a given act (ADR 0047).
+    private var peopleRevision: UInt64 = 0
     private var planningChangeContinuations: [UUID: AsyncStream<RootPlanningChange>.Continuation] = [:]
     private var changeDeliveries: [UUID: DeliveryCount] = [:]
     private var planningChangeDeliveries: [UUID: DeliveryCount] = [:]
@@ -821,6 +825,9 @@ extension CatalogStore {
             }
         }
         let folders = folderRootIDs
+        // Read before the transaction: every write it counts committed before it was bumped,
+        // so the snapshot includes at least those.
+        let revision = peopleRevision
         let accounts = accountRootIDs
         let dbWriter = try database()
         return try await dbWriter.read { db in
@@ -875,7 +882,8 @@ extension CatalogStore {
                 faces: faces,
                 tiles: tiles,
                 people: people,
-                uncheckedPhotoCount: Self.uncheckedFacePhotoCount(folderRootIDs: folders, accountRootIDs: accounts, db: db)
+                uncheckedPhotoCount: Self.uncheckedFacePhotoCount(folderRootIDs: folders, accountRootIDs: accounts, db: db),
+                revision: revision
             )
         }
     }
@@ -1000,7 +1008,7 @@ extension CatalogStore {
     func perform(_ act: PeopleAct) async throws -> PeopleActOutcome {
         let rowIDs = roots.rowIDSnapshot()
         let pathsByRowID = roots.pathsByRowID
-        let outcome = try await database().write { db -> PeopleActOutcome in
+        let applied = try await database().write { db -> (restore: PeopleRestore, person: PersonID?) in
             let touched = try Self.touched(by: act, rowIDs: rowIDs, db: db)
             let before = try Self.restoreRecord(faces: touched.faces, people: touched.people, pathsByRowID: pathsByRowID, db: db)
             let key = { (face: FaceID) throws -> FaceRowKey in try FaceRowKey(face, rowIDs: rowIDs) }
@@ -1045,14 +1053,13 @@ extension CatalogStore {
             for person in created {
                 people[person] = .some(nil)
             }
-            return PeopleActOutcome(
-                restore: PeopleRestore(people: people, faces: before.faces, rejections: before.rejections),
-                person: given
-            )
+            return (PeopleRestore(people: people, faces: before.faces, rejections: before.rejections), given)
         }
+        peopleRevision &+= 1
+        let outcome = PeopleActOutcome(restore: applied.restore, person: applied.person, revision: peopleRevision)
         notifyCatalogChanged()
         OtosLog.catalog.noticeOperation("people.act", phase: "applied", fields: [
-            "act": act.undoName, "faces": "\(act.faceCount)",
+            "act": act.undoName, "faces": "\(act.faceCount)", "revision": "\(outcome.revision)",
         ])
         return outcome
     }
@@ -1113,6 +1120,7 @@ extension CatalogStore {
             // removed does not, so the redo removes them again.
             return current
         }
+        peopleRevision &+= 1
         notifyCatalogChanged()
         return redo
     }

@@ -29,7 +29,8 @@ nonisolated struct SearchQueryParse: Hashable, Sendable {
 ///   week, month and year. "May" counts as the month only with "in", "of" or a year beside
 ///   it. A month without a year is the most recent one, this year's if it has begun.
 /// - **Places:** in an English reading, the first name `NLTagger` finds (it often tags a
-///   place as a person), with a leading "Lake", "Mount" or "Mt." kept. In a query read as
+///   place as a person), with a leading "Lake", "Mount" or "Mt." kept, unless an ordinary
+///   word follows it ("Ferris wheel"). In a query read as
 ///   typed (a language Translation cannot read), the first run of capitalised words, because
 ///   the English tagger finds no name in "koer San Franciscos". Whether it is a place, and
 ///   where, is answered by `SearchPlaces`; one that is nowhere stays part of the picture's
@@ -42,6 +43,9 @@ nonisolated enum SearchQueryParser {
         "november", "december",
     ]
     private static let joiningWords: Set<String> = ["in", "on", "at", "from", "during", "of", "near", "around", "taken", "the"]
+    /// Words that may follow a place's name in a phrase ("Lake Tahoe in July", "Paris with
+    /// kids"), unlike a noun that makes the name half of a compound.
+    private static let followingWords = joiningWords.union(["with", "and", "or", "by", "for", "to", "during", "this", "last"])
 
     /// How a query's place name is found.
     enum Places: Sendable {
@@ -175,6 +179,15 @@ nonisolated enum SearchQueryParser {
 
     private static func takePlace(_ words: inout [String]) -> String? {
         guard let (text, found) = taggedName(in: words.joined(separator: " ")) else { return nil }
+        // A name an ordinary word follows is the first half of a compound, not a place:
+        // "Ferris wheel" (Japanese, Chinese and Korean "carousel", translated), which Maps
+        // places in Texas. "San Francisco skyline" is lost with it and searched as a picture,
+        // the milder miss.
+        if let next = text[found.upperBound...].split(whereSeparator: \.isWhitespace).first,
+           next.first?.isLowercase == true, !followingWords.contains(bare(String(next)))
+        {
+            return nil
+        }
         var range = found
         // A leading feature word belongs to the name the tagger found ("Lake Tahoe").
         let before = text[..<range.lowerBound].split(separator: " ")
