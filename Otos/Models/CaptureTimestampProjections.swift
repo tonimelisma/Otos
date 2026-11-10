@@ -164,7 +164,7 @@ nonisolated struct CaptureLocalTime: Comparable, Hashable, Sendable {
     /// The UTC offset Otos reads an item's absolute time with when its file records no wall
     /// clock: the offset of `timeZone` — the Mac's zone when Otos records that time — at that
     /// time. Lightroom and Photos assume the computer's zone at import the same way. The
-    /// assumption is kept while the absolute time it was made for is unchanged, so an item
+    /// assumption is kept while the absolute time it was made for is unchanged to the second, so an item
     /// does not move between days when the Mac changes zone; it is made again only when that
     /// time changes (`assumed_utc_offset_seconds`).
     static func assumedUTCOffset(
@@ -176,7 +176,9 @@ nonisolated struct CaptureLocalTime: Comparable, Hashable, Sendable {
         guard let absolute else {
             return nil
         }
-        if let previousOffset, previousAbsolute == absolute {
+        // To the second, as the scan compares file dates: a sub-second difference is the
+        // same time.
+        if let previousOffset, let previousAbsolute, previousAbsolute.rounded(.down) == absolute.rounded(.down) {
             return previousOffset
         }
         return timeZone.secondsFromGMT(for: Date(timeIntervalSince1970: absolute))

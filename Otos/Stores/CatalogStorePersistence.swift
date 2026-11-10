@@ -1452,8 +1452,8 @@ extension CatalogStore {
         // had not yet seen reveals it (`awaiting_presence`), and that is a change.
         // The assumed offset (`CaptureLocalTime.assumedUTCOffset`) is made for the
         // absolute time the row is placed by. The file's dates stand in for it only while
-        // no capture instant does, and an unchanged absolute time keeps the offset it was
-        // given, so a rescan in another zone moves nothing.
+        // no capture instant does, and an absolute time unchanged to the second keeps the
+        // offset it was given, so a rescan in another zone moves nothing.
         try db.execute(
             sql: """
             INSERT INTO media_asset (
@@ -1475,10 +1475,10 @@ extension CatalogStore {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(library_root_id, relative_path) DO UPDATE SET
                 assumed_utc_offset_seconds = CASE
-                    WHEN COALESCE(media_asset.capture_instant_unix, media_asset.created_at_unix,
-                                  media_asset.content_modified_at_unix)
-                      IS COALESCE(media_asset.capture_instant_unix, excluded.created_at_unix,
-                                  excluded.content_modified_at_unix)
+                    WHEN CAST(COALESCE(media_asset.capture_instant_unix, media_asset.created_at_unix,
+                                       media_asset.content_modified_at_unix) AS INTEGER)
+                      IS CAST(COALESCE(media_asset.capture_instant_unix, excluded.created_at_unix,
+                                       excluded.content_modified_at_unix) AS INTEGER)
                     THEN media_asset.assumed_utc_offset_seconds
                     ELSE excluded.assumed_utc_offset_seconds
                 END,

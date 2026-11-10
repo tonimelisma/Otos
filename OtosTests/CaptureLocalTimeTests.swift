@@ -155,6 +155,8 @@ struct CaptureLocalTimeTests {
             == -7 * 3600)
         #expect(CaptureLocalTime.assumedUTCOffset(for: january, previousAbsolute: july, previousOffset: -7 * 3600, timeZone: sydney)
             == 11 * 3600)
+        #expect(CaptureLocalTime.assumedUTCOffset(for: july + 0.4, previousAbsolute: july, previousOffset: -7 * 3600, timeZone: sydney)
+            == -7 * 3600)
         #expect(CaptureLocalTime.assumedUTCOffset(for: nil, previousAbsolute: july, previousOffset: -7 * 3600, timeZone: sydney)
             == nil)
     }
