@@ -319,7 +319,7 @@ every 60 s carrying elapsed time and the running test count. Do not invoke
 `script/verify.sh`, `script/test.sh` or `script/build.sh` directly:
 `script/hooks/guard-long-checks.sh` denies it, because those skip the gates and
 emit no heartbeat, which is how a hung run is mistaken for a slow one. While
-iterating on one area, `script/check.sh --only <Suite>` (repeatable) runs the same
+iterating on one area, `script/check.sh --only <Suite>` (repeatable; a suite is a test type's name, not its file's, and one that runs no test fails) runs the same
 gates and build but only the named test suites; it prints `evidence=no` and never
 counts as verification. Check builds share one compilation cache across worktrees,
 with source paths mapped to `/^worktree` (ADR 0044): a test never locates a file
