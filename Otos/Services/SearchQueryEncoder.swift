@@ -62,7 +62,8 @@ nonisolated struct SearchPerson: Hashable, Sendable {
 ///    Translation offers. The query never says its language; constrained recognition
 ///    measured within about two points of being told it (research §8).
 /// 2. **English:** a recognised non-English language whose pack is installed is translated on the device
-///    (`TranslationSession(installedSource:target:)`, no network, no UI). SigLIP 2 reads
+///    (`TranslationSession(installedSource:target:)`, no network, no UI), as a photo's caption
+///    so a lone word has context (`photoWords`). SigLIP 2 reads
 ///    English best: translated queries scored 77 across 16 languages, the same queries as
 ///    typed 65.
 /// 3. **Glossary:** a query not translated, from a user with a language Translation does not
@@ -292,10 +293,44 @@ actor SearchQueryEncoder {
     }
 
     /// A session per query: `TranslationSession` is not `Sendable`, so it is made, used and
-    /// released off this actor.
+    /// released off this actor. The query is translated as a photo's caption ("사진: 호수"),
+    /// and the caption's word is taken off the English.
     @concurrent
     private static func translate(_ text: String, from source: Locale.Language) async throws -> String {
-        try await TranslationSession(installedSource: source, target: english).translate(text).targetText
+        let session = TranslationSession(installedSource: source, target: english)
+        guard let caption = caption(text, in: source) else {
+            return try await session.translate(text).targetText
+        }
+        return try await uncaptioned(session.translate(caption).targetText)
+    }
+
+    /// The word for a photo in each language Translation offers. A query is a word or two, and
+    /// Translation reads a lone word without context, often wrongly: Korean "호수" (lake) → "the
+    /// number of houses", Swedish "tåg" (train) → "march", Finnish "kurpitsat" (pumpkins) →
+    /// "zucchini". As a caption it reads them right ("사진: 호수" → "Photo: Lake"). Over 15
+    /// languages, recall@10 rose from 78.3 to 80.5 (Korean 72 → 78, Finnish 74 → 81, Swedish 75
+    /// → 82), facts from 0.847 to 0.855 (research §9).
+    static let photoWords: [String: String] = [
+        "ar": "صورة", "da": "foto", "de": "Foto", "es": "foto", "fi": "kuva", "fr": "photo", "he": "תמונה",
+        "hi": "फ़ोटो", "id": "foto", "it": "foto", "ja": "写真", "ko": "사진", "ms": "foto", "nb": "foto",
+        "nl": "foto", "pl": "zdjęcie", "pt": "foto", "ru": "фото", "sv": "foto", "th": "รูปภาพ", "tr": "fotoğraf",
+        "uk": "фото", "vi": "ảnh", "zh": "照片",
+    ]
+
+    /// `text` as a photo's caption in `language`; nil for a language with no word for a photo here.
+    static func caption(_ text: String, in language: Locale.Language) -> String? {
+        guard let code = language.languageCode?.identifier, let photo = photoWords[code] else { return nil }
+        return photo + (["ja", "zh"].contains(code) ? "：" : ": ") + text
+    }
+
+    /// The English caption without its photo word: "Photo: Lake", "Image: dog", "picture:
+    /// pumpkins". A translation that dropped the word is kept whole.
+    static func uncaptioned(_ english: String) -> String {
+        guard let range = english.range(
+            of: #"^\s*(a\s+)?(photo|picture|image|photograph|pic|snapshot)s?\s*[:：]\s*"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) else { return english }
+        return String(english[range.upperBound...])
     }
 
     private func remember(_ encoding: SearchQueryEncoding, as key: String) {

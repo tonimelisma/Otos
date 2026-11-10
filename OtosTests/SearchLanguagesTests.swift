@@ -2,6 +2,7 @@ import Foundation
 import NaturalLanguage
 @testable import OtosKit
 import Testing
+import Translation
 
 /// The languages the user searches in (ADR 0048): a stored choice, else the system's, and
 /// recognising a query's language favours them.
@@ -44,5 +45,37 @@ extension SearchLanguagesTests {
     @Test func backgroundReadingIsExemptFromAppNapButNotFromSleep() {
         #expect(BackgroundReading.options.contains(.userInitiatedAllowingIdleSystemSleep))
         #expect(!BackgroundReading.options.contains(.idleSystemSleepDisabled))
+    }
+
+    /// A query is translated as a photo's caption, and the caption's word is taken off.
+    @Test func aQueryIsTranslatedAsAPhotosCaption() {
+        #expect(SearchQueryEncoder.caption("호수", in: Locale.Language(identifier: "ko")) == "사진: 호수")
+        #expect(SearchQueryEncoder.caption("馬", in: Locale.Language(identifier: "ja")) == "写真：馬")
+        #expect(SearchQueryEncoder.caption("lake", in: Locale.Language(identifier: "en")) == nil)
+        #expect(SearchQueryEncoder.uncaptioned("Photo: Lake") == "Lake")
+        #expect(SearchQueryEncoder.uncaptioned("Image: dog") == "dog")
+        #expect(SearchQueryEncoder.uncaptioned("picture: beach in September") == "beach in September")
+        // A translation that dropped the caption's word is kept whole.
+        #expect(SearchQueryEncoder.uncaptioned("Photography exhibition") == "Photography exhibition")
+        #expect(SearchQueryEncoder.uncaptioned("dog on the beach") == "dog on the beach")
+    }
+
+    /// Every language Translation offers has its word for a photo.
+    @Test func everyTranslatableLanguageHasAPhotoWord() async {
+        for code in await Self.translatableCodes() {
+            #expect(SearchQueryEncoder.photoWords[code] != nil, "no photo word for \(code)")
+        }
+    }
+
+    /// `LanguageAvailability` is not `Sendable`, so it is asked entirely off the test's actor.
+    @concurrent
+    private static func translatableCodes() async -> Set<String> {
+        var codes = Set<String>()
+        for language in await LanguageAvailability().supportedLanguages {
+            if let code = language.languageCode?.identifier, code != "en" {
+                codes.insert(code)
+            }
+        }
+        return codes
     }
 }

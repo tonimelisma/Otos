@@ -638,6 +638,27 @@ Translation capitalises every month it does translate ("i maj" → "in May", "to
 English, was trimmed as a joining word; joining words now go only beside a fact taken out.
 Facts unchanged at 0.847.
 
+### Translating a query as a photo's caption
+
+The weakest languages lost on lone words Translation reads without context: Korean "눈"
+(snow) → "an eye", "호수" (lake) → "the number of houses", "초밥" → "vinegared fish and
+rice"; Finnish "vene" (boat) → "Veins", "kurpitsat" (pumpkins) → "zucchini"; Swedish "pumpor"
+→ "pumps", "tåg" → "march"; Dutch "meer" (lake) → "more"; Turkish "atlıkarınca" (carousel) →
+"horse ant". Framed as a caption in the language's own word for a photo, most read right:
+"사진: 호수" → "Photo: Lake", "foto: tåg" → "photo: train", "kuva: kurpitsat" → "picture:
+pumpkins", "写真：馬" → "Photo: horse"; "사진: 눈" still reads "Photo: Eyes". In every one of
+Translation's 24 languages, the caption's word comes back as "photo", "picture" or "image" with
+a colon, and is taken off.
+
+| Through the app, recall@10 | en | fi | sv | de | fr | es | it | nl | pl | ru | ja | zh | ko | ar | hi | tr | mean of 15 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| As typed into Translation | 84.6 | 73.8 | 75.0 | 78.1 | 80.4 | 81.4 | 82.8 | 76.7 | 79.7 | 81.1 | 76.4 | 79.4 | 72.0 | 81.4 | 79.5 | 76.0 | 78.3 |
+| As a photo's caption | 84.6 | 80.5 | 82.4 | 78.9 | 82.1 | 80.9 | 83.4 | 76.5 | 83.4 | 81.1 | 78.0 | 81.3 | 78.3 | 83.0 | 82.0 | 76.2 | 80.5 |
+
+Facts precision@10 rose from 0.847 to 0.855. Russian now places "Уолнат-Крик" and Japanese
+"シャスタ山"; Italian, Russian and Japanese facts each fell by one query of about 12, a picture
+ranking moved by a reworded reading ("Beach" → "beach").
+
 ### The surfaces, in a window
 
 With computer-use access denied, the search surfaces were driven in-process. `ContentView`,

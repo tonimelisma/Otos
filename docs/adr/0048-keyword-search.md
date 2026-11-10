@@ -53,7 +53,12 @@ model reached 68%, and a multilingual text encoder distilled into CLIP's space r
    network, no UI) when that language's pack is installed — asked for that language alone and
    remembered once installed (16 ms, against 0.67 s for asking about every language). This is
    the one large lever: translated queries scored 77 across 16 languages, the same queries as
-   typed 65. A non-English query takes about 0.35 s, mostly the translation.
+   typed 65. A non-English query takes about 0.35 s, mostly the translation. The query is
+   translated as a photo's caption, in the language's word for a photo ("사진: 호수"), and that
+   word is taken off the English: a lone word otherwise has no context, and Translation reads
+   it wrongly (Korean "호수", lake → "the number of houses"; Swedish "tåg", train → "march").
+   Over 15 languages through the app, recall@10 rose from 78.3 to 80.5 and facts precision
+   from 0.847 to 0.855.
 3. **Read through Otos's glossary** a language Translation does not offer, when the user
    searches in it (`SearchGlossary`, Estonian): the picture's words it holds become English
    (Estonian 80 on the app's Core ML embeddings, against 49 as typed; English 85). The
