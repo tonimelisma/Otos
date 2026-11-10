@@ -171,6 +171,8 @@ struct CaptureLocalTimeTests {
 
         #expect(local.formatted(style) == "25/04/2024, 14:51")
         #expect(local.day == CalendarDay(year: 2024, month: 4, day: 25))
+        #expect(CaptureLocalTime(dayNumber: local.dayNumber) == CaptureLocalTime(startOf: local.day))
+        #expect(CaptureLocalTime(seconds: -1).dayNumber == -1)
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = sydney
         let shown = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: local.presentationDate(in: sydney))

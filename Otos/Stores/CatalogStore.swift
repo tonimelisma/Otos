@@ -1428,6 +1428,7 @@ extension CatalogStore {
         let groupsByDate = descriptor.effectiveSort.field == .bestDate
         var ids: [MediaAssetID] = []
         var dayBuckets: [Date?] = []
+        var dayStarts: [Int: Date] = [:]
         var coordinates: [PlaceCoordinate] = []
         ids.reserveCapacity(timedRows.value.rows.count)
         if groupsByDate {
@@ -1453,11 +1454,18 @@ extension CatalogStore {
             }
             ids.append(MediaAssetID(libraryRootPath: rootPath, relativePath: row.relativePath))
             if groupsByDate {
-                // The day the item was taken on (`CaptureLocalTime.day`), as the start of
-                // that day here, which is what the header formats.
-                let dayStart = row.captureLocalTime
-                    .map { Calendar.current.startOfDay(for: $0.presentationDate()) }
-                dayBuckets.append(dayStart)
+                // The day the item was taken on (`CaptureLocalTime.dayNumber`), as the start
+                // of that day here, which is what the header formats. A day's start is made
+                // once per day, not once per row.
+                dayBuckets.append(row.captureLocalTime.map { local in
+                    let day = local.dayNumber
+                    if let start = dayStarts[day] {
+                        return start
+                    }
+                    let start = Calendar.current.startOfDay(for: CaptureLocalTime(dayNumber: day).presentationDate())
+                    dayStarts[day] = start
+                    return start
+                })
             }
         }
         let queryMs = timedRows.totalMs

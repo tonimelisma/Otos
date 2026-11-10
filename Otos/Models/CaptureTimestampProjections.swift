@@ -129,6 +129,17 @@ nonisolated struct CaptureLocalTime: Comparable, Hashable, Sendable {
         seconds = start.timeIntervalSince1970
     }
 
+    /// The midnight that starts the day numbered `dayNumber`.
+    init(dayNumber: Int) {
+        seconds = Double(dayNumber) * 86400
+    }
+
+    /// The day this time falls on, counted in days from 1970-01-01 on the clock it was read
+    /// from: equal for every reading of one day, and cheap to compare.
+    var dayNumber: Int {
+        Int((seconds / 86400).rounded(.down))
+    }
+
     /// The day this time falls on, on the clock it was read from.
     var day: CalendarDay {
         CalendarDay(Date(timeIntervalSince1970: seconds), timeZone: .gmt)
