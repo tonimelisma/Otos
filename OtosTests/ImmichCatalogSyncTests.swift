@@ -510,7 +510,9 @@ struct ImmichCatalogSyncTests {
             [Self.asset("m", name: "IMG_1.MOV", type: .video, visibility: .hidden, modified: 1_700_000_900),
              Self.exif("m", size: 3), Self.complete],
         ])
-        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
 
         _ = await sync.pass()
         _ = await sync.pass()
