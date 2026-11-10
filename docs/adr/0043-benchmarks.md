@@ -64,12 +64,17 @@ The tooling found:
 - **An app-changing PR is compared with its base before it merges.**
   `script/bench.sh compare` sets the PR's record against its merge base with `origin/main`,
   measuring the base first in a detached checkout when it has none.
-  - A case is flagged when it retired **more than 2% more instructions** than the base
-    **and** the rise is beyond both runs' own spread: the head's lowest sample,
-    median × (1 − spread), still exceeds the base's highest, median × (1 + spread). The
-    owner decides whether it merges.
-  - A rise above 2% whose ranges overlap is reported as `within noise`, with both
-    spreads, and does not stop the merge. A smaller change is only reported.
+  - Each side's evidence is every run recorded for its commit on this machine; each run is
+    one test process. A case is flagged when its median over head's runs retired **more
+    than 2% more instructions** than its median over base's **and** the rise is beyond
+    every run's range: head's lowest sample in any run, median × (1 − spread), still
+    exceeds base's highest in any run, median × (1 + spread). The owner decides whether
+    it merges.
+  - A flag needs at least two runs on each side. A case that would flag on one side's
+    single run is reported `to confirm`, and `compare` measures that side again in a new
+    test process, then judges once more. Only a suspected regression costs that run.
+  - A rise above 2% whose ranges overlap is reported as `within noise` and does not stop
+    the merge. A smaller change is only reported.
   - 2% is four times the run-to-run variation measured on unchanged code (about ±0.5%).
     It catches a real regression in a steady case.
   - **Why the spread test (2026-11-10):** the process-wide instruction count includes
@@ -78,6 +83,12 @@ The tooling found:
     25%, and blocked an unrelated PR. A steady case's spread stays under 1%, so a real
     regression there is still flagged. A case that varies is itself reported, and is made
     steady by doing more work per sample.
+  - **Why two runs a side (2026-11-10):** a run's spread shows only the noise inside one
+    test process, and the count also drifts from one process to the next. One commit's
+    `search.textMatch.5k` read 424.3 and 435.5 M in two runs (2.6% apart, each run within
+    1.2%), and `face.align.x1000` read 85.8–88.1 M across four runs of one tree, each
+    within 1%. Either drift alone crossed the gate on unrelated PRs. The ranges of two
+    processes per side cover it, and a real regression moves every process.
   - The owner chose permission over an automatic block. Some regressions are the price
     of a feature, and that trade is a product decision.
 - **A dirty tree records nothing.** A run on uncommitted changes prints its results only,
@@ -101,7 +112,7 @@ The tooling found:
 
 ## Consequences
 
-- A regression of more than 2%, beyond both runs' spread, stops an app-changing PR before
+- A regression of more than 2%, beyond every run's range in two runs a side, stops an app-changing PR before
   merge, until the owner says whether it ships. A noisy case never blocks a merge. Smaller drifts show in `bench.sh history`, against the commit
   that caused each one.
 - Each app-changing PR costs one benchmark run before merge and one on `main` after it.
