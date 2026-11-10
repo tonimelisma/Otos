@@ -659,6 +659,14 @@ Facts precision@10 rose from 0.847 to 0.855. Russian now places "Уолнат-К
 "シャスタ山"; Italian, Russian and Japanese facts each fell by one query of about 12, a picture
 ranking moved by a reworded reading ("Beach" → "beach").
 
+Combining readings does not help. Over the 15 languages: the caption alone 80.5 (lowest
+language 76.2); the plain translation 78.3; the caption's and the plain translation's
+embeddings averaged 80.1; the caption with the typed text at 0.7/0.3, 80.0; at half and half,
+77.5 (lowest 67.0). What remains of the gap to English (84.6) is Translation reading a lone
+word wrong even as a caption ("사진: 눈", snow → "Photo: Eyes"; "メリーゴーランド", carousel →
+"Ferris wheel"); no reader on the device does better. The app's 80.5, its language
+recognised rather than given, is above the bake-off's best told the language (77.3).
+
 ### The surfaces, in a window
 
 With computer-use access denied, the search surfaces were driven in-process. `ContentView`,
