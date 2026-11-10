@@ -48,8 +48,11 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 ///   embeds every asset whose stored thumbnail has no current embedding, a page at a time,
 ///   newest capture first (`SearchEmbeddingStorage`). The thumbnails are decoded and read by
 ///   `SearchImageEmbedder` on its own queue; the results are written only where the
-///   thumbnail is still the one read, and what was written joins memory. A failed read is
-///   logged and waits for the next ring.
+///   thumbnail is still the one read, and what was written joins memory. A pass that leaves
+///   work owed it could not do (a model that would not load, a prediction or a write that
+///   failed) is logged and rings again after a backoff, 30 s doubling to 15 minutes: nothing
+///   reports when the cause clears (a full disk, Core ML), and a settled catalog rings no
+///   change, so without it a hidden Otos would stop reading until relaunch.
 /// - **Memory** is every current embedding as one row-major matrix, so a query is one
 ///   matrix–vector product (about 3 ms over 19,000 photos) and never touches SQLite.
 /// - **A query** goes through `SearchQueryEncoder` (language, translation, text tower); the
@@ -79,6 +82,12 @@ actor PhotoSearchIndex {
 
     private var loop: Task<Void, Never>?
     private var forwarder: Task<Void, Never>?
+    private var ring: AsyncStream<Void>.Continuation?
+    private var retry: Task<Void, Never>?
+    private let backoff: (first: Duration, last: Duration)
+    private var nextRetry: Duration
+    /// How many retries were scheduled: what a test waits on.
+    private(set) var retriesScheduled = 0
     private var changeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
 
     init(
@@ -86,9 +95,12 @@ actor PhotoSearchIndex {
         thumbnailDirectory: URL?,
         bundle: Bundle,
         pageSize: Int = 16,
-        cutoff: SearchCutoff = .calibrated
+        cutoff: SearchCutoff = .calibrated,
+        backoff: (first: Duration, last: Duration) = (.seconds(30), .seconds(900))
     ) {
         self.store = store
+        self.backoff = backoff
+        nextRetry = backoff.first
         self.bundle = bundle
         self.cutoff = cutoff
         self.thumbnailDirectory = thumbnailDirectory
@@ -101,6 +113,7 @@ actor PhotoSearchIndex {
         guard loop == nil else { return }
         let (doorbell, ring) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let changes = await store.changeNotifications()
+        self.ring = ring
         ring.yield()
         forwarder = Task { [weak self] in
             for await _ in changes {
@@ -121,8 +134,11 @@ actor PhotoSearchIndex {
     func shutdown() {
         forwarder?.cancel()
         loop?.cancel()
+        retry?.cancel()
         forwarder = nil
         loop = nil
+        retry = nil
+        ring = nil
         for continuation in changeContinuations.values {
             continuation.finish()
         }
@@ -220,16 +236,47 @@ actor PhotoSearchIndex {
     }
 
     private func refresh() async {
+        var settled = false
         do {
             try await reconcile()
-            try await drain()
+            let embedded = try await drain()
             try await reconcileTexts()
-            try await drainTexts()
+            settled = try await drainTexts() && embedded
         } catch {
             OtosLog.thumbnails.errorOperation("search.index", phase: "failed", fields: [
                 "error": String(describing: error),
             ])
         }
+        guard !Task.isCancelled else { return }
+        if settled {
+            retry?.cancel()
+            retry = nil
+            nextRetry = backoff.first
+        } else {
+            scheduleRetry()
+        }
+    }
+
+    /// One retry at a time; each one waits twice as long as the last, up to `backoff.last`.
+    private func scheduleRetry() {
+        guard retry == nil, ring != nil else { return }
+        let delay = nextRetry
+        nextRetry = min(nextRetry * 2, backoff.last)
+        retriesScheduled += 1
+        OtosLog.thumbnails.noticeOperation("search.index", phase: "retryScheduled", fields: [
+            "seconds": "\(delay.components.seconds)",
+        ])
+        retry = Task { [weak self] in
+            // time: backoff — a read that failed; nothing reports when it would succeed
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            await retryFired()
+        }
+    }
+
+    private func retryFired() {
+        retry = nil
+        ring?.yield()
     }
 
     /// Brings memory in line with the catalog's current embeddings.
@@ -257,14 +304,17 @@ actor PhotoSearchIndex {
     }
 
     /// Embeds every asset whose thumbnail has no current embedding, a page at a time, until
-    /// none is left or a page wrote nothing (its thumbnails all changed meanwhile: the next
-    /// ring offers them again).
-    private func drain() async throws {
+    /// none is left or a page wrote nothing (a model or a prediction failed, or its
+    /// thumbnails all changed meanwhile). True when none is left.
+    private func drain() async throws -> Bool {
         var embedded = 0
         let start = ContinuousClock.now
         while !Task.isCancelled {
             let page = try await store.searchEmbeddingCandidates(limit: pageSize)
-            guard !page.isEmpty else { break }
+            guard !page.isEmpty else {
+                logEmbedded(embedded, since: start)
+                return true
+            }
             let results = await embedder.embed(page, thumbnailDirectory: thumbnailDirectory)
             let written = try await store.applySearchEmbeddings(results)
             guard !written.isEmpty else { break }
@@ -276,13 +326,17 @@ actor PhotoSearchIndex {
             announce()
             embedded += written.count
         }
-        if embedded > 0 {
-            OtosLog.thumbnails.noticeOperation("search.index", phase: "embedded", fields: [
-                "count": "\(embedded)",
-                "total": "\(ids.count)",
-                "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
-            ])
-        }
+        logEmbedded(embedded, since: start)
+        return false
+    }
+
+    private func logEmbedded(_ embedded: Int, since start: ContinuousClock.Instant) {
+        guard embedded > 0 else { return }
+        OtosLog.thumbnails.noticeOperation("search.index", phase: "embedded", fields: [
+            "count": "\(embedded)",
+            "total": "\(ids.count)",
+            "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
     }
 
     private func reconcileTexts() async throws {
@@ -293,13 +347,19 @@ actor PhotoSearchIndex {
     }
 
     /// Reads every owed preview for text, a page at a time, after every embedding is made: a
-    /// photo is searchable by picture first, and a reading costs far more.
-    private func drainTexts() async throws {
+    /// photo is searchable by picture first, and a reading costs far more. True when none is
+    /// left, or when it stops for new embeddings (whose thumbnail's change rang already);
+    /// false when a page wrote nothing.
+    private func drainTexts() async throws -> Bool {
         var read = 0, withText = 0
+        var settled = false
         let start = ContinuousClock.now
         while !Task.isCancelled {
             let page = try await store.searchTextCandidates(limit: 8)
-            guard !page.isEmpty else { break }
+            guard !page.isEmpty else {
+                settled = true
+                break
+            }
             let results = await textReader.read(page, directory: thumbnailDirectory)
             let written = try await store.applySearchTexts(results)
             guard !written.isEmpty else { break }
@@ -312,6 +372,7 @@ actor PhotoSearchIndex {
             // New embeddings come first: a thumbnail written meanwhile is embedded before more
             // previews are read.
             if try await !store.searchEmbeddingCandidates(limit: 1).isEmpty {
+                settled = true
                 break
             }
         }
@@ -320,6 +381,7 @@ actor PhotoSearchIndex {
                 "count": "\(read)", "withText": "\(withText)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
             ])
         }
+        return settled
     }
 
     private func insert(_ embeddings: [StoredSearchEmbedding]) {

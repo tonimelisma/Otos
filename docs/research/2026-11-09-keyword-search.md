@@ -549,7 +549,9 @@ answers as "Lake Tahoe".
 Over the 884 picture queries of §7, the encoder read 3 places, all wrong and all one
 case that predates these changes: Japanese, Chinese and Korean "carousel" translate to "Ferris
 wheel", and Maps places "Ferris" (Texas). The case-ending and capitalised-run rules added no
-false place.
+false place. Rejecting a name an ordinary word follows (shipped) leaves 0 places in the 884,
+and the 204 facts queries unchanged (0.832, Estonian 53): every right place in them ends its
+query.
 
 ### The app with all of it
 
