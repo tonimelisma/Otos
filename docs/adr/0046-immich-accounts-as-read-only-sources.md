@@ -111,8 +111,9 @@ unreachable is never a deletion.
   linked from its still's `livePhotoVideoId`. A still's line lists its folder in full:
   the still, and the motion part it links. The motion part's facts come from its own line
   and size in the same pass, or else from `GET /api/assets/{id}`. A still that no longer
-  links its motion part drops it. A motion part's own line refreshes its facts only
-  through its still's next line, and its size arrives by its own ID.
+  links its motion part drops it. A motion part's own line without its still's refreshes
+  the row it already has, found by its ID, and keeps the hidden state its still decided;
+  its size arrives by its own ID.
 - **Server and credentials:** `library_root.remote_base_url` holds the server URL that Settings
   shows. The session token lives in the Keychain, never in SQLite.
 

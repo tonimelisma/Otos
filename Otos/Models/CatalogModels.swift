@@ -1249,6 +1249,12 @@ nonisolated struct SourceListedItem: Hashable, Sendable {
     let isHiddenBySource: Bool
 }
 
+/// Where an item its source names by ID already lives, and whether the source hides it.
+nonisolated struct SourceItemRow: Equatable, Sendable {
+    let relativePath: MediaRelativePath
+    let isHiddenBySource: Bool
+}
+
 /// A row whose source's own thumbnail and preview are missing or older than its file
 /// (ADR 0046 §7).
 nonisolated struct SourceProductCandidate: Equatable, Sendable {
