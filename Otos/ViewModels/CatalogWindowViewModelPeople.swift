@@ -47,11 +47,11 @@ struct PeopleSession: Equatable {
     var list: PeopleReviewList = .suggestions
     var selectedFaces: Set<FaceID> = []
     var faceCursor: FaceID?
-    /// Faces an act took out of the review, hidden until a People state arrives with no act
-    /// in flight, or the act fails.
-    var leaving: Set<FaceID> = []
-    /// Acts submitted and not yet answered by the store.
-    var actsInFlight = 0
+    /// Faces an act took out of the review, hidden until a People state shows the act — its
+    /// `revision` is at least the act's — or the act fails.
+    var leaving: [FaceID: PeopleLeavingMark] = [:]
+    /// Numbers the acts this window submits, so a store answer finds the faces it hid.
+    var lastSubmittedAct: UInt64 = 0
     var receipt: PeopleReceipt?
     var sheet: PersonSheetRequest?
     /// The faces the name popover names, while it is open.
@@ -59,11 +59,38 @@ struct PeopleSession: Equatable {
     var mergeQuestion: PeopleMergeQuestion?
     /// The shown review list with `leaving` taken out; rebuilt by `refreshPeopleLayout`.
     var layout = PeopleReviewLayout(years: [], leaving: [])
+
+    /// Records the store's answer for `act`: its faces stay hidden until a People state at
+    /// `revision` or later arrives.
+    mutating func actCommitted(_ act: UInt64, revision: UInt64) {
+        for (face, mark) in leaving where mark.act == act {
+            leaving[face] = PeopleLeavingMark(act: act, revision: revision)
+        }
+    }
+
+    /// The store refused `act`: its faces come back.
+    mutating func actFailed(_ act: UInt64) {
+        leaving = leaving.filter { $0.value.act != act }
+    }
+
+    /// A People state at `revision` shows every act committed at or before it: those faces
+    /// are the state's to show or not.
+    mutating func shown(upTo revision: UInt64) {
+        leaving = leaving.filter { mark in mark.value.revision.map { $0 > revision } ?? true }
+    }
 }
 
-/// A People act on its way to the store, or the undo of one.
+/// Why a face is hidden from the review: the window's act that took it out, and the People
+/// revision that act committed as, once the store has answered.
+nonisolated struct PeopleLeavingMark: Equatable, Sendable {
+    let act: UInt64
+    let revision: UInt64?
+}
+
+/// A People act on its way to the store, or the undo of one. `act` numbers an act whose
+/// faces the window hid (`PeopleSession.leaving`); a redo hides none.
 nonisolated enum PeopleIntent: Sendable {
-    case perform(PeopleAct, receipt: PeopleReceipt?)
+    case perform(PeopleAct, receipt: PeopleReceipt?, act: UInt64?)
     case restore(PeopleRestore, act: PeopleAct)
 }
 
@@ -331,7 +358,7 @@ extension CatalogWindowViewModel {
         let people = state.people ?? .empty
         let layout = PeopleReviewLayout(
             years: peopleSession.list == .suggestions ? people.suggestions : people.unsure,
-            leaving: peopleSession.leaving
+            leaving: Set(peopleSession.leaving.keys)
         )
         if layout != peopleSession.layout {
             peopleSession.layout = layout
@@ -340,8 +367,8 @@ extension CatalogWindowViewModel {
 
     // MARK: - State
 
-    /// A new People state takes in every act it shows: the leaving faces are dropped, and
-    /// selections of people or faces that are gone are forgotten.
+    /// A new People state takes in every act it shows: the faces those acts hid are its to
+    /// show now, and selections of people or faces that are gone are forgotten.
     func applyPeopleState(previous: CatalogWindowState, next: CatalogWindowState) {
         guard let people = next.people, people != previous.people else {
             if next.resolvedSidebarSelection.sidebarRow != .people, peopleSession.receipt != nil {
@@ -350,11 +377,9 @@ extension CatalogWindowViewModel {
             return
         }
         peopleIndex = PeopleIndex(people)
-        // A state built while an act is still on its way may predate it; the faces it took
-        // out stay hidden until one arrives after it.
-        if peopleSession.actsInFlight == 0 {
-            peopleSession.leaving = []
-        }
+        // A state read before an act committed does not show it, whenever it arrives: the
+        // faces that act hid stay hidden until a state at its revision or later.
+        peopleSession.shown(upTo: people.revision)
         peopleSession.selectedPeople = peopleSession.selectedPeople.filter { peopleIndex.summaries[$0] != nil }
         peopleSession.selectedFaces = peopleSession.selectedFaces.filter { peopleIndex.reviewTiles[$0] != nil }
         if let sheet = peopleSession.sheet, peopleIndex.summaries[sheet.person] == nil {
@@ -788,9 +813,13 @@ extension CatalogWindowViewModel {
             []
         }
         let acted = Set(faces)
+        peopleSession.lastSubmittedAct &+= 1
+        let number = peopleSession.lastSubmittedAct
         if showsPeopleReview, !acted.isEmpty {
             let next = peopleReviewLayout.successor(of: acted)
-            peopleSession.leaving.formUnion(acted)
+            for face in acted {
+                peopleSession.leaving[face] = PeopleLeavingMark(act: number, revision: nil)
+            }
             peopleSession.selectedFaces = next.map { [$0] } ?? []
             peopleSession.faceCursor = next
             refreshPeopleLayout()
@@ -798,8 +827,7 @@ extension CatalogWindowViewModel {
         OtosLog.ui.noticeOperation("people.act", phase: "submit", fields: [
             "act": act.undoName, "faces": "\(act.faceCount)",
         ])
-        peopleSession.actsInFlight += 1
-        submitPeopleIntent(.perform(act, receipt: receipt))
+        submitPeopleIntent(.perform(act, receipt: receipt, act: number))
     }
 
     private func submitPeopleIntent(_ intent: PeopleIntent) {
@@ -822,18 +850,21 @@ extension CatalogWindowViewModel {
         peopleIntentTask = Task { [weak self, store] in
             for await intent in intents {
                 switch intent {
-                case let .perform(act, receipt):
+                case let .perform(act, receipt, number):
                     do {
                         let outcome = try await store.perform(act)
-                        self?.peopleSession.actsInFlight -= 1
+                        if let number {
+                            self?.peopleSession.actCommitted(number, revision: outcome.revision)
+                        }
                         self?.didPerformPeopleAct(act, outcome: outcome, receipt: receipt)
                     } catch {
-                        self?.peopleSession.actsInFlight -= 1
                         OtosLog.ui.errorOperation("people.act", phase: "failed", fields: [
                             "act": act.undoName, "faces": "\(act.faceCount)", "error": String(describing: error),
                         ])
-                        self?.peopleSession.leaving = []
-                        self?.refreshPeopleLayout()
+                        if let number {
+                            self?.peopleSession.actFailed(number)
+                            self?.refreshPeopleLayout()
+                        }
                     }
                 case let .restore(record, act):
                     do {
@@ -875,15 +906,16 @@ extension CatalogWindowViewModel {
     /// writes back what the act changed.
     private func undoPeopleAct(_ act: PeopleAct, restore: PeopleRestore, receipt: PeopleReceipt?) {
         windowUndoManager.registerUndo(withTarget: self) { model in
-            model.peopleSession.actsInFlight += 1
-            model.submitPeopleIntent(.perform(act, receipt: receipt))
+            model.submitPeopleIntent(.perform(act, receipt: receipt, act: nil))
         }
         windowUndoManager.setActionName(receipt?.undoName ?? act.undoName)
         peopleSession.receipt = nil
         submitPeopleIntent(.restore(restore, act: act))
         // Show what the undo changed (HIG Undo): the faces return to the review, selected.
         let faces = restore.faces.map(\.face)
-        peopleSession.leaving.subtract(faces)
+        for face in faces {
+            peopleSession.leaving[face] = nil
+        }
         refreshPeopleLayout()
         if showsPeopleReview, !faces.isEmpty {
             peopleSession.selectedFaces = Set(faces)
