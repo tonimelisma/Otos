@@ -60,23 +60,12 @@ nonisolated enum SearchEmbeddingStorage {
     }
 
     static func data(_ embedding: [Float]) -> Data {
-        var data = Data(count: embedding.count * 4)
-        data.withUnsafeMutableBytes { raw in
-            for (index, value) in embedding.enumerated() {
-                raw.storeBytes(of: value.bitPattern.littleEndian, toByteOffset: index * 4, as: UInt32.self)
-            }
-        }
-        return data
+        Float32Storage.data(embedding)
     }
 
     /// Nil unless `data` holds exactly one embedding.
     static func embedding(from data: Data) -> [Float]? {
-        guard data.count == SearchEmbedding.dimensions * 4 else { return nil }
-        return data.withUnsafeBytes { raw in
-            (0 ..< SearchEmbedding.dimensions).map { index in
-                Float(bitPattern: UInt32(littleEndian: raw.loadUnaligned(fromByteOffset: index * 4, as: UInt32.self)))
-            }
-        }
+        Float32Storage.floats(from: data, count: SearchEmbedding.dimensions)
     }
 }
 

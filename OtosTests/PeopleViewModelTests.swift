@@ -74,6 +74,7 @@ struct PeopleViewModelTests {
                 deviceConnectionBanner: nil
             )
             state.people = people
+            state.queryGeneration = model.queryGeneration
             model.applyState(state)
         }
 
@@ -197,6 +198,123 @@ struct PeopleViewModelTests {
         let facts = try await fixture.store.peopleSnapshot()
         #expect(facts.faces.first { $0.id == fixture.confirmed }?.rejected == [fixture.sam])
         await fixture.store.shutdown()
+    }
+
+    /// Undo shows what it changed: undoing Not Sam after leaving her photos opens them
+    /// again with the photo selected, and the face is hers again.
+    @Test func undoingNotThisPersonOpensTheirPhotos() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        try await fixture.show(fixture.people(), scope: .person(fixture.sam), grid: [fixture.confirmed.asset])
+        fixture.model.selectAssets([fixture.confirmed.asset])
+        fixture.model.rejectShownPersonFaces()
+        await waitForSession(fixture.model) { $0.receipt != nil }
+        try await fixture.show(fixture.people(), scope: .peopleReview)
+        #expect(fixture.model.showsPeopleReview)
+
+        fixture.model.undoLastChange()
+        #expect(fixture.model.sidebarSelection == .person(fixture.sam))
+        #expect(fixture.model.peopleSession.selectedFaces.isEmpty)
+        try await waitForStore(fixture.store) { try await fixture.person(of: fixture.confirmed) == fixture.sam }
+        // Her scope's first state, holding the photo again, keeps it selected.
+        try await fixture.show(fixture.people(), scope: .person(fixture.sam), grid: [fixture.confirmed.asset])
+        #expect(fixture.model.orderedSelectedAssetIDs == [fixture.confirmed.asset])
+        await fixture.store.shutdown()
+    }
+
+    /// Opening a face's photo from the review shows that photo, not the row's first: its
+    /// selection survives the review-photos scope's first state.
+    @Test func openingAFacesPhotoShowsThatPhoto() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(
+            in: makeTestDirectory(), files: ["a.jpg", "b.jpg", "c.jpg"]
+        )
+        let store = library.store
+        var results: [EnrichmentResult] = []
+        for name in ["a.jpg", "b.jpg", "c.jpg"] {
+            try await results.append(library.result(for: name, faces: [PeopleStoreTests.face(x: 0.1)]))
+        }
+        _ = await store.applyEnrichmentBatch(results)
+        _ = try await store.perform(.name([FaceID(asset: library.id("a.jpg"), index: 0)], "Sam"))
+        let model = CatalogWindowViewModel(
+            catalogStore: store,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
+            startsStallMonitor: false,
+            startsEnrichment: false,
+            startsSourceMonitoring: false,
+            preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
+            volumeCapacity: ampleVolumeCapacity,
+            trashFiles: .refusing
+        )
+        let fixture = Fixture(
+            library: library, model: model, sam: PersonID(rawValue: 0),
+            confirmed: FaceID(asset: library.id("a.jpg"), index: 0), suggested: FaceID(asset: library.id("c.jpg"), index: 0)
+        )
+        try await fixture.show(fixture.people(), scope: .peopleReview)
+        let row = try #require(model.peopleReviewLayout.rows.first)
+        let photos = row.faces.map(\.id.asset)
+        #expect(Set(photos) == [library.id("b.jpg"), library.id("c.jpg")])
+        let opened = try #require(row.faces.last).id
+
+        model.openReviewPhoto(opened)
+        #expect(model.sidebarSelection == .reviewPhotos(photos))
+        try await fixture.show(fixture.people(), scope: .reviewPhotos(photos), grid: photos)
+        #expect(model.orderedSelectedAssetIDs == [opened.asset])
+        #expect(model.focusedAssetID == opened.asset)
+        await store.shutdown()
+    }
+
+    /// The sibling fix by drag: Ian's suggested face dropped onto Sam's row in the same
+    /// year becomes Sam's. A drop onto its own row, or onto a year it is not in, is refused.
+    @Test func faceDroppedOntoAnotherPersonsRowIsTheirs() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(
+            in: makeTestDirectory(), files: ["a.jpg", "b.jpg", "c.jpg", "d.jpg"]
+        )
+        let store = library.store
+        try await store.applyEnrichmentBatch([
+            library.result(for: "a.jpg", faces: [PeopleStoreTests.face(x: 0.1)]),
+            library.result(for: "b.jpg", faces: [PeopleStoreTests.face(x: 0.1)]),
+            library.result(for: "c.jpg", faces: [PeopleStoreTests.face(x: 0.6)]),
+            library.result(for: "d.jpg", faces: [PeopleStoreTests.face(x: 0.6)]),
+        ])
+        let sam = try #require(try await store.perform(.name([FaceID(asset: library.id("a.jpg"), index: 0)], "Sam")).person)
+        let ian = try #require(try await store.perform(.name([FaceID(asset: library.id("c.jpg"), index: 0)], "Ian")).person)
+        let dropped = FaceID(asset: library.id("d.jpg"), index: 0)
+        let model = CatalogWindowViewModel(
+            catalogStore: store,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
+            startsStallMonitor: false,
+            startsEnrichment: false,
+            startsSourceMonitoring: false,
+            preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
+            volumeCapacity: ampleVolumeCapacity,
+            trashFiles: .refusing
+        )
+        model.startPeopleIntentConsumer()
+        let fixture = Fixture(library: library, model: model, sam: sam, confirmed: dropped, suggested: dropped)
+        try await fixture.show(fixture.people(), scope: .peopleReview)
+
+        func row(of person: PersonID) -> PeopleReviewRow? {
+            model.peopleReviewLayout.rows.first {
+                if case .person(person, _) = $0.kind {
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+        let year = try #require(model.peopleReviewLayout.years.first).year
+        let samRow = try #require(row(of: sam))
+        let ianRow = try #require(row(of: ian))
+        #expect(ianRow.faces.map(\.id) == [dropped])
+        let payload = try #require(PeopleDrag.faces(from: PeopleDrag.payload(faces: [dropped])))
+        #expect(payload == [dropped])
+        #expect(model.reviewDropTarget(payload, onto: ianRow, year: year) == nil)
+        #expect(model.reviewDropTarget(payload, onto: samRow, year: (year ?? 2000) - 1) == nil)
+
+        #expect(model.dropReviewFaces(payload, onto: samRow, year: year))
+        await waitForSession(model) { $0.receipt != nil }
+        #expect(model.peopleSession.receipt?.text == "Moved 1 face to Sam")
+        try await waitForStore(store) { try await fixture.person(of: dropped) == sam }
+        await store.shutdown()
     }
 
     /// `PeopleProjection`'s own loop: a request after an act publishes a state whose

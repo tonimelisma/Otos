@@ -1,6 +1,7 @@
 import CoreGraphics
 import CoreImage
 import Foundation
+import ImageIO
 @testable import OtosKit
 import Testing
 
@@ -94,6 +95,44 @@ struct FaceAnalyzerTests {
         #expect(analysis == FaceAnalysis(
             faces: [], rejectedForQuality: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0
         ))
+    }
+
+    // MARK: - Real faces
+
+    /// The whole analysis on real portraits (`OtosTests/Fixtures/Faces`, public domain, sources in its `SOURCES.md`): each
+    /// has one face, admitted, with its box and points on the face. One person twelve years
+    /// apart reaches the threshold a suggestion needs; a different person stays below it.
+    @Test func realPortraitsReadAsTheirPeople() async throws {
+        let analyzer = FaceAnalyzer(bundle: Bundle(for: CatalogWindowViewModel.self))
+        var faces: [String: DetectedFace] = [:]
+        for name in ["williams-2006", "williams-2018", "obama-2013"] {
+            let analysis = try await analyzer.analyze(Self.portrait(name))
+            #expect(analysis.rejectedForQuality == 0, "\(name)")
+            #expect(analysis.rejectedForAlignment == 0, "\(name)")
+            #expect(analysis.rejectedForLandmarks == 0, "\(name)")
+            let face = try #require(analysis.faces.count == 1 ? analysis.faces.first : nil, "\(name)")
+            // A portrait's face sits in the frame's middle, its eyes above its mouth.
+            #expect(face.box.midX > 0.3 && face.box.midX < 0.7 && face.box.height > 0.1, "\(name)")
+            #expect(face.landmarks[0].x < face.landmarks[1].x, "\(name)")
+            #expect(face.landmarks[0].y < face.landmarks[3].y, "\(name)")
+            #expect(face.landmarks[1].y < face.landmarks[4].y, "\(name)")
+            #expect(abs(Self.dot(face.embedding, face.embedding) - 1) < 1e-3, "\(name)")
+            faces[name] = face
+        }
+        let earlier = try #require(faces["williams-2006"]).embedding
+        let later = try #require(faces["williams-2018"]).embedding
+        let other = try #require(faces["obama-2013"]).embedding
+
+        let same = Self.dot(earlier, later)
+        #expect(same >= FacePeoplePolicy.threshold, "same person \(same)")
+        #expect(Self.dot(earlier, other) < FacePeoplePolicy.threshold - FacePeoplePolicy.margin)
+        #expect(Self.dot(later, other) < FacePeoplePolicy.threshold - FacePeoplePolicy.margin)
+    }
+
+    static func portrait(_ name: String) throws -> CGImage {
+        let url = SourceTree.root.appending(path: "OtosTests/Fixtures/Faces/\(name).jpg")
+        let source = try #require(CGImageSourceCreateWithURL(url as CFURL, nil))
+        return try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
     }
 
     // MARK: - Images

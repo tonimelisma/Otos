@@ -394,9 +394,11 @@ private struct PersonCell: View {
     }
 }
 
-/// A person dragged within the list, as text.
+/// A person dragged within the People list, or review faces dragged onto another row, as
+/// text. Each kind has its own prefix, so a drop never reads the other's payload.
 nonisolated enum PeopleDrag {
     private static let prefix = "net.melisma.otos.person:"
+    private static let facesPrefix = "net.melisma.otos.faces:"
 
     static func payload(_ person: PersonID) -> String {
         prefix + String(person.rawValue)
@@ -405,5 +407,30 @@ nonisolated enum PeopleDrag {
     static func person(from payload: String) -> PersonID? {
         guard payload.hasPrefix(prefix), let value = Int64(payload.dropFirst(prefix.count)) else { return nil }
         return PersonID(rawValue: value)
+    }
+
+    /// Each face as its library's path, its photo's path and its index, every field ended
+    /// by NUL, which no path holds.
+    static func payload(faces: [FaceID]) -> String {
+        facesPrefix + faces.map { "\($0.asset.libraryRootPath.rawValue)\0\($0.asset.relativePath.rawValue)\0\($0.index)\0" }.joined()
+    }
+
+    /// Nil unless `payload` is review faces.
+    static func faces(from payload: String) -> [FaceID]? {
+        guard payload.hasPrefix(facesPrefix) else { return nil }
+        let fields = payload.dropFirst(facesPrefix.count).split(separator: "\0", omittingEmptySubsequences: false).dropLast()
+        guard !fields.isEmpty, fields.count.isMultiple(of: 3) else { return nil }
+        var faces: [FaceID] = []
+        for start in stride(from: fields.startIndex, to: fields.endIndex, by: 3) {
+            guard let index = Int(fields[start + 2]) else { return nil }
+            faces.append(FaceID(
+                asset: MediaAssetID(
+                    libraryRootPath: LibraryRootPath(rawValue: String(fields[start])),
+                    relativePath: MediaRelativePath(rawValue: String(fields[start + 1]))
+                ),
+                index: index
+            ))
+        }
+        return faces
     }
 }

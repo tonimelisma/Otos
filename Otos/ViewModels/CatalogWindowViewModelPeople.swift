@@ -450,8 +450,7 @@ extension CatalogWindowViewModel {
         var seen: Set<MediaAssetID> = []
         let photos = row.faces.map(\.id.asset).filter { seen.insert($0).inserted }
         OtosLog.ui.noticeOperation("people.review", phase: "openPhoto", fields: ["photos": "\(photos.count)"])
-        selectSidebar(.reviewPhotos(photos))
-        selectAssets([face.asset])
+        openScope(.reviewPhotos(photos), selecting: [face.asset])
         setViewMode(.loupe)
     }
 
@@ -585,6 +584,28 @@ extension CatalogWindowViewModel {
     /// This Is ▸ a person, from the review or a person's scope.
     func moveFaces(_ faces: [FaceID], to person: PersonID) {
         confirm(faces, as: person, verb: .move)
+    }
+
+    /// The person dropping `faces` onto a person's row in `year` moves them to, or nil when
+    /// that drop is refused (`docs/design/people.md`, sibling fix): the faces are on other
+    /// rows of the same year, and This Is ▸ offers that person for all of them.
+    func reviewDropTarget(_ faces: [FaceID], onto row: PeopleReviewRow, year: Int?) -> PersonID? {
+        guard case let .person(person, _) = row.kind, !faces.isEmpty,
+              let shownYear = peopleReviewLayout.years.first(where: { $0.year == year })
+        else { return nil }
+        let inYear = Set(shownYear.rows.flatMap { $0.faces.map(\.id) })
+        let onRow = Set(row.faces.map(\.id))
+        guard faces.allSatisfy({ inYear.contains($0) && !onRow.contains($0) }),
+              thisIsChoices(for: faces, excluding: []).contains(where: { $0.id == person })
+        else { return nil }
+        return person
+    }
+
+    /// Faces dropped onto a person's row: This Is ▸ that person.
+    func dropReviewFaces(_ faces: [FaceID], onto row: PeopleReviewRow, year: Int?) -> Bool {
+        guard let person = reviewDropTarget(faces, onto: row, year: year) else { return false }
+        moveFaces(faces, to: person)
+        return true
     }
 
     private func confirm(_ faces: [FaceID], as person: PersonID, verb: ConfirmVerb) {
@@ -911,15 +932,30 @@ extension CatalogWindowViewModel {
         windowUndoManager.setActionName(receipt?.undoName ?? act.undoName)
         peopleSession.receipt = nil
         submitPeopleIntent(.restore(restore, act: act))
-        // Show what the undo changed (HIG Undo): the faces return to the review, selected.
         let faces = restore.faces.map(\.face)
         for face in faces {
             peopleSession.leaving[face] = nil
         }
         refreshPeopleLayout()
-        if showsPeopleReview, !faces.isEmpty {
-            peopleSession.selectedFaces = Set(faces)
-            peopleSession.faceCursor = faces.first
+        showUndoneFaces(of: act, restore: restore)
+    }
+
+    /// Shows what an undone act on faces changed (HIG Undo, `docs/design/people.md` Undo).
+    /// Faces that return to one person are that person's again: their photos are selected in
+    /// the person's scope, which opens when the window shows another. Faces that return
+    /// unnamed are selected in the review when it is shown. A person-level act (Merge, Remove
+    /// Person, Rename) moves no selection: the People list shows both people as they were.
+    private func showUndoneFaces(of act: PeopleAct, restore: PeopleRestore) {
+        guard act.faceCount > 0, !restore.faces.isEmpty else { return }
+        let owners = Set(restore.faces.map(\.person))
+        if owners.count == 1, let person = owners.first ?? nil {
+            var seen: Set<MediaAssetID> = []
+            let photos = restore.faces.map(\.face.asset).filter { seen.insert($0).inserted }
+            OtosLog.ui.noticeOperation("people.undo", phase: "revealPerson", fields: ["photos": "\(photos.count)"])
+            openScope(.person(person), selecting: photos)
+        } else if showsPeopleReview {
+            peopleSession.selectedFaces = Set(restore.faces.map(\.face))
+            peopleSession.faceCursor = restore.faces.first?.face
         }
     }
 
@@ -959,6 +995,7 @@ extension CatalogWindowViewModel {
             ignoreRow: { [weak self] row in self?.ignoreReviewRow(row) },
             thisIsChoices: { [weak self] faces in self?.thisIsChoices(for: faces, excluding: []) ?? [] },
             moveTo: { [weak self] faces, person in self?.moveFaces(faces, to: person) },
+            dropFaces: { [weak self] faces, row, year in self?.dropReviewFaces(faces, onto: row, year: year) ?? false },
             split: { [weak self] faces in self?.splitFaces(faces) },
             beginNaming: { [weak self] faces in self?.beginNaming(faces) },
             cancelNaming: { [weak self] in self?.cancelNaming() },

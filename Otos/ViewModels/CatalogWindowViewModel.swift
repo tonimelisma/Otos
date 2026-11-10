@@ -1289,6 +1289,19 @@ extension CatalogWindowViewModel {
         ))
     }
 
+    /// Opens `scope` with `ids` selected. A new scope's first state replaces the selection
+    /// (`applyScopeEntrySelection`), so the items travel as the scope-entry selection and
+    /// survive that state; in the scope already shown they are selected at once.
+    func openScope(_ scope: SidebarSelection, selecting ids: [MediaAssetID]) {
+        let opensScope = scope != queryDescriptor.scope
+        selectSidebar(scope)
+        guard !ids.isEmpty else { return }
+        if opensScope {
+            scopeEntrySelection = (queryGeneration, ids)
+        }
+        selectAssets(ids)
+    }
+
     func setMediaFilter(_ filter: MediaFilter) {
         setQueryDescriptor(CatalogQueryDescriptor(
             scope: queryDescriptor.scope,

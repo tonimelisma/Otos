@@ -43,7 +43,57 @@ struct BenchmarkTests {
         try await Benchmark.measure("duplicates.samePhotoPairs") {
             #expect(!SamePhotoPolicy.candidatePairs(candidates, excluding: []).isEmpty)
         }
+
+        // People at a family archive's scale (ADR 0047): 10,000 faces, 1,000 of them named
+        // across 20 people. `PeopleProjection` runs the whole build after every catalog change
+        // while enrichment reads faces; the snapshot is its catalog read alone.
+        try await Self.addFaces(to: store, faces: 10000, people: 20, confirmedEach: 50)
+        try await Benchmark.measure("people.snapshot.10k", iterations: 3) {
+            let snapshot = try await store.peopleSnapshot(availableLibraryPaths: paths)
+            #expect(snapshot.faces.count == 10000)
+        }
+        try await Benchmark.measure("people.build.10k", iterations: 3) {
+            let built = try await PeopleProjection.build(store: store, libraries: libraries)
+            #expect(built.people.count == 20)
+        }
         await store.shutdown()
+    }
+
+    /// One face on each of the first `faces` stills, embedded as `groupingLibrary` makes them,
+    /// with each person's confirmed faces named through the store's own act.
+    private static func addFaces(to store: CatalogStore, faces count: Int, people: Int, confirmedEach: Int) async throws {
+        let assets = try await waitForCatalogStoreState(store) { !$0.isScanning }.testAssets
+            .sorted { $0.id.relativePath.rawValue < $1.id.relativePath.rawValue }
+            .prefix(count)
+        let (facts, _) = groupingLibrary(faces: count, people: people, confirmedEach: confirmedEach)
+        var named: [PersonID: [FaceID]] = [:]
+        var results: [EnrichmentResult] = []
+        for (asset, fact) in zip(assets, facts) {
+            let face = DetectedFace(
+                box: CGRect(x: 0.4, y: 0.3, width: 0.2, height: 0.25),
+                landmarks: FaceAlignment.template.map { CGPoint(x: $0.x / 112, y: $0.y / 112) },
+                quality: 0.8,
+                embedding: fact.embedding
+            )
+            results.append(EnrichmentResult(
+                id: asset.id,
+                metadata: nil,
+                rendering: nil,
+                sourceSize: asset.byteSize,
+                sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
+                contentHash: nil,
+                faces: EnrichedFaces(faces: [face], analysisRevision: FaceAnalyzer.revision)
+            ))
+            if let person = fact.person {
+                named[person, default: []].append(FaceID(asset: asset.id, index: 0))
+            }
+        }
+        for start in stride(from: 0, to: results.count, by: 500) {
+            _ = await store.applyEnrichmentBatch(Array(results[start ..< min(start + 500, results.count)]))
+        }
+        for (person, faces) in named.sorted(by: { $0.key < $1.key }) {
+            _ = try await store.perform(.name(faces, "Person \(person.rawValue)"))
+        }
     }
 
     /// The pure half of a grid structural apply, which the user waits for on every switch of

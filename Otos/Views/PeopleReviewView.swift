@@ -24,6 +24,8 @@ struct PeopleReviewActions {
     let ignoreRow: @MainActor (PeopleReviewRow) -> Void
     let thisIsChoices: @MainActor ([FaceID]) -> [PersonSummary]
     let moveTo: @MainActor ([FaceID], PersonID) -> Void
+    /// Faces dropped onto a row in a year; false when the drop is refused.
+    let dropFaces: @MainActor ([FaceID], PeopleReviewRow, Int?) -> Bool
     let split: @MainActor ([FaceID]) -> Void
     let beginNaming: @MainActor ([FaceID]) -> Void
     let cancelNaming: @MainActor () -> Void
@@ -59,7 +61,14 @@ struct PeopleReviewView: View {
     let actions: PeopleReviewActions
 
     @FocusState private var listFocused: Bool
+    /// The person row a drag of faces is over, by its year, while that drop would be taken.
+    @State private var dropRow: DropRow?
     @Environment(\.colorScheme) private var colorScheme
+
+    private struct DropRow: Equatable {
+        let row: PeopleReviewRow.ID
+        let year: Int?
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -172,6 +181,27 @@ struct PeopleReviewView: View {
             }
         }
         .padding(.vertical, 8)
+        .background {
+            if dropRow == DropRow(row: row.id, year: year) {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.accentColor.opacity(0.12))
+                    .padding(.horizontal, -6)
+            }
+        }
+        // Faces dragged from another row of this year onto a person's row: This Is ▸ them.
+        .dropDestination(for: String.self) { items, _ in
+            dropRow = nil
+            guard let faces = items.first.flatMap(PeopleDrag.faces(from:)) else { return false }
+            return actions.dropFaces(faces, row, year)
+        } isTargeted: { targeted in
+            if !targeted {
+                if dropRow == DropRow(row: row.id, year: year) {
+                    dropRow = nil
+                }
+            } else if case .person = row.kind {
+                dropRow = DropRow(row: row.id, year: year)
+            }
+        }
     }
 
     @ViewBuilder
@@ -389,6 +419,7 @@ private struct ReviewFace: View {
         .popover(isPresented: naming, arrowEdge: .bottom) {
             NamePopover(actions: actions)
         }
+        .draggable(PeopleDrag.payload(faces: targets))
         .contextMenu { menu }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(PeoplePresentation.faceAccessibility(tile, row: row, names: names))
