@@ -651,7 +651,7 @@ struct CatalogStoreEnrichmentTests {
 
         let state = try await catalogStoreTestState(card.store)
         let copy = try #require(state.testAssets.first { $0.id.libraryRootPath == card.destinationPath })
-        #expect(copy.captureLocalTime == card.captureDate.map { CaptureLocalTime(readingOf: $0) })
+        #expect(copy.captureLocalTime == CaptureLocalTime(readingOf: card.captureDate))
         #expect(copy.contentHash == card.copyDigest)
         #expect(!copy.needsEnrichment(.cardProducts))
     }
@@ -665,7 +665,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(result == ImportProductsResult(metadata: .reused, rendering: .owed))
         let state = try await catalogStoreTestState(card.store)
         let copy = try #require(state.testAssets.first { $0.id.libraryRootPath == card.destinationPath })
-        #expect(copy.captureLocalTime == card.captureDate.map { CaptureLocalTime(readingOf: $0) })
+        #expect(copy.captureLocalTime == CaptureLocalTime(readingOf: card.captureDate))
         #expect(!copy.metadataStale)
         #expect(copy.renderingStale)
         #expect(!copy.hashStale)
