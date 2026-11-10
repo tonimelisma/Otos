@@ -77,7 +77,7 @@ actor ImmichAccounts {
     private let sessions: any ImmichSessionStoring
     private let urlSession: URLSession
     /// Reads a volume's free space for the floor every account's sync keeps (ADR 0027).
-    private let volumeCapacity: @Sendable (URL) -> Int64?
+    private let volumeCapacity: VolumeCapacityReader
     private let schedule: Schedule
     /// Where new accounts' staging folders go: the app's Caches `RemoteStaging`, or a test's
     /// own folder.
@@ -92,7 +92,7 @@ actor ImmichAccounts {
         urlSession: URLSession = .shared,
         schedule: Schedule = .production,
         stagingContainer: URL = StagingLocation.containerURL(.remote),
-        volumeCapacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:)
+        volumeCapacity: @escaping VolumeCapacityReader
     ) {
         self.volumeCapacity = volumeCapacity
         self.stagingContainer = stagingContainer

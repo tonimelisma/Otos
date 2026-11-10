@@ -134,6 +134,7 @@ private func makeQueryIntentModel(temp: PreferencesDomain)
         startsEnrichment: false,
         startsSourceMonitoring: false,
         preferencesDomain: temp,
+        volumeCapacity: ampleVolumeCapacity,
         trashFiles: .refusing
     )
     return (model, gate)

@@ -22,6 +22,7 @@ struct PreferencesDomainTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: temp,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
         first.setGridColumnCount(9)
@@ -46,6 +47,7 @@ struct PreferencesDomainTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: temp,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
         #expect(second.gridColumnCount == 9)
@@ -73,14 +75,22 @@ struct PreferencesDomainTests {
 
         // First coordinator persists a device mapping into temp.
         let storeA = CatalogStore(location: .inMemory)
-        let coordinatorA = MediaOperationCoordinator(store: storeA, preferencesDomain: temp)
+        let coordinatorA = MediaOperationCoordinator(
+            store: storeA,
+            preferencesDomain: temp,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinatorA.setDestination(destPath, for: sourcePath)
         let loadedA = await coordinatorA.allDestinations()
         #expect(loadedA[sourcePath] == destPath)
 
         // Reconstructing from the same domain observes the mapping.
         let storeB = CatalogStore(location: .inMemory)
-        let coordinatorB = MediaOperationCoordinator(store: storeB, preferencesDomain: temp)
+        let coordinatorB = MediaOperationCoordinator(
+            store: storeB,
+            preferencesDomain: temp,
+            volumeCapacity: ampleVolumeCapacity
+        )
         let loadedB = await coordinatorB.allDestinations()
         // The domain's store holds the mapping; read it directly.
         let tempDefaults = temp.makeDefaults()

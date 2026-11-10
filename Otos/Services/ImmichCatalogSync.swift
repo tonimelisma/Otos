@@ -84,7 +84,7 @@ actor ImmichCatalogSync {
     private let source: any ImmichSyncSource
     private let store: CatalogStore
     /// Reads a volume's free space for the floor its products keep (ADR 0027).
-    private let volumeCapacity: @Sendable (URL) -> Int64?
+    private let volumeCapacity: VolumeCapacityReader
     private let doorbell: AsyncStream<Void>
     private let ring: AsyncStream<Void>.Continuation
 
@@ -92,7 +92,7 @@ actor ImmichCatalogSync {
         rootPath: LibraryRootPath,
         source: any ImmichSyncSource,
         store: CatalogStore,
-        volumeCapacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:)
+        volumeCapacity: @escaping VolumeCapacityReader
     ) {
         self.rootPath = rootPath
         self.source = source
@@ -501,7 +501,7 @@ actor ImmichCatalogSync {
     /// for the images about to be written.
     @concurrent
     private static func admitsProducts(
-        onVolumeOf directory: URL, _ volumeCapacity: @Sendable (URL) -> Int64?
+        onVolumeOf directory: URL, _ volumeCapacity: VolumeCapacityReader
     ) async -> Bool {
         FreeSpaceFloor.admits(1_000_000, available: volumeCapacity(directory))
     }

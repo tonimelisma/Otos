@@ -34,6 +34,7 @@ struct MediaOperationCoordinatorSourceReadTests {
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
+            volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()

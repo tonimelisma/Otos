@@ -114,6 +114,7 @@ struct MediaTrashCoordinatorOwnershipTests {
             },
             files: .refusing,
             status: { _ in .dataless },
+            volumeCapacity: ampleVolumeCapacity,
             retryPolicy: Self.retry,
             reads: reads
         )
@@ -146,6 +147,7 @@ struct MediaTrashCoordinatorOwnershipTests {
             store: fixture.store,
             materializationRequester: nil,
             files: .testing(trash: fixture.trashing(log)),
+            volumeCapacity: ampleVolumeCapacity,
             retryPolicy: Self.retry,
             willHandleItem: { id in
                 let isFirst = handled.withLock { seen in
@@ -186,6 +188,7 @@ struct MediaTrashCoordinatorOwnershipTests {
             store: store,
             materializationRequester: nil,
             files: .refusing,
+            volumeCapacity: ampleVolumeCapacity,
             reads: reads
         )
 

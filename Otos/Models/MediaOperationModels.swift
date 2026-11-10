@@ -226,6 +226,13 @@ nonisolated enum ImportStopReason: Equatable, Sendable {
     case diskFloor(bytesFree: Int64?)
 }
 
+/// Reads the free space on a URL's volume, `nil` when the volume does not answer. Every
+/// owner that applies `FreeSpaceFloor` takes one as a required dependency: the app's
+/// composition root (`OtosApp`) passes `FreeSpaceFloor.availableBytes(onVolumeOf:)`, and a
+/// test passes the figure it runs under, so no outcome depends on how full the machine
+/// running it is (ADR 0027).
+typealias VolumeCapacityReader = @Sendable (URL) -> Int64?
+
 /// The free space Otos never takes a volume below (ADR 0027), and the one way every
 /// writer asks about it: import admits an entry, Move to Trash starts a download, and
 /// `MaterializationCoordinator` starts a background or device download only while the

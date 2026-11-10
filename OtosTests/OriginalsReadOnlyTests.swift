@@ -167,7 +167,8 @@ struct OriginalsReadOnlyTests {
             store: store,
             executor: { _ in
                 MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
-            }
+            },
+            volumeCapacity: ampleVolumeCapacity
         )
         let id = MediaAssetID(
             libraryRootPath: LibraryRootPath(rawValue: root.path),

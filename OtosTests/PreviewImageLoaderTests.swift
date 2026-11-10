@@ -315,7 +315,7 @@ struct PreviewImageLoaderTests {
             }
             staged.withLock { $0.append(request.id) }
             return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 1)
-        })
+        }, volumeCapacity: ampleVolumeCapacity)
         let loader = PreviewImageLoader(materializationRequester: coordinator)
 
         #expect(await coordinator.locality(of: id) == .fetchable)
