@@ -152,14 +152,14 @@ struct PeopleViewModelTests {
         fixture.model.undoLastChange()
         #expect(fixture.model.peopleSession.selectedFaces == [fixture.suggested])
         // The restore is ordered after the act on the one consumer; wait for it to land.
-        try await waitForStore(fixture.store) { try await fixture.person(of: fixture.suggested) == nil }
+        try await Self.waitForStore(fixture.store) { try await fixture.person(of: fixture.suggested) == nil }
         let restored = try await fixture.people()
         #expect(restored.suggestionCount == 1)
         fixture.show(restored, scope: .peopleReview)
         #expect(fixture.model.peopleReviewLayout.order == [fixture.suggested])
 
         fixture.model.redoLastChange()
-        try await waitForStore(fixture.store) { try await fixture.person(of: fixture.suggested) == fixture.sam }
+        try await Self.waitForStore(fixture.store) { try await fixture.person(of: fixture.suggested) == fixture.sam }
         await fixture.store.shutdown()
     }
 
@@ -194,7 +194,7 @@ struct PeopleViewModelTests {
         #expect(fixture.model.personCorrectionsMenu()?.enabled == true)
 
         fixture.model.rejectShownPersonFaces()
-        try await waitForStore(fixture.store) { try await fixture.person(of: fixture.confirmed) == nil }
+        try await Self.waitForStore(fixture.store) { try await fixture.person(of: fixture.confirmed) == nil }
         let facts = try await fixture.store.peopleSnapshot()
         #expect(facts.faces.first { $0.id == fixture.confirmed }?.rejected == [fixture.sam])
         await fixture.store.shutdown()
@@ -214,7 +214,7 @@ struct PeopleViewModelTests {
         fixture.model.undoLastChange()
         #expect(fixture.model.sidebarSelection == .person(fixture.sam))
         #expect(fixture.model.peopleSession.selectedFaces.isEmpty)
-        try await waitForStore(fixture.store) { try await fixture.person(of: fixture.confirmed) == fixture.sam }
+        try await Self.waitForStore(fixture.store) { try await fixture.person(of: fixture.confirmed) == fixture.sam }
         // Her scope's first state, holding the photo again, keeps it selected.
         try await fixture.show(fixture.people(), scope: .person(fixture.sam), grid: [fixture.confirmed.asset])
         #expect(fixture.model.orderedSelectedAssetIDs == [fixture.confirmed.asset])
@@ -313,7 +313,7 @@ struct PeopleViewModelTests {
         #expect(model.dropReviewFaces(payload, onto: samRow, year: year))
         await waitForSession(model) { $0.receipt != nil }
         #expect(model.peopleSession.receipt?.text == "Moved 1 face to Sam")
-        try await waitForStore(store) { try await fixture.person(of: dropped) == sam }
+        try await Self.waitForStore(store) { try await fixture.person(of: dropped) == sam }
         await store.shutdown()
     }
 
@@ -360,7 +360,7 @@ struct PeopleViewModelTests {
     /// Waits until `condition` holds, re-checking after each store change. Subscribed before
     /// the first check, so a change between a check and the wait is never missed. No
     /// deadline.
-    func waitForStore(_ store: CatalogStore, _ condition: () async throws -> Bool) async throws {
+    static func waitForStore(_ store: CatalogStore, _ condition: () async throws -> Bool) async throws {
         var changes = await store.changeNotifications().makeAsyncIterator()
         while try await !condition() {
             guard await changes.next() != nil else { return }

@@ -307,61 +307,82 @@ struct PeopleReviewView: View {
 
 /// The review's keys (DES-113): arrows, ⌘A, Return, Delete, ⇧O, Space, ⌘[ / ⌘], ⌘1 / ⌘2
 /// and Escape.
+///
+/// The name popover is presented from inside the list, so a key typed in its field reaches
+/// these handlers too, before the field's own Return (`onSubmit`) and ⌘A. While a name is
+/// being typed (`PeopleSession.naming`), every key here is ignored and belongs to the field.
 private struct ListKeys: ViewModifier {
     let session: PeopleSession
     let actions: PeopleReviewActions
 
+    /// Runs `act` unless a name is being typed.
+    private func listKey(_ act: () -> KeyPress.Result) -> KeyPress.Result {
+        session.naming == nil ? act() : .ignored
+    }
+
     func body(content: Content) -> some View {
         content
             .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
-                let direction: PeopleReviewLayout.Direction = switch press.key {
-                case .leftArrow: .previous
-                case .rightArrow: .next
-                case .upArrow: .up
-                default: .down
+                listKey {
+                    let direction: PeopleReviewLayout.Direction = switch press.key {
+                    case .leftArrow: .previous
+                    case .rightArrow: .next
+                    case .upArrow: .up
+                    default: .down
+                    }
+                    actions.move(direction, press.modifiers.contains(.shift))
+                    return .handled
                 }
-                actions.move(direction, press.modifiers.contains(.shift))
-                return .handled
             }
             .onKeyPress(.return) {
-                if session.list == .suggestions {
-                    actions.confirmSelection()
+                listKey {
+                    if session.list == .suggestions {
+                        actions.confirmSelection()
+                    }
+                    return .handled
                 }
-                return .handled
             }
             .onKeyPress(keys: [.delete, .deleteForward]) { press in
-                // ⌘⌫ never moves a photo to the Trash from here: Delete means "not them".
-                guard !press.modifiers.contains(.command) else { return .handled }
-                actions.reject()
-                return .handled
+                listKey {
+                    // ⌘⌫ never moves a photo to the Trash from here: Delete means "not them".
+                    guard !press.modifiers.contains(.command) else { return .handled }
+                    actions.reject()
+                    return .handled
+                }
             }
             .onKeyPress(.space) {
-                guard let cursor = session.faceCursor else { return .ignored }
-                actions.openPhoto(cursor)
-                return .handled
+                listKey {
+                    guard let cursor = session.faceCursor else { return .ignored }
+                    actions.openPhoto(cursor)
+                    return .handled
+                }
             }
             .onKeyPress(.escape) {
-                actions.select(nil, [])
-                return .handled
+                listKey {
+                    actions.select(nil, [])
+                    return .handled
+                }
             }
             .onKeyPress(characters: CharacterSet(charactersIn: "oOaA[]12")) { press in
-                switch (press.characters.lowercased(), press.modifiers) {
-                case ("o", .shift):
-                    actions.beginNaming(Array(session.selectedFaces))
-                case ("a", .command):
-                    actions.selectAll()
-                case ("[", .command):
-                    actions.confirmCandidate(0)
-                case ("]", .command):
-                    actions.confirmCandidate(1)
-                case ("1", .command):
-                    actions.setList(.suggestions)
-                case ("2", .command):
-                    actions.setList(.unsure)
-                default:
-                    return .ignored
+                listKey {
+                    switch (press.characters.lowercased(), press.modifiers) {
+                    case ("o", .shift):
+                        actions.beginNaming(Array(session.selectedFaces))
+                    case ("a", .command):
+                        actions.selectAll()
+                    case ("[", .command):
+                        actions.confirmCandidate(0)
+                    case ("]", .command):
+                        actions.confirmCandidate(1)
+                    case ("1", .command):
+                        actions.setList(.suggestions)
+                    case ("2", .command):
+                        actions.setList(.unsure)
+                    default:
+                        return .ignored
+                    }
+                    return .handled
                 }
-                return .handled
             }
     }
 }
