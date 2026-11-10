@@ -308,7 +308,10 @@ like, the requirement row says it is implemented and points at the test.
 
 ## Toolchain
 
-Use full Xcode (not Command Line Tools). Install tools with `brew bundle`. The
+Use full Xcode (not Command Line Tools). Install tools with `brew bundle`;
+SwiftFormat and SwiftLint are not among them: `script/lint-tools.sh` pins them,
+checks their checksums, and fetches them on first use. Run `"$(script/lint-tools.sh
+swiftformat)" .` to format. The
 required local check is **`script/check.sh`** — the single entry point, run with
 `run_in_background: true`. It runs the seconds-long gates first, then the full
 verification (requirements-authority + lint + build + test), and prints a heartbeat
@@ -316,7 +319,7 @@ every 60 s carrying elapsed time and the running test count. Do not invoke
 `script/verify.sh`, `script/test.sh` or `script/build.sh` directly:
 `script/hooks/guard-long-checks.sh` denies it, because those skip the gates and
 emit no heartbeat, which is how a hung run is mistaken for a slow one. While
-iterating on one area, `script/check.sh --only <Suite>` (repeatable) runs the same
+iterating on one area, `script/check.sh --only <Suite>` (repeatable; a suite is a test type's name, not its file's, and one that runs no test fails) runs the same
 gates and build but only the named test suites; it prints `evidence=no` and never
 counts as verification. Check builds share one compilation cache across worktrees,
 with source paths mapped to `/^worktree` (ADR 0044): a test never locates a file

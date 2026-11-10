@@ -118,6 +118,38 @@ struct PhotoSearchIndexTests {
 
     /// The index reads every thumbnail with the bundled model and answers a query from what
     /// it read: the red picture is the better match for a red one.
+    @Test func aReadThatFailedIsRetriedWithoutACatalogChange() async throws {
+        let catalog = try await makeCatalog()
+        // A bundle whose image model points at nothing until the first pass has failed: the
+        // model cannot load, as on a full disk, and the catalog does not change afterwards.
+        let real = try #require(Bundle(for: CatalogWindowViewModel.self).resourceURL)
+        let temp = try makeTestDirectory()
+        let folder = temp.appending(path: "Resources", directoryHint: .isDirectory)
+        let later = temp.appending(path: "Later", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: later, withIntermediateDirectories: true)
+        let model = "SigLIP2Image.mlmodelc"
+        for name in try FileManager.default.contentsOfDirectory(atPath: real.path) {
+            let target = name == model ? later.appending(path: name) : real.appending(path: name)
+            try FileManager.default.createSymbolicLink(at: folder.appending(path: name), withDestinationURL: target)
+        }
+        let bundle = try #require(Bundle(url: folder))
+        let index = PhotoSearchIndex(
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: bundle, cutoff: .none,
+            backoff: (.zero, .zero)
+        )
+        let changes = await index.changes()
+        await index.start()
+        try await waitUntil { await index.retriesScheduled > 0 }
+        #expect(await index.embeddedCount == 0)
+        try FileManager.default.createSymbolicLink(at: later.appending(path: model), withDestinationURL: real.appending(path: model))
+        for await _ in changes where await index.embeddedCount == 2 {
+            break
+        }
+        #expect(await index.embeddedCount == 2)
+        await index.shutdown()
+    }
+
     @Test func theIndexEmbedsThumbnailsAndRanksAQuery() async throws {
         let catalog = try await makeCatalog()
         let index = PhotoSearchIndex(

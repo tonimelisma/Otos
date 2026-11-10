@@ -42,15 +42,20 @@ nonisolated enum HandOffAction: Equatable, Sendable {
         }
     }
 
-    /// What the alert says did not happen: "nothing was handed over".
-    var refusedOutcome: String {
+    /// What the alert says did not happen, inside a sentence: "so nothing was handed over".
+    var refusalClause: String {
         self == .revealInFinder ? "nothing was revealed" : "nothing was handed over"
     }
 
-    /// Whether the action takes each photo's original rather than the file a hand-off gives
-    /// for it: Reveal in Finder shows where the photo lives, not what is handed over.
-    var takesOriginals: Bool {
-        self == .revealInFinder
+    /// What the alert says did not happen, as a sentence of its own.
+    var refusalSentence: String {
+        self == .revealInFinder ? "Nothing was revealed." : "Nothing was handed over."
+    }
+
+    /// Which file the action takes for each photo: Reveal in Finder takes the original,
+    /// because it shows where the photo lives, not what is handed over.
+    var wanted: HandOffPreparer.Wanted {
+        self == .revealInFinder ? .original : .handOffFile
     }
 }
 
@@ -88,6 +93,7 @@ extension CatalogWindowViewModel {
         handOffContinuation.yield(HandOffRequest(ids: ids, action: action, generation: handOffRequested))
         OtosLog.ui.noticeOperation("handOff.submit", phase: "submitted", fields: [
             "count": "\(ids.count)", "action": action.verb, "generation": "\(handOffRequested)",
+            "mode": viewMode.rawValue,
         ])
     }
 
@@ -126,23 +132,24 @@ extension CatalogWindowViewModel {
                     continue
                 }
                 let items = request.ids.map { EditedMediaItem(id: $0, detail: details[$0]) }
-                let originals = request.action.takesOriginals
-                let ready = { (item: EditedMediaItem) in
-                    originals ? preparer.readyOriginalURL(for: item) : preparer.readyURL(for: item)
+                let wanted = request.action.wanted
+                // Asked once, before progress shows, so the status bar counts only photos
+                // that take real work: a missing original no source can send takes none.
+                var needed: [Bool] = []
+                for item in items {
+                    await needed.append(preparer.needsPreparation(item, as: wanted))
                 }
-                let pending = items.filter { ready($0) == nil }.count
-                self?.beginHandOffProgress(request, total: pending)
+                self?.beginHandOffProgress(request, total: needed.count(where: \.self))
                 var urls: [URL] = []
                 var failures = HandOffFailures()
                 var cancelled = false
-                for item in items {
+                for (item, itemNeeded) in zip(items, needed) {
                     if let through = self?.handOffCancelledThrough, through >= request.generation {
                         cancelled = true
                         break
                     }
-                    let needed = ready(item) == nil
                     do {
-                        try await urls.append(originals ? preparer.original(for: item) : preparer.prepare(item))
+                        try await urls.append(preparer.prepare(item, as: wanted))
                     } catch HandOffPreparer.PrepareError.outOfSpace {
                         failures.outOfSpace += 1
                     } catch let HandOffPreparer.PrepareError.sourceUnavailable(reason) {
@@ -153,7 +160,7 @@ extension CatalogWindowViewModel {
                     } catch {
                         failures.other += 1
                     }
-                    if needed {
+                    if itemNeeded {
                         self?.advanceHandOffProgress(request)
                     }
                 }
@@ -310,17 +317,17 @@ nonisolated struct HandOffFailures: Equatable, Sendable {
 
     /// The alert's message for `action`, which says what did not happen.
     func alertMessage(for action: HandOffAction) -> String {
-        let nothing = action.refusedOutcome
         let sources = unavailable.map(\.sentence).joined(separator: " ")
         guard outOfSpace + other > 0 else {
-            return sources + " " + nothing.prefix(1).uppercased() + nothing.dropFirst() + "."
+            return sources + " " + action.refusalSentence
         }
-        let preparation = preparationMessage(nothing: nothing)
+        let preparation = preparationMessage(for: action)
         return sources.isEmpty ? preparation : sources + " " + preparation
     }
 
     /// What the alert says about the photos that failed on this Mac.
-    private func preparationMessage(nothing: String) -> String {
+    private func preparationMessage(for action: HandOffAction) -> String {
+        let nothing = action.refusalClause
         let photos = { (count: Int) in count == 1 ? "one photo" : "\(count) photos" }
         switch (outOfSpace, other) {
         case (0, 1):
@@ -333,7 +340,7 @@ nonisolated struct HandOffFailures: Equatable, Sendable {
         case let (outOfSpace, other):
             return "There isn’t enough disk space to prepare \(photos(outOfSpace)), and \(photos(other)) couldn’t be "
                 + "prepared because \(other == 1 ? "its original" : "their originals") may be unavailable. "
-                + "\(nothing.prefix(1).uppercased() + nothing.dropFirst()). Free up space and try again."
+                + "\(action.refusalSentence) Free up space and try again."
         }
     }
 }

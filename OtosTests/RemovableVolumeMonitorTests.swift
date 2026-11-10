@@ -47,7 +47,7 @@ struct RemovableVolumeMonitorQualificationTests {
 /// the unhelpful `"Virtual Interface"` for a disk image, not `"Disk Image"`).
 struct RemovableVolumeMonitorLiveDiskImageTests {
     @Test func mountedDiskImageReportsDiskImageModel() throws {
-        let image = try MountedTestDiskImage.attach(named: "OtosQualificationTest")
+        let image = try MountedTestDiskImage.attach()
         defer { image.detach() }
 
         let session = DASessionCreate(kCFAllocatorDefault)

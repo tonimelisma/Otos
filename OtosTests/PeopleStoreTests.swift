@@ -185,13 +185,27 @@ struct PeopleStoreTests {
         let before = try await library.store.peopleSnapshot()
         let outcome = try await library.store.perform(act)
         let after = try await library.store.peopleSnapshot()
-        #expect(after != before)
+        #expect(Content(after) != Content(before))
 
         let redo = try await library.store.restore(outcome.restore)
-        #expect(try await library.store.peopleSnapshot() == before)
+        #expect(try await Content(library.store.peopleSnapshot()) == Content(before))
         try await library.store.restore(redo)
-        #expect(try await library.store.peopleSnapshot() == after)
+        #expect(try await Content(library.store.peopleSnapshot()) == Content(after))
         await library.store.shutdown()
+    }
+
+    /// A snapshot's catalog content: everything but the revision, which counts writes and
+    /// so differs after an undo by design.
+    struct Content: Equatable {
+        let faces: [FaceFact]
+        let tiles: [FaceID: FaceTile]
+        let people: [PeopleSnapshot.Person]
+
+        init(_ snapshot: PeopleSnapshot) {
+            faces = snapshot.faces
+            tiles = snapshot.tiles
+            people = snapshot.people
+        }
     }
 
     enum UndoCase: CaseIterable {

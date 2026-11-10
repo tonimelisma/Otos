@@ -100,20 +100,12 @@ jobs:
     name: SwiftFormat And SwiftLint
     runs-on: macos-15
     timeout-minutes: 15
-    env:
-      HOMEBREW_NO_INSTALL_CLEANUP: 1
-      HOMEBREW_NO_ANALYTICS: 1
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      # Not `brew bundle`: it accepts whatever SwiftFormat/SwiftLint the runner
-      # image already ships, so the Brewfile's pin never reached CI and an image
-      # update turned `main` red without a source change. The pinned release
-      # binaries go first on PATH; `script/lint.sh` re-asserts the versions.
-      - name: Install pinned lint tools
-        run: script/ci-install-lint-tools.sh
-
+      # `script/lint.sh` fetches the pinned, checksummed SwiftFormat and SwiftLint
+      # itself (`script/lint-tools.sh`) and never uses whatever the image ships.
       - name: Run lint
         run: script/lint.sh
 

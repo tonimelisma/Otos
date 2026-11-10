@@ -268,7 +268,8 @@ nonisolated enum PeopleStateBuilder {
             suggestions: years(suggestionRows),
             unsure: years(unsureRows),
             uncheckedPhotoCount: snapshot.uncheckedPhotoCount,
-            faceCount: usable.count
+            faceCount: usable.count,
+            revision: snapshot.revision
         )
     }
 

@@ -121,6 +121,16 @@ run_tests_with_footprint_guard() {
   kill "$monitor_pid" >/dev/null 2>&1 || true
   wait "$monitor_pid" >/dev/null 2>&1 || true
   cat "$LOG_FILE"
+  # `-only-testing:` matches by suite (type) name, not by file name, and a name
+  # that matches nothing runs nothing and succeeds. A narrowed suite that ran no
+  # test case is a wrong name, never a pass.
+  for identifier in ${OTOS_ONLY_TESTING:-}; do
+    local suite="${identifier#OtosTests/}"
+    if ! grep -q "Test case '${suite}/" "$LOG_FILE"; then
+      echo "op=test.scope phase=noTestsRan suite=$suite — no test in OtosTests is a member of a suite by that name (suites are type names, not file names)" >&2
+      test_status=1
+    fi
+  done
   if [[ -s "$monitor_file" ]]; then
     cat "$monitor_file" >&2
     test_status=1

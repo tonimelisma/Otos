@@ -56,6 +56,9 @@ struct HandOffTests {
         #expect(HandOffFailures(outOfSpace: 2, other: 1).alertMessage(for: .openDefault)
             == "There isn’t enough disk space to prepare 2 photos, and one photo couldn’t be prepared because its "
             + "original may be unavailable. Nothing was handed over. Free up space and try again.")
+        #expect(HandOffFailures(outOfSpace: 1, other: 1).alertMessage(for: .revealInFinder)
+            == "There isn’t enough disk space to prepare one photo, and one photo couldn’t be prepared because its "
+            + "original may be unavailable. Nothing was revealed. Free up space and try again.")
     }
 
     /// ADR 0046 §6: a source that cannot send an original is named, by the name the sidebar
@@ -176,17 +179,43 @@ struct HandOffTests {
         let preparer = HandOffPreparer(directory: handOff, materialization: source)
         let item = EditedMediaItem(id: id, isVideo: false, recipe: EditRecipe(exposure: 1), sourceSize: nil)
         #expect(item.handOffForm == .renderedStill)
-        #expect(preparer.readyOriginalURL(for: item) == nil)
+        #expect(await preparer.needsPreparation(item, as: .original))
 
         await #expect(throws: HandOffPreparer.PrepareError.sourceUnavailable(.cameraDisconnected)) {
-            try await preparer.original(for: item)
+            try await preparer.prepare(item, as: .original)
         }
 
         outcome.withLock { $0 = .materialized }
-        #expect(try await preparer.original(for: item) == staged)
-        #expect(preparer.readyOriginalURL(for: item) == staged)
+        #expect(try await preparer.prepare(item, as: .original) == staged)
+        #expect(await !preparer.needsPreparation(item, as: .original))
+        #expect(await preparer.needsPreparation(item, as: .handOffFile))
         #expect(preparer.readyURL(for: item) == nil)
         #expect(!FileManager.default.fileExists(atPath: handOff.path(percentEncoded: false)))
+    }
+
+    /// The status bar counts only photos that take work: an original that is there takes
+    /// none, and neither does a missing one no source can send, which is handed over as the
+    /// path it is, as Finder would. An edit to render does take work.
+    @Test func onlyPhotosThatTakeWorkAreCountedAsPreparing() async throws {
+        let directory = try makeTestDirectory()
+        let root = try CatalogPath.normalizedExistingDirectoryPath(for: directory)
+        let present = directory.appending(path: "here.jpg")
+        try writeGradientJPEG(to: present)
+        func item(_ name: String, _ recipe: EditRecipe = .neutral) -> EditedMediaItem {
+            EditedMediaItem(
+                id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: name)),
+                isVideo: false, recipe: recipe, sourceSize: nil
+            )
+        }
+        let preparer = HandOffPreparer(directory: directory.appending(path: "HandOff"), materialization: localOriginals)
+
+        #expect(await !preparer.needsPreparation(item("here.jpg"), as: .handOffFile))
+        #expect(await !preparer.needsPreparation(item("here.jpg"), as: .original))
+        #expect(await !preparer.needsPreparation(item("gone.jpg"), as: .handOffFile))
+        #expect(await !preparer.needsPreparation(item("gone.jpg"), as: .original))
+        #expect(await preparer.needsPreparation(item("here.jpg", EditRecipe(exposure: 1)), as: .handOffFile))
+        #expect(await !preparer.needsPreparation(item("here.jpg", EditRecipe(exposure: 1)), as: .original))
+        #expect(try await preparer.prepare(item("gone.jpg"), as: .original) == item("gone.jpg").id.fileURL)
     }
 
     /// A write that fails for a reason other than space keeps that reason: writing into a

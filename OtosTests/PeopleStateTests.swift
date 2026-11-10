@@ -29,7 +29,8 @@ struct PeopleStateTests {
                 .init(id: sam, name: "Sam", birthday: nil),
                 .init(id: ian, name: "Ian", birthday: nil),
             ],
-            uncheckedPhotoCount: unchecked
+            uncheckedPhotoCount: unchecked,
+            revision: 0
         )
     }
 

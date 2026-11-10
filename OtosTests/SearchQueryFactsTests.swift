@@ -67,6 +67,10 @@ struct SearchQueryFactsTests {
         #expect(lake.placeName == "Lake Tahoe")
         #expect(lake.pictureText == "lake")
         #expect(SearchQueryParser.parse("Dog in San Francisco", places: .notRead).pictureText == "Dog in San Francisco")
+        #expect(parse("Lake Tahoe in July").placeName == "Lake Tahoe")
+        let wheel = parse("Ferris wheel")
+        #expect(wheel.placeName == nil)
+        #expect(wheel.pictureText == "Ferris wheel")
     }
 
     @Test func aNameInALanguageTheTaggerDoesNotKnowIsItsCapitalisedRun() {
