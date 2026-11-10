@@ -29,8 +29,8 @@ nonisolated struct SearchQueryParse: Hashable, Sendable {
 ///   week, month and year. "May" counts as the month only with "in", "of" or a year beside
 ///   it. A month without a year is the most recent one, this year's if it has begun.
 /// - **Places:** in an English reading, the first name `NLTagger` finds (it often tags a
-///   place as a person), with a leading "Lake", "Mount" or "Mt." kept, unless an ordinary
-///   word follows it ("Ferris wheel"). In a query read as
+///   place as a person), with a leading "Lake", "Mount" or "Mt." kept, unless it is one word
+///   an ordinary word follows ("Ferris wheel"). In a query read as
 ///   typed (a language Translation cannot read), the first run of capitalised words, because
 ///   the English tagger finds no name in "koer San Franciscos". Whether it is a place, and
 ///   where, is answered by `SearchPlaces`; one that is nowhere stays part of the picture's
@@ -179,11 +179,12 @@ nonisolated enum SearchQueryParser {
 
     private static func takePlace(_ words: inout [String]) -> String? {
         guard let (text, found) = taggedName(in: words.joined(separator: " ")) else { return nil }
-        // A name an ordinary word follows is the first half of a compound, not a place:
-        // "Ferris wheel" (Japanese, Chinese and Korean "carousel", translated), which Maps
-        // places in Texas. "San Francisco skyline" is lost with it and searched as a picture,
-        // the milder miss.
-        if let next = text[found.upperBound...].split(whereSeparator: \.isWhitespace).first,
+        // A one-word name an ordinary word follows is the first half of a compound, not a
+        // place: "Ferris wheel" (Japanese, Chinese and Korean "carousel", translated), which
+        // Maps places in Texas, "Christmas tree", "Teddy bear". A longer name before a noun
+        // is a place ("San Francisco skyline", "New York pizza").
+        if !text[found].contains(" "),
+           let next = text[found.upperBound...].split(whereSeparator: \.isWhitespace).first,
            next.first?.isLowercase == true, !followingWords.contains(bare(String(next)))
         {
             return nil

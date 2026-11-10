@@ -549,9 +549,13 @@ answers as "Lake Tahoe".
 Over the 884 picture queries of §7, the encoder read 3 places, all wrong and all one
 case that predates these changes: Japanese, Chinese and Korean "carousel" translate to "Ferris
 wheel", and Maps places "Ferris" (Texas). The case-ending and capitalised-run rules added no
-false place. Rejecting a name an ordinary word follows (shipped) leaves 0 places in the 884,
-and the 204 facts queries unchanged (0.832, Estonian 53): every right place in them ends its
-query.
+false place. Rejecting a name an ordinary word follows leaves 0 places in the 884, and the
+204 facts queries unchanged (0.832, Estonian 53): every right place in them ends its query.
+It also lost "San Francisco skyline". Rejecting only a one-word name before a noun (shipped)
+keeps 0 false places in the 884 and the facts queries the same (0.829 for both rules, on the
+catalog re-read by the installed app). Of nine phrases tried by hand, it places "San Francisco
+skyline" and "Lake Tahoe sunset" and none of "Ferris wheel", "Christmas tree", "Teddy bear",
+"Disney castle" or "Golden Gate bridge"; "Paris cafe" and "New York pizza" are not placed.
 
 ### The app with all of it
 
