@@ -31,7 +31,7 @@ nonisolated enum CatalogQueryGateway {
         return try json.map(CatalogStore.decodeMetadataExtraJSON)
     }
 
-    /// `bestCaptureUnix` is carried alongside identity purely as a day-grouping
+    /// `captureLocalTime` is carried alongside identity purely as a day-grouping
     /// key for the grid (DES-069) — a single scalar already read by the index
     /// for `ORDER BY`, not a step toward per-asset detail in window state.
     /// `nil` under any sort other than `.bestDate`: the value is date-contiguous
@@ -61,7 +61,7 @@ nonisolated enum CatalogQueryGateway {
             return OrderedAssetIDRow(
                 libraryRootID: row["library_root_id"],
                 relativePath: MediaRelativePath(rawValue: row["relative_path"]),
-                bestCaptureUnix: row["best_capture_unix"],
+                captureLocalTime: (row["best_capture_local"] as Double?).map(CaptureLocalTime.init(seconds:)),
                 coordinate: coordinate
             )
         }
@@ -72,7 +72,7 @@ nonisolated enum CatalogQueryGateway {
     struct OrderedAssetIDRow {
         let libraryRootID: Int64
         let relativePath: MediaRelativePath
-        let bestCaptureUnix: Double?
+        let captureLocalTime: CaptureLocalTime?
         let coordinate: PlaceCoordinate?
     }
 
@@ -96,7 +96,7 @@ nonisolated enum CatalogQueryGateway {
             : ""
         return SQLQuery(
             sql: """
-            SELECT media_asset.library_root_id, media_asset.relative_path, media_asset.best_capture_unix\(locationColumns)
+            SELECT media_asset.library_root_id, media_asset.relative_path, media_asset.best_capture_local\(locationColumns)
             FROM media_asset INDEXED BY \(order.indexName)\(scopeClause.join)
             WHERE \(scopeClause.sql)\(filterSQL)
             ORDER BY \(order.orderBy)
@@ -198,7 +198,7 @@ nonisolated enum CatalogQueryGateway {
                        faces_source_size, faces_source_mtime,
                        thumbnail_path,
                        duration_seconds,
-                       best_capture_unix, best_kind, best_format, media_choice
+                       best_capture_local, best_kind, best_format, media_choice
                 FROM media_asset
                 WHERE library_root_id = ? AND relative_path IN (\(placeholders))
                 """,
@@ -339,7 +339,7 @@ nonisolated enum CatalogQueryGateway {
             sql: """
             SELECT library_root_id, relative_path
             FROM media_asset
-            WHERE best_capture_unix IS NULL
+            WHERE best_capture_local IS NULL
             ORDER BY library_root_id, relative_path
             """
         ).compactMap { row in
@@ -444,12 +444,12 @@ private nonisolated func orderPlan(
     case (.bestDate, true):
         return (
             "idx_media_asset_best_capture_root_\(suffix)",
-            "media_asset.best_capture_unix \(direction), media_asset.relative_path"
+            "media_asset.best_capture_local \(direction), media_asset.relative_path"
         )
     case (.bestDate, false):
         return (
             "idx_media_asset_best_capture_global_\(suffix)",
-            "media_asset.best_capture_unix \(direction), media_asset.library_root_id, media_asset.relative_path"
+            "media_asset.best_capture_local \(direction), media_asset.library_root_id, media_asset.relative_path"
         )
     case (.name, true):
         return (
@@ -502,7 +502,7 @@ private nonisolated func scopeClause(
     case let .anniversary(day):
         let ranges = try AnniversaryRanges.ranges(
             for: day,
-            earliestCaptureUnix: earliestCaptureUnix(rootIDs: scope.rootIDs, db: db)
+            earliest: earliestCaptureLocalTime(rootIDs: scope.rootIDs, db: db)
         )
         // No earlier year holds a dated row: nothing can match, and SQLite is not asked.
         guard !ranges.isEmpty else {
@@ -595,7 +595,7 @@ private nonisolated func scopeClause(
     }
     if let captureRanges {
         let clauses = Array(
-            repeating: "(media_asset.best_capture_unix >= ? AND media_asset.best_capture_unix < ?)",
+            repeating: "(media_asset.best_capture_local >= ? AND media_asset.best_capture_local < ?)",
             count: captureRanges.count
         )
         predicate += "\n  AND (\(clauses.joined(separator: " OR ")))"
@@ -626,18 +626,18 @@ private nonisolated func scopeClause(
     return (join, predicate, arguments)
 }
 
-/// The earliest capture instant the roots hold, the floor of an anniversary scope's years.
-/// Every row of the roots counts, hidden or not: a lower floor only adds a range that
-/// matches nothing.
-private nonisolated func earliestCaptureUnix(rootIDs: [Int64], db: Database) throws -> Double? {
+/// The earliest local capture time the roots hold, the floor of an anniversary scope's
+/// years. Every row of the roots counts, hidden or not: a lower floor only adds a range
+/// that matches nothing.
+private nonisolated func earliestCaptureLocalTime(rootIDs: [Int64], db: Database) throws -> CaptureLocalTime? {
     try Double.fetchOne(
         db,
         sql: """
-        SELECT MIN(best_capture_unix) FROM media_asset
+        SELECT MIN(best_capture_local) FROM media_asset
         WHERE library_root_id IN (\(sqlPlaceholders(count: rootIDs.count)))
         """,
         arguments: StatementArguments(rootIDs)
-    )
+    ).map(CaptureLocalTime.init(seconds:))
 }
 
 private nonisolated let locationJoin = """
@@ -697,7 +697,7 @@ private nonisolated func sqlPlaceholders(count: Int) -> String {
 private nonisolated func storedAsset(from row: Row) -> StoredAsset {
     let createdUnix: Double? = row["created_at_unix"]
     let modifiedUnix: Double? = row["content_modified_at_unix"]
-    let bestCaptureUnix: Double? = row["best_capture_unix"]
+    let bestCaptureLocal: Double? = row["best_capture_local"]
     let bestKindRaw: String? = row["best_kind"]
     let bestFormatRaw: String? = row["best_format"]
     return StoredAsset(
@@ -709,7 +709,7 @@ private nonisolated func storedAsset(from row: Row) -> StoredAsset {
         createdAt: createdUnix.map(Date.init(timeIntervalSince1970:)),
         contentModifiedAt: modifiedUnix.map(Date.init(timeIntervalSince1970:)),
         thumbnailPath: row["thumbnail_path"],
-        bestCaptureDate: bestCaptureUnix.map(Date.init(timeIntervalSince1970:)),
+        captureLocalTime: bestCaptureLocal.map(CaptureLocalTime.init(seconds:)),
         bestKind: bestKindRaw.flatMap(MediaKind.init(rawValue:)),
         bestFormat: bestFormatRaw.map(MediaFormatToken.init(rawValue:)),
         durationSeconds: row["duration_seconds"],

@@ -42,13 +42,13 @@ struct CatalogWindowViewModelEnrichmentTests {
         // The coordinator the view model started enriches the asset, and the enriched
         // capture date and thumbnail path surface in the projected window state.
         let asset = try await waitForFirstAsset(store: store, model: model) { asset in
-            asset.bestCaptureDate == captureDate
+            asset.captureLocalTime == CaptureLocalTime(readingOf: captureDate)
         }
         #expect(asset.thumbnailPath == "t.jpg")
 
         // The viewport priority hint is accepted without disrupting the enrichment result.
         model.viewportChanged([asset.id])
-        #expect(asset.bestCaptureDate == captureDate)
+        #expect(asset.captureLocalTime == CaptureLocalTime(readingOf: captureDate))
         await coordinator.shutdown()
     }
 
@@ -115,7 +115,7 @@ struct CatalogWindowViewModelEnrichmentTests {
 
         // The persisted asset enriches purely from the post-load Store query.
         let asset = try await waitForFirstAsset(store: secondStore, model: model) { asset in
-            asset.bestCaptureDate == captureDate
+            asset.captureLocalTime == CaptureLocalTime(readingOf: captureDate)
         }
         #expect(asset.thumbnailPath == "t.jpg")
         await coordinator.shutdown()
@@ -178,9 +178,9 @@ private func waitForFirstAsset(
         }
     }
     let need = String(describing: lastAsset?.needsEnrichment(.library))
-    let cap = String(describing: lastAsset?.bestCaptureDate)
+    let cap = String(describing: lastAsset?.captureLocalTime)
     let size = String(describing: lastAsset?.byteSize)
-    Issue.record("waitForFirstAsset stream ended: needsEnrichment=\(need) bestCaptureDate=\(cap) byteSize=\(size)")
+    Issue.record("waitForFirstAsset stream ended: needsEnrichment=\(need) captureLocalTime=\(cap) byteSize=\(size)")
     throw EnrichmentWiringTestError.streamEnded
 }
 

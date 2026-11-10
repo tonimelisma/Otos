@@ -141,7 +141,7 @@ struct SearchQueryFactsTests {
         try await store.addLibrary(url: library)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
         let asset = try #require(scanned.testAssets.first)
-        let captured = try #require(asset.bestCaptureDate ?? asset.createdAt)
+        let captured = try #require(asset.captureLocalTime?.presentationDate() ?? asset.createdAt)
         let around = SearchDateSpan(start: captured.addingTimeInterval(-60), end: captured.addingTimeInterval(60))
         let before = SearchDateSpan(start: captured.addingTimeInterval(-7200), end: captured.addingTimeInterval(-3600))
         #expect(try await store.searchFactMatches(SearchFacts(date: around)) == [asset.id])

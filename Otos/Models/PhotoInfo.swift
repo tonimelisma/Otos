@@ -27,8 +27,9 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         calendar: Calendar = .current
     ) -> PhotoInfo {
         let fileName = asset?.name ?? id.relativePath.fileName
-        let captureDate: String = if let date = asset?.bestCaptureDate {
-            date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, calendar: calendar))
+        // Written as the clock where it was taken read it, whatever zone this Mac is in.
+        let captureDate: String = if let local = asset?.captureLocalTime {
+            local.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, calendar: calendar))
         } else {
             unknown
         }

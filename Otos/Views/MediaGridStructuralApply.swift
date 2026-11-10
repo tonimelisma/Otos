@@ -240,7 +240,7 @@ extension MediaGridViewController {
     ///
     /// `NSScrollView` holds the scroll *offset* fixed, so items inserted before the viewport
     /// slide the content under a stationary window and the user drifts backwards through
-    /// the library. The default order is `best_capture_unix DESC` and a card copies
+    /// the library. The default order is `best_capture_local DESC` and a card copies
     /// oldest-first, so during an import every newly published asset is newer than
     /// everything already in the batch and lands at index 0 — before the viewport, every
     /// time. Measured on a 999-item card: 273 applies inserting 2–10 items each, one about

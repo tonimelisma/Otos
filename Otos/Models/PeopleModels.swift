@@ -16,11 +16,12 @@ nonisolated struct FaceTile: Hashable, Sendable, Identifiable {
     let box: CGRect
     /// The stored preview's name in the derived-image directory; nil before one is made.
     let previewName: String?
-    /// The photo's capture instant, seconds since 1970; nil when the photo has no date.
+    /// The photo's local capture time (`CaptureLocalTime.seconds`); nil when the photo has
+    /// no date. Its UTC day is the day the photo was taken, the same day a birthday names.
     let captureSeconds: Double?
 
-    var captureDate: Date? {
-        captureSeconds.map { Date(timeIntervalSince1970: $0) }
+    var captureLocalTime: CaptureLocalTime? {
+        captureSeconds.map(CaptureLocalTime.init(seconds:))
     }
 }
 

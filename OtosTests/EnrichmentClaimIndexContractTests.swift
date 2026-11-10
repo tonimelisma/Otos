@@ -142,7 +142,7 @@ struct EnrichmentClaimIndexContractTests {
         WHERE library_root_id = ?
           AND (\(reparenthesized))
           AND enrichment_claimed IS NULL
-        ORDER BY best_capture_unix DESC, relative_path
+        ORDER BY best_capture_local DESC, relative_path
         LIMIT ?
         """
         await #expect(throws: (any Error).self) {

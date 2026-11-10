@@ -27,56 +27,45 @@ struct OnThisDayPolicyTests {
 
     // MARK: - Anniversary ranges
 
-    @Test func rangesCoverEachEarlierYearFromTheFloorAndNotTheDaysOwnYear() {
-        let helsinki = Self.calendar("Europe/Helsinki")
-        let day = CalendarDay(year: 2026, month: 11, day: 9)
-
-        let ranges = AnniversaryRanges.ranges(
-            for: day,
-            earliestCaptureUnix: Self.instant(helsinki, 2023, 2, 1, 12),
-            timeZone: Self.zone("Europe/Helsinki")
-        )
-
-        #expect(ranges.count == 3)
-        #expect(ranges.first?.lowerBound == Self.instant(helsinki, 2023, 11, 9))
-        #expect(ranges.first?.upperBound == Self.instant(helsinki, 2023, 11, 10))
-        #expect(ranges.last?.lowerBound == Self.instant(helsinki, 2025, 11, 9))
-        // Nothing dated before the day's own year, or nothing dated at all: no range.
-        #expect(AnniversaryRanges.ranges(
-            for: day,
-            earliestCaptureUnix: Self.instant(helsinki, 2026, 1, 1, 12),
-            timeZone: Self.zone("Europe/Helsinki")
-        ).isEmpty)
-        #expect(AnniversaryRanges.ranges(for: day, earliestCaptureUnix: nil, timeZone: Self.zone("Europe/Helsinki")).isEmpty)
+    /// A local capture time as `best_capture_local` stores it: the reading counted on a UTC
+    /// calendar.
+    private static func local(_ year: Int, _ month: Int, _ day: Int, _ hour: Int = 0) -> Double {
+        instant(calendar("UTC"), year, month, day, hour)
     }
 
-    @Test func aDaylightSavingDayIsItsOwnLength() {
-        let helsinki = Self.calendar("Europe/Helsinki")
-        // Clocks go forward on 30 March 2025 and back on 26 October 2025 in Helsinki.
-        let spring = AnniversaryRanges.ranges(
-            for: CalendarDay(year: 2026, month: 3, day: 30),
-            earliestCaptureUnix: Self.instant(helsinki, 2025, 1, 1, 12),
-            timeZone: Self.zone("Europe/Helsinki")
-        )
-        let autumn = AnniversaryRanges.ranges(
-            for: CalendarDay(year: 2026, month: 10, day: 26),
-            earliestCaptureUnix: Self.instant(helsinki, 2025, 1, 1, 12),
-            timeZone: Self.zone("Europe/Helsinki")
-        )
+    @Test func rangesCoverEachEarlierYearFromTheFloorAndNotTheDaysOwnYear() {
+        let day = CalendarDay(year: 2026, month: 11, day: 9)
 
-        #expect(spring.map { $0.upperBound - $0.lowerBound } == [23 * 3600])
-        #expect(autumn.map { $0.upperBound - $0.lowerBound } == [25 * 3600])
+        let ranges = AnniversaryRanges.ranges(for: day, earliest: CaptureLocalTime(seconds: Self.local(2023, 2, 1, 12)))
+
+        #expect(ranges.count == 3)
+        #expect(ranges.first?.lowerBound == Self.local(2023, 11, 9))
+        #expect(ranges.first?.upperBound == Self.local(2023, 11, 10))
+        #expect(ranges.last?.lowerBound == Self.local(2025, 11, 9))
+        // Nothing dated before the day's own year, or nothing dated at all: no range.
+        #expect(AnniversaryRanges.ranges(for: day, earliest: CaptureLocalTime(seconds: Self.local(2026, 1, 1, 12))).isEmpty)
+        #expect(AnniversaryRanges.ranges(for: day, earliest: nil).isEmpty)
+    }
+
+    /// Clocks went forward on 30 March 2025 and back on 26 October 2025 in Helsinki, but a
+    /// photo's day is a day of its own clock's readings: midnight to midnight, whatever the
+    /// zone did that day.
+    @Test func aDaylightSavingDayIsADayOfLocalTime() {
+        let floor = CaptureLocalTime(seconds: Self.local(2025, 1, 1, 12))
+        let spring = AnniversaryRanges.ranges(for: CalendarDay(year: 2026, month: 3, day: 30), earliest: floor)
+        let autumn = AnniversaryRanges.ranges(for: CalendarDay(year: 2026, month: 10, day: 26), earliest: floor)
+
+        #expect(spring == [Self.local(2025, 3, 30) ..< Self.local(2025, 3, 31)])
+        #expect(autumn == [Self.local(2025, 10, 26) ..< Self.local(2025, 10, 27)])
     }
 
     @Test func aLeapDayMatchesOnlyLeapYears() {
-        let utc = Self.calendar("UTC")
         let ranges = AnniversaryRanges.ranges(
             for: CalendarDay(year: 2028, month: 2, day: 29),
-            earliestCaptureUnix: Self.instant(utc, 2019, 5, 1),
-            timeZone: Self.zone("UTC")
+            earliest: CaptureLocalTime(seconds: Self.local(2019, 5, 1))
         )
 
-        #expect(ranges.map(\.lowerBound) == [Self.instant(utc, 2020, 2, 29), Self.instant(utc, 2024, 2, 29)])
+        #expect(ranges.map(\.lowerBound) == [Self.local(2020, 2, 29), Self.local(2024, 2, 29)])
         #expect(CalendarDay(year: 2023, month: 2, day: 29).start(in: Self.zone("UTC")) == nil)
     }
 
@@ -193,7 +182,7 @@ struct OnThisDayPolicyTests {
         #expect(CalendarDay(instant) == CalendarDay(year: 2023, month: 11, day: 9))
         let ranges = AnniversaryRanges.ranges(
             for: CalendarDay(year: 2026, month: 11, day: 9),
-            earliestCaptureUnix: instant.timeIntervalSince1970
+            earliest: CaptureLocalTime(startOf: CalendarDay(instant))
         )
         #expect(ranges.count == 3)
     }

@@ -115,7 +115,7 @@ extension AssetMetadata {
     /// Metadata whose only capture record carries an **absolute instant** and no
     /// local wall-clock components.
     ///
-    /// It therefore feeds `capture_instant_unix` — and so `best_capture_unix` ordering —
+    /// It therefore feeds `capture_instant_unix` — and so `best_capture_local` ordering —
     /// without supplying a naming fact, because `CaptureWallClock` selects only
     /// local-authority records with full components. That is exactly what a bare
     /// `timestampFacts.original` used to produce when paired with an empty

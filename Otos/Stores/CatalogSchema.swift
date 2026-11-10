@@ -300,10 +300,10 @@ nonisolated enum CatalogSchema {
                 AND preview_path IS NULL
             )
             """,
-            claimIndex(EnrichmentClaimGateway.broadGlobalIndexName, global: true, claim: .cardProducts),
-            claimIndex(EnrichmentClaimGateway.broadRootIndexName, global: false, claim: .cardProducts),
-            claimIndex(EnrichmentClaimGateway.metadataOnlyGlobalIndexName, global: true, claim: .metadata),
-            claimIndex(EnrichmentClaimGateway.metadataOnlyRootIndexName, global: false, claim: .metadata),
+            claimIndex(EnrichmentClaimGateway.broadGlobalIndexName, global: true, claim: .cardProducts, orderColumn: "best_capture_unix"),
+            claimIndex(EnrichmentClaimGateway.broadRootIndexName, global: false, claim: .cardProducts, orderColumn: "best_capture_unix"),
+            claimIndex(EnrichmentClaimGateway.metadataOnlyGlobalIndexName, global: true, claim: .metadata, orderColumn: "best_capture_unix"),
+            claimIndex(EnrichmentClaimGateway.metadataOnlyRootIndexName, global: false, claim: .metadata, orderColumn: "best_capture_unix"),
         ]
     }
 
@@ -390,8 +390,8 @@ nonisolated enum CatalogSchema {
                     ON UPDATE CASCADE ON DELETE CASCADE
             )
             """,
-            claimIndex(EnrichmentClaimGateway.libraryGlobalIndexName, global: true, claim: .library),
-            claimIndex(EnrichmentClaimGateway.libraryRootIndexName, global: false, claim: .library),
+            claimIndex(EnrichmentClaimGateway.libraryGlobalIndexName, global: true, claim: .library, orderColumn: "best_capture_unix"),
+            claimIndex(EnrichmentClaimGateway.libraryRootIndexName, global: false, claim: .library, orderColumn: "best_capture_unix"),
         ]
     }
 
@@ -505,6 +505,75 @@ nonisolated enum CatalogSchema {
         )
         """,
     ]
+
+    /// The timeline runs on local capture time (ADR 0039): `best_capture_local` replaces
+    /// `best_capture_unix`. It is the library's capture wall clock read as if it were UTC
+    /// (`CaptureLocalTime`), so an item is ordered by, and sits on, the day it was taken on
+    /// the clock where it was taken, whatever zone the Mac is in. An item whose file records
+    /// no wall clock is placed by its absolute time — capture instant, else creation, else
+    /// modification date — read with `assumed_utc_offset_seconds`, the offset of the Mac's
+    /// zone when Otos recorded that time (`CaptureLocalTime.assumedUTCOffset`). This
+    /// migration makes that assumption for every existing row in the zone it runs in.
+    ///
+    /// Every index over the old column is rebuilt, under its own name, over the new one.
+    static let captureLocalTimeMigrationIdentifier = "v23_media_asset_capture_local_time"
+
+    /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
+    static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
+
+    /// `best_capture_local`'s definition: the stored wall clock (`YYYYMMDDHHMMSS`) as
+    /// seconds of a UTC reading, else the absolute time plus the assumed offset. A wall that
+    /// is not a real date-time is NULL to `unixepoch` and falls through to the absolute time.
+    static let bestCaptureLocalSQL = """
+    COALESCE(
+        unixepoch(printf('%04d-%02d-%02d %02d:%02d:%02d',
+            capture_wall_compact / 10000000000, (capture_wall_compact / 100000000) % 100,
+            (capture_wall_compact / 1000000) % 100, (capture_wall_compact / 10000) % 100,
+            (capture_wall_compact / 100) % 100, capture_wall_compact % 100)),
+        \(absoluteCaptureSQL) + assumed_utc_offset_seconds
+    )
+    """
+
+    static func migrateToCaptureLocalTime(_ db: Database, timeZone: TimeZone = .current) throws {
+        try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN assumed_utc_offset_seconds INTEGER")
+        let rows = try Row.fetchAll(db, sql: """
+        SELECT library_root_id, relative_path, \(absoluteCaptureSQL) AS absolute FROM media_asset
+        WHERE \(absoluteCaptureSQL) IS NOT NULL
+        """)
+        let update = try db.makeStatement(sql: """
+        UPDATE media_asset SET assumed_utc_offset_seconds = ? WHERE library_root_id = ? AND relative_path = ?
+        """)
+        for row in rows {
+            let offset = CaptureLocalTime.assumedUTCOffset(
+                for: row["absolute"],
+                previousAbsolute: nil,
+                previousOffset: nil,
+                timeZone: timeZone
+            )
+            try update.execute(arguments: [offset, row["library_root_id"] as Int64, row["relative_path"] as String])
+        }
+        let indexes = try Row.fetchAll(db, sql: """
+        SELECT name, sql FROM sqlite_master
+        WHERE type = 'index' AND tbl_name = 'media_asset' AND sql LIKE '%best_capture_unix%'
+        """)
+        for index in indexes {
+            try db.execute(sql: "DROP INDEX \(index["name"] as String)")
+        }
+        try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN best_capture_unix")
+        try db.execute(sql: """
+        ALTER TABLE media_asset ADD COLUMN best_capture_local DOUBLE GENERATED ALWAYS AS (
+            \(bestCaptureLocalSQL)
+        ) VIRTUAL
+        """)
+        for index in indexes {
+            try db.execute(sql: (index["sql"] as String).replacingOccurrences(of: "best_capture_unix", with: "best_capture_local"))
+        }
+        OtosLog.persistence.noticeOperation("catalog.migration.captureLocalTime", phase: "finish", fields: [
+            "rows": "\(rows.count)",
+            "indexes": "\(indexes.count)",
+            "timeZone": timeZone.identifier,
+        ])
+    }
 
     static let baselineStatements: [String] = [
         """
@@ -828,8 +897,15 @@ nonisolated enum CatalogSchema {
 
     /// A claim index over rows owing a product, newest first: the claim queries walk these
     /// by name with `INDEXED BY`, so the `WHERE` text is the gateway's predicate verbatim.
-    static func claimIndex(_ name: String, global: Bool, claim: EnrichmentClaim) -> String {
-        claimIndex(name, global: global, predicate: EnrichmentClaimGateway.stalenessSQLPredicate(claim))
+    /// `orderColumn` is the capture-order column of the schema the migration runs against:
+    /// `best_capture_unix` before v23, `best_capture_local` from it.
+    static func claimIndex(_ name: String, global: Bool, claim: EnrichmentClaim, orderColumn: String) -> String {
+        claimIndex(
+            name,
+            global: global,
+            predicate: EnrichmentClaimGateway.stalenessSQLPredicate(claim),
+            orderColumn: orderColumn
+        )
     }
 
     private static func v1ClaimIndex(_ name: String, global: Bool, broad: Bool) -> String {
@@ -855,13 +931,13 @@ nonisolated enum CatalogSchema {
                OR \(hash)
             """
             : metadata
-        return claimIndex(name, global: global, predicate: predicate)
+        return claimIndex(name, global: global, predicate: predicate, orderColumn: "best_capture_unix")
     }
 
-    private static func claimIndex(_ name: String, global: Bool, predicate: String) -> String {
+    private static func claimIndex(_ name: String, global: Bool, predicate: String, orderColumn: String) -> String {
         let columns = global
-            ? "best_capture_unix DESC, library_root_id, relative_path"
-            : "library_root_id, best_capture_unix DESC, relative_path"
+            ? "\(orderColumn) DESC, library_root_id, relative_path"
+            : "library_root_id, \(orderColumn) DESC, relative_path"
         return """
         CREATE INDEX \(name)
         ON media_asset(\(columns))

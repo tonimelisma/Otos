@@ -219,7 +219,7 @@ struct PeopleReviewView: View {
         }
         .frame(width: Self.edge, alignment: .leading)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Confirmed face from \(tile.captureDate?.formatted(date: .long, time: .omitted) ?? "no date")")
+        .accessibilityLabel("Confirmed face from \(tile.captureLocalTime?.formatted(Date.FormatStyle(date: .long, time: .omitted)) ?? "no date")")
     }
 
     private func referencePerson(_ tile: FaceTile) -> PersonID? {

@@ -178,6 +178,9 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.captureLocalTimeMigrationIdentifier) { db in
+            try CatalogSchema.migrateToCaptureLocalTime(db)
+        }
         return migrator
     }
 
@@ -834,9 +837,30 @@ extension CatalogStore {
                 )
                 : nil
         )
+        // The assumed offset follows the absolute time the row is now placed by, and is
+        // kept when that time is unchanged (`CaptureLocalTime.assumedUTCOffset`).
+        let captureInstant = metadata.captureInstant?.timeIntervalSince1970
+        let dates = try Row.fetchOne(
+            db,
+            sql: """
+            SELECT \(CatalogSchema.absoluteCaptureSQL) AS absolute, created_at_unix, content_modified_at_unix,
+                   assumed_utc_offset_seconds
+            FROM media_asset WHERE library_root_id = ? AND relative_path = ?
+            """,
+            arguments: [libraryRootID, relativePath.rawValue]
+        )
+        let fileDate: Double? = dates.flatMap { row in
+            (row["created_at_unix"] as Double?) ?? (row["content_modified_at_unix"] as Double?)
+        }
+        let assumedOffset = CaptureLocalTime.assumedUTCOffset(
+            for: captureInstant ?? fileDate,
+            previousAbsolute: dates?["absolute"],
+            previousOffset: dates?["assumed_utc_offset_seconds"]
+        )
         try db.execute(
             sql: """
             UPDATE media_asset SET
+                assumed_utc_offset_seconds = ?,
                 capture_instant_unix = ?,
                 enriched_kind = ?,
                 enriched_format = ?,
@@ -848,7 +872,8 @@ extension CatalogStore {
                 AND relative_path = ?
             """,
             arguments: [
-                metadata.captureInstant?.timeIntervalSince1970,
+                assumedOffset,
+                captureInstant,
                 enrichedKind?.rawValue,
                 enrichedFormat?.rawValue,
                 metadata.durationSeconds,
@@ -1425,6 +1450,10 @@ extension CatalogStore {
         // path refreshes its current filesystem facts instead of creating scan
         // history or a second asset identity. Observing a row the current attachment
         // had not yet seen reveals it (`awaiting_presence`), and that is a change.
+        // The assumed offset (`CaptureLocalTime.assumedUTCOffset`) is made for the
+        // absolute time the row is placed by. The file's dates stand in for it only while
+        // no capture instant does, and an absolute time unchanged to the second keeps the
+        // offset it was given, so a rescan in another zone moves nothing.
         try db.execute(
             sql: """
             INSERT INTO media_asset (
@@ -1440,10 +1469,19 @@ extension CatalogStore {
                 byte_size,
                 created_at_unix,
                 content_modified_at_unix,
-                file_identifier
+                file_identifier,
+                assumed_utc_offset_seconds
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(library_root_id, relative_path) DO UPDATE SET
+                assumed_utc_offset_seconds = CASE
+                    WHEN CAST(COALESCE(media_asset.capture_instant_unix, media_asset.created_at_unix,
+                                       media_asset.content_modified_at_unix) AS INTEGER)
+                      IS CAST(COALESCE(media_asset.capture_instant_unix, excluded.created_at_unix,
+                                       excluded.content_modified_at_unix) AS INTEGER)
+                    THEN media_asset.assumed_utc_offset_seconds
+                    ELSE excluded.assumed_utc_offset_seconds
+                END,
                 sort_key = excluded.sort_key,
                 name_sort_key = excluded.name_sort_key,
                 name = excluded.name,
@@ -1579,6 +1617,11 @@ private nonisolated func scannedFileUpsertArguments(
         file.createdAt?.timeIntervalSince1970,
         file.contentModifiedAt?.timeIntervalSince1970,
         file.fileIdentifier.map { Int64(bitPattern: $0) },
+        CaptureLocalTime.assumedUTCOffset(
+            for: (file.createdAt ?? file.contentModifiedAt)?.timeIntervalSince1970,
+            previousAbsolute: nil,
+            previousOffset: nil
+        ),
     ]
     return StatementArguments(values)
 }
