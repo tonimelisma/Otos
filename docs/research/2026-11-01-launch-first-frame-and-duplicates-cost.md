@@ -7,7 +7,8 @@ each one is, measured on the owner's Mac (Xcode 27.2, Debug builds as installed,
 ## The duplicates build
 
 Evidence: the installed app's logs after a launch with a camera card attached, and the
-Time Profiler trace `build/Profiles/launch-20261101-104820.trace`.
+Time Profiler trace `build/Profiles/launch-20261101-104820.trace` (deleted 2026-11-10
+to free disk; the figures below are its only record).
 
 - Each window pass rebuilt the groups, so they were rebuilt back to back while the catalog
   changed: 1.5–2.5 s apart for as long as the card was being read.

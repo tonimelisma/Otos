@@ -26,7 +26,8 @@ Debug build, 23,043-asset OneDrive library, ~55 s of user scrolling while
 background enrichment ran. Artifacts:
 
 - Instruments trace: `build/Profiles/SwiftUI-jank-20260709-114428.trace`
-  (SwiftUI template: Time Profiler, Hangs, hitches).
+  (SwiftUI template: Time Profiler, Hangs, hitches; deleted 2026-11-10 to free disk,
+  so the figures below are its only record).
 - Unified log capture: `logs/run-20260709T184420Z-p77645-prod.log`.
 
 Findings, cross-confirmed between the Hangs table, the debug
@@ -234,7 +235,7 @@ allocation and unanimated reorder policy are unchanged — those remain plan
 ## Post-fix run (2026-07-09, after PRs #78–#80 / plan 0008)
 
 Instrumented scroll run: log `logs/run-20260709T235830Z-p6981-prod.log`, trace
-`build/Profiles/SwiftUI-postfix-20260709-165836.trace` (~2 min attach,
+`build/Profiles/SwiftUI-postfix-20260709-165836.trace` (deleted 2026-11-10; ~2 min attach,
 enrichment active at ~4.9k/23,045 enriched).
 
 - Plan 0008 behaves as designed: 26/26 structural applies animated
@@ -314,7 +315,8 @@ duration.
 
 Owner scroll session, ~2 min attach with enrichment active (~5.1k/23,048):
 log `logs/run-20260710T021345Z-p19675-prod.log`, trace
-`build/Profiles/SwiftUI-plan0009-20260709-191352.trace`.
+`build/Profiles/SwiftUI-plan0009-20260709-191352.trace` (deleted 2026-11-10; the
+aggregates below are its only record).
 
 - **Instruments Hangs table: 0 rows** (plan-0008 verification run: 31; original
   diagnosis run: 11). The apply-path jank is fixed at the platform-authoritative
