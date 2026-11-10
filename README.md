@@ -28,7 +28,8 @@ Select full Xcode:
 sudo xcode-select --switch /Applications/Xcode-beta.app/Contents/Developer
 ```
 
-Install developer tools:
+Install developer tools (SwiftFormat and SwiftLint are fetched, pinned and
+checksummed, by `script/lint-tools.sh` on first use):
 
 ```sh
 brew bundle

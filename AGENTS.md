@@ -308,7 +308,10 @@ like, the requirement row says it is implemented and points at the test.
 
 ## Toolchain
 
-Use full Xcode (not Command Line Tools). Install tools with `brew bundle`. The
+Use full Xcode (not Command Line Tools). Install tools with `brew bundle`;
+SwiftFormat and SwiftLint are not among them: `script/lint-tools.sh` pins them,
+checks their checksums, and fetches them on first use. Run `"$(script/lint-tools.sh
+swiftformat)" .` to format. The
 required local check is **`script/check.sh`** — the single entry point, run with
 `run_in_background: true`. It runs the seconds-long gates first, then the full
 verification (requirements-authority + lint + build + test), and prints a heartbeat
