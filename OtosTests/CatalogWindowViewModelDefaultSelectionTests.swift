@@ -20,6 +20,7 @@ struct ViewModelDefaultSelectionTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
 
@@ -131,6 +132,7 @@ struct ViewModelDefaultSelectionTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: temp,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
     }

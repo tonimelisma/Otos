@@ -241,16 +241,15 @@ actor MediaImportExecutor {
 
     /// Reads the destination volume's available capacity for the per-entry
     /// floor check (ADR 0027). Injected for the same reason as
-    /// `VolumeTransfer`: the floor is otherwise untestable. The production
-    /// reader is `FreeSpaceFloor.availableBytes(onVolumeOf:)`.
-    private let volumeCapacity: @Sendable (URL) -> Int64?
+    /// `VolumeTransfer`: the floor is otherwise untestable.
+    private let volumeCapacity: VolumeCapacityReader
     private let transfer: VolumeTransfer
 
     init(
         store: CatalogStore,
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,
-        volumeCapacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:),
+        volumeCapacity: @escaping VolumeCapacityReader,
         transfer: @escaping VolumeTransfer = CopyfileTransfer.copy
     ) {
         self.store = store

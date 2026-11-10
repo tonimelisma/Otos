@@ -58,7 +58,7 @@ nonisolated enum MediaExporter {
         settings: ExportSettings,
         to folder: URL,
         materialization: any MaterializationRequesting,
-        volumeCapacity: @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:)
+        volumeCapacity: VolumeCapacityReader
     ) async -> ExportOutcome {
         let start = ContinuousClock.now
         let original = item.id.fileURL
@@ -121,7 +121,7 @@ nonisolated enum MediaExporter {
         settings: ExportSettings,
         into scratch: URL,
         folder: URL,
-        volumeCapacity: @Sendable (URL) -> Int64?
+        volumeCapacity: VolumeCapacityReader
     ) async throws -> (URL, String) {
         let original = item.id.fileURL
         if item.isVideo {
@@ -177,8 +177,7 @@ nonisolated enum MediaExporter {
         throw ExportError.namesExhausted
     }
 
-    /// `volumeCapacity` reads a volume's free space; the app passes the system's reading,
-    /// a test its own, so no outcome depends on how full the machine running it is.
+    /// `volumeCapacity` reads a volume's free space (`VolumeCapacityReader`).
     private static func requireRoom(
         _ bytes: Int64, onVolumeOf url: URL, _ volumeCapacity: (URL) -> Int64?
     ) throws {

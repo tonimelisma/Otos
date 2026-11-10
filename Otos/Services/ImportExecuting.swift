@@ -29,14 +29,14 @@ actor LiveImportExecutor: ImportExecuting {
     /// Forwarded to every `MediaImportExecutor` this creates — the floor's
     /// capacity reader (ADR 0027), substitutable so a coordinator-level test
     /// can drive a real copy into a volume that "runs out".
-    private let volumeCapacity: @Sendable (URL) -> Int64?
+    private let volumeCapacity: VolumeCapacityReader
     private var activeExecutor: MediaImportExecutor?
 
     init(
         store: CatalogStore,
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,
-        volumeCapacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:)
+        volumeCapacity: @escaping VolumeCapacityReader
     ) {
         self.store = store
         self.cameraImport = cameraImport

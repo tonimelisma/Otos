@@ -822,6 +822,7 @@ private struct AllImportsListView: View {
         viewModel: CatalogWindowViewModel(
             catalogStore: CatalogStore(location: .inMemory),
             preferencesDomain: .suite("Otos.Preview.\(UUID().uuidString)"),
+            volumeCapacity: FreeSpaceFloor.availableBytes(onVolumeOf:),
             trashFiles: .refusing
         )
     )

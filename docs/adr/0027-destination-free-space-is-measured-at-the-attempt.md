@@ -41,10 +41,14 @@ observes it on a timer. `FreeSpaceFloor` is one constant and one check
 (`FreeSpaceFloor.admits`) with one home, used by the import executor, by Move to
 Trash's downloads, by `MaterializationCoordinator` for every background and device
 download, by export, and by an Immich account's products. Each of those owners takes the
-volume's free space from an injected reader (`volumeCapacity` / `capacity`, defaulting to
-`FreeSpaceFloor.availableBytes(onVolumeOf:)`), and `CatalogWindowViewModel` hands its one
-reader to every owner it builds, so a test decides how full a volume is and no outcome
-depends on the disk of the machine that runs it. A held download is offered again after the enrichment schedule's 60 s space
+volume's free space from a `VolumeCapacityReader` passed as `volumeCapacity:`, a required
+parameter with no default. The composition root (`OtosApp`) is the one place that names
+the real disk's reading, `FreeSpaceFloor.availableBytes(onVolumeOf:)`, and
+`CatalogWindowViewModel` hands that one reader to every owner it builds. A test therefore
+states the figure it runs under — ample, unless it tests the floor — and no outcome depends
+on the disk of the machine that runs it: a defaulted reader once let suites that omitted it
+hang whenever parallel checks took the host volume below the floor, because held work
+never started. A held download is offered again after the enrichment schedule's 60 s space
 recheck (`time: poll`), because macOS reports no free-space change at an app-defined
 threshold.
 

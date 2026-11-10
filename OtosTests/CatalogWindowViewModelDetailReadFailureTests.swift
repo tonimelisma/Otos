@@ -47,6 +47,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
                 startsSourceMonitoring: false,
                 preferencesDomain: .suite(UUID().uuidString),
                 previewLoader: loader,
+                volumeCapacity: ampleVolumeCapacity,
                 trashFiles: .refusing
             )
             model.applyState(CatalogWindowState(

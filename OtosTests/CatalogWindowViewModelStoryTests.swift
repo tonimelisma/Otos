@@ -50,6 +50,7 @@ struct CatalogWindowViewModelStoryTests {
             calendarDayReader: { day.get() },
             calendarNotificationCenter: center,
             tileContentStore: tiles,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: trash.map { .folder($0) } ?? .refusing
         )
     }

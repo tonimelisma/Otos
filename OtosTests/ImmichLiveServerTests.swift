@@ -76,7 +76,8 @@ struct ImmichLiveServerTests {
             let sync = ImmichCatalogSync(
                 rootPath: rootPath,
                 source: ImmichSessionSyncSource(client: client, token: login.accessToken),
-                store: store
+                store: store,
+                volumeCapacity: ampleVolumeCapacity
             )
             outcome = await sync.pass()
             try await expectRangedMetadataRead(
@@ -170,7 +171,8 @@ struct ImmichLiveServerTests {
                 stagingContainer: directory.appending(path: "RemoteStaging")
             )
             let sync = ImmichCatalogSync(
-                rootPath: rootPath, source: ImmichSessionSyncSource(client: client, token: token), store: store
+                rootPath: rootPath, source: ImmichSessionSyncSource(client: client, token: token), store: store,
+                volumeCapacity: ampleVolumeCapacity
             )
             _ = await sync.pass()
             let rows = try await store.sourceItemRows([stillID, motionID], in: rootPath)

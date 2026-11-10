@@ -69,6 +69,7 @@ struct LoupeVideoPreparationTests {
                 status: { _ in .materialized },
                 materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in .testMaterialized }
             ),
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
     }

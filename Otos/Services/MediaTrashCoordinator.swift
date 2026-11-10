@@ -49,7 +49,6 @@ actor MediaTrashCoordinator {
     /// Moves a file back from the Trash: `(from, to)`. Never overwrites.
     typealias PutBackExecutor = @Sendable (URL, URL) throws -> Void
     typealias StatusReader = @Sendable (URL) -> FileMaterializationStatus
-    typealias CapacityReader = @Sendable (URL) -> Int64?
 
     /// The filesystem acts the queue performs, as one value: the app passes `.live`, the
     /// system Trash, and a test passes a Trash of its own. There is no default, so nothing
@@ -188,7 +187,7 @@ actor MediaTrashCoordinator {
     private let willHandleItem: (@Sendable (MediaAssetID) async -> Void)?
     private let materializationRequester: (any MaterializationRequesting)?
     private let status: StatusReader
-    private let capacity: CapacityReader
+    private let volumeCapacity: VolumeCapacityReader
     private let files: FileOperations
     private let retryPolicy: RetryPolicy
     private let clock = ContinuousClock()
@@ -237,7 +236,7 @@ actor MediaTrashCoordinator {
         materializationRequester: (any MaterializationRequesting)?,
         files: FileOperations,
         status: @escaping StatusReader = { FileMaterialization.status(of: $0) },
-        capacity: @escaping CapacityReader = FreeSpaceFloor.availableBytes(onVolumeOf:),
+        volumeCapacity: @escaping VolumeCapacityReader,
         retryPolicy: RetryPolicy = .production,
         reads: StoreReads? = nil,
         willHandleItem: (@Sendable (MediaAssetID) async -> Void)? = nil
@@ -247,7 +246,7 @@ actor MediaTrashCoordinator {
         self.willHandleItem = willHandleItem
         self.materializationRequester = materializationRequester
         self.status = status
-        self.capacity = capacity
+        self.volumeCapacity = volumeCapacity
         self.files = files
         self.retryPolicy = retryPolicy
         let (events, eventContinuation) = AsyncStream<Event>.makeStream(bufferingPolicy: .unbounded)
@@ -547,7 +546,7 @@ actor MediaTrashCoordinator {
     }
 
     private func fitsAboveFloor(_ bytes: Int64, root: LibraryRootPath) -> Bool {
-        FreeSpaceFloor.admits(bytes, committed: downloadBytes.values.reduce(0, +), available: capacity(root.url))
+        FreeSpaceFloor.admits(bytes, committed: downloadBytes.values.reduce(0, +), available: volumeCapacity(root.url))
     }
 
     private func startDownload(_ item: MediaTrashItem, members: [MediaTrashMember], bytes: Int64) {

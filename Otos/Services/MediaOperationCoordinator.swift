@@ -37,7 +37,7 @@ actor MediaOperationCoordinator {
     /// Reads the destination volume's available capacity for state C's
     /// "not everything will fit" line — the same reader the executor's floor
     /// uses, so "available" means one thing in Otos. Injectable for tests.
-    private let volumeCapacity: @Sendable (URL) -> Int64?
+    private let volumeCapacity: VolumeCapacityReader
     private let makeExecutor: @Sendable (LibraryRootPath) -> any ImportExecuting
 
     private var machine: ImportSessionMachine
@@ -98,7 +98,7 @@ actor MediaOperationCoordinator {
         preferencesDomain: PreferencesDomain,
         planBuilder: any ImportPlanBuilding = LiveImportPlanBuilder(),
         unreadableRetryDelays: [Duration] = [.seconds(1), .seconds(4), .seconds(16), .seconds(60)],
-        volumeCapacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:),
+        volumeCapacity: @escaping VolumeCapacityReader,
         makeExecutor: (@Sendable (LibraryRootPath) -> any ImportExecuting)? = nil,
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,

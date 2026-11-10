@@ -117,7 +117,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
         ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults, planBuilder: builder)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            planBuilder: builder,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         try await waitForPendingBuilder(builder, source: cardPath)
 
@@ -166,7 +171,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         let builder = ControlledImportPlanBuilder()
         await builder.suspendNextBuild(for: cardPath)
         let defaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults, planBuilder: builder)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            planBuilder: builder,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         try await waitForPendingBuilder(builder, source: cardPath)
 
@@ -214,7 +224,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
         ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults, planBuilder: builder)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            planBuilder: builder,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         try await waitForPendingBuilder(builder, source: cardPath)
 
@@ -282,7 +297,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
         ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults, planBuilder: builder)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            planBuilder: builder,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         try await waitForPendingBuilder(builder, source: cardPath)
 
@@ -352,7 +372,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
         ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         let planA = try await waitForReady(coordinator, source: cardAPath)
         #expect(planA.entries.first?.destination?.rawValue == "shared.jpg")
@@ -437,11 +461,12 @@ struct MediaOperationCoordinatorAdversarialTests {
             store: store,
             preferencesDomain: defaults,
             planBuilder: builder,
+            volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { source in
                 if source == cardAPath {
                     ControlledImportExecutor(control: execControl)
                 } else {
-                    LiveImportExecutor(store: store)
+                    LiveImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity)
                 }
             }
         )
@@ -541,11 +566,12 @@ struct MediaOperationCoordinatorAdversarialTests {
             store: store,
             preferencesDomain: defaults,
             planBuilder: builder2,
+            volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { source in
                 if source == cardAPath {
                     ControlledImportExecutor(control: execControl)
                 } else {
-                    LiveImportExecutor(store: store)
+                    LiveImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity)
                 }
             }
         )
@@ -622,7 +648,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         let builder = ControlledImportPlanBuilder()
         await builder.suspendNextBuild(for: cardAPath)
         await builder.suspendNextBuild(for: cardBPath)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults, planBuilder: builder)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            planBuilder: builder,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         try await waitForPendingBuilder(builder, source: cardAPath)
         try await waitForPendingBuilder(builder, source: cardBPath)
@@ -688,7 +719,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
 
         // Use live executor for A so it actually publishes a file.
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         let planA = try await waitForReady(coordinator, source: cardAPath)
         #expect(planA.entries.first?.destination?.rawValue == "shared.jpg")
@@ -761,6 +796,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -824,6 +860,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -904,6 +941,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -999,6 +1037,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -1063,6 +1102,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -1129,6 +1169,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -1195,7 +1236,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             store: store,
             preferencesDomain: defaults,
             planBuilder: builder,
-            unreadableRetryDelays: [.milliseconds(30), .milliseconds(30), .milliseconds(30)]
+            unreadableRetryDelays: [.milliseconds(30), .milliseconds(30), .milliseconds(30)],
+            volumeCapacity: ampleVolumeCapacity
         )
         await coordinator.start()
         let proven = try await waitForReady(coordinator, source: cardPath)
@@ -1270,7 +1312,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             store: store,
             preferencesDomain: defaults,
             planBuilder: builder,
-            unreadableRetryDelays: [.milliseconds(20)]
+            unreadableRetryDelays: [.milliseconds(20)],
+            volumeCapacity: ampleVolumeCapacity
         )
         await coordinator.start()
         let failed = try await waitForPresentation(coordinator, source: cardPath) { pres in
@@ -1338,7 +1381,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             store: store,
             preferencesDomain: defaults,
             planBuilder: builder,
-            makeExecutor: { _ in LiveImportExecutor(store: store) }
+            volumeCapacity: ampleVolumeCapacity,
+            makeExecutor: { _ in LiveImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity) }
         )
         await coordinator.start()
         let proven = try await waitForReady(coordinator, source: cardPath)
@@ -1413,7 +1457,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
-            makeExecutor: { _ in LiveImportExecutor(store: store) }
+            volumeCapacity: ampleVolumeCapacity,
+            makeExecutor: { _ in LiveImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity) }
         )
         await coordinator.start()
         await coordinator.setDestination(firstPath, for: cardPath)
@@ -1542,6 +1587,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -1613,6 +1659,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in
                 LiveImportExecutor(store: store, volumeCapacity: { _ in FreeSpaceFloor.bytes + 2500 })
             }
@@ -1696,6 +1743,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -1793,6 +1841,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             store: store,
             preferencesDomain: defaults,
             planBuilder: builder,
+            volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -1847,7 +1896,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         // coordinator these tests do not run.
         await markEnrichmentLookedAtEveryRow(store, root: cardPath)
         let defaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         _ = try await waitForReady(coordinator, source: cardPath)
 
@@ -1905,7 +1958,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         )
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
 
         _ = try await waitForPresentation(coordinator, source: cardPath, predicate: { pres in
@@ -1987,7 +2044,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
-            makeExecutor: { _ in LiveImportExecutor(store: store) }
+            volumeCapacity: ampleVolumeCapacity,
+            makeExecutor: { _ in LiveImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity) }
         )
         await coordinator.start()
         await markEnrichmentLookedAtEveryRow(store, root: cardPath)
@@ -2065,7 +2123,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         )
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
 
         // Wait for waitingForMetadata
@@ -2161,6 +2223,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -2223,7 +2286,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
 
         // Use live executor for this test so deletion actually happens.
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         let plan = try await waitForReady(coordinator, source: cardPath)
         #expect(plan.totals.copyCount == 0, "Should be zero-copy")
@@ -2265,7 +2332,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         )
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
 
         // The session is created and reaches Ready the instant the device root
@@ -2323,7 +2394,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         )
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         _ = try await waitForReady(coordinator, source: rootPath)
 

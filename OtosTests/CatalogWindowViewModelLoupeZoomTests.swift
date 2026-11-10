@@ -157,6 +157,7 @@ private func makeZoomModel(loader: FakePreviewLoader) -> CatalogWindowViewModel 
         startsSourceMonitoring: false,
         preferencesDomain: .suite(UUID().uuidString),
         previewLoader: loader,
+        volumeCapacity: ampleVolumeCapacity,
         trashFiles: .refusing
     )
 }
