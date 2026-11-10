@@ -49,9 +49,14 @@ struct CatalogWindowViewModelImportIntentTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: domain,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: domain)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: domain,
+            volumeCapacity: ampleVolumeCapacity
+        )
         model.mediaOperationCoordinator = coordinator
         model.startImportIntentConsumer(coordinator: coordinator)
         await coordinator.start()

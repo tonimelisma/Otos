@@ -32,7 +32,8 @@ struct MediaOperationCoordinatorTests {
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: tempDefaults
+            preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity
         )
         await coordinator.start()
         // Ready requires proven naming facts (ARC-057); stand in for the
@@ -86,7 +87,11 @@ struct MediaOperationCoordinatorTests {
             !state.isScanning && state.removableSources.first?.activity == .idle
         }
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         // Ready requires proven naming facts (ARC-057); stand in for the
         // enrichment coordinator these tests do not run.
@@ -123,7 +128,8 @@ struct MediaOperationCoordinatorTests {
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: tempDefaults
+            preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity
         )
         await coordinator.start()
 
@@ -203,7 +209,11 @@ struct MediaOperationCoordinatorTests {
         )
 
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
 
         // The source waits for metadata before enrichment.
@@ -287,7 +297,8 @@ struct MediaOperationCoordinatorTests {
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: tempDefaults
+            preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity
         )
         await coordinator.start()
 
@@ -361,7 +372,8 @@ struct MediaOperationCoordinatorTests {
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: tempDefaults
+            preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity
         )
         await coordinator.start()
         // Ready requires proven naming facts (ARC-057); stand in for the
@@ -446,7 +458,11 @@ struct MediaOperationCoordinatorTests {
         }
 
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         await markEnrichmentLookedAtEveryRow(store, root: cardPath)
         await coordinator.setDestination(fixedPath, for: cardPath)
@@ -516,7 +532,11 @@ struct MediaOperationCoordinatorTests {
         }
 
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         await markEnrichmentLookedAtEveryRow(store, root: cardPath)
         await coordinator.setDestination(fixedPath, for: cardPath)
@@ -598,7 +618,11 @@ struct MediaOperationCoordinatorTests {
         }
 
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         await markEnrichmentLookedAtEveryRow(store, root: cardPath)
         await coordinator.setDestination(firstPath, for: cardPath)
@@ -659,7 +683,11 @@ struct MediaOperationCoordinatorTests {
         }
 
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         // Ready requires proven naming facts (ARC-057); stand in for the
         // enrichment coordinator these tests do not run.
@@ -729,7 +757,11 @@ struct MediaOperationCoordinatorTests {
         }
 
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         // Ready requires proven naming facts (ARC-057); stand in for the
         // enrichment coordinator these tests do not run.
@@ -749,7 +781,11 @@ struct MediaOperationCoordinatorTests {
             identity: .volume(uuid: "first-added")
         )
         let defaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(
+            store: fixture.store,
+            preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
 
         _ = try await readyGeneration(coordinator, source: fixture.source)
@@ -797,7 +833,11 @@ struct MediaOperationCoordinatorTests {
         }
         let source = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         let defaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         _ = try await readyGeneration(coordinator, source: source)
         let presentation = try #require(
@@ -822,7 +862,11 @@ struct MediaOperationCoordinatorTests {
             forKey: "import.destinationByDeviceIdentity"
         )
         defaults.makeDefaults().set(fixture.libraries[1].rawValue, forKey: "import.lastUsedDestination")
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(
+            store: fixture.store,
+            preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         _ = try await readyGeneration(coordinator, source: fixture.source)
         let presentation = try #require(
@@ -845,7 +889,11 @@ struct MediaOperationCoordinatorTests {
             identity: .volume(uuid: "reorder-attached")
         )
         let defaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(
+            store: fixture.store,
+            preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         let baseline = try await readyGeneration(coordinator, source: fixture.source)
         let before = try #require(
@@ -874,7 +922,11 @@ struct MediaOperationCoordinatorTests {
             identity: .volume(uuid: "explicit-survives-reorder")
         )
         let defaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(
+            store: fixture.store,
+            preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         let baseline = try await readyGeneration(coordinator, source: fixture.source)
         await coordinator.setDestination(fixture.libraries[1], for: fixture.source)
@@ -901,7 +953,11 @@ struct MediaOperationCoordinatorTests {
             identity: .volume(uuid: "explicit-then-unavailable")
         )
         let defaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(
+            store: fixture.store,
+            preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         let baseline = try await readyGeneration(coordinator, source: fixture.source)
         await coordinator.setDestination(fixture.libraries[2], for: fixture.source)
@@ -944,7 +1000,11 @@ struct MediaOperationCoordinatorTests {
             identity: .volume(uuid: "reattach-remembers")
         )
         let defaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(
+            store: fixture.store,
+            preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         let baseline = try await readyGeneration(coordinator, source: fixture.source)
         await coordinator.setDestination(fixture.libraries[2], for: fixture.source)

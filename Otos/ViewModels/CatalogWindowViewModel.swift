@@ -378,7 +378,7 @@ final class CatalogWindowViewModel {
     /// Reads a volume's free space for every free-space floor this window's owners keep
     /// (ADR 0027): the system's reading in the app, a test's own so no outcome depends on
     /// how full the machine running it is.
-    @ObservationIgnored let volumeCapacity: @Sendable (URL) -> Int64?
+    @ObservationIgnored let volumeCapacity: VolumeCapacityReader
     @ObservationIgnored let deviceStagingRegistry: DeviceStagingRegistry
     @ObservationIgnored private let mediaTileDetailReader: MediaTileDetailReader
     @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
@@ -588,7 +588,7 @@ final class CatalogWindowViewModel {
         calendarDayReader: @escaping @Sendable () -> CalendarDay = { CalendarDay.today() },
         calendarNotificationCenter: NotificationCenter = .default,
         tileContentStore: TileContentStore = TileContentStore(),
-        volumeCapacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:),
+        volumeCapacity: @escaping VolumeCapacityReader,
         trashFiles: MediaTrashCoordinator.FileOperations
     ) {
         self.volumeCapacity = volumeCapacity
@@ -695,7 +695,7 @@ final class CatalogWindowViewModel {
                     )
                 }
             },
-            capacity: volumeCapacity
+            volumeCapacity: volumeCapacity
         )
         self.materializationCoordinator = materializationCoordinator
         handOffPreparer = HandOffPreparer(
@@ -706,7 +706,7 @@ final class CatalogWindowViewModel {
             store: catalogStore,
             materializationRequester: materializationCoordinator,
             files: trashFiles,
-            capacity: volumeCapacity
+            volumeCapacity: volumeCapacity
         )
         // One face analyser, so the model loads once, read by enrichment (fixed libraries'
         // originals) and the preview face reader (Immich accounts' previews).

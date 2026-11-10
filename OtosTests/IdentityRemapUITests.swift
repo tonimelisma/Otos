@@ -68,6 +68,7 @@ struct IdentityRemapUITests {
             catalogStore: CatalogStore(location: .inMemory, scanCadence: .milliseconds(10)),
             startsSourceMonitoring: false,
             preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
         viewModel.applyState(Self.state(orderedIDs: [oldID, other], pending: []))

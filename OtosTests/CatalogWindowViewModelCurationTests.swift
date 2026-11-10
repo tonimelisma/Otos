@@ -72,6 +72,7 @@ struct CatalogWindowViewModelCurationTests {
                 startsEnrichment: false,
                 startsSourceMonitoring: false,
                 preferencesDomain: .suite(UUID().uuidString),
+                volumeCapacity: ampleVolumeCapacity,
                 trashFiles: .refusing
             )
             let ids = library.ids
@@ -130,6 +131,7 @@ private func makeCurationModel() -> CatalogWindowViewModel {
         startsEnrichment: false,
         startsSourceMonitoring: false,
         preferencesDomain: .suite(UUID().uuidString),
+        volumeCapacity: ampleVolumeCapacity,
         trashFiles: .refusing
     )
 }

@@ -45,6 +45,7 @@ struct MediaOperationCoordinatorProgressTests {
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
+            volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()

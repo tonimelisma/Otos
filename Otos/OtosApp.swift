@@ -37,14 +37,16 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
     private var backgroundReading: NSObjectProtocol?
 
     /// The one place in the app that names the production catalog location,
-    /// UserDefaults.standard and the system Trash — every other type takes them as
-    /// required (no-default) parameters, so a caller cannot reach production data by
-    /// omitting an argument (ADR 0020).
+    /// UserDefaults.standard, the system Trash and the real disk's free space — every other
+    /// type takes them as required (no-default) parameters, so a caller cannot reach
+    /// production data, or depend on how full the disk is, by omitting an argument
+    /// (ADR 0020, ADR 0027).
     let catalogViewModel = CatalogWindowViewModel(
         catalogStore: CatalogStore(
             location: .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos")
         ),
         preferencesDomain: .standard,
+        volumeCapacity: FreeSpaceFloor.availableBytes(onVolumeOf:),
         trashFiles: .live
     )
 
