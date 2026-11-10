@@ -18,9 +18,13 @@ struct SearchGlossaryTests {
         #expect(glossary.reading(of: "rannapall") == "beach ball")
         #expect(glossary.reading(of: "sünnipäevatort") == "birthday cake")
         // A word the glossary lacks stays as typed; a foreign name keeps its name, not its ending.
-        #expect(glossary.reading(of: "magav beebi") == "magav baby")
+        #expect(glossary.reading(of: "unistav beebi") == "unistav baby")
+        // Common words beyond the labels: a participle, a colour, a compound of an adjective.
+        #expect(glossary.reading(of: "magav beebi") == "sleeping baby")
+        #expect(glossary.reading(of: "punase mütsiga laps") == "red beanie child")
+        #expect(glossary.reading(of: "vanaauto") == "old automobile")
         #expect(glossary.reading(of: "Golden Gate'i sild") == "Golden Gate bridge")
-        #expect(glossary.reading(of: "magav") == nil)
+        #expect(glossary.reading(of: "unistus") == nil)
         #expect(try SearchGlossary(language: "xx", bundle: Self.bundle) == nil)
     }
 

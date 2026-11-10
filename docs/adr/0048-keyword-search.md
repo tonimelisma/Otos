@@ -56,9 +56,11 @@ model reached 68%, and a multilingual text encoder distilled into CLIP's space r
    typed 65. A non-English query takes about 0.35 s, mostly the translation.
 3. **Read through Otos's glossary** a language Translation does not offer, when the user
    searches in it (`SearchGlossary`, Estonian): the picture's words it holds become English
-   (Estonian 69 on the app's Core ML embeddings, against 49 as typed; English 85). The
-   glossary is written for Otos from Vision's 1,303 scene-label names, nominative and genitive
-   form, with the language's case endings; a typed word is read when forms cover it end to end.
+   (Estonian 77 on the app's Core ML embeddings, against 49 as typed; English 85). The
+   glossary is written for Otos: Vision's 1,303 scene-label names, then about 150 common words
+   of a photo search (people, colours, qualities, places, times, actions with their verb
+   forms), nominative and genitive, with the language's case endings; a typed word is read when
+   forms cover it end to end.
 4. **Fall back to the text as typed** for every other word, and for a language with no
    installed pack and no glossary, or none recognised. SigLIP 2's own multilingual tower
    reads it.
@@ -200,7 +202,7 @@ word of it and English spelling (`NSSpellChecker`, English alone) rejects a word
 52 test queries in English, none is glossed; an English word the glossary also holds ("tool",
 Estonian chair) is spelled right and stays English. Facts are read from the typed text before
 the glossary, so a place's name is never read as a word ("Kassel" is no cat). On the facts
-queries, Estonian rose from 56 to 78 and the total from 0.832 to 0.843.
+queries, Estonian rose from 56 to 86 and the total from 0.832 to 0.847.
 
 ### Reading while hidden
 
@@ -234,9 +236,8 @@ relaunch. Nothing reports when a full disk or a failed Core ML load clears.
 - **Unread items:** until indexing finishes, a search shows only what has been read. The
   empty state counts what has not.
 - **A language Translation lacks** is read through Otos's glossary of it where one exists
-  (Estonian, 69 against 85 in English); a word it lacks, and a language without one, is read
-  by the multilingual tower as typed. A glossary covers the scene-label vocabulary, not
-  verbs or adjectives ("magav", sleeping, stays as typed). Another language takes its own
+  (Estonian, 77 against 85 in English); a word it lacks, and a language without one, is read
+  by the multilingual tower as typed ("unistav", dreaming). Another language takes its own
   `SearchGlossary-<code>.tsv`.
 - **A new model or preprocessing** bumps `SearchEmbedding.revision`, and every embedding is
   read again from the stored thumbnails. No original is read.

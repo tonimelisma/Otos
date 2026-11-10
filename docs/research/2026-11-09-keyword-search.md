@@ -586,6 +586,7 @@ or one case ending. Words the glossary lacks stay as typed.
 | Glossary, unread words as typed | 70.4 | 69.4 | 68.9 |
 | Glossary, unread words dropped | 66.3 | | |
 | Glossary fused with as typed | 64.5 | | |
+| Glossary with the common words | | 77.2 | 77.5 |
 
 The app's column is the encoder itself (a user whose languages are Estonian and English). It
 glosses 45 of the 52 queries: 7 hold no word the glossary reads ("vanaauto", "kõrvitsapõld"),
@@ -603,6 +604,17 @@ readings for that user.
 
 The 204 facts queries, through the same encoder: precision@10 0.832 → 0.843, Estonian 56 → 78,
 no other language lower (en 91, fi 92, de 87, sv 78).
+
+A second pass added about 150 common words of a photo search that are not scene labels:
+people, colours, qualities, places, times of day and year, and actions with their verb forms
+(the -v participle, the third person, -mas, -mine: "magav", "magab", "magamas" sleeping).
+The list was written as a general vocabulary. Four words first written in came from the test
+queries rather than from it (crayon, menu, selfie, skyline) and were taken out before
+measuring; the rest still overlaps the test where a test query uses an everyday word ("old",
+"red", "field"), so the gain is an upper bound for words outside the list. Through the app's
+encoder: 50 of 52 queries glossed, recall@10 69 → 77 (English 85). Facts: 0.843 → 0.847,
+Estonian 78 → 86. English, Finnish, Swedish and German queries for an Estonian user read as
+before; none of the 52 English queries is glossed.
 
 ### The surfaces, in a window
 

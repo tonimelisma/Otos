@@ -67,7 +67,7 @@ nonisolated struct SearchPerson: Hashable, Sendable {
 ///    typed 65.
 /// 3. **Glossary:** a query not translated, from a user with a language Translation does not
 ///    offer (Estonian), has its picture words read through Otos's glossary of that language
-///    (`SearchGlossary`): recall@10 70 instead of 50 as typed. Facts are read first, from what
+///    (`SearchGlossary`): recall@10 77 instead of 49 as typed. Facts are read first, from what
 ///    was typed, so a place's name is never read as a word ("Kassel" is not a cat).
 /// 4. **Embedding:** `SearchTextTokenizer` and `SearchTextModel`. A word no glossary holds is
 ///    read as typed by the model's multilingual tower.
