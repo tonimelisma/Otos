@@ -20,7 +20,7 @@ func pacedSchedule(
     let lastAttempt = EnrichmentRetrySchedule.production.backgroundDownloadDelays.count
     for row in rows {
         let work = EnrichmentCoordinator.DownloadWork(
-            id: row.id, url: row.id.fileURL, sourceSize: row.sourceSize, captureDate: nil,
+            id: row.id, url: row.id.fileURL, sourceSize: row.sourceSize, captureLocalTime: nil,
             isVideo: false, attemptCount: lastAttempt
         )
         schedule.demand(work, ownsStoreClaim: false)

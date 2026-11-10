@@ -30,7 +30,7 @@ extension EnrichmentCoordinator {
                 id: id,
                 url: work.url,
                 sourceSize: work.sourceSize,
-                captureDate: work.captureDate,
+                captureLocalTime: work.captureLocalTime,
                 isVideo: work.isVideo,
                 isDeviceStaging: work.isDeviceStaging
             )

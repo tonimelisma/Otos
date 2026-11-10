@@ -135,7 +135,7 @@ actor CatalogStore {
     private struct EnrichmentBatchWriteOutcome {
         var appliedCount = 0
         /// True when any applied result changed the *effective* generated
-        /// ordering/scope columns (`best_capture_unix`, `best_kind`, `best_format`).
+        /// ordering/scope columns (`best_capture_local`, `best_kind`, `best_format`).
         /// A batch that changed none of these is detail-only: the projection can skip
         /// the full order query and re-sort (ADR 0011).
         var structureChanged = false
@@ -174,7 +174,7 @@ actor CatalogStore {
     /// it would store (the guess had no fallback path matching the generated
     /// column's own COALESCE chain and could silently disagree with it).
     private struct EnrichmentOverlayBeforeWrite {
-        let bestCaptureUnix: Double?
+        let bestCaptureLocal: Double?
         let bestKind: String?
         let bestFormat: String?
         let captureWallCompact: Int64?
@@ -183,14 +183,14 @@ actor CatalogStore {
         let contentIdentifier: String?
 
         static let columnsSQL = """
-        SELECT best_capture_unix, best_kind, best_format, capture_wall_compact, thumbnail_path, preview_path,
+        SELECT best_capture_local, best_kind, best_format, capture_wall_compact, thumbnail_path, preview_path,
             content_identifier
         FROM media_asset
         WHERE library_root_id = ? AND relative_path = ?
         """
 
         init(row: Row) {
-            bestCaptureUnix = row["best_capture_unix"]
+            bestCaptureLocal = row["best_capture_local"]
             bestKind = row["best_kind"]
             bestFormat = row["best_format"]
             captureWallCompact = row["capture_wall_compact"]
@@ -203,7 +203,7 @@ actor CatalogStore {
         /// date, the kind and format filters, or — through the content identifier and the
         /// kind — which movies a Live Photo hides (ADR 0041). Anything else is detail-only.
         func changesStructure(to new: EnrichmentOverlayBeforeWrite) -> Bool {
-            bestCaptureUnix != new.bestCaptureUnix
+            bestCaptureLocal != new.bestCaptureLocal
                 || bestKind != new.bestKind
                 || bestFormat != new.bestFormat
                 || contentIdentifier != new.contentIdentifier
@@ -842,7 +842,7 @@ extension CatalogStore {
                 sql: """
                 SELECT f.library_root_id, f.relative_path, f.face_index, f.embedding, f.person_id,
                        f.is_not_face, f.is_ignored, f.box_x, f.box_y, f.box_width, f.box_height,
-                       m.best_capture_unix, m.preview_path
+                       m.best_capture_local, m.preview_path
                 FROM face f
                 JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
                 WHERE m.trash_path IS NULL
@@ -857,7 +857,7 @@ extension CatalogStore {
                     throw CatalogStoreError.malformedFaceRow(asset)
                 }
                 let id = FaceID(asset: asset, index: key.index)
-                let capture: Double? = row["best_capture_unix"]
+                let capture: Double? = row["best_capture_local"]
                 faces.append(FaceFact(
                     id: id,
                     captureSeconds: capture,
@@ -1141,7 +1141,7 @@ extension CatalogStore {
                 sql: """
                 SELECT COUNT(*) FROM face f
                 JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
-                WHERE f.person_id = ? AND m.best_capture_unix < ?
+                WHERE f.person_id = ? AND m.best_capture_local < ?
                 """,
                 arguments: [person.rawValue, birthdaySeconds]
             ) ?? 0
@@ -1170,7 +1170,7 @@ extension CatalogStore {
                 guard elsewhere == 0 else { throw PeopleRuleViolation.personAlreadyInPhoto }
                 if let birthday, let capture = try Double.fetchOne(
                     db,
-                    sql: "SELECT best_capture_unix FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                    sql: "SELECT best_capture_local FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
                     arguments: [key.rootID, key.path.rawValue]
                 ), capture < birthday {
                     throw PeopleRuleViolation.beforeBirthday
@@ -1252,7 +1252,7 @@ extension CatalogStore {
                 sql: """
                 SELECT COUNT(*) FROM face f
                 JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
-                WHERE f.person_id = ? AND m.best_capture_unix < ?
+                WHERE f.person_id = ? AND m.best_capture_local < ?
                 """,
                 arguments: [from.rawValue, birthday]
             ) ?? 0
@@ -1436,6 +1436,7 @@ extension CatalogStore {
         let groupsByDate = descriptor.effectiveSort.field == .bestDate
         var ids: [MediaAssetID] = []
         var dayBuckets: [Date?] = []
+        var dayStarts: [Int: Date] = [:]
         var coordinates: [PlaceCoordinate] = []
         ids.reserveCapacity(timedRows.value.rows.count)
         if groupsByDate {
@@ -1461,9 +1462,18 @@ extension CatalogStore {
             }
             ids.append(MediaAssetID(libraryRootPath: rootPath, relativePath: row.relativePath))
             if groupsByDate {
-                let dayStart = row.bestCaptureUnix
-                    .map { Calendar.current.startOfDay(for: Date(timeIntervalSince1970: $0)) }
-                dayBuckets.append(dayStart)
+                // The day the item was taken on (`CaptureLocalTime.dayNumber`), as the start
+                // of that day here, which is what the header formats. A day's start is made
+                // once per day, not once per row.
+                dayBuckets.append(row.captureLocalTime.map { local in
+                    let day = local.dayNumber
+                    if let start = dayStarts[day] {
+                        return start
+                    }
+                    let start = Calendar.current.startOfDay(for: CaptureLocalTime(dayNumber: day).presentationDate())
+                    dayStarts[day] = start
+                    return start
+                })
             }
         }
         let queryMs = timedRows.totalMs
@@ -4913,7 +4923,7 @@ private extension CatalogStore {
             createdAt: storedAsset.createdAt,
             contentModifiedAt: storedAsset.contentModifiedAt,
             thumbnailPath: storedAsset.thumbnailPath,
-            bestCaptureDate: storedAsset.bestCaptureDate,
+            captureLocalTime: storedAsset.captureLocalTime,
             bestKind: storedAsset.bestKind,
             bestFormat: storedAsset.bestFormat,
             durationSeconds: storedAsset.durationSeconds,
@@ -7234,7 +7244,7 @@ extension CatalogStore {
                 SELECT a.library_root_id, a.relative_path, a.thumbnail_path,
                        \(SearchEmbeddingStorage.currentSource("a")) AS source
                 \(SearchEmbeddingStorage.owedFrom(rootCount: rootIDs.count))
-                ORDER BY a.best_capture_unix DESC, a.library_root_id, a.relative_path
+                ORDER BY a.best_capture_local DESC, a.library_root_id, a.relative_path
                 LIMIT ?
                 """,
                 arguments: StatementArguments(rootIDs + [limit])
@@ -7375,8 +7385,13 @@ extension CatalogStore {
         var clauses = ["a.library_root_id IN (\(Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")))"]
         var arguments: [DatabaseValue] = rootIDs.map(\.databaseValue)
         if let date = facts.date {
-            clauses.append("a.best_capture_unix >= ? AND a.best_capture_unix < ?")
-            arguments += [date.start.timeIntervalSince1970.databaseValue, date.end.timeIntervalSince1970.databaseValue]
+            // The span is days on this Mac's calendar, so its ends are the readings of its
+            // clock at them: a photo taken that day anywhere matches it.
+            clauses.append("a.best_capture_local >= ? AND a.best_capture_local < ?")
+            arguments += [
+                CaptureLocalTime(readingOf: date.start).seconds.databaseValue,
+                CaptureLocalTime(readingOf: date.end).seconds.databaseValue,
+            ]
         }
         if let place = facts.place {
             // A box first, so SQLite reads few rows; the exact distance after.
@@ -7429,7 +7444,7 @@ extension CatalogStore {
                 sql: """
                 SELECT a.library_root_id, a.relative_path, a.preview_path, \(SearchTextStorage.currentSource("a")) AS source
                 \(SearchTextStorage.owedFrom(rootCount: rootIDs.count))
-                ORDER BY a.best_capture_unix DESC, a.library_root_id, a.relative_path
+                ORDER BY a.best_capture_local DESC, a.library_root_id, a.relative_path
                 LIMIT ?
                 """,
                 arguments: StatementArguments(rootIDs + [limit])

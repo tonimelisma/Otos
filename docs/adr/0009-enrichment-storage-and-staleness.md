@@ -61,7 +61,7 @@ This ADR owns:
   `(size, mtime)` source signature they were made from, and each is stale on its own; a missing, malformed, or
   signature-mismatched hash is stale. mtime-only changes count. One read of a file
   makes every product its row owes.
-- Timestamp role facts are stored; SQLite's generated `best_capture_unix` value
+- Timestamp role facts are stored; SQLite's generated `best_capture_local` value
   supplies Date sort and enrichment priority. Video duration is a hot scalar
   because the tile surface needs it for every visible video; other metadata
   dimensions and details remain cold.
@@ -154,7 +154,7 @@ Adjacent decisions requiring separate ADRs or specs:
 4. **Timestamp role facts and video duration are stored as hot query/display facts.**
    Enrichment writes timestamp role facts (original, QuickTime creation,
    digitized, and GPS) instead of a pre-resolved winner. SQLite's
-   `best_capture_unix` generated column ranks those role facts ahead of
+   `best_capture_local` generated column (ADR 0039) ranks those role facts ahead of
    filesystem creation and modification dates, so Date sort and enrichment
    priority read the same best value without keeping full metadata resident. The
    metadata detail row still preserves all date roles, and the generated best date
@@ -612,8 +612,9 @@ column is a *projection* of it, derived where it is written:
   the naming fact (ENR-012): the library's `captureWallClock`, which takes local-authority
   times only.
 - `CaptureTimestamps(records:).captureInstant` → `capture_instant_unix`, the library's capture
-  instant (`CaptureTimestamps.instantPrecedence`), which the `best_capture_unix`
-  generated column falls back from to the file's dates for ordering (ENR-003).
+  instant (`CaptureTimestamps.instantPrecedence`). `best_capture_local` orders by the
+  capture wall and, where a file has none, reads this instant (else the file's dates) in
+  the zone Otos assumed for it (ENR-003, ADR 0039).
 
 `EnrichmentResult` previously carried a second copy of those four instants as
 `EnrichmentTimestampFacts`, and `ReusableEnrichmentOverlay` carried them again

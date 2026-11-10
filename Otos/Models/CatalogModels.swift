@@ -803,7 +803,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     // `(size, mtime-seconds)` they were made from, and each is stale when the file's
     // current pair differs.
     let thumbnailPath: String?
-    let bestCaptureDate: Date?
+    let captureLocalTime: CaptureLocalTime?
     let bestKind: MediaKind?
     let bestFormat: MediaFormatToken?
     let durationSeconds: Double?
@@ -827,7 +827,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         createdAt: Date?,
         contentModifiedAt: Date?,
         thumbnailPath: String? = nil,
-        bestCaptureDate: Date? = nil,
+        captureLocalTime: CaptureLocalTime? = nil,
         bestKind: MediaKind? = nil,
         bestFormat: MediaFormatToken? = nil,
         durationSeconds: Double? = nil,
@@ -850,7 +850,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         self.createdAt = createdAt
         self.contentModifiedAt = contentModifiedAt
         self.thumbnailPath = thumbnailPath
-        self.bestCaptureDate = bestCaptureDate
+        self.captureLocalTime = captureLocalTime
         self.bestKind = bestKind
         self.bestFormat = bestFormat
         self.durationSeconds = durationSeconds

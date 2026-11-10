@@ -77,9 +77,9 @@ struct EnrichmentCoordinatorTests {
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
         let seeds = [
-            deviceStagingSeed(rootPath: rootPath, relativePath: "video.mov", captureDate: 50, isVideo: true),
-            deviceStagingSeed(rootPath: rootPath, relativePath: "still-b.jpg", captureDate: 200, isVideo: false),
-            deviceStagingSeed(rootPath: rootPath, relativePath: "still-a.jpg", captureDate: 100, isVideo: false),
+            deviceStagingSeed(rootPath: rootPath, relativePath: "video.mov", captureSeconds: 50, isVideo: true),
+            deviceStagingSeed(rootPath: rootPath, relativePath: "still-b.jpg", captureSeconds: 200, isVideo: false),
+            deviceStagingSeed(rootPath: rootPath, relativePath: "still-a.jpg", captureSeconds: 100, isVideo: false),
         ]
 
         await coordinator.stageDevice(seeds)
@@ -337,7 +337,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.shutdown()
 
         #expect(enriched.testAssets.allSatisfy { $0.thumbnailPath == "t.jpg" })
-        #expect(enriched.testAssets.allSatisfy { $0.bestCaptureDate == captureDate })
+        #expect(enriched.testAssets.allSatisfy { $0.captureLocalTime == CaptureLocalTime(readingOf: captureDate) })
     }
 
     @Test func downloadLifecycleMaterializesThenEnrichesDatalessAsset() async throws {
@@ -565,7 +565,7 @@ struct EnrichmentCoordinatorTests {
             )
             schedule.demand(
                 EnrichmentCoordinator.DownloadWork(
-                    id: badID, url: badID.fileURL, sourceSize: 100, captureDate: nil,
+                    id: badID, url: badID.fileURL, sourceSize: 100, captureLocalTime: nil,
                     isVideo: false, isDeviceStaging: false, attemptCount: 4, retryNotBefore: nil
                 ),
                 ownsStoreClaim: true
@@ -593,7 +593,7 @@ struct EnrichmentCoordinatorTests {
         // (the ledger side is `EnrichmentScheduleTests`).
         for badID in badIDs {
             let work = EnrichmentCoordinator.DownloadWork(
-                id: badID, url: badID.fileURL, sourceSize: 100, captureDate: nil,
+                id: badID, url: badID.fileURL, sourceSize: 100, captureLocalTime: nil,
                 isVideo: false, isDeviceStaging: false, attemptCount: 4, retryNotBefore: nil
             )
             await coordinator.finishDownload(
@@ -705,7 +705,7 @@ struct EnrichmentCoordinatorTests {
             deviceStagingSeed(
                 rootPath: rootPath,
                 relativePath: "IMG_\(index).jpg",
-                captureDate: TimeInterval(index),
+                captureSeconds: TimeInterval(index),
                 isVideo: false
             )
         }
@@ -740,7 +740,7 @@ struct EnrichmentCoordinatorTests {
             deviceStagingSeed(
                 rootPath: rootPath,
                 relativePath: "IMG_\(index).arw",
-                captureDate: TimeInterval(index),
+                captureSeconds: TimeInterval(index),
                 isVideo: false
             )
         })
@@ -773,7 +773,7 @@ struct EnrichmentCoordinatorTests {
             deviceStagingSeed(
                 rootPath: rootPath,
                 relativePath: "IMG_\(index).jpg",
-                captureDate: TimeInterval(index),
+                captureSeconds: TimeInterval(index),
                 isVideo: false
             )
         })
@@ -806,7 +806,7 @@ struct EnrichmentCoordinatorTests {
             sourceSize: 1024,
             sourceMTimeSeconds: nil,
             isVideo: false,
-            captureDate: nil,
+            captureLocalTime: nil,
             isDeviceStaging: true,
             scope: .metadata
         )
@@ -882,7 +882,7 @@ struct EnrichmentCoordinatorTests {
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "a.arw"))
         let work = EnrichmentCoordinator.EnrichWork(
             id: id, url: id.fileURL, sourceSize: 1024, sourceMTimeSeconds: nil,
-            isVideo: false, captureDate: nil, isDeviceStaging: true, scope: .metadata
+            isVideo: false, captureLocalTime: nil, isDeviceStaging: true, scope: .metadata
         )
 
         #expect(await coordinator.byteAccess(for: work).localURL == id.fileURL)
@@ -900,14 +900,14 @@ struct EnrichmentCoordinatorTests {
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "video.mov"))
         await coordinator.stageDevice([
             EnrichmentCoordinator.DeviceStagingSeed(
-                id: id, sourceSize: 100, captureDate: Date(timeIntervalSince1970: 50), isVideo: true
+                id: id, sourceSize: 100, captureLocalTime: CaptureLocalTime(seconds: 50), isVideo: true
             ),
         ])
         #expect(await coordinator.dequeueMaterializationSubmissions().map(\.id) == [id])
 
         let seeds = [
             EnrichmentCoordinator.DeviceStagingSeed(
-                id: id, sourceSize: 100, captureDate: Date(timeIntervalSince1970: 50), isVideo: true
+                id: id, sourceSize: 100, captureLocalTime: CaptureLocalTime(seconds: 50), isVideo: true
             ),
         ]
         await coordinator.stageDevice(seeds)
@@ -1129,7 +1129,7 @@ func fixedScanner(
 private func deviceStagingSeed(
     rootPath: LibraryRootPath,
     relativePath: String,
-    captureDate: TimeInterval,
+    captureSeconds: TimeInterval,
     isVideo: Bool
 ) -> EnrichmentCoordinator.DeviceStagingSeed {
     EnrichmentCoordinator.DeviceStagingSeed(
@@ -1138,7 +1138,7 @@ private func deviceStagingSeed(
             relativePath: MediaRelativePath(rawValue: relativePath)
         ),
         sourceSize: 100,
-        captureDate: Date(timeIntervalSince1970: captureDate),
+        captureLocalTime: CaptureLocalTime(seconds: captureSeconds),
         isVideo: isVideo
     )
 }

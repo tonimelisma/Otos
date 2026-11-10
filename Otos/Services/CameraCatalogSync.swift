@@ -192,7 +192,9 @@ final class CameraCatalogSync {
             EnrichmentCoordinator.DeviceStagingSeed(
                 id: MediaAssetID(libraryRootPath: rootPath, relativePath: item.relativePath),
                 sourceSize: item.byteSize,
-                captureDate: item.captureDate,
+                // The camera's date is an absolute instant; read in this Mac's zone, it is the
+                // local time the catalog will assume for the item until enrichment reads one.
+                captureLocalTime: item.captureDate.map { CaptureLocalTime(readingOf: $0) },
                 isVideo: MediaEligibility.isVideo(contentTypeIdentifier: item.contentTypeIdentifier)
             )
         }

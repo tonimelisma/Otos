@@ -218,7 +218,7 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
     ) -> DuplicateGroupPresentation {
         let copies = group.copies
         let count = copies.count
-        let title = group.captureDate.map {
+        let title = group.captureLocalTime.map {
             $0.formatted(Date.FormatStyle(date: .long, time: .omitted, calendar: calendar))
         } ?? "No Date"
         if group.isKept {

@@ -77,13 +77,14 @@ SQLite stores scan facts (`kind`, `format`, and `name_sort_key`) and enrichment
 facts (`capture_instant_unix` — the library's capture instant, chosen by
 `CaptureTimestamps.instantPrecedence` from the stored timestamp records — plus
 `enriched_kind` and `enriched_format`). The current best values are generated
-columns (`best_capture_unix` virtual, the other two stored):
+columns (`best_capture_local` virtual, the other two stored). `best_capture_local` is
+the local capture time, defined in ADR 0039:
 
 ```sql
-best_capture_unix AS COALESCE(
-    capture_instant_unix,
-    created_at_unix,
-    content_modified_at_unix
+best_capture_local AS COALESCE(
+    unixepoch(<capture_wall_compact as a UTC reading>),
+    COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)
+        + assumed_utc_offset_seconds
 )
 best_kind AS COALESCE(enriched_kind, kind)
 best_format AS COALESCE(enriched_format, format)
@@ -92,7 +93,7 @@ best_format AS COALESCE(enriched_format, format)
 The old `capture_date_unix` winner column and Swift best-date fallback chain are
 retired. Enrichment persists role facts; SQLite owns the ranking. Tile display,
 date sorting, and future current consumers read the same generated
-`best_capture_unix` value.
+`best_capture_local` value.
 
 Projection always asks Store for ordered IDs for the current descriptor on
 publication. If enrichment changes best date, best kind, or best format, the next
@@ -200,7 +201,7 @@ definition, and keeps the UI passive.
   refuse to open without erase so non-rebuildable overlay (import history) is not
   destroyed; see ADR 0010.
 - Tile date, date sort, and future date consumers cannot drift while they consume
-  `best_capture_unix`.
+  `best_capture_local`.
 - The toolbar and menu commands can update one descriptor state and share one
   intent path.
 - Query request generations make stale-publication rejection independent of

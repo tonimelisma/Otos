@@ -186,7 +186,7 @@ extension EnrichmentCoordinator {
                         id: asset.id,
                         url: asset.id.fileURL,
                         sourceSize: asset.byteSize,
-                        captureDate: asset.bestCaptureDate,
+                        captureLocalTime: asset.captureLocalTime,
                         isVideo: asset.bestKind == .video,
                         isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath)
                     ),
@@ -500,7 +500,7 @@ extension EnrichmentCoordinator {
             sourceSize: asset.byteSize,
             sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
             isVideo: asset.bestKind == .video,
-            captureDate: asset.bestCaptureDate,
+            captureLocalTime: asset.captureLocalTime,
             isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath),
             scope: candidate.scope
         )

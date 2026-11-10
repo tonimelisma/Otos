@@ -158,7 +158,7 @@ struct ProjectionEnrichmentCoalescingTests {
     ) -> EnrichmentResult {
         EnrichmentResult(
             id: asset.id,
-            metadata: .absoluteCapture(instant: captureDate ?? asset.bestCaptureDate),
+            metadata: .absoluteCapture(instant: captureDate ?? asset.captureLocalTime?.presentationDate()),
             enrichedKind: asset.bestKind,
             enrichedFormat: asset.bestFormat,
             thumbnailPath: nil,

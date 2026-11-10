@@ -41,7 +41,7 @@ struct ProjectionEnrichmentScaleTests {
     private func detailEnrichment(for asset: MediaAsset) -> EnrichmentResult {
         EnrichmentResult(
             id: asset.id,
-            metadata: .absoluteCapture(instant: asset.bestCaptureDate),
+            metadata: .absoluteCapture(instant: asset.captureLocalTime?.presentationDate()),
             enrichedKind: asset.bestKind,
             enrichedFormat: asset.bestFormat,
             thumbnailPath: nil,
