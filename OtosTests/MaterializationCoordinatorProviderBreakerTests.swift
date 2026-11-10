@@ -18,7 +18,7 @@ struct MaterializationCoordinatorProviderBreakerTests {
         // `beginKnownMaterialization`/`endKnownMaterialization`, which no-ops
         // until roots exist. No scan/enrichment work touches this Store.
         let store = CatalogStore(location: .inMemory)
-        return MaterializationCoordinator(store: store, executor: executor, policy: policy)
+        return MaterializationCoordinator(store: store, executor: executor, capacity: { _ in nil }, policy: policy)
     }
 
     private func id(root: String, file: String) -> MediaAssetID {

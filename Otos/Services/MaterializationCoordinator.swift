@@ -234,7 +234,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
     init(
         store: CatalogStore,
         executor: @escaping Executor,
-        capacity: @escaping @Sendable (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:),
+        capacity: @escaping @Sendable (URL) -> Int64?,
         policy: MaterializationAdmissionPolicy = .production,
         diagnosticSink: DiagnosticSink? = nil
     ) {

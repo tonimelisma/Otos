@@ -67,7 +67,8 @@ struct MaterializationCoordinatorTests {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0.id.fileURL) }
+            executor: { await executor.run($0.id.fileURL) },
+            capacity: { _ in nil }
         )
         let shared = request("shared.jpg", priority: .background)
         let first = Task { await coordinator.materialize(shared) }
@@ -98,7 +99,7 @@ struct MaterializationCoordinatorTests {
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
-            policy: policy
+            capacity: { _ in nil }, policy: policy
         )
         let firstActive = Task { await coordinator.materialize(request("active-1.jpg", priority: .device)) }
         try await executor.waitForStarts(1)
@@ -157,7 +158,8 @@ struct MaterializationCoordinatorTests {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0.id.fileURL) }
+            executor: { await executor.run($0.id.fileURL) },
+            capacity: { _ in nil }
         )
         let first = Task { await coordinator.materialize(request("first.arw", priority: .device)) }
         try await executor.waitForStarts(1)
@@ -184,7 +186,8 @@ struct MaterializationCoordinatorTests {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0.id.fileURL) }
+            executor: { await executor.run($0.id.fileURL) },
+            capacity: { _ in nil }
         )
         let device = Task { await coordinator.materialize(request("card.arw", priority: .device)) }
         try await executor.waitForStarts(1)
@@ -215,7 +218,8 @@ struct MaterializationCoordinatorTests {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0.id.fileURL) }
+            executor: { await executor.run($0.id.fileURL) },
+            capacity: { _ in nil }
         )
         let admitted = (0 ..< cap).map { "admitted-\($0).jpg" }
         var tasks: [Task<MaterializationResult, Never>] = []
@@ -246,7 +250,8 @@ struct MaterializationCoordinatorTests {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0.id.fileURL) }
+            executor: { await executor.run($0.id.fileURL) },
+            capacity: { _ in nil }
         )
         var tasks: [Task<MaterializationResult, Never>] = []
         for index in 0 ..< cap {
@@ -279,7 +284,8 @@ struct MaterializationCoordinatorTests {
         let executor = HeldInteractiveExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0.id.fileURL) }
+            executor: { await executor.run($0.id.fileURL) },
+            capacity: { _ in nil }
         )
         await coordinator.start()
         let waiting = Task { await coordinator.materialize(request("trash.jpg", priority: .command)) }
@@ -301,7 +307,7 @@ struct MaterializationCoordinatorTests {
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
-            policy: policy
+            capacity: { _ in nil }, policy: policy
         )
         let first = Task { await coordinator.materialize(request("one.jpg", priority: .background)) }
         try await executor.waitForStarts(1)
@@ -343,7 +349,7 @@ struct MaterializationCoordinatorTests {
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
-            policy: policy
+            capacity: { _ in nil }, policy: policy
         )
         let active = Task { await coordinator.materialize(request("active.jpg", priority: .device)) }
         try await executor.waitForStarts(1)
@@ -366,7 +372,7 @@ struct MaterializationCoordinatorTests {
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
-            policy: policy,
+            capacity: { _ in nil }, policy: policy,
             diagnosticSink: { diagnostics.record($0) }
         )
         let active = Task { await coordinator.materialize(request("active.jpg", priority: .interactive)) }
@@ -389,7 +395,7 @@ struct MaterializationCoordinatorTests {
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
-            policy: policy
+            capacity: { _ in nil }, policy: policy
         )
         let background = Task {
             await coordinator.materialize(request("active.jpg", priority: .background))
@@ -426,7 +432,7 @@ struct MaterializationCoordinatorTests {
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
-            policy: policy
+            capacity: { _ in nil }, policy: policy
         )
         let first = Task { await coordinator.materialize(request("first.jpg", priority: .device)) }
         let second = Task { await coordinator.materialize(request("second.jpg", priority: .device)) }
@@ -464,7 +470,7 @@ struct MaterializationCoordinatorTests {
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
-            policy: policy,
+            capacity: { _ in nil }, policy: policy,
             diagnosticSink: { diagnostics.record($0) }
         )
         let active = Task { await coordinator.materialize(request("active.jpg", priority: .background)) }
@@ -529,7 +535,8 @@ struct MaterializationCoordinatorTests {
         let executor = HeldInteractiveExecutor()
         let coordinator = MaterializationCoordinator(
             store: store,
-            executor: { await executor.run($0.id.fileURL) }
+            executor: { await executor.run($0.id.fileURL) },
+            capacity: { _ in nil }
         )
         await coordinator.start()
 
