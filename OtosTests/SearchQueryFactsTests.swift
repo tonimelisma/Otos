@@ -59,6 +59,28 @@ struct SearchQueryFactsTests {
         #expect(month(parse("beach in May").date) == DateComponents(year: 2026, month: 5))
     }
 
+    /// Translation capitalises a month it translates and writes the same word lower-case when
+    /// it means something else: Swedish "tåg" (train) comes back "march".
+    @Test func aTranslatedMonthIsACapitalisedName() {
+        func translated(_ text: String) -> SearchQueryParse {
+            SearchQueryParser.parse(text, writtenBy: .translation, now: Self.now, calendar: Self.calendar)
+        }
+        let train = translated("march")
+        #expect(train.date == nil)
+        #expect(train.pictureText == "march")
+        // Finnish "toukokuu" → "May": a month, though "may" typed alone is not.
+        #expect(month(translated("May").date) == DateComponents(year: 2026, month: 5))
+        #expect(month(translated("beach in March").date) == DateComponents(year: 2026, month: 3))
+        #expect(month(parse("march").date) == DateComponents(year: 2026, month: 3))
+    }
+
+    /// A joining word goes only with a fact taken out beside it.
+    @Test func aQueryWithoutAFactKeepsItsJoiningWords() {
+        #expect(parse("at").pictureText == "at")
+        #expect(parse("dog in").pictureText == "dog in")
+        #expect(parse("dog in 2025").pictureText == "dog")
+    }
+
     @Test func aNameIsTakenAsACandidatePlace() {
         let dog = parse("Dog in San Francisco")
         #expect(dog.placeName == "San Francisco")

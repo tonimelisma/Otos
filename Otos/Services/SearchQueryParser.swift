@@ -26,8 +26,9 @@ nonisolated struct SearchQueryParse: Hashable, Sendable {
 /// ("ranta syyskuussa" → "beach in September").
 ///
 /// - **Dates:** a month (with or without a year), a year, and today, yesterday, this or last
-///   week, month and year. "May" counts as the month only with "in", "of" or a year beside
-///   it. A month without a year is the most recent one, this year's if it has begun.
+///   week, month and year. In what the user typed, "may" counts as the month only with "in",
+///   "of" or a year beside it; in a translation, a month is a capitalised name (`Writer`). A
+///   month without a year is the most recent one, this year's if it has begun.
 /// - **Places:** in an English reading, the first name `NLTagger` finds (it often tags a
 ///   place as a person), with a leading "Lake", "Mount" or "Mt." kept, unless it is one word
 ///   an ordinary word follows ("Ferris wheel"). In a query read as
@@ -58,20 +59,35 @@ nonisolated enum SearchQueryParser {
         case notRead
     }
 
+    /// Who wrote the English reading, which decides what a month name is.
+    enum Writer: Sendable {
+        /// The user: any case, and "may" is the month only with "in", "of", "during" or a year.
+        case user
+        /// Apple Translation, which capitalises a month it translates ("i maj" → "in May",
+        /// "toukokuu" → "May") and writes the same word in lower case when it means something
+        /// else (Swedish "tåg", train → "march"). Only a capitalised name is a month.
+        case translation
+    }
+
     static func parse(
         _ english: String,
         places: Places = .tagged,
+        writtenBy writer: Writer = .user,
         now: Date = Date(),
         calendar: Calendar = .current
     ) -> SearchQueryParse {
         var words = english.split(whereSeparator: \.isWhitespace).map(String.init)
-        let date = takeDate(&words, now: now, calendar: calendar)
+        let date = takeDate(&words, writtenBy: writer, now: now, calendar: calendar)
         let place: String? = switch places {
         case .tagged: takePlace(&words)
         case .capitalised: takeCapitalised(&words)
         case .notRead: nil
         }
-        trimJoiningWords(&words)
+        // A joining word is left behind by a fact taken out ("beach in" May); a query with no
+        // fact keeps every word, so "at" (Turkish horse, recognised as English) is not emptied.
+        if date != nil || place != nil {
+            trimJoiningWords(&words)
+        }
         return SearchQueryParse(date: date, placeName: place, pictureText: words.joined(separator: " "))
     }
 
@@ -85,7 +101,9 @@ nonisolated enum SearchQueryParser {
         return word
     }
 
-    private static func takeDate(_ words: inout [String], now: Date, calendar: Calendar) -> SearchDateSpan? {
+    private static func takeDate(
+        _ words: inout [String], writtenBy writer: Writer, now: Date, calendar: Calendar
+    ) -> SearchDateSpan? {
         let lower = words.map(bare)
         func year(at index: Int) -> Int? {
             guard lower.indices.contains(index), lower[index].count == 4, let value = Int(lower[index]),
@@ -112,8 +130,13 @@ nonisolated enum SearchQueryParser {
         for (index, word) in lower.enumerated() {
             guard let month = months.firstIndex(of: word).map({ $0 + 1 }) else { continue }
             let named = year(at: index + 1) ?? (index > 0 ? year(at: index - 1) : nil)
-            if word == "may", named == nil, !(index > 0 && ["in", "of", "during"].contains(lower[index - 1])) {
-                continue
+            switch writer {
+            case .translation:
+                guard words[index].first?.isUppercase == true else { continue }
+            case .user:
+                if word == "may", named == nil, !(index > 0 && ["in", "of", "during"].contains(lower[index - 1])) {
+                    continue
+                }
             }
             var components = calendar.dateComponents([.year, .month], from: now)
             if let named {

@@ -162,8 +162,13 @@ A query is read for facts before the picture (`SearchQueryParser`, `SearchPlaces
 - **Who:** a person the user named, matched in the typed text before translation (translation
   mangles names), as whole words ignoring case and diacritics.
 - **When:** from the English reading, a month (the most recent), a month and year, a year, or
-  today, yesterday, this or last week, month or year. "May" is the month only beside "in", "of"
-  or a year. A language Translation cannot read (Estonian) has its months found by
+  today, yesterday, this or last week, month or year. In what the user typed, "may" is the
+  month only beside "in", "of" or a year. In a translation, a month is a capitalised name:
+  Translation capitalises the months it translates ("toukokuu" → "May") and writes the same
+  word in lower case when it means something else (Swedish "tåg", train → "march"), which had
+  made a train query a filter to March with no picture. Joining words ("in", "at") are trimmed
+  only beside a fact taken out, so Turkish "at" (horse), recognised as English, is not
+  emptied. A language Translation cannot read (Estonian) has its months found by
   Foundation's month names in the user's languages, on the stem, before recognition.
 - **Where:** the first name `NLTagger` finds in the English reading (it often calls a place a
   person), located by Apple Maps (`MKLocalSearch`, addresses and areas): a place only when Maps

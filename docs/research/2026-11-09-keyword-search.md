@@ -626,6 +626,18 @@ two stay: "rand" typed alone is spelled as English and read as English, the righ
 when English is a user's language too; "südame joonistus liivas" already reads "heart
 drawing sand".
 
+Every language through the app's encoder, each as its own speaker types it (their language
+and English as search languages), on the installed catalog's thumbnails: en 84.6, fi 73.8,
+sv 75.0, de 78.1, fr 80.4, es 81.4, it 82.8, nl 76.7, pl 79.7, ru 81.1, ja 76.4, zh 79.4,
+ko 72.0, ar 81.4, hi 79.5, tr 76.0, et 80.7. Estonian, through the glossary, is above the mean
+of the 15 translated languages, 78.3. The run turned up two queries left with no picture.
+Swedish "tåg" (train) translates "march" in lower case, and the parser read it as the month;
+Translation capitalises every month it does translate ("i maj" → "in May", "toukokuu" →
+"May"), so a translated month is now only a capitalised name, which also reads Finnish
+"toukokuu" as May where "May" alone had been skipped. Turkish "at" (horse), recognised as
+English, was trimmed as a joining word; joining words now go only beside a fact taken out.
+Facts unchanged at 0.847.
+
 ### The surfaces, in a window
 
 With computer-use access denied, the search surfaces were driven in-process. `ContentView`,

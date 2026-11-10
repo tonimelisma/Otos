@@ -161,12 +161,13 @@ actor SearchQueryEncoder {
         // A query not translated, from a user with a language nothing recognises, may be in
         // that language, where the English tagger finds no whole name.
         let mayBeUnrecognised = reading != .translated && !untranslatable.isEmpty
-        var parse = SearchQueryParser.parse(modelText, places: mayBeUnrecognised ? .capitalised : .tagged)
+        let writer: SearchQueryParser.Writer = reading == .translated ? .translation : .user
+        var parse = SearchQueryParser.parse(modelText, places: mayBeUnrecognised ? .capitalised : .tagged, writtenBy: writer)
         var place: SearchPlace?
         if let name = parse.placeName {
             place = await locate(name)
             if place == nil {
-                parse = SearchQueryParser.parse(modelText, places: .notRead)
+                parse = SearchQueryParser.parse(modelText, places: .notRead, writtenBy: writer)
             }
         }
         if let native = nativeMonth {
