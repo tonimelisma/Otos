@@ -100,8 +100,39 @@ for line in open(path):
         print(json.dumps(row, sort_keys=True))
 PY
 )"
-  git -C "$ROOT_DIR" notes --ref="$NOTES_REF" append -m "$note" "$commit"
+  append_note "$commit" "$note"
   echo "op=bench phase=recorded commit=$commit ref=$NOTES_REF"
+}
+
+# Appends a run's records to the commit's note without losing another session's.
+# `git notes append` reads the notes ref, writes a commit on it and moves the ref with no
+# check that it is unchanged, so two sessions recording at once each build on the same
+# parent and the later one drops the earlier's records. The append is built on a ref of
+# this process's own and the shared ref moves only if it still points where that append
+# began; a race starts it again on the new tip.
+append_note() {
+  local commit="$1" note="$2"
+  local scratch="refs/notes/bench-append-$$"
+  local none="0000000000000000000000000000000000000000"
+  local attempt old new
+  for attempt in $(seq 1 20); do
+    old="$(git -C "$ROOT_DIR" rev-parse -q --verify "$NOTES_REF" || true)"
+    if [[ -n "$old" ]]; then
+      git -C "$ROOT_DIR" update-ref "$scratch" "$old"
+    else
+      git -C "$ROOT_DIR" update-ref -d "$scratch" 2>/dev/null || true
+    fi
+    git -C "$ROOT_DIR" notes --ref="$scratch" append -m "$note" "$commit"
+    new="$(git -C "$ROOT_DIR" rev-parse "$scratch")"
+    if git -C "$ROOT_DIR" update-ref "$NOTES_REF" "$new" "${old:-$none}" 2>/dev/null; then
+      git -C "$ROOT_DIR" update-ref -d "$scratch"
+      return 0
+    fi
+    echo "op=bench phase=recordRaced attempt=$attempt commit=$commit"
+  done
+  git -C "$ROOT_DIR" update-ref -d "$scratch"
+  echo "op=bench phase=failed reason=recordRaced commit=$commit" >&2
+  exit 1
 }
 
 history() {
