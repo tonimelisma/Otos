@@ -183,7 +183,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
     private let executor: Executor
     /// Reads a volume's free space for the floor every background and device download
     /// keeps (ADR 0027). Injected because the floor is otherwise untestable.
-    private let capacity: @Sendable (URL) -> Int64?
+    private let volumeCapacity: VolumeCapacityReader
     private let policy: MaterializationAdmissionPolicy
     private let diagnosticSink: DiagnosticSink?
     private let clock = ContinuousClock()
@@ -234,13 +234,13 @@ actor MaterializationCoordinator: MaterializationRequesting {
     init(
         store: CatalogStore,
         executor: @escaping Executor,
-        capacity: @escaping @Sendable (URL) -> Int64?,
+        volumeCapacity: @escaping VolumeCapacityReader,
         policy: MaterializationAdmissionPolicy = .production,
         diagnosticSink: DiagnosticSink? = nil
     ) {
         self.store = store
         self.executor = executor
-        self.capacity = capacity
+        self.volumeCapacity = volumeCapacity
         self.policy = policy
         self.diagnosticSink = diagnosticSink
         let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -620,9 +620,9 @@ actor MaterializationCoordinator: MaterializationRequesting {
             task: nil
         )
         let executor = executor
-        let capacity = capacity
+        let volumeCapacity = volumeCapacity
         let store = store
-        let task = Task { [weak self, request, executor, capacity, store] in
+        let task = Task { [weak self, request, executor, volumeCapacity, store] in
             guard !Task.isCancelled else {
                 await self?.finishOperation(
                     request.id,
@@ -632,7 +632,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
                 return
             }
             if floorApplies {
-                let available = await Self.availableBytes(capacity, onVolumeOf: request.id.libraryRootPath.url)
+                let available = await Self.availableBytes(volumeCapacity, onVolumeOf: request.id.libraryRootPath.url)
                 guard FreeSpaceFloor.admits(request.sourceSize ?? 0, committed: committedBytes, available: available)
                 else {
                     OtosLog.mediaIO.notice(
@@ -685,10 +685,10 @@ actor MaterializationCoordinator: MaterializationRequesting {
     /// recalculating (ADR 0032 rule 6).
     @concurrent
     private static func availableBytes(
-        _ capacity: @Sendable (URL) -> Int64?,
+        _ volumeCapacity: VolumeCapacityReader,
         onVolumeOf url: URL
     ) async -> Int64? {
-        capacity(url)
+        volumeCapacity(url)
     }
 
     private func finishOperation(

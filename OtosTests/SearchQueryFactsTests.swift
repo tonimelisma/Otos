@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 @testable import OtosKit
 import Testing
 
@@ -65,7 +66,36 @@ struct SearchQueryFactsTests {
         let lake = parse("lake at Lake Tahoe")
         #expect(lake.placeName == "Lake Tahoe")
         #expect(lake.pictureText == "lake")
-        #expect(SearchQueryParser.parse("Dog in San Francisco", takesPlace: false).pictureText == "Dog in San Francisco")
+        #expect(SearchQueryParser.parse("Dog in San Francisco", places: .notRead).pictureText == "Dog in San Francisco")
+    }
+
+    @Test func aNameInALanguageTheTaggerDoesNotKnowIsItsCapitalisedRun() {
+        let dog = SearchQueryParser.parse("koer San Franciscos", places: .capitalised)
+        #expect(dog.placeName == "San Franciscos")
+        #expect(dog.pictureText == "koer")
+        let trampoline = SearchQueryParser.parse("batuut Walnut Creekis", places: .capitalised)
+        #expect(trampoline.placeName == "Walnut Creekis")
+        #expect(trampoline.pictureText == "batuut")
+        #expect(SearchQueryParser.parse("rand septembris", places: .capitalised).placeName == nil)
+        #expect(SearchQueryParser.parse("Dog in San Francisco", places: .capitalised).placeName == "San Francisco")
+    }
+
+    @Test func mapsNamesAPlaceWithItsCaseEnding() {
+        #expect(SearchPlaces.names("San Francisco", as: "San Franciscos"))
+        #expect(SearchPlaces.names("Walnut Creek", as: "Walnut Creekis"))
+        #expect(SearchPlaces.names("Zürich", as: "zurich"))
+        #expect(!SearchPlaces.names("San Francisco", as: "San Franciscosta ranta"))
+        #expect(!SearchPlaces.names("Lake Tahoe", as: "Tahoe"))
+        #expect(!SearchPlaces.names("City View Drive", as: "City view"))
+        #expect(!SearchPlaces.names("Paris", as: "Parisienne"))
+    }
+
+    @Test func aRecognitionOutsideTheUsersLanguagesIsDistrustedWhenOneOfThemCannotBeRead() {
+        let estonian = ["et", "en"]
+        #expect(SearchQueryEncoder.trusted(.finnish, preferring: estonian, untranslatable: ["et"]) == nil)
+        #expect(SearchQueryEncoder.trusted(.english, preferring: estonian, untranslatable: ["et"]) == .english)
+        #expect(SearchQueryEncoder.trusted(.finnish, preferring: ["fi", "en"], untranslatable: []) == .finnish)
+        #expect(SearchQueryEncoder.trusted(.german, preferring: ["fi", "en"], untranslatable: []) == .german)
     }
 
     @Test func namedPeopleAreTakenBeforeTranslation() {

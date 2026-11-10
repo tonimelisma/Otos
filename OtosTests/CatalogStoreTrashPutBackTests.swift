@@ -120,7 +120,12 @@ struct CatalogStoreTrashPutBackTests {
     @Test func cancelWithdrawsWhatAnEarlierRunLeftWaiting() async throws {
         let (library, store) = try await Self.makeLibrary(names: ["a.jpg", "b.jpg"])
         _ = try await store.markPendingTrash(library.ids, batch: MediaTrashBatchID())
-        let coordinator = MediaTrashCoordinator(store: store, materializationRequester: nil, files: .refusing)
+        let coordinator = MediaTrashCoordinator(
+            store: store,
+            materializationRequester: nil,
+            files: .refusing,
+            volumeCapacity: ampleVolumeCapacity
+        )
 
         let withdrawn = await coordinator.withdrawAllPending()
 

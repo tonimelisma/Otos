@@ -16,6 +16,7 @@ struct RemovableEjectOutcomeTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: temp,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
         model.ejectRemovableSource(LibraryRoot(

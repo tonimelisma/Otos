@@ -137,7 +137,8 @@ struct ImmichAccountsTests {
         let sessions = MemorySessions()
         let accounts = try ImmichAccounts(
             store: store, sessions: sessions, urlSession: server.session(), schedule: Self.quick,
-            stagingContainer: makeTestDirectory()
+            stagingContainer: makeTestDirectory(),
+            volumeCapacity: ampleVolumeCapacity
         )
 
         let outcome = try await accounts.add(
@@ -163,10 +164,12 @@ struct ImmichAccountsTests {
         let wrong = FakeServer(host: "wrong.test")
         let old = FakeServer(host: "old.test", major: 2)
         let wrongAccounts = try ImmichAccounts(
-            store: store, sessions: sessions, urlSession: wrong.session(), stagingContainer: makeTestDirectory()
+            store: store, sessions: sessions, urlSession: wrong.session(), stagingContainer: makeTestDirectory(),
+            volumeCapacity: ampleVolumeCapacity
         )
         let oldAccounts = try ImmichAccounts(
-            store: store, sessions: sessions, urlSession: old.session(), stagingContainer: makeTestDirectory()
+            store: store, sessions: sessions, urlSession: old.session(), stagingContainer: makeTestDirectory(),
+            volumeCapacity: ampleVolumeCapacity
         )
 
         #expect(try await wrongAccounts.add(server: #require(URL(string: "http://wrong.test")), email: "a", password: "bad")
@@ -192,7 +195,8 @@ struct ImmichAccountsTests {
         let asked = ImmichAccounts.Schedule(poll: .seconds(3600), backoff: [.seconds(3600)])
         let accounts = try ImmichAccounts(
             store: store, sessions: MemorySessions(), urlSession: server.session(), schedule: asked,
-            stagingContainer: makeTestDirectory()
+            stagingContainer: makeTestDirectory(),
+            volumeCapacity: ampleVolumeCapacity
         )
         guard case let .added(rootPath) = try await accounts.add(
             server: #require(URL(string: "http://flaky.test")), email: "a", password: "right"
@@ -229,7 +233,8 @@ struct ImmichAccountsTests {
         try sessions.saveToken("tok", for: identity)
         let accounts = try ImmichAccounts(
             store: store, sessions: sessions, urlSession: server.session(), schedule: Self.quick,
-            stagingContainer: makeTestDirectory()
+            stagingContainer: makeTestDirectory(),
+            volumeCapacity: ampleVolumeCapacity
         )
 
         await accounts.start()
@@ -246,7 +251,8 @@ struct ImmichAccountsTests {
         let sessions = MemorySessions()
         let accounts = try ImmichAccounts(
             store: store, sessions: sessions, urlSession: server.session(), schedule: Self.quick,
-            stagingContainer: makeTestDirectory()
+            stagingContainer: makeTestDirectory(),
+            volumeCapacity: ampleVolumeCapacity
         )
         guard case let .added(rootPath) = try await accounts.add(
             server: #require(URL(string: "http://forget.test")), email: "a", password: "right"
@@ -298,7 +304,8 @@ struct ImmichAccountsTests {
         let store = try await makeStore()
         let accounts = try ImmichAccounts(
             store: store, sessions: MemorySessions(), urlSession: server.session(), schedule: Self.quick,
-            stagingContainer: makeTestDirectory()
+            stagingContainer: makeTestDirectory(),
+            volumeCapacity: ampleVolumeCapacity
         )
         guard case let .added(rootPath) = try await accounts.add(
             server: #require(URL(string: "http://original.test")), email: "a", password: "right"

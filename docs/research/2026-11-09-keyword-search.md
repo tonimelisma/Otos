@@ -517,14 +517,39 @@ fixed circle of the place by GPS.
 
 By language: en 92, fi 92, de 88, fr 87, it 87, nl 87, ru 87, hi 87, ja 85, ko 85, ar 84, es 83,
 zh 82, tr 80, pl 79, sv 78, et 32. Estonian rose from 24 when its months were read by
-Foundation's month names in the user's languages; its places are still not read (the name
-arrives inflected, "San Franciscos"). The parser's misses were translations that mangle a
+Foundation's month names in the user's languages; its places were not read (the name
+arrives inflected, "San Franciscos"; § Estonian below). The parser's misses were translations that mangle a
 name ("Lake Taihao") and a possessive ("October's swing", fixed). Of the place candidates the
 tagger returned, Maps answered the false ones ("City view", "Panorama") with a street of that
 name somewhere; requiring an exact name and an area of 0.03° or more rejected all of them.
 Generating the test queries with Translation (English → each language) was tried first and
 discarded: it produced wrong words ("heilua", to sway, for a swing; "mantelit", almonds, for
 pumpkins).
+
+### Estonian: a language nothing recognises
+
+Two faults held Estonian at 32 on the facts queries. Queries the recogniser took for Finnish
+were translated from it ("jäätis San Franciscos", ice cream in San Francisco, became "I froze";
+"linna siluett", city skyline, "linen silhouette"). And its place names are inflected:
+the English tagger tags only "San" in "koer San Franciscos" and nothing in "batuut Walnut
+Creekis", while Maps, asked for "San Franciscos" or "Walnut Creekis", answers San Francisco
+and Walnut Creek. Three changes, each measured on the 204 queries:
+
+| Change | Total | Estonian |
+| --- | --- | --- |
+| before | 0.820 | 32 |
+| + a recognition outside the user's languages is read as typed when one of theirs is untranslatable; Maps' name may lack a case ending of up to 3 letters; as-typed queries take the first capitalised run as the place | 0.828 | 47 |
+| + that applies to every untranslated query of such a user, the run grown around the tagger's name (shipped) | 0.832 | 53 |
+
+No other language moved, and every place read was right (San Francisco, Lake Tahoe, Mount
+Shasta, Walnut Creek). The rest of Estonian's gap is the picture: "rand" (beach) read as
+typed by the multilingual tower, and "Tahoe järve ääres" (by Lake Tahoe), whose name Maps
+answers as "Lake Tahoe".
+
+Over the 884 picture queries of §7, the encoder read 3 places, all wrong and all one
+case that predates these changes: Japanese, Chinese and Korean "carousel" translate to "Ferris
+wheel", and Maps places "Ferris" (Texas). The case-ending and capitalised-run rules added no
+false place.
 
 ### The app with all of it
 

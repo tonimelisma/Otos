@@ -156,6 +156,7 @@ private func makeOpenWithModel(workspace: RecordingWorkspace) -> CatalogWindowVi
         startsSourceMonitoring: false,
         preferencesDomain: .suite(UUID().uuidString),
         workspace: workspace,
+        volumeCapacity: ampleVolumeCapacity,
         trashFiles: .refusing
     )
     model.startHandOff(store: model.catalogStore)

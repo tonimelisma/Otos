@@ -187,6 +187,7 @@ struct ExportTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: domain,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
         #expect(model.exportSettings == .default)

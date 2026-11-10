@@ -14,7 +14,8 @@ struct MediaOperationDestinationStreamTests {
         let second = LibraryRootPath(rawValue: temp.appending(path: "Second").path(percentEncoded: false))
         let coordinator = MediaOperationCoordinator(
             store: CatalogStore(location: .inMemory),
-            preferencesDomain: PreferencesDomain.suite(UUID().uuidString)
+            preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
+            volumeCapacity: ampleVolumeCapacity
         )
 
         var maps = await coordinator.destinationsStream().makeAsyncIterator()

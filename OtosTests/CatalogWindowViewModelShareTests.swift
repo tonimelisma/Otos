@@ -70,6 +70,7 @@ private func makeShareModel() -> CatalogWindowViewModel {
         startsEnrichment: false,
         startsSourceMonitoring: false,
         preferencesDomain: .suite(UUID().uuidString),
+        volumeCapacity: ampleVolumeCapacity,
         trashFiles: .refusing
     )
     model.startHandOff(store: model.catalogStore)

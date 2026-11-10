@@ -37,6 +37,7 @@ struct CatalogWindowViewModelTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
         projection = nil
@@ -72,6 +73,7 @@ struct CatalogWindowViewModelTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
 
@@ -114,6 +116,7 @@ struct CatalogWindowViewModelTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
 
@@ -152,6 +155,7 @@ struct CatalogWindowViewModelTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
 
@@ -188,6 +192,7 @@ struct CatalogWindowViewModelTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
 
@@ -225,6 +230,7 @@ struct CatalogWindowViewModelTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
         model.start()
@@ -273,6 +279,7 @@ struct CatalogWindowViewModelTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
@@ -308,6 +315,7 @@ struct CatalogWindowViewModelTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
@@ -363,6 +371,7 @@ struct CatalogWindowViewModelTests {
             startsSourceMonitoring: false,
             preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
             previewLoader: previewLoader,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
         previewLoader = nil
@@ -398,6 +407,7 @@ struct CatalogWindowViewModelTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
 

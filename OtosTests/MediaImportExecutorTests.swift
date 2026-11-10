@@ -479,7 +479,8 @@ struct ImportRecoveryTests {
         let relaunched = CatalogStore(location: .databaseFile(databaseURL))
         let coordinator = MediaOperationCoordinator(
             store: relaunched,
-            preferencesDomain: PreferencesDomain.suite(UUID().uuidString)
+            preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
+            volumeCapacity: ampleVolumeCapacity
         )
         await coordinator.start()
 
@@ -606,14 +607,18 @@ struct ImportExecutionProgressTests {
         // coordinator these tests do not run.
         await markEnrichmentLookedAtEveryRow(store, root: source)
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: tempDefaults,
+            volumeCapacity: ampleVolumeCapacity
+        )
         await coordinator.start()
         await coordinator.setDestination(destination, for: source)
         let plan = try await waitForReadyPlan(coordinator, source: source)
 
         let collector = ProgressCollector()
         let started = ContinuousClock.now
-        let result = await MediaImportExecutor(store: store).execute(
+        let result = await MediaImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity).execute(
             plan: plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
@@ -708,7 +713,7 @@ struct ImportExecutionProgressTests {
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationRoot)
-        let result = await MediaImportExecutor(store: store).execute(
+        let result = await MediaImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity).execute(
             plan: plan,
             batch: ImportBatchID(),
             sourceKind: .deviceMTP,
@@ -787,7 +792,7 @@ struct ImportExecutionProgressTests {
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationRoot)
-        let result = await MediaImportExecutor(store: store).execute(
+        let result = await MediaImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity).execute(
             plan: plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
@@ -871,7 +876,7 @@ struct ImportExecutionProgressTests {
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationRoot)
-        let result = await MediaImportExecutor(store: store).execute(
+        let result = await MediaImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity).execute(
             plan: plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
@@ -893,7 +898,7 @@ struct ImportExecutionProgressTests {
 
     @Test func zeroCopyPlanWithDeleteRequestedExecutesDeletion() async throws {
         let fixture = try await makeZeroCopyFixture()
-        let result = await MediaImportExecutor(store: fixture.store).execute(
+        let result = await MediaImportExecutor(store: fixture.store, volumeCapacity: ampleVolumeCapacity).execute(
             plan: fixture.plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
@@ -914,7 +919,7 @@ struct ImportExecutionProgressTests {
     @Test func zeroCopyPlanWithoutDeleteStaysReady() async throws {
         let fixture = try await makeZeroCopyFixture()
         let sourceBefore = try FilesystemTreeSnapshot.capture(root: fixture.sourceRoot)
-        let result = await MediaImportExecutor(store: fixture.store).execute(
+        let result = await MediaImportExecutor(store: fixture.store, volumeCapacity: ampleVolumeCapacity).execute(
             plan: fixture.plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
@@ -974,7 +979,7 @@ struct ImportExecutionProgressTests {
             )
         )
 
-        let result = await MediaImportExecutor(store: fixture.store).execute(
+        let result = await MediaImportExecutor(store: fixture.store, volumeCapacity: ampleVolumeCapacity).execute(
             plan: plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
@@ -1008,7 +1013,7 @@ struct ImportExecutionProgressTests {
             return
         }
 
-        let result = await MediaImportExecutor(store: fixture.store).execute(
+        let result = await MediaImportExecutor(store: fixture.store, volumeCapacity: ampleVolumeCapacity).execute(
             plan: fixture.plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
@@ -1672,14 +1677,15 @@ struct ImportVerifiesTheStagedCopyTests {
 
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: PreferencesDomain.suite(UUID().uuidString)
+            preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
+            volumeCapacity: ampleVolumeCapacity
         )
         await coordinator.start()
         await coordinator.setDestination(destination, for: source)
         let plan = try await waitForValue(every: .milliseconds(25)) { await coordinator.readyPlan(for: source) }
         #expect(plan.entries.first { $0.source.relativePath.rawValue == "a.jpg" }?.source.contentHash == wrong)
 
-        let result = await MediaImportExecutor(store: store).execute(
+        let result = await MediaImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity).execute(
             plan: plan,
             batch: ImportBatchID(),
             sourceKind: .removableVolume,

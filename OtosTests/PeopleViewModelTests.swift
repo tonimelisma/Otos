@@ -45,6 +45,7 @@ struct PeopleViewModelTests {
                 startsEnrichment: false,
                 startsSourceMonitoring: false,
                 preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
+                volumeCapacity: ampleVolumeCapacity,
                 trashFiles: .refusing
             )
             model.startPeopleIntentConsumer()

@@ -190,6 +190,7 @@ struct SmokeLibrarySelectionTests {
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: .suite(UUID().uuidString),
+            volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
 
