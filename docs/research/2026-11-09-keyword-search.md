@@ -667,6 +667,24 @@ word wrong even as a caption ("사진: 눈", snow → "Photo: Eyes"; "メリー�
 "Ferris wheel"); no reader on the device does better. The app's 80.5, its language
 recognised rather than given, is above the bake-off's best told the language (77.3).
 
+Nor does snapping to a scene label. The multilingual tower, reading the query as typed,
+names the right label where Translation errs ("눈" → snow, "メリーゴーランド" and
+"atlıkarınca" → carousel, "balkabakları" → pumpkin), and the wrong one elsewhere ("회전목마" →
+furniture, Dutch "meer" → ocean). Where the caption's nearest label is not among the typed
+text's nearest k, its embedding was replaced by that label's, or averaged with it:
+
+| Rule, mean of 15 languages | Queries changed | Recall@10 | Lowest language |
+| --- | --- | --- | --- |
+| The caption alone | 0 | 80.5 | 76.2 |
+| Not in the top 3: the label | 79 | 74.7 | 56.4 |
+| Not in the top 3: averaged | 79 | 79.5 | 75.6 |
+| Not in the top 5: the label | 63 | 76.0 | 63.0 |
+| Not in the top 5: averaged | 63 | 79.8 | 75.6 |
+| Not in the top 10: the label | 52 | 77.1 | 64.3 |
+| Not in the top 10: averaged | 52 | 80.0 | 75.6 |
+
+Every rule scores below the caption alone, so the caption stays the one reading.
+
 ### The surfaces, in a window
 
 With computer-use access denied, the search surfaces were driven in-process. `ContentView`,
