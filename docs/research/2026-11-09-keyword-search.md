@@ -565,8 +565,44 @@ The on-device system language model (Foundation Models, available on this Mac, r
 neither Estonian nor Finnish as supported) was asked to translate the 52 Estonian queries to
 English. Half came back wrong ("rand", beach → "Random"; "kiik", swing → "Bird"; "kass", cat →
 "Cash register"): recall@10 38.5, and fused with the typed embedding 41.3, against 50.1 as
-typed. With Translation offering no Estonian, nothing on the device reads it better than the
-multilingual tower: Estonian's gap to the other languages is the model's, not the pipeline's.
+typed. With Translation offering no Estonian and no Estonian dictionary among the system's
+(86 dictionary assets checked), no reader on the device does better than the multilingual
+tower.
+
+### Estonian through a glossary written for Otos
+
+A glossary, written for Otos, maps Estonian forms to English. To keep it independent of the
+52 test queries, its vocabulary is Vision's 1,303 scene-label names, the words search
+already reads photos with, not the test's. Each name gets its Estonian nominative and
+genitive (965 readings), plus 24 case endings. Two forms first written in were taken out
+because the test could have suggested them ("siluett" under cityscape, a plural under
+pumpkin). A typed word is read when forms cover it end to end, the last followed by nothing
+or one case ending. Words the glossary lacks stay as typed.
+
+| Reading of the 52 Estonian queries | Full precision (bake-off) | The app, Core ML int8, catalog | The app, thumbnails |
+| --- | --- | --- | --- |
+| English (ceiling) | 84.7 | | |
+| As typed | 50.1 | 49.3 | 51.6 |
+| Glossary, unread words as typed | 70.4 | 69.4 | 68.9 |
+| Glossary, unread words dropped | 66.3 | | |
+| Glossary fused with as typed | 64.5 | | |
+
+The app's column is the encoder itself (a user whose languages are Estonian and English). It
+glosses 45 of the 52 queries: 7 hold no word the glossary reads ("vanaauto", "kõrvitsapõld"),
+or are words English spells ("rand", "sushi").
+
+NaturalLanguage recognised 22 of the Estonian queries as English. Its English probability does
+not separate them: "owl" 0.38, "lilled" (flowers) 0.99. English spelling does. Unified
+checking (`checkString`) identifies the language itself and passed "koer" and "bassein" on a
+Mac with several spelling languages. `checkSpelling(of:language: "en")` passed "seas",
+"tools", "selfie" and "screenshot", and rejected "lennuk", "hobune" and "koer". Of the
+glossary's forms, 92 are English words ("tool", chair; "sea", pig's genitive; "seen",
+mushroom), so a query recognised as English is glossed only when spelling also rejects a word
+of it. No English query among the 52 is glossed, and neither are the other languages'
+readings for that user.
+
+The 204 facts queries, through the same encoder: precision@10 0.832 → 0.843, Estonian 56 → 78,
+no other language lower (en 91, fi 92, de 87, sv 78).
 
 ### The surfaces, in a window
 

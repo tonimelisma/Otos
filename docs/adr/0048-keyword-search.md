@@ -54,12 +54,23 @@ model reached 68%, and a multilingual text encoder distilled into CLIP's space r
    remembered once installed (16 ms, against 0.67 s for asking about every language). This is
    the one large lever: translated queries scored 77 across 16 languages, the same queries as
    typed 65. A non-English query takes about 0.35 s, mostly the translation.
-3. **Fall back to the text as typed** for a language with no installed pack, or none
-   recognised. SigLIP 2's own multilingual tower reads it (Estonian: 50).
+3. **Read through Otos's glossary** a language Translation does not offer, when the user
+   searches in it (`SearchGlossary`, Estonian): the picture's words it holds become English
+   (Estonian 69 on the app's Core ML embeddings, against 49 as typed; English 85). The
+   glossary is written for Otos from Vision's 1,303 scene-label names, nominative and genitive
+   form, with the language's case endings; a typed word is read when forms cover it end to end.
+4. **Fall back to the text as typed** for every other word, and for a language with no
+   installed pack and no glossary, or none recognised. SigLIP 2's own multilingual tower
+   reads it.
 
 Rejected:
 - **A cross-lingual embedding instead of translation.** It scored 44–68, against 78.
 - **A word-by-word translation model.** A sentence translator already handles a single word.
+- **For a language Translation lacks:** the system language model (Foundation Models)
+  translated half the Estonian queries wrongly ("rand", beach → "Random"; 38.5); prompt
+  templates around the typed text (42–47); a cloud translator, which would send the user's
+  search text off the Mac; and a downloaded third-party dictionary, a data dependency. The
+  glossary is Otos's own data, read offline.
 - **Fusing the native and translated embeddings.** It scored 74.0, below translation alone.
 - **Confidence gates** for when to fall back to the text as typed. They moved the mean by
   under half a point, which the judging cannot resolve.
@@ -182,6 +193,15 @@ trusted and the query is read as typed, so "jäätis" (ice cream) is not transla
 Finnish as "I froze". On the facts queries Estonian rose from 32 to 53 with this and the
 inflected place names above; no other language moved.
 
+The recogniser chooses only among English and Translation's languages, so an Estonian word
+is often called English ("lennuk", airplane; "hobune", horse). A query recognised as English
+from a user with a glossary language is read through the glossary when the glossary reads a
+word of it and English spelling (`NSSpellChecker`, English alone) rejects a word of it. Of the
+52 test queries in English, none is glossed; an English word the glossary also holds ("tool",
+Estonian chair) is spelled right and stays English. Facts are read from the typed text before
+the glossary, so a place's name is never read as a word ("Kassel" is no cat). On the facts
+queries, Estonian rose from 56 to 78 and the total from 0.832 to 0.843.
+
 ### Reading while hidden
 
 Otos holds one process activity for the session (`BackgroundReading`,
@@ -213,7 +233,10 @@ relaunch. Nothing reports when a full disk or a failed Core ML load clears.
   the picture instead.
 - **Unread items:** until indexing finishes, a search shows only what has been read. The
   empty state counts what has not.
-- **A language Translation lacks** is searched by the multilingual tower: weaker (Estonian
-  50 against 78 translated), but not empty.
+- **A language Translation lacks** is read through Otos's glossary of it where one exists
+  (Estonian, 69 against 85 in English); a word it lacks, and a language without one, is read
+  by the multilingual tower as typed. A glossary covers the scene-label vocabulary, not
+  verbs or adjectives ("magav", sleeping, stays as typed). Another language takes its own
+  `SearchGlossary-<code>.tsv`.
 - **A new model or preprocessing** bumps `SearchEmbedding.revision`, and every embedding is
   read again from the stored thumbnails. No original is read.

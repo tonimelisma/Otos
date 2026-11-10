@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import NaturalLanguage
 import OSLog
@@ -13,6 +14,10 @@ nonisolated struct SearchQueryEncoding: Sendable, Equatable {
         /// Recognised as a language with no installed translation, or not recognised: read
         /// by the model's own multilingual text tower as typed.
         case asTyped
+        /// Not translated, from a user whose language Translation does not offer and Otos has a
+        /// glossary for (`SearchGlossary`): the picture's words the glossary holds are read in
+        /// English, the rest as typed. `language` is the glossary's.
+        case glossed
     }
 
     let text: String
@@ -20,11 +25,12 @@ nonisolated struct SearchQueryEncoding: Sendable, Equatable {
     let language: String?
     let reading: Reading
     /// The English reading of the query, without the people it named; the typed text when
-    /// `reading` is `.asTyped`.
+    /// `reading` is `.asTyped` or `.glossed`, whose facts are read from what was typed.
     let modelText: String
     /// What the query asks for besides the picture.
     let facts: SearchFacts
-    /// What the picture is searched for: the reading without its facts.
+    /// What the picture is searched for: the reading without its facts, through the glossary
+    /// when `reading` is `.glossed`.
     let pictureText: String
     /// `pictureText`'s embedding; nil when the query is only facts ("in September").
     let embedding: [Float]?
@@ -59,8 +65,12 @@ nonisolated struct SearchPerson: Hashable, Sendable {
 ///    (`TranslationSession(installedSource:target:)`, no network, no UI). SigLIP 2 reads
 ///    English best: translated queries scored 77 across 16 languages, the same queries as
 ///    typed 65.
-/// 3. **Embedding:** `SearchTextTokenizer` and `SearchTextModel`. A language Translation does
-///    not offer (Estonian in the test) is read as typed by the model's multilingual tower.
+/// 3. **Glossary:** a query not translated, from a user with a language Translation does not
+///    offer (Estonian), has its picture words read through Otos's glossary of that language
+///    (`SearchGlossary`): recall@10 70 instead of 50 as typed. Facts are read first, from what
+///    was typed, so a place's name is never read as a word ("Kassel" is not a cat).
+/// 4. **Embedding:** `SearchTextTokenizer` and `SearchTextModel`. A word no glossary holds is
+///    read as typed by the model's multilingual tower.
 ///
 /// A failed translation is an error, not a fallback: the query is not answered with a
 /// reading the user did not get. The tokenizer, the model (87 MB, memory-mapped token table)
@@ -74,6 +84,7 @@ actor SearchQueryEncoder {
     private var model: SearchTextModel?
     private var supported: [NLLanguage: Locale.Language]?
     private var places: [String: SearchPlace?] = [:]
+    private var glossaries: [String: SearchGlossary?] = [:]
     private var installed: Set<NLLanguage> = []
     private var recent: [String: SearchQueryEncoding] = [:]
     private var recentOrder: [String] = []
@@ -131,7 +142,13 @@ actor SearchQueryEncoder {
                 Self.recognize(rest, among: candidates, preferring: preferred.map(NLLanguage.init(rawValue:))),
                 preferring: preferred, untranslatable: untranslatable
             )
-            if language == .english {
+            if language == .english, try await mayBeGlossed(rest, in: untranslatable) {
+                // The recogniser chooses only among languages Translation offers, so a word
+                // nothing recognises ("lennuk", airplane) is often called English.
+                language = nil
+                reading = .asTyped
+                modelText = rest
+            } else if language == .english {
                 modelText = rest
             } else if let language, let source = candidates[language], await isInstalled(language, source) {
                 modelText = try await Self.translate(rest, from: source)
@@ -156,10 +173,20 @@ actor SearchQueryEncoder {
             parse.date = native
         }
         let facts = SearchFacts(date: parse.date, place: place, people: named)
-        let embedding = parse.pictureText.isEmpty ? nil : try embed(parse.pictureText)
+        var pictureText = parse.pictureText
+        if reading == .asTyped {
+            for code in untranslatable {
+                guard let glossary = try glossary(code), let read = glossary.reading(of: pictureText) else { continue }
+                pictureText = read
+                reading = .glossed
+                language = NLLanguage(rawValue: code)
+                break
+            }
+        }
+        let embedding = pictureText.isEmpty ? nil : try embed(pictureText)
         let encoding = SearchQueryEncoding(
             text: text, language: language?.rawValue, reading: reading, modelText: modelText,
-            facts: facts, pictureText: parse.pictureText, embedding: embedding
+            facts: facts, pictureText: pictureText, embedding: embedding
         )
         remember(encoding, as: key)
         OtosLog.catalog.noticeOperation("search.encode", phase: "done", fields: [
@@ -217,6 +244,40 @@ actor SearchQueryEncoder {
         }
         let words = rest.split(whereSeparator: \.isWhitespace).map(String.init)
         return (found, words.joined(separator: " ").trimmingCharacters(in: .punctuationCharacters.union(.whitespaces)))
+    }
+
+    /// Whether a query recognised as English is in one of the user's untranslatable languages
+    /// instead: a glossary of one reads a word of it, and English spelling rejects a word of
+    /// it. Of the 52 test queries in English the glossary reads none; spelling keeps an
+    /// English word the glossary also holds ("tool", Estonian chair; "seas") English.
+    private func mayBeGlossed(_ text: String, in languages: [String]) async throws -> Bool {
+        for code in languages {
+            if try glossary(code)?.reading(of: text) != nil {
+                return await Self.misspellsEnglish(text)
+            }
+        }
+        return false
+    }
+
+    /// English spelling alone: unified checking (`requestCheckingOfString`) identifies the
+    /// language itself and, on a Mac with several spelling languages, passed "koer" and
+    /// "bassein". AppKit's spell checker is asked on the main actor, a few words, well under
+    /// a millisecond.
+    @MainActor
+    private static func misspellsEnglish(_ text: String) -> Bool {
+        NSSpellChecker.shared.checkSpelling(
+            of: text, startingAt: 0, language: "en", wrap: false, inSpellDocumentWithTag: 0, wordCount: nil
+        ).location != NSNotFound
+    }
+
+    /// Otos's glossary of `language`, read from the bundle once; nil when there is none.
+    private func glossary(_ language: String) throws -> SearchGlossary? {
+        if let known = glossaries[language] {
+            return known
+        }
+        let glossary = try SearchGlossary(language: language, bundle: bundle)
+        glossaries[language] = .some(glossary)
+        return glossary
     }
 
     private func embed(_ text: String) throws -> [Float] {
