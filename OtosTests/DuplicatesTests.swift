@@ -300,7 +300,8 @@ struct DuplicatesTests {
         let twins = try Self.onlyGroup([Self.copy("2026/08/a.mp4", born: 10, kind: .video), Self.copy("2026/08/b.mp4", born: 90, kind: .video)])
         var session = DuplicatesSession()
         let header = DuplicateGroupPresentation.map(twins, session: session)
-        #expect(header.title == Date(timeIntervalSince1970: 1_700_000_000).formatted(date: .long, time: .omitted))
+        // The copies' local capture time, written as their own clock read it.
+        #expect(header.title == CaptureLocalTime(seconds: 1_700_000_000).formatted(Date.FormatStyle(date: .long, time: .omitted)))
         #expect(header.reason == "2026/08 · Keeping the older file")
         #expect(header.tiles.map(\.fate) == [.keep, .trash])
         #expect(header.tiles.map(\.size) == ["1 KB", "1 KB"])

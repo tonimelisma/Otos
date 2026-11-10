@@ -495,7 +495,9 @@ struct CatalogStoreEnrichmentTests {
         let settled = try await catalogStoreTestState(store)
         let destinationAsset = try #require(settled.testAssets.first { $0.id == destinationID })
         // The ordering column, rebuilt from the cloned records.
-        #expect(destinationAsset.captureLocalTime == CaptureLocalTime(readingOf: captureDate))
+        // The record's wall clock is the instant's UTC reading (`localCapture`), and the local
+        // time is that wall clock.
+        #expect(destinationAsset.captureLocalTime == CaptureLocalTime(seconds: captureDate.timeIntervalSince1970))
         // The naming column, rebuilt from the same records — the two agree because
         // there is only one thing left for them to disagree about.
         #expect(try await store.captureWall(for: destinationID) == sourceWall)
@@ -651,7 +653,7 @@ struct CatalogStoreEnrichmentTests {
 
         let state = try await catalogStoreTestState(card.store)
         let copy = try #require(state.testAssets.first { $0.id.libraryRootPath == card.destinationPath })
-        #expect(copy.captureLocalTime == CaptureLocalTime(readingOf: card.captureDate))
+        #expect(copy.captureLocalTime == CaptureLocalTime(seconds: card.captureDate.timeIntervalSince1970))
         #expect(copy.contentHash == card.copyDigest)
         #expect(!copy.needsEnrichment(.cardProducts))
     }
@@ -665,7 +667,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(result == ImportProductsResult(metadata: .reused, rendering: .owed))
         let state = try await catalogStoreTestState(card.store)
         let copy = try #require(state.testAssets.first { $0.id.libraryRootPath == card.destinationPath })
-        #expect(copy.captureLocalTime == CaptureLocalTime(readingOf: card.captureDate))
+        #expect(copy.captureLocalTime == CaptureLocalTime(seconds: card.captureDate.timeIntervalSince1970))
         #expect(!copy.metadataStale)
         #expect(copy.renderingStale)
         #expect(!copy.hashStale)

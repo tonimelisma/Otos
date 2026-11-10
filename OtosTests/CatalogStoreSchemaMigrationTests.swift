@@ -181,6 +181,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.sourceItemIDMigrationIdentifier,
             CatalogSchema.searchEmbeddingsMigrationIdentifier,
             CatalogSchema.searchTextMigrationIdentifier,
+            CatalogSchema.captureLocalTimeMigrationIdentifier,
         ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
@@ -276,6 +277,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.sourceItemIDMigrationIdentifier,
             CatalogSchema.searchEmbeddingsMigrationIdentifier,
             CatalogSchema.searchTextMigrationIdentifier,
+            CatalogSchema.captureLocalTimeMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
