@@ -49,6 +49,9 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     /// Stills in the available fixed libraries whose faces are not yet read for their current
     /// bytes (for an Immich account, its current preview).
     let uncheckedPhotoCount: Int
+    /// The store's People revision the snapshot was read under: it includes every act whose
+    /// `PeopleActOutcome.revision` is at most this.
+    let revision: UInt64
 }
 
 /// A person in the People list: their confirmed faces, newest first, the first being the
@@ -133,6 +136,9 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
     let uncheckedPhotoCount: Int
     /// Faces found that are still faces (not marked `Not a Face`).
     let faceCount: Int
+    /// The People revision the state was built from (`PeopleSnapshot.revision`): it shows
+    /// every act whose revision is at most this.
+    var revision: UInt64 = 0
 
     static let empty = CatalogPeopleState(people: [], suggestions: [], unsure: [], uncheckedPhotoCount: 0, faceCount: 0)
 
@@ -226,4 +232,7 @@ nonisolated struct PeopleRestore: Equatable, Sendable {
 nonisolated struct PeopleActOutcome: Equatable, Sendable {
     let restore: PeopleRestore
     let person: PersonID?
+    /// The People revision this act committed as; a People state whose `revision` is at
+    /// least this shows it.
+    let revision: UInt64
 }
