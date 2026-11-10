@@ -83,7 +83,7 @@ bathroom	vannituba,vannitoa
 bathroom faucet	kraan,kraani
 beach	rand,ranna
 bean	uba
-beanie	müts,mütsi
+beanie	suusamüts,suusamütsi
 bear	karu
 bed	voodi
 bedding	voodipesu
@@ -102,7 +102,7 @@ bellydance	kõhutants,kõhutantsu
 bench	pink,pingi
 berry	mari,marja
 bib	pudipõll,pudipõlle
-bicycle	jalgratas,jalgratta,ratas,ratta
+bicycle	ratas,ratta,jalgratas,jalgratta
 billboards	reklaamtahvel,reklaamtahvli
 billiards	piljard,piljardi
 binoculars	binokkel,binokli
@@ -444,7 +444,7 @@ handwriting	käekiri,käekirja
 hangar	angaar,angaari
 hardhat	kiiver,kiivri
 harp	harf,harfi
-hat	kübar,kübara,müts,mütsi
+hat	müts,mütsi,kübar,kübara
 haze	udu,vine
 headgear	peakate,peakatte
 headphones	kõrvaklapid,kõrvaklappide
@@ -1114,7 +1114,6 @@ holding	hoidev,hoiab,hoidmas
 sunbathing	päevitav,päevitab,päevitamas
 writing	kirjutav,kirjutab,kirjutamas
 working	töötav,töötab,töötamas,töö,töö
-hat	müts,mütsi
 dress	kleit,kleidi
 glasses	prillid,prillide
 view	vaade,vaate

@@ -21,7 +21,8 @@ struct SearchGlossaryTests {
         #expect(glossary.reading(of: "unistav beebi") == "unistav baby")
         // Common words beyond the labels: a participle, a colour, a compound of an adjective.
         #expect(glossary.reading(of: "magav beebi") == "sleeping baby")
-        #expect(glossary.reading(of: "punase mütsiga laps") == "red beanie child")
+        #expect(glossary.reading(of: "punase mütsiga laps") == "red hat child")
+        #expect(glossary.reading(of: "laps sõidab rattaga") == "child riding bicycle")
         #expect(glossary.reading(of: "vanaauto") == "old automobile")
         #expect(glossary.reading(of: "Golden Gate'i sild") == "Golden Gate bridge")
         #expect(glossary.reading(of: "unistus") == nil)

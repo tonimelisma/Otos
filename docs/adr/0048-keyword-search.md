@@ -56,7 +56,7 @@ model reached 68%, and a multilingual text encoder distilled into CLIP's space r
    typed 65. A non-English query takes about 0.35 s, mostly the translation.
 3. **Read through Otos's glossary** a language Translation does not offer, when the user
    searches in it (`SearchGlossary`, Estonian): the picture's words it holds become English
-   (Estonian 77 on the app's Core ML embeddings, against 49 as typed; English 85). The
+   (Estonian 80 on the app's Core ML embeddings, against 49 as typed; English 85). The
    glossary is written for Otos: Vision's 1,303 scene-label names, then about 150 common words
    of a photo search (people, colours, qualities, places, times, actions with their verb
    forms), nominative and genitive, with the language's case endings; a typed word is read when
@@ -236,8 +236,11 @@ relaunch. Nothing reports when a full disk or a failed Core ML load clears.
 - **Unread items:** until indexing finishes, a search shows only what has been read. The
   empty state counts what has not.
 - **A language Translation lacks** is read through Otos's glossary of it where one exists
-  (Estonian, 77 against 85 in English); a word it lacks, and a language without one, is read
-  by the multilingual tower as typed ("unistav", dreaming). Another language takes its own
+  (Estonian, 80 against 85 in English); a word it lacks, and a language without one, is read
+  by the multilingual tower as typed ("unistav", dreaming). A word that is both English and
+  in the glossary, typed alone, reads as English ("rand", beach and a currency). A glossary
+  applies only when its language is among the user's search languages (Settings ▸ Search
+  Languages; default, the system's). Another language takes its own
   `SearchGlossary-<code>.tsv`.
 - **A new model or preprocessing** bumps `SearchEmbedding.revision`, and every embedding is
   read again from the stored thumbnails. No original is read.
