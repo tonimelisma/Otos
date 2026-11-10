@@ -157,8 +157,9 @@ A query is read for facts before the picture (`SearchQueryParser`, `SearchPlaces
   names it so, a case ending of up to three letters aside ("San Franciscos", Estonian for in
   San Francisco), and it covers 0.03° or more, a photo in it within 1.5 times the area's
   half-diagonal and at least 15 km. A name that is nowhere stays a picture word, and so does a
-  name an ordinary word follows ("Ferris wheel", which Maps places in Texas): "San Francisco
-  skyline" is searched as a picture with it, the milder miss. A query
+  one-word name an ordinary word follows ("Ferris wheel", which Maps places in Texas,
+  "Christmas tree"); a longer one before a noun is a place ("San Francisco skyline"). "Paris
+  cafe" is searched as a picture with the compounds, the milder miss. A query
   that may be in a language nothing recognises (not translated, from a user with such a
   language) takes the run of capitalised words around the tagger's first name, or the first
   such run, because the English tagger finds only "San" in "koer San Franciscos".
