@@ -561,6 +561,23 @@ Estonian queries read as typed were also tried inside a prompt, on the bake-off'
 embeddings and judgments (recall@10 over 51 concepts): as typed 50.1, "pilt: …" 46.8,
 "… (foto)" 44.1, "foto: …" 43.6, "a photo of …" 42.1. None helps; the query stays as typed.
 
+The on-device system language model (Foundation Models, available on this Mac, reporting
+neither Estonian nor Finnish as supported) was asked to translate the 52 Estonian queries to
+English. Half came back wrong ("rand", beach → "Random"; "kiik", swing → "Bird"; "kass", cat →
+"Cash register"): recall@10 38.5, and fused with the typed embedding 41.3, against 50.1 as
+typed. With Translation offering no Estonian, nothing on the device reads it better than the
+multilingual tower: Estonian's gap to the other languages is the model's, not the pipeline's.
+
+### The surfaces, in a window
+
+With computer-use access denied, the search surfaces were driven in-process. `ContentView`,
+hosted in a titled window with its toolbar bridged, takes "dog" typed into the toolbar's
+`NSSearchField` through its field editor into the view model's search, and Edit ▸ Find's intent
+puts the keyboard in the field (`SearchFieldWindowTests`). The window's frame drawn in-process
+shows the search item at the toolbar's trailing end, collapsed to its magnifier while empty in
+a 1,100-point window and expanded with its clear button while holding a query; the Settings row
+and the empty states were drawn in light and dark, and one in grayscale.
+
 ### The app with all of it
 
 The dev build re-read its catalog with labels (14,885 assets) and the text of its 2,002
