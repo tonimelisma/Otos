@@ -69,10 +69,10 @@ nonisolated extension CaptureTime {
 }
 
 /// The stored timestamps put back into the library's own value (ADR 0039), so its
-/// selections answer the catalog's questions: `captureInstant` orders a file
-/// (`capture_instant_unix`, which `best_capture_unix` falls back from to the file's
-/// dates) and `captureWallClock` names it (`CaptureWallClock`). Otos restates neither
-/// precedence.
+/// selections answer the catalog's questions: `captureWallClock` names a file, puts it on a
+/// day and orders the timeline (`CaptureWallClock`, `best_capture_local`), and
+/// `captureInstant` pins the moment (`capture_instant_unix`), which places a file without a
+/// wall clock (`CaptureLocalTime`). Otos restates neither precedence.
 ///
 /// `metadata.timestamps` is the one stored copy; both are derived from it where they are
 /// written. A record of a role this build does not know, or one that is not a capture time
