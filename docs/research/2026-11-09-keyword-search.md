@@ -557,6 +557,10 @@ catalog re-read by the installed app). Of nine phrases tried by hand, it places 
 skyline" and "Lake Tahoe sunset" and none of "Ferris wheel", "Christmas tree", "Teddy bear",
 "Disney castle" or "Golden Gate bridge"; "Paris cafe" and "New York pizza" are not placed.
 
+Estonian queries read as typed were also tried inside a prompt, on the bake-off's full-precision
+embeddings and judgments (recall@10 over 51 concepts): as typed 50.1, "pilt: …" 46.8,
+"… (foto)" 44.1, "foto: …" 43.6, "a photo of …" 42.1. None helps; the query stays as typed.
+
 ### The app with all of it
 
 The dev build re-read its catalog with labels (14,885 assets) and the text of its 2,002

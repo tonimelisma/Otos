@@ -7,7 +7,10 @@ import UniformTypeIdentifiers
 
 /// ADR 0048: a search embedding is read from the stored thumbnail it names, is stale when
 /// that thumbnail changes, and the index answers a query from what it has read.
-@Suite(.testDirectory)
+// Serialized: every case builds its own index, which loads the image and text models
+// (hundreds of megabytes) and Vision's readers. Run side by side they took the test host
+// past its 2 GB ceiling (2,142 MB) under the full suite.
+@Suite(.serialized, .testDirectory)
 struct PhotoSearchIndexTests {
     private struct Catalog {
         let store: CatalogStore

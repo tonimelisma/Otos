@@ -27,6 +27,20 @@ struct SearchLanguagesTests {
 extension SearchLanguagesTests {
     /// ARC-061: user-initiated work is what exempts a process from App Nap; the activity must
     /// not also keep the Mac awake.
+    @Test func choosingALanguageAddsOrRemovesItButNeverTheLast() {
+        #expect(SearchLanguages.choosing("sv", isOn: true, in: ["fi", "en"]) == ["fi", "en", "sv"])
+        #expect(SearchLanguages.choosing("fi", isOn: false, in: ["fi", "en"]) == ["en"])
+        #expect(SearchLanguages.choosing("en", isOn: true, in: ["fi", "en"]) == ["fi", "en"])
+        #expect(SearchLanguages.choosing("en", isOn: false, in: ["en"]) == nil)
+    }
+
+    @Test func theTitleNamesTheChosenLanguagesInOrder() {
+        let choices = [SearchLanguageChoice(code: "en", name: "English"), SearchLanguageChoice(code: "fi", name: "Finnish")]
+        let english = Locale(identifier: "en_US")
+        #expect(SearchLanguages.title(of: ["fi", "en"], among: choices, locale: english) == "Finnish and English")
+        #expect(SearchLanguages.title(of: ["en"], among: choices, locale: english) == "English")
+    }
+
     @Test func backgroundReadingIsExemptFromAppNapButNotFromSleep() {
         #expect(BackgroundReading.options.contains(.userInitiatedAllowingIdleSystemSleep))
         #expect(!BackgroundReading.options.contains(.idleSystemSleepDisabled))

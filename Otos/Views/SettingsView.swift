@@ -563,8 +563,7 @@ struct SearchLanguagesPicker: View {
                     Toggle(choice.name, isOn: Binding(
                         get: { selected.contains(choice.code) },
                         set: { isOn in
-                            let next = isOn ? selected + [choice.code] : selected.filter { $0 != choice.code }
-                            if !next.isEmpty {
+                            if let next = SearchLanguages.choosing(choice.code, isOn: isOn, in: selected) {
                                 setSelected(next)
                             }
                         }
@@ -578,7 +577,6 @@ struct SearchLanguagesPicker: View {
     }
 
     private var title: String {
-        let names = selected.map { code in choices.first { $0.code == code }?.name ?? Locale.current.localizedString(forIdentifier: code) ?? code }
-        return ListFormatter.localizedString(byJoining: names)
+        SearchLanguages.title(of: selected, among: choices)
     }
 }

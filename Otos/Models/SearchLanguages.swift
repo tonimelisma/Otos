@@ -55,4 +55,22 @@ nonisolated enum SearchLanguages {
         return codes.map { SearchLanguageChoice(code: $0, name: locale.localizedString(forIdentifier: $0) ?? $0) }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
+
+    /// The choice after the user turns `code` on or off in Settings ▸ Search Languages; nil
+    /// when that would leave none, because recognition needs a language to favour.
+    static func choosing(_ code: String, isOn: Bool, in selected: [String]) -> [String]? {
+        let next = isOn ? (selected.contains(code) ? selected : selected + [code]) : selected.filter { $0 != code }
+        return next.isEmpty ? nil : next
+    }
+
+    /// The chosen languages by name, in the user's order ("Finnish and English"); a code with
+    /// no choice is named by the current locale.
+    static func title(of selected: [String], among choices: [SearchLanguageChoice], locale: Locale = .current) -> String {
+        let names = selected.map { code in
+            choices.first { $0.code == code }?.name ?? locale.localizedString(forIdentifier: code) ?? code
+        }
+        let formatter = ListFormatter()
+        formatter.locale = locale
+        return formatter.string(from: names) ?? names.joined(separator: ", ")
+    }
 }
