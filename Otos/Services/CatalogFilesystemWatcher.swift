@@ -216,7 +216,7 @@ private nonisolated func filesystemEventStreamCallback(
         guard let path = pathsArray[index] as? String else {
             continue
         }
-        events.append(FilesystemEvent(path: path, flags: eventFlags[index]))
+        events.append(FilesystemEvent(path: CatalogPath.catalogSpelling(ofEventPath: path), flags: eventFlags[index]))
     }
     client.deliver(events: events)
 }

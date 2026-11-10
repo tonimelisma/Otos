@@ -39,6 +39,21 @@ nonisolated enum CatalogPath {
         return nil
     }
 
+    /// A path FSEvents reported, spelled as the catalog spells paths. Foundation, which
+    /// spells every root and scanned file here, drops a leading `/private` where the
+    /// shorter path names the same place: `/var`, `/tmp` and `/etc` are links into
+    /// `/private`. FSEvents reports the real `/private` path, so without this an event
+    /// inside a library under `/var` or `/tmp` would never match its root.
+    static func catalogSpelling(ofEventPath path: String) -> String {
+        for linked in ["/var", "/tmp", "/etc"] {
+            let real = "/private" + linked
+            if path == real || path.hasPrefix(real + "/") {
+                return String(path.dropFirst("/private".count))
+            }
+        }
+        return path
+    }
+
     static func relativePath(rootPath: LibraryRootPath, fileURL: URL) -> MediaRelativePath? {
         // The root path was resolved once at registration. Resolving every file
         // again can rewrite `/private` to `/` and break this prefix comparison;

@@ -19,6 +19,28 @@ struct CatalogStoreRootNormalizationTests {
         #expect(scanned.testAssets.map(\.relativePath.rawValue) == ["one.jpg"])
     }
 
+    /// A library behind a link into `/private` (`/var`, `/tmp`): FSEvents reports a file in
+    /// it by its real `/private` path, which, spelled as the catalog spells paths, belongs to
+    /// the library and maps to the file's relative path.
+    @Test func anEventUnderPrivateBelongsToItsLibrary() throws {
+        let folder = try makeTestDirectory()
+        let file = folder.appending(path: "one.jpg")
+        try Data("jpeg".utf8).write(to: file)
+        let reported = try #require(file.path.withCString { realpath($0, nil) }.map { pointer in
+            defer { free(pointer) }
+            return String(cString: pointer)
+        })
+        // The test directory lives under `/var`, a link to `/private/var`.
+        #expect(reported.hasPrefix("/private/var/"))
+
+        let root = try CatalogPath.normalizedDirectoryPath(for: folder)
+        let event = CatalogPath.catalogSpelling(ofEventPath: reported)
+        #expect(CatalogPath.owningRoot(for: event, among: [root]) == root)
+        #expect(CatalogPath.relativePath(rootPath: root, absolutePath: event)?.rawValue == "one.jpg")
+        #expect(CatalogPath.catalogSpelling(ofEventPath: "/private/variable/x") == "/private/variable/x")
+        #expect(CatalogPath.catalogSpelling(ofEventPath: "/Users/me/Pictures") == "/Users/me/Pictures")
+    }
+
     @Test func startupResolvesSavedSymlinkedRootBeforeScanning() async throws {
         let fixture = try makeSymlinkedOneDrivePicturesFixture()
         let databaseURL = fixture.temp.appending(path: "db/catalog.sqlite")

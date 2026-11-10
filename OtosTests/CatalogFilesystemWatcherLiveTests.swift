@@ -34,6 +34,10 @@ struct CatalogFilesystemWatcherLiveTests {
         try await waitUntil { eventsA.fileNames().contains("a.jpg") && eventsB.fileNames().contains("b.jpg") }
         #expect(!eventsA.fileNames().contains("b.jpg"))
         #expect(!eventsB.fileNames().contains("a.jpg"))
+        // FSEvents reports the test directory's real `/private/var` path; every event arrives
+        // spelled as its root is, so the store can tell which library it belongs to.
+        #expect(eventsA.paths().allSatisfy { CatalogPath.owningRoot(for: $0, among: [pathA]) == pathA })
+        #expect(eventsB.paths().allSatisfy { CatalogPath.owningRoot(for: $0, among: [pathB]) == pathB })
 
         watcherA.stop()
         try touchFromAnotherProcess(rootB.appending(path: "c.jpg"))
@@ -55,6 +59,10 @@ private final nonisolated class WatcherEventRecorder: Sendable {
 
     func record(_ event: FilesystemEvent) {
         events.withLock { $0.append(event) }
+    }
+
+    func paths() -> [String] {
+        events.withLock { $0.map(\.path) }
     }
 
     func fileNames() -> Set<String> {
