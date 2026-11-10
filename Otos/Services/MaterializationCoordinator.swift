@@ -177,6 +177,9 @@ actor MaterializationCoordinator: MaterializationRequesting {
         let estimatedBytes: Int64
         let dispatchedAt: ContinuousClock.Instant
         var task: Task<Void, Never>?
+        /// What this download committed to its volume's `FreeSpaceLedger`, once the task
+        /// has read the volume's figure and been admitted; `nil` before that.
+        var floorCommit: (volume: URL, bytes: Int64)?
     }
 
     private let store: CatalogStore
@@ -201,6 +204,9 @@ actor MaterializationCoordinator: MaterializationRequesting {
     private var deviceQueue: [MediaAssetID] = []
     private var backgroundQueue: [MediaAssetID] = []
     private var inFlightByID: [MediaAssetID: InFlightEntry] = [:]
+    /// One `FreeSpaceLedger` per volume with a committed download in flight, dropped when
+    /// the last one settles, so the next stretch of downloads reads the figure afresh.
+    private var ledgers: [URL: FreeSpaceLedger] = [:]
 
     private var inFlightCount = 0
     private var inFlightBytes: Int64 = 0
@@ -592,10 +598,9 @@ actor MaterializationCoordinator: MaterializationRequesting {
         let estimatedBytes = policy.estimatedBytes(request.sourceSize)
         let now = clock.now
         // Work nobody is looking at keeps the free-space floor; the photo on screen and
-        // a command the user gave do not wait for it. The bytes already in flight are
-        // read here, synchronously, and travel into the transfer as a value.
+        // a command the user gave do not wait for it, but still commit their bytes so the
+        // work that waits counts them.
         let floorApplies = entry.effectivePriority == .background || entry.effectivePriority == .device
-        let committedBytes = inFlightBytes
         inFlightCount += 1
         inFlightBytes += estimatedBytes
         if policy.isLargeVideo(request) {
@@ -631,27 +636,21 @@ actor MaterializationCoordinator: MaterializationRequesting {
                 )
                 return
             }
-            if floorApplies {
-                let available = await Self.availableBytes(volumeCapacity, onVolumeOf: request.id.libraryRootPath.url)
-                guard FreeSpaceFloor.admits(request.sourceSize ?? 0, committed: committedBytes, available: available)
-                else {
-                    OtosLog.mediaIO.notice(
-                        """
-                        op=materialization.request phase=floorHeld priority=\(request.priority.description, privacy: .public) \
-                        rootPath=\(request.id.libraryRootPath.rawValue, privacy: .public) \
-                        relativePath=\(request.id.relativePath.rawValue, privacy: .public) \
-                        sourceSize=\(request.sourceSize ?? -1, privacy: .public) \
-                        committedBytes=\(committedBytes, privacy: .public) available=\(available ?? -1, privacy: .public) \
-                        floor=\(FreeSpaceFloor.bytes, privacy: .public)
-                        """
-                    )
-                    await self?.finishOperation(
-                        request.id,
-                        result: MaterializationResult(outcome: .insufficientLocalSpace, rerequestCount: 0, elapsedMs: 0),
-                        providerFinishedAt: ContinuousClock().now
-                    )
-                    return
-                }
+            let reading = await Self.floorReading(
+                volumeCapacity,
+                for: request.id.libraryRootPath.url,
+                readsCapacity: floorApplies
+            )
+            guard let admitted = await self?.commitDownload(request.id, reading: reading, waitsForFloor: floorApplies)
+            else { return }
+            guard admitted else {
+                // Held at the floor, or no longer in flight (then this settles nothing).
+                await self?.finishOperation(
+                    request.id,
+                    result: MaterializationResult(outcome: .insufficientLocalSpace, rerequestCount: 0, elapsedMs: 0),
+                    providerFinishedAt: ContinuousClock().now
+                )
+                return
             }
             await store.beginKnownMaterialization(for: request.id)
             let result = await executor(request)
@@ -681,14 +680,67 @@ actor MaterializationCoordinator: MaterializationRequesting {
         )
     }
 
-    /// The capacity read leaves the actor: CacheDelete answers it over XPC and may be
+    /// The volume a download writes to and, for one that waits for the floor, its
+    /// figure. Read off the actor: CacheDelete answers the figure over XPC and may be
     /// recalculating (ADR 0032 rule 6).
     @concurrent
-    private static func availableBytes(
+    private static func floorReading(
         _ volumeCapacity: VolumeCapacityReader,
-        onVolumeOf url: URL
-    ) async -> Int64? {
-        volumeCapacity(url)
+        for url: URL,
+        readsCapacity: Bool
+    ) async -> (volume: URL, reported: Int64?) {
+        (FreeSpaceFloor.volume(of: url), readsCapacity ? volumeCapacity(url) : nil)
+    }
+
+    /// Admits a download against its volume's ledger and commits its bytes, applied
+    /// synchronously after the read so no other admission interleaves. A download that
+    /// does not wait for the floor is committed without the check. Returns `false` when
+    /// the floor holds the download, or when it is no longer in flight.
+    private func commitDownload(
+        _ id: MediaAssetID,
+        reading: (volume: URL, reported: Int64?),
+        waitsForFloor: Bool
+    ) -> Bool {
+        guard var entry = inFlightByID[id] else {
+            return false
+        }
+        let bytes = entry.request.sourceSize ?? 0
+        var ledger = ledgers[reading.volume] ?? FreeSpaceLedger()
+        if waitsForFloor {
+            guard ledger.admit(bytes, reported: reading.reported) else {
+                OtosLog.mediaIO.notice(
+                    """
+                    op=materialization.request phase=floorHeld priority=\(entry.request.priority.description, privacy: .public) \
+                    rootPath=\(id.libraryRootPath.rawValue, privacy: .public) \
+                    relativePath=\(id.relativePath.rawValue, privacy: .public) \
+                    sourceSize=\(entry.request.sourceSize ?? -1, privacy: .public) \
+                    committedBytes=\(ledger.committedBytes, privacy: .public) \
+                    reported=\(reading.reported ?? -1, privacy: .public) \
+                    available=\(ledger.available(reported: reading.reported) ?? -1, privacy: .public) \
+                    floor=\(FreeSpaceFloor.bytes, privacy: .public)
+                    """
+                )
+                return false
+            }
+        } else {
+            ledger.commit(bytes)
+        }
+        ledgers[reading.volume] = ledger
+        entry.floorCommit = (reading.volume, bytes)
+        inFlightByID[id] = entry
+        return true
+    }
+
+    /// Settles a download's commitment: kept when the file became local, returned
+    /// otherwise, and the volume's ledger dropped once nothing committed is in flight there.
+    private func settleCommitment(of entry: InFlightEntry, landed: Bool) {
+        guard let commit = entry.floorCommit else { return }
+        if !landed {
+            ledgers[commit.volume]?.release(commit.bytes)
+        }
+        if !inFlightByID.values.contains(where: { $0.floorCommit?.volume == commit.volume }) {
+            ledgers[commit.volume] = nil
+        }
     }
 
     private func finishOperation(
@@ -705,6 +757,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
             effectivePriority: entry.effectivePriority
         )
         removeAccounting(for: entry)
+        settleCommitment(of: entry, landed: result.isMaterialized)
         let deliveredAt = clock.now
         let providerMs = DiagnosticsTiming.milliseconds(from: entry.dispatchedAt, to: providerFinishedAt)
         let completionDeliveryMs = DiagnosticsTiming.milliseconds(from: providerFinishedAt, to: deliveredAt)

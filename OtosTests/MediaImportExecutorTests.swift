@@ -1247,8 +1247,8 @@ struct ImportExecutionProgressTests {
     /// Three 1 KB entries into a volume with room for two above the floor:
     /// two land, the third is never attempted, and the run settles as stopped
     /// at the floor with the count it actually published. The figure never
-    /// moves, as a lagging one (CacheDelete) does: the bytes already in flight
-    /// are what refuse the third.
+    /// moves, as a lagging one (CacheDelete) does: the bytes this run has
+    /// committed are what refuse the third.
     @Test func theFloorStopsTheRunBeforeTheEntryThatWouldBreachIt() async throws {
         let fixture = try await makeCardFixture(count: 3, bytesEach: 1024)
         let destination = fixture.destinationRoot
@@ -1266,6 +1266,57 @@ struct ImportExecutionProgressTests {
         #expect(publishedCount == 2)
         #expect(failedCount == 0, "an entry the floor refused was never attempted, so it is not a failure")
         #expect(!FileManager.default.fileExists(atPath: destination.appending(path: "IMG_2.jpg").path))
+    }
+
+    /// A fresh figure shows each copy as it reaches the disk (`copyfile` reserves the
+    /// whole file when it starts), and the run is not charged for it twice: a volume
+    /// with room for exactly three takes all three, however far the copies have got
+    /// when each admission reads the figure.
+    @Test func aFreshFigureLetsTheRunCopyEverythingThatFits() async throws {
+        let fixture = try await makeCardFixture(count: 3, bytesEach: 1024)
+        let destination = fixture.destinationRoot
+        let result = await executeFloorRun(fixture) { _ in
+            FreeSpaceFloor.bytes + 3 * 1024 - Self.bytesOnDisk(under: destination)
+        }
+        guard case let .completed(tally, _, nil) = result else {
+            Issue.record("Expected a completed run, got \(result)")
+            return
+        }
+        let publishedCount = tally.publishedCount
+        #expect(publishedCount == 3)
+    }
+
+    /// A figure that never moves does not let landed entries be forgotten: with more
+    /// entries than workers, room for nine of ten copies nine, though entries land and
+    /// leave the in-flight set while the run goes on.
+    @Test func aFigureThatNeverMovesStillCountsTheEntriesThatLanded() async throws {
+        let fixture = try await makeCardFixture(count: 10, bytesEach: 1024)
+        let result = await executeFloorRun(fixture) { _ in FreeSpaceFloor.bytes + 9 * 1024 }
+        guard case let .stopped(_, tally) = result else {
+            Issue.record("Expected a stopped run, got \(result)")
+            return
+        }
+        let publishedCount = tally.publishedCount
+        #expect(publishedCount == 9)
+    }
+
+    /// Bytes sitting in a directory tree, staging files included: what a fresh capacity
+    /// figure has lost to this run's copies so far.
+    private static func bytesOnDisk(under root: URL) -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
+        ) else {
+            return 0
+        }
+        var total: Int64 = 0
+        for case let url as URL in enumerator {
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            if values?.isRegularFile == true {
+                total += Int64(values?.fileSize ?? 0)
+            }
+        }
+        return total
     }
 
     /// A volume that does not answer admits everything; `ENOSPC` is the

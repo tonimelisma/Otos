@@ -236,7 +236,8 @@ typealias VolumeCapacityReader = @Sendable (URL) -> Int64?
 /// The free space Otos never takes a volume below (ADR 0027), and the one way every
 /// writer asks about it: import admits an entry, Move to Trash starts a download, and
 /// `MaterializationCoordinator` starts a background or device download only while the
-/// volume keeps this much after that write and every write already in flight lands.
+/// volume keeps this much after that write lands, counted through the owner's
+/// `FreeSpaceLedger` when it has several writes at once.
 /// One constant and one check with one home — the promise is the same wherever Otos
 /// writes.
 nonisolated enum FreeSpaceFloor {
@@ -252,15 +253,22 @@ nonisolated enum FreeSpaceFloor {
             .volumeAvailableCapacityForImportantUsage
     }
 
-    /// Whether writing `bytes` more, with `committed` bytes already on their way, keeps
-    /// a volume reporting `available` at or above the floor. An unknown capacity admits:
-    /// it is not evidence of room, but neither is it evidence of none, and the write's
+    /// The volume `url` lies on, which keys a `FreeSpaceLedger`: one volume's projection
+    /// never gates a write to another. `url` itself when the volume does not answer.
+    static func volume(of url: URL) -> URL {
+        (try? url.resourceValues(forKeys: [.volumeURLKey]))?.volume ?? url
+    }
+
+    /// Whether one write of `bytes` keeps a volume reporting `available` at or above the
+    /// floor. For a single write with nothing else of Otos's in flight; an owner with
+    /// several writes at once asks its `FreeSpaceLedger`. An unknown capacity admits: it
+    /// is not evidence of room, but neither is it evidence of none, and the write's
     /// `ENOSPC` is the backstop.
-    static func admits(_ bytes: Int64, committed: Int64 = 0, available: Int64?) -> Bool {
+    static func admits(_ bytes: Int64, available: Int64?) -> Bool {
         guard let available else {
             return true
         }
-        return available - committed - bytes >= Self.bytes
+        return available - bytes >= Self.bytes
     }
 
     /// Whether a write failed because its volume was out of space — the floor reached the
@@ -279,6 +287,75 @@ nonisolated enum FreeSpaceFloor {
             return refusedForSpace(underlying)
         }
         return false
+    }
+}
+
+/// One owner's account of the space its own writes have taken on a volume, so the floor
+/// (ADR 0027) is checked against neither more nor less than is really free.
+///
+/// The volume's figure alone undercounts: a write admitted a moment ago may not have
+/// reached the disk yet. Subtracting every in-flight write from the figure overcounts:
+/// `copyfile` reserves a file's whole size when it starts (research 2026-11-10), so a
+/// started write is in the figure *and* in the subtraction, and a run of eight workers
+/// stops up to eight files early. The ledger holds two views and checks against the
+/// lesser:
+///
+/// - the figure now, which sees every write that has reached the disk, Otos's and
+///   everyone else's;
+/// - the first figure this ledger read, less every byte it has committed since, which
+///   sees every write of Otos's whether or not the figure has caught up.
+///
+/// A fresh figure makes the two agree except for writes not yet started, which is exact.
+/// A figure that lags or never moves (CacheDelete) leaves the second view in charge,
+/// which still counts every landed write. That is safer than a figure less what is in
+/// flight now, which forgets an entry the moment it lands.
+///
+/// Committed bytes stay committed when their write lands: they are on the disk. A write
+/// that leaves nothing behind (failed, cancelled, refused) is released. The owner sets
+/// the ledger's lifetime: one import run, or one busy stretch of downloads that ends when
+/// nothing is in flight, after which the next write reads the figure afresh.
+nonisolated struct FreeSpaceLedger: Equatable, Sendable {
+    /// The first figure read, less every byte committed since; `nil` until a reading.
+    private var projected: Int64?
+    /// Every byte this ledger has admitted and not released.
+    private(set) var committedBytes: Int64 = 0
+
+    /// The free space the floor is checked against, given the figure read now: the
+    /// lesser of that figure and the projection. `nil` when neither is known.
+    func available(reported: Int64?) -> Int64? {
+        switch (reported, projected) {
+        case let (reported?, projected?): min(reported, projected)
+        case let (reported?, nil): reported
+        case let (nil, projected?): projected
+        case (nil, nil): nil
+        }
+    }
+
+    /// Admits a write of `bytes` if it keeps the floor, and commits it. `reported` is the
+    /// volume's figure read for this decision. The first one read sets the projection,
+    /// less whatever was committed before it: those bytes are assumed not to be in it yet.
+    mutating func admit(_ bytes: Int64, reported: Int64?) -> Bool {
+        if projected == nil, let reported {
+            projected = reported - committedBytes
+        }
+        guard FreeSpaceFloor.admits(bytes, available: available(reported: reported)) else {
+            return false
+        }
+        commit(bytes)
+        return true
+    }
+
+    /// Commits a write that does not wait for the floor (the photo on screen, a command
+    /// the user gave), so the writes that do wait still count it.
+    mutating func commit(_ bytes: Int64) {
+        projected = projected.map { $0 - bytes }
+        committedBytes += bytes
+    }
+
+    /// Returns a committed write's bytes: it left nothing on the disk.
+    mutating func release(_ bytes: Int64) {
+        projected = projected.map { $0 + bytes }
+        committedBytes -= bytes
     }
 }
 

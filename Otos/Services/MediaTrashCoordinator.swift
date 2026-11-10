@@ -203,8 +203,12 @@ actor MediaTrashCoordinator {
 
     /// One download task per item whose dataless members are being fetched.
     private var downloads: [MediaAssetID: Task<Void, Never>] = [:]
-    /// Bytes requested by in-flight downloads, counted against the free-space floor.
-    private var downloadBytes: [MediaAssetID: Int64] = [:]
+    /// What each in-flight download committed against the floor, and on which volume's
+    /// ledger. Settled by `finishDownload`, which every download task ends in.
+    private var downloadCommits: [MediaAssetID: (volume: URL, bytes: Int64)] = [:]
+    /// One `FreeSpaceLedger` per volume with a download in flight, dropped when its last
+    /// download settles, so the next stretch of downloads reads the figure afresh.
+    private var ledgers: [URL: FreeSpaceLedger] = [:]
     private var attempts: [MediaAssetID: Int] = [:]
     private var retryAt: [MediaAssetID: ContinuousClock.Instant] = [:]
     /// Items waiting on the user's answer to a published decision.
@@ -450,14 +454,14 @@ actor MediaTrashCoordinator {
             // evidence of room, but neither is it evidence of none; ENOSPC from the provider
             // is the backstop and stays transient, as for an unknown capacity.
             let bytes = PartialByteCount(sizes: dataless.map(\.byteSize)).knownBytes
-            guard fitsAboveFloor(bytes, root: item.root.path) else {
+            guard let volume = admitDownload(bytes, root: item.root.path) else {
                 if !waitingForSpace.contains(item.id) {
                     floorBlocked.append(item.id)
                 }
                 continue
             }
             waitingForSpace.remove(item.id)
-            startDownload(item, members: dataless, bytes: bytes)
+            startDownload(item, members: dataless, bytes: bytes, volume: volume)
         }
 
         if !floorBlocked.isEmpty {
@@ -545,12 +549,34 @@ actor MediaTrashCoordinator {
         PartialByteCount(sizes: datalessMembers(of: item).map(\.byteSize))
     }
 
-    private func fitsAboveFloor(_ bytes: Int64, root: LibraryRootPath) -> Bool {
-        FreeSpaceFloor.admits(bytes, committed: downloadBytes.values.reduce(0, +), available: volumeCapacity(root.url))
+    /// Admits a download of `bytes` into `root` against its volume's ledger and commits
+    /// it, returning that volume; `nil` when the download would take it below the floor.
+    private func admitDownload(_ bytes: Int64, root: LibraryRootPath) -> URL? {
+        let volume = FreeSpaceFloor.volume(of: root.url)
+        var ledger = ledgers[volume] ?? FreeSpaceLedger()
+        guard ledger.admit(bytes, reported: volumeCapacity(root.url)) else {
+            return nil
+        }
+        ledgers[volume] = ledger
+        return volume
     }
 
-    private func startDownload(_ item: MediaTrashItem, members: [MediaTrashMember], bytes: Int64) {
+    /// Settles a download's commitment: kept when its bytes are on the disk, returned
+    /// otherwise, and the volume's ledger dropped once nothing of Otos's is in flight there.
+    private func settleCommitment(of id: MediaAssetID, landed: Bool) {
+        guard let commit = downloadCommits.removeValue(forKey: id) else { return }
+        if !landed {
+            ledgers[commit.volume]?.release(commit.bytes)
+        }
+        if !downloadCommits.values.contains(where: { $0.volume == commit.volume }) {
+            ledgers[commit.volume] = nil
+        }
+    }
+
+    private func startDownload(_ item: MediaTrashItem, members: [MediaTrashMember], bytes: Int64, volume: URL) {
+        downloadCommits[item.id] = (volume, bytes)
         guard let materializationRequester else {
+            settleCommitment(of: item.id, landed: false)
             OtosLog.catalog.errorOperation("mediaTrash.path", phase: "failed", fields: [
                 "reason": "noMaterializer", "path": item.id.relativePath.rawValue,
             ])
@@ -558,7 +584,6 @@ actor MediaTrashCoordinator {
             eventContinuation.yield(.decision(.downloadFailed([item.id])))
             return
         }
-        downloadBytes[item.id] = bytes
         OtosLog.catalog.noticeOperation("mediaTrash.queue", phase: "download", fields: [
             "path": item.id.relativePath.rawValue, "members": "\(members.count)", "bytes": "\(bytes)",
         ])
@@ -587,7 +612,7 @@ actor MediaTrashCoordinator {
 
     private func finishDownload(_ id: MediaAssetID, outcome: MaterializationOutcome) {
         downloads[id] = nil
-        downloadBytes[id] = nil
+        settleCommitment(of: id, landed: outcome == .alreadyMaterialized || outcome == .materialized)
         guard !isShuttingDown else { return }
         switch outcome {
         case .alreadyMaterialized, .materialized:
@@ -624,7 +649,6 @@ actor MediaTrashCoordinator {
         for id in ids {
             attempts[id] = nil
             retryAt[id] = nil
-            downloadBytes[id] = nil
         }
     }
 
