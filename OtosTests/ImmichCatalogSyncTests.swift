@@ -499,4 +499,27 @@ struct ImmichCatalogSyncTests {
         #expect(try await fixture.visible() == ["s/IMG_1.HEIC"])
         await fixture.store.shutdown()
     }
+
+    /// A motion part's own line, arriving without its still's, refreshes the row it already
+    /// has: its modification time and size, in its still's folder, hidden as the still is.
+    @Test func aMotionPartsOwnLineRefreshesItsRowWhereItLives() async throws {
+        let fixture = try await Fixture.make()
+        let server = ScriptedServer([
+            [Self.motion("m"), Self.exif("m", size: 2), Self.asset("s", name: "IMG_1.HEIC", trashed: true, motion: "m"),
+             Self.complete],
+            [Self.asset("m", name: "IMG_1.MOV", type: .video, visibility: .hidden, modified: 1_700_000_900),
+             Self.exif("m", size: 3), Self.complete],
+        ])
+        let sync = ImmichCatalogSync(rootPath: fixture.rootPath, source: server, store: fixture.store)
+
+        _ = await sync.pass()
+        _ = await sync.pass()
+        let motion = MediaAssetID(libraryRootPath: fixture.rootPath, relativePath: MediaRelativePath(rawValue: "s/IMG_1.MOV"))
+        let row = try #require(try await fixture.store.mediaAssets(for: [motion])[motion])
+        #expect(row.byteSize == 3)
+        #expect(row.contentModifiedAt == Date(timeIntervalSince1970: 1_700_000_900))
+        #expect(try await fixture.store.sourceItemRows(["m"], in: fixture.rootPath)["m"]?.isHiddenBySource == true)
+        #expect(server.requestedDetails.isEmpty)
+        await fixture.store.shutdown()
+    }
 }

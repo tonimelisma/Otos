@@ -4383,29 +4383,33 @@ extension CatalogStore {
     }
 
     /// The rows of `rootPath` named by each of `sourceItemIDs`, by that ID: where an item
-    /// a source reports apart from its folder's own line already lives.
-    func paths(
-        ofSourceItems sourceItemIDs: Set<String>,
+    /// a source reports apart from its folder's own line already lives, and whether its
+    /// source hides it.
+    func sourceItemRows(
+        _ sourceItemIDs: Set<String>,
         in rootPath: LibraryRootPath
-    ) async throws -> [String: MediaRelativePath] {
+    ) async throws -> [String: SourceItemRow] {
         guard let rootID = roots.rowIDSnapshot()[rootPath], !sourceItemIDs.isEmpty else {
             return [:]
         }
         let ids = sourceItemIDs.sorted()
         let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ", ")
         return try await database().read { db in
-            var paths: [String: MediaRelativePath] = [:]
+            var rows: [String: SourceItemRow] = [:]
             for row in try Row.fetchAll(
                 db,
                 sql: """
-                SELECT source_item_id, relative_path FROM media_asset
+                SELECT source_item_id, relative_path, hidden_by_source FROM media_asset
                 WHERE library_root_id = ? AND source_item_id IN (\(placeholders))
                 """,
                 arguments: StatementArguments([rootID] as [any DatabaseValueConvertible] + ids)
             ) {
-                paths[row["source_item_id"]] = MediaRelativePath(rawValue: row["relative_path"])
+                rows[row["source_item_id"]] = SourceItemRow(
+                    relativePath: MediaRelativePath(rawValue: row["relative_path"]),
+                    isHiddenBySource: row["hidden_by_source"]
+                )
             }
-            return paths
+            return rows
         }
     }
 

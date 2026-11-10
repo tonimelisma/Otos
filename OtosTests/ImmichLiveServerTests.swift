@@ -173,9 +173,9 @@ struct ImmichLiveServerTests {
                 rootPath: rootPath, source: ImmichSessionSyncSource(client: client, token: token), store: store
             )
             _ = await sync.pass()
-            let paths = try await store.paths(ofSourceItems: [stillID, motionID], in: rootPath)
-            #expect(paths[stillID]?.rawValue == "\(stillID)/\(still.lastPathComponent)")
-            #expect(paths[motionID]?.rawValue == "\(stillID)/\(movie.lastPathComponent)")
+            let rows = try await store.sourceItemRows([stillID, motionID], in: rootPath)
+            #expect(rows[stillID]?.relativePath.rawValue == "\(stillID)/\(still.lastPathComponent)")
+            #expect(rows[motionID]?.relativePath.rawValue == "\(stillID)/\(movie.lastPathComponent)")
             await store.shutdown()
         } catch {
             failure = error

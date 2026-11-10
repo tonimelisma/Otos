@@ -250,7 +250,12 @@ actor ImmichCatalogSync {
                 motions[motionID] = try await source.asset(id: motionID)
             }
         }
-        let changes = batch.changes(motions: motions)
+        // A motion part's own line without its still in the batch refreshes the row it
+        // already has, hidden as its still is. One the catalog does not hold yet is listed
+        // when its still is.
+        let alone = Set(batch.motionLines.keys).subtracting(batch.linkedMotions)
+        let existing = try await store.sourceItemRows(alone, in: rootPath)
+        let changes = batch.changes(motions: motions, existingMotions: existing)
         if !changes.isEmpty {
             try await store.applySourceListingChanges(changes, scan: scan)
         }
@@ -320,9 +325,19 @@ actor ImmichCatalogSync {
 
         /// The batch as catalog changes. Each listed still's folder is listed in full: the
         /// still, and the motion part it links (from `motions`), under its own name and ID.
-        func changes(motions: [String: ImmichAssetDetail]) -> SourceListingChanges {
+        func changes(
+            motions: [String: ImmichAssetDetail],
+            existingMotions: [String: SourceItemRow]
+        ) -> SourceListingChanges {
             var listed: [SourceListedItem] = []
             var joined: Set<String> = []
+            for id in existingMotions.keys.sorted() {
+                guard let row = existingMotions[id], let line = motionLines[id] else {
+                    continue
+                }
+                listed.append(ImmichCatalogSync.refreshedItem(line, at: row, size: sizes[id]))
+                joined.insert(id)
+            }
             for id in listedByAsset.keys.sorted() {
                 guard let asset = listedByAsset[id] else {
                     continue
@@ -583,6 +598,25 @@ actor ImmichCatalogSync {
             ),
             sourceItemID: motion.id,
             isHiddenBySource: still.deletedAt != nil
+        )
+    }
+
+    /// A row the catalog already holds, refreshed from its asset's own line where it lives:
+    /// a motion part whose line came without its still's. It keeps its name and its source's
+    /// hidden state, which its still's line decides.
+    static func refreshedItem(_ asset: ImmichAsset, at row: SourceItemRow, size: Int64?) -> SourceListedItem {
+        let name = row.relativePath.fileName
+        return SourceListedItem(
+            file: ScannedMediaFile(
+                relativePath: row.relativePath,
+                name: name,
+                contentTypeIdentifier: UTType(filenameExtension: (name as NSString).pathExtension)?.identifier,
+                byteSize: size,
+                createdAt: asset.fileCreatedAt,
+                contentModifiedAt: asset.fileModifiedAt
+            ),
+            sourceItemID: asset.id,
+            isHiddenBySource: row.isHiddenBySource
         )
     }
 
