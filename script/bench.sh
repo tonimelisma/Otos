@@ -41,8 +41,16 @@ PY
 run() {
   source "$ROOT_DIR/script/lib/xcode.sh"
   source "$ROOT_DIR/script/lib/run-context.sh"
+  source "$ROOT_DIR/script/lib/build-folder.sh"
   otos_require_full_xcode
   otos_build_settings "$ROOT_DIR"
+  otos_hold_build_folder "$ROOT_DIR/build/DerivedData" bench
+  # What this run measures, read before the build: a pull during the run must not
+  # record these results on the commit it moved to.
+  local commit tree clean=1
+  commit="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+  tree="$(otos_tree_identity "$ROOT_DIR")"
+  [[ -z "$(git -C "$ROOT_DIR" status --porcelain)" ]] || clean=0
   local log_file
   log_file="$(otos_log_file "$ROOT_DIR" bench bench)"
   rm -f "$RESULTS_FILE"
@@ -79,12 +87,15 @@ run() {
   fi
   print_results "$RESULTS_FILE"
 
-  if [[ -n "$(git -C "$ROOT_DIR" status --porcelain)" ]]; then
+  if [[ "$(otos_tree_identity "$ROOT_DIR")" != "$tree" ]]; then
+    echo "op=bench phase=notRecorded reason=treeChangedDuringRun commit=$commit"
+    return
+  fi
+  if [[ "$clean" == 0 ]]; then
     echo "op=bench phase=notRecorded reason=uncommittedChanges"
     return
   fi
-  local commit note
-  commit="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+  local note
   note="$(/usr/bin/python3 -I - "$RESULTS_FILE" "$commit" \
     "$(/usr/sbin/sysctl -n hw.model)" \
     "$(/usr/bin/sw_vers -productVersion)" \

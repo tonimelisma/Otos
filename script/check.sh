@@ -105,6 +105,11 @@ MSG
 }
 
 banner
+# The tree this run measures, read before any gate does. Another session can pull into
+# a shared checkout mid-run; a result that measured two trees proves neither.
+source "$ROOT_DIR/script/lib/build-folder.sh"
+MEASURED_TREE="$(otos_tree_identity "$ROOT_DIR")" || { echo "check: FAILED — could not read the tree identity" >&2; exit 1; }
+echo "op=check.tree phase=start tree=$MEASURED_TREE"
 if [[ -n "$OTOS_ONLY_TESTING" ]]; then
   echo "op=check.scope tests=\"$OTOS_ONLY_TESTING\" evidence=no — a scoped run; the final tree needs script/check.sh with no arguments"
 fi
@@ -135,6 +140,9 @@ fi
 echo "op=check.stage phase=pass stage=fast-gates"
 
 # ── Stage 2: the real check, with a heartbeat so a stall is self-evident ─────
+# One run per build folder: a bench or a second check in this checkout waits here, before
+# the deadlock detector starts, and says whom it waits for.
+otos_hold_build_folder "$ROOT_DIR/build/DerivedData" check || exit 1
 echo "op=check.stage phase=start stage=verify"
 VERIFY_LOG="$(mktemp)"
 "$ROOT_DIR/script/verify.sh" > "$VERIFY_LOG" 2>&1 &
@@ -312,7 +320,12 @@ verify_status=$?
 cat "$VERIFY_LOG"
 rm -f "$VERIFY_LOG" "$CPU_LEDGER"
 
-if [[ "$verify_status" == "0" && -n "$OTOS_ONLY_TESTING" ]]; then
+final_tree="$(otos_tree_identity "$ROOT_DIR")" || final_tree="unreadable"
+if [[ "$verify_status" == "0" && "$final_tree" != "$MEASURED_TREE" ]]; then
+  echo "op=check.tree phase=changed start=$MEASURED_TREE end=$final_tree" >&2
+  echo "check: FAILED — the tree changed during the run, so this result describes neither tree; re-run" >&2
+  verify_status=1
+elif [[ "$verify_status" == "0" && -n "$OTOS_ONLY_TESTING" ]]; then
   echo "check: PASSED (scoped to $OTOS_ONLY_TESTING) — iteration feedback, NOT verification evidence"
 elif [[ "$verify_status" == "0" ]]; then
   echo "check: PASSED — evidence is valid only for the tree as it stands right now"

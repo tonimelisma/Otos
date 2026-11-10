@@ -7,8 +7,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/script/lib/xcode.sh"
 source "$ROOT_DIR/script/lib/run-context.sh"
+source "$ROOT_DIR/script/lib/build-folder.sh"
 
 otos_require_full_xcode
+otos_hold_build_folder "$ROOT_DIR/build/DerivedData" test
 
 LOG_FILE="$(otos_log_file "$ROOT_DIR" test test)"
 echo "Capturing test output to $LOG_FILE"

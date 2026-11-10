@@ -1,7 +1,7 @@
 # ADR 0044: Verification builds share compile results across worktrees, gates run in one pass, and a check can be scoped while iterating
 
 - Status: Accepted
-- Last updated: 2026-11-01
+- Last updated: 2026-11-10
 
 ## Context
 
@@ -29,7 +29,8 @@ work per commit to get there. The measurements and sources are in
 
 Owns: the build settings of the verification build (`script/build.sh`) and the
 benchmark build (`script/bench.sh`); how tests find the checkout; how fast the static
-gates run; the scoped `check.sh --only` mode and what counts as verification evidence.
+gates run; the scoped `check.sh --only` mode and what counts as verification evidence;
+one run at a time per build folder, and the tree identity a run reports.
 
 References but does not own: the check's supervision (heartbeat, deadlock detection,
 one entry point; `AGENTS.md` and ADR 0015), the benchmark design (ADR 0043), the
@@ -65,6 +66,25 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
    and the full build, then only the named suites (`-only-testing:OtosTests/<Suite>`),
    and says on its first and last lines that it is not evidence. Verification evidence
    is still a no-argument `check.sh` on the final tree.
+7. **One run at a time per build folder.** Sessions share the primary checkout, where one
+   installs, one benchmarks and one checks. Two `xcodebuild` runs against one DerivedData
+   fail on its locked build database (exit 65). `otos_hold_build_folder` in
+   `script/lib/build-folder.sh` holds the folder for the rest of the calling script:
+   `check.sh`, `build.sh`, `test.sh`, `bench.sh run`, `face-accuracy.sh` and
+   `build_and_run.sh` hold `build/DerivedData`, `install.sh` holds
+   `build/InstallDerivedData`. A second run waits for the first to exit, which the
+   kernel reports, and logs `op=<run>.wait reason=buildFolderBusy holder=<pid> op=<run>`.
+   `check.sh` waits before its deadlock detector starts. A nested script inherits its
+   caller's hold through `OTOS_HELD_BUILD_FOLDERS`. The lock lives in a holder process
+   (`script/lib/hold-build-folder.py`), not in a descriptor every build child would
+   inherit.
+8. **A run names the tree it measured.** `otos_tree_identity` is the git tree id of the
+   checkout with uncommitted and untracked files, built in a private copy of the index.
+   `check.sh` prints it at the start (`op=check.tree`) and fails when it differs at the
+   end, because a pull during the run leaves a result that describes neither tree.
+   `bench.sh run` reads the commit before building and records nothing if the tree
+   changed, so a pull mid-run cannot record results on the commit it moved to.
+   `install.sh` refuses to install a build whose tree changed under it.
 
 ## Alternatives Considered
 
@@ -94,6 +114,15 @@ and keep right. Explicit `--only` gives the iteration speed without that.
 
 Incremental builds already recompile per file; the clean build, not module size, was
 the cost, and caching removes it.
+
+### Wait on a timer and retry when a build folder is busy
+
+Rejected: the release is a fact the kernel reports (ADR 0033), and a retry loop guesses
+how long the other run takes.
+
+### One lock for the whole checkout
+
+Rejected: `install.sh` builds into its own folder and need not wait for a check.
 
 ## Consequences
 

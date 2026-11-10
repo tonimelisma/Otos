@@ -11,11 +11,13 @@ APP_BUNDLE="$DERIVED_DATA/Build/Products/Debug/$APP_NAME.app"
 
 source "$ROOT_DIR/script/lib/xcode.sh"
 source "$ROOT_DIR/script/lib/run-context.sh"
+source "$ROOT_DIR/script/lib/build-folder.sh"
 otos_require_full_xcode
 
 # Killing every instance made the PID lookup below unambiguous by destroying the
 # alternative — including a session the user was running. Refuse instead.
 otos_refuse_if_running "$APP_NAME"
+otos_hold_build_folder "$DERIVED_DATA" buildAndRun
 
 /usr/bin/xcodebuild \
   -project "$ROOT_DIR/Otos.xcodeproj" \

@@ -30,7 +30,9 @@ catalog would also give one database two `CatalogStore` owners.
   debuggable app. The build disables code coverage (Xcode 27 enables it for Debug
   by default; the instrumented binary writes `default.profraw` into its working
   directory) and the preview debug dylib. `CFBundleVersion` is the commit count of
-  the installed commit; the install refuses a dirty tree.
+  the installed commit; the install refuses a dirty tree, and refuses a build whose
+  tree changed during it. One install runs at a time: a second waits for the first to
+  exit, then builds its own HEAD (ADR 0044's build-folder hold).
 - **Symbols live with the build.** The installed binary's debug map points at
   object files in `build/InstallDerivedData`, which only the next install
   overwrites — the same step that replaces the binary. No separate symbol store.

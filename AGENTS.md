@@ -379,7 +379,10 @@ hangs has a defect; fix the defect.**
 often while Otos is running; that is the normal case, not a contention to wait out.
 Each worktree builds into its own `build/DerivedData`, `check.sh` watches and kills
 only its own descendants, and tests run in a standalone `xctest` host, never inside
-Otos.app. Do not wait for an idle machine before starting a check. A test that fails
+Otos.app. Runs that share one checkout (a check, a bench, an install in the primary
+checkout) take turns on its build folder and log `op=<run>.wait reason=buildFolderBusy`
+while they wait; a check whose tree changed mid-run (another session pulled) fails with
+`op=check.tree phase=changed` (ADR 0044). Do not wait for an idle machine before starting a check. A test that fails
 or hangs only under that load has a defect — a wall-clock bound, an order between two
 async facts it does not own, or a leaked thread or file in shared machine state —
 and the fix is to that test or its harness, never to serialize the runs.

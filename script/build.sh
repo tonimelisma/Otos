@@ -8,8 +8,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/script/lib/xcode.sh"
+source "$ROOT_DIR/script/lib/build-folder.sh"
 
 otos_require_full_xcode
+otos_hold_build_folder "$ROOT_DIR/build/DerivedData" build
 otos_build_settings "$ROOT_DIR"
 
 /usr/bin/xcodebuild \

@@ -10,6 +10,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/script/lib/xcode.sh"
 source "$ROOT_DIR/script/lib/operational-busy.sh"
+source "$ROOT_DIR/script/lib/build-folder.sh"
 
 BUNDLE_ID="net.melisma.Otos"
 INSTALLED_APP="/Applications/Otos.app"
@@ -22,12 +23,15 @@ DERIVED_DATA="$ROOT_DIR/build/InstallDerivedData"
 BUILT_APP="$DERIVED_DATA/Build/Products/Debug/Otos.app"
 
 otos_require_full_xcode
+# One install at a time: a second waits for the first, then builds its own HEAD.
+otos_hold_build_folder "$DERIVED_DATA" install
 
 if [[ -n "$(git -C "$ROOT_DIR" status --porcelain)" ]]; then
   echo "Refusing to install from a dirty tree: the installed app must be one commit." >&2
   exit 1
 fi
 REVISION="$(git -C "$ROOT_DIR" rev-parse --short HEAD)"
+TREE="$(otos_tree_identity "$ROOT_DIR")"
 
 if [[ -e "$INSTALLED_APP" ]]; then
   existing_id="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$INSTALLED_APP/Contents/Info.plist" 2>/dev/null || true)"
@@ -51,6 +55,12 @@ fi
   ENABLE_DEBUG_DYLIB=NO \
   CURRENT_PROJECT_VERSION="$(git -C "$ROOT_DIR" rev-list --count HEAD)" \
   build
+
+# A pull during the build leaves a binary that is neither commit; never install it.
+if [[ "$(otos_tree_identity "$ROOT_DIR")" != "$TREE" ]]; then
+  echo "op=install phase=failed revision=$REVISION reason=treeChangedDuringBuild" >&2
+  exit 1
+fi
 
 built_id="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$BUILT_APP/Contents/Info.plist")"
 [[ "$built_id" == "$BUNDLE_ID" ]] || { echo "Built bundle id is $built_id, expected $BUNDLE_ID" >&2; exit 1; }
