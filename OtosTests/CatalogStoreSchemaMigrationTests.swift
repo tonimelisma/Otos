@@ -285,7 +285,8 @@ struct CatalogStoreSchemaMigrationTests {
     /// row with stored records takes the first role in `instantPrecedence` with an instant
     /// (digitized here, which the old order ranked behind QuickTime's creation date); a row
     /// whose records cannot be decoded, or that has none, keeps the old columns' value in
-    /// the library's order. `best_capture_unix` still falls back to the file's dates.
+    /// the library's order. The absolute time the timeline falls back to still falls back
+    /// from it to the file's dates (v23 keeps that chain under `best_capture_local`).
     @Test func theCaptureInstantMigrationOrdersByTheLibrarysInstant() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -347,8 +348,8 @@ struct CatalogStoreSchemaMigrationTests {
         let (best, columns, indexes) = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try (
                 Dictionary(uniqueKeysWithValues: Row.fetchAll(
-                    db, sql: "SELECT relative_path, best_capture_unix FROM media_asset"
-                ).map { ($0["relative_path"] as String, $0["best_capture_unix"] as Double?) }),
+                    db, sql: "SELECT relative_path, \(CatalogSchema.absoluteCaptureSQL) AS absolute FROM media_asset"
+                ).map { ($0["relative_path"] as String, $0["absolute"] as Double?) }),
                 Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_xinfo('media_asset')")),
                 Set(String.fetchAll(
                     db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_media_asset_best_capture_%'"
@@ -362,6 +363,72 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(columns.contains("capture_instant_unix"))
         #expect(columns.isDisjoint(with: ["ts_original_unix", "ts_quicktime_creation_unix", "ts_digitized_unix", "ts_gps_unix"]))
         #expect(indexes.count == 4)
+    }
+
+    /// ADR 0039: v23 puts the timeline on local capture time. A row with a wall clock —
+    /// floating or offset-bearing — is its wall clock read as UTC, whatever its instant or
+    /// file dates say; a row without one is its absolute time read in the zone the
+    /// migration runs in, at that time; an undated row stays undated. Every index over the
+    /// old column is rebuilt under its own name over the new one.
+    @Test func theCaptureLocalTimeMigrationPutsEveryRowOnItsOwnDay() async throws {
+        let pacific = try #require(TimeZone(identifier: "America/Los_Angeles"))
+        let queue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.searchTextMigrationIdentifier)
+        let indexesBefore = try await queue.read { db in
+            try Set(String.fetchAll(
+                db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND sql LIKE '%best_capture_unix%'"
+            ))
+        }
+        // 2024-04-25 14:51 floating, created 101 days later; 2025-11-09 20:00 at −08:00
+        // (04:00 UTC on the 10th); a screenshot with only a creation date in July (−07:00).
+        struct OldRow {
+            let path: String
+            let wall: Int64?
+            let instant: Double?
+            let created: Double?
+        }
+        let rows = [
+            OldRow(path: "floating.jpg", wall: 20_240_425_145_100, instant: nil, created: 1_722_800_000),
+            OldRow(path: "california.heic", wall: 20_251_109_200_000, instant: 1_762_747_200, created: 1_762_747_300),
+            OldRow(path: "screenshot.png", wall: nil, instant: nil, created: 1_751_400_000),
+            OldRow(path: "undated.jpg", wall: nil, instant: nil, created: nil),
+        ]
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (path, kind) VALUES ('/Pictures', 'library')")
+            for row in rows {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (
+                        library_root_id, relative_path, relative_path_key, sort_key, name_sort_key,
+                        capture_wall_compact, capture_instant_unix, created_at_unix
+                    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [row.path, row.path, row.path, row.path, row.wall, row.instant, row.created]
+                )
+            }
+            try CatalogSchema.migrateToCaptureLocalTime(db, timeZone: pacific)
+        }
+        let (local, columns, indexesAfter, stale) = try await queue.read { db in
+            try (
+                Dictionary(uniqueKeysWithValues: Row.fetchAll(
+                    db, sql: "SELECT relative_path, best_capture_local FROM media_asset"
+                ).map { ($0["relative_path"] as String, $0["best_capture_local"] as Double?) }),
+                Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_xinfo('media_asset')")),
+                Set(String.fetchAll(
+                    db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND sql LIKE '%best_capture_local%'"
+                )),
+                String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE sql LIKE '%best_capture_unix%'")
+            )
+        }
+        #expect(local["floating.jpg"] == 1_714_056_660) // 2024-04-25 14:51 read as UTC
+        #expect(local["california.heic"] == 1_762_718_400) // 2025-11-09 20:00 read as UTC
+        #expect(local["screenshot.png"] == 1_751_400_000 - 7 * 3600)
+        #expect(local["undated.jpg"] == .some(nil))
+        #expect(!columns.contains("best_capture_unix"))
+        #expect(columns.contains("assumed_utc_offset_seconds"))
+        #expect(!indexesBefore.isEmpty)
+        #expect(indexesAfter == indexesBefore)
+        #expect(stale.isEmpty)
     }
 
     /// ADR 0009: v13 turns the one enrichment stamp into the metadata stamp and gives every

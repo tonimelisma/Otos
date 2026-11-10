@@ -126,7 +126,7 @@ struct RemoteRangeEnrichmentTests {
             await (try? store.mediaAssets(for: [id])[id]?.metadataSourceSize) == Int64(data.count)
         }
         let asset = try #require(try await store.mediaAssets(for: [id])[id])
-        #expect(asset.bestCaptureDate != nil)
+        #expect(asset.captureLocalTime != nil)
         #expect(asset.renderedSourceSize == nil)
         // A few ranges, not the file: the read-through cache's chunks.
         #expect(requests.value <= 4)

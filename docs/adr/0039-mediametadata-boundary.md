@@ -42,6 +42,10 @@ MediaMetadata 0.7.0 adds what a consumer needs to stop re-deriving:
   fields added since 0.7.1 moved it: a stored row cannot tell "the file has none" from
   "the reader did not look", so a revision that announced only corrections left every new
   field to a consumer migration.
+- 0.9.3 restates which selection answers which question: the wall clock names an item,
+  puts it on a day and orders a timeline, and the instant compares across zones. Ordering
+  by instant had put photos on the viewer's day rather than their own, and could not place
+  a floating time at all.
 
 ## Decision
 
@@ -51,7 +55,8 @@ what those facts mean. That covers:
 - orientation semantics and display geometry (`PixelGeometry`, `Orientation.swapsDimensions`),
   and the camera's level at capture;
 - the list of timestamp roles and location sources;
-- which role names a file (`wallClockPrecedence`) and which orders it (`instantPrecedence`);
+- which role names, days and orders a file (`wallClockPrecedence`) and which pins its
+  instant (`instantPrecedence`);
 - codec identity;
 - the extraction revision.
 
@@ -59,7 +64,8 @@ what those facts mean. That covers:
 - persistence and its schema;
 - when to pay for bytes (materialization, the free-space floor, never downloading for a
   parser fix);
-- the catalog's own projections (`best_capture_unix`, the stored capture wall);
+- the catalog's own projections (`best_capture_local`, the stored capture wall), including
+  the zone it assumes for an item whose file records no wall clock;
 - product policy, such as no audio (MED-004);
 - platform decode facts used for rendering (ImageIO's and Core Image's own orientation,
   which describe the decode Otos draws, not the file's metadata).
@@ -83,9 +89,32 @@ what those facts mean. That covers:
   `CaptureTimestamps(entries:)`, 0.8.1) and Otos asks it, restating no precedence. A
   record whose precision or wall-clock components are not a valid capture time is left
   out (`CaptureTime(record:)`).
-- **The sort order is `captureInstant`.** `capture_instant_unix` is its instant, and
-  `best_capture_unix` falls back from it to the file's dates. Migration v8 replaced the
-  four `ts_*_unix` columns Otos had coalesced in its own order.
+- **The timeline runs on local capture time** (0.9.3). The library's `captureWallClock`
+  is the local time when and where an item was taken. It names the item, puts it on a day,
+  and places it in the timeline. `captureInstant` is for comparing across zones. Otos
+  stores it as `capture_instant_unix`, and it orders nothing on its own.
+  - `best_capture_local` is the wall clock read as if it were UTC (`CaptureLocalTime`). An
+    item is ordered by that reading and belongs to its date, so a photo taken at 15:00 in
+    California is a 15:00 photo of that California day, also on a Mac in Sydney. Two
+    clocks in different zones order by their readings, as Lightroom's Capture Time does.
+  - An item whose file records no wall clock is placed by its absolute time: capture
+    instant, else creation date, else modification date. That time is read with
+    `assumed_utc_offset_seconds`, the offset of the Mac's zone when Otos recorded it
+    (`CaptureLocalTime.assumedUTCOffset`), which is how Lightroom and Photos date such a
+    file at import. The assumption is kept while that absolute time is unchanged, so no
+    item moves when the Mac changes zone. Migration v23 made it for every existing row in
+    the zone the migration ran in.
+  - The grid's day sections (`CatalogStore.orderedAssetIDs`), the Date sort, On This Day
+    (`AnniversaryRanges`), search's date spans, People's birthday rules and Info's
+    Captured line all read this one value. Day sections are the reading's date. On This Day
+    and search take a day on the Mac's calendar as the same readings on any clock. So the
+    three always agree, and none of them depends on the Mac's zone.
+  - Migration v8 replaced the four `ts_*_unix` columns Otos had coalesced in its own order.
+    Migration v23 replaced `best_capture_unix` (instant in the viewer's zone, else file
+    dates) with `best_capture_local`. With the Mac on UTC+11, 15,161 of 15,188
+    offset-bearing photos in one library sat a day off their own day under the old column.
+    718 floating photos in another fell back to file creation dates up to 101 days away
+    (`docs/research/2026-11-10-capture-local-time.md`).
 - **The wall clock is `captureWallClock`** (`wallClockPrecedence`). So an AVI's RIFF recording date (ICRD/IDIT), when no earlier
   role is local, now names the file instead of the mtime-less-duration fallback:
   - an embedded fact is better than a derived one;
@@ -132,12 +161,24 @@ what those facts mean. That covers:
   HEIFs; nothing displayed is shaped by it (APP-040, APP-048).
 - A library release that raises a family's revision re-reads that family's *local* rows
   once, which is cheap; nothing is downloaded for it.
-- `best_capture_unix` still coalesces original → quickTimeCreation → digitized → gps,
-  while the library's `instantPrecedence` puts digitized before quickTimeCreation.
-  Adopting the library's order changes a STORED generated column (a table rebuild) and can
-  reorder the grid, so it is a separate decision.
+- A photo's day no longer follows the Mac's zone. Travelling does not move anything taken
+  with a wall clock. An item with only an absolute time keeps the zone Otos assumed when
+  it recorded that time. The migration ran in the Mac's zone of that moment, so such an
+  item recorded while away keeps that zone's day.
+- Two photos taken minutes apart in different zones order by their wall clocks. This is
+  the trade Lightroom makes; it keeps every day's photos together.
 
 ## Rejected
+
+- **Order by instant and day by wall clock.** Day sections are runs of the ordered list;
+  when the viewer's zone differs from the capture zone, instant order interleaves the
+  photos of two days, so a day would appear twice.
+- **Turn a floating wall clock into an instant in the Mac's zone.** The instant would
+  carry the zone of the moment it was computed, so a floating photo would leave its day
+  whenever the Mac's zone differs, the same defect as before for a different set of photos.
+- **Read items without a wall clock in the Mac's current zone at every read.** That cannot
+  be indexed, and a change of zone would move those items between days while everything
+  else stayed put.
 
 - **Make a lower revision stale for enrichment**, as the library's documentation suggests.
   Enrichment downloads cloud-only stale rows (ENR-008). For 0.7.0 that is ~779 GB, ~713 GB

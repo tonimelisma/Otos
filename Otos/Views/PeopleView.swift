@@ -96,16 +96,16 @@ nonisolated enum PeoplePresentation {
 
     /// A face's date under it: `Mar 4`, with the year when it differs from its row's year.
     static func faceDate(_ tile: FaceTile, rowYear: Int?, calendar: Calendar = .current) -> String {
-        guard let date = tile.captureDate else { return "No date" }
-        if let rowYear, calendar.component(.year, from: date) == rowYear {
-            return date.formatted(.dateTime.month(.abbreviated).day())
+        guard let local = tile.captureLocalTime else { return "No date" }
+        if let rowYear, calendar.component(.year, from: local.presentationDate(in: calendar.timeZone)) == rowYear {
+            return local.formatted(.dateTime.month(.abbreviated).day())
         }
-        return date.formatted(.dateTime.month(.abbreviated).day().year())
+        return local.formatted(.dateTime.month(.abbreviated).day().year())
     }
 
     /// VoiceOver's reading of a review face.
     static func faceAccessibility(_ tile: FaceTile, row: PeopleReviewRow, names: (PersonID) -> String) -> String {
-        let date = tile.captureDate?.formatted(date: .long, time: .omitted) ?? "No date"
+        let date = tile.captureLocalTime?.formatted(Date.FormatStyle(date: .long, time: .omitted)) ?? "No date"
         switch row.kind {
         case let .person(person, _): return "\(date), suggested as \(names(person))"
         case .unnamed: return "\(date), in an unnamed group"

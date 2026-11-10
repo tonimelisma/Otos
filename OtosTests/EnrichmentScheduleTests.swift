@@ -17,11 +17,11 @@ struct EnrichmentScheduleTests {
         sourceSize: Int64? = 100,
         isVideo: Bool = false,
         isDeviceStaging: Bool = false,
-        captureDate: Date? = nil,
+        captureLocalTime: CaptureLocalTime? = nil,
         attemptCount: Int = 0
     ) -> EnrichmentCoordinator.DownloadWork {
         EnrichmentCoordinator.DownloadWork(
-            id: id, url: id.fileURL, sourceSize: sourceSize, captureDate: captureDate,
+            id: id, url: id.fileURL, sourceSize: sourceSize, captureLocalTime: captureLocalTime,
             isVideo: isVideo, isDeviceStaging: isDeviceStaging, attemptCount: attemptCount
         )
     }
@@ -157,7 +157,7 @@ struct EnrichmentScheduleTests {
             let finished = schedule.finish(pending, outcome: .requestFailed, now: now)
             let settlement = try #require(finished)
             #expect(settlement.disposition == .retrying(EnrichmentCoordinator.DownloadWork(
-                id: row, url: row.fileURL, sourceSize: 100, captureDate: nil, isVideo: false,
+                id: row, url: row.fileURL, sourceSize: 100, captureLocalTime: nil, isVideo: false,
                 isDeviceStaging: true, attemptCount: attempt,
                 retryNotBefore: now.advanced(by: .seconds(5) * attempt)
             )))
@@ -194,11 +194,11 @@ struct EnrichmentScheduleTests {
         let visible = id("visible.jpg")
         schedule.demand(work(video, isVideo: true, isDeviceStaging: true), ownsStoreClaim: false)
         schedule.demand(
-            work(older, isDeviceStaging: true, captureDate: Date(timeIntervalSince1970: 100)),
+            work(older, isDeviceStaging: true, captureLocalTime: CaptureLocalTime(seconds: 100)),
             ownsStoreClaim: false
         )
         schedule.demand(
-            work(newer, isDeviceStaging: true, captureDate: Date(timeIntervalSince1970: 200)),
+            work(newer, isDeviceStaging: true, captureLocalTime: CaptureLocalTime(seconds: 200)),
             ownsStoreClaim: false
         )
         for row in background {

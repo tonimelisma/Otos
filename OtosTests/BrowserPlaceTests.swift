@@ -232,7 +232,7 @@ struct BrowserPlaceTests {
         let model = makeViewModel(domain)
         let copies = ids.map { id in
             DuplicateCopy(
-                id: id, libraryDisplayName: "Pictures", libraryKind: .library, kind: .image, captureDate: nil, byteSize: 1, createdAt: nil,
+                id: id, libraryDisplayName: "Pictures", libraryKind: .library, kind: .image, captureLocalTime: nil, byteSize: 1, createdAt: nil,
                 pixelWidth: 4, pixelHeight: 3, mediaChoice: .notRated, isEdited: false, hasCompanions: false
             )
         }
@@ -268,7 +268,7 @@ struct BrowserPlaceTests {
         let model = makeViewModel(domain)
         let copies = ids.enumerated().map { index, id in
             DuplicateCopy(
-                id: id, libraryDisplayName: "Pictures", libraryKind: .library, kind: .image, captureDate: nil, byteSize: 1,
+                id: id, libraryDisplayName: "Pictures", libraryKind: .library, kind: .image, captureLocalTime: nil, byteSize: 1,
                 createdAt: Date(timeIntervalSince1970: Double(index)), pixelWidth: 4, pixelHeight: 3,
                 mediaChoice: .notRated, isEdited: false, hasCompanions: false
             )

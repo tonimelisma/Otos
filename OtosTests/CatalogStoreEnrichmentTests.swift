@@ -72,18 +72,14 @@ struct CatalogStoreEnrichmentTests {
         #expect(noHash.hashStale)
     }
 
-    @Test func bestCaptureDatePrefersMetadataThenFilesystem() {
-        let capture = Date(timeIntervalSince1970: 700)
+    @Test func captureLocalTimePrefersMetadataThenFilesystem() {
+        let capture = CaptureLocalTime(seconds: 700)
         let created = Date(timeIntervalSince1970: 500)
         let modified = Date(timeIntervalSince1970: 900)
         #expect(
-            makeAsset(bestCaptureDate: capture, createdAt: created, modifiedAt: modified).bestCaptureDate == capture
+            makeAsset(captureLocalTime: capture, createdAt: created, modifiedAt: modified).captureLocalTime == capture
         )
-        #expect(
-            makeAsset(bestCaptureDate: created, createdAt: created, modifiedAt: modified).bestCaptureDate == created
-        )
-        #expect(makeAsset(bestCaptureDate: modified, createdAt: nil, modifiedAt: modified).bestCaptureDate == modified)
-        #expect(makeAsset(bestCaptureDate: nil, createdAt: nil, modifiedAt: nil).bestCaptureDate == nil)
+        #expect(makeAsset(captureLocalTime: nil, createdAt: nil, modifiedAt: nil).captureLocalTime == nil)
     }
 
     /// A stored record that does not decode is an error, never an asset without metadata.
@@ -159,7 +155,7 @@ struct CatalogStoreEnrichmentTests {
 
         let enriched = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
         #expect(enriched.thumbnailPath == "thumb.jpg")
-        #expect(enriched.bestCaptureDate == captureDate)
+        #expect(enriched.captureLocalTime == CaptureLocalTime(readingOf: captureDate))
         #expect(enriched.durationSeconds == 42.5)
         #expect(enriched.needsEnrichment(.cardProducts) == false)
 
@@ -173,7 +169,7 @@ struct CatalogStoreEnrichmentTests {
         }
         let asset = try #require(restaled.testAssets.first { $0.id == id })
         #expect(asset.thumbnailPath == "thumb.jpg")
-        #expect(asset.bestCaptureDate == captureDate)
+        #expect(asset.captureLocalTime == CaptureLocalTime(readingOf: captureDate))
         #expect(asset.durationSeconds == 42.5)
         #expect(asset.metadataSourceSize == 100)
         #expect(asset.needsEnrichment(.cardProducts) == true)
@@ -227,7 +223,7 @@ struct CatalogStoreEnrichmentTests {
         try await reloaded.start(scansSavedLibraries: false)
         let asset = try #require(try await catalogStoreTestState(reloaded).testAssets.first { $0.id == id })
         #expect(asset.thumbnailPath == "thumb.jpg")
-        #expect(asset.bestCaptureDate == captureDate)
+        #expect(asset.captureLocalTime == CaptureLocalTime(readingOf: captureDate))
         #expect(asset.durationSeconds == 187.25)
         #expect(asset.metadataSourceSize == scannedSize)
         #expect(asset.metadataSourceMTimeSeconds == scannedMTime)
@@ -317,7 +313,7 @@ struct CatalogStoreEnrichmentTests {
 
         let current = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
         #expect(current.thumbnailPath == nil)
-        #expect(current.bestCaptureDate == Date(timeIntervalSince1970: 500))
+        #expect(current.captureLocalTime == CaptureLocalTime(readingOf: Date(timeIntervalSince1970: 500)))
         #expect(current.metadataSourceSize == nil)
         #expect(current.metadataSourceMTimeSeconds == nil)
         #expect(current.needsEnrichment(.cardProducts))
@@ -326,7 +322,7 @@ struct CatalogStoreEnrichmentTests {
         try await reloaded.start(scansSavedLibraries: false)
         let persisted = try #require(try await catalogStoreTestState(reloaded).testAssets.first { $0.id == id })
         #expect(persisted.thumbnailPath == nil)
-        #expect(persisted.bestCaptureDate == Date(timeIntervalSince1970: 500))
+        #expect(persisted.captureLocalTime == CaptureLocalTime(readingOf: Date(timeIntervalSince1970: 500)))
         #expect(persisted.metadataSourceSize == nil)
         #expect(persisted.metadataSourceMTimeSeconds == nil)
         #expect(persisted.needsEnrichment(.cardProducts))
@@ -335,7 +331,7 @@ struct CatalogStoreEnrichmentTests {
     /// `structureChanged` must compare the STORED generated columns
     /// before vs after the write, not a Swift-side prediction of what the write will
     /// produce. Fixture: the asset scans with `created_at_unix = 500`; a first
-    /// enrichment sets `capture_instant_unix = 700`, so `best_capture_unix` becomes 700. A
+    /// enrichment sets `capture_instant_unix = 700`, so `best_capture_local` becomes 700. A
     /// second enrichment result with every timestamp fact nil clears `capture_instant_unix`
     /// back to NULL (plain-assignment write, not COALESCE-preserved — see
     /// `writeEnrichmentOverlay`), so SQLite's generated column falls back to
@@ -349,7 +345,7 @@ struct CatalogStoreEnrichmentTests {
     /// chains agree today." This is therefore a characterization test locking in
     /// correct stored-value comparison, not a caught live bug; the value of asking the
     /// database instead of predicting is that a *future* migration adding a new
-    /// `best_capture_unix` source cannot silently desync a Swift twin that no longer
+    /// `best_capture_local` source cannot silently desync a Swift twin that no longer
     /// exists.
     @Test func timestampClearingStructuralChangeIsCatalogChanged() async throws {
         let temp = try makeTestDirectory()
@@ -377,7 +373,7 @@ struct CatalogStoreEnrichmentTests {
             ),
         ])
         let afterFirst = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
-        #expect(afterFirst.bestCaptureDate == Date(timeIntervalSince1970: 700))
+        #expect(afterFirst.captureLocalTime == CaptureLocalTime(readingOf: Date(timeIntervalSince1970: 700)))
 
         // Subscribe synchronously (the `await` only returns once the continuation is
         // registered on the Store actor) before firing the write that must be
@@ -392,7 +388,7 @@ struct CatalogStoreEnrichmentTests {
         defer { changeTask.cancel() }
 
         // Second enrichment: every timestamp fact nil. Clears capture_instant_unix, so
-        // best_capture_unix moves T1 (700) -> T0 (500, created_at_unix) — structural.
+        // best_capture_local moves T1 (700) -> T0 (500, created_at_unix) — structural.
         await store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: id,
@@ -406,7 +402,7 @@ struct CatalogStoreEnrichmentTests {
 
         _ = await changes.waitForValues { $0.last == .catalogChanged }
         let afterSecond = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
-        #expect(afterSecond.bestCaptureDate == Date(timeIntervalSince1970: 500))
+        #expect(afterSecond.captureLocalTime == CaptureLocalTime(readingOf: Date(timeIntervalSince1970: 500)))
     }
 
     /// Overlay reuse clones the source's *stored* timestamp truth, and both date
@@ -499,7 +495,7 @@ struct CatalogStoreEnrichmentTests {
         let settled = try await catalogStoreTestState(store)
         let destinationAsset = try #require(settled.testAssets.first { $0.id == destinationID })
         // The ordering column, rebuilt from the cloned records.
-        #expect(destinationAsset.bestCaptureDate == captureDate)
+        #expect(destinationAsset.captureLocalTime == CaptureLocalTime(readingOf: captureDate))
         // The naming column, rebuilt from the same records — the two agree because
         // there is only one thing left for them to disagree about.
         #expect(try await store.captureWall(for: destinationID) == sourceWall)
@@ -655,7 +651,7 @@ struct CatalogStoreEnrichmentTests {
 
         let state = try await catalogStoreTestState(card.store)
         let copy = try #require(state.testAssets.first { $0.id.libraryRootPath == card.destinationPath })
-        #expect(copy.bestCaptureDate == card.captureDate)
+        #expect(copy.captureLocalTime == card.captureDate.map { CaptureLocalTime(readingOf: $0) })
         #expect(copy.contentHash == card.copyDigest)
         #expect(!copy.needsEnrichment(.cardProducts))
     }
@@ -669,7 +665,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(result == ImportProductsResult(metadata: .reused, rendering: .owed))
         let state = try await catalogStoreTestState(card.store)
         let copy = try #require(state.testAssets.first { $0.id.libraryRootPath == card.destinationPath })
-        #expect(copy.bestCaptureDate == card.captureDate)
+        #expect(copy.captureLocalTime == card.captureDate.map { CaptureLocalTime(readingOf: $0) })
         #expect(!copy.metadataStale)
         #expect(copy.renderingStale)
         #expect(!copy.hashStale)
@@ -823,7 +819,7 @@ private func enrichedCardImportFixture(rendered: Bool = true) async throws -> En
 
 private func makeAsset(
     size: Int64? = 100,
-    bestCaptureDate: Date? = nil,
+    captureLocalTime: CaptureLocalTime? = nil,
     createdAt: Date? = nil,
     modifiedAt: Date? = nil,
     stampSize: Int64? = nil,
@@ -843,7 +839,7 @@ private func makeAsset(
         createdAt: createdAt,
         contentModifiedAt: modifiedAt,
         thumbnailPath: nil,
-        bestCaptureDate: bestCaptureDate,
+        captureLocalTime: captureLocalTime,
         metadataSourceSize: stampSize,
         metadataSourceMTimeSeconds: stampMtime,
         renderedSourceSize: stampSize,

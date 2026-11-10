@@ -46,13 +46,13 @@ view mode for it.
    directly under Places, present whenever Places is, with no trailing count.
 2. **What matches.** Rows of the available fixed libraries — All Media's membership —
    whose day bucket has today's month and day in a year before today's. The day bucket
-   is the day `best_capture_unix` falls on in the user's time zone, the same day
-   `CatalogStore.orderedAssetIDs` buckets the grid by (DES-069). Days and years are
-   counted on one calendar, `CalendarDay.calendar(in:)` — Gregorian, in the user's zone —
-   never `Calendar.current`, whose year is an era year under the Japanese calendar (Reiwa
-   8) and 2569 under the Buddhist one; the grid's `startOfDay` depends only on the zone,
-   so both agree on the day. What the user reads is formatted from real instants in their
-   own calendar and locale. The match is exact: on a common year, 29 February
+   is the day the item was taken on, on the clock where it was taken: the date of its
+   local capture time, `best_capture_local` (ADR 0039). That is the same day
+   `CatalogStore.orderedAssetIDs` buckets the grid by (DES-069), and it does not depend on
+   the Mac's zone. Days and years are counted on the Gregorian calendar
+   (`CalendarDay.calendar(in:)`), never `Calendar.current`, whose year is an era year
+   under the Japanese calendar (Reiwa 8) and 2569 under the Buddhist one. What the user
+   reads is formatted in their own calendar and locale. The match is exact: on a common year, 29 February
    matches nothing. Undated rows never match. It is a live query, never a snapshot, so a
    late import appears and a deleted file goes (ADR 0008).
 3. **Today is a typed value in the selection.** `SidebarSelection.onThisDay(CalendarDay)`,
@@ -67,12 +67,11 @@ view mode for it.
 4. **The predicate carries the date dimension.** `CatalogScopePredicate.DateConstraint`
    is `.any` or `.anniversary(CalendarDay)`, resolved only by
    `RootRegistry.scopePredicate`, so ordered IDs, counts and filter options agree. The
-   gateway turns it into half-open `best_capture_unix` ranges in the read's own
-   transaction: the earliest dated year comes from a `MIN(best_capture_unix)` over the
+   gateway turns it into half-open `best_capture_local` ranges in the read's own
+   transaction: the earliest dated year comes from a `MIN(best_capture_local)` over the
    scope's roots, and `AnniversaryRanges` (pure) builds one range per year from that
-   floor through `day.year − 1`, each from the local start of the day to the local start
-   of the next, on the Gregorian calendar in the user's zone — so a 23- or 25-hour day is
-   covered exactly. No
+   floor through `day.year − 1`, each from that day's midnight to the next on any clock.
+   A local time has no zone, so a daylight-saving day is still midnight to midnight. No
    earlier dated year means no range, and the scope selects nothing without asking
    SQLite for rows.
 5. **The scope fixes its order.** `SidebarSelection.fixedSort` is `dateNewest` for On
@@ -163,7 +162,7 @@ imports never appear. A live scope costs one indexed walk and follows the files.
 
 ### SQLite `localtime` to bucket days in SQL
 
-`strftime('%m-%d', best_capture_unix, 'unixepoch', 'localtime')` uses SQLite's notion of
+`strftime('%m-%d', best_capture_unix, 'unixepoch', 'localtime')` (the instant column of the time) uses SQLite's notion of
 the zone, which is not `Calendar.current` and is fixed per connection; the grid's day
 bucket would then disagree with the scope's. It also cannot use the order index.
 

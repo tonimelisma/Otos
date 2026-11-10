@@ -95,7 +95,7 @@ actor EnrichmentCoordinator {
         let sourceSize: Int64?
         let sourceMTimeSeconds: Int?
         let isVideo: Bool
-        let captureDate: Date?
+        let captureLocalTime: CaptureLocalTime?
         let isDeviceStaging: Bool
         /// What this enrichment reads and produces, as the Store's claim decided it.
         let scope: EnrichmentScope
@@ -105,7 +105,7 @@ actor EnrichmentCoordinator {
         let id: MediaAssetID
         let url: URL
         let sourceSize: Int64?
-        let captureDate: Date?
+        let captureLocalTime: CaptureLocalTime?
         let isVideo: Bool
         let isDeviceStaging: Bool
         let attemptCount: Int
@@ -115,7 +115,7 @@ actor EnrichmentCoordinator {
             id: MediaAssetID,
             url: URL,
             sourceSize: Int64?,
-            captureDate: Date?,
+            captureLocalTime: CaptureLocalTime?,
             isVideo: Bool,
             isDeviceStaging: Bool = false,
             attemptCount: Int = 0,
@@ -124,7 +124,7 @@ actor EnrichmentCoordinator {
             self.id = id
             self.url = url
             self.sourceSize = sourceSize
-            self.captureDate = captureDate
+            self.captureLocalTime = captureLocalTime
             self.isVideo = isVideo
             self.isDeviceStaging = isDeviceStaging
             self.attemptCount = attemptCount
@@ -135,7 +135,7 @@ actor EnrichmentCoordinator {
     struct DeviceStagingSeed {
         let id: MediaAssetID
         let sourceSize: Int64?
-        let captureDate: Date?
+        let captureLocalTime: CaptureLocalTime?
         let isVideo: Bool
     }
 
@@ -405,7 +405,7 @@ extension EnrichmentCoordinator {
                     id: seed.id,
                     url: seed.id.fileURL,
                     sourceSize: seed.sourceSize,
-                    captureDate: seed.captureDate,
+                    captureLocalTime: seed.captureLocalTime,
                     isVideo: seed.isVideo,
                     isDeviceStaging: true
                 ),

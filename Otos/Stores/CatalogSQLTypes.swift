@@ -18,7 +18,7 @@ nonisolated struct StoredAsset {
     let createdAt: Date?
     let contentModifiedAt: Date?
     var thumbnailPath: String?
-    var bestCaptureDate: Date?
+    var captureLocalTime: CaptureLocalTime?
     var bestKind: MediaKind?
     var bestFormat: MediaFormatToken?
     var durationSeconds: Double?

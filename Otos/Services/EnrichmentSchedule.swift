@@ -265,7 +265,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
             id: work.id,
             url: work.url,
             sourceSize: work.sourceSize,
-            captureDate: work.captureDate,
+            captureLocalTime: work.captureLocalTime,
             isVideo: work.isVideo,
             isDeviceStaging: work.isDeviceStaging,
             attemptCount: attemptCount,
@@ -283,7 +283,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
         if left.isVideo != right.isVideo {
             return !left.isVideo
         }
-        switch (left.captureDate, right.captureDate) {
+        switch (left.captureLocalTime, right.captureLocalTime) {
         case let (leftDate?, rightDate?) where leftDate != rightDate:
             return leftDate > rightDate
         case (.some, nil):

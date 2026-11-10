@@ -170,7 +170,7 @@ nonisolated enum PeopleStateBuilder {
             snapshot.tiles[face]
         }
         func year(_ tile: FaceTile) -> Int? {
-            tile.captureDate.map { calendar.component(.year, from: $0) }
+            tile.captureLocalTime.map { calendar.component(.year, from: $0.presentationDate(in: calendar.timeZone)) }
         }
 
         var confirmed: [PersonID: [FaceTile]] = [:]

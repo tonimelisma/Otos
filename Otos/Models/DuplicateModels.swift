@@ -55,7 +55,7 @@ nonisolated struct DuplicateCopy: Equatable, Sendable, Identifiable {
     /// enrichment has read it.
     let kind: MediaKind?
     /// The catalog's best capture date: what the group is dated by and listed under.
-    let captureDate: Date?
+    let captureLocalTime: CaptureLocalTime?
     let byteSize: Int64?
     /// The file's birth time, a filesystem fact.
     let createdAt: Date?
@@ -167,8 +167,8 @@ nonisolated struct DuplicateGroup: Equatable, Sendable, Identifiable {
     /// card's date is the date of the file that stays — identical copies share it, and
     /// versions of one photo agree on it, except where a file names no capture and its
     /// birth time stands in.
-    var captureDate: Date? {
-        copies.first { $0.captureDate != nil }?.captureDate
+    var captureLocalTime: CaptureLocalTime? {
+        copies.first { $0.captureLocalTime != nil }?.captureLocalTime
     }
 
     /// Display order: files of one photo first — the groups that need eyes — then identical
@@ -182,7 +182,7 @@ nonisolated struct DuplicateGroup: Equatable, Sendable, Identifiable {
 
         init(_ group: DuplicateGroup) {
             identical = !group.id.isSamePhoto
-            newestFirst = group.captureDate.map { -$0.timeIntervalSince1970 } ?? .greatestFiniteMagnitude
+            newestFirst = group.captureLocalTime.map { -$0.seconds } ?? .greatestFiniteMagnitude
             orderKey = group.copies.first?.id.duplicateOrderKey ?? ""
         }
 

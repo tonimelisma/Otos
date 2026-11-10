@@ -5,7 +5,8 @@ import Foundation
 /// the user has decided about it (ADR 0047).
 nonisolated struct FaceFact: Sendable, Equatable {
     let id: FaceID
-    /// The photo's capture instant, seconds since 1970; nil when the photo has no date.
+    /// The photo's local capture time (`CaptureLocalTime.seconds`); nil when the photo has
+    /// no date. A birthday is midnight UTC of its day, so the two compare day for day.
     let captureSeconds: Double?
     /// Unit length, `FaceEmbeddingModel.dimensions` values.
     let embedding: [Float]
@@ -212,7 +213,7 @@ nonisolated enum FacePeoplePolicy {
         return capture >= birthday
     }
 
-    /// The calendar day of a capture instant, UTC; nil without a date.
+    /// The day a photo was taken, from its local capture time; nil without a date.
     static func day(_ seconds: Double?) -> Int? {
         seconds.map { Int(($0 / 86400).rounded(.down)) }
     }

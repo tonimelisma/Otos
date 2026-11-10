@@ -26,7 +26,7 @@ struct DuplicatesTests {
                 libraryDisplayName: root == photos ? "Photos" : root == family ? "Family" : "Backup",
                 libraryKind: root == family ? .immichAccount : .library,
                 kind: kind,
-                captureDate: captured.map(Date.init(timeIntervalSince1970:)),
+                captureLocalTime: captured.map(CaptureLocalTime.init(seconds:)),
                 byteSize: 1000,
                 createdAt: Date(timeIntervalSince1970: born),
                 pixelWidth: 4032,
@@ -342,7 +342,7 @@ struct DuplicatesTests {
         }
         func version(_ id: MediaAssetID, width: Int, bytes: Int64) -> DuplicateCopy {
             DuplicateCopy(
-                id: id, libraryDisplayName: "Photos", libraryKind: .library, kind: .image, captureDate: nil, byteSize: bytes,
+                id: id, libraryDisplayName: "Photos", libraryKind: .library, kind: .image, captureLocalTime: nil, byteSize: bytes,
                 createdAt: nil, pixelWidth: width, pixelHeight: width * 3 / 4, mediaChoice: .notRated,
                 isEdited: false, hasCompanions: false
             )
@@ -374,7 +374,7 @@ struct DuplicatesTests {
         let copies = bytes.enumerated().map { index, size in
             DuplicateCopy(
                 id: MediaAssetID(libraryRootPath: Self.photos, relativePath: MediaRelativePath(rawValue: "f\(index).arw")),
-                libraryDisplayName: "Photos", libraryKind: .library, kind: .raw, captureDate: nil, byteSize: size, createdAt: nil,
+                libraryDisplayName: "Photos", libraryKind: .library, kind: .raw, captureLocalTime: nil, byteSize: size, createdAt: nil,
                 pixelWidth: 6192, pixelHeight: 4128, mediaChoice: .notRated, isEdited: false, hasCompanions: false
             )
         }
@@ -383,7 +383,7 @@ struct DuplicatesTests {
 
         let twins = Array(copies.prefix(2)).map {
             DuplicateCopy(
-                id: $0.id, libraryDisplayName: "Photos", libraryKind: .library, kind: .raw, captureDate: nil, byteSize: 39_133_184,
+                id: $0.id, libraryDisplayName: "Photos", libraryKind: .library, kind: .raw, captureLocalTime: nil, byteSize: 39_133_184,
                 createdAt: nil, pixelWidth: 6192, pixelHeight: 4128, mediaChoice: .notRated, isEdited: false,
                 hasCompanions: false
             )

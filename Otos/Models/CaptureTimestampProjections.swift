@@ -95,3 +95,90 @@ nonisolated extension AssetMetadata {
         CaptureTimestamps(records: timestamps).captureInstant?.time.instant
     }
 }
+
+/// When an item was taken, as a clock where it was taken read: a local wall-clock time with
+/// no zone (ADR 0039). It is what the timeline orders by, what puts an item on a day, and
+/// what Info shows, so a photo taken at 08:00 on 25 April in Tokyo is a 25 April photo,
+/// shown at 08:00, wherever and in whatever zone the Mac is now.
+///
+/// `seconds` counts the reading from 1970-01-01 00:00 on the same clock: the reading taken
+/// as if it were UTC. That makes it comparable, indexable (`best_capture_local`) and
+/// zone-free; it is never an instant, so it is never handed to an API that wants one
+/// without `presentationDate(in:)`.
+///
+/// The catalog's value is the library's capture wall clock where the file has one
+/// (`capture_wall_compact`), else the item's absolute time read in the zone Otos assumed
+/// for it (`CaptureLocalTime.assumedUTCOffset`).
+nonisolated struct CaptureLocalTime: Comparable, Hashable, Sendable {
+    let seconds: Double
+
+    init(seconds: Double) {
+        self.seconds = seconds
+    }
+
+    /// The reading a clock in `timeZone` shows at `date`.
+    init(readingOf date: Date, in timeZone: TimeZone = .current) {
+        seconds = date.timeIntervalSince1970 + Double(timeZone.secondsFromGMT(for: date))
+    }
+
+    /// The first moment of `day` on any clock: midnight of that reading.
+    init?(startOf day: CalendarDay) {
+        guard let start = day.start(in: .gmt) else {
+            return nil
+        }
+        seconds = start.timeIntervalSince1970
+    }
+
+    /// The day this time falls on, on the clock it was read from.
+    var day: CalendarDay {
+        CalendarDay(Date(timeIntervalSince1970: seconds), timeZone: .gmt)
+    }
+
+    /// The instant a clock in `timeZone` shows this reading, which is what a formatter or
+    /// calendar in that zone needs to write the time as it was taken. A reading the zone
+    /// skips (the hour a daylight-saving change removes) resolves to the next reading it has.
+    func presentationDate(in timeZone: TimeZone = .current) -> Date {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = .gmt
+        let reading = utc.dateComponents(
+            [.year, .month, .day, .hour, .minute, .second, .nanosecond],
+            from: Date(timeIntervalSince1970: seconds)
+        )
+        var local = Calendar(identifier: .gregorian)
+        local.timeZone = timeZone
+        return local.date(from: reading) ?? Date(timeIntervalSince1970: seconds - Double(timeZone.secondsFromGMT()))
+    }
+
+    /// This reading written with `style`, as the clock it was read from shows it: the style's
+    /// calendar and locale are kept, its zone is the reading's own.
+    func formatted(_ style: Date.FormatStyle) -> String {
+        var reading = style
+        reading.timeZone = .gmt
+        return Date(timeIntervalSince1970: seconds).formatted(reading)
+    }
+
+    static func < (lhs: Self, rhs: Self) -> Bool {
+        lhs.seconds < rhs.seconds
+    }
+
+    /// The UTC offset Otos reads an item's absolute time with when its file records no wall
+    /// clock: the offset of `timeZone` — the Mac's zone when Otos records that time — at that
+    /// time. Lightroom and Photos assume the computer's zone at import the same way. The
+    /// assumption is kept while the absolute time it was made for is unchanged, so an item
+    /// does not move between days when the Mac changes zone; it is made again only when that
+    /// time changes (`assumed_utc_offset_seconds`).
+    static func assumedUTCOffset(
+        for absolute: Double?,
+        previousAbsolute: Double?,
+        previousOffset: Int?,
+        timeZone: TimeZone = .current
+    ) -> Int? {
+        guard let absolute else {
+            return nil
+        }
+        if let previousOffset, previousAbsolute == absolute {
+            return previousOffset
+        }
+        return timeZone.secondsFromGMT(for: Date(timeIntervalSince1970: absolute))
+    }
+}

@@ -314,7 +314,7 @@ private nonisolated func rootEnrichmentClaimQuery(
           AND enrichment_claimed IS NULL
           AND trash_path IS NULL
           AND awaiting_presence = 0
-        ORDER BY best_capture_unix DESC, relative_path
+        ORDER BY best_capture_local DESC, relative_path
         LIMIT ?
         """,
         arguments: sqlArguments(rootID, limit)
@@ -339,7 +339,7 @@ private nonisolated func globalEnrichmentClaimQuery(
           AND enrichment_claimed IS NULL
           AND trash_path IS NULL
           AND awaiting_presence = 0
-        ORDER BY best_capture_unix DESC, library_root_id, relative_path
+        ORDER BY best_capture_local DESC, library_root_id, relative_path
         LIMIT ?
         """,
         arguments: StatementArguments(arguments)
@@ -386,7 +386,7 @@ private nonisolated func fetchStoredAssetsForEnrichmentCandidates(
                faces_source_size, faces_source_mtime,
                thumbnail_path,
                duration_seconds,
-               best_capture_unix, best_kind, best_format
+               best_capture_local, best_kind, best_format
         FROM media_asset
         WHERE (library_root_id, relative_path) IN (\(sqlTuplePlaceholders(rowCount: keys.count, columnCount: 2)))
         """,
@@ -397,7 +397,7 @@ private nonisolated func fetchStoredAssetsForEnrichmentCandidates(
 private nonisolated func enrichmentCandidateStoredAsset(from row: Row) -> StoredAsset {
     let createdUnix: Double? = row["created_at_unix"]
     let modifiedUnix: Double? = row["content_modified_at_unix"]
-    let bestCaptureUnix: Double? = row["best_capture_unix"]
+    let bestCaptureLocal: Double? = row["best_capture_local"]
     let bestKindRaw: String? = row["best_kind"]
     let bestFormatRaw: String? = row["best_format"]
     return StoredAsset(
@@ -409,7 +409,7 @@ private nonisolated func enrichmentCandidateStoredAsset(from row: Row) -> Stored
         createdAt: createdUnix.map(Date.init(timeIntervalSince1970:)),
         contentModifiedAt: modifiedUnix.map(Date.init(timeIntervalSince1970:)),
         thumbnailPath: row["thumbnail_path"],
-        bestCaptureDate: bestCaptureUnix.map(Date.init(timeIntervalSince1970:)),
+        captureLocalTime: bestCaptureLocal.map(CaptureLocalTime.init(seconds:)),
         bestKind: bestKindRaw.flatMap(MediaKind.init(rawValue:)),
         bestFormat: bestFormatRaw.map(MediaFormatToken.init(rawValue:)),
         durationSeconds: row["duration_seconds"],

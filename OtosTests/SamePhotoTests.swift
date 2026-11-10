@@ -52,7 +52,7 @@ struct SamePhotoTests {
                 id: id,
                 libraryDisplayName: "Photos", libraryKind: .library,
                 kind: .image,
-                captureDate: instant.map(Date.init(timeIntervalSince1970:)),
+                captureLocalTime: instant.map(CaptureLocalTime.init(seconds:)),
                 byteSize: 1000,
                 createdAt: nil,
                 pixelWidth: width,

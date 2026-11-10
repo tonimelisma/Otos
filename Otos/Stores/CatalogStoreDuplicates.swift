@@ -17,7 +17,7 @@ nonisolated enum DuplicatesGateway {
         /// read, which compares pixels instead.
         let digest: XXH3Digest128?
         let kind: String?
-        let captureDate: Double?
+        let captureLocal: Double?
         let byteSize: Int64?
         let createdAt: Double?
         let mediaChoice: String?
@@ -47,7 +47,7 @@ nonisolated enum DuplicatesGateway {
                 id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: relativePath)),
                 libraryDisplayName: library.displayName, libraryKind: library.kind,
                 kind: kind.flatMap(MediaKind.init(rawValue:)),
-                captureDate: captureDate.map(Date.init(timeIntervalSince1970:)),
+                captureLocalTime: captureLocal.map(CaptureLocalTime.init(seconds:)),
                 byteSize: byteSize,
                 createdAt: createdAt.map(Date.init(timeIntervalSince1970:)),
                 pixelWidth: pixelWidth,
@@ -98,7 +98,7 @@ nonisolated enum DuplicatesGateway {
         let rows = try Row.fetchAll(
             db,
             sql: """
-            SELECT a.library_root_id, a.relative_path, a.content_hash_xxh3_128, a.best_kind, a.best_capture_unix,
+            SELECT a.library_root_id, a.relative_path, a.content_hash_xxh3_128, a.best_kind, a.best_capture_local,
                    a.byte_size, a.created_at_unix, a.media_choice, a.edit_recipe_json IS NOT NULL AS edited,
                    m.pixel_width, m.pixel_height,
                    EXISTS(
@@ -129,7 +129,7 @@ nonisolated enum DuplicatesGateway {
                 relativePath: row["relative_path"],
                 digest: digest,
                 kind: row["best_kind"],
-                captureDate: row["best_capture_unix"],
+                captureLocal: row["best_capture_local"],
                 byteSize: row["byte_size"],
                 createdAt: row["created_at_unix"],
                 mediaChoice: row["media_choice"],
@@ -323,7 +323,7 @@ nonisolated extension DuplicatesGateway {
         db: Database
     ) throws -> SamePhotoDetail? {
         let statement = try db.cachedStatement(sql: """
-        SELECT a.best_kind, a.best_capture_unix, a.byte_size, a.created_at_unix, a.media_choice,
+        SELECT a.best_kind, a.best_capture_local, a.byte_size, a.created_at_unix, a.media_choice,
                a.edit_recipe_json IS NOT NULL AS edited, a.render_dhash, a.render_gray,
                m.pixel_width, m.pixel_height, m.metadata_extra_json,
                EXISTS(
@@ -365,13 +365,13 @@ nonisolated extension DuplicatesGateway {
         let mediaChoice: String? = row[Column.mediaChoice]
         let createdAt: Double? = row[Column.createdAt]
         let kind: String? = row[Column.bestKind]
-        let captureDate: Double? = row[Column.bestCapture]
+        let captureLocal: Double? = row[Column.bestCapture]
         return SamePhotoDetail(
             copy: DuplicateCopy(
                 id: id,
                 libraryDisplayName: library.displayName, libraryKind: library.kind,
                 kind: kind.flatMap(MediaKind.init(rawValue:)),
-                captureDate: captureDate.map(Date.init(timeIntervalSince1970:)),
+                captureLocalTime: captureLocal.map(CaptureLocalTime.init(seconds:)),
                 byteSize: row[Column.byteSize],
                 createdAt: createdAt.map(Date.init(timeIntervalSince1970:)),
                 pixelWidth: row[Column.pixelWidth],
