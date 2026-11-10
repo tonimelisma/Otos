@@ -91,6 +91,12 @@ The tooling found:
     processes per side cover it, and a real regression moves every process.
   - The owner chose permission over an automatic block. Some regressions are the price
     of a feature, and that trade is a product decision.
+- **A record is never lost to a parallel run.** Sessions benchmark in parallel, and
+  `git notes append` moves the notes ref without checking it is unchanged: two runs
+  recording in the same second both built on one parent and the later dropped the
+  earlier's records (2026-11-10, and 5 of 20 concurrent appends survived in a test).
+  `bench.sh` builds each append on a ref of its own and moves the shared ref only if it
+  still points where the append began, starting again on a race: 20 of 20 survive.
 - **A dirty tree records nothing.** A run on uncommitted changes prints its results only,
   because no commit is what it measured.
 
