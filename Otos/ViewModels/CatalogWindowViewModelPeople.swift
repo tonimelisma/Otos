@@ -42,8 +42,9 @@ nonisolated struct PeopleMergeQuestion: Equatable, Sendable {
 
 /// People window state.
 struct PeopleSession: Equatable {
-    var selectedPeople: Set<PersonID> = []
-    var personCursor: PersonID?
+    /// The People list's selection: people and unnamed groups are one selection.
+    var selectedItems: Set<PeopleListItem> = []
+    var listCursor: PeopleListItem?
     var list: PeopleReviewList = .suggestions
     var selectedFaces: Set<FaceID> = []
     var faceCursor: FaceID?
@@ -57,8 +58,32 @@ struct PeopleSession: Equatable {
     /// The faces the name popover names, while it is open.
     var naming: [FaceID]?
     var mergeQuestion: PeopleMergeQuestion?
+    /// Review rows showing all their faces (`Show All N Faces`), while the review is open.
+    var expandedRows: Set<PeopleReviewRowKey> = []
     /// The shown review list with `leaving` taken out; rebuilt by `refreshPeopleLayout`.
-    var layout = PeopleReviewLayout(years: [], leaving: [])
+    var layout = PeopleReviewLayout(years: [], leaving: [], expanded: [])
+
+    /// The people selected on the People list.
+    var selectedPeople: Set<PersonID> {
+        Set(selectedItems.compactMap { item in
+            if case let .person(person) = item {
+                person
+            } else {
+                nil
+            }
+        })
+    }
+
+    /// The unnamed groups selected on the People list.
+    var selectedUnnamedGroups: Set<FaceID> {
+        Set(selectedItems.compactMap { item in
+            if case let .unnamed(group) = item {
+                group
+            } else {
+                nil
+            }
+        })
+    }
 
     /// Records the store's answer for `act`: its faces stay hidden until a People state at
     /// `revision` or later arrives.
@@ -208,20 +233,36 @@ nonisolated struct PeopleIndex {
     }
 }
 
+/// One review row in one year: what `Show All N Faces` expands.
+nonisolated struct PeopleReviewRowKey: Hashable, Sendable {
+    let row: PeopleReviewRow.ID
+    let year: Int?
+}
+
 /// The review as it is on screen: the shown list's years with the leaving faces taken out,
-/// and the faces in reading order, which the arrow keys walk.
+/// each row showing its first `collapsedFaces` faces unless expanded, and the shown faces in
+/// reading order, which the arrow keys walk.
 nonisolated struct PeopleReviewLayout: Equatable {
+    /// The faces a row shows until `Show All N Faces` (owner decision, 2026-11-11).
+    static let collapsedFaces = 12
+
     let years: [PeopleReviewYear]
+    let expanded: Set<PeopleReviewRowKey>
+    /// The shown faces in reading order.
     let order: [FaceID]
-    /// Each face's row and place in it.
+    /// Each shown face's row and place in it.
     let position: [FaceID: (row: Int, index: Int)]
     let rows: [PeopleReviewRow]
+    /// How many faces each of `rows` shows.
+    let shownCounts: [Int]
+    /// Every face of every row, shown or not.
+    let faceCount: Int
 
     static func == (lhs: PeopleReviewLayout, rhs: PeopleReviewLayout) -> Bool {
-        lhs.years == rhs.years
+        lhs.years == rhs.years && lhs.expanded == rhs.expanded
     }
 
-    init(years source: [PeopleReviewYear], leaving: Set<FaceID>) {
+    init(years source: [PeopleReviewYear], leaving: Set<FaceID>, expanded: Set<PeopleReviewRowKey>) {
         var years: [PeopleReviewYear] = []
         for year in source {
             let rows = year.rows.compactMap { row -> PeopleReviewRow? in
@@ -233,11 +274,22 @@ nonisolated struct PeopleReviewLayout: Equatable {
             }
         }
         self.years = years
-        rows = years.flatMap(\.rows)
+        self.expanded = expanded
+        var rows: [PeopleReviewRow] = []
+        var shownCounts: [Int] = []
+        for year in years {
+            for row in year.rows {
+                rows.append(row)
+                shownCounts.append(Self.shownCount(row, year: year.year, expanded: expanded))
+            }
+        }
+        self.rows = rows
+        self.shownCounts = shownCounts
+        faceCount = rows.reduce(0) { $0 + $1.faces.count }
         var order: [FaceID] = []
         var position: [FaceID: (row: Int, index: Int)] = [:]
         for (rowIndex, row) in rows.enumerated() {
-            for (index, face) in row.faces.enumerated() {
+            for (index, face) in row.faces.prefix(shownCounts[rowIndex]).enumerated() {
                 order.append(face.id)
                 position[face.id] = (rowIndex, index)
             }
@@ -246,8 +298,13 @@ nonisolated struct PeopleReviewLayout: Equatable {
         self.position = position
     }
 
-    var faceCount: Int {
-        order.count
+    private static func shownCount(_ row: PeopleReviewRow, year: Int?, expanded: Set<PeopleReviewRowKey>) -> Int {
+        expanded.contains(PeopleReviewRowKey(row: row.id, year: year)) ? row.faces.count : min(row.faces.count, collapsedFaces)
+    }
+
+    /// The faces `row` of `year` shows.
+    func shownFaces(_ row: PeopleReviewRow, year: Int?) -> ArraySlice<FaceTile> {
+        row.faces.prefix(Self.shownCount(row, year: year, expanded: expanded))
     }
 
     func row(of face: FaceID) -> PeopleReviewRow? {
@@ -272,8 +329,7 @@ nonisolated struct PeopleReviewLayout: Equatable {
         case .up, .down:
             let row = at.row + (direction == .up ? -1 : 1)
             guard rows.indices.contains(row) else { return nil }
-            let faces = rows[row].faces
-            return faces[min(at.index, faces.count - 1)].id
+            return rows[row].faces[min(at.index, shownCounts[row] - 1)].id
         }
     }
 
@@ -358,7 +414,8 @@ extension CatalogWindowViewModel {
         let people = state.people ?? .empty
         let layout = PeopleReviewLayout(
             years: peopleSession.list == .suggestions ? people.suggestions : people.unsure,
-            leaving: Set(peopleSession.leaving.keys)
+            leaving: Set(peopleSession.leaving.keys),
+            expanded: peopleSession.expandedRows
         )
         if layout != peopleSession.layout {
             peopleSession.layout = layout
@@ -380,7 +437,12 @@ extension CatalogWindowViewModel {
         // A state read before an act committed does not show it, whenever it arrives: the
         // faces that act hid stay hidden until a state at its revision or later.
         peopleSession.shown(upTo: people.revision)
-        peopleSession.selectedPeople = peopleSession.selectedPeople.filter { peopleIndex.summaries[$0] != nil }
+        peopleSession.selectedItems = peopleSession.selectedItems.filter { item in
+            switch item {
+            case let .person(person): peopleIndex.summaries[person] != nil
+            case let .unnamed(group): people.unnamedGroup(group) != nil
+            }
+        }
         peopleSession.selectedFaces = peopleSession.selectedFaces.filter { peopleIndex.reviewTiles[$0] != nil }
         if let sheet = peopleSession.sheet, peopleIndex.summaries[sheet.person] == nil {
             peopleSession.sheet = nil
@@ -404,14 +466,29 @@ extension CatalogWindowViewModel {
         selectSidebar(.person(person))
     }
 
-    func openSelectedPerson() {
-        if let person = peopleSession.personCursor ?? peopleSession.selectedPeople.first {
-            openPerson(person)
+    /// Return or a double-click on the People list: a person's photos, or the review with an
+    /// unnamed group's faces selected.
+    func openPeopleListItem(_ item: PeopleListItem) {
+        switch item {
+        case let .person(person): openPerson(person)
+        case let .unnamed(group): openUnnamedGroup(group)
         }
     }
 
-    /// Back to People from a person or the review.
+    /// The review, on Suggestions, with every face of `group` selected and the first shown.
+    func openUnnamedGroup(_ group: FaceID) {
+        guard state.people?.unnamedGroup(group) != nil else { return }
+        openReview()
+        setReviewList(.suggestions)
+        let rows = peopleReviewLayout.rows.filter { $0.id == .unnamed(group) }
+        peopleSession.selectedFaces = Set(rows.flatMap { $0.faces.map(\.id) })
+        peopleSession.faceCursor = rows.first?.faces.first?.id
+    }
+
+    /// Back to People from a person or the review. Rows expanded in the review close.
     func returnToPeople() {
+        peopleSession.expandedRows = []
+        refreshPeopleLayout()
         setViewMode(.grid)
         selectSidebar(.people)
     }
@@ -438,6 +515,7 @@ extension CatalogWindowViewModel {
     func setReviewList(_ list: PeopleReviewList) {
         guard peopleSession.list != list else { return }
         peopleSession.list = list
+        peopleSession.expandedRows = []
         peopleSession.selectedFaces = []
         peopleSession.faceCursor = nil
         refreshPeopleLayout()
@@ -456,17 +534,37 @@ extension CatalogWindowViewModel {
 
     // MARK: - Selection
 
-    func selectPeople(_ hit: PersonID?, modifiers: NSEvent.ModifierFlags) {
+    /// The unnamed groups the People list shows: those with a face not on its way out.
+    var shownUnnamedGroups: [UnnamedGroupSummary] {
+        let leaving = peopleSession.leaving
+        return (state.people?.unnamed ?? []).filter { group in group.faces.contains { leaving[$0.id] == nil } }
+    }
+
+    /// The People list's cells in order, as shown.
+    var peopleListOrder: [PeopleListItem] {
+        (state.people?.people ?? []).map { .person($0.id) } + shownUnnamedGroups.map { .unnamed($0.id) }
+    }
+
+    func selectPeople(_ hit: PeopleListItem?, modifiers: NSEvent.ModifierFlags) {
         guard let hit else {
-            peopleSession.selectedPeople = []
-            peopleSession.personCursor = nil
+            peopleSession.selectedItems = []
+            peopleSession.listCursor = nil
             return
         }
-        let order = (state.people?.people ?? []).map(\.id)
-        peopleSession.selectedPeople = Self.extend(
-            peopleSession.selectedPeople, cursor: peopleSession.personCursor, hit: hit, modifiers: modifiers, order: order
+        peopleSession.selectedItems = Self.extend(
+            peopleSession.selectedItems, cursor: peopleSession.listCursor, hit: hit, modifiers: modifiers, order: peopleListOrder
         )
-        peopleSession.personCursor = hit
+        peopleSession.listCursor = hit
+    }
+
+    /// ← → ↑ ↓ on the People list: `step` cells along its order.
+    func moveListCursor(by step: Int, extending: Bool) -> PeopleListItem? {
+        let order = peopleListOrder
+        let from = peopleSession.listCursor.flatMap(order.firstIndex(of:))
+        let target = from.map { $0 + step } ?? 0
+        guard order.indices.contains(target) else { return nil }
+        selectPeople(order[target], modifiers: extending ? .shift : [])
+        return order[target]
     }
 
     func selectReviewFaces(_ hit: FaceID?, modifiers: NSEvent.ModifierFlags) {
@@ -480,6 +578,20 @@ extension CatalogWindowViewModel {
             order: peopleReviewLayout.order
         )
         peopleSession.faceCursor = hit
+    }
+
+    /// `Show All N Faces` and `Show Fewer` on a row of a year.
+    func setReviewRowExpanded(_ key: PeopleReviewRowKey, _ expanded: Bool) {
+        if expanded {
+            peopleSession.expandedRows.insert(key)
+        } else {
+            peopleSession.expandedRows.remove(key)
+        }
+        refreshPeopleLayout()
+        // A cursor on a face the row no longer shows is forgotten; the selection is kept.
+        if !expanded, let cursor = peopleSession.faceCursor, !peopleReviewLayout.order.contains(cursor) {
+            peopleSession.faceCursor = nil
+        }
     }
 
     /// A click on a row's header selects its faces.
@@ -654,7 +766,36 @@ extension CatalogWindowViewModel {
 
     /// An unnamed row's Ignore.
     func ignoreReviewRow(_ row: PeopleReviewRow) {
-        let faces = row.faces.map(\.id)
+        ignoreFaces(row.faces.map(\.id))
+    }
+
+    /// Ignore on the People list: the unnamed group, or every selected one when it is selected.
+    func ignoreUnnamedGroups(from group: FaceID) {
+        ignoreFaces(unnamedTargets(from: group).flatMap { $0.faces.map(\.id) })
+    }
+
+    /// Add Name… on an unnamed cell: its group's faces, or every selected group's when it is
+    /// selected.
+    func beginNamingUnnamedGroups(from group: FaceID) {
+        beginNaming(unnamedTargets(from: group).flatMap { $0.faces.map(\.id) })
+    }
+
+    /// ⇧O on the People list: the selected unnamed groups.
+    func beginNamingSelectedUnnamedGroups() {
+        let groups = shownUnnamedGroups.filter { peopleSession.selectedUnnamedGroups.contains($0.id) }
+        beginNaming(groups.flatMap { $0.faces.map(\.id) })
+    }
+
+    /// The groups an act from `group`'s cell applies to: the selected ones when it is
+    /// selected, else `group`.
+    private func unnamedTargets(from group: FaceID) -> [UnnamedGroupSummary] {
+        let selected = peopleSession.selectedUnnamedGroups
+        let ids = selected.contains(group) ? selected : [group]
+        return shownUnnamedGroups.filter { ids.contains($0.id) }
+    }
+
+    private func ignoreFaces(_ faces: [FaceID]) {
+        guard !faces.isEmpty else { return }
         let text = "Ignored \(PeopleText.count(faces.count, "face"))"
         submitPeopleAct(.ignore(faces), receipt: PeopleReceipt(text: text, undoName: PeopleAct.ignore([]).undoName))
     }
@@ -773,8 +914,8 @@ extension CatalogWindowViewModel {
         if case .person(question.from) = sidebarSelection {
             returnToPeople()
         }
-        peopleSession.selectedPeople = [question.into]
-        peopleSession.personCursor = question.into
+        peopleSession.selectedItems = [.person(question.into)]
+        peopleSession.listCursor = .person(question.into)
         submitPeopleAct(.merge(question.from, into: question.into), receipt: PeopleReceipt(
             text: "Merged \(from) into \(into)", undoName: PeopleAct.merge(question.from, into: question.into).undoName
         ))
@@ -786,7 +927,7 @@ extension CatalogWindowViewModel {
         if case .person(person) = sidebarSelection {
             returnToPeople()
         }
-        peopleSession.selectedPeople.remove(person)
+        peopleSession.selectedItems.remove(.person(person))
         submitPeopleAct(.remove(person), receipt: PeopleReceipt(
             text: "Removed \(peopleIndex.name(person))", undoName: PeopleAct.remove(person).undoName
         ))
@@ -843,6 +984,23 @@ extension CatalogWindowViewModel {
             }
             peopleSession.selectedFaces = next.map { [$0] } ?? []
             peopleSession.faceCursor = next
+            refreshPeopleLayout()
+        } else if showsPeopleList, !acted.isEmpty {
+            // An unnamed group named or ignored from the list leaves it at once.
+            for face in acted {
+                peopleSession.leaving[face] = PeopleLeavingMark(act: number, revision: nil)
+            }
+            let gone = Set(shownUnnamedGroups.map(\.id))
+            peopleSession.selectedItems = peopleSession.selectedItems.filter { item in
+                if case let .unnamed(group) = item {
+                    gone.contains(group)
+                } else {
+                    true
+                }
+            }
+            if case let .unnamed(group)? = peopleSession.listCursor, !gone.contains(group) {
+                peopleSession.listCursor = nil
+            }
             refreshPeopleLayout()
         }
         OtosLog.ui.noticeOperation("people.act", phase: "submit", fields: [
@@ -974,14 +1132,19 @@ extension CatalogWindowViewModel {
 
     var peopleActions: PeopleActions {
         PeopleActions(
-            selectPerson: { [weak self] person, modifiers in self?.selectPeople(person, modifiers: modifiers) },
-            openPerson: { [weak self] person in self?.openPerson(person) },
+            selectItem: { [weak self] item, modifiers in self?.selectPeople(item, modifiers: modifiers) },
+            moveCursor: { [weak self] step, extending in self?.moveListCursor(by: step, extending: extending) },
+            open: { [weak self] item in self?.openPeopleListItem(item) },
             openReview: { [weak self] in self?.openReview() },
             edit: { [weak self] person in self?.beginEditingPerson(person) },
             askMerge: { [weak self] from, into in self?.askMerge(from, into: into) },
             mergeRefusal: { [weak self] from, into in self?.mergeRefusal(from, into: into) },
             answerMerge: { [weak self] merge in self?.answerMerge(merge) },
-            remove: { [weak self] person in self?.removePerson(person) }
+            remove: { [weak self] person in self?.removePerson(person) },
+            beginNaming: { [weak self] group in self?.beginNamingUnnamedGroups(from: group) },
+            beginNamingSelection: { [weak self] in self?.beginNamingSelectedUnnamedGroups() },
+            ignore: { [weak self] group in self?.ignoreUnnamedGroups(from: group) },
+            naming: namingActions
         )
     }
 
@@ -1003,12 +1166,20 @@ extension CatalogWindowViewModel {
             dropFaces: { [weak self] faces, row, year in self?.dropReviewFaces(faces, onto: row, year: year) ?? false },
             split: { [weak self] faces in self?.splitFaces(faces) },
             beginNaming: { [weak self] faces in self?.beginNaming(faces) },
-            cancelNaming: { [weak self] in self?.cancelNaming() },
-            nameCompletions: { [weak self] text in self?.nameCompletions(text) ?? [] },
-            namingRefusal: { [weak self] text in self?.namingRefusal(text) },
-            commitNaming: { [weak self] text in self?.commitNaming(text) },
+            naming: namingActions,
+            setExpanded: { [weak self] key, expanded in self?.setReviewRowExpanded(key, expanded) },
             openPhoto: { [weak self] face in self?.openReviewPhoto(face) },
             undo: { [weak self] in self?.undoLastChange() }
+        )
+    }
+
+    /// The name popover's intents, on the list and in the review.
+    var namingActions: PeopleNamingActions {
+        PeopleNamingActions(
+            cancel: { [weak self] in self?.cancelNaming() },
+            completions: { [weak self] text in self?.nameCompletions(text) ?? [] },
+            refusal: { [weak self] text in self?.namingRefusal(text) },
+            commit: { [weak self] text in self?.commitNaming(text) }
         )
     }
 

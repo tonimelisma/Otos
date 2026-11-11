@@ -362,6 +362,53 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    /// The b.jpg face as an unnamed group on the People list and in the review.
+    static func unnamedState(_ people: CatalogPeopleState, group face: FaceID) throws -> CatalogPeopleState {
+        let tile = try #require(people.suggestions.first?.rows.first?.faces.first { $0.id == face })
+        var state = CatalogPeopleState(
+            people: people.people,
+            suggestions: [PeopleReviewYear(year: nil, rows: [PeopleReviewRow(kind: .unnamed(group: face), references: [], faces: [tile])])],
+            unsure: [], uncheckedPhotoCount: 0, faceCount: people.faceCount, revision: people.revision
+        )
+        state.unnamed = [UnnamedGroupSummary(id: face, faces: [tile])]
+        return state
+    }
+
+    /// ⇧O on a selected unnamed group names its faces: the group leaves the list at once and
+    /// the faces are that person's.
+    @Test func namingAnUnnamedGroupFromTheList() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let state = try await Self.unnamedState(fixture.people(), group: fixture.suggested)
+        fixture.show(state, scope: .people)
+        #expect(fixture.model.peopleListOrder == [.person(fixture.sam), .unnamed(fixture.suggested)])
+
+        fixture.model.selectPeople(.unnamed(fixture.suggested), modifiers: [])
+        fixture.model.beginNamingSelectedUnnamedGroups()
+        #expect(fixture.model.peopleSession.naming == [fixture.suggested])
+        fixture.model.commitNaming("Ian")
+
+        #expect(fixture.model.shownUnnamedGroups.isEmpty)
+        #expect(fixture.model.peopleSession.selectedItems.isEmpty)
+        try await Self.waitForStore(fixture.store) { try await fixture.person(of: fixture.suggested) != nil }
+        let named = try await fixture.people()
+        #expect(named.people.map(\.displayName).contains("Ian"))
+        await fixture.store.shutdown()
+    }
+
+    /// Return on an unnamed group opens the review with its faces selected.
+    @Test func openingAnUnnamedGroupSelectsItsFacesInTheReview() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let state = try await Self.unnamedState(fixture.people(), group: fixture.suggested)
+        fixture.show(state, scope: .people)
+
+        fixture.model.openPeopleListItem(.unnamed(fixture.suggested))
+
+        #expect(fixture.model.peopleSession.list == .suggestions)
+        #expect(fixture.model.peopleSession.selectedFaces == [fixture.suggested])
+        #expect(fixture.model.peopleSession.faceCursor == fixture.suggested)
+        await fixture.store.shutdown()
+    }
+
     /// The hiding rule on its own: a face stays hidden while its act is on its way and
     /// until a state at the act's revision; a refused act's faces come back at once.
     @Test func hiddenFacesFollowTheirActsRevision() {

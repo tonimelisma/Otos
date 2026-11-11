@@ -104,6 +104,44 @@ struct PeopleStateTests {
         #expect(state.suggestionCount == 3)
     }
 
+    /// The People list holds every unnamed group, across years, as its newest face: most
+    /// photos first, named by its first face in path order, which also names its review rows.
+    @Test func theListHoldsUnnamedGroups() {
+        let small = [
+            Fixture.face("x1.jpg", toward: [6: 1], at: 0),
+            Fixture.face("x2.jpg", toward: [6: 1], at: 2 * Self.year),
+        ]
+        let large = [
+            Fixture.face("y1.jpg", toward: [5: 1], at: 0),
+            Fixture.face("y2.jpg", toward: [5: 1], at: Self.year),
+            Fixture.face("y3.jpg", toward: [5: 1], at: 3 * Self.year),
+        ]
+
+        let state = PeopleStateBuilder.state(from: Self.snapshot(small + large, people: []), calendar: Self.utc)
+
+        #expect(state.people.isEmpty)
+        #expect(state.unnamed.map(\.id) == [large[0].id, small[0].id])
+        #expect(state.unnamed.first?.cover?.id == large[2].id)
+        #expect(state.unnamed.first?.photoCount == 3)
+        #expect(state.listItems == [.unnamed(large[0].id), .unnamed(small[0].id)])
+        let rowIDs = Set(state.suggestions.flatMap(\.rows).map(\.id))
+        #expect(rowIDs == [.unnamed(large[0].id), .unnamed(small[0].id)])
+        #expect(PeoplePresentation.emptyListSentence(state) == nil)
+        #expect(PeoplePresentation.unnamedCount(state.unnamed) == "5 faces")
+    }
+
+    /// A person row shows the face least like the person first.
+    @Test func aPersonRowShowsItsLeastSureFaceFirst() {
+        let samFace = Fixture.face("s.jpg", toward: [0: 1], at: 0, person: Self.sam)
+        let sure = Fixture.face("sure.jpg", toward: [0: 1, 9: 0.1], at: Self.year / 4)
+        let lessSure = Fixture.face("less.jpg", toward: [0: 1, 9: 0.8], at: Self.year / 4 + 86400)
+
+        let state = PeopleStateBuilder.state(from: Self.snapshot([samFace, sure, lessSure]), calendar: Self.utc)
+
+        #expect(state.suggestions.count == 1)
+        #expect(state.suggestions.first?.rows.first?.faces.map(\.id) == [lessSure.id, sure.id])
+    }
+
     /// Not a Face takes a detection out of People altogether.
     @Test func notAFaceIsNotCounted() {
         let face = Fixture.face("x.jpg", toward: [0: 1], at: 0, notAFace: true)
@@ -172,7 +210,7 @@ struct PeopleStateTests {
             PeopleReviewRow(kind: .person(Self.sam, referenceYear: 2020), references: [], faces: first),
             PeopleReviewRow(kind: .person(Self.ian, referenceYear: 2020), references: [], faces: second),
         ])]
-        let layout = PeopleReviewLayout(years: years, leaving: [])
+        let layout = PeopleReviewLayout(years: years, leaving: [], expanded: [])
 
         #expect(layout.target(from: nil, .next) == first[0].id)
         #expect(layout.target(from: first[2].id, .next) == second[0].id)
@@ -182,9 +220,34 @@ struct PeopleStateTests {
         #expect(layout.successor(of: [first[0].id, first[1].id]) == first[2].id)
         #expect(layout.successor(of: Set((first + second).map(\.id))) == nil)
 
-        let without = PeopleReviewLayout(years: years, leaving: Set(first.map(\.id)))
+        let without = PeopleReviewLayout(years: years, leaving: Set(first.map(\.id)), expanded: [])
         #expect(without.rows.count == 1)
         #expect(without.order == second.map(\.id))
+    }
+
+    /// A row shows its first 12 faces until it is expanded; the hidden ones still count, and
+    /// the keys walk only the shown ones.
+    @Test func aLongRowShowsTwelveFacesUntilExpanded() {
+        let many = (0 ..< 15).map { Self.tile("m\($0).jpg", at: Fixture.epoch - Double($0)) }
+        let next = [Self.tile("n.jpg", at: Fixture.epoch)]
+        let row = PeopleReviewRow(kind: .person(Self.sam, referenceYear: 2020), references: [], faces: many)
+        let years = [PeopleReviewYear(year: 2020, rows: [
+            row,
+            PeopleReviewRow(kind: .person(Self.ian, referenceYear: 2020), references: [], faces: next),
+        ])]
+
+        let collapsed = PeopleReviewLayout(years: years, leaving: [], expanded: [])
+        #expect(collapsed.faceCount == 16)
+        #expect(collapsed.order == many.prefix(12).map(\.id) + next.map(\.id))
+        #expect(collapsed.shownFaces(row, year: 2020).count == 12)
+        #expect(collapsed.target(from: many[11].id, .next) == next[0].id)
+        #expect(collapsed.target(from: next[0].id, .up) == many[0].id)
+        #expect(PeoplePresentation.showAllTitle(15) == "Show All 15 Faces")
+
+        let expanded = PeopleReviewLayout(years: years, leaving: [], expanded: [PeopleReviewRowKey(row: row.id, year: 2020)])
+        #expect(expanded.order.count == 16)
+        #expect(expanded.shownFaces(row, year: 2020).count == 15)
+        #expect(expanded != collapsed)
     }
 
     // MARK: - Words

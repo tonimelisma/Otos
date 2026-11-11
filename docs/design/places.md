@@ -31,8 +31,8 @@ Terms are Apple's: *location*, never *GPS* or *geotag*.
 
 ## Sidebar
 
-`Places`, SF Symbol `map`, directly under `All Media` and above the Libraries section,
-as a top-level row like All Media. Present whenever one fixed library exists. No
+`Places`, SF Symbol `map`, under the `Utilities` header, after `People` and before
+`Duplicates` (owner decision, 2026-11-11). Present whenever one fixed library exists. No
 trailing count, because library rows carry none. While an area is open the row stays
 highlighted: the area has no row of its own.
 

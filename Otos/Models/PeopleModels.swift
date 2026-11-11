@@ -75,6 +75,31 @@ nonisolated struct PersonSummary: Hashable, Sendable, Identifiable {
     }
 }
 
+/// Faces that look alike and match no person, as the People list shows them under
+/// `Unnamed` (owner decision, 2026-11-11): one cell per group, across every year.
+nonisolated struct UnnamedGroupSummary: Hashable, Sendable, Identifiable {
+    /// The group's identity: its first face in path order, the face that names its review
+    /// rows (`PeopleReviewRow.Kind.unnamed`).
+    let id: FaceID
+    /// Newest first, the first being the cover, as a person's newest face is theirs.
+    let faces: [FaceTile]
+
+    var cover: FaceTile? {
+        faces.first
+    }
+
+    /// A group never holds two faces of one photo, so its faces are its photos.
+    var photoCount: Int {
+        faces.count
+    }
+}
+
+/// One cell of the People list: a person, or an unnamed group.
+nonisolated enum PeopleListItem: Hashable, Sendable {
+    case person(PersonID)
+    case unnamed(FaceID)
+}
+
 /// One row of the review: one person's suggestions in a year, one unnamed group's faces in a
 /// year, or the faces of a year that could be either of two people.
 nonisolated struct PeopleReviewRow: Hashable, Sendable, Identifiable {
@@ -99,7 +124,8 @@ nonisolated struct PeopleReviewRow: Hashable, Sendable, Identifiable {
     /// The confirmed faces shown as evidence: one for a person row, one per candidate for an
     /// unsure row, none for an unnamed group.
     let references: [FaceTile]
-    /// Newest first.
+    /// Least sure first: a person row's least like the person first, an unnamed row's least
+    /// like the rest of its group first, an unsure row's newest first.
     let faces: [FaceTile]
 
     var id: ID {
@@ -130,6 +156,8 @@ nonisolated struct PeopleReviewYear: Hashable, Sendable, Identifiable {
 nonisolated struct CatalogPeopleState: Equatable, Sendable {
     /// Most photos first, ties by name in the locale's order (owner decision, 2026-11-09).
     let people: [PersonSummary]
+    /// Most photos first, ties by the newest face (owner decision, 2026-11-11).
+    var unnamed: [UnnamedGroupSummary] = []
     /// One person clearly wins, or the faces form an unnamed group.
     let suggestions: [PeopleReviewYear]
     /// The best two people are too close to call.
@@ -153,6 +181,15 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
 
     func person(_ id: PersonID) -> PersonSummary? {
         people.first { $0.id == id }
+    }
+
+    func unnamedGroup(_ id: FaceID) -> UnnamedGroupSummary? {
+        unnamed.first { $0.id == id }
+    }
+
+    /// The People list's cells in order: the named people, then the unnamed groups.
+    var listItems: [PeopleListItem] {
+        people.map { .person($0.id) } + unnamed.map { .unnamed($0.id) }
     }
 }
 

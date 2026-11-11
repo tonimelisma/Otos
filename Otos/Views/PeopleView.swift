@@ -4,7 +4,8 @@ import SwiftUI
 // The detail pane for the `.people` scope (ADR 0047, `docs/design/people.md`): a 52 pt bar
 // stating how many people are named and how many photos are not yet checked, with Review
 // Suggestions; under it, every person as their newest confirmed face, name and photo count,
-// most photos first. Passive: strings come from `PeoplePresentation`, and every control
+// most photos first, then under `Unnamed` every unnamed group as its newest face, `Add Name…`
+// and its photo count. Passive: strings come from `PeoplePresentation`, and every control
 // calls a view-model intent through `PeopleActions`.
 
 /// The words People's surfaces show. Pure, so each one is tested without a window.
@@ -19,17 +20,27 @@ nonisolated enum PeoplePresentation {
         count == 0 ? "Every photo has been checked" : "\(PeopleText.count(count, "photo")) not yet checked for faces"
     }
 
-    /// The list's sentence when it holds nobody; nil when it holds someone or the window's
-    /// shared sentence speaks instead.
+    /// The list's sentence when it holds nobody and no unnamed group; nil when it holds one
+    /// or the window's shared sentence speaks instead.
     static func emptyListSentence(_ state: CatalogPeopleState) -> String? {
-        guard state.people.isEmpty else { return nil }
+        guard state.people.isEmpty, state.unnamed.isEmpty else { return nil }
         if state.faceCount > 0 {
-            return "Name the faces Otos found in Review Suggestions."
+            return "People appear here once Otos finds the same face on different days."
         }
         if state.uncheckedPhotoCount > 0 {
             return "People appear here as Otos finds faces in your photos."
         }
         return "Otos found no faces in your photos."
+    }
+
+    /// The `Unnamed` header's L3: every face in the shown groups.
+    static func unnamedCount(_ groups: [UnnamedGroupSummary]) -> String {
+        PeopleText.count(groups.reduce(0) { $0 + $1.faces.count }, "face")
+    }
+
+    /// The link under a row that shows only some of its faces.
+    static func showAllTitle(_ count: Int) -> String {
+        "Show All \(PeopleText.count(count, "Face"))"
     }
 
     /// The review bar's L1 for the list shown.
@@ -116,18 +127,30 @@ nonisolated enum PeoplePresentation {
 
 /// The view model's People intents, handed to the passive views.
 struct PeopleActions {
-    let selectPerson: @MainActor (PersonID?, NSEvent.ModifierFlags) -> Void
-    let openPerson: @MainActor (PersonID) -> Void
+    let selectItem: @MainActor (PeopleListItem?, NSEvent.ModifierFlags) -> Void
+    /// The arrow keys: `step` cells along the list; the cell reached, nil at an end.
+    let moveCursor: @MainActor (Int, Bool) -> PeopleListItem?
+    /// A person's photos, or the review with an unnamed group's faces selected.
+    let open: @MainActor (PeopleListItem) -> Void
     let openReview: @MainActor () -> Void
     let edit: @MainActor (PersonID) -> Void
     let askMerge: @MainActor (PersonID, PersonID) -> Void
     let mergeRefusal: @MainActor (PersonID, PersonID) -> String?
     let answerMerge: @MainActor (Bool) -> Void
     let remove: @MainActor (PersonID) -> Void
+    /// Add Name… on an unnamed group's cell.
+    let beginNaming: @MainActor (FaceID) -> Void
+    /// ⇧O: the selected unnamed groups.
+    let beginNamingSelection: @MainActor () -> Void
+    /// Ignore on an unnamed group's cell.
+    let ignore: @MainActor (FaceID) -> Void
+    let naming: PeopleNamingActions
 }
 
 struct PeopleView: View {
     let people: CatalogPeopleState
+    /// The unnamed groups shown: those not on their way out after an act.
+    let unnamed: [UnnamedGroupSummary]
     let session: PeopleSession
     /// The window's shared sentence when libraries are offline or being checked.
     let librariesState: CatalogMediaEmptyState
@@ -184,17 +207,13 @@ struct PeopleView: View {
     }
 
     private var emptySentence: String? {
-        guard people.people.isEmpty else { return nil }
+        guard people.people.isEmpty, unnamed.isEmpty else { return nil }
         switch librariesState {
         case .checkingLibraries, .noAvailableMedia:
             return librariesState.message
         default:
             return PeoplePresentation.emptyListSentence(people)
         }
-    }
-
-    private var order: [PersonID] {
-        people.people.map(\.id)
     }
 
     private var list: some View {
@@ -209,7 +228,7 @@ struct PeopleView: View {
                         PersonCell(
                             person: person,
                             edge: Self.edge,
-                            isSelected: session.selectedPeople.contains(person.id),
+                            isSelected: session.selectedItems.contains(.person(person.id)),
                             selectedPeople: session.selectedPeople,
                             people: people,
                             images: images,
@@ -217,7 +236,26 @@ struct PeopleView: View {
                             actions: actions,
                             focusList: { listFocused = true }
                         )
-                        .id(person.id)
+                        .id(PeopleListItem.person(person.id))
+                    }
+                    if !unnamed.isEmpty {
+                        Section {
+                            ForEach(unnamed) { group in
+                                UnnamedCell(
+                                    group: group,
+                                    edge: Self.edge,
+                                    isSelected: session.selectedItems.contains(.unnamed(group.id)),
+                                    isNaming: namingAnchor == group.id,
+                                    images: images,
+                                    derivedImageDirectory: derivedImageDirectory,
+                                    actions: actions,
+                                    focusList: { listFocused = true }
+                                )
+                                .id(PeopleListItem.unnamed(group.id))
+                            }
+                        } header: {
+                            unnamedHeader
+                        }
                     }
                 }
                 .padding(12)
@@ -232,30 +270,59 @@ struct PeopleView: View {
             .focusable()
             .focusEffectDisabled()
             .focused($listFocused)
+            // The name popover's field sits inside the list, so its keys reach these handlers
+            // first; while a name is being typed every key is the field's.
             .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
+                guard session.naming == nil else { return .ignored }
                 let step = switch press.key {
                 case .leftArrow: -1
                 case .rightArrow: 1
                 case .upArrow: -columns
                 default: columns
                 }
-                let from = session.personCursor.flatMap(order.firstIndex(of:))
-                let target = from.map { $0 + step } ?? 0
-                guard order.indices.contains(target) else { return .ignored }
-                actions.selectPerson(order[target], press.modifiers.contains(.shift) ? .shift : [])
-                proxy.scrollTo(order[target])
+                guard let reached = actions.moveCursor(step, press.modifiers.contains(.shift)) else { return .ignored }
+                proxy.scrollTo(reached)
                 return .handled
             }
             .onKeyPress(.return) {
-                guard let cursor = session.personCursor else { return .ignored }
-                actions.openPerson(cursor)
+                guard session.naming == nil, let cursor = session.listCursor else { return .ignored }
+                actions.open(cursor)
+                return .handled
+            }
+            .onKeyPress(characters: CharacterSet(charactersIn: "oO")) { press in
+                guard session.naming == nil, press.modifiers == .shift else { return .ignored }
+                actions.beginNamingSelection()
                 return .handled
             }
             .onKeyPress(.escape) {
-                actions.selectPerson(nil, [])
+                guard session.naming == nil else { return .ignored }
+                actions.selectItem(nil, [])
                 return .handled
             }
         }
+    }
+
+    /// `Unnamed` over the count of its faces, spanning the grid's width.
+    private var unnamedHeader: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("Unnamed")
+                .font(.headline)
+                .foregroundStyle(DesignPalette.label(for: colorScheme))
+                .accessibilityAddTraits(.isHeader)
+            Text(PeoplePresentation.unnamedCount(unnamed))
+                .font(.subheadline)
+                .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                .monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, people.people.isEmpty ? 0 : 12)
+    }
+
+    /// The group the name popover opens on: the first, in the list's order, whose faces it
+    /// names.
+    private var namingAnchor: FaceID? {
+        guard let naming = session.naming.map(Set.init) else { return nil }
+        return unnamed.first { group in group.faces.contains { naming.contains($0.id) } }?.id
     }
 }
 
@@ -346,19 +413,19 @@ private struct PersonCell: View {
         .frame(width: edge, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
-            actions.openPerson(person.id)
+            actions.open(.person(person.id))
         }
         .simultaneousGesture(TapGesture().modifiers(.command).onEnded {
             focusList()
-            actions.selectPerson(person.id, .command)
+            actions.selectItem(.person(person.id), .command)
         })
         .simultaneousGesture(TapGesture().modifiers(.shift).onEnded {
             focusList()
-            actions.selectPerson(person.id, .shift)
+            actions.selectItem(.person(person.id), .shift)
         })
         .onTapGesture {
             focusList()
-            actions.selectPerson(person.id, [])
+            actions.selectItem(.person(person.id), [])
         }
         .draggable(PeopleDrag.payload(person.id))
         .dropDestination(for: String.self) { items, _ in
@@ -390,7 +457,76 @@ private struct PersonCell: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(person.displayName), \(PeopleText.count(person.photoCount, "photo"))")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction { actions.openPerson(person.id) }
+        .accessibilityAction { actions.open(.person(person.id)) }
+    }
+}
+
+/// One unnamed group: its newest face, `Add Name…` where a name goes, and its photo count.
+private struct UnnamedCell: View {
+    let group: UnnamedGroupSummary
+    let edge: CGFloat
+    let isSelected: Bool
+    let isNaming: Bool
+    let images: FaceTileImages?
+    let derivedImageDirectory: URL?
+    let actions: PeopleActions
+    let focusList: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let cover = group.cover {
+                FaceTileView(tile: cover, edge: edge, isSelected: isSelected, images: images, derivedImageDirectory: derivedImageDirectory)
+            }
+            Button("Add Name…") { actions.beginNaming(group.id) }
+                .buttonStyle(.link)
+                .font(.body)
+                .lineLimit(1)
+                .popover(
+                    isPresented: Binding(get: { isNaming }, set: {
+                        if !$0 {
+                            actions.naming.cancel()
+                        }
+                    }),
+                    arrowEdge: .bottom
+                ) {
+                    PeopleNamePopover(actions: actions.naming)
+                }
+            Text(PeopleText.count(group.photoCount, "photo"))
+                .font(.subheadline)
+                .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                .monospacedDigit()
+        }
+        .frame(width: edge, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            actions.open(.unnamed(group.id))
+        }
+        .simultaneousGesture(TapGesture().modifiers(.command).onEnded {
+            focusList()
+            actions.selectItem(.unnamed(group.id), .command)
+        })
+        .simultaneousGesture(TapGesture().modifiers(.shift).onEnded {
+            focusList()
+            actions.selectItem(.unnamed(group.id), .shift)
+        })
+        .onTapGesture {
+            focusList()
+            actions.selectItem(.unnamed(group.id), [])
+        }
+        .contextMenu {
+            Button("Add Name…") { actions.beginNaming(group.id) }
+            Button("Ignore") { actions.ignore(group.id) }
+            Divider()
+            Button("Review Suggestions") { actions.openReview() }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Unnamed, \(PeopleText.count(group.photoCount, "photo"))")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { actions.open(.unnamed(group.id)) }
+        .accessibilityAction(named: "Add Name…") { actions.beginNaming(group.id) }
+        .accessibilityAction(named: "Ignore") { actions.ignore(group.id) }
     }
 }
 

@@ -29,8 +29,8 @@ was asked for.
 
 ## Sidebar
 
-`On This Day`, SF Symbol `calendar`, directly under `Places`, a top-level row present
-whenever Places is. No trailing count, as Places has none. The row is today's: when the
+`On This Day`, SF Symbol `calendar`, directly under `All Media`, a top-level row present
+whenever one fixed library exists (owner decision, 2026-11-11). No trailing count, as Places has none. The row is today's: when the
 day changes it is the new day's.
 
 ## Toolbar

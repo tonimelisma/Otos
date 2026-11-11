@@ -134,6 +134,7 @@ extension PeopleProjection {
         let state = await derive(snapshot)
         OtosLog.catalog.debugOperation("people.state", phase: "built", fields: [
             "people": "\(state.people.count)",
+            "unnamed": "\(state.unnamed.count)",
             "faces": "\(state.faceCount)",
             "suggestions": "\(state.suggestionCount)",
             "unsure": "\(state.unsureCount)",
@@ -156,10 +157,12 @@ extension PeopleProjection {
 /// Turns a `PeopleSnapshot` into what People shows. Pure: the same snapshot always gives the
 /// same state, so it is tested without a catalog.
 /// - **The list:** each person with their confirmed faces, newest first; most photos first,
-///   then the name in the locale's order.
+///   then the name in the locale's order. Then each unnamed group with its faces newest first;
+///   most photos first, then the newest face.
 /// - **Suggestions:** `FacePeoplePolicy`'s suggestions, one row per person and year of the
-///   face's photo, resting on the confirmed face of the row's strongest suggestion; then the
-///   unnamed groups, one row per group and year.
+///   face's photo, resting on the confirmed face of the row's strongest suggestion, its faces
+///   least like the person first; then the unnamed groups, one row per group and year, in the
+///   policy's order (least sure first). A group is named by its first face in path order.
 /// - **Unsure:** one row per pair of candidates and year, with each candidate's confirmed face
 ///   nearest that year.
 /// - **Years:** newest first; photos with no date last.
@@ -217,26 +220,37 @@ nonisolated enum PeopleStateBuilder {
             guard let strongest = list.max(by: { $0.similarity < $1.similarity }),
                   let reference = tile(strongest.reference)
             else { continue }
-            let faces = list.compactMap { tile($0.face) }.sorted(by: newestFirst)
+            let faces = list
+                .sorted { ($0.similarity, $0.face.index) < ($1.similarity, $1.face.index) }
+                .compactMap { tile($0.face) }
             suggestionRows[key.year, default: []].append((
                 rank[key.person] ?? Int.max,
                 faces.count,
                 PeopleReviewRow(kind: .person(key.person, referenceYear: year(reference)), references: [reference], faces: faces)
             ))
         }
+        var unnamed: [UnnamedGroupSummary] = []
         for group in policy.unnamedGroups {
-            guard let first = group.first else { continue }
+            let tiles = group.compactMap(tile)
+            guard let first = tiles.min(by: pathOrder)?.id else { continue }
+            unnamed.append(UnnamedGroupSummary(id: first, faces: tiles.sorted(by: newestFirst)))
             var byYear: [Int?: [FaceTile]] = [:]
-            for face in group.compactMap(tile) {
+            for face in tiles {
                 byYear[year(face), default: []].append(face)
             }
             for (key, faces) in byYear {
                 suggestionRows[key, default: []].append((
                     Int.max,
                     faces.count,
-                    PeopleReviewRow(kind: .unnamed(group: first), references: [], faces: faces.sorted(by: newestFirst))
+                    PeopleReviewRow(kind: .unnamed(group: first), references: [], faces: faces)
                 ))
             }
+        }
+        unnamed.sort { lhs, rhs in
+            if lhs.photoCount != rhs.photoCount {
+                return lhs.photoCount > rhs.photoCount
+            }
+            return newestFirst(lhs.faces[0], rhs.faces[0])
         }
 
         // Unsure: one row per (year, pair), the pair in the People list's order.
@@ -265,6 +279,7 @@ nonisolated enum PeopleStateBuilder {
 
         return CatalogPeopleState(
             people: people,
+            unnamed: unnamed,
             suggestions: years(suggestionRows),
             unsure: years(unsureRows),
             uncheckedPhotoCount: snapshot.uncheckedPhotoCount,
@@ -284,7 +299,7 @@ nonisolated enum PeopleStateBuilder {
                 if lhs.size != rhs.size {
                     return lhs.size > rhs.size
                 }
-                return newestFirst(lhs.row.faces[0], rhs.row.faces[0])
+                return pathOrder(lhs.row.faces[0], rhs.row.faces[0])
             }.map(\.row))
         }.sorted { ($0.year ?? Int.min) > ($1.year ?? Int.min) }
     }
@@ -301,6 +316,13 @@ nonisolated enum PeopleStateBuilder {
         }
     }
 
+    /// The order of a face's photo path, then its library and its place in the photo: an
+    /// order that does not change while the face exists.
+    static func pathOrder(_ lhs: FaceTile, _ rhs: FaceTile) -> Bool {
+        (lhs.id.asset.relativePath.rawValue, lhs.id.asset.libraryRootPath.rawValue, lhs.id.index)
+            < (rhs.id.asset.relativePath.rawValue, rhs.id.asset.libraryRootPath.rawValue, rhs.id.index)
+    }
+
     /// Capture order, newest first; faces with no date last, then by photo and place.
     static func newestFirst(_ lhs: FaceTile, _ rhs: FaceTile) -> Bool {
         switch (lhs.captureSeconds, rhs.captureSeconds) {
@@ -311,8 +333,7 @@ nonisolated enum PeopleStateBuilder {
         case (nil, .some):
             false
         default:
-            (lhs.id.asset.relativePath.rawValue, lhs.id.asset.libraryRootPath.rawValue, lhs.id.index)
-                < (rhs.id.asset.relativePath.rawValue, rhs.id.asset.libraryRootPath.rawValue, rhs.id.index)
+            pathOrder(lhs, rhs)
         }
     }
 }

@@ -13,7 +13,7 @@ chose, on 2026-11-09:
 - **the content:** photos and videos;
 - **the presentation:** a story player like Immich's — one progress segment per item,
   stills hold, videos play their own length, keyboard navigation;
-- **the placement:** a top-level `On This Day` sidebar row under Places, chosen from four
+- **the placement:** a top-level `On This Day` sidebar row under All Media, chosen from four
   options (a sidebar row, a strip above the grid, a menu command only, a sidebar row plus
   a strip);
 - **the pane:** a grid of photo cards, one per earlier year, chosen from four options
@@ -43,7 +43,8 @@ and materialization (ADR 0016, ADR 0023); the no-blank grid rule (ADR 0006).
 view mode for it.
 
 1. **Placement (owner decision).** A sidebar row, `On This Day`, SF Symbol `calendar`,
-   directly under Places, present whenever Places is, with no trailing count.
+   second under All Media, present whenever one fixed library exists, with no trailing count
+   (owner decision, 2026-11-11).
 2. **What matches.** Rows of the available fixed libraries — All Media's membership —
    whose day bucket has today's month and day in a year before today's. The day bucket
    is the day the item was taken on, on the clock where it was taken: the date of its

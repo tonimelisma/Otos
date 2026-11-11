@@ -134,6 +134,22 @@ struct FacePeoplePolicyTests {
         #expect(result.unnamedGroups == [twoDays.map(\.id)])
     }
 
+    /// A group lists the face least like the rest of it first: its strongest link is weakest.
+    @Test func aGroupListsItsLeastSureFaceFirst() {
+        let alike = [
+            Self.face("a.jpg", toward: [5: 1], at: 0),
+            Self.face("b.jpg", toward: [5: 1], at: 86400 * 2),
+        ]
+        // Cosine 0.707 with either: above the group link, below their 1.0.
+        let lessAlike = Self.face("c.jpg", toward: [5: 1, 9: 1], at: 86400 * 4)
+
+        let result = FacePeoplePolicy.suggestions(faces: alike + [lessAlike], people: Self.people)
+
+        #expect(result.unnamedGroups.count == 1)
+        #expect(result.unnamedGroups.first?.first == lessAlike.id)
+        #expect(Set(result.unnamedGroups.first ?? []) == Set((alike + [lessAlike]).map(\.id)))
+    }
+
     /// The vectorised policy gives the same suggestions and unsure faces as the rules read
     /// one comparison at a time, on random faces with every complication: undated faces,
     /// birthdays, rejections, shared photos, ignored faces and non-faces.

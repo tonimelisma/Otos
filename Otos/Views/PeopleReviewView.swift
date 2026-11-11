@@ -4,7 +4,8 @@ import SwiftUI
 // The detail pane for the `.peopleReview` scope (ADR 0047, `docs/design/people.md`): the
 // shown list — Suggestions or Unsure — grouped by year, newest first; in each year one row
 // per person (their suggested faces beside the confirmed face they rest on), per unnamed
-// group, or per pair of people a face could be. Under it a fixed-height bar: the list
+// group, or per pair of people a face could be, each showing its first 12 faces, least sure
+// first, until `Show All N Faces`. Under it a fixed-height bar: the list
 // picker, what is left, the last act's receipt or the legend, and Confirm, which Return
 // fires. Passive: every string comes from `PeoplePresentation`, every act is an intent
 // through `PeopleReviewActions`, and the selection is the view model's.
@@ -28,10 +29,9 @@ struct PeopleReviewActions {
     let dropFaces: @MainActor ([FaceID], PeopleReviewRow, Int?) -> Bool
     let split: @MainActor ([FaceID]) -> Void
     let beginNaming: @MainActor ([FaceID]) -> Void
-    let cancelNaming: @MainActor () -> Void
-    let nameCompletions: @MainActor (String) -> [String]
-    let namingRefusal: @MainActor (String) -> String?
-    let commitNaming: @MainActor (String) -> Void
+    let naming: PeopleNamingActions
+    /// `Show All N Faces` (true) and `Show Fewer` (false) on a row of a year.
+    let setExpanded: @MainActor (PeopleReviewRowKey, Bool) -> Void
     let openPhoto: @MainActor (FaceID) -> Void
     let undo: @MainActor () -> Void
 }
@@ -184,7 +184,10 @@ struct PeopleReviewView: View {
                         }
                     }
                 }
-                faces(row, year: year)
+                VStack(alignment: .leading, spacing: 6) {
+                    faces(row, year: year)
+                    expandLink(row, year: year)
+                }
             }
         }
         .padding(.vertical, 8)
@@ -224,7 +227,7 @@ struct PeopleReviewView: View {
                     .buttonStyle(.link)
                     .font(.subheadline)
                     .popover(isPresented: namingBinding(for: row.faces.map(\.id)), arrowEdge: .bottom) {
-                        NamePopover(actions: actions)
+                        PeopleNamePopover(actions: actions.naming)
                     }
                 Button("Ignore") { actions.ignoreRow(row) }
                     .buttonStyle(.link)
@@ -266,13 +269,29 @@ struct PeopleReviewView: View {
     private static let edge: CGFloat = 96
     private static let gutter: CGFloat = 8
 
+    /// `Show All 856 Faces` under a row that hides some, `Show Fewer` under an expanded one.
+    @ViewBuilder
+    private func expandLink(_ row: PeopleReviewRow, year: Int?) -> some View {
+        let key = PeopleReviewRowKey(row: row.id, year: year)
+        if layout.expanded.contains(key), row.faces.count > PeopleReviewLayout.collapsedFaces {
+            Button("Show Fewer") { actions.setExpanded(key, false) }
+                .buttonStyle(.link)
+                .font(.subheadline)
+        } else if row.faces.count > PeopleReviewLayout.collapsedFaces {
+            Button(PeoplePresentation.showAllTitle(row.faces.count)) { actions.setExpanded(key, true) }
+                .buttonStyle(.link)
+                .font(.subheadline)
+                .monospacedDigit()
+        }
+    }
+
     private func faces(_ row: PeopleReviewRow, year: Int?) -> some View {
         LazyVGrid(
             columns: [GridItem(.adaptive(minimum: Self.edge, maximum: Self.edge), spacing: Self.gutter, alignment: .top)],
             alignment: .leading,
             spacing: Self.gutter
         ) {
-            ForEach(row.faces) { tile in
+            ForEach(layout.shownFaces(row, year: year)) { tile in
                 ReviewFace(
                     tile: tile,
                     row: row,
@@ -305,7 +324,7 @@ struct PeopleReviewView: View {
             },
             set: {
                 if !$0 {
-                    actions.cancelNaming()
+                    actions.naming.cancel()
                 }
             }
         )
@@ -449,7 +468,7 @@ private struct ReviewFace: View {
             actions.select(tile.id, [])
         }
         .popover(isPresented: naming, arrowEdge: .bottom) {
-            NamePopover(actions: actions)
+            PeopleNamePopover(actions: actions.naming)
         }
         .draggable(PeopleDrag.payload(faces: targets))
         .contextMenu { menu }
@@ -539,27 +558,35 @@ private struct ReviewFace: View {
     }
 }
 
+/// The name popover's intents, shared by the People list and the review.
+struct PeopleNamingActions {
+    let cancel: @MainActor () -> Void
+    let completions: @MainActor (String) -> [String]
+    let refusal: @MainActor (String) -> String?
+    let commit: @MainActor (String) -> Void
+}
+
 /// One field that completes eligible names. Return commits, Escape cancels.
-private struct NamePopover: View {
-    let actions: PeopleReviewActions
+struct PeopleNamePopover: View {
+    let actions: PeopleNamingActions
 
     @State private var text = ""
     @FocusState private var focused: Bool
 
     var body: some View {
-        let refusal = actions.namingRefusal(text)
+        let refusal = actions.refusal(text)
         VStack(alignment: .leading, spacing: 8) {
             TextField("Name", text: $text)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 220)
                 .focused($focused)
                 .onSubmit {
-                    actions.commitNaming(text)
+                    actions.commit(text)
                 }
                 .onExitCommand {
-                    actions.cancelNaming()
+                    actions.cancel()
                 }
-            let completions = actions.nameCompletions(text).prefix(6)
+            let completions = actions.completions(text).prefix(6)
             if !completions.isEmpty, !completions.contains(text) {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(Array(completions), id: \.self) { name in

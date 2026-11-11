@@ -60,6 +60,7 @@ nonisolated struct PeopleSuggestions: Sendable, Equatable {
     let suggestions: [Suggestion]
     let unsure: [Unsure]
     /// Faces matching no person, grouped among themselves; each group spans two or more days.
+    /// Within a group, least sure first: by each face's strongest link, weakest first.
     let unnamedGroups: [[FaceID]]
 }
 
@@ -87,6 +88,9 @@ nonisolated struct PeopleSuggestions: Sendable, Equatable {
 ///   `groupLink`; they are joined strongest first, never two faces of one photo, and a group
 ///   is offered only when its faces span two or more days. Measured: 102 groups holding 1,983
 ///   faces, none wrong. Lower links chain different people together (238 wrong faces at 0.60).
+///   A group lists its faces least sure first, by each face's strongest link (the face most
+///   like it), weakest first, so the review shows first the faces most likely to be someone
+///   else.
 nonisolated enum FacePeoplePolicy {
     static let threshold: Float = 0.434
     static let margin: Float = 0.08
@@ -140,9 +144,13 @@ nonisolated enum FacePeoplePolicy {
     }
 
     /// The leftover faces linked strongest first at `groupLink` or above, never joining two
-    /// faces of one photo, keeping groups that span two or more days.
+    /// faces of one photo, keeping groups that span two or more days; each group's faces least
+    /// sure first.
     static func unnamedGroups(_ faces: [FaceFact]) -> [[FaceID]] {
         var links: [(similarity: Float, a: Int, b: Int)] = []
+        // How sure each face is of being grouped: its strongest link, the first one its row
+        // keeps; -2 for a face with none.
+        var strength = [Float](repeating: -2, count: faces.count)
         var scratch = [Float](repeating: 0, count: faces.count)
         BlockedSimilarity(rows: faces, columns: faces).forEachBlock { rows, values in
             for row in rows {
@@ -161,6 +169,9 @@ nonisolated enum FacePeoplePolicy {
                     let column = Int(index)
                     scratch[column] = -2
                     guard faces[row].id.asset != faces[column].id.asset else { continue }
+                    if kept == 0 {
+                        strength[row] = value
+                    }
                     links.append((value, min(row, column), max(row, column)))
                     kept += 1
                 }
@@ -190,7 +201,9 @@ nonisolated enum FacePeoplePolicy {
         }
         return groups.values
             .filter { members in Set(members.compactMap { day(faces[$0].captureSeconds) }).count >= 2 }
-            .map { $0.map { faces[$0].id } }
+            .map { members in
+                members.sorted { (strength[$0], $0) < (strength[$1], $1) }.map { faces[$0].id }
+            }
             .sorted { ($0.count, $1.first?.asset.relativePath.rawValue ?? "") > ($1.count, $0.first?.asset.relativePath.rawValue ?? "") }
     }
 

@@ -545,6 +545,7 @@ struct ContentView: View {
             if let people = viewModel.state.people {
                 PeopleView(
                     people: people,
+                    unnamed: viewModel.shownUnnamedGroups,
                     session: viewModel.peopleSession,
                     librariesState: viewModel.state.mediaEmptyState,
                     images: viewModel.faceTileImages,

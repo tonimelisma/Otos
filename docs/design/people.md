@@ -1,6 +1,7 @@
 # People
 
 Status: approved by the owner in chat, 2026-11-10, with the changes noted as owner decisions;
+revised 2026-11-11 (unnamed people on the list, rows that show the least sure faces first);
 built (APP-072). Its rules are DES-109 to DES-111 and DES-113.
 
 The surfaces for finding and naming the people in the user's photos (ADR 0047). Three views share one sidebar row: the **People list**, a **person's scope**
@@ -59,8 +60,11 @@ review (suggestions).
   matched mainly against that child's faces within about two years (ADR 0047), so a year is
   the unit in which a suggestion is right or wrong, and the unit in which siblings at the
   same age sit side by side.
-- **No collapsed stacks, and no S.** Every suggested face is shown. A wrong sibling inside
-  a collapsed stack is exactly the error the owner needs to see.
+- **Rows show the faces Otos is least sure of, not a stack.** A row shows its first 12
+  faces, least sure first, with `Show All 856 Faces` (owner decision, 2026-11-11). A wrong
+  sibling is a face Otos is least sure of, so it is in view where a stack would hide it, and
+  a person with hundreds of faces no longer stands between the user and the next person.
+  There is no S key.
 - **Merging asks first,** as Lightroom desktop does: `Are these the same person?` with
   `Merge` and `Cancel` (owner decision, 2026-11-10). The merge is also undoable.
 - **No face regions drawn by hand, and no keywords.** Lightroom writes person keywords into
@@ -76,7 +80,7 @@ review (suggestions).
 | **Person** | A named catalog row (name, optional birthday) and the faces confirmed as theirs. | "contact", "tag", "keyword" |
 | **Face** | One face Otos found in one photo. | "region", "detection", "embedding" |
 | **Suggestion** | A face Otos thinks is one person's, not yet confirmed. | "match", "guess", "candidate" |
-| **Unnamed group** | Faces that look alike and match no person. Shown only in the review [Q 1]. | "cluster", "stack" |
+| **Unnamed group** | Faces that look alike and match no person. Shown on the People list under `Unnamed`, and in the review. | "cluster", "stack" |
 | **Checked** | A photo that has a current face reading (ADR 0009 stamp and model revision). | "analysed", "scanned", "processed" |
 
 Forbidden in copy (DES-035): embedding, threshold, margin, score, cluster, revision, chain,
@@ -84,8 +88,8 @@ model.
 
 ## Sidebar
 
-- **The row:** `People`, SF Symbol `person.crop.square`, directly under `Places`, as a
-  top-level row. It exists whenever one fixed library exists, like Places (APP-057).
+- **The row:** `People`, SF Symbol `person.crop.square`, first under the `Utilities`
+  header, before `Places` and `Duplicates` (owner decision, 2026-11-11). It exists whenever one fixed library exists, like Places (APP-057).
 - **No trailing count** [Q 2]: library rows and Places carry none.
 - **No row per person** [Q 1]: a person opens from the People list. While a person's
   scope or the review is open, the People row stays highlighted, as Places does for an area.
@@ -113,9 +117,11 @@ cannot be read is not counted, matching the enrichment state that marks it unrea
 (APP-006). Immich photos depend on [Q 7]. The count is a live tally, never a denominator,
 and nothing on the surface reads `M of N` or a percentage (*Honest numbers, or none*).
 
-**The list.** The list is a grid of people on the `content` backdrop (DES-022), with the
-12 pt section inset and 8 pt gutters (DES-060). It is ordered by photo count, most first,
-ties by name in the locale's comparison (owner decision). Counts change only when faces are
+**The list.** The list is a grid on the `content` backdrop (DES-022), with the 12 pt section
+inset and 8 pt gutters (DES-060): the named people, then, under an `Unnamed` header, every
+unnamed group (owner decision, 2026-11-11, as Immich, Photos and Lightroom Classic show the
+people they found before anyone is named). Named people are ordered by photo count, most
+first, ties by name in the locale's comparison (owner decision). Counts change only when faces are
 confirmed, merged or removed, never while photos are checked, because a person's count is
 of confirmed faces: a cell moves only after the user's own act. Each person is one cell:
 
@@ -126,7 +132,21 @@ of confirmed faces: a cell moves only after the user's own act. Each person is o
 - **The count:** under the name, `.subheadline` L3 `312 photos`, tabular. It counts photos
   with a confirmed face of this person, in every library the list spans.
 
-Selection is DES-061's 3 pt accent border on the face, never on the label. The list ignores
+**Unnamed.** Under the named people, a section header: `.headline` `Unnamed`, then
+`.subheadline` L3 `3,208 faces`, tabular; no header above the named people, whose count is
+the bar's L1. Each unnamed group is one cell, the same size as a person's:
+- **The face:** a 128 pt face tile of the group's newest face.
+- **The name line:** a link-style `Add Name…` in place of a name, which opens the name
+  popover for every face in the group.
+- **The count:** `.subheadline` L3 `856 photos`: one face per photo, since a group never
+  holds two faces of one photo.
+
+Unnamed groups go most photos first, ties by the newest face. A group's cell moves only when
+grouping changes, which photos being checked can do; it leaves the list when it is named or
+ignored, and its faces leave at once, as in the review.
+
+Selection is DES-061's 3 pt accent border on the face, never on the label. People and
+unnamed groups are one selection, walked by the arrow keys in the list's order. The list ignores
 the toolbar filter, and the window shows no `Filtered` subtitle here, as with Duplicates.
 
 **Empty states.** The bar is always drawn above them, and the list area holds one centered
@@ -137,7 +157,7 @@ L3 sentence, never a `.title2` title. The bar's L1 is the surface's one primary 
 | --- | --- | --- |
 | Catalog not loaded | nothing (APP-044) | nothing |
 | Nothing checked yet, no person | `No people` | `People appear here as Otos finds faces in your photos.` |
-| Faces found, none named | `No people` | `Name the faces Otos found in Review Suggestions.` |
+| Faces found, none named, no unnamed group | `No people` | `People appear here once Otos finds the same face on different days.` |
 | Every photo checked, no face found | `No people` | `Otos found no faces in your photos.` |
 | Libraries offline or being checked | `No people` | the shared `No Available Media` / `Checking Libraries` sentence |
 
@@ -145,10 +165,12 @@ L3 sentence, never a `.title2` title. The bar's L1 is the surface's one primary 
 
 | Act | Result |
 | --- | --- |
-| Click | Selects the person. |
-| Double-click, or Return | Opens the person's scope. |
+| Click | Selects the person or unnamed group. |
+| Double-click, or Return | Opens the person's scope; on an unnamed group, opens the review with the group's faces selected. |
+| `Add Name…`, or ⇧O | Names the selected unnamed groups' faces: one name for several groups joins them as one person, and an existing name gives them to that person (the review's Name…). |
 | Drag a person onto another | Asks `Are these the same person?` (`Merge`, `Cancel`), then merges the dragged person into the target, which keeps its name and birthday (Lightroom desktop's gesture and alert; owner decision). `Merge Into ▸` asks the same. |
-| Context menu | `Rename…`, `Set Birthday…`, `Merge Into ▸` (the other selected people; present only when two or more are selected), `Remove Person`, then `Review Suggestions`. |
+| Context menu | `Rename…`, `Set Birthday…`, `Merge Into ▸` (the other selected people; present only when two or more are selected), `Remove Person`, then `Review Suggestions`. On an unnamed group: `Add Name…`, `Ignore`, then `Review Suggestions`. |
+| Ignore | Undoable. The group's faces are never grouped or suggested again (the review's Ignore). |
 | Remove Person | Undoable. The person is gone; every face that was theirs returns to the review as unnamed, and their rejections are forgotten (owner decision). Nothing on disk changes. |
 
 **Merge rules (ADR 0047's hard rules), enforced by disabling the act (DES-038):**
@@ -236,7 +258,8 @@ The list is grouped by year (**[proposed DES-109]**), on the `content` backdrop.
 is the year of each face's photo capture date, newest first (owner decision). Faces with no
 capture date go last, under `No Date`. The whole review is one scrolling list.
 
-- **Year header:** `.headline` `2023`, then `.subheadline` L3 `48 faces to review`. The
+- **Year header:** `.headline` `2023`, then `.subheadline` L3 `48 faces to review`, which
+  counts hidden faces too. The
   header separates years with a DES-023 hairline, never above the first. It is not sticky:
   the review has no day bar.
 - **A person row:** one per person with suggestions in that year. Rows go in the People
@@ -250,9 +273,15 @@ capture date go last, under `No Date`. The whole review is one scrolling list.
     as a 96 pt face tile with no selection, a hairline frame, and its date as L3 under it.
     It is the evidence: telling a sibling apart needs that year's face beside the suggested
     one. It is not a Tab stop and not selectable.
-  - **The faces:** 96 pt face tiles (**[proposed DES-110]**), 8 pt apart, wrapping. They
-    go in capture order, newest first, each with its date as `.subheadline` L3 under it,
-    for example `Mar 4`.
+  - **The faces:** 96 pt face tiles (**[proposed DES-110]**), 8 pt apart, wrapping, each
+    with its date as `.subheadline` L3 under it, for example `Mar 4`. They go least sure
+    first: a person row's by how alike each face is to the person, least alike first; an
+    unnamed row's by how alike each face is to the face most like it, least alike first; an Unsure row's in capture order, newest first.
+  - **At most 12 faces show** (owner decision, 2026-11-11). A row with more ends in a
+    link-style `Show All 856 Faces` under its faces; an expanded row ends in `Show Fewer`.
+    Expanding is the window's, per row and year, and lasts while the review is open. The
+    hidden faces are acted on by `Confirm All`, `Add Name…`, `Ignore` and a click on the row
+    header, which selects every face of the row; the arrow keys walk the shown faces.
 - **An unnamed group row:** the same layout, with no reference face. The header reads L2
   `Unnamed` and L3 `14 faces`, with link-style `Add Name…` and `Ignore` at the trailing edge
   in place of `Confirm All`. Only groups with faces from at least two different days are
@@ -473,7 +502,8 @@ from the review receipt's `Undo`.
 
 ## Owner decisions (2026-11-09)
 
-1. **Sidebar:** one `People` row; no row per person; unnamed groups only in the review.
+1. **Sidebar:** one `People` row; no row per person. Unnamed groups are on the People list
+   under `Unnamed`, and in the review (2026-11-11; until then, only in the review).
 2. **People list order:** most photos first, ties by name.
 3. **Cover face:** the newest confirmed face; no picker.
 4. **Review order:** newest year first, all years in one scrolling list.
@@ -487,6 +517,8 @@ from the review receipt's `Undo`.
    separate acts.
 8. **Immich:** Immich photos are read for faces. How (from originals downloaded for it, or
    from the preview Immich already supplies) was decided on measurement: from the stored preview (ENR-026).
+9. **Rows:** a review row shows at most 12 faces, least sure first, with `Show All N Faces`
+   (2026-11-11).
 
 **Defaults taken, not yet confirmed by the owner:** no count on the `People` row (as Places);
 no bare `O` key; no per-person review (the review is one surface).
