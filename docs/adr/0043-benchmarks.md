@@ -101,6 +101,12 @@ The tooling found:
   - **A noisy case cannot be sharpened by the harness.** In `face.crop.x16` (about 14%) the
     noise is in Core Image's threads. A case like that shows only a rise wider than its
     noise, and is made sharper only by changing what it measures, as `face.align` was.
+  - **A case that is mostly allocation measures the allocator.** In the Debug build an
+    unspecialised generic sequence step allocates, and the allocator's cost differs from
+    one process to the next. `face.align.x1000` read 85–94 M from process to process on
+    identical code, with 0% spread inside each, and flagged +9%
+    (`docs/research/2026-11-10-face-align-benchmark-variance.md`). The fix is in the
+    owner code: its arithmetic no longer allocates.
   - The owner chose permission over an automatic block. Some regressions are the price
     of a feature, and that trade is a product decision.
 - **A record is never lost to a parallel run.** Sessions benchmark in parallel, and

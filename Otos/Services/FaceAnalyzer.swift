@@ -8,9 +8,8 @@ import Vision
 nonisolated struct DetectedFace: Sendable, Equatable {
     /// The face's box as fractions of the upright photo, top-left origin.
     let box: CGRect
-    /// The five alignment points as fractions of the upright photo, top-left origin: left eye
-    /// centre, right eye centre, nose tip, left mouth corner, right mouth corner.
-    let landmarks: [CGPoint]
+    /// The five alignment points as fractions of the upright photo, top-left origin.
+    let landmarks: FaceAlignment.Landmarks
     /// Vision's face capture quality, 0 to 1.
     let quality: Float
     /// The unit-length embedding (`FaceEmbeddingModel.dimensions` values).
@@ -165,7 +164,7 @@ actor FaceAnalyzer {
     /// The five alignment points in the photo's pixels, bottom-left origin: the two eye centres
     /// (left to right in the image), the lowest nose-crest point as the nose tip, and the
     /// leftmost and rightmost outer-lip points as the mouth corners.
-    static func alignmentPoints(_ observation: VNFaceObservation, imageSize: CGSize) -> [CGPoint]? {
+    static func alignmentPoints(_ observation: VNFaceObservation, imageSize: CGSize) -> FaceAlignment.Landmarks? {
         guard let landmarks = observation.landmarks,
               let leftEye = landmarks.leftEye, let rightEye = landmarks.rightEye,
               let noseCrest = landmarks.noseCrest, let lips = landmarks.outerLips
@@ -186,8 +185,13 @@ actor FaceAnalyzer {
         else {
             return nil
         }
-        let eyes = [left, right].sorted { $0.x < $1.x }
-        return [eyes[0], eyes[1], nose, mouthLeft, mouthRight]
+        return FaceAlignment.Landmarks(
+            leftEye: left.x <= right.x ? left : right,
+            rightEye: left.x <= right.x ? right : left,
+            nose: nose,
+            leftMouth: mouthLeft,
+            rightMouth: mouthRight
+        )
     }
 
     /// The aligned 112 × 112 crop of `source` under `transform`, made opaque: where the face

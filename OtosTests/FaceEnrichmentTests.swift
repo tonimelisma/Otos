@@ -261,7 +261,11 @@ struct FaceEnrichmentTests {
         let quarter = Double(seed) / 16
         return DetectedFace(
             box: CGRect(x: quarter, y: 0.25, width: 0.125, height: 0.25),
-            landmarks: (0 ..< 5).map { CGPoint(x: quarter + Double($0) / 64, y: 0.375) },
+            landmarks: FaceAlignment.Landmarks(
+                leftEye: CGPoint(x: quarter, y: 0.375), rightEye: CGPoint(x: quarter + 1 / 64, y: 0.375),
+                nose: CGPoint(x: quarter + 2 / 64, y: 0.375), leftMouth: CGPoint(x: quarter + 3 / 64, y: 0.375),
+                rightMouth: CGPoint(x: quarter + 4 / 64, y: 0.375)
+            ),
             quality: 0.5,
             embedding: (0 ..< FaceEmbeddingModel.dimensions).map { Float(($0 + seed) % 7) / 8 }
         )

@@ -225,7 +225,11 @@ struct PeopleStoreTests {
     static func face(x: Double) -> DetectedFace {
         DetectedFace(
             box: CGRect(x: x, y: 0.3, width: 0.2, height: 0.25),
-            landmarks: (0 ..< 5).map { CGPoint(x: x + Double($0) / 64, y: 0.375) },
+            landmarks: FaceAlignment.Landmarks(
+                leftEye: CGPoint(x: x, y: 0.375), rightEye: CGPoint(x: x + 1 / 64, y: 0.375),
+                nose: CGPoint(x: x + 2 / 64, y: 0.375), leftMouth: CGPoint(x: x + 3 / 64, y: 0.375),
+                rightMouth: CGPoint(x: x + 4 / 64, y: 0.375)
+            ),
             quality: 0.5,
             embedding: FaceEnrichmentTests.face(seed: Int(x * 100)).embedding
         )

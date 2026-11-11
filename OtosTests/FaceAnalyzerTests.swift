@@ -14,11 +14,11 @@ struct FaceAnalyzerTests {
     /// the template exactly.
     @Test func alignmentUndoesAKnownSimilarity() throws {
         let moved = CGAffineTransform(rotationAngle: 0.35).scaledBy(x: 4.2, y: 4.2).translatedBy(x: 310, y: -45)
-        let photoPoints = FaceAlignment.template.map { $0.applying(moved) }
+        let photoPoints = FaceAlignment.template.applying(moved)
 
         let transform = try #require(FaceAlignment.similarity(from: photoPoints, to: FaceAlignment.template))
 
-        for (point, target) in zip(photoPoints.map { $0.applying(transform) }, FaceAlignment.template) {
+        for (point, target) in zip(photoPoints.applying(transform).points, FaceAlignment.template.points) {
             #expect(abs(point.x - target.x) < 1e-9 && abs(point.y - target.y) < 1e-9)
         }
         #expect(abs(FaceAlignment.scale(of: transform) - 1 / 4.2) < 1e-12)
@@ -27,7 +27,10 @@ struct FaceAnalyzerTests {
     /// Points that all coincide have no shape to align, so there is no alignment rather than
     /// an identity one that could pass the admission check.
     @Test func coincidentPointsHaveNoAlignment() {
-        let points = Array(repeating: CGPoint(x: 10, y: 10), count: 5)
+        let point = CGPoint(x: 10, y: 10)
+        let points = FaceAlignment.Landmarks(
+            leftEye: point, rightEye: point, nose: point, leftMouth: point, rightMouth: point
+        )
         #expect(FaceAlignment.similarity(from: points, to: FaceAlignment.template) == nil)
     }
 
@@ -113,9 +116,9 @@ struct FaceAnalyzerTests {
             let face = try #require(analysis.faces.count == 1 ? analysis.faces.first : nil, "\(name)")
             // A portrait's face sits in the frame's middle, its eyes above its mouth.
             #expect(face.box.midX > 0.3 && face.box.midX < 0.7 && face.box.height > 0.1, "\(name)")
-            #expect(face.landmarks[0].x < face.landmarks[1].x, "\(name)")
-            #expect(face.landmarks[0].y < face.landmarks[3].y, "\(name)")
-            #expect(face.landmarks[1].y < face.landmarks[4].y, "\(name)")
+            #expect(face.landmarks.leftEye.x < face.landmarks.rightEye.x, "\(name)")
+            #expect(face.landmarks.leftEye.y < face.landmarks.leftMouth.y, "\(name)")
+            #expect(face.landmarks.rightEye.y < face.landmarks.rightMouth.y, "\(name)")
             #expect(abs(Self.dot(face.embedding, face.embedding) - 1) < 1e-3, "\(name)")
             faces[name] = face
         }

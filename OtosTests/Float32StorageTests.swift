@@ -22,7 +22,7 @@ struct Float32StorageTests {
 
     /// Five landmarks round-trip through their stored form.
     @Test func landmarksRoundTrip() throws {
-        let points = (0 ..< 5).map { CGPoint(x: Double($0) / 8, y: 0.25) }
-        #expect(try #require(FaceStorage.landmarks(from: FaceStorage.landmarksData(points))) == points)
+        let landmarks = try #require(FaceAlignment.Landmarks(points: (0 ..< 5).map { CGPoint(x: Double($0) / 8, y: 0.25) }))
+        #expect(FaceStorage.landmarks(from: FaceStorage.landmarksData(landmarks)) == landmarks)
     }
 }

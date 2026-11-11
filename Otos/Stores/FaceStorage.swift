@@ -15,14 +15,16 @@ nonisolated enum FaceStorage {
         Float32Storage.floats(from: data, count: FaceEmbeddingModel.dimensions)
     }
 
-    static func landmarksData(_ points: [CGPoint]) -> Data {
-        Float32Storage.data(points.flatMap { [Float($0.x), Float($0.y)] })
+    static func landmarksData(_ landmarks: FaceAlignment.Landmarks) -> Data {
+        Float32Storage.data(landmarks.points.flatMap { [Float($0.x), Float($0.y)] })
     }
 
     /// Nil unless `data` holds exactly five points.
-    static func landmarks(from data: Data) -> [CGPoint]? {
+    static func landmarks(from data: Data) -> FaceAlignment.Landmarks? {
         guard let values = Float32Storage.floats(from: data, count: 5 * 2) else { return nil }
-        return stride(from: 0, to: values.count, by: 2).map { CGPoint(x: Double(values[$0]), y: Double(values[$0 + 1])) }
+        return FaceAlignment.Landmarks(points: stride(from: 0, to: values.count, by: 2).map {
+            CGPoint(x: Double(values[$0]), y: Double(values[$0 + 1]))
+        })
     }
 }
 
