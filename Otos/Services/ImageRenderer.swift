@@ -149,8 +149,7 @@ final nonisolated class ImageRenderer: Sendable {
     /// no recipe. A RAW is decoded the same way, by Image I/O's own RAW support: faces need
     /// the photo's geometry and detail, not its development.
     static func uprightOriginal(_ still: StillSource) throws -> CGImage {
-        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
-        guard let source = CGImageSourceCreateWithData(still.data as CFData, sourceOptions),
+        guard let source = still.imageSource(),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
         else {
             throw RenderError.unreadable
@@ -176,15 +175,35 @@ final nonisolated class ImageRenderer: Sendable {
     /// decoders are handed the bytes rather than the file, so every byte a render needs is
     /// read here and the time a render spends waiting on its source is measured apart from
     /// the time it spends developing (`render.still` `readMs` / `developMs`).
+    ///
+    /// A source carries its file's type, named by its extension, because the bytes alone do
+    /// not always name it: a Sony ARW begins as a TIFF, and Image I/O handed only its bytes
+    /// reads it as a TIFF with no image in it (`docs/research/2026-11-11-arw-bytes-read-as-tiff.md`).
+    /// Every decoder is told the type through this source.
     struct StillSource {
         let url: URL
         let data: Data
+        let type: UTType?
         let readDuration: Duration
 
         static func read(_ url: URL) throws -> StillSource {
             let start = ContinuousClock.now
             let data = try Data(contentsOf: url)
-            return StillSource(url: url, data: data, readDuration: ContinuousClock.now - start)
+            return StillSource(
+                url: url,
+                data: data,
+                type: UTType(filenameExtension: url.pathExtension),
+                readDuration: ContinuousClock.now - start
+            )
+        }
+
+        /// An Image I/O source over the bytes, told the file's type, that caches nothing.
+        func imageSource() -> CGImageSource? {
+            var options: [CFString: Any] = [kCGImageSourceShouldCache: false]
+            if let type {
+                options[kCGImageSourceTypeIdentifierHint] = type.identifier
+            }
+            return CGImageSourceCreateWithData(data as CFData, options as CFDictionary)
         }
     }
 
@@ -239,8 +258,7 @@ final nonisolated class ImageRenderer: Sendable {
         outputLongEdge: Int?,
         recipe: EditRecipe
     ) throws -> OpenedRAW {
-        let hint = UTType(filenameExtension: source.url.pathExtension)?.identifier
-        guard let filter = CIRAWFilter(imageData: source.data, identifierHint: hint) else {
+        guard let filter = CIRAWFilter(imageData: source.data, identifierHint: source.type?.identifier) else {
             throw RenderError.unreadable
         }
         let sensor = filter.nativeSize
@@ -434,8 +452,7 @@ final nonisolated class ImageRenderer: Sendable {
     /// Decodes a still that is not a RAW, oriented, large enough for the recipe's edited
     /// long edge to reach `outputLongEdge` (the whole original when nil).
     static func decodeImage(_ still: StillSource, outputLongEdge: Int?, recipe: EditRecipe) throws -> Rendered {
-        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
-        guard let source = CGImageSourceCreateWithData(still.data as CFData, sourceOptions) else {
+        guard let source = still.imageSource() else {
             throw RenderError.unreadable
         }
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]

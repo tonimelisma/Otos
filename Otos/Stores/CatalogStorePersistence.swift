@@ -181,6 +181,11 @@ extension CatalogStore {
         migrator.registerMigration(CatalogSchema.captureLocalTimeMigrationIdentifier) { db in
             try CatalogSchema.migrateToCaptureLocalTime(db)
         }
+        migrator.registerMigration(CatalogSchema.rawFacesMigrationIdentifier) { db in
+            for statement in CatalogSchema.rawFacesStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

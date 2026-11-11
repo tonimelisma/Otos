@@ -182,6 +182,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.searchEmbeddingsMigrationIdentifier,
             CatalogSchema.searchTextMigrationIdentifier,
             CatalogSchema.captureLocalTimeMigrationIdentifier,
+            CatalogSchema.rawFacesMigrationIdentifier,
         ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
@@ -278,6 +279,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.searchEmbeddingsMigrationIdentifier,
             CatalogSchema.searchTextMigrationIdentifier,
             CatalogSchema.captureLocalTimeMigrationIdentifier,
+            CatalogSchema.rawFacesMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -569,6 +571,57 @@ struct CatalogStoreSchemaMigrationTests {
             ))
         }
         #expect(stamped == ["clip.mov", "card.jpg"])
+    }
+
+    /// A RAW whose upright original could not be decoded was stamped as read with no faces.
+    /// The migration clears the faces stamp of a RAW with no face row, so it is read again,
+    /// and leaves a RAW with faces, a still that is no RAW and an unread RAW as they were.
+    @Test func theRawFacesMigrationReReadsOnlyRAWsStampedWithoutFaces() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let fresh = CatalogStore(location: .databaseFile(databaseURL))
+        try await fresh.start(scansSavedLibraries: false)
+        await fresh.shutdown()
+
+        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            let rows: [(String, String, Int?)] = [
+                ("faceless.arw", "raw", 10), ("withFace.arw", "raw", 10), ("still.jpg", "image", 10), ("unread.arw", "raw", nil),
+            ]
+            for (path, kind, stamp) in rows {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
+                        name_sort_key, kind, faces_source_size, faces_source_mtime)
+                    VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [path, path, path, path, kind, stamp, stamp]
+                )
+            }
+            try db.execute(sql: """
+            INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
+                landmarks, quality, analysis_revision, embedding)
+            VALUES (1, 'withFace.arw', 0, 0, 0, 0.5, 0.5, x'00', 0.9, 1, x'00')
+            """)
+            try db.execute(
+                sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
+                arguments: [CatalogSchema.rawFacesMigrationIdentifier]
+            )
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
+
+        let stamped = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try Set(String.fetchAll(
+                db, sql: "SELECT relative_path FROM media_asset WHERE faces_source_size IS NOT NULL"
+            ))
+        }
+        #expect(stamped == ["withFace.arw", "still.jpg"])
     }
 
     /// A HEIF rotated by its `irot` property was cataloged with no orientation before

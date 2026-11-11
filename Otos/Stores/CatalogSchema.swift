@@ -518,6 +518,28 @@ nonisolated enum CatalogSchema {
     /// Every index over the old column is rebuilt, under its own name, over the new one.
     static let captureLocalTimeMigrationIdentifier = "v23_media_asset_capture_local_time"
 
+    /// Re-reads the faces of every RAW stamped as read with none. Before the renderer told
+    /// Image I/O a still's type, a Sony ARW's bytes read as a TIFF with no image, the upright
+    /// original was unreadable, and the row was stamped with no faces (ENR-022), so no ARW
+    /// in a library was ever read for faces. Clearing the stamp of a RAW that has no face
+    /// row makes it owe faces again; a RAW with faces was read and keeps them.
+    static let rawFacesMigrationIdentifier = "v24_raw_faces_reread"
+
+    static var rawFacesStatements: [String] {
+        [
+            """
+            UPDATE media_asset SET faces_source_size = NULL, faces_source_mtime = NULL
+            WHERE best_kind = 'raw'
+              AND faces_source_size IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM face
+                  WHERE face.library_root_id = media_asset.library_root_id
+                    AND face.relative_path = media_asset.relative_path
+              )
+            """,
+        ]
+    }
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 
