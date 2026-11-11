@@ -159,7 +159,67 @@ struct CatalogWindowViewModelDetailReadFailureTests {
             try await hidden.restore()
             model.refreshPhotoInfo()
             try await waitUntil { model.photoInfo?.id == library.ids[1] }
-            #expect(model.photoInfo?.fileSize != PhotoInfo.unknown)
+            #expect(model.photoInfo?.value("Size") != PhotoInfo.unknown)
         }
+    }
+
+    /// The place name is looked up for the item the pane shows; an answer for an item the
+    /// pane has left is dropped, never shown under the next one (APP-041, ADR 0050).
+    @Test func thePlaceNameIsLookedUpForTheItemShownAndAStaleAnswerIsDropped() async throws {
+        try await withEditableLibrary(fileCount: 2) { library in
+            for (index, id) in library.ids.enumerated() {
+                let asset = try #require(try await library.store.mediaAssets(for: [id])[id])
+                let located = AssetMetadata(locations: [
+                    GeoRecord(source: "exifGPS", latitude: Double(index + 1), longitude: 0, altitudeMeters: nil),
+                ])
+                try await library.store.applyEnrichmentBatch([EnrichmentResult(
+                    id: id,
+                    metadata: EnrichedMetadata(metadata: located, kind: .image, format: nil),
+                    rendering: nil,
+                    sourceSize: asset.byteSize,
+                    sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
+                    contentHash: nil
+                )])
+                try #require(try await library.store.metadata(for: id)?.locations.count == 1)
+            }
+            let model = makeEditModel(store: library.store, ids: library.ids)
+            defer { model.editCommandTask?.cancel() }
+            defer { model.editRenderTask?.cancel() }
+            let places = PlaceGate()
+            model.placeNameLookup = PlaceNameLookup { await places.name(for: $0) }
+
+            model.openLoupe(id: library.ids[0])
+            model.toggleInspector(.info)
+            await places.waitForRequest(latitude: 1)
+            model.focusNext()
+            await places.waitForRequest(latitude: 2)
+
+            await places.answer(latitude: 1, with: "First")
+            await places.answer(latitude: 2, with: "Second")
+            try await waitUntil { model.photoInfo?.value("Place") == "Second" }
+            #expect(model.photoInfo?.id == library.ids[1])
+        }
+    }
+}
+
+/// Holds each place-name lookup until the test answers it.
+private actor PlaceGate {
+    private var pending: [Double: CheckedContinuation<String?, Never>] = [:]
+    private var requested: [Double: [CheckedContinuation<Void, Never>]] = [:]
+
+    func name(for coordinate: PlaceCoordinate) async -> String? {
+        await withCheckedContinuation { continuation in
+            pending[coordinate.latitude] = continuation
+            requested.removeValue(forKey: coordinate.latitude)?.forEach { $0.resume() }
+        }
+    }
+
+    func waitForRequest(latitude: Double) async {
+        guard pending[latitude] == nil else { return }
+        await withCheckedContinuation { requested[latitude, default: []].append($0) }
+    }
+
+    func answer(latitude: Double, with name: String) {
+        pending.removeValue(forKey: latitude)?.resume(returning: name)
     }
 }

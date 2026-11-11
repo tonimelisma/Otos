@@ -1,4 +1,6 @@
+import CoreLocation
 import Foundation
+import MapKit
 import OSLog
 
 /// Which pane the trailing inspector shows: the photo's Info or its Edit controls.
@@ -50,24 +52,35 @@ extension CatalogWindowViewModel {
         refreshPhotoInfo()
     }
 
-    /// Rebuilds the Info pane's facts for the current target when it is exactly one item.
-    /// Called when the pane is shown and by every writer of the target.
+    /// Rebuilds the Info pane's facts for the current target. With no single item the pane
+    /// reads `No Selection` or a count; with one, everything Otos holds for it is read off
+    /// the main actor and applied when it still describes the target. Called when the pane is
+    /// shown and by every writer of the target.
     func refreshPhotoInfo() {
         photoInfoTask?.cancel()
+        placeNameTask?.cancel()
+        placeNameTask = nil
         let ids = targetIDs(.current)
-        guard showsInfo, ids.count == 1, let id = ids.first else {
+        guard showsInfo else {
             photoInfo = nil
+            photoInfoTask = nil
+            return
+        }
+        guard ids.count == 1, let id = ids.first else {
+            photoInfo = .none(itemCount: ids.count)
             photoInfoTask = nil
             return
         }
         let store = catalogStore
         let reader = tileDetailReader
+        let materialization = materializationCoordinator
+        let libraryName = sourceName(for: id.libraryRootPath)
         photoInfoTask = Task { [weak self] in
-            let asset: MediaAsset?
-            let detail: MediaTileDetail?
+            let read: PhotoInfo
             do {
-                asset = try await store.mediaAssets(for: [id])[id]
-                detail = try await reader.detail(for: id)
+                read = try await Self.readPhotoInfo(
+                    id: id, store: store, reader: reader, materialization: materialization, libraryName: libraryName
+                )
             } catch {
                 guard !Task.isCancelled, let self, targetIDs(.current) == [id], showsInfo else { return }
                 // A failed read is not an asset without facts: nothing reads `Unknown` for
@@ -84,13 +97,84 @@ extension CatalogWindowViewModel {
                 return
             }
             guard !Task.isCancelled, let self, targetIDs(.current) == [id], showsInfo else { return }
-            photoInfo = PhotoInfo.make(
-                id: id,
-                asset: asset,
-                kind: detail?.bestKind,
-                nativePixelSize: detail?.nativePixelSize
-            )
+            photoInfo = read
             photoInfoTask = nil
+            OtosLog.ui.debugOperation("photo.info", phase: "applied", fields: [
+                "id": id.relativePath.rawValue,
+                "located": read.coordinate == nil ? "false" : "true",
+            ])
+            if let coordinate = read.coordinate {
+                lookUpPlaceName(coordinate, for: id)
+            }
         }
+    }
+
+    /// Everything the pane shows for `id`, from the catalog and the original's locality. The
+    /// metadata record and overlay are read whole, so a missing one is a fact (`Unknown`),
+    /// and any read that throws fails the whole refresh.
+    private nonisolated static func readPhotoInfo(
+        id: MediaAssetID,
+        store: CatalogStore,
+        reader: MediaTileDetailReader,
+        materialization: MaterializationCoordinator,
+        libraryName: String?
+    ) async throws -> PhotoInfo {
+        async let asset = store.mediaAssets(for: [id])[id]
+        async let metadata = store.metadata(for: id)
+        async let overlay = store.photoInfoOverlay(for: id)
+        async let detail = reader.detail(for: id)
+        async let locality = materialization.locality(of: id)
+        let resolvedDetail = try await detail
+        return try await PhotoInfo.make(PhotoInfo.Source(
+            id: id,
+            asset: asset,
+            metadata: metadata,
+            overlay: overlay,
+            kind: resolvedDetail?.bestKind,
+            nativePixelSize: resolvedDetail?.nativePixelSize,
+            libraryName: libraryName,
+            locality: locality
+        ))
+    }
+
+    /// Looks up the place name for the pane's located item. It names the place in the
+    /// Mac's language; a failed or empty lookup leaves the row `Unknown` and is logged.
+    private func lookUpPlaceName(_ coordinate: PlaceCoordinate, for id: MediaAssetID) {
+        let lookup = placeNameLookup
+        placeNameTask = Task { [weak self] in
+            let name: String?
+            do {
+                name = try await lookup.name(coordinate)
+            } catch {
+                guard !Task.isCancelled else { return }
+                OtosLog.ui.errorOperation("photo.info.place", phase: "lookupFailed", fields: [
+                    "id": id.relativePath.rawValue,
+                    "error": String(describing: error),
+                ])
+                return
+            }
+            guard !Task.isCancelled, let self, photoInfo?.id == id, showsInfo else { return }
+            OtosLog.ui.debugOperation("photo.info.place", phase: name == nil ? "none" : "named", fields: [
+                "id": id.relativePath.rawValue,
+            ])
+            photoInfo?.placeName = name
+            placeNameTask = nil
+        }
+    }
+}
+
+/// How the Info pane names a coordinate. `mapKit` asks Apple Maps; tests substitute their
+/// own so no test reaches the network.
+nonisolated struct PlaceNameLookup: Sendable {
+    let name: @Sendable (PlaceCoordinate) async throws -> String?
+
+    static let mapKit = PlaceNameLookup { coordinate in
+        guard let request = MKReverseGeocodingRequest(
+            location: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        ) else {
+            return nil
+        }
+        let items = try await request.mapItems
+        return items.first?.addressRepresentations?.cityWithContext
     }
 }

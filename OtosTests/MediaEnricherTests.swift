@@ -190,6 +190,17 @@ struct MediaEnricherTests {
         #expect(mapped.pixelWidth != nil)
     }
 
+    /// A still's exposure is stored as the library reports it and put back unchanged.
+    @Test func aStillsExposureIsStoredAsTheLibraryReportsIt() throws {
+        let result = MediaMetadataReader.read(url: fixtureDirectory.appending(path: "ios-heic-offset-date.heic"))
+        let exposure = try #require(result.exposure)
+        let record = try #require(MediaEnricher.map(result).exposure)
+        #expect(record.exposure == exposure)
+        #expect(record.isoSensitivity == 25)
+        #expect(record.exposureTimeNumerator == 1)
+        #expect(record.exposureTimeDenominator == 345)
+    }
+
     /// Kind is MediaMetadata's (ADR 0039): the type the bytes settled, camera RAW included;
     /// else the kind the bytes showed; else the type the extension names.
     @Test func kindIsTheLibrarysFromBytesThenExtension() {

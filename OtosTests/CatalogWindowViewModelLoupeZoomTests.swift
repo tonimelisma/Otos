@@ -130,12 +130,12 @@ struct CatalogWindowViewModelLoupeZoomTests {
 
         model.toggleInspector(.info)
         #expect(model.inspectorPane == .info)
-        try await waitUntil { model.photoInfo?.fileName == "asset-0.jpg" }
-        #expect(model.photoInfo?.captureDate == PhotoInfo.unknown)
+        try await waitUntil { model.photoInfo?.title == "asset-0.jpg" }
+        #expect(model.photoInfo?.captured == PhotoInfo.unknown)
 
         model.openLoupe(id: ids[0])
         model.focusNext()
-        try await waitUntil { model.photoInfo?.fileName == "asset-1.jpg" }
+        try await waitUntil { model.photoInfo?.title == "asset-1.jpg" }
 
         model.toggleInspector(.edit)
         #expect(model.inspectorPane == .edit)

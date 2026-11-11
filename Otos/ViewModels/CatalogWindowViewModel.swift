@@ -314,6 +314,9 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var handledEditCommandCount = 0
     var photoInfo: PhotoInfo?
     @ObservationIgnored var photoInfoTask: Task<Void, Never>?
+    /// The Info pane's place-name lookup for its located item; a new target cancels it.
+    @ObservationIgnored var placeNameTask: Task<Void, Never>?
+    @ObservationIgnored var placeNameLookup: PlaceNameLookup = .mapKit
     /// The window's undo stack: likes (APP-039), Move to Trash (ADR 0022) and edits (ADR
     /// 0036). One window, one manager, owned here so Edit ▸ Undo renders `undoMenuState`
     /// rather than searching a responder chain that ends in an AppKit collection view.
@@ -838,6 +841,7 @@ final class CatalogWindowViewModel {
         peopleIntentTask?.cancel()
         openWithMenuTask?.cancel()
         photoInfoTask?.cancel()
+        placeNameTask?.cancel()
         focusedKindTask?.cancel()
         currentTargetChoiceTask?.cancel()
         viewportForwardingTask?.cancel()

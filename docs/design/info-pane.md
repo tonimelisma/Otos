@@ -1,0 +1,67 @@
+# Info pane
+
+The inspector pane that says what Otos knows about the current item (DES-088, APP-041,
+ADR 0050). It shares the trailing column with the Edit pane and is laid out the way the
+Edit pane is (`edit-panel.md`), so pressing I and E in turn changes the content of the
+column, not its shape.
+
+## Reference
+
+Photos' Info window puts the date first, then a camera block with the exposure line, then
+a small map. Preview's inspector groups General, Exif, GPS and IPTC into folding sections.
+Lightroom desktop's Info panel is a short fixed list (file, date, camera, exposure line,
+location); Lightroom Classic switches metadata presets. Otos takes Photos' order of
+interest (when, how, who, where, what file), Preview's folding sections, and the Edit
+pane's heading and indent, so both panes repeat one pattern.
+
+## L1 primary fact
+
+Which item the facts describe: its file name, `No Selection`, or `3 Items`.
+
+## Levels
+
+| String | Level |
+| --- | --- |
+| File name / `No Selection` / `3 Items` | L1 (`title2`, semibold, middle-truncated) |
+| When it was taken (`Saturday, November 7, 2026 at 3:42 PM UTC+02:00`) | L2 in secondary color (`body`) |
+| Section heading (`Camera`, `Exposure`, `Video`, `People`, `Location`, `File`) | `.title3`, regular, beside the section's symbol |
+| Row label (`Shutter Speed`) | L2 in secondary color (`body`) |
+| Row value (`1/250 s`, `Unknown`, `—`) | L2 (`body`, `.monospacedDigit()`) |
+
+Three sizes, two weights (DES-004).
+
+## Zones and height
+
+A header zone (name over date, 4 pt apart), then one zone per section, 12 pt either side
+of each section's hairline. A section's heading is the disclosure triangle, its symbol
+(`camera`, `camera.aperture`, `film`, `person.2`, `mappin.and.ellipse`, `doc`) and its
+title; its rows sit 8 pt below, indented 16 pt so they start under the symbol, 4 pt apart.
+Labels share one leading edge; a long value wraps beside its label rather than under it.
+
+| Section | Rows |
+| --- | --- |
+| Camera | Camera, Lens, Serial Number |
+| Exposure (a still) | Shutter Speed, Aperture, ISO, Focal Length, Compensation, Program, Metering, Flash, White Balance |
+| Video (a movie) | Duration, Frame Rate, Codec |
+| People | People |
+| Location | a 140 pt still map with one pin (when located), Place, Coordinates, Altitude |
+| File | Kind, Dimensions, Size, Folder, Original, Created, Modified, Imported, Companions, Edits |
+
+Which sections show depends only on the kind, so every still has the same rows and every
+movie the same rows (DES-053). With no single item the still layout shows with every
+value `—`. The map is the one element that comes and goes: it is there only when the item
+has a location to show, as a control whose subject does not exist is omitted (DES-053).
+
+## States
+
+- **One item:** every value the catalog holds, `Unknown` for one it lacks. The place name
+  reads `Unknown` until MapKit names the coordinate.
+- **No item / several items:** `No Selection` or the count, every value `—`.
+- **A read failed:** the pane keeps what it showed for the same item, or empties for
+  another, and the next refresh reads again (APP-041).
+
+## Keyboard and motion
+
+Each section heading is a button: Tab reaches it, Space folds it, and VoiceOver reads it
+as a header with `expanded` / `collapsed`. Folding fades the rows in place, 0.25 s, or
+0.15 s under Reduce Motion (DES-070, DES-075).

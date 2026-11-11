@@ -190,7 +190,8 @@ P0/P1 items through Import Into User Libraries are now largely shipped; current 
 
 ## Places (ideas beyond ADR 0040)
 
-- Place names from reverse geocoding (`CLGeocoder`), as Photos and Lightroom show.
+- Place names on the map and in Places' sections, as Photos shows (the Info pane names
+  one item's place, ADR 0050).
 - Assigning or moving a location as authored overlay — drag onto the map, never a write
   to the file.
 - `Nearby` from one photo, and a map of a card or an import batch (a contextual

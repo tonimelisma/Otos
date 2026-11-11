@@ -110,7 +110,13 @@ struct CatalogStoreEnrichmentTests {
             orientation: 1,
             pixelWidth: 4000,
             pixelHeight: 3000,
-            durationSeconds: nil
+            durationSeconds: nil,
+            exposure: ExposureRecord(
+                exposureTimeNumerator: 1, exposureTimeDenominator: 250, fNumber: 2.8, isoSensitivity: 400,
+                exposureBiasEV: -0.3, focalLengthMillimeters: 35, focalLengthIn35mmFilmMillimeters: 52,
+                flashFired: false, flashMode: 2, flashRedEyeReduction: false, flashHasFunction: true,
+                program: 3, meteringMode: 5, whiteBalance: 0
+            )
         )
         let json = try CatalogStore.encodeMetadataExtraJSON(meta)
         #expect(try CatalogStore.decodeMetadataExtraJSON(json) == meta)

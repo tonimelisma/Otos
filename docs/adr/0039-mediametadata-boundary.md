@@ -46,6 +46,8 @@ MediaMetadata 0.7.0 adds what a consumer needs to stop re-deriving:
   puts it on a day and orders a timeline, and the instant compares across zones. Ordering
   by instant had put photos on the viewer's day rather than their own, and could not place
   a floating time at all.
+- `exposure`, a still's Exif exposure, and the revision it moved for every family that
+  reads Exif (0.9.4; ADR 0050).
 
 ## Decision
 

@@ -249,7 +249,7 @@ extension CatalogWindowViewModel {
     }
 
     /// The name the sidebar shows for a library or removable source.
-    private func sourceName(for rootPath: LibraryRootPath) -> String? {
+    func sourceName(for rootPath: LibraryRootPath) -> String? {
         (state.libraries + state.removableSources).first { $0.path == rootPath }?.displayName
     }
 

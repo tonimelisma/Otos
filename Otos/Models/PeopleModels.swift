@@ -71,6 +71,10 @@ nonisolated struct PersonSummary: Hashable, Sendable, Identifiable {
 
     /// What the person is called on every surface; an unnamed person (a split) is `Unnamed`.
     var displayName: String {
+        Self.displayName(name)
+    }
+
+    static func displayName(_ name: String?) -> String {
         name ?? "Unnamed"
     }
 }

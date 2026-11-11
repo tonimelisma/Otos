@@ -1,4 +1,5 @@
 import Foundation
+import MediaMetadata
 
 /// The full parsed media metadata, preserved as JSON in the cold metadata row and
 /// decoded only on demand for future per-asset detail surfaces — never held
@@ -33,6 +34,8 @@ nonisolated struct AssetMetadata: Codable, Equatable {
     var contentIdentifier: String?
     /// Apple's burst identifier, shared by every frame of one burst (MediaMetadata 0.9).
     var burstIdentifier: String?
+    /// How a still was exposed, as the library reports it (MediaMetadata 0.9.4).
+    var exposure: ExposureRecord?
     /// `MediaMetadataReader.extractionRevision` of the reader that produced this record;
     /// nil for a record read before revisions were stored. A lower revision is a record
     /// the current reader may read differently (ADR 0039).
@@ -56,6 +59,7 @@ nonisolated struct AssetMetadata: Codable, Equatable {
         videoCodec: String? = nil,
         contentIdentifier: String? = nil,
         burstIdentifier: String? = nil,
+        exposure: ExposureRecord? = nil,
         extractionRevision: Int? = nil
     ) {
         self.family = family
@@ -75,7 +79,79 @@ nonisolated struct AssetMetadata: Codable, Equatable {
         self.videoCodec = videoCodec
         self.contentIdentifier = contentIdentifier
         self.burstIdentifier = burstIdentifier
+        self.exposure = exposure
         self.extractionRevision = extractionRevision
+    }
+}
+
+/// A still's exposure as MediaMetadata's `Exposure` reports it, field for field. The shutter
+/// time keeps the fraction the camera wrote; the program, metering mode and white balance are
+/// the Exif codes the library's enums carry as raw values, so they are put back into those
+/// enums rather than mirrored here (ADR 0039).
+nonisolated struct ExposureRecord: Codable, Equatable {
+    var exposureTimeNumerator: Int?
+    var exposureTimeDenominator: Int?
+    var fNumber: Double?
+    var isoSensitivity: Int?
+    var exposureBiasEV: Double?
+    var focalLengthMillimeters: Double?
+    var focalLengthIn35mmFilmMillimeters: Int?
+    var flashFired: Bool?
+    var flashMode: Int?
+    var flashRedEyeReduction: Bool?
+    var flashHasFunction: Bool?
+    var program: Int?
+    var meteringMode: Int?
+    var whiteBalance: Int?
+}
+
+nonisolated extension ExposureRecord {
+    init(_ exposure: Exposure) {
+        self.init(
+            exposureTimeNumerator: exposure.exposureTime?.numerator,
+            exposureTimeDenominator: exposure.exposureTime?.denominator,
+            fNumber: exposure.fNumber,
+            isoSensitivity: exposure.isoSensitivity,
+            exposureBiasEV: exposure.exposureBiasEV,
+            focalLengthMillimeters: exposure.focalLengthMillimeters,
+            focalLengthIn35mmFilmMillimeters: exposure.focalLengthIn35mmFilmMillimeters,
+            flashFired: exposure.flash?.fired,
+            flashMode: exposure.flash?.mode?.rawValue,
+            flashRedEyeReduction: exposure.flash?.redEyeReduction,
+            flashHasFunction: exposure.flash?.hasFlashFunction,
+            program: exposure.program?.rawValue,
+            meteringMode: exposure.meteringMode?.rawValue,
+            whiteBalance: exposure.whiteBalance?.rawValue
+        )
+    }
+
+    /// The library's value, put back from the stored record.
+    var exposure: Exposure {
+        let time: ExposureTime? = if let exposureTimeNumerator, let exposureTimeDenominator {
+            ExposureTime(numerator: exposureTimeNumerator, denominator: exposureTimeDenominator)
+        } else {
+            nil
+        }
+        let flash: Flash? = flashFired.map { fired in
+            Flash(
+                fired: fired,
+                mode: flashMode.flatMap(Flash.Mode.init(rawValue:)),
+                redEyeReduction: flashRedEyeReduction ?? false,
+                hasFlashFunction: flashHasFunction ?? true
+            )
+        }
+        return Exposure(
+            exposureTime: time,
+            fNumber: fNumber,
+            isoSensitivity: isoSensitivity,
+            exposureBiasEV: exposureBiasEV,
+            focalLengthMillimeters: focalLengthMillimeters,
+            focalLengthIn35mmFilmMillimeters: focalLengthIn35mmFilmMillimeters,
+            flash: flash,
+            program: program.flatMap(ExposureProgram.init(rawValue:)),
+            meteringMode: meteringMode.flatMap(MeteringMode.init(rawValue:)),
+            whiteBalance: whiteBalance.flatMap(WhiteBalanceMode.init(rawValue:))
+        )
     }
 }
 

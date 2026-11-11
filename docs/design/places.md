@@ -134,5 +134,5 @@ points.
 
 ## Not in this spec
 
-Place names (reverse geocoding), assigning or moving a location, a filmstrip under the
+Place names on the map (the Info pane names one item's place, ADR 0050), assigning or moving a location, a filmstrip under the
 map, a map of a card or an import batch, Satellite imagery. Each is on the roadmap.

@@ -36,6 +36,25 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    /// The Info pane names the people confirmed in a photo in the order its faces were
+    /// found, and no one for a face not confirmed (APP-041, DES-111).
+    @Test func thePhotosOverlayNamesItsConfirmedPeopleInFaceOrder() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
+        try await library.store.applyEnrichmentBatch([
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.4), Self.face(x: 0.7)]),
+        ])
+        let id = library.id("a.jpg")
+        _ = try await library.store.perform(.name([FaceID(asset: id, index: 2)], "Sam"))
+        _ = try await library.store.perform(.name([FaceID(asset: id, index: 0)], "Ian"))
+
+        let overlay = try #require(try await library.store.photoInfoOverlay(for: id))
+        #expect(overlay.people == ["Ian", "Sam"])
+        #expect(overlay.companionFileNames.isEmpty)
+        #expect(overlay.importedAt == nil)
+        #expect(!overlay.isEdited)
+        await library.store.shutdown()
+    }
+
     /// Naming faces with a name a person already holds gives them to that person, which is
     /// how an unnamed group joins a person.
     @Test func aNameAPersonHoldsIsThatPerson() async throws {

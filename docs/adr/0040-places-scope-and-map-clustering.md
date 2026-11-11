@@ -29,7 +29,8 @@ bar, all meaningless on a map, so every one needs a disabled state.
 This ADR owns: what the Places and place scopes mean; where the map's content and its
 clusters are computed; how the sidebar, toolbar and view modes behave while the map
 shows; how a stack is reached and left; and what the map never does (location
-services, reverse geocoding, editing).
+services, reverse geocoding, editing). The Info pane's place name for one item is ADR
+0050's.
 
 It references but does not own: scope resolution and the sidebar default policy (ADR
 0014); the query descriptor and scope predicate (ADR 0011, ADR 0010); the browser

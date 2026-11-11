@@ -769,6 +769,64 @@ extension CatalogStore {
         }
     }
 
+    /// The overlay the Info pane shows for `id` (APP-041): the people its faces are
+    /// confirmed as, each once, in the order the faces were found and named as every surface
+    /// names them (`Unnamed` for a person without a name); its companion files; the import
+    /// it arrived in; and whether it carries an edit. Nil when the asset is not cataloged.
+    func photoInfoOverlay(for id: MediaAssetID) async throws -> PhotoInfoOverlay? {
+        guard let rootRowID = roots[id.libraryRootPath]?.rowID else {
+            return nil
+        }
+        let dbWriter = try database()
+        let overlay = try await dbWriter.read { db -> PhotoInfoOverlay? in
+            let arguments: StatementArguments = [rootRowID, id.relativePath.rawValue]
+            guard let asset = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT import_batch_unix_ms, edit_recipe_json IS NOT NULL AS edited
+                FROM media_asset WHERE library_root_id = ? AND relative_path = ?
+                """,
+                arguments: arguments
+            ) else {
+                return nil
+            }
+            let people = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT p.id, p.name FROM face f JOIN person p ON p.id = f.person_id
+                WHERE f.library_root_id = ? AND f.relative_path = ? AND f.is_not_face = 0
+                ORDER BY f.face_index
+                """,
+                arguments: arguments
+            )
+            var seen: Set<Int64> = []
+            let names = people.compactMap { row -> String? in
+                let person: Int64 = row["id"]
+                return seen.insert(person).inserted ? PersonSummary.displayName(row["name"]) : nil
+            }
+            let companions = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT relative_path FROM media_companion
+                WHERE library_root_id = ? AND primary_relative_path = ?
+                ORDER BY relative_path
+                """,
+                arguments: arguments
+            ).map { MediaRelativePath(rawValue: $0["relative_path"]).fileName }
+            let batch: Int64? = asset["import_batch_unix_ms"]
+            return PhotoInfoOverlay(
+                people: names,
+                companionFileNames: companions,
+                importedAt: batch.map { Date(timeIntervalSince1970: Double($0) / 1000) },
+                isEdited: asset["edited"]
+            )
+        }
+        guard roots[id.libraryRootPath]?.rowID == rootRowID else {
+            return nil
+        }
+        return overlay
+    }
+
     /// The faces stored for `id`, in the order its reading found them. Empty when the asset
     /// has none, has not been read for faces yet, or its library is no longer cataloged.
     func faces(of id: MediaAssetID) async throws -> [DetectedFace] {

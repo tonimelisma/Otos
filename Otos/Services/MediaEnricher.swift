@@ -657,6 +657,7 @@ nonisolated struct MediaEnricher {
             videoCodec: result.video?.codec?.identifier,
             contentIdentifier: result.contentIdentifier,
             burstIdentifier: result.burstIdentifier,
+            exposure: result.exposure.map(ExposureRecord.init),
             extractionRevision: MediaMetadataReader.extractionRevision(for: result.format.family)
         )
     }
