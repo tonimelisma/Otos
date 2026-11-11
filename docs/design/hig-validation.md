@@ -130,7 +130,7 @@ reference where the HIG leaves room.
   reveal hidden panes", using "a toolbar button or a menu command — including a
   keyboard shortcut". Its width is bounded at 240–360 pt: "Set reasonable defaults for
   minimum and maximum pane sizes."
-- **The toolbar button sits on the trailing edge**, before the More menu. Toolbars:
+- **The toolbar button sits on the trailing edge**, beside Info, after the acts group (DES-114). Toolbars:
   the trailing edge holds "buttons that open nearby inspectors", and every toolbar item
   is also a menu-bar command.
 - **The show/hide title follows state**, as The menu bar requires.

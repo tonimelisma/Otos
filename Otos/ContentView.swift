@@ -278,6 +278,9 @@ struct ContentView: View {
                     .help("Back to Duplicates")
                 }
             }
+            // Four groups, each on its own glass, broad to narrow (DES-114): how the items
+            // look, which items show and in what order, acts on the current targets, and the
+            // inspector's panes nearest the column they open. Search trails them (DES-108).
             ToolbarItemGroup(placement: .primaryAction) {
                 ViewModePicker(
                     // The map and On This Day are not view modes: no segment is selected.
@@ -286,6 +289,15 @@ struct ContentView: View {
                 )
                 // The duplicates list has one presentation (DES-053: disabled, never removed).
                 .disabled(!viewModel.canChangeViewMode)
+                CatalogZoomControl(
+                    canZoomOut: viewModel.canZoomOut,
+                    canZoomIn: viewModel.canZoomIn,
+                    zoomOut: viewModel.zoomOut,
+                    zoomIn: viewModel.zoomIn
+                )
+            }
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+            ToolbarItemGroup(placement: .primaryAction) {
                 CatalogFilterControl(
                     descriptor: viewModel.queryDescriptor,
                     options: viewModel.state.filterOptions,
@@ -309,48 +321,21 @@ struct ContentView: View {
                 .disabled(!viewModel.canChangeSort)
                 .help(viewModel.canChangeSort ? "Sort" : "On This Day always shows the newest year first")
             }
-            ToolbarItem(placement: .primaryAction) {
-                CatalogZoomControl(
-                    canZoomOut: viewModel.canZoomOut,
-                    canZoomIn: viewModel.canZoomIn,
-                    zoomOut: viewModel.zoomOut,
-                    zoomIn: viewModel.zoomIn
-                )
-            }
-            // Trailing-edge Info and Share (APP-041, APP-036). File ▸ Share… and View ▸
-            // Show Info are the menu-bar equivalents every toolbar item must have; the
-            // Share button is also the anchor every Share path presents from.
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+            // Acts on the current targets (APP-013, APP-036). File ▸ Share… and the Photo
+            // menu are the menu-bar equivalents every toolbar item must have; the Share
+            // button is also the anchor every Share path presents from.
+            ToolbarItemGroup(placement: .primaryAction) {
                 CatalogCurationToolbarControl(
                     currentChoice: viewModel.currentTargetChoice,
                     isEnabled: viewModel.hasMediaChoiceTarget,
                     choose: { viewModel.submitMediaChoice($0, origin: .toolbar) }
                 )
-            }
-            ToolbarItem(placement: .primaryAction) {
-                CatalogSurfaceToolbarToggle(
-                    title: "Info",
-                    systemImage: "info.circle",
-                    isShowing: viewModel.showsInfo,
-                    toggle: { viewModel.toggleInspector(.info) }
-                )
-            }
-            ToolbarItem(placement: .primaryAction) {
                 CatalogShareToolbarButton(
                     isEnabled: !viewModel.currentTargetFileURLs.isEmpty,
                     onAnchor: viewModel.setShareAnchor,
                     share: { viewModel.shareCurrentTargets(origin: .toolbar) }
                 )
-            }
-            ToolbarItem(placement: .primaryAction) {
-                CatalogSurfaceToolbarToggle(
-                    title: "Edit",
-                    systemImage: "slider.horizontal.3",
-                    isShowing: viewModel.isEditPanelPresented,
-                    toggle: { viewModel.toggleInspector(.edit) }
-                )
-            }
-            ToolbarItem(placement: .primaryAction) {
                 CatalogActionToolbarMenu(
                     openWith: viewModel.openWithMenu,
                     icons: viewModel.openWithApplicationIcons,
@@ -361,6 +346,23 @@ struct ContentView: View {
                     openWithOther: viewModel.openTargetsWithChosenApplication,
                     reveal: viewModel.revealCurrentTargetsInFinder,
                     moveToTrash: viewModel.moveTargetedMediaToTrash
+                )
+            }
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+            // The inspector's two panes (APP-041, DES-092, DES-097); View ▸ Show Info and
+            // Show Edit are their menu-bar equivalents.
+            ToolbarItemGroup(placement: .primaryAction) {
+                CatalogSurfaceToolbarToggle(
+                    title: "Info",
+                    systemImage: "info.circle",
+                    isShowing: viewModel.showsInfo,
+                    toggle: { viewModel.toggleInspector(.info) }
+                )
+                CatalogSurfaceToolbarToggle(
+                    title: "Edit",
+                    systemImage: "slider.horizontal.3",
+                    isShowing: viewModel.isEditPanelPresented,
+                    toggle: { viewModel.toggleInspector(.edit) }
                 )
             }
         }
