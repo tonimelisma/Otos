@@ -54,7 +54,9 @@ actor FaceAnalyzer {
 
     private let queue = DispatchSerialQueue(label: "net.melisma.Otos.face.analysis", qos: .utility)
     private let bundle: Bundle
-    private let context = CIContext()
+    /// Made on first use, on the analysis queue: an analyzer is built on the main actor at
+    /// launch, and a Core Image context costs several milliseconds to make.
+    private lazy var context = CIContext()
     private var model: FaceEmbeddingModel?
 
     nonisolated var unownedExecutor: UnownedSerialExecutor {

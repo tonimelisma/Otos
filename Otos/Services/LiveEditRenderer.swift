@@ -67,7 +67,9 @@ actor LiveEditRenderer {
     }
 
     private let queue = DispatchSerialQueue(label: "net.melisma.Otos.render.edit", qos: .userInitiated)
-    private let context = CIContext(options: [.cacheIntermediates: true])
+    /// Made on first use, on the edit queue: the renderer is built on the main actor at
+    /// launch, and a Core Image context costs tens of milliseconds to make (2026-11-11).
+    private lazy var context = CIContext(options: [.cacheIntermediates: true])
     private var open: OpenPhoto?
 
     nonisolated var unownedExecutor: UnownedSerialExecutor {

@@ -390,6 +390,7 @@ nonisolated struct MediaEnricher {
         var rendering: EnrichedRendering?
         var provisionalThumbnail: StagedDerivedImage?
         var faces: EnrichedFaces?
+        var verdict: DecodeVerdict?
         var products: [String] = []
         if scope.contains(.rendering) || scope.contains(.faces) {
             let still = await Self.readStill(
@@ -398,6 +399,10 @@ nonisolated struct MediaEnricher {
             )
             if case .transient = still.faces {
                 return .transient
+            }
+            verdict = still.verdict
+            if case .undecodable = still.verdict {
+                products.append("undecodable")
             }
             if scope.contains(.rendering) {
                 if let rendered = still.rendering {
@@ -441,7 +446,8 @@ nonisolated struct MediaEnricher {
                 sourceMTimeSeconds: read.sourceMTimeSeconds ?? -1,
                 contentHash: contentHash,
                 faces: faces,
-                editRevision: recipe?.revision ?? 0
+                editRevision: recipe?.revision ?? 0,
+                decodeVerdict: verdict
             )
         )
     }
@@ -463,10 +469,12 @@ nonisolated struct MediaEnricher {
     }
 
     /// What one read of a still made: its staged rendering, when asked for and the renderer
-    /// could make one, and its faces.
+    /// could make one, its faces, and whether the renderer could decode it at all.
     struct StillRead {
         let rendering: (thumbnail: StagedDerivedImage, preview: StagedDerivedImage)?
         let faces: FacesRead
+        /// nil when the still was not handed to the renderer (a video, or nothing asked).
+        let verdict: DecodeVerdict?
     }
 
     /// Reads a still once (ADR 0009) for its loupe preview and the grid thumbnail drawn from
@@ -486,7 +494,7 @@ nonisolated struct MediaEnricher {
     ) async -> StillRead {
         let noFaces: FacesRead = wantsFaces ? .read(.noneFound) : .notAsked
         guard UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true else {
-            return StillRead(rendering: nil, faces: noFaces)
+            return StillRead(rendering: nil, faces: noFaces, verdict: nil)
         }
         let products: ImageRenderer.StillProducts
         do {
@@ -496,9 +504,13 @@ nonisolated struct MediaEnricher {
                 upright: wantsFaces
             )
         } catch is ImageRenderer.RenderError {
-            return StillRead(rendering: nil, faces: noFaces)
+            // The decoder's verdict, not the photo's: it is stored with the decoder that
+            // gave it, and a later decoder tries again (ENR-029).
+            return StillRead(
+                rendering: nil, faces: noFaces, verdict: .undecodable(decoder: ImageRenderer.decoderIdentity)
+            )
         } catch {
-            return StillRead(rendering: nil, faces: wantsFaces ? .transient : .notAsked)
+            return StillRead(rendering: nil, faces: wantsFaces ? .transient : .notAsked, verdict: nil)
         }
         var faces: FacesRead = .notAsked
         if wantsFaces, let upright = products.upright {
@@ -511,13 +523,13 @@ nonisolated struct MediaEnricher {
                     "relativePath": id.relativePath.rawValue,
                     "error": String(describing: error),
                 ])
-                return StillRead(rendering: nil, faces: .transient)
+                return StillRead(rendering: nil, faces: .transient, verdict: nil)
             }
         }
         guard let rendered = products.rendered else {
-            return StillRead(rendering: nil, faces: faces)
+            return StillRead(rendering: nil, faces: faces, verdict: .decoded)
         }
-        return StillRead(rendering: stage(rendered, id: id, directory: directory), faces: faces)
+        return StillRead(rendering: stage(rendered, id: id, directory: directory), faces: faces, verdict: .decoded)
     }
 
     /// Stages a rendering as the loupe preview and the grid thumbnail drawn from it; nil

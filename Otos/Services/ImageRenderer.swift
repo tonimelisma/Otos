@@ -48,6 +48,30 @@ final nonisolated class ImageRenderer: Sendable {
         case renderFailed
     }
 
+    /// Otos's own part of the decoder: 2 since a still's bytes are decoded as the type its
+    /// extension names (`docs/research/2026-11-11-arw-bytes-read-as-tiff.md`). A change to
+    /// how Otos hands a still to its decoders that can make an unreadable still readable is
+    /// a new revision.
+    static let decodeRevision = 2
+
+    /// The decoder a verdict of "cannot decode" is about: Otos's revision and the macOS
+    /// build, whose Image I/O and `CIRAWFilter` do the decoding. A still neither could
+    /// decode is tried again once either changes (ENR-029).
+    static let decoderIdentity = "otos\(decodeRevision)-macos\(operatingSystemBuild)"
+
+    /// The running macOS build (`kern.osversion`, e.g. `26B118`).
+    private static let operatingSystemBuild: String = {
+        var size = 0
+        guard sysctlbyname("kern.osversion", nil, &size, nil, 0) == 0, size > 0 else {
+            return "unread"
+        }
+        var bytes = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("kern.osversion", &bytes, &size, nil, 0) == 0 else {
+            return "unread"
+        }
+        return String(cString: bytes)
+    }()
+
     static let background = ImageRenderer(lane: "background", qos: .utility, imageDecodes: 4)
     static let interactive = ImageRenderer(lane: "interactive", qos: .userInitiated, imageDecodes: 1)
 
@@ -136,6 +160,7 @@ final nonisolated class ImageRenderer: Sendable {
                 } catch {
                     OtosLog.rendering.errorOperation("render.still", phase: "failed", fields: [
                         "lane": lane,
+                        "decoder": Self.decoderIdentity,
                         "path": url.path(percentEncoded: false),
                         "error": String(describing: error),
                     ])

@@ -540,6 +540,26 @@ nonisolated enum CatalogSchema {
         ]
     }
 
+    /// The decoder a still could not be decoded by (ENR-029). When the renderer cannot
+    /// decode a still, its rendering falls back to QuickLook's thumbnail and it is stamped
+    /// with no faces; `undecodable_by` names the decoder that said so
+    /// (`ImageRenderer.decoderIdentity`), and is NULL once a decoder read it. A row
+    /// rendered before this column with a stamp and no preview is such a fallback, so it
+    /// is marked as undecodable by Otos's first decoder and tried again once.
+    static let decodeVerdictMigrationIdentifier = "v25_media_asset_undecodable_by"
+
+    static var decodeVerdictStatements: [String] {
+        [
+            "ALTER TABLE media_asset ADD COLUMN undecodable_by TEXT",
+            """
+            UPDATE media_asset SET undecodable_by = 'otos1'
+            WHERE best_kind IN ('image', 'raw')
+              AND rendered_source_size IS NOT NULL
+              AND preview_path IS NULL
+            """,
+        ]
+    }
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

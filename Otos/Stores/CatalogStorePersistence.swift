@@ -186,6 +186,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.decodeVerdictMigrationIdentifier) { db in
+            for statement in CatalogSchema.decodeVerdictStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -655,6 +660,30 @@ extension CatalogStore {
         if let faces = result.faces {
             try writeFaces(faces, stamp: (result.sourceSize, result.sourceMTimeSeconds), row: row, db: db)
         }
+        if let verdict = result.decodeVerdict {
+            try db.execute(
+                sql: "UPDATE media_asset SET undecodable_by = ? WHERE library_root_id = ? AND relative_path = ?",
+                arguments: [verdict.undecodableBy, row.rootID, row.relativePath.rawValue]
+            )
+        }
+    }
+
+    /// Hands every still that a decoder other than `decoder` could not decode back to
+    /// enrichment (ENR-029): its rendering and faces stamps are cleared, so it is rendered
+    /// and read for faces again, and the verdict with them, which the new reading records
+    /// afresh. Returns how many stills were released.
+    static func releaseStillsUndecodedByAnotherDecoder(_ decoder: String, db: Database) throws -> Int {
+        try db.execute(
+            sql: """
+            UPDATE media_asset SET
+                rendered_source_size = NULL, rendered_source_mtime = NULL,
+                faces_source_size = NULL, faces_source_mtime = NULL,
+                undecodable_by = NULL
+            WHERE undecodable_by IS NOT NULL AND undecodable_by <> ?
+            """,
+            arguments: [decoder]
+        )
+        return db.changesCount
     }
 
     /// A still's faces (ADR 0047): the reading replaces every face the asset held, and its

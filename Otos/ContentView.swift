@@ -16,7 +16,9 @@ import SwiftUI
 struct ContentView: View {
     @Bindable var viewModel: CatalogWindowViewModel
     /// The pane the inspector last showed: view-local, so a collapsing column keeps it.
-    @State private var lastInspectorPane: InspectorPane = .edit
+    /// None until a pane is first shown, so a window whose inspector is closed builds no
+    /// pane: a hidden edit panel cost the launch its every slider and value field.
+    @State private var lastInspectorPane: InspectorPane?
     @FocusState private var isSearchFocused: Bool
 
     /// The large-download question (Plan 0104): the suppression checkbox writes the same
@@ -26,6 +28,8 @@ struct ContentView: View {
     @ViewBuilder
     private var inspectorContent: some View {
         switch viewModel.inspectorPane ?? lastInspectorPane {
+        case nil:
+            EmptyView()
         case .info:
             InfoPaneView(info: viewModel.photoInfo)
         case .edit:

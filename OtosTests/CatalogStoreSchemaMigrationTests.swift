@@ -183,6 +183,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.searchTextMigrationIdentifier,
             CatalogSchema.captureLocalTimeMigrationIdentifier,
             CatalogSchema.rawFacesMigrationIdentifier,
+            CatalogSchema.decodeVerdictMigrationIdentifier,
         ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
@@ -280,6 +281,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.searchTextMigrationIdentifier,
             CatalogSchema.captureLocalTimeMigrationIdentifier,
             CatalogSchema.rawFacesMigrationIdentifier,
+            CatalogSchema.decodeVerdictMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -516,11 +518,11 @@ struct CatalogStoreSchemaMigrationTests {
             }
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
-        try await store.start(scansSavedLibraries: false)
-        await store.shutdown()
+        // Up to this migration only: a later one (v25) retries a library still stamped with
+        // no preview, which `lib.jpg` here is, and that is not this migration's decision.
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.productStampsMigrationIdentifier)
 
-        let (metadataStamped, rendered) = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let (metadataStamped, rendered) = try await queue.read { db in
             try (
                 Set(String.fetchAll(db, sql: "SELECT relative_path FROM media_asset WHERE metadata_source_size = 10 AND metadata_source_mtime = 20")),
                 Set(String.fetchAll(db, sql: "SELECT relative_path FROM media_asset WHERE rendered_source_size = 10 AND rendered_source_mtime = 20"))

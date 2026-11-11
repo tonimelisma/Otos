@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import OSLog
+import Synchronization
 
 /// UI jank diagnostics guide
 ///
@@ -11,10 +12,13 @@ import OSLog
 /// (`op=`/`key=value`) for the agent and interval signposts for Instruments; a
 /// main-thread stall emits one structured `.fault op=mainThreadStall` line.
 ///
-/// Attribution: this monitor *flags* a stall with the state around it
-/// (bracketedOp, currentOperation, lastLongOperation). Naming the code that
-/// stalled is `script/profile.sh` with Time Profiler — the repo's documented
-/// division of labour. A bracketedOp field states a fact (no bracketed
+/// Attribution: the tick runs only once the main thread is free again, so it
+/// can flag a stall with the state around it (bracketedOp, currentOperation,
+/// lastLongOperation) but cannot see what held the thread. A watcher on a
+/// thread of its own (`StalledThreadWatcher`) samples the main thread's stack
+/// while the stall lasts, and the tick reports those stacks as
+/// `op=mainThreadStall.stack` lines carrying the stall's `stallID`
+/// (`script/stall-stacks.sh` reads them back). A bracketedOp field states a fact (no bracketed
 /// operation was in flight or recently completed) rather than implying a cause,
 /// and a stall without a bracket is not a finding of "nothing was running."
 nonisolated struct CatalogGridHandoff: Equatable {
@@ -69,6 +73,9 @@ final class MainRunLoopStallMonitor {
     private var operationStack: [OperationRecord] = []
     private var lastLongOperation: CompletedOperationRecord?
     private var pendingIntentToPaint: PendingIntentToPaint?
+    /// Samples the main thread's stack while a stall lasts; present while started.
+    private var watcher: StalledThreadWatcher?
+    private var nextStallID = 0
     /// Optional MainActor-safe extra fields (e.g. mutation-gate exclusivity) sampled at stall time.
     var additionalStallFields: (() -> [String: String])?
     // time: measurement — the sampling period of the stall monitor
@@ -78,6 +85,7 @@ final class MainRunLoopStallMonitor {
 
     isolated deinit {
         timer?.invalidate()
+        watcher?.stop()
     }
 
     func reserveUpdateID() -> Int {
@@ -178,6 +186,11 @@ final class MainRunLoopStallMonitor {
             }
             self.timer = timer
             RunLoop.main.add(timer, forMode: .common)
+            // `start` runs on the main thread (the monitor is main-actor isolated), so the
+            // calling thread is the one to watch.
+            let watcher = StalledThreadWatcher(watching: .current())
+            self.watcher = watcher
+            watcher.start()
             OtosLog.performance.debug("Main run loop stall monitor started")
         #else
             return
@@ -187,6 +200,8 @@ final class MainRunLoopStallMonitor {
     func stop() {
         timer?.invalidate()
         timer = nil
+        watcher?.stop()
+        watcher = nil
         expectedFire = nil
         latestHandoff = nil
         operationStack.removeAll()
@@ -195,6 +210,11 @@ final class MainRunLoopStallMonitor {
     }
 
     private func tick(now: ContinuousClock.Instant = .now) {
+        // The samples are of the silence this tick ends: a stall reports them, and
+        // anything else (an inactive app's coalesced timer, a lateness under the
+        // threshold) discards them.
+        let samples = watcher?.takeSamples() ?? []
+        watcher?.beat()
         guard let expectedFire = activeExpectedFire(now: now) else {
             return
         }
@@ -205,7 +225,7 @@ final class MainRunLoopStallMonitor {
             return
         }
 
-        recordStall(stallMs: DiagnosticsTiming.milliseconds(lateness), now: now)
+        recordStall(stallMs: DiagnosticsTiming.milliseconds(lateness), now: now, samples: samples)
     }
 
     private func activeExpectedFire(now: ContinuousClock.Instant) -> ContinuousClock.Instant? {
@@ -224,7 +244,9 @@ final class MainRunLoopStallMonitor {
         return expectedFire
     }
 
-    private func recordStall(stallMs: Int, now: ContinuousClock.Instant) {
+    private func recordStall(stallMs: Int, now: ContinuousClock.Instant, samples: [StackSample]) {
+        nextStallID += 1
+        let stallID = nextStallID
         let latestHandoff = latestHandoff
         let currentOperation = operationStack.last
         let lastLongOperation = lastLongOperation
@@ -237,7 +259,10 @@ final class MainRunLoopStallMonitor {
             lastLongOperation: lastLongOperation,
             extraFields: extraFields
         )
-        recordStallDiagnostic(fields)
+        recordStallDiagnostic(fields.merging(["stallID": "\(stallID)", "stackSamples": "\(samples.count)"]) { $1 })
+        for line in StallStackReport.lines(stallID: stallID, samples: samples) {
+            OtosLog.performance.notice("op=mainThreadStall.stack \(otosLogFields(line.fields), privacy: .public)")
+        }
     }
 
     private func stallFields(
@@ -288,5 +313,341 @@ final class MainRunLoopStallMonitor {
         OtosLog.performance.fault(
             "op=mainThreadStall bracketedOp=\(bracketedOp, privacy: .public) \(otosLogFields(fields), privacy: .public)"
         )
+    }
+}
+
+// MARK: - Stacks of a stalled main thread
+
+/// One reading of a thread's call stack: return addresses, innermost first, with the
+/// image and nearest symbol `dladdr` names for each, read after the thread was resumed.
+nonisolated struct StackSample: Equatable, Sendable {
+    struct Frame: Hashable, Sendable {
+        /// The image's file name (`Otos`, `libsystem_kernel.dylib`).
+        let image: String
+        /// The address's offset into its image, which `atos -l 0` resolves offline.
+        let offset: UInt
+        /// The nearest symbol the image names, mangled as stored; nil when it names none.
+        let symbol: String?
+    }
+
+    let frames: [Frame]
+}
+
+/// Reads another thread's call stack by suspending it, reading its registers, walking
+/// its frame-pointer chain inside its own stack, and resuming it.
+///
+/// While the thread is suspended nothing here allocates, locks or logs: the suspended
+/// thread may hold the allocator's or the logging system's lock, and taking either then
+/// would deadlock both threads. The return addresses go into a buffer allocated before
+/// the suspension; naming them (`dladdr`, which takes dyld's lock) happens after resume.
+nonisolated enum ThreadStackSampler {
+    /// The deepest stack a sample keeps.
+    static let maximumFrames = 64
+
+    /// A thread to sample and the bounds of its stack, which every frame pointer read
+    /// must fall inside.
+    struct Target: Sendable {
+        let port: mach_port_t
+        let stackLow: UInt
+        let stackHigh: UInt
+
+        /// The calling thread.
+        static func current() -> Target {
+            target(of: pthread_self())
+        }
+
+        private static func target(of thread: pthread_t) -> Target {
+            let high = UInt(bitPattern: pthread_get_stackaddr_np(thread))
+            return Target(
+                port: pthread_mach_thread_np(thread),
+                stackLow: high - UInt(pthread_get_stacksize_np(thread)),
+                stackHigh: high
+            )
+        }
+    }
+
+    /// The target's stack, innermost frame first; nil when the thread could not be
+    /// suspended or read (it ended, or this architecture has no reader).
+    static func sample(_ target: Target) -> StackSample? {
+        let addresses = UnsafeMutableBufferPointer<UInt>.allocate(capacity: maximumFrames)
+        defer { addresses.deallocate() }
+        let count = readReturnAddresses(target, into: addresses)
+        guard count > 0 else {
+            return nil
+        }
+        return StackSample(frames: addresses.prefix(count).map(frame(at:)))
+    }
+
+    #if arch(arm64)
+        /// The pointer bits of an address: return addresses saved by arm64e system code
+        /// carry a pointer-authentication signature in the bits above the 47-bit user
+        /// address space.
+        private static let addressMask: UInt = 0x7FFF_FFFF_FFFF
+
+        private static func readReturnAddresses(_ target: Target, into buffer: UnsafeMutableBufferPointer<UInt>) -> Int {
+            guard thread_suspend(target.port) == KERN_SUCCESS else {
+                return 0
+            }
+            defer { thread_resume(target.port) }
+            var state = arm_thread_state64_t()
+            var stateCount = mach_msg_type_number_t(
+                MemoryLayout<arm_thread_state64_t>.size / MemoryLayout<natural_t>.size
+            )
+            let status = withUnsafeMutablePointer(to: &state) { pointer in
+                pointer.withMemoryRebound(to: natural_t.self, capacity: Int(stateCount)) {
+                    thread_get_state(target.port, ARM_THREAD_STATE64, $0, &stateCount)
+                }
+            }
+            guard status == KERN_SUCCESS else {
+                return 0
+            }
+            buffer[0] = UInt(state.__pc) & addressMask
+            var count = 1
+            var framePointer = UInt(state.__fp)
+            // Each frame record is (caller's frame pointer, return address). A pointer
+            // outside the stack, misaligned, or not moving outward ends the walk, so a
+            // frame built without a frame pointer can never send the read astray.
+            while count < buffer.count,
+                  framePointer >= target.stackLow,
+                  framePointer + 16 <= target.stackHigh,
+                  framePointer & 0xF == 0,
+                  let record = UnsafePointer<UInt>(bitPattern: framePointer)
+            {
+                let returnAddress = record[1] & addressMask
+                guard returnAddress != 0 else {
+                    break
+                }
+                buffer[count] = returnAddress
+                count += 1
+                let caller = record[0]
+                guard caller > framePointer else {
+                    break
+                }
+                framePointer = caller
+            }
+            return count
+        }
+    #else
+        private static func readReturnAddresses(_: Target, into _: UnsafeMutableBufferPointer<UInt>) -> Int {
+            0
+        }
+    #endif
+
+    private static func frame(at address: UInt) -> StackSample.Frame {
+        var info = Dl_info()
+        guard dladdr(UnsafeRawPointer(bitPattern: address), &info) != 0, let base = info.dli_fbase else {
+            return StackSample.Frame(image: "?", offset: address, symbol: nil)
+        }
+        let path = info.dli_fname.map { String(cString: $0) } ?? "?"
+        return StackSample.Frame(
+            image: path.split(separator: "/").last.map(String.init) ?? path,
+            offset: address - UInt(bitPattern: base),
+            symbol: info.dli_sname.map { String(cString: $0) }
+        )
+    }
+}
+
+/// Samples a thread's stack while it stops answering, so a stall's report says what that
+/// thread was doing rather than only that it was late.
+///
+/// The watched thread calls `beat()` whenever it runs (the stall monitor's tick, every
+/// 100 ms). The watcher runs on a thread of its own, the one place that can see a stall
+/// while it is happening: from the second missed beat on, it samples the watched thread
+/// every 50 ms and keeps the samples until the watched thread, running again, takes them.
+final nonisolated class StalledThreadWatcher: Sendable {
+    /// A beat older than this is a stall in progress: one tick period (100 ms) plus half.
+    static let silenceThreshold = Duration.milliseconds(150)
+    /// The most samples one stall keeps; a longer stall keeps its first ones.
+    static let maximumSamples = 100
+
+    private let target: ThreadStackSampler.Target
+    private let lastBeat: Atomic<UInt64>
+    private let isStopped = Atomic<Bool>(false)
+    private let samples = Mutex<[StackSample]>([])
+
+    init(watching target: ThreadStackSampler.Target) {
+        self.target = target
+        lastBeat = Atomic(Self.now())
+    }
+
+    /// Starts the watcher's thread; it ends after `stop()`.
+    func start() {
+        let thread = Thread { [self] in
+            watch()
+        }
+        thread.name = "net.melisma.Otos.stallWatcher"
+        thread.qualityOfService = .userInteractive
+        thread.start()
+    }
+
+    func stop() {
+        isStopped.store(true, ordering: .relaxed)
+    }
+
+    /// The watched thread is running.
+    func beat() {
+        lastBeat.store(Self.now(), ordering: .relaxed)
+    }
+
+    /// The samples taken since the last call, oldest first.
+    func takeSamples() -> [StackSample] {
+        samples.withLock { taken in
+            defer { taken.removeAll(keepingCapacity: true) }
+            return taken
+        }
+    }
+
+    private func watch() {
+        let threshold = UInt64(DiagnosticsTiming.milliseconds(Self.silenceThreshold)) * 1_000_000
+        while !isStopped.load(ordering: .relaxed) {
+            // time: measurement — the watcher's sampling period while a stall lasts
+            Thread.sleep(forTimeInterval: 0.05)
+            guard Self.now() &- lastBeat.load(ordering: .relaxed) >= threshold else {
+                continue
+            }
+            let full = samples.withLock { $0.count >= Self.maximumSamples }
+            guard !full, let sample = ThreadStackSampler.sample(target) else {
+                continue
+            }
+            samples.withLock { $0.append(sample) }
+        }
+    }
+
+    /// Nanoseconds on the clock `ContinuousClock` reads, as a value an atomic can hold.
+    private static func now() -> UInt64 {
+        clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW)
+    }
+}
+
+/// The log lines that report a stall's stacks, each split into parts that fit one
+/// unified-log message. Two samples of one stall rarely share a whole stack (the
+/// innermost frames move), so three views count frames across samples, as a profiler
+/// does:
+/// - `kind=heaviest`: every frame with the number of samples it appears in, most first.
+///   Its head is the trunk every sample shares: the run loop, and what it was serving.
+/// - `kind=own`: the same count over Otos's own frames only, which name the Otos code on
+///   the stack below the frameworks' trunk.
+/// - `kind=leaf`: the innermost frame of each sample, by count: where the time was spent.
+/// - `kind=stack`: each stack sampled more than once, most sampled first, whole.
+nonisolated enum StallStackReport {
+    /// The unified log keeps about 1,017 characters of a message and drops the rest
+    /// (measured 2026-11-11); a part stays under this with room for its fields.
+    static let partCharacterLimit = 900
+    /// The frames each counted view keeps.
+    static let maximumHeaviestFrames = 40
+    /// The image Otos's own code is in: `Otos` installed, `Otos.debug.dylib` in a dev
+    /// build, the test bundle's image under test.
+    static let ownImage: String = {
+        var info = Dl_info()
+        guard dladdr(#dsohandle, &info) != 0, let name = info.dli_fname else {
+            return "?"
+        }
+        let path = String(cString: name)
+        return path.split(separator: "/").last.map(String.init) ?? path
+    }()
+
+    /// The repeated stacks a stall reports.
+    static let maximumStacks = 2
+    /// The characters of a symbol a frame keeps.
+    static let maximumSymbolCharacters = 300
+
+    struct Line: Equatable {
+        let fields: [String: String]
+    }
+
+    static func lines(stallID: Int, samples: [StackSample]) -> [Line] {
+        guard !samples.isEmpty else {
+            return []
+        }
+        var lines: [Line] = []
+        let counted = [
+            ("heaviest", heaviest(samples)),
+            ("own", heaviest(samples) { $0.image == ownImage }),
+            ("leaf", heaviest(samples.compactMap { $0.frames.first.map { StackSample(frames: [$0]) } })),
+        ]
+        for (kind, frames) in counted where !frames.isEmpty {
+            lines += parts(of: frames).enumerated().map { index, part in
+                Line(fields: [
+                    "stallID": "\(stallID)", "kind": kind, "ofSamples": "\(samples.count)",
+                    "part": "\(index + 1)", "frames": part.joined(separator: "|"),
+                ])
+            }
+        }
+        var counts: [[StackSample.Frame]: Int] = [:]
+        var order: [[StackSample.Frame]] = []
+        for sample in samples {
+            if counts[sample.frames] == nil {
+                order.append(sample.frames)
+            }
+            counts[sample.frames, default: 0] += 1
+        }
+        let repeated = order.enumerated()
+            .filter { counts[$0.element]! > 1 }
+            .sorted { (counts[$0.element]!, -$0.offset) > (counts[$1.element]!, -$1.offset) }
+            .prefix(maximumStacks)
+            .map(\.element)
+        for (stackIndex, frames) in repeated.enumerated() {
+            for (partIndex, part) in parts(of: frames.map(text(of:))).enumerated() {
+                lines.append(Line(fields: [
+                    "stallID": "\(stallID)", "kind": "stack", "stack": "\(stackIndex + 1)",
+                    "samples": "\(counts[frames]!)", "ofSamples": "\(samples.count)",
+                    "part": "\(partIndex + 1)", "frames": part.joined(separator: "|"),
+                ]))
+            }
+        }
+        let partTotals = Dictionary(grouping: lines) { [$0.fields["kind"], $0.fields["stack"]] }.mapValues(\.count)
+        return lines.map { line in
+            var fields = line.fields
+            fields["parts"] = "\(partTotals[[line.fields["kind"], line.fields["stack"]]]!)"
+            return Line(fields: fields)
+        }
+    }
+
+    /// `count*frame` for each frame `including` keeps, by the number of samples it appears
+    /// in, most first; a tie goes to the frame nearer the stack's root, so the shared trunk
+    /// reads outward-in.
+    static func heaviest(
+        _ samples: [StackSample],
+        including: (StackSample.Frame) -> Bool = { _ in true }
+    ) -> [String] {
+        var counts: [StackSample.Frame: Int] = [:]
+        var depthFromRoot: [StackSample.Frame: Int] = [:]
+        for sample in samples {
+            for (index, frame) in sample.frames.reversed().enumerated() {
+                depthFromRoot[frame] = min(depthFromRoot[frame] ?? index, index)
+            }
+            for frame in Set(sample.frames) where including(frame) {
+                counts[frame, default: 0] += 1
+            }
+        }
+        return counts.keys
+            .sorted { (counts[$0]!, -depthFromRoot[$0]!) > (counts[$1]!, -depthFromRoot[$1]!) }
+            .prefix(maximumHeaviestFrames)
+            .map { "\(counts[$0]!)*\(text(of: $0))" }
+    }
+
+    /// `image+0xoffset` with `:symbol` when the image names one. A space in a symbol (an
+    /// Objective-C method's, `-[NSApplication sendEvent:]`) becomes `_`, because a space
+    /// ends a `key=value` field for every reader of the line.
+    static func text(of frame: StackSample.Frame) -> String {
+        let location = "\(frame.image)+0x\(String(frame.offset, radix: 16))"
+        guard let symbol = frame.symbol else {
+            return location
+        }
+        return "\(location):\(symbol.prefix(maximumSymbolCharacters).replacing(" ", with: "_"))"
+    }
+
+    private static func parts(of frames: [String]) -> [[String]] {
+        var parts: [[String]] = [[]]
+        var length = 0
+        for frame in frames {
+            if !parts[parts.count - 1].isEmpty, length + frame.count + 1 > partCharacterLimit {
+                parts.append([])
+                length = 0
+            }
+            parts[parts.count - 1].append(frame)
+            length += frame.count + 1
+        }
+        return parts
     }
 }

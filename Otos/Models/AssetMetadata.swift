@@ -374,6 +374,23 @@ nonisolated struct EnrichedFaces: Equatable, Sendable {
     static let noneFound = EnrichedFaces(faces: [], analysisRevision: FaceAnalyzer.revision)
 }
 
+/// What a still's decoder said about it (ENR-029). "Cannot decode" is a fact about that
+/// decoder, never about the photo, so it names the decoder: a still whose rendering fell
+/// back to QuickLook's thumbnail, or that was stamped with no faces, because no decoder
+/// could read it is tried again once the decoder changes.
+nonisolated enum DecodeVerdict: Equatable, Sendable {
+    case decoded
+    case undecodable(decoder: String)
+
+    /// The stored form: the decoder's identity, or nil once a decoder read the still.
+    var undecodableBy: String? {
+        switch self {
+        case .decoded: nil
+        case let .undecodable(decoder): decoder
+        }
+    }
+}
+
 nonisolated struct EnrichmentResult: Equatable {
     let id: MediaAssetID
     let metadata: EnrichedMetadata?
@@ -392,6 +409,9 @@ nonisolated struct EnrichmentResult: Equatable {
     /// Absent when the scope did not cover faces. Present, it replaces every face the asset
     /// held, and stamps them, even when it holds none (ADR 0047).
     let faces: EnrichedFaces?
+    /// Whether the renderer could decode the still, when the result covers a product it
+    /// decodes for (the rendering or the faces); nil leaves the stored verdict as it is.
+    let decodeVerdict: DecodeVerdict?
 
     init(
         id: MediaAssetID,
@@ -402,7 +422,8 @@ nonisolated struct EnrichmentResult: Equatable {
         sourceMTimeSeconds: Int?,
         contentHash: XXH3Digest128?,
         faces: EnrichedFaces? = nil,
-        editRevision: Int64 = 0
+        editRevision: Int64 = 0,
+        decodeVerdict: DecodeVerdict? = nil
     ) {
         self.id = id
         self.metadata = metadata
@@ -413,6 +434,7 @@ nonisolated struct EnrichmentResult: Equatable {
         self.sourceMTimeSeconds = sourceMTimeSeconds
         self.contentHash = contentHash
         self.faces = faces
+        self.decodeVerdict = decodeVerdict
     }
 
     /// A result carrying metadata and a rendering together, as a fixed library's

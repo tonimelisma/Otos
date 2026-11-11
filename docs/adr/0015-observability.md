@@ -59,6 +59,8 @@ consumes them; use a log line instead.
 - `script/logs.sh show --last <duration> [Category]` — post-hoc ndjson.
 - `script/profile.sh "<Template>" <duration>` — `xctrace record`.
 - `script/profile-export.sh <trace>` — `xctrace export` wrapper.
+- `script/stall-stacks.sh --last <duration>` — each main-thread stall with the stacks
+  sampled while it lasted, parts joined and Swift symbols demangled.
 
 ### Explicit rejections
 
@@ -67,11 +69,23 @@ consumes them; use a log line instead.
 | Bespoke JSONL sinks (`CatalogDiagnostics`) | No consumer; unified logging already persists `.notice`+ |
 | Bare event signposts (`emitEvent`) | No Instruments workflow points at them |
 | Scalar counter snapshot machinery (`GridTelemetry`) | One unread JSONL row; hot-path counters without a reader |
+| MetricKit hang diagnostics for stall attribution | Delivered to the app later in a payload, not beside the stall's own log line; the agent reads logs as the stall happens |
+| Time Profiler as the only way to name a stalled frame | A stall at launch, or one that happens once a day, is over before a trace can be attached |
 
 ## Consequences
 
 - Smoke `--verify` asserts `op=catalog.library.ensure` via `log show`, not JSONL.
-- Stall detection logs `op=mainThreadStall` at `.fault`.
+- Stall detection logs `op=mainThreadStall` at `.fault`, with a `stallID` and the
+  number of stack samples taken while it lasted (`stackSamples`). The monitor's tick
+  runs only once the main thread is free again, so it cannot see what held the thread.
+  `StalledThreadWatcher` can: on a thread of its own, from the second missed beat on
+  (150 ms of silence), it samples the main thread's stack every 50 ms by suspending it,
+  walking its frame-pointer chain inside its own stack, and resuming it, with nothing
+  allocated, locked or logged while it is suspended. The tick then logs the stall's
+  distinct stacks, the two most sampled, as `op=mainThreadStall.stack` lines at
+  `.notice`. Each frame is `image+0xoffset` with the image's nearest symbol, and each
+  stack is split into parts of at most 900 characters, because the unified log keeps
+  only about 1,017 characters of a message (measured 2026-11-11).
 - Session correlation: `op=sessionStart session=… kind=…` once at launch.
 - Store query paths emit `waitMs` (pool acquisition) and `execMs` separately so
   GRDB reader-pool contention is measurable without Instruments; tile-detail

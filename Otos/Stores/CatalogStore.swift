@@ -2774,6 +2774,15 @@ extension CatalogStore {
         try await dbQueue.write { db in
             _ = try Self.releaseUnrenderedEdits(db: db)
         }
+        // A still no decoder could read was read by this build's decoder or an earlier
+        // one; one an earlier decoder could not read is this decoder's to try (ENR-029).
+        let decoder = ImageRenderer.decoderIdentity
+        let releasedUndecodable = try await dbQueue.write { db in
+            try Self.releaseStillsUndecodedByAnotherDecoder(decoder, db: db)
+        }
+        OtosLog.catalog.noticeOperation("catalog.start", phase: "undecodableReleased", fields: [
+            "count": "\(releasedUndecodable)", "decoder": decoder,
+        ])
         // No card or camera is attached while the catalog loads; a process that ended
         // while one was being read left its unseen rows marked (ADR 0013).
         let clearedAwaiting = try await dbQueue.write { db in

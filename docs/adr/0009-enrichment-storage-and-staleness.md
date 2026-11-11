@@ -61,6 +61,18 @@ This ADR owns:
   `(size, mtime)` source signature they were made from, and each is stale on its own; a missing, malformed, or
   signature-mismatched hash is stale. mtime-only changes count. One read of a file
   makes every product its row owes.
+- A still the renderer cannot decode is a fact about the decoder, not the photo. Its
+  rendering falls back to QuickLook's thumbnail and it is stamped with no faces, so
+  it is not read again on every pass, and `undecodable_by` names the decoder that
+  said so: Otos's decode revision and the macOS build
+  (`ImageRenderer.decoderIdentity`), because Image I/O and `CIRAWFilter` ship with
+  the OS. At launch a still another decoder could not read loses its rendering and
+  faces stamps and is tried again (ENR-029). Without the decoder's name, a decoder
+  that learned to read the still would never be asked: every Sony ARW was stored as
+  faceless by a renderer that handed Image I/O untyped bytes
+  (`docs/research/2026-11-11-arw-bytes-read-as-tiff.md`). Marking the still
+  transient instead was rejected: it would retry on every pass and show the file as
+  unreadable, blaming the file for the decoder.
 - Timestamp role facts are stored; SQLite's generated `best_capture_local` value
   supplies Date sort and enrichment priority. Video duration is a hot scalar
   because the tile surface needs it for every visible video; other metadata
