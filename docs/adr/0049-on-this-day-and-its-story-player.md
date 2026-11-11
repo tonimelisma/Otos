@@ -67,7 +67,7 @@ view mode for it.
    `onThisDay` without a day and restores it as `.onThisDay(today)`.
 4. **The predicate carries the date dimension.** `CatalogScopePredicate.DateConstraint`
    is `.any` or `.anniversary(CalendarDay)`, resolved only by
-   `RootRegistry.scopePredicate`, so ordered IDs, counts and filter options agree. The
+   `RootRegistry.scopePredicate`, so ordered IDs and counts agree. The
    gateway turns it into half-open `best_capture_local` ranges in the read's own
    transaction: the earliest dated year comes from a `MIN(best_capture_local)` over the
    scope's roots, and `AnniversaryRanges` (pure) builds one range per year from that

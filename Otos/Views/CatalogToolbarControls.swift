@@ -68,12 +68,14 @@ struct CatalogFilterPopoverContent: View {
             Text("Media")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
-            ForEach(availableKinds, id: \.self) { kind in
+            // Every kind, always: the popover's rows never depend on what the shown scope
+            // holds, so an empty scope still shows (and can clear) the filter it is under.
+            ForEach(MediaKind.displayOrder, id: \.self) { kind in
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle(kind.label, sources: kindToggleSources(kind), isOn: \.isOn)
                         .fontWeight(.semibold)
                         .accessibilityLabel(kind.label)
-                    ForEach(options.formats(for: kind), id: \.self) { fileType in
+                    ForEach(options.formats(for: kind, holding: descriptor.filter), id: \.self) { fileType in
                         Toggle(fileType.rawValue, isOn: fileTypeBinding(fileType, kind: kind))
                             .padding(.leading, 20)
                             .accessibilityLabel(fileType.rawValue)
@@ -89,16 +91,12 @@ struct CatalogFilterPopoverContent: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    private var availableKinds: [MediaKind] {
-        options.availableKinds
-    }
-
     /// A collection-backed Toggle gives macOS its native mixed state. Every
     /// source setter calls the one kind-level owner intent, so clicking a mixed
     /// parent still produces one effective descriptor change; repeated setter
     /// calls from SwiftUI become normalized no-ops.
     private func kindToggleSources(_ kind: MediaKind) -> [MenuToggleSource] {
-        let fileTypes = options.formats(for: kind)
+        let fileTypes = options.formats(for: kind, holding: descriptor.filter)
         if fileTypes.isEmpty {
             return [MenuToggleSource(isOn: kindBinding(kind))]
         }
@@ -126,7 +124,7 @@ struct CatalogFilterPopoverContent: View {
 
     private func isFileTypeIncluded(_ fileType: MediaFormatToken, kind: MediaKind) -> Bool {
         descriptor.filter.kinds.contains(kind)
-            || descriptor.filter.formats.contains(fileType)
+            || descriptor.filter.fileTypes.contains(FilterFileType(kind: kind, format: fileType))
     }
 }
 

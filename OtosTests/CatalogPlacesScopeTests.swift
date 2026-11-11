@@ -89,8 +89,6 @@ struct CatalogPlacesScopeTests {
             filter: MediaFilter(kinds: [.image]),
             availableLibraryPaths: available
         )
-        let placesOptions = try await store.filterOptions(for: .places, availableLibraryPaths: available)
-        let placeOptions = try await store.filterOptions(for: .mapArea(.point(Self.helsinki)), availableLibraryPaths: available)
         await store.shutdown()
 
         // Located items only, newest first, each with its coordinate beside it.
@@ -105,11 +103,9 @@ struct CatalogPlacesScopeTests {
         // A scope without a location requirement carries no coordinates.
         #expect(allMedia.ids.count == 4)
         #expect(allMedia.coordinates.isEmpty)
-        // Counts and the filter menu honor the same membership as the order.
+        // Counts honor the same membership as the order.
         #expect(placesCount == 3)
         #expect(imagesInLibrary == 3)
-        #expect(placesOptions.availableKinds == [.image, .video])
-        #expect(placeOptions.availableKinds == [.image])
     }
 
     @Test func placesResolvesAwayOnlyWhenNoFixedLibraryRemains() {

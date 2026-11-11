@@ -18,7 +18,11 @@ struct BrowserPlaceTests {
         let place = BrowserPlace(
             descriptor: CatalogQueryDescriptor(
                 scope: .library(pictures),
-                filter: MediaFilter(kinds: [.image, .raw], formats: [MediaFormatToken(rawValue: "JPEG")], choices: [.liked]),
+                filter: MediaFilter(
+                    kinds: [.image],
+                    fileTypes: [FilterFileType(kind: .raw, format: MediaFormatToken(rawValue: "ARW"))],
+                    choices: [.liked]
+                ),
                 sort: MediaSortOrder(field: .name, direction: .ascending)
             ),
             viewMode: .loupe,
@@ -87,7 +91,8 @@ struct BrowserPlaceTests {
         BrowserPlace(descriptor: .default, viewMode: .grid, focus: nil, selection: []).save(to: preferences)
         let stored = try #require(preferences.string(forKey: BrowserPlace.defaultsKey))
         for (valid, invalid) in [
-            ("\"version\":1", "\"version\":2"),
+            // A place stored before file types carried their kind.
+            ("\"version\":2", "\"version\":1"),
             ("\"sortField\":\"bestDate\"", "\"sortField\":\"rating\""),
             ("\"viewMode\":\"grid\"", "\"viewMode\":\"survey\""),
             ("\"kind\":\"allMedia\"", "\"kind\":\"smartAlbum\""),

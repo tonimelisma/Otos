@@ -19,7 +19,7 @@ import Foundation
 /// position, never their launch.
 nonisolated struct BrowserPlace: Equatable {
     static let defaultsKey = "browserPlace"
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     var descriptor: CatalogQueryDescriptor
     var viewMode: BrowserViewMode
@@ -54,8 +54,9 @@ nonisolated struct BrowserPlace: Equatable {
 // MARK: - Wire format
 
 private nonisolated extension BrowserPlace {
-    /// Version 1 of the stored shape. Plain strings, so the domain types stay free of
-    /// persistence conformances and this file is the whole schema.
+    /// Version 2 of the stored shape: a filter's file types carry their kind. Plain
+    /// strings, so the domain types stay free of persistence conformances and this file
+    /// is the whole schema.
     nonisolated struct Record: Codable {
         nonisolated struct Scope: Codable {
             /// `allMedia`, `places`, `mapArea`, `onThisDay`, `duplicates`, `people`,
@@ -77,10 +78,15 @@ private nonisolated extension BrowserPlace {
             var path: String
         }
 
+        nonisolated struct FileType: Codable {
+            var kind: String
+            var format: String
+        }
+
         var version: Int
         var scope: Scope
         var kinds: [String]
-        var formats: [String]
+        var fileTypes: [FileType]
         var choices: [String]
         var sortField: String
         var sortDirection: String
@@ -100,16 +106,20 @@ private nonisolated extension BrowserPlace {
         }
         let kinds = record.kinds.compactMap(MediaKind.init(rawValue:))
         let choices = record.choices.compactMap(MediaChoice.init(rawValue:))
-        guard kinds.count == record.kinds.count, choices.count == record.choices.count else {
+        let fileTypes = record.fileTypes.compactMap { fileType in
+            // Restored through the library's naming, so a type saved as `HEIC` by an older
+            // build selects the `HEIF` the catalog now stores (ADR 0039).
+            MediaKind(rawValue: fileType.kind).flatMap { kind in
+                MediaFormatToken.normalize(extension: fileType.format).map { FilterFileType(kind: kind, format: $0) }
+            }
+        }
+        guard kinds.count == record.kinds.count,
+              choices.count == record.choices.count,
+              fileTypes.count == record.fileTypes.count
+        else {
             return nil
         }
-        let filter = MediaFilter(
-            kinds: Set(kinds),
-            // Restored through the library's naming, so a filter saved as `HEIC` by an older
-            // build selects the `HEIF` the catalog now stores (ADR 0039).
-            formats: Set(record.formats.compactMap { MediaFormatToken.normalize(extension: $0) }),
-            choices: Set(choices)
-        )
+        let filter = MediaFilter(kinds: Set(kinds), fileTypes: Set(fileTypes), choices: Set(choices))
         self.init(
             descriptor: CatalogQueryDescriptor(
                 scope: scope,
@@ -170,7 +180,9 @@ private nonisolated extension BrowserPlace.Record {
             version: BrowserPlace.currentVersion,
             scope: Self.scope(descriptor.scope),
             kinds: descriptor.filter.kinds.map(\.rawValue).sorted(),
-            formats: descriptor.filter.formats.map(\.rawValue).sorted(),
+            fileTypes: descriptor.filter.fileTypes
+                .map { FileType(kind: $0.kind.rawValue, format: $0.format.rawValue) }
+                .sorted { ($0.kind, $0.format) < ($1.kind, $1.format) },
             choices: descriptor.filter.choices.map(\.rawValue).sorted(),
             sortField: descriptor.sort.field.rawValue,
             sortDirection: descriptor.sort.direction.rawValue,

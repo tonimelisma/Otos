@@ -5,8 +5,8 @@ import Testing
 
 /// An Imports row narrows by root *and* by batch stamp. These cover the seam where
 /// those two dimensions used to be resolved separately: ordered IDs applied the
-/// stamp, while counts and filter options quietly did not, so a batch whose rows an
-/// active filter excluded reported "no media at all" and withheld Clear Filters.
+/// stamp, while counts quietly did not, so a batch whose rows an active filter
+/// excluded reported "no media at all" and withheld Clear Filters.
 ///
 /// Store answers *what the scope holds*; `CatalogWindowPolicy` turns that into
 /// *what the window says*. They are tested at their own boundaries.
@@ -14,9 +14,9 @@ import Testing
 struct CatalogBatchScopeTests {
     private static let batch = ImportBatchID(unixMilliseconds: 1_785_908_514_176)
 
-    /// Every scoped read agrees about the batch: ordering, both counts, and the
-    /// filter menu. Before the fix only ordering applied the stamp, so the counts
-    /// returned zero and the menu offered the whole library's formats.
+    /// Every scoped read agrees about the batch: ordering and both counts. The filter's
+    /// choices are not a scoped read: a batch of videos still offers the library's
+    /// stills, because the filter spans scopes (APP-025).
     @Test func everyScopedReadAppliesBatchMembership() async throws {
         let temp = try makeTestDirectory()
         defer { try? FileManager.default.removeItem(at: temp) }
@@ -41,10 +41,7 @@ struct CatalogBatchScopeTests {
             availableLibraryPaths: available
         ).ids
         let hiddenByFilter = try await store.orderedAssetIDs(
-            for: CatalogQueryDescriptor(
-                scope: batchScope,
-                filter: MediaFilter(formats: [MediaFormatToken(rawValue: "HEIC")])
-            ),
+            for: CatalogQueryDescriptor(scope: batchScope, filter: Self.heifOnly),
             availableLibraryPaths: available
         ).ids
         let batchVisibleCount = try await store.visibleAssetCount(
@@ -53,11 +50,7 @@ struct CatalogBatchScopeTests {
         )
         let batchCatalogedCount = try await store.catalogedAssetCount(for: batchScope)
         let libraryCatalogedCount = try await store.catalogedAssetCount(for: .library(rootPath))
-        let batchOptions = try await store.filterOptions(for: batchScope, availableLibraryPaths: available)
-        let libraryOptions = try await store.filterOptions(
-            for: .library(rootPath),
-            availableLibraryPaths: available
-        )
+        let options = try await store.filterOptions(availableLibraryPaths: available)
         await store.shutdown()
 
         #expect(Set(batchIDs.map(\.relativePath.rawValue)) == ["clip-one.mp4", "clip-two.mp4"])
@@ -66,9 +59,11 @@ struct CatalogBatchScopeTests {
         #expect(batchVisibleCount == 2)
         #expect(batchCatalogedCount == 2)
         #expect(libraryCatalogedCount == 3)
-        #expect(batchOptions.availableKinds == [.video])
-        #expect(libraryOptions.availableKinds == [.image, .video])
+        #expect(options.formatsByKind[.video] == [MediaFormatToken(rawValue: "MP4")])
+        #expect(options.formatsByKind[.image] == [MediaFormatToken(rawValue: "HEIF")])
     }
+
+    private static let heifOnly = MediaFilter(fileTypes: [FilterFileType(kind: .image, format: MediaFormatToken(rawValue: "HEIF"))])
 
     /// The reported case: an active HEIC-only filter hides both imported clips. The
     /// batch is not empty, so the window must offer Clear Filters instead of telling
@@ -76,7 +71,7 @@ struct CatalogBatchScopeTests {
     @Test func batchEmptiedByFilterReportsNoFilterMatches() {
         let descriptor = CatalogQueryDescriptor(
             scope: .importBatch(Self.batch),
-            filter: MediaFilter(formats: [MediaFormatToken(rawValue: "HEIC")])
+            filter: Self.heifOnly
         )
 
         let emptyState = CatalogWindowPolicy.mediaEmptyState(

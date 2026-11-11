@@ -85,9 +85,9 @@ excluded everything."
 A scope is not merely a set of roots — an Imports row also narrows by
 `import_batch_unix_ms`. `RootRegistry` therefore resolves each `SidebarSelection`
 into exactly one `CatalogScopePredicate`, and every scoped read (ordered IDs, both
-counts, filter options) consumes that value. Passing bare root IDs per query is
-rejected: it let ordering apply batch membership while the counts and filter options
-silently did not, so a batch whose rows an active filter excluded reported itself as
+counts) consumes that value; the filter's options span every available source, not a
+scope (ADR 0011). Passing bare root IDs per query is
+rejected: it let ordering apply batch membership while the counts silently did not, so a batch whose rows an active filter excluded reported itself as
 an empty library and withheld the Clear Filters affordance.
 
 Detail-only Store changes reuse the last ordered-ID result and advance

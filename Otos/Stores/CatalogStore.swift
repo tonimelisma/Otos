@@ -1613,14 +1613,11 @@ extension CatalogStore {
         return timedCount.value
     }
 
-    /// Kinds and formats the filter menu may offer, drawn from the rows this scope
-    /// actually holds — so a scope can never offer a filter value that matches
-    /// nothing in it.
-    func filterOptions(
-        for selection: SidebarSelection,
-        availableLibraryPaths: Set<LibraryRootPath>
-    ) async throws -> CatalogFilterOptions {
-        let scope = scopePredicate(selection: selection, availableLibraryPaths: availableLibraryPaths)
+    /// The file types the filter popover offers, drawn from every available source —
+    /// fixed libraries, cards and cameras alike — and not from the shown scope: the
+    /// filter spans scopes, so its choices must too (`CatalogFilterOptions`).
+    func filterOptions(availableLibraryPaths: Set<LibraryRootPath>) async throws -> CatalogFilterOptions {
+        let scope = CatalogScopePredicate(rootIDs: roots.rootIDs(in: availableLibraryPaths))
         guard !scope.selectsNothing else {
             return .empty
         }
@@ -1629,7 +1626,7 @@ extension CatalogStore {
             try CatalogQueryGateway.filterOptions(scope: scope, db: db)
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.filterOptions phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) kindCount=\(timedOptions.value.availableKinds.count, privacy: .public) formatCount=\(timedOptions.value.formatsByKind.values.reduce(0) { $0 + $1.count }, privacy: .public) waitMs=\(timedOptions.waitMs, privacy: .public) execMs=\(timedOptions.execMs, privacy: .public) queryMs=\(timedOptions.totalMs, privacy: .public)"
+            "op=catalog.store.query.filterOptions phase=finish rootCount=\(scope.rootIDs.count, privacy: .public) kindCount=\(timedOptions.value.formatsByKind.count, privacy: .public) formatCount=\(timedOptions.value.formatsByKind.values.reduce(0) { $0 + $1.count }, privacy: .public) waitMs=\(timedOptions.waitMs, privacy: .public) execMs=\(timedOptions.execMs, privacy: .public) queryMs=\(timedOptions.totalMs, privacy: .public)"
         )
         return timedOptions.value
     }

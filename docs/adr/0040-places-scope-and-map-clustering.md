@@ -59,7 +59,7 @@ Map view mode.
   Photos' Grid, reached through Otos's own picker rather than a fourth control.
 - **The scope predicate carries the location dimension.** `CatalogScopePredicate`
   gains `LocationConstraint` (`.any`, `.located`, `.within(area)`), resolved only by
-  `RootRegistry.scopePredicate`, so order, counts and filter options cannot disagree
+  `RootRegistry.scopePredicate`, so order and counts cannot disagree
   about what Places holds — the same guarantee ADR 0010 gave the import-batch
   dimension. A scope that requires a location joins `asset_metadata` and the ordered-ID
   query reads each row's coordinate alongside its order; there is no second query for

@@ -26,10 +26,10 @@ struct CatalogQueryGatewayTests {
         #expect(options == .empty)
     }
 
-    /// Counting and filter options are scope-scoped reads exactly like ordering is:
-    /// a batch stamp has to reach all three, or they disagree about what the scope
-    /// holds and the window reports the wrong kind of emptiness.
-    @Test func batchScopeNarrowsCountsAndFilterOptionsToThatBatch() async throws {
+    /// Counting is a scope-scoped read exactly like ordering is: a batch stamp has to
+    /// reach both, or they disagree about what the scope holds and the window reports
+    /// the wrong kind of emptiness.
+    @Test func batchScopeNarrowsCountsToThatBatch() async throws {
         let dbQueue = try DatabaseQueue()
         try CatalogStore.migrator.migrate(dbQueue)
         try await dbQueue.write { db in
@@ -46,15 +46,9 @@ struct CatalogQueryGatewayTests {
         let batchCount = try await dbQueue.read { db in
             try CatalogQueryGateway.countAssets(scope: batchScope, db: db)
         }
-        let batchOptions = try await dbQueue.read { db in
-            try CatalogQueryGateway.filterOptions(scope: batchScope, db: db)
-        }
 
         #expect(wholeRootCount == 3)
         #expect(batchCount == 1)
-        #expect(batchOptions.availableKinds == [.video])
-        #expect(batchOptions.formatsByKind[.video] == [MediaFormatToken(rawValue: "MP4")])
-        #expect(batchOptions.formatsByKind[.image] == nil)
     }
 
     /// The ordering query keeps the root-local index and `=` predicate for a

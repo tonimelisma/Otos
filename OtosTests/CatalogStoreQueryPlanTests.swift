@@ -20,7 +20,7 @@ struct CatalogStoreQueryPlanTests {
             scope: .allMedia,
             filter: MediaFilter(
                 kinds: [.image],
-                formats: [MediaFormatToken(rawValue: "DNG")]
+                fileTypes: [FilterFileType(kind: .raw, format: MediaFormatToken(rawValue: "DNG"))]
             ),
             sort: MediaSortOrder(field: .name, direction: .ascending)
         )
@@ -34,6 +34,19 @@ struct CatalogStoreQueryPlanTests {
         }
 
         #expect(ids.map(\.relativePath.rawValue) == ["alpha.jpg", "raw-original.nef", "retagged.mov"])
+
+        // A file type matches only under the kind it was chosen in.
+        let wrongKind = try await dbQueue.read { db in
+            try CatalogQueryGateway.fetchOrderedAssetIDRows(
+                descriptor: CatalogQueryDescriptor(
+                    scope: .allMedia,
+                    filter: MediaFilter(fileTypes: [FilterFileType(kind: .image, format: MediaFormatToken(rawValue: "DNG"))])
+                ),
+                scope: CatalogScopePredicate(rootIDs: [rootID]),
+                db: db
+            )
+        }
+        #expect(wrongKind.isEmpty)
     }
 
     @Test func querySchemaStreamsCatalogOrderAndEnrichmentCandidatesFromIndexes() async throws {

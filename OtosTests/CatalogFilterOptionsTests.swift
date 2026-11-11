@@ -2,15 +2,8 @@
 import Testing
 
 struct CatalogFilterOptionsTests {
-    @Test func availableKindsIncludeKindsWithNoFormats() {
-        let options = CatalogFilterOptions(formatsByKind: [
-            .image: [],
-            .video: [MediaFormatToken(rawValue: "MOV")],
-        ])
-
-        #expect(options.availableKinds == [.image, .video])
-        #expect(options.formats(for: .image).isEmpty)
-    }
+    private let jpeg = MediaFormatToken(rawValue: "JPEG")
+    private let arw = MediaFormatToken(rawValue: "ARW")
 
     /// File types carry MediaMetadata's names (ADR 0039): every spelling of one type is one
     /// token, so it is one filter row, and a token restored from an older build is renamed.
@@ -23,42 +16,63 @@ struct CatalogFilterOptionsTests {
         let options = CatalogFilterOptions(formatsByKind: [
             .image: [MediaFormatToken(rawValue: "JPEG"), MediaFormatToken(rawValue: "HEIF")],
         ])
-        #expect(options.formats(for: .image) == [MediaFormatToken(rawValue: "HEIF"), MediaFormatToken(rawValue: "JPEG")])
+        #expect(options.formats(for: .image, holding: .all) == [MediaFormatToken(rawValue: "HEIF"), jpeg])
+    }
+
+    /// The reported case: a RAW filter chosen in one library, then a scope — or a whole
+    /// catalog — with no ARW in it. The filter still names ARW, so ARW still has a row
+    /// under RAW, ticked, where it can be cleared.
+    @Test func everyHeldFileTypeHasARowEvenWhereNothingHasIt() {
+        let heldARW = MediaFilter(fileTypes: [FilterFileType(kind: .raw, format: arw)])
+        let noRAW = CatalogFilterOptions(formatsByKind: [.image: [jpeg]])
+
+        #expect(noRAW.formats(for: .raw, holding: heldARW) == [arw])
+        #expect(noRAW.formats(for: .raw, holding: .all).isEmpty)
+        #expect(noRAW.formats(for: .image, holding: heldARW) == [jpeg])
+
+        let cleared = heldARW.settingFileType(arw, kind: .raw, included: false, options: noRAW)
+        #expect(cleared == .all)
     }
 
     @Test func selectingAWholeKindReplacesItsChildFileTypes() {
         let options = filterOptions()
-        let jpeg = MediaFormatToken(rawValue: "JPEG")
         let formatOnly = MediaFilter.all.settingFileType(jpeg, kind: .image, included: true, options: options)
 
         #expect(formatOnly.kinds.isEmpty)
-        #expect(formatOnly.formats == [jpeg])
+        #expect(formatOnly.fileTypes == [FilterFileType(kind: .image, format: jpeg)])
 
-        let allImages = formatOnly.settingKind(.image, included: true, options: options)
+        let allImages = formatOnly.settingKind(.image, included: true)
         #expect(allImages.kinds == [.image])
-        #expect(allImages.formats.isEmpty)
+        #expect(allImages.fileTypes.isEmpty)
     }
 
     @Test func removingOneFileTypeFromAWholeKindProducesTheExpectedMixedSubset() {
-        let options = filterOptions()
         let allImages = MediaFilter(kinds: [.image])
 
-        let withoutJPEG = allImages.settingFileType(
-            MediaFormatToken(rawValue: "JPEG"),
-            kind: .image,
-            included: false,
-            options: options
-        )
+        let withoutJPEG = allImages.settingFileType(jpeg, kind: .image, included: false, options: filterOptions())
 
         #expect(withoutJPEG.kinds.isEmpty)
-        #expect(withoutJPEG.formats == [MediaFormatToken(rawValue: "ARW"), MediaFormatToken(rawValue: "HEIF")])
+        #expect(withoutJPEG.fileTypes == [
+            FilterFileType(kind: .image, format: MediaFormatToken(rawValue: "HEIF")),
+            FilterFileType(kind: .image, format: MediaFormatToken(rawValue: "PNG")),
+        ])
     }
 
-    @Test func selectingEveryAvailableKindCanonicalizesToAllItems() {
+    @Test func selectingEveryFileTypeOfAKindSelectsTheKind() {
         let options = filterOptions()
-        let images = MediaFilter.all.settingKind(.image, included: true, options: options)
-        let everything = images.settingKind(.video, included: true, options: options)
+        let filter = ["HEIF", "JPEG", "PNG"].reduce(MediaFilter.all) { filter, name in
+            filter.settingFileType(MediaFormatToken(rawValue: name), kind: .image, included: true, options: options)
+        }
 
+        #expect(filter == MediaFilter(kinds: [.image]))
+    }
+
+    /// Every kind is one choice, present or not, so "all of them" is the same everywhere.
+    @Test func selectingEveryKindCanonicalizesToAllItems() {
+        let twoKinds = MediaFilter.all.settingKind(.image, included: true).settingKind(.video, included: true)
+        #expect(twoKinds.isActive)
+
+        let everything = twoKinds.settingKind(.raw, included: true)
         #expect(everything == .all)
         #expect(!everything.isActive)
     }
@@ -66,10 +80,11 @@ struct CatalogFilterOptionsTests {
     private func filterOptions() -> CatalogFilterOptions {
         CatalogFilterOptions(formatsByKind: [
             .image: [
-                MediaFormatToken(rawValue: "ARW"),
                 MediaFormatToken(rawValue: "HEIF"),
                 MediaFormatToken(rawValue: "JPEG"),
+                MediaFormatToken(rawValue: "PNG"),
             ],
+            .raw: [arw],
             .video: [MediaFormatToken(rawValue: "MOV")],
         ])
     }

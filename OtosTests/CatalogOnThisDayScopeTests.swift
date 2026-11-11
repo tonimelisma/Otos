@@ -74,7 +74,6 @@ struct CatalogOnThisDayScopeTests {
         )
         let count = try await store.visibleAssetCount(for: scope, availableLibraryPaths: available)
         let cataloged = try await store.catalogedAssetCount(for: scope)
-        let options = try await store.filterOptions(for: scope, availableLibraryPaths: available)
         let anotherDay = try await store.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .onThisDay(CalendarDay(year: 2026, month: 6, day: 1))),
             availableLibraryPaths: available
@@ -87,7 +86,6 @@ struct CatalogOnThisDayScopeTests {
         #expect(videos.ids.map(\.relativePath.rawValue) == ["2020-late.mp4"])
         #expect(count == 3)
         #expect(cataloged == 3)
-        #expect(options.availableKinds == [.image, .video])
         #expect(anotherDay.ids.map(\.relativePath.rawValue) == ["2018-other-day.jpg"])
 
         let state = try #require(CatalogWindowPolicy.onThisDayState(

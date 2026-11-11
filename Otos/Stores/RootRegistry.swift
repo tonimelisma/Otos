@@ -83,8 +83,7 @@ nonisolated struct RootRegistry {
 
     /// Resolves a sidebar selection into the one predicate every scoped catalog read
     /// consumes. This is the sole translation from product scope to SQL scope, so
-    /// ordered IDs, counts, and filter options cannot disagree about what a
-    /// selection means.
+    /// ordered IDs and counts cannot disagree about what a selection means.
     func scopePredicate(
         selection: SidebarSelection,
         availableLibraryPaths: Set<LibraryRootPath>
@@ -172,6 +171,11 @@ nonisolated struct RootRegistry {
                 rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths)
             )
         }
+    }
+
+    /// Row ids of every source in `availableLibraryPaths`, fixed or removable, ascending.
+    func rootIDs(in availableLibraryPaths: Set<LibraryRootPath>) -> [Int64] {
+        availableLibraryPaths.compactMap { statesByPath[$0]?.rowID }.sorted()
     }
 
     private func fixedLibraryRootIDs(in availableLibraryPaths: Set<LibraryRootPath>) -> [Int64] {

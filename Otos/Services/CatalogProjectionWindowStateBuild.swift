@@ -75,10 +75,7 @@ extension CatalogProjection {
         // The supplementary reads are independent; an error in any fails the build.
         async let unfilteredVisibleAssetCount = unfilteredVisibleAssetCount(facts, store: store)
         async let allAssetCount = catalogedAssetCount(facts, store: store)
-        async let filterOptions = store.filterOptions(
-            for: facts.resolvedDescriptor.scope,
-            availableLibraryPaths: facts.availableLibraryPaths
-        )
+        async let filterOptions = store.filterOptions(availableLibraryPaths: facts.availableLibraryPaths)
         async let filteredFixedAssetCount = filteredFixedAssetCount(facts, store: store)
         var (state, metrics) = try await windowState(
             from: facts,

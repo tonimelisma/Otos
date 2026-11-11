@@ -84,29 +84,36 @@ extension MediaFormatToken {
     }
 }
 
+/// One file type the filter holds, under the kind its catalog rows carry. The kind is part
+/// of the value so the popover can always draw a row for it, even where nothing in the
+/// catalog has that type any more — a filter never holds a value the user cannot see.
+nonisolated struct FilterFileType: Hashable {
+    let kind: MediaKind
+    let format: MediaFormatToken
+}
+
 nonisolated struct MediaFilter: Hashable {
     var kinds: Set<MediaKind> = []
-    var formats: Set<MediaFormatToken> = []
+    var fileTypes: Set<FilterFileType> = []
     var choices: Set<MediaChoice> = []
 
     static let all = MediaFilter()
 
     var isActive: Bool {
-        !kinds.isEmpty || !formats.isEmpty || !choices.isEmpty
-    }
-
-    func includes(kind: MediaKind?, format: MediaFormatToken?) -> Bool {
-        (kinds.isEmpty && formats.isEmpty)
-            || (kind.map(kinds.contains) ?? false)
-            || (format.map(formats.contains) ?? false)
+        !kinds.isEmpty || !fileTypes.isEmpty || !choices.isEmpty
     }
 
     func includes(kind: MediaKind?, format: MediaFormatToken?, choice: MediaChoice) -> Bool {
-        let includesMedia = (kinds.isEmpty && formats.isEmpty)
+        let includesMedia = (kinds.isEmpty && fileTypes.isEmpty)
             || (kind.map(kinds.contains) ?? false)
-            || (format.map(formats.contains) ?? false)
+            || (kind.flatMap { kind in format.map { fileTypes.contains(FilterFileType(kind: kind, format: $0)) } } ?? false)
         let includesChoice = choices.isEmpty || choices.contains(choice)
         return includesMedia && includesChoice
+    }
+
+    /// The file types of `kind` this filter holds by name (a whole kind holds none by name).
+    func fileTypes(of kind: MediaKind) -> Set<MediaFormatToken> {
+        Set(fileTypes.filter { $0.kind == kind }.map(\.format))
     }
 
     func settingChoice(_ choice: MediaChoice, included: Bool) -> MediaFilter {
@@ -122,21 +129,18 @@ nonisolated struct MediaFilter: Hashable {
         return updated
     }
 
-    func settingKind(
-        _ kind: MediaKind,
-        included: Bool,
-        options: CatalogFilterOptions
-    ) -> MediaFilter {
+    func settingKind(_ kind: MediaKind, included: Bool) -> MediaFilter {
         var updated = self
-        let formatsInKind = options.availableFormatTokens(for: kind)
         updated.kinds.remove(kind)
-        updated.formats.subtract(formatsInKind)
+        updated.fileTypes = updated.fileTypes.filter { $0.kind != kind }
         if included {
             updated.kinds.insert(kind)
         }
-        return updated.canonicalized(options: options)
+        return updated.canonicalized()
     }
 
+    /// Selecting every file type `options` offers under `kind` selects the kind itself, so
+    /// a type that arrives in that kind later is included too.
     func settingFileType(
         _ format: MediaFormatToken,
         kind: MediaKind,
@@ -144,39 +148,32 @@ nonisolated struct MediaFilter: Hashable {
         options: CatalogFilterOptions
     ) -> MediaFilter {
         var updated = self
-        let formatsInKind = options.availableFormatTokens(for: kind)
-        var selectedFormats = updated.kinds.contains(kind)
-            ? formatsInKind
-            : updated.formats.intersection(formatsInKind)
-
+        let offered = Set(options.formats(for: kind, holding: self))
+        var selected = kinds.contains(kind) ? offered : fileTypes(of: kind)
         if included {
-            selectedFormats.insert(format)
+            selected.insert(format)
         } else {
-            selectedFormats.remove(format)
+            selected.remove(format)
         }
 
         updated.kinds.remove(kind)
-        updated.formats.subtract(formatsInKind)
-        if !formatsInKind.isEmpty, selectedFormats == formatsInKind {
+        updated.fileTypes = updated.fileTypes.filter { $0.kind != kind }
+        if !offered.isEmpty, selected == offered {
             updated.kinds.insert(kind)
         } else {
-            updated.formats.formUnion(selectedFormats)
+            updated.fileTypes.formUnion(selected.map { FilterFileType(kind: kind, format: $0) })
         }
-        return updated.canonicalized(options: options)
+        return updated.canonicalized()
     }
 
-    private func canonicalized(options: CatalogFilterOptions) -> MediaFilter {
-        let availableKinds = Set(options.availableKinds)
-        let selectsEveryAvailableKind = !availableKinds.isEmpty
-            && kinds == availableKinds
-            && formats.isEmpty
-        if selectsEveryAvailableKind {
-            var result = self
-            result.kinds = []
-            result.formats = []
-            return result.choices.isEmpty ? .all : result
+    /// Every kind selected is no media restriction at all.
+    private func canonicalized() -> MediaFilter {
+        guard kinds == Set(MediaKind.allCases), fileTypes.isEmpty else {
+            return self
         }
-        return self
+        var result = self
+        result.kinds = []
+        return result
     }
 }
 
@@ -303,7 +300,7 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
 
     var diagnosticDescription: String {
         let kindList = filter.kinds.map(\.rawValue).sorted().joined(separator: ",")
-        let formatList = filter.formats.map(\.rawValue).sorted().joined(separator: ",")
+        let formatList = filter.fileTypes.map { "\($0.kind.rawValue)/\($0.format.rawValue)" }.sorted().joined(separator: ",")
         let choiceList = filter.choices.map(\.rawValue).sorted().joined(separator: ",")
         return """
         scope=\(scope.diagnosticDescription) \
@@ -323,27 +320,19 @@ nonisolated struct CatalogQueryRequest: Hashable {
     static let initial = CatalogQueryRequest(descriptor: .default, generation: 0)
 }
 
+/// The file types the filter popover offers: those present in every available source,
+/// whatever the sidebar shows. The filter itself spans scopes (APP-042), so its choices
+/// do too — a value chosen in one scope keeps its row in every other.
 nonisolated struct CatalogFilterOptions: Equatable {
     var formatsByKind: [MediaKind: [MediaFormatToken]] = [:]
 
     static let empty = CatalogFilterOptions()
 
-    var isEmpty: Bool {
-        formatsByKind.isEmpty
-    }
-
-    var availableKinds: [MediaKind] {
-        MediaKind.displayOrder.filter { formatsByKind.keys.contains($0) }
-    }
-
-    /// The file types present for `kind`, in name order. Every token is one file type
-    /// (MediaMetadata's name), so a type is one filter row.
-    func formats(for kind: MediaKind) -> [MediaFormatToken] {
-        (formatsByKind[kind] ?? []).sorted()
-    }
-
-    func availableFormatTokens(for kind: MediaKind) -> Set<MediaFormatToken> {
-        Set(formatsByKind[kind] ?? [])
+    /// The rows under `kind`, in name order: the file types present, plus any `filter`
+    /// holds that nothing present has, so every held value can be seen and cleared.
+    /// Every token is one file type (MediaMetadata's name), so a type is one row.
+    func formats(for kind: MediaKind, holding filter: MediaFilter) -> [MediaFormatToken] {
+        Set(formatsByKind[kind] ?? []).union(filter.fileTypes(of: kind)).sorted()
     }
 }
 

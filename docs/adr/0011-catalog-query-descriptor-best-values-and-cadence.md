@@ -31,8 +31,8 @@ This ADR owns:
   the AppKit grid reset policy
 - the single-layer SQLite best-value model for best capture date, best media
   kind, and best format
-- the current indexed query shapes for ordered IDs, unfiltered counts, and
-  scoped filter options
+- the current indexed query shapes for ordered IDs and unfiltered counts, and the
+  filter's options
 - the two-tier publication cadence: immediate user-intent wakeups and roughly
   one-second background coalescing for scan, enrichment, thumbnail, and
   filesystem-event updates
@@ -111,21 +111,28 @@ enrichment results are coalesced by their owners' in-flight work instead of a ti
 (`docs/research/2026-10-23-cadence-audit.md`). Viewport priority hints remain
 immediate because they affect scheduling, not UI publication.
 
-Toolbar and View menu controls share `CatalogFilterMenuContent` and
-`CatalogSortMenuContent`, so native checked/mixed state, scoped availability, and
-complete sort-order copy cannot drift between the two command surfaces. Sort is
+The toolbar and the View menu open the same filter popover and share the sort
+menu's content, so native checked/mixed state and complete sort-order copy cannot
+drift between the two command surfaces. Sort is
 presented as six complete field-and-direction choices but still writes the same
 `MediaSortOrder` value. The toolbar filter uses a native popover with Images, RAW,
 and Videos parent toggles directly above their child file types. Partial child
-selection gives the parent a mixed state; selecting every scoped kind or clearing
-every selection canonicalizes back to the empty, all-items descriptor. The View
+selection gives the parent a mixed state; selecting every kind or clearing every
+selection canonicalizes back to the empty, all-items descriptor.
+
+The filter's options are not scoped. The descriptor's filter survives a scope change
+(APP-042), so a filter value and the rows that show it must span the same thing: the
+popover always lists all three kinds, and under each the file types present in any
+available source plus every file type the filter holds. A filter holds a file type
+under its kind (`FilterFileType`), which is what lets it draw a row for a type no
+available row has any more. Options drawn from the shown scope were rejected: a value
+chosen in one scope then had no row in another, so the window said "Filtered" with
+nothing ticked, and the filter's own normalization gave different answers per scope. The View
 menu opens that same popover instead of duplicating the hierarchy.
 
-Exact `best_format` tokens remain catalog facts. `MediaFileTypeOption` is a query-
-surface grouping only: HEIC, HEIF, and HIF appear as one `HEIF` choice whose
-filter predicate contains all exact tokens; JPEG/JPG/JPE and TIFF/TIF aliases are
-grouped similarly. The grouping neither changes the
-generated `best_format` column nor discards the original extension fact.
+`best_format` tokens are MediaMetadata's file-type names (ADR 0039): HEIC, HEIF and
+HIF are one `HEIF`, JPG/JPE one `JPEG`, TIF one `TIFF`, so every token is one filter
+row and a file type's predicate is one `best_kind`/`best_format` pair.
 
 ## Alternatives Considered
 

@@ -661,10 +661,11 @@ private nonisolated func filterPredicate(
         mediaClauses.append("best_kind IN (\(sqlPlaceholders(count: kinds.count)))")
         arguments.append(contentsOf: kinds.map(\.rawValue))
     }
-    let formats = filter.formats.sorted()
-    if !formats.isEmpty {
-        mediaClauses.append("best_format IN (\(sqlPlaceholders(count: formats.count)))")
-        arguments.append(contentsOf: formats.map(\.rawValue))
+    let fileTypes = filter.fileTypes.sorted { ($0.kind.rawValue, $0.format.rawValue) < ($1.kind.rawValue, $1.format.rawValue) }
+    for fileType in fileTypes {
+        mediaClauses.append("(best_kind = ? AND best_format = ?)")
+        arguments.append(fileType.kind.rawValue)
+        arguments.append(fileType.format.rawValue)
     }
     if !mediaClauses.isEmpty {
         clauses.append("(\(mediaClauses.joined(separator: " OR ")))")
