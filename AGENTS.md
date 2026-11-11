@@ -330,12 +330,13 @@ with `script/logs.sh stream [Category]` (live) or
 See `docs/adr/0015-observability.md`.
 
 Benchmarks are `script/bench.sh run`: it runs the opt-in cases in
-`OtosTests/BenchmarkTests.swift` on a generated catalog and, on a clean tree, records
-the results on HEAD as git notes. `script/bench.sh history [case]` reads them back,
-newest first, with each change in instructions. Compare instructions, not
-milliseconds: instructions hold within about 1% under the parallel load that moves
-wall time several-fold. Run it in the background like `check.sh`. A hot path that
-performance work touches gets a case (ADR 0043).
+`OtosTests/BenchmarkTests.swift` on a generated catalog, in three fresh test processes,
+and on a clean tree records the results on HEAD as git notes. `script/bench.sh history
+[case]` reads them back, newest first, with each change in instructions. Compare
+instructions, not milliseconds: under the parallel load that moves wall time several-fold,
+a steady case's instructions hold within about 1%. Some cases also differ from one process
+to the next, and `compare` holds each case to the noise it has shown. Run it in the
+background like `check.sh`. A hot path that performance work touches gets a case (ADR 0043).
 
 Dev builds (scripts, Xcode ▸ Run) are `net.melisma.Otos.dev` with their own
 Application Support data; `/Applications/Otos.app` is the installed
@@ -507,10 +508,9 @@ the final PR commit, with `main` merged in and the tree clean, after `script/che
 passes:
 
 1. Run `script/bench.sh run`, then `script/bench.sh compare`, both in the background.
-2. If `compare` exits 3, a case retired more than 2% more instructions than its base,
-   beyond every run's range in at least two runs a side (`compare` measures a side again
-   when a suspected rise has one run there; a rise within the ranges is reported as
-   `within noise`).
+2. If `compare` exits 3, a case retired more instructions than its base by more than 2%
+   and more than its own process-to-process noise, beyond every process's range (a run
+   measures three test processes; a rise within the noise is reported as `within noise`).
    Stop before merging and show the user the comparison table. Merge only with the
    user's explicit permission in chat, and quote that permission in the DoD report.
 3. Either way, include the comparison table in the DoD report.

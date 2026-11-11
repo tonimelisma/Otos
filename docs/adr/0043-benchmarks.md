@@ -1,7 +1,7 @@
 # ADR 0043: Benchmarks are opt-in, count instructions, are recorded per commit, and are compared before merge
 
 - Status: Accepted
-- Last updated: 2026-11-01
+- Last updated: 2026-11-11
 
 ## Context
 
@@ -38,14 +38,26 @@ The tooling found:
 - **They are opt-in.** The suite is enabled only when `OTOS_BENCHMARK=1`, which
   `script/bench.sh run` passes through the scheme, the same way `OTOS_SCALE_TEST` works.
   `script/check.sh` never runs them.
-- **Each case is measured as one warm-up run and five measured runs.** For each run the
-  harness records the instructions the test process retired (`proc_pid_rusage`,
-  `ri_instructions`) and the wall time. The result keeps the median instructions, their
-  spread, and the median and minimum milliseconds.
-  - Instructions are the number to compare across commits.
-  - Milliseconds are kept as what a user waits for.
-  - Counting is process-wide because a case's work hops between actors. The suite is
-    serialized so no other test adds to the count.
+- **A run measures several test processes, each with one hash seed.** `script/bench.sh run`
+  builds once and runs the suite in `OTOS_BENCH_PROCESSES` fresh test processes (default
+  3), each with `SWIFT_DETERMINISTIC_HASHING=1`. In each process, each case is measured as
+  one warm-up run and five measured runs.
+  - For each run the harness records the instructions the test process retired
+    (`proc_pid_rusage`, `ri_instructions`) and the wall time. A process's result keeps the
+    median instructions, their spread, and the median and minimum milliseconds.
+  - Instructions are the number to compare across commits; milliseconds are kept as what
+    a user waits for.
+  - Counting is process-wide because a case's work hops between actors and into Apple's
+    frameworks' threads. The suite is serialized so no other test adds to the count.
+  - **Why several processes (2026-11-11):** a case's count differs from one process to the
+    next by more than its samples vary inside one. A process's allocator (xzone malloc)
+    takes different paths in each process, and its switches are locked on a release macOS.
+    Core Image's and Vision's worker threads settle into different modes in each process.
+    Neither can be held still, so a run measures it.
+  - **Why one hash seed (2026-11-11):** each process otherwise seeds `Set` and `Dictionary`
+    hashing at random. That alone made the People cases differ by 4–5% between processes;
+    with one seed, under 2%. Measured in
+    `docs/research/2026-11-11-benchmark-process-variance.md`.
 - **Fixtures are generated from a fixed seed, never the owner's library.**
   `BenchmarkLibrary` builds about 15,000 stills shaped like the owner's catalog of
   2026-11-01: one in nine without capture metadata, in screenshot shapes; one in forty
@@ -62,33 +74,33 @@ The tooling found:
   first, with each case's change in instructions from the previous record on the same
   machine.
 - **An app-changing PR is compared with its base before it merges.**
-  `script/bench.sh compare` sets the PR's record against its merge base with `origin/main`,
-  measuring the base first in a detached checkout when it has none.
-  - Each side's evidence is every run recorded for its commit on this machine; each run is
-    one test process. A case is flagged when its median over head's runs retired **more
-    than 2% more instructions** than its median over base's **and** the rise is beyond
-    every run's range: head's lowest sample in any run, median × (1 − spread), still
-    exceeds base's highest in any run, median × (1 + spread). The owner decides whether
-    it merges.
-  - A flag needs at least two runs on each side. A case that would flag on one side's
-    single run is reported `to confirm`, and `compare` measures that side again in a new
-    test process, then judges once more. Only a suspected regression costs that run.
-  - A rise above 2% whose ranges overlap is reported as `within noise` and does not stop
-    the merge. A smaller change is only reported.
-  - 2% is four times the run-to-run variation measured on unchanged code (about ±0.5%).
-    It catches a real regression in a steady case.
-  - **Why the spread test (2026-11-10):** the process-wide instruction count includes
-    other threads, so a case retiring well under 10 M instructions varies by tens of
-    percent. On unchanged code, `face.align` (0.1 M) read +26.6% with spreads of 20% and
-    25%, and blocked an unrelated PR. A steady case's spread stays under 1%, so a real
-    regression there is still flagged. A case that varies is itself reported, and is made
-    steady by doing more work per sample.
-  - **Why two runs a side (2026-11-10):** a run's spread shows only the noise inside one
-    test process, and the count also drifts from one process to the next. One commit's
-    `search.textMatch.5k` read 424.3 and 435.5 M in two runs (2.6% apart, each run within
-    1.2%), and `face.align.x1000` read 85.8–88.1 M across four runs of one tree, each
-    within 1%. Either drift alone crossed the gate on unrelated PRs. The ranges of two
-    processes per side cover it, and a real regression moves every process.
+  `script/bench.sh compare` sets the PR's processes against its merge base's with
+  `origin/main`. When base has no record from the current harness, `compare` measures it
+  first, with the current harness, in a detached checkout.
+  - **Records carry their harness.** Each record carries `harness` (now 2), and `compare`
+    sets only records of one harness against each other. Records of another harness stay
+    as history. A change to what a run counts raises the number in `bench.sh`.
+  - **A case's noise is measured, not assumed.** A case's noise is the widest range its
+    processes spanned on any one commit, over the newest 10 measured commits. One commit
+    is one tree, so whatever its processes disagree on is noise.
+  - **When a case is flagged.** Its median over head's processes must have risen by more
+    than 2% and by more than the case's noise. The rise must also be beyond every process's
+    range: head's lowest sample in any process, median × (1 − spread), still exceeds base's
+    highest, median × (1 + spread). The owner then decides whether the PR merges.
+  - **A rise that is not flagged.** A rise above 2% that fails either test is reported as
+    `within noise` and does not stop the merge. A smaller change is only reported.
+  - **Why 2%.** It is four times the run-to-run variation of a steady case (about ±0.5%),
+    so it catches a real regression there.
+  - **Why the noise is read from history (2026-11-11):** two processes a side were not
+    enough evidence. A case with two modes 2.4% apart was flagged whenever base's
+    processes happened to land in one mode and head's in the other. That is how
+    `search.readText` (+7.6%) and `search.textMatch.5k` (+2.6%) stopped unrelated PRs.
+    The record already holds, per commit, how far each case's processes disagree on one
+    tree. A case is held to the noise it has shown, so a steady case stays sharp and a
+    two-mode case can only report a rise wider than its modes.
+  - **A noisy case cannot be sharpened by the harness.** In `face.crop.x16` (about 14%) the
+    noise is in Core Image's threads. A case like that shows only a rise wider than its
+    noise, and is made sharper only by changing what it measures, as `face.align` was.
   - The owner chose permission over an automatic block. Some regressions are the price
     of a feature, and that trade is a product decision.
 - **A record is never lost to a parallel run.** Sessions benchmark in parallel, and
@@ -116,13 +128,24 @@ The tooling found:
 - **A results file committed to the tree.** Every run would be a commit, and the file
   would conflict across worktrees. Notes record the same facts against the commit itself.
 
+- **Each case in its own process.** Run alone, a case group read inside the range of the
+  full suite's processes (2026-11-11), so the earlier cases' heap is not what moves a
+  count. The cost would be one catalog fixture build per catalog case and process.
+- **Tuning the allocator for benchmark runs.** xzone malloc's per-process and timing
+  switches are refused on a release macOS. Even where honoured, they would measure an
+  allocator the app does not run with.
+- **A software `CIContext` for `face.crop`.** It stayed noisy (6.8% inside a process) and
+  stopped measuring the GPU path the app takes.
+
 ## Consequences
 
-- A regression of more than 2%, beyond every run's range in two runs a side, stops an app-changing PR before
-  merge, until the owner says whether it ships. A noisy case never blocks a merge. Smaller drifts show in `bench.sh history`, against the commit
+- A regression of more than 2%, and more than the case's own noise, beyond every process's
+  range, stops an app-changing PR before merge, until the owner says whether it ships.
+  Noise alone never blocks a merge. Smaller drifts show in `bench.sh history`, against the commit
   that caused each one.
-- Each app-changing PR costs one benchmark run before merge and one on `main` after it.
-  A base without a record costs one more run, in a fresh checkout.
+- Each app-changing PR costs one benchmark run before merge and one on `main` after it,
+  each of three test processes (about four minutes together). A base without a record
+  from the current harness costs one more run, in a fresh checkout.
 - Numbers compare only on one machine and configuration. The record carries both, and
   `history` compares within a machine.
 - Notes stay in the local clone unless pushed (`git push origin refs/notes/benchmarks`).
