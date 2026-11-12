@@ -5,12 +5,15 @@
 Accepted, 2026-11-10; assignment rewritten 2026-11-12, when the owner redesigned People
 around auto-tagged faces; the person-admission rule and lapsed seeds added 2026-11-12, after
 objects Vision took for faces became a person of their own; the image read rewritten
-2026-11-12, when faces moved from the original at full resolution to the stored preview. The
+2026-11-12, when faces moved from the original at full resolution to the stored preview;
+unrecognisable faces kept out of assignment 2026-11-13, after faces of different people the
+model cannot tell apart became a person of their own. The
 model, precision and face-admission rules are decided on measured evidence
 (`docs/research/2026-11-07-face-recognition-models.md`,
 `docs/research/2026-11-12-face-person-admission.md`); the image read on
 `docs/research/2026-11-12-faces-from-the-preview.md`; assignment on
-`docs/research/2026-11-12-face-auto-assignment.md`.
+`docs/research/2026-11-12-face-auto-assignment.md` and
+`docs/research/2026-11-13-unrecognisable-faces.md`.
 
 Built: detection, the analyser and the model (#593), stored faces (#601), faces read from
 stored previews (`PreviewFaceReader`, for Immich accounts in #605 and for every still since),
@@ -179,9 +182,17 @@ grouping had put with the right child.
   faces from two or more days becomes a new, unnamed person seeded with them, and chaining
   runs again from scratch with the seeds as anchors. A face like no one, or seen on one day
   only, stays unidentified, so a stranger caught once never becomes a person.
+- **Unrecognisable faces:** AdaFace places a face it cannot tell anyone by (blurred, upside
+  down, hidden by a costume, seen too close) near one common direction, whoever it shows, so
+  such faces of different people link as strongly as one person's. `FaceRecognisability`
+  holds that direction: the mean embedding of aligned crops shrunk to 8 px, which keeps no
+  identity. A face whose cosine with it reaches 0.2 is never guessed, grouped or compared
+  with. One the user gave a person still keeps that person out of the rest of its photo.
+  Measured on the owner's catalog: no face the user named reaches 0.13, and every face of
+  the group they found wrong reaches 0.22 (`docs/research/2026-11-13-unrecognisable-faces.md`).
 - **Lapsed seeds:** a person the user said nothing about (no name, birthday, favourite, hidden
-  mark or key photo, and no face on their word) keeps their seeds only while the seeds span two
-  or more days, as a new person's must. When faces leave such a person (re-read under stricter
+  mark or key photo, and no face on their word) keeps none of their unrecognisable seeds, and
+  their others only while those span two or more days, as a new person's must. When faces leave such a person (re-read under stricter
   admission, deleted, or moved by the user), the seeds left are Otos's to decide again, and the
   person is forgotten once no face is theirs. A person the user said anything about keeps
   their seeds.
@@ -274,6 +285,11 @@ grouping had put with the right child.
   adult's median is 0.43, so a floor high enough for the objects would drop real faces.
 - **Classifying the aligned crop:** the 112 px crop shows the classifier only skin and features.
   On it a face the user named reads as low as 0.074, and on the wider square 0.279.
+- **Turning unrecognisable faces away at admission:** they are real faces the user may name.
+  The embedding alone says the model cannot tell who they are, so assignment leaves them alone
+  and nothing is analysed again.
+- **A direction built from 12 px crops:** some identity survives at 12 px. It reaches 0.19 on a
+  face the user named and leaves half the wrong group under the limit.
 - **Seeds that anchor until the user moves them, for every person:** a person Otos found from
   objects and a few unrecognisable faces outlived the objects' removal through the seeds left,
   all from one day.
@@ -301,7 +317,8 @@ grouping had put with the right child.
 - **Hidden faces are turned away too:** a face behind a mask or a net, or a face printed on a
   document, can read under the person rule and stay unread (3 of 5,477 measured).
 - **Model change:** a new model is a new revision that re-analyses every photo, and stored names
-  carry over through the user's faces and the seeds.
+  carry over through the user's faces and the seeds. `FaceRecognisability.direction`
+  is rebuilt for it the same way.
 - **Wrong guesses are shown:** a face can carry the wrong person until the user corrects it;
   the likeness sort puts the faces least like a person first, where the wrong ones are.
 - **Licence check:** WebFace260M's terms are recorded as unread. They are checked when the site

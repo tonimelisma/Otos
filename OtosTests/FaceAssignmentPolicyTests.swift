@@ -210,6 +210,54 @@ struct FaceAssignmentPolicyTests {
         #expect(FaceAssignmentPolicy.assign(faces: oneDay, people: bare).lapsedSeeds == Set(oneDay.map(\.id)))
     }
 
+    /// The direction unrecognisable faces share, as fixture weights: a face along it is one
+    /// the model cannot tell anyone by.
+    static let unrecognisable = Dictionary(uniqueKeysWithValues: FaceRecognisability.direction.enumerated().map { ($0.offset, $0.element) })
+
+    /// A face the model cannot tell anyone by is never guessed and never grouped, however
+    /// alike it is to a person or to other such faces.
+    @Test func anUnrecognisableFaceIsNeverGuessedOrGrouped() {
+        let sam = Self.face("sam.jpg", toward: Self.unrecognisable, at: 0, assignment: .user(Self.sam))
+        let faces = [
+            Self.face("a.jpg", toward: Self.unrecognisable, at: Self.day),
+            Self.face("b.jpg", toward: Self.unrecognisable, at: 3 * Self.day),
+        ]
+
+        let result = FaceAssignmentPolicy.assign(faces: [sam] + faces, people: Self.people)
+
+        #expect(!sam.isRecognisable && faces.allSatisfy { !$0.isRecognisable })
+        #expect(result.guesses.isEmpty)
+        #expect(result.newPeople.isEmpty)
+        #expect(result.likeness.isEmpty)
+    }
+
+    /// An unrecognisable face the user gave a person still keeps them out of the rest of its
+    /// photo: a face there as like them as can be is not theirs.
+    @Test func anUnrecognisableAnchorHoldsItsPhoto() {
+        let held = Self.face("group.jpg", index: 0, toward: Self.unrecognisable, at: 0, assignment: .user(Self.sam))
+        let sam = Self.face("sam.jpg", toward: [0: 1], at: 0, assignment: .user(Self.sam))
+        let sameGroup = Self.face("group.jpg", index: 1, toward: [0: 1, 1: 0.2], at: 0)
+        let elsewhere = Self.face("other.jpg", toward: [0: 1, 1: 0.2], at: 0)
+
+        let result = FaceAssignmentPolicy.assign(faces: [held, sam, sameGroup, elsewhere], people: Self.people)
+
+        #expect(result.guesses[sameGroup.id] == nil)
+        #expect(result.guesses[elsewhere.id] == .existing(Self.sam))
+    }
+
+    /// A bare person's unrecognisable seeds lapse; its seeds stand while the recognisable
+    /// ones still span two days, and all lapse when they do not.
+    @Test func unrecognisableSeedsOfABarePersonLapse() {
+        let found = PersonID(rawValue: 7)
+        let people = Self.people + [PersonFact(id: found, birthdaySeconds: nil, isBare: true)]
+        let blurred = Self.face("blurred.jpg", toward: Self.unrecognisable, at: 9 * Self.day, assignment: .seed(found))
+        let monday = Self.face("monday.jpg", toward: [5: 1], at: 0, assignment: .seed(found))
+        let friday = Self.face("friday.jpg", toward: [5: 1, 6: 0.3], at: 4 * Self.day, assignment: .seed(found))
+
+        #expect(FaceAssignmentPolicy.assign(faces: [monday, friday, blurred], people: people).lapsedSeeds == [blurred.id])
+        #expect(FaceAssignmentPolicy.assign(faces: [monday, blurred], people: people).lapsedSeeds == [monday.id, blurred.id])
+    }
+
     @Test func likenessIsTheBestSimilarityToTheOtherFacesOfThePerson() {
         let anchor = Self.face("a.jpg", toward: [0: 1], at: 0, assignment: .user(Self.sam))
         let guess = Self.face("b.jpg", toward: [0: 1, 1: 1], at: Self.day)

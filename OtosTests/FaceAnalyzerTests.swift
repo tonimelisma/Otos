@@ -101,6 +101,45 @@ struct FaceAnalyzerTests {
         #expect(object < FaceAnalyzer.minimumPersonConfidence, "object \(object)")
     }
 
+    /// The model cannot tell anyone by a face blurred to nothing: a portrait's aligned crop,
+    /// shrunk to 8 px and enlarged back, reads along `FaceRecognisability.direction`, while
+    /// the crop itself does not. The direction is unit length.
+    @Test func aFaceBlurredToNothingIsUnrecognisable() throws {
+        let model = try FaceEmbeddingModel(bundle: Bundle(for: CatalogWindowViewModel.self))
+        let crop = try Self.alignedPortraitCrop("williams-2018")
+
+        #expect(try FaceRecognisability.isRecognisable(model.embedding(of: crop)))
+        #expect(try !FaceRecognisability.isRecognisable(model.embedding(of: Self.resampled(crop, through: 8))))
+        #expect(abs(Self.dot(FaceRecognisability.direction, FaceRecognisability.direction) - 1) < 1e-4)
+    }
+
+    /// The aligned 112 px crop the analyzer hands the model for a fixture portrait's one face.
+    static func alignedPortraitCrop(_ name: String) throws -> CGImage {
+        let image = try portrait(name)
+        let request = VNDetectFaceLandmarksRequest()
+        request.revision = VNDetectFaceLandmarksRequestRevision3
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        let observation = try #require(request.results?.first)
+        let size = CGSize(width: image.width, height: image.height)
+        let points = try #require(FaceAnalyzer.alignmentPoints(observation, imageSize: size))
+        let transform = try #require(FaceAlignment.similarity(from: points, to: FaceAlignment.template))
+        return try #require(FaceAnalyzer.alignedCrop(of: CIImage(cgImage: image), transform: transform, context: CIContext()))
+    }
+
+    /// `image` shrunk to `side` pixels square and enlarged back to its own size.
+    static func resampled(_ image: CGImage, through side: Int) throws -> CGImage {
+        func drawn(_ source: CGImage, _ width: Int, _ height: Int) throws -> CGImage {
+            let context = try #require(CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+            ))
+            context.interpolationQuality = .high
+            context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return try #require(context.makeImage())
+        }
+        return try drawn(drawn(image, side, side), image.width, image.height)
+    }
+
     // MARK: - Real faces
 
     /// The whole analysis on real portraits (`OtosTests/Fixtures/Faces`, public domain, sources in its `SOURCES.md`): each
@@ -122,6 +161,7 @@ struct FaceAnalyzerTests {
             #expect(face.landmarks.leftEye.y < face.landmarks.leftMouth.y, "\(name)")
             #expect(face.landmarks.rightEye.y < face.landmarks.rightMouth.y, "\(name)")
             #expect(abs(Self.dot(face.embedding, face.embedding) - 1) < 1e-3, "\(name)")
+            #expect(FaceRecognisability.isRecognisable(face.embedding), "\(name)")
             faces[name] = face
         }
         let earlier = try #require(faces["williams-2006"]).embedding

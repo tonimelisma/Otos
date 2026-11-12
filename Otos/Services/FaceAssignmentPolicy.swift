@@ -65,6 +65,23 @@ nonisolated struct FaceFact: Sendable, Equatable {
     let isNotFace: Bool
     /// People the user said this face is not (Remove Name).
     let rejected: Set<PersonID>
+    /// The model can tell who this face is (`FaceRecognisability`). A face it cannot is still
+    /// a face, and keeps what the user says of it, but Otos never guesses it, never groups
+    /// it, and never compares another face with it.
+    let isRecognisable: Bool
+
+    init(
+        id: FaceID, captureSeconds: Double?, embedding: [Float], assignment: FaceAssignment, isNotFace: Bool,
+        rejected: Set<PersonID>
+    ) {
+        self.id = id
+        self.captureSeconds = captureSeconds
+        self.embedding = embedding
+        self.assignment = assignment
+        self.isNotFace = isNotFace
+        self.rejected = rejected
+        isRecognisable = FaceRecognisability.isRecognisable(embedding)
+    }
 
     /// The same face with no person: a seed whose group no longer stands is Otos's to decide
     /// again.
@@ -149,8 +166,12 @@ nonisolated struct FaceAssignmentResult: Sendable, Equatable {
 ///   joined strongest first, never two faces of one photo. A group of faces from two or more
 ///   days becomes a new person, seeded with its faces, and chaining runs again with them. A
 ///   face matching nobody and like no face of another day stays without a person.
-/// - **Lapsed seeds:** a person the user said nothing about keeps its seeds only while they
-///   still span two or more days, as a new person's must. When faces leave it (re-read
+/// - **Unrecognisable faces:** a face the model cannot tell anyone by
+///   (`FaceRecognisability`) is never guessed, grouped or compared with; one the user gave a
+///   person still keeps that person out of the rest of its photo.
+/// - **Lapsed seeds:** a person the user said nothing about keeps its unrecognisable seeds
+///   never, and its others only while they still span two or more days, as a new person's
+///   must. When faces leave it (re-read
 ///   under stricter admission, deleted, or moved by the user), the seeds left are Otos's to
 ///   decide again, and the person is forgotten once no face is theirs.
 nonisolated enum FaceAssignmentPolicy {
@@ -208,9 +229,9 @@ nonisolated enum FaceAssignmentPolicy {
         return result
     }
 
-    /// The seeds of each person the user said nothing about and gave no face, when the dated
-    /// seeds left span fewer than two days: the group the person was found from no longer
-    /// stands.
+    /// The seeds of each person the user said nothing about and gave no face that no longer
+    /// stand: every unrecognisable seed, and every seed when the recognisable ones span fewer
+    /// than two days.
     static func lapsedSeeds(_ faces: [FaceFact], people: [PersonFact]) -> Set<FaceID> {
         let bare = Set(people.filter(\.isBare).map(\.id))
         var seeds: [PersonID: [FaceFact]] = [:]
@@ -227,8 +248,11 @@ nonisolated enum FaceAssignmentPolicy {
         }
         var lapsed: Set<FaceID> = []
         for (person, faces) in seeds where !claimed.contains(person) {
-            if Set(faces.compactMap { day($0.captureSeconds) }).count < 2 {
+            let standing = faces.filter(\.isRecognisable)
+            if Set(standing.compactMap { day($0.captureSeconds) }).count < 2 {
                 lapsed.formUnion(faces.map(\.id))
+            } else {
+                lapsed.formUnion(faces.filter { !$0.isRecognisable }.map(\.id))
             }
         }
         return lapsed
@@ -297,7 +321,7 @@ nonisolated enum FaceAssignmentPolicy {
         birthdays: [PersonID: Double?]
     ) -> [FaceID: Float] {
         var byPerson: [FaceAssignmentResult.Person: [Int]] = [:]
-        for (index, person) in assigned {
+        for (index, person) in assigned where faces[index].isRecognisable {
             byPerson[person, default: []].append(index)
         }
         var likeness: [FaceID: Float] = [:]
@@ -379,7 +403,9 @@ nonisolated struct Fill {
                 nil
             }
         }
-        let rows = faces.indices.filter { faces[$0].assignment.isGuessable && anchors[$0] == nil }
+        // An unrecognisable face is never a row or evidence; as an anchor it still keeps its
+        // person out of the rest of its photo.
+        let rows = faces.indices.filter { faces[$0].assignment.isGuessable && anchors[$0] == nil && faces[$0].isRecognisable }
         let rowFaces = rows.map { faces[$0] }
         let rejected = rowFaces.map { face in Set(face.rejected.compactMap { slotOf[.existing($0)] }) }
         var assigned = anchors
@@ -392,7 +418,7 @@ nonisolated struct Fill {
         // far; -2 before any of it is within reach.
         var best = [Float](repeating: -2, count: rows.count * count)
         var open = Set(rows.indices)
-        var evidence = anchors.keys.sorted()
+        var evidence = anchors.keys.filter { faces[$0].isRecognisable }.sorted()
 
         func top(_ row: Int, excludingPhoto: Bool) -> (slot: Int, value: Float, second: Float)? {
             var excluded = rejected[row]
@@ -579,7 +605,7 @@ nonisolated struct FaceRanker: Sendable {
     init(faces: [FaceFact], people: [PersonFact], offered: Set<PersonID>) {
         let birthdays = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.birthdaySeconds) })
         var byPerson: [PersonID: [FaceFact]] = [:]
-        for face in faces where !face.isNotFace {
+        for face in faces where !face.isNotFace && face.isRecognisable {
             if let person = face.assignment.person, offered.contains(person) {
                 byPerson[person, default: []].append(face)
             }
