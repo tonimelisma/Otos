@@ -70,9 +70,15 @@ Standard style, following light and dark; points of interest excluded **[deviati
 DES-104]**; pan and zoom only; `MapZoomStepper` and `MapScaleView` as the only chrome.
 No user-location control and no permission prompt.
 
-Camera: on entering Places, fit every located item with a margin, in map points so a
-library shot on two continents (more than 180° of longitude) does not wrap (a single
-point gets a 2 km square). MapKit refuses a camera past its zoom-out (about 153° of
+Camera: on entering Places, center on the located items' average location (the circular
+mean of longitude, so items either side of the antimeridian average to it) and reach the
+farthest item on each axis with a margin, in map points so a library shot on two
+continents (more than 180° of longitude) does not wrap (a single point gets a 2 km
+square). Zoomed far out is fine; a view of no items is not: MapKit clamps a camera wider
+than it can show about its center, so a library mostly in one place opens on that place
+(owner decision, 2026-11-12, after a California library with a few Sydney and Helsinki
+photos opened on an empty Africa). The map wraps at the antimeridian, and stacks and the
+fit check take each item's copy in the viewport. MapKit refuses a camera past its zoom-out (about 153° of
 longitude at a 1232 pt map), so when the viewport that follows a fit leaves an item
 outside, the fit is asked once more without margin but grown to the camera the map
 just showed, and left there if it still misses. On a filter change, re-fit; on return from an area, the viewport

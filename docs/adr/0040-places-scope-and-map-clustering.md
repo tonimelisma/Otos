@@ -97,7 +97,8 @@ Map view mode.
   once. A viewport report carries the request it followed, so a fit is checked: MapKit
   clamps a camera past its zoom-out, and a fit whose own viewport leaves an item
   outside is asked once more without margin, grown to the camera the map proved it can
-  show, then left. Cameras requested: fit all located items on entry
+  show, then left. Cameras requested: on entry, centered on the located items' average location (circular
+  mean of longitude) and reaching every item, so a clamp keeps the average in view
   and on a filter change, the last viewport on return from an area, a quarter-span zoom
   on a stack that can still split, a step on View ▸ Zoom In / Out.
 - **The map is not a view mode; the modes open its area.** While the map shows, the

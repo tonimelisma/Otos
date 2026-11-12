@@ -139,17 +139,18 @@ extension CatalogWindowViewModel {
             requestMapCamera(MapClusterPolicy.bounds(of: viewport), reason: "return")
         } else if entered || filterChanged || firstLocated {
             let reason = entered ? "enter" : (filterChanged ? "filter" : "firstLocated")
-            requestFit(map.located, reason: reason, padded: true)
+            requestCenteredFit(map.located, reason: reason, padded: true)
         }
         if previous.map != next.map || entered {
             requestMapClusters()
         }
     }
 
-    /// Asks for the camera that shows every located item, and remembers the ask so the
+    /// Asks for the camera centered on the located items' average location and reaching
+    /// all of them (`MapClusterPolicy.centeredBounds`), and remembers the ask so the
     /// viewport that follows it can be checked (`mapViewportChanged`).
-    private func requestFit(_ located: [LocatedAsset], reason: String, padded: Bool, atLeast: MapBounds? = nil) {
-        guard var bounds = MapClusterPolicy.fittingBounds(located.map(\.coordinate), padded: padded) else {
+    private func requestCenteredFit(_ located: [LocatedAsset], reason: String, padded: Bool, atLeast: MapBounds? = nil) {
+        guard var bounds = MapClusterPolicy.centeredBounds(located.map(\.coordinate), padded: padded) else {
             return
         }
         if let atLeast {
@@ -189,8 +190,8 @@ extension CatalogWindowViewModel {
     /// two-continent library with its margin asks for 209°). The viewport that followed
     /// the fit's own request says whether it held; if not, the fit is asked once more
     /// without its margin but grown to the camera the map just proved it can show, so
-    /// whatever margin fits is kept. A miss after that is logged and left — the items
-    /// are where they are, and the map shows what it can.
+    /// whatever margin fits is kept. A miss after that is logged and left: the camera
+    /// stays centered on the items' average location and shows what it can.
     private func checkPendingFit(against viewport: MapViewport) {
         guard let pending = mapPendingFit, viewport.cameraRevision == pending.revision, let map = state.map else {
             return
@@ -209,7 +210,7 @@ extension CatalogWindowViewModel {
             "outside": "\(outside)",
         ])
         if pending.padded {
-            requestFit(map.located, reason: "refit", padded: false, atLeast: shown)
+            requestCenteredFit(map.located, reason: "refit", padded: false, atLeast: shown)
         } else {
             mapPendingFit = nil
         }

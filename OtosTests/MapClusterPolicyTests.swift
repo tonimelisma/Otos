@@ -107,24 +107,56 @@ struct MapClusterPolicyTests {
         #expect(global.count == 2)
     }
 
-    @Test func fittingBoundsHoldEveryCoordinateWithAMarginAndNeverCollapse() throws {
+    @Test func centeredBoundsHoldEveryCoordinateWithAMarginAndNeverCollapse() throws {
         let helsinkiPoint = PlaceCoordinate(latitude: 60.17, longitude: 24.94)
         let losAngeles = PlaceCoordinate(latitude: 34.05, longitude: -118.24)
-        let spread = try #require(MapClusterPolicy.fittingBounds([helsinkiPoint, losAngeles]))
+        let spread = try #require(MapClusterPolicy.centeredBounds([helsinkiPoint, losAngeles]))
         #expect(MapClusterPolicy.contains(helsinkiPoint, in: spread))
         #expect(MapClusterPolicy.contains(losAngeles, in: spread))
-        // The margin: a fifth of the extent on each side.
-        let extent = try #require(MapClusterPolicy.fittingBounds([helsinkiPoint, losAngeles]))
-        let region = MapClusterPolicy.region(of: extent)
+        // The margin: a fifth of the reach on each side.
+        let region = MapClusterPolicy.region(of: spread)
         #expect(region.longitudeDelta > 143 * 1.3)
 
-        let single = try #require(MapClusterPolicy.fittingBounds([helsinkiPoint]))
+        let single = try #require(MapClusterPolicy.centeredBounds([helsinkiPoint]))
         let singleRegion = MapClusterPolicy.region(of: single)
         // About 2 km at Helsinki: roughly 0.018° of latitude.
         #expect(singleRegion.latitudeDelta > 0.015 && singleRegion.latitudeDelta < 0.025)
         #expect(MapClusterPolicy.contains(helsinkiPoint, in: single))
 
-        #expect(MapClusterPolicy.fittingBounds([]) == nil)
+        #expect(MapClusterPolicy.centeredBounds([]) == nil)
+    }
+
+    /// The owner's library (2026-11-12): nearly everything in California, a few in Sydney
+    /// and Helsinki. The box around the extent was centered on Africa, which MapKit
+    /// clamped to a view holding none of the 13,913 items. The camera centers on the
+    /// average location, so the clamp keeps California in view.
+    @Test func theCameraCentersOnTheAverageLocation() throws {
+        let california = (0 ..< 98).map { _ in PlaceCoordinate(latitude: 37.77, longitude: -122.42) }
+        let sydney = PlaceCoordinate(latitude: -33.87, longitude: 151.21)
+        let helsinkiPoint = PlaceCoordinate(latitude: 60.17, longitude: 24.94)
+        let bounds = try #require(MapClusterPolicy.centeredBounds(california + [sydney, helsinkiPoint]))
+        let region = MapClusterPolicy.region(of: bounds)
+
+        #expect(abs(region.centerLongitude - -122.42) < 5)
+        #expect(abs(region.centerLatitude - 37.0) < 2)
+        #expect(MapClusterPolicy.contains(sydney, in: bounds))
+        #expect(MapClusterPolicy.contains(helsinkiPoint, in: bounds))
+        #expect(MapClusterPolicy.contains(california[0], in: bounds))
+    }
+
+    /// Items either side of the antimeridian average to it, not to the far side of the
+    /// earth, and the camera is the small box across it.
+    @Test func itemsEitherSideOfTheAntimeridianCenterOnIt() throws {
+        let east = PlaceCoordinate(latitude: -17.7, longitude: 179.0)
+        let west = PlaceCoordinate(latitude: -17.7, longitude: -179.0)
+        let bounds = try #require(MapClusterPolicy.centeredBounds([east, west]))
+        let region = MapClusterPolicy.region(of: bounds)
+
+        #expect(abs(abs(region.centerLongitude) - 180) < 0.01)
+        #expect(region.longitudeDelta < 5)
+        #expect(bounds.originX >= 0 && bounds.originX < MapClusterPolicy.worldMapPoints)
+        #expect(MapClusterPolicy.contains(east, in: bounds))
+        #expect(MapClusterPolicy.contains(west, in: bounds))
     }
 
     /// A library shot on two continents spans more than 180° of longitude. A camera in
@@ -133,10 +165,38 @@ struct MapClusterPolicyTests {
     @Test func aFitAcrossMoreThanHalfTheWorldStillHoldsBothEnds() throws {
         let tokyo = PlaceCoordinate(latitude: 35.68, longitude: 139.69)
         let lima = PlaceCoordinate(latitude: -12.05, longitude: -77.04)
-        let bounds = try #require(MapClusterPolicy.fittingBounds([tokyo, lima]))
+        let bounds = try #require(MapClusterPolicy.centeredBounds([tokyo, lima]))
         #expect(MapClusterPolicy.contains(tokyo, in: bounds))
         #expect(MapClusterPolicy.contains(lima, in: bounds))
         #expect(bounds.width <= MapClusterPolicy.worldMapPoints)
+    }
+
+    /// A view of the Pacific reaches past the world's right edge; an item just west of
+    /// the antimeridian sits at the start of the world and is drawn there all the same.
+    @Test func aViewportAcrossTheAntimeridianDrawsStacksOnBothSides() {
+        let world = MapClusterPolicy.worldMapPoints
+        let fiji = MKMapPoint(CLLocationCoordinate2D(latitude: -17.7, longitude: 178.0))
+        let viewport = MapViewport(
+            originX: fiji.x,
+            originY: fiji.y - world / 64,
+            width: world / 32,
+            height: world / 32,
+            viewWidth: 800,
+            viewHeight: 800
+        )
+        let items = [located("east.jpg", -17.7, 179.5), located("west.jpg", -17.7, -179.5)]
+
+        let clusters = MapClusterPolicy.clusters(located: items, viewport: viewport)
+
+        #expect(Set(clusters.flatMap(\.memberIDs)) == Set(items.map(\.id)))
+        #expect(clusters.allSatisfy { abs($0.coordinate.longitude) <= 180 })
+        let west = MapClusterPolicy.viewPoint(of: items[1].coordinate, in: viewport)
+        #expect(west.x > 0 && west.x < 800)
+        #expect(MapClusterPolicy.contains(items[1].coordinate, in: MapClusterPolicy.bounds(of: viewport)))
+        #expect(!MapClusterPolicy.contains(
+            PlaceCoordinate(latitude: -17.7, longitude: 170),
+            in: MapClusterPolicy.bounds(of: viewport)
+        ))
     }
 
     /// Two cells next to each other can hold items whose centers are closer than a

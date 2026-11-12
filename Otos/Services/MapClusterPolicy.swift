@@ -10,7 +10,10 @@ import MapKit
 ///
 /// Everything is in Web Mercator map points (`MKMapPoint`), never degrees: a camera
 /// in degrees wraps once its longitude span passes 180°, and a cell in degrees is a
-/// different size at every latitude. At the current viewport one cell is `cellPoints`
+/// different size at every latitude. The map wraps at the antimeridian, and MapKit
+/// reports a viewport that shows it with x past one world width, so every comparison of
+/// a point with a viewport or a camera takes the point's copy at or right of the rect's
+/// left edge (`wrappedX`). At the current viewport one cell is `cellPoints`
 /// screen points on a side. Items in one cell form one stack; a stack whose center
 /// would land within a cell of an earlier stack's center merges into it, so stacks
 /// never overlap whatever the cell boundaries happen to be. Only cells that touch the
@@ -56,8 +59,10 @@ nonisolated enum MapClusterPolicy {
         }
         var membersByCell: [Cell: [Member]] = [:]
         var cellOrder: [Cell] = []
+        let left = Double(minCellX) * cell
         for (index, asset) in located.enumerated() {
-            let point = mapPoint(asset.coordinate)
+            let raw = mapPoint(asset.coordinate)
+            let point = MKMapPoint(x: wrappedX(raw.x, from: left), y: raw.y)
             let cellX = Int(floor(point.x / cell))
             let cellY = Int(floor(point.y / cell))
             guard cellX >= minCellX, cellX <= maxCellX, cellY >= minCellY, cellY <= maxCellY else {
@@ -97,10 +102,7 @@ nonisolated enum MapClusterPolicy {
             let coordinate: PlaceCoordinate = if isExact {
                 first
             } else {
-                PlaceCoordinate(
-                    latitude: stack.center.coordinate.latitude,
-                    longitude: stack.center.coordinate.longitude
-                )
+                coordinate(of: stack.center)
             }
             return MapPlaceCluster(
                 id: stack.members[0].asset.id,
@@ -111,18 +113,62 @@ nonisolated enum MapClusterPolicy {
         }
     }
 
-    /// The camera that shows every coordinate, with `fitMargin` around them when
-    /// `padded`, or nil when there is nothing to show. One point, or coincident points,
-    /// get `minimumCameraMeters` either way.
-    static func fittingBounds(_ coordinates: [PlaceCoordinate], padded: Bool = true) -> MapBounds? {
+    /// The camera Places opens on: centered on the average location of the coordinates,
+    /// and reaching the farthest of them on each axis, with `fitMargin` around that reach
+    /// when `padded`; nil when there is nothing to show. The average longitude is the
+    /// circular mean, so items either side of the antimeridian average to it, not to the
+    /// far side of the earth; the average latitude is the plain mean. MapKit clamps a
+    /// camera wider than it can show about its center, so a library spread over more
+    /// than the map's zoom-out stays centered where it is on average (owner decision,
+    /// 2026-11-12). One point, or coincident points, get `minimumCameraMeters`.
+    static func centeredBounds(_ coordinates: [PlaceCoordinate], padded: Bool = true) -> MapBounds? {
+        guard !coordinates.isEmpty else {
+            return nil
+        }
+        var east = 0.0
+        var north = 0.0
+        var latitudeSum = 0.0
+        for coordinate in coordinates {
+            let longitude = coordinate.longitude * .pi / 180
+            east += cos(longitude)
+            north += sin(longitude)
+            latitudeSum += coordinate.latitude
+        }
+        let center = mapPoint(PlaceCoordinate(
+            latitude: latitudeSum / Double(coordinates.count),
+            longitude: atan2(north, east) * 180 / .pi
+        ))
+        var halfWidth = 0.0
+        var halfHeight = 0.0
+        for coordinate in coordinates {
+            let point = mapPoint(coordinate)
+            halfWidth = max(halfWidth, abs(wrappedX(point.x, from: center.x - worldMapPoints / 2) - center.x))
+            halfHeight = max(halfHeight, abs(point.y - center.y))
+        }
+        let rect = MKMapRect(
+            x: center.x - halfWidth,
+            y: center.y - halfHeight,
+            width: 2 * halfWidth,
+            height: 2 * halfHeight
+        )
+        return normalized(bounds(rect, margin: padded ? fitMargin : 0))
+    }
+
+    /// The box around the coordinates' own extent, with `fitMargin`: what a click on a
+    /// stack zooms to. Each point is taken at its copy nearest the first, so a stack
+    /// straddling the antimeridian is one small box, not one around the world.
+    private static func fittingBounds(_ coordinates: [PlaceCoordinate]) -> MapBounds? {
         guard let first = coordinates.first else {
             return nil
         }
-        var rect = MKMapRect(origin: mapPoint(first), size: MKMapSize(width: 0, height: 0))
+        let anchor = mapPoint(first)
+        var rect = MKMapRect(origin: anchor, size: MKMapSize(width: 0, height: 0))
         for coordinate in coordinates.dropFirst() {
-            rect = rect.union(MKMapRect(origin: mapPoint(coordinate), size: MKMapSize(width: 0, height: 0)))
+            let point = mapPoint(coordinate)
+            let near = MKMapPoint(x: wrappedX(point.x, from: anchor.x - worldMapPoints / 2), y: point.y)
+            rect = rect.union(MKMapRect(origin: near, size: MKMapSize(width: 0, height: 0)))
         }
-        return bounds(rect, margin: padded ? fitMargin : 0)
+        return normalized(bounds(rect, margin: fitMargin))
     }
 
     /// The camera a double-click on a stack that can still be split zooms to: the
@@ -192,7 +238,8 @@ nonisolated enum MapClusterPolicy {
     /// (a stack on the very edge counts as shown); what a fit promises.
     static func contains(_ coordinate: PlaceCoordinate, in bounds: MapBounds, tolerance: Double = 0) -> Bool {
         let point = mapPoint(coordinate)
-        return point.x >= bounds.originX - tolerance && point.x <= bounds.originX + bounds.width + tolerance
+        let x = wrappedX(point.x, from: bounds.originX - tolerance)
+        return x <= bounds.originX + bounds.width + tolerance
             && point.y >= bounds.originY - tolerance && point.y <= bounds.originY + bounds.height + tolerance
     }
 
@@ -214,7 +261,8 @@ nonisolated enum MapClusterPolicy {
     static func viewPoint(of coordinate: PlaceCoordinate, in viewport: MapViewport) -> (x: Double, y: Double) {
         let point = mapPoint(coordinate)
         let scale = viewport.viewWidth / viewport.width
-        return ((point.x - viewport.originX) * scale, (point.y - viewport.originY) * scale)
+        let x = wrappedX(point.x, from: viewport.originX)
+        return ((x - viewport.originX) * scale, (point.y - viewport.originY) * scale)
     }
 
     /// The viewport in degrees, for logs and tests.
@@ -222,14 +270,18 @@ nonisolated enum MapClusterPolicy {
         region(of: bounds(of: viewport))
     }
 
+    /// Web Mercator maps x to longitude linearly, so the span is the width's share of
+    /// 360°, and a rect past the world's right edge still has its center's longitude.
     static func region(of bounds: MapBounds) -> MapRegion {
-        let rect = MKMapRect(x: bounds.originX, y: bounds.originY, width: bounds.width, height: bounds.height)
-        let region = MKCoordinateRegion(rect)
+        let world = worldMapPoints
+        let center = coordinate(of: MKMapPoint(x: bounds.centerX, y: bounds.centerY))
+        let north = MKMapPoint(x: 0, y: min(max(bounds.originY, 0), world)).coordinate.latitude
+        let south = MKMapPoint(x: 0, y: min(max(bounds.originY + bounds.height, 0), world)).coordinate.latitude
         return MapRegion(
-            centerLatitude: region.center.latitude,
-            centerLongitude: region.center.longitude,
-            latitudeDelta: region.span.latitudeDelta,
-            longitudeDelta: region.span.longitudeDelta
+            centerLatitude: center.latitude,
+            centerLongitude: center.longitude,
+            latitudeDelta: north - south,
+            longitudeDelta: bounds.width / world * 360
         )
     }
 
@@ -250,6 +302,28 @@ nonisolated enum MapClusterPolicy {
 
     private static func mapPoint(_ coordinate: PlaceCoordinate) -> MKMapPoint {
         MKMapPoint(CLLocationCoordinate2D(latitude: coordinate.latitude, longitude: coordinate.longitude))
+    }
+
+    /// `x` moved by whole worlds to the first copy at or right of `left`.
+    private static func wrappedX(_ x: Double, from left: Double) -> Double {
+        x + ((left - x) / worldMapPoints).rounded(.up) * worldMapPoints
+    }
+
+    /// The coordinate at a map point, whichever copy of the world its x is in.
+    private static func coordinate(of point: MKMapPoint) -> PlaceCoordinate {
+        let normal = MKMapPoint(x: wrappedX(point.x, from: 0), y: point.y).coordinate
+        return PlaceCoordinate(latitude: normal.latitude, longitude: normal.longitude)
+    }
+
+    /// `bounds` with its left edge moved into the first world, so a camera across the
+    /// antimeridian reaches past the right edge as MapKit's own viewport does.
+    private static func normalized(_ bounds: MapBounds) -> MapBounds {
+        MapBounds(
+            originX: wrappedX(bounds.originX, from: 0),
+            originY: bounds.originY,
+            width: bounds.width,
+            height: bounds.height
+        )
     }
 
     private static func centroid(of points: [MKMapPoint]) -> MKMapPoint {
