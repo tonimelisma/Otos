@@ -67,7 +67,13 @@ Adjacent decisions requiring separate ADRs or specs:
    volumes, and MTP cameras all remain catalog roots because media identity in the
    app is still `(root path, relative path)`. The root row now records `kind`,
    optional `device_identity`, optional raw display name, and `last_seen_at`.
-   SQLite row ids remain private persistence keys.
+   SQLite row ids remain private persistence keys. A camera item's relative path is
+   its parent folders and the name the device lists (`ICCameraItem.name`), which is
+   unique within its folder and stable across sessions (`CameraItemNaming`).
+   `originalFilename` is not a name: an iPhone gives every edited photo
+   `FullSizeRender.heic` (31 of 1,054 items, measured 2026-11-12) and a Sony reports
+   none. A path two items claim is cataloged for neither and logged; Otos invents no
+   suffix, which would make identity depend on the order the camera lists items.
 
 2. **Source identity remaps the current path.** A removable volume can return at a
    different mount path. When the same `device_identity` attaches, Store updates

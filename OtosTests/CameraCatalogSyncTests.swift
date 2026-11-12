@@ -8,6 +8,16 @@ import Testing
 @Suite(.testDirectory)
 @MainActor
 struct CameraCatalogSyncTests {
+    /// A camera item is named by the name the device lists, which is unique in its folder;
+    /// a path two items claim is no one's, so no suffix is ever invented for it.
+    @Test func aCameraItemIsNamedByItsListedName() {
+        #expect(CameraItemNaming.name(listed: "IMG_E0571.HEIC", created: nil) == "IMG_E0571.HEIC")
+        #expect(CameraItemNaming.name(listed: " ", created: "DSC0001.JPG") == "DSC0001.JPG")
+        #expect(CameraItemNaming.name(listed: nil, created: nil) == nil)
+        let paths = ["202610_a/IMG_E0571.HEIC", "202610_a/IMG_E0572.HEIC", "202610_a/A.JPG", "202610_a/A.JPG"]
+        #expect(CameraItemNaming.contested(paths) == ["202610_a/A.JPG"])
+    }
+
     @Test func aConnectedCameraStaysInStepWithItsCard() async throws {
         let fixture = try await Fixture(passes: [
             Fixture.snapshot(["A.JPG", "B.JPG"], isStable: true),

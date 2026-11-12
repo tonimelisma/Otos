@@ -13,6 +13,32 @@ nonisolated struct DeviceCameraCatalogItem: Hashable {
     let modificationDate: Date?
 }
 
+/// How a camera item is named in the catalog, where its path is its identity (ADR 0008).
+/// The name is the one the device lists, unique within its folder and stable across
+/// sessions: an iPhone's `IMG_E0571.HEIC`, a Sony's `DSC06715.ARW`. Never
+/// `originalFilename`, which an iPhone gives every edited photo alike (`FullSizeRender.heic`,
+/// measured 2026-11-12: 31 of 1,054 items), and which a Sony does not report at all. A path
+/// two items claim belongs to neither: Otos invents no suffix, so neither is cataloged.
+nonisolated enum CameraItemNaming {
+    /// The listed name, else the name the item was created with on the device.
+    static func name(listed: String?, created: String?) -> String? {
+        [listed, created].lazy.compactMap { value in
+            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed?.isEmpty == false ? trimmed : nil
+        }.first
+    }
+
+    /// The paths more than one item claims.
+    static func contested(_ paths: [String]) -> Set<String> {
+        var seen = Set<String>()
+        var contested = Set<String>()
+        for path in paths where !seen.insert(path).inserted {
+            contested.insert(path)
+        }
+        return contested
+    }
+}
+
 nonisolated struct DeviceCameraCompanionItem: Hashable {
     let relativePath: MediaRelativePath
     let primaryRelativePath: MediaRelativePath
@@ -440,14 +466,19 @@ final class DeviceCameraSession: NSObject {
     }
 
     private func currentCatalogItems() -> [DeviceCameraCatalogItem] {
-        let files = (device.mediaFiles ?? []).compactMap { $0 as? ICCameraFile }
-        var collisionCounts: [String: Int] = [:]
+        let named = (device.mediaFiles ?? []).compactMap { $0 as? ICCameraFile }.compactMap { file in
+            catalogItem(for: file).map { (file, $0) }
+        }
+        let contested = CameraItemNaming.contested(named.map(\.1.relativePath.rawValue))
+        if !contested.isEmpty {
+            OtosLog.fileAccess.noticeOperation("camera.inventory", phase: "contestedPathsSkipped", fields: [
+                "identity": identity.rawValue,
+                "paths": "\(contested.count)",
+            ])
+        }
         var items: [DeviceCameraCatalogItem] = []
         filesByRelativePath.removeAll(keepingCapacity: true)
-        for file in files {
-            guard let item = catalogItem(for: file, collisionCounts: &collisionCounts) else {
-                continue
-            }
+        for (file, item) in named where !contested.contains(item.relativePath.rawValue) {
             filesByRelativePath[item.relativePath] = file
             items.append(item)
         }
@@ -470,11 +501,7 @@ final class DeviceCameraSession: NSObject {
                 guard let cameraFile = sidecar as? ICCameraFile else {
                     continue
                 }
-                guard let name = firstNonEmpty(
-                    cameraFile.originalFilename,
-                    cameraFile.name,
-                    cameraFile.createdFilename
-                ) else {
+                guard let name = CameraItemNaming.name(listed: cameraFile.name, created: cameraFile.createdFilename) else {
                     continue
                 }
                 guard let kind = MediaCompanionKind.recognize(
@@ -997,28 +1024,20 @@ final class DeviceCameraSession: NSObject {
         return false
     }
 
-    private func catalogItem(
-        for file: ICCameraFile,
-        collisionCounts: inout [String: Int]
-    ) -> DeviceCameraCatalogItem? {
+    private func catalogItem(for file: ICCameraFile) -> DeviceCameraCatalogItem? {
         guard file.fileSize >= 0 else {
             return nil
         }
         // An item's path is its identity (ADR 0008), so an item the camera gives no name
         // has none that would survive the next enumeration; it is not cataloged.
-        guard let name = firstNonEmpty(file.originalFilename, file.name, file.createdFilename) else {
+        guard let name = CameraItemNaming.name(listed: file.name, created: file.createdFilename) else {
             OtosLog.fileAccess.noticeOperation("camera.inventory", phase: "unnamedItemSkipped", fields: [
                 "identity": identity.rawValue,
                 "fileSize": "\(file.fileSize)",
             ])
             return nil
         }
-        let baseRelativePath = cameraRelativePath(for: file, name: name)
-        let collisionIndex = collisionCounts[baseRelativePath, default: 0]
-        collisionCounts[baseRelativePath] = collisionIndex + 1
-        let relativePath = collisionIndex == 0
-            ? baseRelativePath
-            : baseRelativePath + "#\(collisionIndex + 1)"
+        let relativePath = cameraRelativePath(for: file, name: name)
         let fileExtension = MediaRelativePath(rawValue: name).fileExtension
         let contentType = fileExtension.isEmpty ? nil : UTType(filenameExtension: fileExtension)
         guard MediaEligibility.isCatalogMedia(contentType: contentType) else {

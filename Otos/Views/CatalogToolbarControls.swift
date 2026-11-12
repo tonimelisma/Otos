@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // Toolbar control guide
@@ -92,10 +93,35 @@ struct CatalogFilterPopoverContent: View {
     /// The countries whose every town shows.
     @State private var countriesShowingAllTowns: Set<String> = []
 
+    /// The popover is as tall as its rows, never taller than the screen can show under the
+    /// toolbar: the title and Clear Filters stay put and the sections between them scroll as
+    /// one, so no row is ever out of reach (DES-115).
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Filter")
                 .font(.headline)
+            ScrollView {
+                sections
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: Self.sectionsMaxHeight)
+            .fixedSize(horizontal: false, vertical: true)
+            Divider()
+            Button("Clear Filters", action: clearFilters)
+                .disabled(!descriptor.filter.isActive)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// The screen's visible height less what stands above and around the sections: the
+    /// toolbar, the popover's arrow and margins, the title and Clear Filters.
+    private static var sectionsMaxHeight: CGFloat {
+        let visible = NSScreen.main?.visibleFrame.height ?? 800
+        return max(240, visible - 220)
+    }
+
+    private var sections: some View {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Curation")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -131,12 +157,7 @@ struct CatalogFilterPopoverContent: View {
             peopleSection
             Divider()
             placesSection
-            Divider()
-            Button("Clear Filters", action: clearFilters)
-                .disabled(!descriptor.filter.isActive)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var peopleSection: some View {
@@ -156,24 +177,20 @@ struct CatalogFilterPopoverContent: View {
                 TextField("Search People", text: $peopleQuery)
                     .textFieldStyle(.roundedBorder)
             }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(shown) { person in
-                        Toggle(person.displayName, isOn: Binding(
-                            get: { filter.people.contains(person.id) },
-                            set: { people.setPerson(person.id, $0) }
-                        ))
-                    }
-                    Toggle("Unidentified Faces", isOn: Binding(
-                        get: { filter.unassignedFaces },
-                        set: { people.setUnidentified($0) }
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(shown) { person in
+                    Toggle(person.displayName, isOn: Binding(
+                        get: { filter.people.contains(person.id) },
+                        set: { people.setPerson(person.id, $0) }
                     ))
                 }
-                .toggleStyle(.checkbox)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Toggle("Unidentified Faces", isOn: Binding(
+                    get: { filter.unassignedFaces },
+                    set: { people.setUnidentified($0) }
+                ))
             }
-            .frame(maxHeight: 200)
-            .fixedSize(horizontal: false, vertical: true)
+            .toggleStyle(.checkbox)
+            .frame(maxWidth: .infinity, alignment: .leading)
             if head.isLong {
                 showAllButton(
                     showsAll: showsAllPeople, total: people.people.count, noun: "People",
@@ -226,21 +243,17 @@ struct CatalogFilterPopoverContent: View {
                 Text(countries.isEmpty ? "No places named yet" : "No matching places")
                     .foregroundStyle(.secondary)
             }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(shown) { country in
-                        DisclosureGroup {
-                            townRows(country, searching: !query.isEmpty)
-                        } label: {
-                            Toggle(country.name, sources: countrySources(country), isOn: \.isOn)
-                        }
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(shown) { country in
+                    DisclosureGroup {
+                        townRows(country, searching: !query.isEmpty)
+                    } label: {
+                        Toggle(country.name, sources: countrySources(country), isOn: \.isOn)
                     }
                 }
-                .toggleStyle(.checkbox)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 220)
-            .fixedSize(horizontal: false, vertical: true)
+            .toggleStyle(.checkbox)
+            .frame(maxWidth: .infinity, alignment: .leading)
             if head.isLong {
                 showAllButton(
                     showsAll: showsAllCountries, total: countries.count, noun: "Countries",
