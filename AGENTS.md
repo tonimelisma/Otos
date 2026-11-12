@@ -329,15 +329,15 @@ with `script/logs.sh stream [Category]` (live) or
 `script/profile.sh "<Template>" 10s` and `script/profile-export.sh <trace>`.
 See `docs/adr/0015-observability.md`.
 
-Benchmarks run nightly, never per PR (ADR 0043). A launchd agent (`script/bench.sh
-schedule`) runs `script/bench.sh nightly` at 03:00: it measures `origin/main`'s newest
-commit on a generated catalog, in three fresh test processes, and sets it against the
-baseline, the last commit that measured clean. `script/check.sh` prints one
-`op=bench.status` line:
+Benchmarks run once a day, never per PR (ADR 0043), and a session runs them.
+`script/check.sh` prints one `op=bench.status` line:
+- `verdict=due`: no run has finished today and `main` has moved. Start
+  `script/bench.sh daily` in the background, watch it like any long run, and keep
+  working. It measures `origin/main`'s newest commit on a generated catalog, in three
+  fresh test processes, against the baseline, the last commit that measured clean. Only
+  one session runs it; another gets `phase=skipped`.
 - `verdict=flagged`: a case regressed. Fixing it is the next work, unless the owner
   accepts it in chat (`script/bench.sh accept`, permission quoted in the DoD report).
-- `verdict=stale`: `main` is 20 or more commits past the baseline. Run
-  `script/bench.sh nightly` in the background.
 `script/bench.sh history [case]` reads the records back, and `script/bench.sh compare
 <base>` bisects a flagged range by hand. Compare instructions, not milliseconds: under
 the parallel load that moves wall time several-fold, a steady case's instructions hold

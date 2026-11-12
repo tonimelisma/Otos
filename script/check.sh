@@ -188,8 +188,8 @@ fi
 echo "op=check.tier tier=$CHECK_TIER"
 export OTOS_CHECK_TIER="$CHECK_TIER"
 
-# Benchmarks run nightly, not here (ADR 0043). One line says whether main is clean, flagged,
-# or far enough past its last measured commit to need a run by hand.
+# Benchmarks run once a day, started by the session this line tells (ADR 0043): it says
+# whether a run is due, running, clean or flagged.
 "$ROOT_DIR/script/bench.sh" status || true
 
 # ── Stage 2: the real check, with a heartbeat so a stall is self-evident ─────

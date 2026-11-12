@@ -5,16 +5,15 @@
 #                                   in OTOS_BENCH_PROCESSES fresh test processes (default 3),
 #                                   print the results, and record them on HEAD when the tree
 #                                   is clean.
-#   script/bench.sh nightly         Measure origin/main's newest commit in a detached checkout
+#   script/bench.sh daily           Measure origin/main's newest commit in a detached checkout
 #                                   and set it against the baseline, the last commit that
 #                                   measured clean. Clean moves the baseline; a flagged case
-#                                   leaves it and stays flagged until a later night is clean
-#                                   or the owner accepts it. launchd runs it every night.
-#   script/bench.sh status          One line: the nightly verdict, and how far origin/main is
-#                                   past the baseline. script/check.sh prints it.
+#                                   leaves it and stays flagged until a later run is clean or
+#                                   the owner accepts it. At most one run a day, one at a time:
+#                                   the session whose check.sh reports verdict=due starts it.
+#   script/bench.sh status          One line: due, clean or flagged. script/check.sh prints it.
 #   script/bench.sh accept          Move the baseline to the flagged commit. Only on the
 #                                   owner's word: a regression may be a feature's price.
-#   script/bench.sh schedule        Install the nightly launchd agent for this checkout.
 #   script/bench.sh history [case]  Every recorded result, newest first, with the change in
 #                                   instructions from the previous record on the same machine.
 #   script/bench.sh compare [base]  HEAD's processes against base's (default: the merge base
@@ -22,7 +21,7 @@
 #                                   has not. Exits 3 when a case retired more instructions
 #                                   than both 2% (OTOS_BENCH_FLAG_PERCENT) and the case's own
 #                                   process-to-process noise allow, beyond every process's
-#                                   range. For bisecting a flagged night by hand.
+#                                   range. For bisecting a flagged run by hand.
 #
 # Results are recorded as git notes on the commit they measured (refs/notes/benchmarks),
 # one JSON object per case and test process. Instructions retired is the number to compare:
@@ -40,17 +39,18 @@ HARNESS=2
 PROCESSES="${OTOS_BENCH_PROCESSES:-3}"
 # How many of the newest measured commits a case's process-to-process noise is read from.
 NOISE_COMMITS=10
-# The nightly's state, shared by every worktree of the clone: the baseline is a ref, the
-# verdict a one-line file beside it.
+# The daily run's state, shared by every worktree of the clone: the baseline is a ref, the
+# verdict and the day of the last finished run are one-line files beside it, and the lock
+# is a directory holding the running process's pid.
 COMMON_DIR="$(git -C "$ROOT_DIR" rev-parse --path-format=absolute --git-common-dir)"
+PRIMARY_DIR="$(dirname "$COMMON_DIR")"
 BASELINE_REF="refs/bench/baseline"
 VERDICT_FILE="$COMMON_DIR/otos-bench-verdict"
-# How far origin/main may run past the baseline before status asks for a run by hand: the
-# nightly did not run (the Mac was off for days, or the agent is not installed).
-STALE_COMMITS=20
+LAST_RUN_FILE="$COMMON_DIR/otos-bench-last-run"
+LOCK_DIR="$COMMON_DIR/otos-bench-daily.lock"
 
 usage() {
-  sed -n '4,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '4,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # One row per case: the median over processes, the range across processes, and the widest
@@ -388,28 +388,55 @@ judge_pair() {
   return "$status"
 }
 
-# origin/main as this clone last fetched it: every merge fetches it, and the nightly reads
-# no network, so a network that hangs never hangs the night.
-nightly() {
-  local head baseline threshold output status=0
+# The lock is free, or held by a process that no longer runs (its session ended mid-run).
+take_lock() {
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    echo "$$" > "$LOCK_DIR/pid"
+    return 0
+  fi
+  local holder
+  holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+  if [[ -n "$holder" ]] && kill -0 "$holder" 2>/dev/null; then
+    return 1
+  fi
+  echo "op=bench.daily phase=lockReclaimed deadHolder=${holder:-unknown}"
+  echo "$$" > "$LOCK_DIR/pid"
+}
+
+# Runs from the primary checkout, whichever session started it: a session may remove its
+# own worktree while the run is under way, and the primary checkout outlives every one.
+# origin/main is read as this clone last fetched it (every merge fetches it), so a network
+# that hangs never hangs the run.
+daily() {
+  if [[ "$ROOT_DIR" != "$PRIMARY_DIR" ]]; then
+    exec "$PRIMARY_DIR/script/bench.sh" daily
+  fi
+  local head baseline threshold output status=0 today
+  today="$(/bin/date +%Y-%m-%d)"
+  if [[ "$(cut -d' ' -f1 "$LAST_RUN_FILE" 2>/dev/null)" == "$today" ]]; then
+    echo "op=bench.daily phase=skipped reason=ranToday day=$today"
+    return
+  fi
+  if ! take_lock; then
+    echo "op=bench.daily phase=skipped reason=running holder=$(cat "$LOCK_DIR/pid" 2>/dev/null)"
+    return
+  fi
+  trap 'rm -rf "$LOCK_DIR"' EXIT
   threshold="${OTOS_BENCH_FLAG_PERCENT:-2}"
   head="$(git -C "$ROOT_DIR" rev-parse origin/main)"
   baseline="$(git -C "$ROOT_DIR" rev-parse -q --verify "$BASELINE_REF" || true)"
-  echo "op=bench.nightly phase=start head=$head baseline=${baseline:-none}"
-  if [[ "$head" == "$baseline" ]]; then
-    echo "op=bench.nightly phase=skipped reason=headIsBaseline head=$head"
-    return
-  fi
-  if [[ -z "$(records "$head")" ]]; then
-    measure_commit "$head" "$ROOT_DIR/build/bench-nightly" || {
-      echo "op=bench.nightly phase=failed reason=headRunFailed head=$head" >&2
+  echo "op=bench.daily phase=start head=$head baseline=${baseline:-none}"
+  if [[ "$head" != "$baseline" && -z "$(records "$head")" ]]; then
+    measure_commit "$head" "$ROOT_DIR/build/bench-daily" || {
+      echo "op=bench.daily phase=failed reason=headRunFailed head=$head" >&2
       exit 1
     }
   fi
-  if [[ -z "$baseline" ]]; then
+  if [[ -z "$baseline" || "$head" == "$baseline" ]]; then
     git -C "$ROOT_DIR" update-ref "$BASELINE_REF" "$head"
     echo "clean baseline=$head" > "$VERDICT_FILE"
-    echo "op=bench.nightly phase=baselined head=$head"
+    echo "$today $head" > "$LAST_RUN_FILE"
+    echo "op=bench.daily phase=baselined head=$head"
     return
   fi
   output="$(judge_pair "$threshold" "$baseline" "$head")" || status=$?
@@ -418,42 +445,43 @@ nightly() {
     0)
       git -C "$ROOT_DIR" update-ref "$BASELINE_REF" "$head"
       echo "clean baseline=$head" > "$VERDICT_FILE"
-      echo "op=bench.nightly phase=clean baseline=$head"
+      echo "op=bench.daily phase=clean baseline=$head"
       ;;
     3)
       local cases
       cases="$(printf '%s\n' "$output" | sed -n 's/^op=bench phase=flagged cases=//p')"
       echo "flagged baseline=$baseline head=$head cases=$cases" > "$VERDICT_FILE"
-      echo "op=bench.nightly phase=flagged baseline=$baseline head=$head cases=$cases"
+      echo "op=bench.daily phase=flagged baseline=$baseline head=$head cases=$cases"
       ;;
     *)
-      echo "op=bench.nightly phase=failed reason=judge status=$status" >&2
+      echo "op=bench.daily phase=failed reason=judge status=$status" >&2
       exit 1
       ;;
   esac
+  echo "$today $head" > "$LAST_RUN_FILE"
 }
 
+# Due when no run finished today and origin/main has moved past the baseline. A flagged
+# verdict is reported every time, whatever the day.
 status() {
-  local baseline verdict behind
+  local baseline verdict last_day today
   baseline="$(git -C "$ROOT_DIR" rev-parse -q --verify "$BASELINE_REF" || true)"
-  if [[ -z "$baseline" ]]; then
-    echo "op=bench.status verdict=none note=\"no night has run; script/bench.sh schedule installs the nightly\""
-    return
-  fi
-  verdict="$(cat "$VERDICT_FILE" 2>/dev/null || echo unknown)"
-  behind="$(git -C "$ROOT_DIR" rev-list --count "$baseline..origin/main")"
+  verdict="$(cat "$VERDICT_FILE" 2>/dev/null || true)"
+  last_day="$(cut -d' ' -f1 "$LAST_RUN_FILE" 2>/dev/null || true)"
+  today="$(/bin/date +%Y-%m-%d)"
   case "$verdict" in
     flagged*)
-      echo "op=bench.status verdict=$verdict behind=$behind action=\"fix the flagged cases first, or the owner accepts them (script/bench.sh accept)\""
-      ;;
-    *)
-      if (( behind >= STALE_COMMITS )); then
-        echo "op=bench.status verdict=stale baseline=$baseline behind=$behind action=\"run script/bench.sh nightly in the background\""
-      else
-        echo "op=bench.status verdict=clean baseline=$baseline behind=$behind"
-      fi
+      echo "op=bench.status verdict=$verdict action=\"fix the flagged cases first, or the owner accepts them (script/bench.sh accept)\""
+      return
       ;;
   esac
+  if [[ -d "$LOCK_DIR" ]]; then
+    echo "op=bench.status verdict=running holder=$(cat "$LOCK_DIR/pid" 2>/dev/null)"
+  elif [[ "$last_day" != "$today" && "$(git -C "$ROOT_DIR" rev-parse origin/main)" != "$baseline" ]]; then
+    echo "op=bench.status verdict=due lastRun=${last_day:-never} action=\"start script/bench.sh daily in the background and keep working\""
+  else
+    echo "op=bench.status verdict=clean baseline=${baseline:-none} lastRun=${last_day:-never}"
+  fi
 }
 
 accept() {
@@ -469,40 +497,12 @@ accept() {
   echo "op=bench.accept phase=accepted baseline=$head"
 }
 
-# A per-user launchd agent: 03:00 every night, and on wake when the Mac slept through it.
-schedule() {
-  local label="net.melisma.Otos.bench-nightly"
-  local plist="$HOME/Library/LaunchAgents/$label.plist"
-  mkdir -p "$HOME/Library/LaunchAgents" "$ROOT_DIR/logs"
-  cat > "$plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>$label</string>
-  <key>ProgramArguments</key>
-  <array><string>$ROOT_DIR/script/bench.sh</string><string>nightly</string></array>
-  <key>WorkingDirectory</key><string>$ROOT_DIR</string>
-  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>0</integer></dict>
-  <key>StandardOutPath</key><string>$ROOT_DIR/logs/bench-nightly.log</string>
-  <key>StandardErrorPath</key><string>$ROOT_DIR/logs/bench-nightly.log</string>
-  <key>LowPriorityIO</key><true/>
-  <key>Nice</key><integer>10</integer>
-</dict>
-</plist>
-PLIST
-  launchctl bootout "gui/$(id -u)/$label" >/dev/null 2>&1 || true
-  launchctl bootstrap "gui/$(id -u)" "$plist"
-  echo "op=bench.schedule phase=installed label=$label plist=$plist log=$ROOT_DIR/logs/bench-nightly.log"
-}
-
 case "${1:-}" in
   run) run ;;
   history) history "${2:-}" ;;
   compare) compare "${2:-}" ;;
-  nightly) nightly ;;
+  daily) daily ;;
   status) status ;;
   accept) accept ;;
-  schedule) schedule ;;
   *) usage; exit 2 ;;
 esac

@@ -1,4 +1,4 @@
-# ADR 0043: Benchmarks are opt-in, count instructions, are recorded per commit, and run nightly on main
+# ADR 0043: Benchmarks are opt-in, count instructions, are recorded per commit, and run once a day on main
 
 - Status: Accepted
 - Last updated: 2026-11-12
@@ -73,27 +73,32 @@ The tooling found:
 - **History is read with `script/bench.sh history [case]`.** It lists the records, newest
   first, with each case's change in instructions from the previous record on the same
   machine.
-- **Benchmarks run nightly on `main`, never per PR (2026-11-12).** A per-PR comparison
-  cost two runs a change, the PR head and then `main` after the merge, each a build plus
-  three ~70-second test processes: 9–10 minutes of every commit, more than the test suite.
-  The owner asked to move it off the commit path.
-  - **The night.** A per-user launchd agent (`script/bench.sh schedule`, 03:00, and on
-    wake when the Mac slept through it) runs `script/bench.sh nightly`. It measures
-    `origin/main`'s newest commit in a detached checkout and sets it against the
-    **baseline**, the last commit that measured clean (`refs/bench/baseline`). It reads
-    `origin/main` as the clone last fetched it, because every merge fetches it, and a
-    network that hangs must not hang the night.
-  - **A clean night moves the baseline; a flagged one does not.** The verdict sits in
-    the clone's git directory, shared by every worktree. A regression therefore stays
-    flagged across later nights until a night measures clean against the same baseline
+- **Benchmarks run once a day on `main`, never per PR, and a session runs them
+  (2026-11-12).** A per-PR comparison cost two runs a change, the PR head and then `main`
+  after the merge, each a build plus three ~70-second test processes: 9–10 minutes of
+  every commit, more than the test suite. The owner asked to move it off the commit path.
+  - **Due.** `script/check.sh` prints `script/bench.sh status`. It reads `verdict=due`
+    when no run has finished today and `origin/main` has moved past the **baseline**,
+    the last commit that measured clean (`refs/bench/baseline`). The session that sees
+    it starts `script/bench.sh daily` in the background and keeps working.
+  - **One run, from the primary checkout.** The run takes a lock directory in the clone's
+    git directory, holding its pid, so every other session sees `verdict=running`, and a
+    second start reports `phase=skipped`. A lock whose pid no longer runs (its session
+    ended mid-run) is taken over. The run re-executes from the primary checkout and
+    measures in a detached checkout under it, because the starting session may remove
+    its own worktree before the run ends. It reads `origin/main` as the clone last
+    fetched it, since every merge fetches it, so a network that hangs never hangs it.
+  - **A clean run moves the baseline; a flagged one does not.** The verdict and the day
+    of the last finished run sit beside the lock, shared by every worktree. A regression
+    stays flagged across later runs until one measures clean against the same baseline
     (it was fixed) or the owner accepts it (`script/bench.sh accept`). A baseline that
-    followed every night would forget a regression the next night.
-  - **`script/check.sh` prints the verdict** as one `op=bench.status` line and never fails
-    on it, because the fix for a flagged case must pass the same check. It also reports
-    `verdict=stale` once `main` is 20 or more commits past the baseline (the Mac was off,
-    or the agent is not installed), and the agent then runs the night by hand.
-  - **Attribution is by hand.** A flagged night names a range of commits;
+    followed every run would forget a regression the next day.
+  - **`check.sh` never fails on the verdict**, because the fix for a flagged case must
+    pass the same check.
+  - **Attribution is by hand.** A flagged run names a range of commits;
     `script/bench.sh compare <base>` on a commit in that range bisects it.
+  - **Rejected: a launchd agent at night.** It runs whether or not anyone works that
+    day, needs installing on each machine, and owns a run no session watches.
   - **Rejected: GitHub Actions nightly.** No hosted runner carries the Xcode 27 beta this
     repo builds with, and the account's Actions minutes are not dependable.
   - **Rejected: per-PR comparison on a shorter suite.** Fewer processes or iterations
@@ -110,7 +115,7 @@ The tooling found:
     range: head's lowest sample in any process, median × (1 − spread), still exceeds base's
     highest, median × (1 + spread). The owner then decides whether to accept it.
   - **A rise that is not flagged.** A rise above 2% that fails either test is reported as
-    `within noise` and does not flag the night. A smaller change is only reported.
+    `within noise` and does not flag the run. A smaller change is only reported.
   - **Why 2%.** It is four times the run-to-run variation of a steady case (about ±0.5%),
     so it catches a real regression there.
   - **Why the noise is read from history (2026-11-11):** two processes a side were not
@@ -168,13 +173,14 @@ The tooling found:
 ## Consequences
 
 - A regression of more than 2%, and more than the case's own noise, beyond every process's
-  range, flags the night. It stays flagged, and `check.sh` says so on every run, until it
-  is fixed or the owner accepts it. Noise alone never flags. Smaller drifts show in
+  range, flags the day's run. It stays flagged, and `check.sh` says so on every run, until
+  it is fixed or the owner accepts it. Noise alone never flags. Smaller drifts show in
   `bench.sh history`, against the commit measured.
-- A PR costs no benchmark run. A night costs one: a build in a fresh checkout and three
-  test processes (about five minutes), skipped when `main` has not moved.
-- A regression is found the morning after, as a range of commits, not on the PR that
-  caused it. Bisecting the range is by hand.
+- A PR costs no benchmark run. A working day costs one, in the background of whichever
+  session sees it due: a build in a fresh checkout and three test processes (about five
+  minutes), skipped when `main` has not moved.
+- A regression is found within a day, as a range of commits, not on the PR that caused
+  it. Bisecting the range is by hand.
 - Numbers compare only on one machine and configuration. The record carries both, and
   `history` compares within a machine.
 - Notes stay in the local clone unless pushed (`git push origin refs/notes/benchmarks`).
