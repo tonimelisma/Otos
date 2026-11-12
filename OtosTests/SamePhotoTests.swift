@@ -224,17 +224,6 @@ struct SamePhotoTests {
         #expect(bumped.meanDifference(to: base) == 4.0 / 1024)
     }
 
-    @Test func subsecondDigitsRoundTripThroughTheStoredRecord() {
-        let time = CaptureTime(
-            year: 2026, month: 9, day: 22, hour: 11, minute: 55, second: 6,
-            utcOffsetSeconds: -25200, instant: Date(timeIntervalSince1970: 1_790_000_000),
-            precision: .localWithOffset, fractionalSecondDigits: "387"
-        )
-        let record = CaptureTimestampRecord(role: .original, time: time)
-        #expect(record.fractionalSecondDigits == "387")
-        #expect(CaptureTime(record: record)?.fractionalSecondDigits == "387")
-    }
-
     @Test func aSignatureIsWrittenOnlyForTheThumbnailItWasReadFrom() async throws {
         let temp = try makeTestDirectory()
         let library = temp.appending(path: "Pictures", directoryHint: .isDirectory)

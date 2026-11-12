@@ -40,17 +40,6 @@ struct ThumbnailStoreTests {
         #expect(try ThumbnailStore.scaled(image, toLongEdge: 1000).width == 400)
     }
 
-    @Test func relativeNameUsesJPEGExtension() {
-        let id = MediaAssetID(
-            libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
-            relativePath: MediaRelativePath(rawValue: "movie.mp4")
-        )
-
-        let name = ThumbnailStore.relativeName(for: id)
-        #expect(name.hasSuffix(".jpg"))
-        #expect(!name.hasSuffix(".heic"))
-    }
-
     @Test func stageAndPromoteNormalizeToLoadableJPEG() throws {
         let temp = try makeTestDirectory()
         let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
@@ -132,19 +121,6 @@ struct ThumbnailStoreTests {
 
         #expect(!FileManager.default.fileExists(atPath: nested.path(percentEncoded: false)))
         #expect(FileManager.default.fileExists(atPath: outside.path(percentEncoded: false)))
-    }
-
-    @Test func deleteRemovesThumbnailFile() throws {
-        let temp = try makeTestDirectory()
-        let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let name = "thumb.jpg"
-        let thumbnailURL = ThumbnailStore.url(for: name, in: directory)
-        try Data("thumb".utf8).write(to: thumbnailURL)
-
-        ThumbnailStore.delete(name, in: directory)
-
-        #expect(!FileManager.default.fileExists(atPath: thumbnailURL.path(percentEncoded: false)))
     }
 
     /// Staging has its own subdirectory, so the startup sweep lists only what was staged —

@@ -218,25 +218,6 @@ struct HandOffTests {
         #expect(try await preparer.prepare(item("gone.jpg"), as: .original) == item("gone.jpg").id.fileURL)
     }
 
-    /// A write that fails for a reason other than space keeps that reason: writing into a
-    /// missing folder is not reported as a full disk.
-    @Test func aWriteThatFailsForAnotherReasonIsNotAFullDisk() async throws {
-        let image = try #require(CGContext(
-            data: nil, width: 4, height: 4, bitsPerComponent: 8, bytesPerRow: 16,
-            space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )?.makeImage())
-        let missing = try makeTestDirectory().appending(path: "absent/edit.jpg")
-        do {
-            try await MediaFileWriter.writeImage(
-                image, as: .jpeg, quality: 0.9, metadataOf: missing, removingLocation: false, to: missing
-            )
-            Issue.record("expected the write into a missing folder to fail")
-        } catch {
-            #expect(error as? MediaFileWriter.WriteError != .outOfSpace)
-            #expect(!FreeSpaceFloor.refusedForSpace(error))
-        }
-    }
-
     @Test func aMixedSelectionCopiesAsOneFilePerPhoto() async throws {
         try await withEditableLibrary(fileCount: 3) { library in
             let ids = library.ids

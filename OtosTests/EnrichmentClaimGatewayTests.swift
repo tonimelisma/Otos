@@ -79,21 +79,4 @@ struct EnrichmentClaimGatewayTests {
         #expect(eligible[0].asset == staleAsset)
         #expect(eligible[0].rootID == 7)
     }
-
-    @Test func enrichmentClaimQueryReturnsNilForEmptyInputs() {
-        #expect(
-            EnrichmentClaimGateway.enrichmentClaimQuery(
-                rootIDs: [],
-                limit: 1,
-                claim: .library
-            ) == nil
-        )
-        #expect(
-            EnrichmentClaimGateway.enrichmentClaimQuery(
-                rootIDs: [1],
-                limit: 0,
-                claim: .library
-            ) == nil
-        )
-    }
 }

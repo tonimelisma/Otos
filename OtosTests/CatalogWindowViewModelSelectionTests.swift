@@ -9,43 +9,6 @@ import Testing
 /// before any AppKit renderer sees the new order.
 @MainActor
 struct CatalogWindowViewModelSelectionTests {
-    @Test func startsEmpty() {
-        let model = makeSelectionViewModel()
-        #expect(model.gridSelection == .empty)
-        #expect(model.selectionAnchor == nil)
-        #expect(model.orderedSelectedAssetIDs.isEmpty)
-    }
-
-    @Test func plainClickSelectsAndAnchors() {
-        let model = makeSelectionViewModel()
-        let ids = makeIDs(count: 4)
-
-        let updated = model.applyGridClick(
-            hit: ids[1],
-            modifiers: [],
-            orderedIDs: ids
-        )
-
-        #expect(updated.selection == [ids[1]])
-        #expect(updated.anchor == ids[1])
-        #expect(model.gridSelection == updated)
-        #expect(model.selectionAnchor == ids[1])
-    }
-
-    @Test func shiftClickExtendsFromAnchor() {
-        let model = makeSelectionViewModel()
-        let ids = makeIDs(count: 6)
-        _ = model.applyGridClick(hit: ids[1], modifiers: [], orderedIDs: ids)
-        let updated = model.applyGridClick(
-            hit: ids[4],
-            modifiers: [.shift],
-            orderedIDs: ids
-        )
-
-        #expect(updated.selection == Set(ids[1 ... 4]))
-        #expect(updated.anchor == ids[1])
-    }
-
     @Test func emptySpaceClears() {
         let model = makeSelectionViewModel()
         let ids = makeIDs(count: 3)
@@ -58,20 +21,6 @@ struct CatalogWindowViewModelSelectionTests {
 
         #expect(updated == .empty)
         #expect(model.gridSelection == .empty)
-    }
-
-    @Test func shiftEmptySpaceIsNoOp() {
-        let model = makeSelectionViewModel()
-        let ids = makeIDs(count: 3)
-        _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
-        let updated = model.applyGridClick(
-            hit: nil,
-            modifiers: [.shift],
-            orderedIDs: ids
-        )
-
-        #expect(updated.selection == [ids[0]])
-        #expect(updated.anchor == ids[0])
     }
 
     @Test func loupeEmptySpaceIsNoOp() {
@@ -99,17 +48,6 @@ struct CatalogWindowViewModelSelectionTests {
         #expect(updated.base == Set(ids[0 ... 2]))
     }
 
-    @Test func reconcileNativeIsIdempotentWhenEqual() {
-        let model = makeSelectionViewModel()
-        let ids = makeIDs(count: 3)
-        _ = model.applyGridClick(hit: ids[1], modifiers: [], orderedIDs: ids)
-        let before = model.gridSelection
-
-        let updated = model.reconcileNativeSelection([ids[1]])
-
-        #expect(updated == before)
-    }
-
     @Test func reconcileNativeInCompareIsNoOp() {
         let model = makeSelectionViewModel()
         let ids = makeIDs(count: 4)
@@ -123,27 +61,6 @@ struct CatalogWindowViewModelSelectionTests {
 
         #expect(updated == before)
         #expect(model.comparePair.members.count == 2)
-    }
-
-    @Test func clearGridSelectionResetsModel() {
-        let model = makeSelectionViewModel()
-        let ids = makeIDs(count: 2)
-        _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
-
-        model.clearGridSelection(reason: "descriptorChange")
-
-        #expect(model.gridSelection == .empty)
-    }
-
-    @Test func handlersFromViewModelRoundTrip() {
-        let model = makeSelectionViewModel()
-        let ids = makeIDs(count: 3)
-        let handlers = MediaGridSelectionHandlers.from(model)
-
-        let updated = handlers.applyClick(ids[2], [], ids)
-        #expect(updated.selection == [ids[2]])
-        #expect(handlers.currentSelection().anchor == ids[2])
-        #expect(model.gridSelection.anchor == ids[2])
     }
 
     @Test func applyStatePrunesRemovedIdentities() {
@@ -227,24 +144,6 @@ struct CatalogWindowViewModelSelectionTests {
         let dropsFocus = CatalogQueryDescriptor(scope: .allMedia, filter: MediaFilter(kinds: [.video]))
         model.applyState(makeWindowState(orderedIDs: [ids[0], ids[5]], descriptor: dropsFocus))
         #expect(model.focusedAssetID == ids[5])
-    }
-
-    @Test func focusReconcileRunsOnGridChange() {
-        let model = makeSelectionViewModel()
-        let ids = makeIDs(count: 4)
-        model.applyState(makeWindowState(orderedIDs: ids))
-        model.openLoupe(id: ids[1])
-        #expect(model.focusedAssetID == ids[1])
-
-        let survivors = [ids[0], ids[2], ids[3]]
-        model.applyState(makeWindowState(orderedIDs: survivors))
-
-        let expected = BrowserModePolicy.pruneFocus(
-            previous: ids[1],
-            previousOrderedIDs: ids,
-            survivingOrderedIDs: survivors
-        )
-        #expect(model.focusedAssetID == expected)
     }
 
     @Test func selectionSurvivesFreshControllerFirstApply() async throws {

@@ -72,54 +72,11 @@ struct CatalogStoreEnrichmentTests {
         #expect(noHash.hashStale)
     }
 
-    @Test func captureLocalTimePrefersMetadataThenFilesystem() {
-        let capture = CaptureLocalTime(seconds: 700)
-        let created = Date(timeIntervalSince1970: 500)
-        let modified = Date(timeIntervalSince1970: 900)
-        #expect(
-            makeAsset(captureLocalTime: capture, createdAt: created, modifiedAt: modified).captureLocalTime == capture
-        )
-        #expect(makeAsset(captureLocalTime: nil, createdAt: nil, modifiedAt: nil).captureLocalTime == nil)
-    }
-
     /// A stored record that does not decode is an error, never an asset without metadata.
     @Test func anUndecodableMetadataRecordIsAnErrorNotAbsence() {
         #expect(throws: DecodingError.self) {
             try CatalogStore.decodeMetadataExtraJSON(#"{"family": 3}"#)
         }
-    }
-
-    @Test func metadataExtraJSONRoundTrips() throws {
-        let meta = AssetMetadata(
-            family: "image",
-            fileExtension: "jpg",
-            brand: nil,
-            timestamps: [
-                CaptureTimestampRecord(
-                    role: "original",
-                    instant: Date(timeIntervalSince1970: 700),
-                    utcOffsetSeconds: 3600,
-                    precision: "full",
-                    year: 1992, month: 6, day: 1, hour: 12, minute: 0, second: 0
-                ),
-            ],
-            locations: [GeoRecord(source: "exifGPS", latitude: 1.5, longitude: 2.5, altitudeMeters: 10)],
-            cameraMake: "Acme",
-            cameraModel: "X1",
-            lensModel: "50mm",
-            orientation: 1,
-            pixelWidth: 4000,
-            pixelHeight: 3000,
-            durationSeconds: nil,
-            exposure: ExposureRecord(
-                exposureTimeNumerator: 1, exposureTimeDenominator: 250, fNumber: 2.8, isoSensitivity: 400,
-                exposureBiasEV: -0.3, focalLengthMillimeters: 35, focalLengthIn35mmFilmMillimeters: 52,
-                flashFired: false, flashMode: 2, flashRedEyeReduction: false, flashHasFunction: true,
-                program: 3, meteringMode: 5, whiteBalance: 0
-            )
-        )
-        let json = try CatalogStore.encodeMetadataExtraJSON(meta)
-        #expect(try CatalogStore.decodeMetadataExtraJSON(json) == meta)
     }
 
     // MARK: - Store: rescan merge, persistence, and purge

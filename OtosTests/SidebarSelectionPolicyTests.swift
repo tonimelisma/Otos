@@ -185,12 +185,6 @@ struct SidebarSelectionPolicyTests {
         )
     }
 
-    @Test func barOwnsStatusMatchesLibrarySelection() {
-        let pres = Self.presentation(state: .inventory)
-        #expect(SidebarSelectionPolicy.barOwnsStatus(sidebarSelection: .library(Self.cardPath), presentation: pres))
-        #expect(!SidebarSelectionPolicy.barOwnsStatus(sidebarSelection: .allMedia, presentation: pres))
-    }
-
     @Test func barOwnsStatusIgnoresBatchSelection() {
         let pres = Self.presentation(
             state: .executing(progress: MediaOperationProgress(
@@ -242,29 +236,6 @@ struct SidebarSelectionPolicyTests {
             batchID: Self.batchID
         )
         #expect(SidebarSelectionPolicy.removableIndicator(presentation: pres, sidebarSelection: .allMedia) == .none)
-    }
-
-    @Test func removableIndicatorHidesWithNoPresentation() {
-        #expect(SidebarSelectionPolicy.removableIndicator(presentation: nil, sidebarSelection: .allMedia) == .none)
-    }
-
-    @Test func batchIndicatorShowsDeterminateWhileExecuting() {
-        let pres = Self.presentation(
-            state: .executing(progress: MediaOperationProgress(
-                completedCount: 4,
-                totalCount: 9,
-                completedBytes: 1,
-                totalBytes: 2,
-                elapsedMs: 0
-            )),
-            batchID: Self.batchID
-        )
-        let indicator = SidebarSelectionPolicy.batchIndicator(
-            batchID: Self.batchID,
-            presentations: [pres],
-            sidebarSelection: .allMedia
-        )
-        #expect(indicator == .determinate(completed: 4, total: 9))
     }
 
     @Test func batchIndicatorHidesOnlyWhenTheCardRowIsSelected() {

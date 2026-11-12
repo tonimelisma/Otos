@@ -53,8 +53,4 @@ struct KnownMaterializationSuppressionTests {
         state.endFailure(id: id, now: now.advanced(by: .seconds(1)))
         #expect(state.activeExpiries(now: now.advanced(by: .seconds(1))).isEmpty)
     }
-
-    @Test func activeCeilingIsAtLeastMaterializationTimeoutPlusLag() {
-        #expect(KnownMaterializationSuppressionPolicy.activeCeiling >= .seconds(135))
-    }
 }

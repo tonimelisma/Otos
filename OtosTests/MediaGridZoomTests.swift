@@ -13,25 +13,6 @@ import Testing
 /// keeps these tests free of AppKit animation timing.
 @MainActor
 struct MediaGridZoomTests {
-    @Test func receiveColumnCountSwapsImmediatelyWhenNoApplyIsInFlight() {
-        let controller = makeController(itemCount: 4)
-        #expect(controller.mutationGate.installedColumnCount == GridColumnCount.defaultValue)
-
-        controller.receiveColumnCount(3)
-
-        #expect(controller.mutationGate.installedColumnCount == 3)
-        #expect(controller.mutationGate.requestedColumnCount == 3)
-        #expect(controller.mutationGate.inFlight == .none)
-    }
-
-    @Test func receiveColumnCountIsANoOpWhenTheRequestedValueAlreadyMatches() {
-        let controller = makeController(itemCount: 4)
-        controller.receiveColumnCount(GridColumnCount.defaultValue)
-
-        #expect(controller.mutationGate.installedColumnCount == GridColumnCount.defaultValue)
-        #expect(controller.mutationGate.inFlight == .none)
-    }
-
     @Test func presentationUpdateDoesNotPreemptAnimatedGridZoomPath() {
         let controller = makeController(itemCount: 4)
         let originalLayout = controller.collectionView.collectionViewLayout

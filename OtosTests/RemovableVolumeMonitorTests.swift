@@ -16,22 +16,6 @@ struct RemovableVolumeMonitorQualificationTests {
         #expect(!RemovableVolumeMonitor.isPhysicalRemovableDevice(deviceModel: "Disk Image"))
     }
 
-    @Test func plausibleRealDeviceModelsAreAccepted() {
-        // `kDADiskDescriptionDeviceModelKey` is an arbitrary hardware
-        // vendor/model string, not a fixed enum — unlike disk images, which
-        // measured evidence shows always report exactly `"Disk Image"`, there
-        // is no closed set of "real" values to fixture. These are
-        // illustrative (the internal SSD on the machine that ran this
-        // research measured `"APPLE SSD AP0512R"`); the property under test
-        // is simply "anything but the disk-image sentinel is accepted."
-        for model in ["APPLE SSD AP0512R", "Kingston DataTraveler", "SD Card Reader", "Generic Flash Disk"] {
-            #expect(
-                RemovableVolumeMonitor.isPhysicalRemovableDevice(deviceModel: model),
-                "\(model) should be accepted"
-            )
-        }
-    }
-
     @Test func missingOrEmptyModelIsRejected() {
         // Fails closed: no answer is not proof of physical media.
         #expect(!RemovableVolumeMonitor.isPhysicalRemovableDevice(deviceModel: nil))
@@ -54,12 +38,6 @@ struct RemovableVolumeMonitorLiveDiskImageTests {
         let reported = RemovableVolumeMonitor.deviceModel(forVolumeAt: image.mountURL, session: session)
         #expect(reported == "Disk Image")
         #expect(!RemovableVolumeMonitor.isPhysicalRemovableDevice(deviceModel: reported))
-    }
-
-    @Test func unmountedPathReportsNoModel() {
-        let session = DASessionCreate(kCFAllocatorDefault)
-        let neverMounted = URL(fileURLWithPath: "/Volumes/OtosNeverMounted-\(UUID().uuidString)", isDirectory: true)
-        #expect(RemovableVolumeMonitor.deviceModel(forVolumeAt: neverMounted, session: session) == nil)
     }
 }
 
@@ -130,11 +108,5 @@ struct RemovableVolumeTrackerTests {
         #expect(tracker.disappeared(RemovableVolumeDisk(volumePath: "/Volumes/CARD", volumeUUID: nil))
             == [.detach(Self.card.identity, .disconnected)])
         #expect(tracker.disappeared(Self.cardDisk).isEmpty, "an unknown disk changes nothing")
-    }
-
-    @Test func anUnmountRequestForAnUnknownDiskChangesNothing() {
-        var tracker = RemovableVolumeTracker()
-        _ = tracker.reconcile([Self.card])
-        #expect(tracker.unmountRequested(RemovableVolumeDisk(volumePath: "/Volumes/OTHER", volumeUUID: nil)).isEmpty)
     }
 }

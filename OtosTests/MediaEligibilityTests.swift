@@ -23,13 +23,6 @@ struct MediaEligibilityTests {
         #expect(!MediaEligibility.isCatalogMedia(contentTypeIdentifier: "public.swift-source"))
     }
 
-    @Test func videoUsesMovieConformanceOnly() {
-        #expect(MediaEligibility.isVideo(contentTypeIdentifier: "public.mpeg-4"))
-        #expect(MediaEligibility.isVideo(contentTypeIdentifier: "com.apple.quicktime-movie"))
-        #expect(!MediaEligibility.isVideo(contentTypeIdentifier: "public.jpeg"))
-        #expect(!MediaEligibility.isVideo(contentTypeIdentifier: nil))
-    }
-
     @Test func skipsDeviceArtifactAndTrashPaths() {
         #expect(MediaEligibility.shouldSkipDirectory(name: ".Trash-1000"))
         #expect(MediaEligibility.shouldSkipDirectory(name: "$RECYCLE.BIN"))

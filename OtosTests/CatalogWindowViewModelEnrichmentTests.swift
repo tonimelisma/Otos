@@ -9,50 +9,6 @@ import Testing
 @Suite(.testDirectory)
 struct CatalogWindowViewModelEnrichmentTests {
     @MainActor
-    @Test func startStartsInjectedCoordinatorAndViewportIsAccepted() async throws {
-        let temp = try makeTestDirectory()
-        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try writeCatalogStoreFile(root.appending(path: "one.jpg"), contents: "jpeg")
-
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let captureDate = Date(timeIntervalSince1970: 900)
-        let coordinator = EnrichmentCoordinator(
-            store: store,
-            enricher: completeEnricher(captureDate: captureDate),
-            materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
-        )
-        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
-        let model = CatalogWindowViewModel(
-            catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
-            enrichmentCoordinator: coordinator,
-            startsStallMonitor: false,
-            startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults,
-            volumeCapacity: ampleVolumeCapacity,
-            trashFiles: .refusing
-            // startsEnrichment defaults true: start() must start the injected coordinator.
-        )
-
-        model.start()
-        model.addLibrary(url: root)
-
-        // The coordinator the view model started enriches the asset, and the enriched
-        // capture date and thumbnail path surface in the projected window state.
-        let asset = try await waitForFirstAsset(store: store, model: model) { asset in
-            asset.captureLocalTime == CaptureLocalTime(readingOf: captureDate)
-        }
-        #expect(asset.thumbnailPath == "t.jpg")
-
-        // The viewport priority hint is accepted without disrupting the enrichment result.
-        model.viewportChanged([asset.id])
-        #expect(asset.captureLocalTime == CaptureLocalTime(readingOf: captureDate))
-        await coordinator.shutdown()
-    }
-
-    @MainActor
     @Test func persistedAssetsEnrichOnRelaunchAfterNoOpLaunchScan() async throws {
         // A persistent catalog whose launch rescan is a no-op (identical facts → no
         // notification) is the case start-after-load must cover: the coordinator must

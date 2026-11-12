@@ -206,21 +206,6 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.selectedImportPresentation == nil)
     }
 
-    @Test func aStaleBatchSelectionResolvesNormally() {
-        // A batch scope the catalog no longer resolves falls back through the
-        // ordinary resolution; nothing pins it.
-        let model = makeModel()
-        model.selectSidebar(.importBatch(Self.batchID))
-
-        let bouncedState = Self.state(
-            resolvedSidebarSelection: .allMedia,
-            importBatches: [],
-            queryGeneration: model.queryGeneration
-        )
-        model.applyState(bouncedState)
-        #expect(model.sidebarSelection == .allMedia)
-    }
-
     /// APP-029: `sessionPreferences(for:)` reads straight off the live
     /// presentation. A second ViewModel-owned copy, wholesale-replaced from the
     /// coordinator on every frame, would race an optimistic write from

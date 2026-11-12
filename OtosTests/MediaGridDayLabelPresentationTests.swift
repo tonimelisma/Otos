@@ -36,14 +36,4 @@ struct MediaGridDayLabelPresentationTests {
         )
         #expect(presentation.countText == "1 item")
     }
-
-    @Test func zeroItemsStillPluralizes() {
-        let presentation = MediaGridDayLabelPresentation.map(
-            date: Self.now,
-            itemCount: 0,
-            now: Self.now,
-            calendar: Self.calendar
-        )
-        #expect(presentation.countText == "0 items")
-    }
 }

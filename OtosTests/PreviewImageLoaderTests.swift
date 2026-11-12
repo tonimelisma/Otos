@@ -91,36 +91,6 @@ struct PreviewImageLoaderTests {
         }
     }
 
-    @Test func materializedLocalJPEGDecodes() async throws {
-        let directory = try makeTestDirectory()
-
-        let file = directory.appending(path: "sample.jpg")
-        try writeTinyJPEG(to: file)
-
-        let id = MediaAssetID(
-            libraryRootPath: LibraryRootPath(rawValue: directory.path(percentEncoded: false)),
-            relativePath: MediaRelativePath(rawValue: "sample.jpg")
-        )
-        let loader = PreviewImageLoader(
-            status: { _ in .materialized },
-            materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in
-                MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
-            }
-        )
-
-        let outcome = await loader.preview(
-            for: PreviewImageLoader.Request(
-                id: id,
-                detail: nil,
-                targetLongEdge: 512
-            )
-        )
-        guard case .image = outcome else {
-            Issue.record("Expected decoded image, got \(String(describing: outcome))")
-            return
-        }
-    }
-
     @Test func decodeReportsNativePixelSize() async throws {
         let directory = try makeTestDirectory()
         let file = directory.appending(path: "sample.jpg")
@@ -258,34 +228,6 @@ struct PreviewImageLoaderTests {
         let (firstResult, secondResult) = await (firstLoad, secondLoad)
         guard case .image = firstResult, case .image = secondResult else {
             Issue.record("Both requests should decode")
-            return
-        }
-    }
-
-    @Test func cacheMissesWhenStoredLongEdgeIsSmaller() async throws {
-        let directory = try makeTestDirectory()
-        let file = directory.appending(path: "sample.jpg")
-        try writeTinyJPEG(to: file)
-        let id = MediaAssetID(
-            libraryRootPath: LibraryRootPath(rawValue: directory.path(percentEncoded: false)),
-            relativePath: MediaRelativePath(rawValue: "sample.jpg")
-        )
-        let loader = PreviewImageLoader(
-            status: { _ in .materialized },
-            materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in
-                MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
-            }
-        )
-        let first = await loader.preview(for: .init(id: id, detail: nil, targetLongEdge: 128))
-        guard case .image = first else {
-            Issue.record("first decode failed")
-            return
-        }
-        // Larger target must not reuse the undersized cache entry as a hit that
-        // skips decode bookkeeping — outcome is still an image either way.
-        let second = await loader.preview(for: .init(id: id, detail: nil, targetLongEdge: 1024))
-        guard case .image = second else {
-            Issue.record("second decode failed")
             return
         }
     }

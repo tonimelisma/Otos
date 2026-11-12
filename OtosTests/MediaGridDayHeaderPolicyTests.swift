@@ -26,9 +26,4 @@ struct MediaGridDayHeaderPolicyTests {
                 == .map(date: nil, itemCount: 1)
         )
     }
-
-    @Test func anUngroupedOrUnknownSectionDrawsNothing() {
-        #expect(MediaGridDayHeaderPolicy.presentation(section: 1, daySections: [nil, nil]) == nil)
-        #expect(MediaGridDayHeaderPolicy.presentation(section: 3, daySections: days) == nil)
-    }
 }

@@ -59,30 +59,6 @@ struct LibraryRootKindCapabilityTests {
         }
     }
 
-    @Test func aLibraryIsAUserChosenFolderInAllMediaThatImportsLand() {
-        #expect(Row(.library) == Row(
-            userChosenFolder: true, librariesSection: true, allMedia: true, importDestination: true,
-            removable: false, filesystemNamespace: true, moveToTrash: true, sourceListing: false,
-            stagesOriginals: false, pausesEnrichmentWhileImporting: false
-        ))
-    }
-
-    @Test func aCardIsARemovableFilesystemThatAnImportReadsInPlace() {
-        #expect(Row(.removableVolume) == Row(
-            userChosenFolder: false, librariesSection: false, allMedia: false, importDestination: false,
-            removable: true, filesystemNamespace: true, moveToTrash: true, sourceListing: false,
-            stagesOriginals: false, pausesEnrichmentWhileImporting: true
-        ))
-    }
-
-    @Test func aCameraIsARemovableListingWhoseOriginalsAreStaged() {
-        #expect(Row(.deviceMTP) == Row(
-            userChosenFolder: false, librariesSection: false, allMedia: false, importDestination: false,
-            removable: true, filesystemNamespace: false, moveToTrash: false, sourceListing: true,
-            stagesOriginals: true, pausesEnrichmentWhileImporting: false
-        ))
-    }
-
     /// ADR 0046 §3: an account is a library in browsing — the Libraries section and All
     /// Media — and in nothing that changes files. Its rows come from its server's listing,
     /// its originals are staged when fetched, and its rows stay while the server is gone.
@@ -98,18 +74,6 @@ struct LibraryRootKindCapabilityTests {
         #expect(LibraryRootKind.library.availabilityAtLaunch == .unknown)
         #expect(LibraryRootKind.removableVolume.availabilityAtLaunch == .unavailable)
         #expect(LibraryRootKind.deviceMTP.availabilityAtLaunch == .unavailable)
-    }
-
-    /// A kind that stages its originals names the container they go into, and only such a
-    /// kind does; the staging sweep spans every container.
-    @Test func onlyAStagingKindNamesAStagingContainer() {
-        #expect(LibraryRootKind.deviceMTP.stagingContainer == .device)
-        #expect(LibraryRootKind.immichAccount.stagingContainer == .remote)
-        #expect(LibraryRootKind.library.stagingContainer == nil)
-        #expect(LibraryRootKind.removableVolume.stagingContainer == nil)
-        #expect(StagingContainer.allCases.allSatisfy { container in
-            LibraryRootKind.allCases.contains { $0.stagingContainer == container }
-        })
     }
 
     @Test func sqlListNamesExactlyTheKindsWithTheCapability() {

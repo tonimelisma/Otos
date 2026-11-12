@@ -134,27 +134,6 @@ func waitForPendingBuilderCount(
     try await waitUntil(every: .milliseconds(10)) { await builder.pendingCount(for: source) >= count }
 }
 
-func waitForRecordedCancellation(
-    _ builder: ControlledImportPlanBuilder,
-    source: LibraryRootPath
-) async throws {
-    try await waitUntil(every: .milliseconds(10)) { await builder.recordedCancelled().contains(source) }
-}
-
-/// Cancellation has two effects: the source is recorded, and the suspended
-/// continuation is released with a dummy so it cannot leak. Gating on the
-/// first alone leaves the second racing with the assertion that reads it.
-func waitForCancellationSettled(
-    _ builder: ControlledImportPlanBuilder,
-    source: LibraryRootPath
-) async throws {
-    try await waitUntil(every: .milliseconds(10)) {
-        let cancelled = await builder.recordedCancelled().contains(source)
-        let pending = await builder.pendingSources().contains(source)
-        return cancelled && !pending
-    }
-}
-
 extension ControlledImportPlanBuilder: ImportPlanBuilding {
     nonisolated func build(
         snapshot: ImportPlanningSnapshot,

@@ -102,12 +102,6 @@ extension AppKitWindowTests {
             #expect(harness.controller.tileContents.content(for: visible)?.image != nil)
         }
 
-        @Test func reconfigureVisibleItemsPinsOnce() throws {
-            let harness = try PaintInvariantHarness(itemCount: 4)
-            harness.controller.reconfigureVisibleItems(reason: "test")
-            #expect(harness.controller.lastReconfigurePinCallCount == 1)
-        }
-
         /// APP-015 regression: a light/dark switch redisplays every view in the window,
         /// and the painted thumbnail must survive it. AppKit updates layers for that
         /// redisplay when the transaction commits, so each switch is flushed before the

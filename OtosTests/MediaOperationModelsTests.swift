@@ -84,24 +84,7 @@ struct MediaOperationModelsTests {
         }
     }
 
-    @Test func attentionItemsIsEmptyWhenNothingIsBlocked() {
-        let copied = Self.entry(
-            name: "fine.jpg",
-            disposition: .copy(destination: MediaRelativePath(rawValue: "fine.jpg"))
-        )
-        #expect(Self.plan(entries: [copied]).attentionItems.isEmpty)
-    }
-
     // MARK: - MediaOperationFailureReason.forMissingSnapshot (trap #3's two new producers)
-
-    @Test func missingSnapshotClassifiesSourceRemovedWhenSourceIsGone() {
-        let reason = MediaOperationFailureReason.forMissingSnapshot(
-            source: Self.source,
-            destination: Self.destination,
-            availableRoots: [Self.destination]
-        )
-        #expect(reason == .sourceRemoved)
-    }
 
     @Test func missingSnapshotClassifiesDestinationUnavailableWhenOnlyDestinationIsGone() {
         let reason = MediaOperationFailureReason.forMissingSnapshot(

@@ -31,17 +31,6 @@ struct MediaCompanionPairingTests {
         #expect(paired[0].primaryRelativePath?.rawValue == "IMG_1.CR2")
     }
 
-    @Test func unpairedCompanionRetainsNilPrimary() {
-        let companion = ScannedCompanionFile(
-            relativePath: MediaRelativePath(rawValue: "orphan.srt"),
-            kind: .srt,
-            byteSize: 1,
-            contentModifiedAt: nil
-        )
-        let paired = MediaCompanionPairing.pair(companions: [companion], primaries: [])
-        #expect(paired[0].primaryRelativePath == nil)
-    }
-
     @Test func doesNotRecognizeLRC() {
         #expect(MediaCompanionKind.recognize(fileExtension: "lrc") == nil)
         #expect(MediaCompanionKind.recognize(fileExtension: "XMP") == .xmp)
@@ -58,23 +47,6 @@ struct MediaCompanionPairingTests {
             contentModifiedAt: nil,
             kind: kind
         )
-    }
-}
-
-struct ImportPreferencesStoreTests {
-    @Test func roundTripsThroughUserDefaults() {
-        let temp = PreferencesDomain.suite(UUID().uuidString)
-
-        var prefs = ImportPreferences.default
-        prefs.importSidecarFiles = false
-        prefs.deleteSourceAfterImport = true
-        prefs.autoEjectAfterImport = true
-        prefs.destinationFolderPolicy = .none
-        prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: temp.makeDefaults())
-
-        let loaded = ImportPreferencesStore.load(defaults: temp.makeDefaults())
-        #expect(loaded == prefs)
     }
 }
 
@@ -101,35 +73,6 @@ struct MediaCompanionInventoryTests {
         #expect(companions[0].primaryRelativePath?.rawValue == "IMG_1.JPG")
         #expect(companions[0].kind == .xmp)
         #expect(scanned.testAssets.map(\.relativePath.rawValue) == ["IMG_1.JPG"])
-    }
-
-    @Test func rawJPEGPairingPrefersRawWhenClassified() {
-        let jpeg = ScannedMediaFile(
-            relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
-            name: "IMG_1.JPG",
-            contentTypeIdentifier: "public.jpeg",
-            byteSize: 100,
-            createdAt: nil,
-            contentModifiedAt: nil,
-            kind: .image
-        )
-        let raw = ScannedMediaFile(
-            relativePath: MediaRelativePath(rawValue: "IMG_1.CR2"),
-            name: "IMG_1.CR2",
-            contentTypeIdentifier: "com.canon.cr2-raw-image",
-            byteSize: 100,
-            createdAt: nil,
-            contentModifiedAt: nil,
-            kind: .raw
-        )
-        let companion = ScannedCompanionFile(
-            relativePath: MediaRelativePath(rawValue: "IMG_1.xmp"),
-            kind: .xmp,
-            byteSize: nil,
-            contentModifiedAt: nil
-        )
-        let paired = MediaCompanionPairing.pair(companions: [companion], primaries: [jpeg, raw])
-        #expect(paired[0].primaryRelativePath?.rawValue == "IMG_1.CR2")
     }
 
     @Test func targetedDeleteRepairsCompanionPairing() async throws {

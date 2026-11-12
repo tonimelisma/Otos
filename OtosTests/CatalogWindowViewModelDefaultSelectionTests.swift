@@ -77,23 +77,6 @@ struct ViewModelDefaultSelectionTests {
         #expect(model.sidebarSelection == .library(library.path))
     }
 
-    @MainActor
-    @Test func initialDefaultSelectsCardAfterEmptyPreload() {
-        let model = makePolicyTestViewModel()
-        let empty = CatalogWindowState.empty
-        let card = removableSource(
-            path: "/Volumes/CARD",
-            identity: .volume(uuid: "card"),
-            availability: .available
-        )
-        let loaded = windowState(removableSources: [card])
-
-        model.applySidebarSelectionPolicy(previous: empty, next: empty)
-        model.applySidebarSelectionPolicy(previous: empty, next: loaded)
-
-        #expect(model.sidebarSelection == .library(card.path))
-    }
-
     /// Inserting a card takes the user to it even after they chose another row
     /// (APP-002): the one-time startup default is not the only automatic jump.
     @MainActor

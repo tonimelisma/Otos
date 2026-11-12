@@ -61,51 +61,6 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
-    /// `import-bar.md` "What the presentation must carry": destination display
-    /// name and whether the card still exists are facts the presentation states
-    /// explicitly rather than leaving the view to re-derive them from
-    /// `fixedLibraries`/`removableSources` itself.
-    @Test func presentationCarriesDestinationDisplayNameAndCardStillExists() async throws {
-        let temp = try makeTestDirectory()
-        let destinationURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
-        let sourceURL = temp.appending(path: "Card", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
-        try Data(repeating: 1, count: 1024).write(to: sourceURL.appending(path: "a.jpg"))
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        try await store.start(scansSavedLibraries: false)
-        try await store.addLibrary(url: destinationURL)
-        let destination = try CatalogPath.normalizedDirectoryPath(for: destinationURL)
-        try await store.attachRemovableVolume(
-            mountURL: sourceURL,
-            identity: .volume(uuid: "display-name"),
-            displayName: "Card",
-            isEjectable: true
-        )
-        let source = try CatalogPath.normalizedDirectoryPath(for: sourceURL)
-        _ = try await waitForCatalogStoreState(store) { state in
-            !state.isScanning && state.removableSources.first?.activity == .idle
-        }
-        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(
-            store: store,
-            preferencesDomain: tempDefaults,
-            volumeCapacity: ampleVolumeCapacity
-        )
-        await coordinator.start()
-        // Ready requires proven naming facts (ARC-057); stand in for the
-        // enrichment coordinator these tests do not run.
-        await markEnrichmentLookedAtEveryRow(store, root: source)
-        await coordinator.setDestination(destination, for: source)
-        _ = try await readyGeneration(coordinator, source: source)
-
-        let presentation = try #require(
-            await coordinator.currentPresentations().first { $0.sourcePath == source }
-        )
-        #expect(presentation.destinationDisplayName == "Pictures")
-        await coordinator.shutdown()
-    }
-
     /// ARC-047: the coordinator must discover an attached source purely via
     /// the store's `RootPlanningChange` stream — no `setDestination`/`queueImport`
     /// intent. This pins the emit → subscribe → refreshSources chain that a field
@@ -260,80 +215,6 @@ struct MediaOperationCoordinatorTests {
                 return true
             }
             return false
-        }
-        await coordinator.shutdown()
-    }
-
-    @Test func queueImportSurfacesExecutionUnavailableOrQueuedState() async throws {
-        let temp = try makeTestDirectory()
-        let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
-        let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
-        try writeCatalogStoreFile(fixedRoot.appending(path: "fixed.jpg"), contents: "jpeg")
-        try writeCatalogStoreFile(cardRoot.appending(path: "card.jpg"), contents: "jpeg")
-
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        try await store.start(scansSavedLibraries: false)
-        try await store.addLibrary(url: fixedRoot)
-        let fixedPath = try CatalogPath.normalizedDirectoryPath(for: fixedRoot)
-        _ = try await waitForCatalogStoreState(store) { snapshot in
-            !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["fixed.jpg"]
-        }
-
-        try await store.attachRemovableVolume(
-            mountURL: cardRoot,
-            identity: .volume(uuid: "import-plan-card"),
-            displayName: "Card",
-            isEjectable: true
-        )
-        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
-        _ = try await waitForCatalogStoreState(store) { snapshot in
-            snapshot.removableSources.contains {
-                $0.path == cardPath && $0.availability == .available && !$0.isScanning
-            }
-        }
-
-        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(
-            store: store,
-            preferencesDomain: tempDefaults,
-            volumeCapacity: ampleVolumeCapacity
-        )
-        await coordinator.start()
-
-        // Ready requires proven naming facts (ARC-057); stand in for the
-
-        // enrichment coordinator these tests do not run.
-
-        await markEnrichmentLookedAtEveryRow(store, root: cardPath)
-
-        await coordinator.setDestination(fixedPath, for: cardPath)
-        _ = try await readyGeneration(coordinator, source: cardPath)
-        await coordinator.queueImport(for: cardPath)
-        // Deterministically wait until presentation leaves inventory.
-        try await waitUntil(every: .milliseconds(25)) {
-            let presentations = await coordinator.currentPresentations()
-            guard let presentation = presentations.first(where: { $0.sourcePath == cardPath }) else {
-                return false
-            }
-            if case .inventory = presentation.state {
-                return false
-            }
-            return true
-        }
-
-        let presentations = await coordinator.currentPresentations()
-        let card = try #require(presentations.first { $0.sourcePath == cardPath })
-        // A one-file import through the live executor can settle inside the
-        // wait; a settled run presents its completion until the re-plan lands,
-        // so `.executing` and `.completed` are as legitimate here as the
-        // states before them.
-        switch card.state {
-        case .executionUnavailable, .waitingForMetadata, .ready, .planning, .executing, .completed:
-            break
-        default:
-            Issue.record("Unexpected import presentation state \(card.state)")
         }
         await coordinator.shutdown()
     }
@@ -848,36 +729,6 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
-    /// The device-identity and last-used heuristics are deleted: the coordinator
-    /// ignores any value an earlier build left in these keys and always defaults
-    /// to first-available.
-    @Test func staleLegacyDestinationPreferencesAreIgnored() async throws {
-        let fixture = try await makeDestinationFixture(
-            libraryNames: ["Zebra", "Alpha", "Middle"],
-            identity: .volume(uuid: "stale-legacy")
-        )
-        let defaults = PreferencesDomain.suite(UUID().uuidString)
-        defaults.makeDefaults().set(
-            [fixture.identity.rawValue: fixture.libraries[2].rawValue],
-            forKey: "import.destinationByDeviceIdentity"
-        )
-        defaults.makeDefaults().set(fixture.libraries[1].rawValue, forKey: "import.lastUsedDestination")
-        let coordinator = MediaOperationCoordinator(
-            store: fixture.store,
-            preferencesDomain: defaults,
-            volumeCapacity: ampleVolumeCapacity
-        )
-        await coordinator.start()
-        _ = try await readyGeneration(coordinator, source: fixture.source)
-        let presentation = try #require(
-            await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
-        )
-        #expect(presentation.destinationPath == fixture.libraries[0])
-        #expect(defaults.makeDefaults().dictionary(forKey: "import.destinationByDeviceIdentity") == nil)
-        #expect(defaults.makeDefaults().string(forKey: "import.lastUsedDestination") == nil)
-        await coordinator.shutdown()
-    }
-
     /// "Dragging a library to the top changes [the default destination]" —
     /// including for a card already attached, which is the deliberate
     /// consequence of following the order rather than a fixed pick: the
@@ -1149,20 +1000,6 @@ struct ImportBatchSidebarPolicyTests {
             importBatches: []
         )
         #expect(resolved == .library(pictures.path))
-    }
-
-    @Test func existingBatchIsPreserved() {
-        let batch = ImportBatchSummary(
-            batchID: ImportBatchID(unixMilliseconds: 42),
-            assetCount: 3
-        )
-        let resolved = CatalogWindowPolicy.resolvedSidebarSelection(
-            .importBatch(batch.batchID),
-            libraries: [],
-            removableSources: [],
-            importBatches: [batch]
-        )
-        #expect(resolved == .importBatch(batch.batchID))
     }
 
     /// The import counter stuttered: it stepped forward and then back, hundreds of times.

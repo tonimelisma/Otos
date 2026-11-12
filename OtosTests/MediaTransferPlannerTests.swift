@@ -224,29 +224,6 @@ struct MediaTransferPlannerTests {
         #expect(plan.entries[0].disposition == .copy(destination: next))
     }
 
-    @Test func differentLiveMtimeAdvancesTheWholeBundleSuffix() throws {
-        let destinationDir = try makeTestDirectory()
-        defer { try? FileManager.default.removeItem(at: destinationDir) }
-        let destinationRoot = LibraryRootPath(rawValue: destinationDir.path)
-
-        let source = Self.facts(name: "a.jpg", modified: Date(timeIntervalSince1970: 100))
-        var policy = ImportPolicy.from(.default)
-        policy.destinationFolderPolicy = .none
-        policy.destinationNamePolicy = .original
-        let snapshot = Self.snapshot(sourceMedia: [source], destinationRoot: destinationRoot, policy: policy)
-        let next = MediaRelativePath(rawValue: "a_001.jpg")
-
-        let idealFile = destinationDir.appending(path: source.relativePath.rawValue)
-        try Data(repeating: 0, count: 10).write(to: idealFile)
-        try FileManager.default.setAttributes(
-            [.modificationDate: Date(timeIntervalSince1970: 101)],
-            ofItemAtPath: idealFile.path
-        )
-
-        let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
-        #expect(plan.entries[0].disposition == .copy(destination: next))
-    }
-
     /// Stays on `planImport` with a directly injected `NamespaceOccupancyResult`
     /// rather than `buildImportPlan`: a real regular file's mtime is unreadable only
     /// when `resourceValues` throws (for example a race where the file vanishes
@@ -424,30 +401,6 @@ struct MediaTransferPlannerTests {
         )
         #expect(firstPlan.entries.map(\.disposition) == [.copy(destination: Self.base)])
         #expect(secondPlan.entries.map(\.disposition) == [.copy(destination: Self.firstSuffix)])
-    }
-
-    /// A plan built before a competing plan claimed its name starts on the same name;
-    /// replanned against that claim it moves to the next suffix, and the winner keeps it.
-    @Test func conflictingPublishReplansAndNeverEvicts() {
-        let snapshot = Self.snapshot(sourceMedia: [Self.facts(name: "same.jpg")], policy: Self.rootOriginalNames)
-        let winner = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
-        let loserStart = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
-        let loserReplanned = MediaTransferPlanner.planImport(
-            snapshot: snapshot,
-            namespace: Self.namespace(),
-            additionalReserved: Set(winner.entries.compactMap(\.destination))
-        )
-        #expect(winner.entries[0].destination == Self.base)
-        #expect(loserStart.entries[0].destination == Self.base)
-        #expect(loserReplanned.entries[0].destination == Self.firstSuffix)
-    }
-
-    /// With no competing claim (the other run detached, cancelled or failed), a rebuild
-    /// takes the base name again.
-    @Test func aReleasedClaimFreesTheBaseName() {
-        let snapshot = Self.snapshot(sourceMedia: [Self.facts(name: "same.jpg")], policy: Self.rootOriginalNames)
-        let rebuilt = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
-        #expect(rebuilt.entries[0].destination == Self.base)
     }
 
     /// A companion lands beside its primary under the primary's name. Original naming

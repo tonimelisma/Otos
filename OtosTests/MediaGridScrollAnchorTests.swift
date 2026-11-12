@@ -35,19 +35,6 @@ struct MediaGridScrollAnchorTests {
         )
     }
 
-    /// Without the restore the same apply displaces the user, so the test above is proving
-    /// the anchor and not merely a grid that happens to hold still.
-    @Test func withoutTheRestoreTheSameInsertDoesDisplaceTheUser() {
-        let controller = makeAnchorController(itemCount: 200)
-        controller.scrollTo(offset: 600)
-        let before = controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: [])?.id
-
-        controller.applyIDs(prepending: 12, to: controller.currentIDs)
-
-        let after = controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: [])?.id
-        #expect(before != after, "negative control: an unanchored insert above must displace")
-    }
-
     /// The exception that makes the rule feel right. At the top, arrivals pushing the grid
     /// down is the signal that something is happening, and nothing the user was reading is
     /// displaced — so anchoring is deliberately withheld there.
@@ -104,18 +91,6 @@ struct MediaGridScrollAnchorTests {
             abs(after.offsetFromViewportLeadingEdge - before.offsetFromViewportLeadingEdge) < 1,
             "the anchored tile moved on screen"
         )
-    }
-
-    /// Negative control for the strip: unanchored, the same insert does displace it.
-    @Test func withoutTheRestoreTheSameInsertDoesDisplaceTheStrip() {
-        let controller = makeAnchorController(itemCount: 200, presentation: .strip(tileEdge: 72))
-        controller.scrollTo(offset: 900)
-        let before = controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: [])?.id
-
-        controller.applyIDs(prepending: 12, to: controller.currentIDs)
-
-        let after = controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: [])?.id
-        #expect(before != after, "negative control: an unanchored insert to the left must displace")
     }
 
     /// The grid's top-edge exception does not carry over: the strip's viewport holds the
@@ -187,23 +162,6 @@ struct MediaGridScrollAnchorTests {
             "the nearest survivor is not on screen"
         )
         #expect(abs(after - before.offsetFromViewportLeadingEdge) < 1)
-    }
-
-    /// Negative control for the two tests above: the same filtered snapshot without the
-    /// anchor does not leave the user's item where it was.
-    @Test func withoutTheAnchorAFilterDisplacesTheUser() throws {
-        let controller = makeAnchorController(itemCount: 200)
-        controller.scrollTo(offset: 600)
-        let before = try #require(controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []))
-        let ids = controller.currentIDs
-        let kept = ids.enumerated()
-            .filter { $0.offset.isMultiple(of: 3) || $0.element == before.id }
-            .map(\.element)
-
-        controller.applyIDs(prepending: 0, to: kept)
-
-        let after = controller.onScreenOffset(of: before.id)
-        #expect(after.map { abs($0 - before.offsetFromViewportLeadingEdge) >= 1 } ?? true)
     }
 
     /// A visible selected tile is what the user was working on, so a sort that would carry

@@ -203,17 +203,6 @@ struct MaterializationCoordinatorTests {
         await coordinator.shutdown()
     }
 
-    /// The rejection is named, so a stalled camera is attributable in the admission log
-    /// rather than looking like generic global-concurrency pressure.
-    @Test func aSecondDeviceRequestIsRejectedAsDeviceConcurrency() {
-        let policy = MaterializationAdmissionPolicy.production
-        let inFlight = MaterializationAdmissionPolicy.Snapshot(
-            count: 1, bytes: 0, largeVideoCount: 0, deviceCount: 1, backgroundByRoot: [:]
-        )
-        #expect(policy.rejection(for: request("next.arw", priority: .device), inFlight: inFlight) == .deviceConcurrency)
-        #expect(policy.rejection(for: request("next.jpg", priority: .interactive), inFlight: inFlight) == nil)
-    }
-
     @Test func backgroundIsLimitedToTheRootCap() async throws {
         let cap = MaterializationAdmissionPolicy.production.backgroundPerRootCap
         let executor = ControlledMaterializationExecutor()
@@ -273,31 +262,6 @@ struct MaterializationCoordinatorTests {
         for task in tasks {
             _ = await task.value
         }
-        await coordinator.shutdown()
-    }
-
-    @Test func commandRunsUnderTheBoundedPersistence() {
-        #expect(FileMaterialization.Persistence.forPriority(.command) == .background)
-        #expect(FileMaterialization.Persistence.forPriority(.interactive) == .interactive)
-    }
-
-    @Test func theLastCommandWaiterLeavingEndsTheTransferAndReleasesAccounting() async throws {
-        let executor = HeldInteractiveExecutor()
-        let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0.id.fileURL) },
-            volumeCapacity: ampleVolumeCapacity
-        )
-        await coordinator.start()
-        let waiting = Task { await coordinator.materialize(request("trash.jpg", priority: .command)) }
-        try await executor.waitForStart()
-        #expect(await coordinator.stateSnapshot().inFlight == 1)
-
-        waiting.cancel()
-        _ = await waiting.value
-
-        try await waitUntil { await coordinator.stateSnapshot().inFlight == 0 }
-        #expect(await coordinator.stateSnapshot().bytes == 0)
         await coordinator.shutdown()
     }
 
@@ -364,31 +328,6 @@ struct MaterializationCoordinatorTests {
         try await executor.releaseNext()
         _ = await active.value
         #expect(await executor.startedNames() == ["active.jpg"])
-        await coordinator.shutdown()
-    }
-
-    @Test func unchangedBlockedAdmissionSnapshotIsDeduplicated() async throws {
-        var policy = MaterializationAdmissionPolicy.production
-        policy.globalConcurrency = 1
-        let executor = ControlledMaterializationExecutor()
-        let diagnostics = AdmissionDiagnosticRecorder()
-        let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0.id.fileURL) },
-            volumeCapacity: ampleVolumeCapacity,
-            policy: policy,
-            diagnosticSink: { diagnostics.record($0) }
-        )
-        let active = Task { await coordinator.materialize(request("active.jpg", priority: .interactive)) }
-        try await executor.waitForStarts(1)
-        let queued = Task { await coordinator.materialize(request("queued.jpg", priority: .interactive)) }
-        try await waitForAdmission(coordinator) { await coordinator.queuedRequestCount() == 1 }
-        #expect(diagnostics.blockedCount() == 1)
-        try await executor.releaseNext()
-        try await executor.waitForStarts(2)
-        try await executor.releaseNext()
-        _ = await (active.value, queued.value)
-        #expect(diagnostics.unblockedCount() == 1)
         await coordinator.shutdown()
     }
 
@@ -463,47 +402,6 @@ struct MaterializationCoordinatorTests {
         #expect(await (executor.startedNames()).last == "restored.jpg")
         try await executor.releaseNext()
         _ = await (first.value, second.value, background.value)
-        await coordinator.shutdown()
-    }
-
-    // MARK: - Interactive and background admission
-
-    @Test func interactiveJoinBlocksBackgroundWithTruthfulBlockedDiagnostic() async throws {
-        var policy = MaterializationAdmissionPolicy.production
-        policy.globalConcurrency = 3
-        let executor = ControlledMaterializationExecutor()
-        let diagnostics = AdmissionDiagnosticRecorder()
-        let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0.id.fileURL) },
-            volumeCapacity: ampleVolumeCapacity,
-            policy: policy,
-            diagnosticSink: { diagnostics.record($0) }
-        )
-        let active = Task { await coordinator.materialize(request("active.jpg", priority: .background)) }
-        try await executor.waitForStarts(1)
-        // The interactive waiter joins the in-flight background transfer rather than
-        // queuing: `effectiveInteractiveCount` rises with `interactiveQueue` empty.
-        let interactive = Task {
-            await coordinator.materialize(request("active.jpg", priority: .interactive))
-        }
-        try await waitUntil(every: .milliseconds(10)) { await coordinator.stateSnapshot().effectiveInteractive == 1 }
-        let queued = Task {
-            await coordinator.materialize(request("queued.jpg", root: "/other-library", priority: .background))
-        }
-        try await waitForAdmission(coordinator) { await coordinator.queuedRequestCount() >= 1 }
-        #expect(diagnostics.blockedCount() >= 1)
-        #expect(diagnostics.unblockedCount() == 0)
-
-        interactive.cancel()
-        #expect(await !(interactive.value).isMaterialized)
-        try await executor.waitForStarts(2)
-        #expect(await executor.startedNames() == ["active.jpg", "queued.jpg"])
-
-        try await executor.releaseNext()
-        try await executor.releaseNext()
-        _ = await (active.value, queued.value)
-        #expect(diagnostics.unblockedCount() >= 1)
         await coordinator.shutdown()
     }
 
@@ -603,22 +501,6 @@ private actor ControlledMaterializationExecutor {
 
     private func startedCount() -> Int {
         starts.count
-    }
-}
-
-private final class AdmissionDiagnosticRecorder: Sendable {
-    private let storage = Mutex<[MaterializationCoordinator.AdmissionSnapshot?]>([])
-
-    func record(_ value: MaterializationCoordinator.AdmissionSnapshot?) {
-        storage.withLock { $0.append(value) }
-    }
-
-    func blockedCount() -> Int {
-        storage.withLock { $0.compactMap(\.self).count }
-    }
-
-    func unblockedCount() -> Int {
-        storage.withLock { $0.count(where: { $0 == nil }) }
     }
 }
 

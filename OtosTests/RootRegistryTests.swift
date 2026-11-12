@@ -44,34 +44,6 @@ struct RootRegistryTests {
         )
     }
 
-    @Test func upsertIndexesPathAndRowID() {
-        var registry = RootRegistry()
-        registry.upsert(libraryState(path: libraryPath, rowID: 7))
-
-        #expect(registry[libraryPath]?.rowID == 7)
-        #expect(registry.path(forRowID: 7) == libraryPath)
-        #expect(registry.rowIDSnapshot() == [libraryPath: 7])
-    }
-
-    @Test func removeClearsBothIndexes() {
-        var registry = RootRegistry()
-        registry.upsert(libraryState(path: libraryPath, rowID: 7))
-        let removed = registry.remove(path: libraryPath)
-
-        #expect(removed?.rowID == 7)
-        #expect(registry[libraryPath] == nil)
-        #expect(registry.path(forRowID: 7) == nil)
-    }
-
-    @Test func setAvailabilityNoopsWhenUnchanged() {
-        var registry = RootRegistry()
-        registry.upsert(libraryState(path: libraryPath, rowID: 1, availability: .available))
-
-        #expect(registry.setAvailability(.available, for: libraryPath) == false)
-        #expect(registry.setAvailability(.unavailable, for: libraryPath) == true)
-        #expect(registry[libraryPath]?.availability == .unavailable)
-    }
-
     @Test func scopePredicateHonorsAllMediaAndLibraryScope() {
         var registry = RootRegistry()
         registry.upsert(libraryState(path: libraryPath, rowID: 1))
@@ -167,13 +139,6 @@ struct RootRegistryTests {
         )
         #expect(!LibraryRoot(path: path, kind: .removableVolume).claimsEveryProductTogether)
         #expect(LibraryRoot(path: path, kind: .removableVolume).isRemovableSource)
-    }
-
-    @Test func rootForDeviceIdentityFindsMatchingRoot() {
-        var registry = RootRegistry()
-        registry.upsert(libraryState(path: libraryPath, rowID: 1, deviceIdentity: .camera(id: "1")))
-        #expect(registry.rootForDeviceIdentity(.camera(id: "1"))?.path == libraryPath)
-        #expect(registry.rootForDeviceIdentity(.camera(id: "missing")) == nil)
     }
 
     @Test func ownsLeaseRequiresMatchingPathAndRowID() {

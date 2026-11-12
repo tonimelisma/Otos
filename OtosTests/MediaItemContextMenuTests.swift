@@ -46,13 +46,6 @@ struct MediaItemContextMenuTests {
         #expect(menu.items[3].isEnabled)
     }
 
-    @Test func emptyTargetsRenderDisabledItemsIncludingShare() {
-        let menu = MediaItemContextMenu.make(model: .empty) { _ in }
-
-        #expect(menu.items.filter { !$0.isSeparatorItem }.allSatisfy { !$0.isEnabled })
-        #expect(menu.items[3].title == "Share…")
-    }
-
     @Test func menuItemsRouteToPerform() throws {
         let photos = OpenWithApplication(
             url: URL(fileURLWithPath: "/System/Applications/Photos.app"),

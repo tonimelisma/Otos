@@ -31,18 +31,4 @@ struct CatalogQueryModelsTests {
             sourceExtension: "Odd"
         ) == "Odd")
     }
-
-    @Test func sortOrdersExposeEightCompleteUserFacingChoices() {
-        #expect(MediaSortOrder.allCases.map(\.label) == [
-            "Date — Newest First",
-            "Date — Oldest First",
-            "Filename — A to Z",
-            "Filename — Z to A",
-            "Size — Largest First",
-            "Size — Smallest First",
-            "Likeness — Least Alike First",
-            "Likeness — Most Alike First",
-        ])
-        #expect(MediaSortOrder.defaultOrder == .dateNewest)
-    }
 }

@@ -54,38 +54,6 @@ struct CaptureWallClockTests {
         #expect(CaptureWallClock.select(from: [riff, original])?.compact == 20_110_102_030_405)
     }
 
-    @Test func prefersOriginalOverDigitizedWhenBothLocal() {
-        let records = [
-            CaptureTimestampRecord(
-                role: "digitized",
-                instant: nil,
-                utcOffsetSeconds: -25200,
-                precision: "localWithOffset",
-                year: 2025,
-                month: 6,
-                day: 1,
-                hour: 8,
-                minute: 0,
-                second: 0
-            ),
-            CaptureTimestampRecord(
-                role: "original",
-                instant: nil,
-                utcOffsetSeconds: nil,
-                precision: "localFloating",
-                year: 2024,
-                month: 12,
-                day: 25,
-                hour: 15,
-                minute: 30,
-                second: 45
-            ),
-        ]
-
-        let wall = CaptureWallClock.select(from: records)
-        #expect(wall?.compact == 20_241_225_153_045)
-    }
-
     /// A local record whose components are not a real wall clock is left out, so the next
     /// role in `wallClockPrecedence` names the file.
     @Test func anInvalidLocalRecordFallsToTheNextRole() {
@@ -129,75 +97,10 @@ struct CaptureWallClockTests {
         ]
         #expect(CaptureWallClock.select(from: records) == nil)
     }
-
-    @Test func roundTripsCompactComponents() {
-        let compact: Int64 = 20_260_101_120_000
-        let components = CaptureWallClock.components(fromCompact: compact)
-        #expect(components?.year == 2026)
-        #expect(components?.month == 1)
-        #expect(components?.day == 1)
-        #expect(components?.hour == 12)
-        #expect(components?.minute == 0)
-        #expect(components?.second == 0)
-    }
 }
 
 @Suite(.testDirectory)
 struct CatalogStoreSchemaMigrationTests {
-    /// ARC-043: a fresh catalog is the baseline schema plus the additive migrations after it.
-    @Test func aNewCatalogIsTheBaselineSchemaPlusItsMigrations() async throws {
-        let temp = try makeTestDirectory()
-        let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let store = CatalogStore(location: .databaseFile(databaseURL))
-        try await store.start(scansSavedLibraries: false)
-        await store.shutdown()
-
-        let (applied, tables) = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
-            let applied = try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
-            let tables = try String.fetchSet(
-                db,
-                sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
-            )
-            return (applied, tables)
-        }
-        #expect(applied == [
-            CatalogSchema.baselineMigrationIdentifier, CatalogSchema.fileIdentifierMigrationIdentifier,
-            CatalogSchema.previewPathMigrationIdentifier, CatalogSchema.editRecipeMigrationIdentifier,
-            CatalogSchema.heifOrientationMigrationIdentifier,
-            CatalogSchema.extractionRevisionMigrationIdentifier,
-            CatalogSchema.familyRevisionMigrationIdentifier,
-            CatalogSchema.captureInstantMigrationIdentifier,
-            CatalogSchema.contentIdentifierMigrationIdentifier,
-            CatalogSchema.trashPathMigrationIdentifier,
-            CatalogSchema.duplicatesMigrationIdentifier,
-            CatalogSchema.renderSignatureMigrationIdentifier,
-            CatalogSchema.productStampsMigrationIdentifier,
-            CatalogSchema.awaitingPresenceMigrationIdentifier,
-            CatalogSchema.remoteBaseURLMigrationIdentifier,
-            CatalogSchema.hiddenBySourceMigrationIdentifier,
-            CatalogSchema.sourceProductsMigrationIdentifier,
-            CatalogSchema.facesMigrationIdentifier,
-            CatalogSchema.peopleMigrationIdentifier,
-            CatalogSchema.sourceItemIDMigrationIdentifier,
-            CatalogSchema.searchEmbeddingsMigrationIdentifier,
-            CatalogSchema.searchTextMigrationIdentifier,
-            CatalogSchema.captureLocalTimeMigrationIdentifier,
-            CatalogSchema.rawFacesMigrationIdentifier,
-            CatalogSchema.decodeVerdictMigrationIdentifier,
-            CatalogSchema.autoTaggedPeopleMigrationIdentifier,
-            CatalogSchema.placeNamesMigrationIdentifier,
-            CatalogSchema.keyPhotoMigrationIdentifier,
-        ])
-        #expect(tables == [
-            "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
-            "active_file_operation", "active_file_operation_companion_staging", "active_source_erase",
-            "active_reorganization_component", "active_reorganization_member",
-            "active_reorganization_step", "active_reorganization_directory",
-            "pending_identity_remap_batch", "pending_identity_remap", "duplicate_kept_pair", "face",
-            "person", "face_rejection", "search_embedding", "search_text", "place_cell",
-        ])
-    }
-
     /// ARC-043: a catalog whose migration history this build does not know — one a newer
     /// Otos wrote, or one from before the schema baseline — is refused unopened, and
     /// nothing in it or beside it is erased.

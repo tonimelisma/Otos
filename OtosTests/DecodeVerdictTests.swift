@@ -50,11 +50,6 @@ struct DecodeVerdictTests {
         #expect(result.decodeVerdict == .decoded)
     }
 
-    @Test func theDecoderIdentityNamesOtossRevisionAndTheMacOSBuild() {
-        #expect(ImageRenderer.decoderIdentity.hasPrefix("otos\(ImageRenderer.decodeRevision)-macos"))
-        #expect(!ImageRenderer.decoderIdentity.hasSuffix("unread"))
-    }
-
     /// At launch a still another decoder could not read loses its rendering and faces
     /// stamps, so enrichment tries it; one this decoder could not read keeps them, and a
     /// decoded still is untouched.

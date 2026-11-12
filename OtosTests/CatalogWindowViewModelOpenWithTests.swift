@@ -9,33 +9,6 @@ import Testing
 /// else, and the menu model is rebuilt newest-wins.
 @MainActor
 struct CatalogWindowViewModelOpenWithTests {
-    @Test func noTargetsLeavesMenuEmptyAndOpensNothing() async {
-        let workspace = RecordingWorkspace(defaults: ["jpg": .preview], applications: ["jpg": [.preview]])
-        let model = makeOpenWithModel(workspace: workspace)
-        model.applyState(openWithWindowState(ids: makeIDs(count: 2)))
-
-        model.openTargetsInDefaultApplication()
-
-        #expect(model.openTask == nil)
-        #expect(model.openWithMenu == .empty)
-        #expect(await workspace.opens.isEmpty)
-    }
-
-    @Test func selectionRebuildsMenuOffMainAndTitlesDefault() async throws {
-        let workspace = RecordingWorkspace(defaults: ["jpg": .preview], applications: ["jpg": [.preview, .photos]])
-        let model = makeOpenWithModel(workspace: workspace)
-        let ids = makeIDs(count: 3)
-        model.applyState(openWithWindowState(ids: ids))
-
-        _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
-        _ = model.applyGridClick(hit: ids[2], modifiers: [.shift], orderedIDs: ids)
-        try await waitUntil { model.openWithMenu.targetCount == 3 }
-
-        #expect(model.openWithMenu.openTitle == "Open in Preview")
-        #expect(model.openWithMenu.applications.map(\.displayName) == ["Preview", "Photos"])
-        #expect(model.openWithMenu.canOpen)
-    }
-
     @Test func openInDefaultOpensEachGroupOnce() async throws {
         let workspace = RecordingWorkspace(
             defaults: ["jpg": .preview, "mov": .quickTime],

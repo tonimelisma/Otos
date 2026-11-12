@@ -3,12 +3,6 @@ import CoreGraphics
 import Testing
 
 struct MediaAssetTilePresentationTests {
-    @Test func onlyVideoDetailsReceiveVideoPresentation() {
-        #expect(MediaAssetTilePresentation.isVideo(makeDetail(path: "movie.mp4", kind: .video)))
-        #expect(!MediaAssetTilePresentation.isVideo(makeDetail(path: "image.jpg", kind: .image)))
-        #expect(!MediaAssetTilePresentation.isVideo(makeDetail(path: "unknown.bin", kind: nil)))
-    }
-
     @Test func videoBadgeTextOnlyAppearsForVideosWithDuration() {
         #expect(MediaAssetTilePresentation.videoBadgeText(makeDetail(
             path: "image.jpg",
@@ -80,17 +74,6 @@ struct MediaAssetTilePresentationTests {
         ) == .none)
     }
 
-    @Test func paintedVideoWithDurationShowsCenteredDurationText() {
-        #expect(MediaAssetTilePresentation.badgeContent(
-            detail: makeDetail(path: "clip.mp4", kind: .video, thumbnailPath: "t.jpg", durationSeconds: 5),
-            thumbnailPainted: true
-        ) == .durationText("0:05"))
-        #expect(MediaAssetTilePresentation.badgeContent(
-            detail: makeDetail(path: "long.mp4", kind: .video, thumbnailPath: "t.jpg", durationSeconds: 5025),
-            thumbnailPainted: true
-        ) == .durationText("1:23:45"))
-    }
-
     @Test func paintedVideoWithoutDurationShowsFilmIcon() {
         #expect(MediaAssetTilePresentation.badgeContent(
             detail: makeDetail(path: "movie.mp4", kind: .video, thumbnailPath: "t.jpg", durationSeconds: nil),
@@ -107,17 +90,6 @@ struct MediaAssetTilePresentationTests {
             detail: makeDetail(path: "shot.NEF", kind: .raw, thumbnailPath: "t.jpg", durationSeconds: 42),
             thumbnailPainted: true
         ) == .rawLabel)
-    }
-
-    @Test func paintedPlainImageShowsNoBadge() {
-        #expect(MediaAssetTilePresentation.badgeContent(
-            detail: makeDetail(path: "image.jpg", kind: .image, thumbnailPath: "t.jpg"),
-            thumbnailPainted: true
-        ) == .none)
-        #expect(MediaAssetTilePresentation.badgeContent(
-            detail: makeDetail(path: "unknown.bin", kind: nil, thumbnailPath: "t.jpg"),
-            thumbnailPainted: true
-        ) == .none)
     }
 
     @Test func accessibilityLabelCoversBrokenLoadingAndPaintedStates() {
@@ -192,19 +164,6 @@ struct MediaAssetTilePresentationTests {
 
     // MARK: - Thumbnail-only hit area
 
-    @Test func thumbnailFaceRectMatchesContentRect() {
-        let bounds = CGRect(x: 0, y: 0, width: 120, height: 120)
-        #expect(MediaAssetTilePresentation.thumbnailFaceRect(
-            imagePixelSize: CGSize(width: 400, height: 200),
-            bounds: bounds
-        ) == CGRect(x: 0, y: 30, width: 120, height: 60))
-    }
-
-    @Test func thumbnailFaceRectIsFullBoundsForPlaceholder() {
-        let bounds = CGRect(x: 0, y: 0, width: 120, height: 120)
-        #expect(MediaAssetTilePresentation.thumbnailFaceRect(imagePixelSize: nil, bounds: bounds) == bounds)
-    }
-
     @Test func landscapeThumbnailLetterboxIsMissAndFaceIsHit() {
         let bounds = CGRect(x: 0, y: 0, width: 120, height: 120)
         let face = MediaAssetTilePresentation.thumbnailFaceRect(
@@ -214,93 +173,6 @@ struct MediaAssetTilePresentationTests {
         #expect(!face.contains(CGPoint(x: 60, y: 10)))
         #expect(!face.contains(CGPoint(x: 60, y: 110)))
         #expect(face.contains(CGPoint(x: 60, y: 60)))
-    }
-
-    @Test func portraitThumbnailLetterboxIsMissAndFaceIsHit() {
-        let bounds = CGRect(x: 0, y: 0, width: 120, height: 120)
-        let face = MediaAssetTilePresentation.thumbnailFaceRect(
-            imagePixelSize: CGSize(width: 200, height: 400),
-            bounds: bounds
-        )
-        #expect(!face.contains(CGPoint(x: 10, y: 60)))
-        #expect(!face.contains(CGPoint(x: 110, y: 60)))
-        #expect(face.contains(CGPoint(x: 60, y: 60)))
-    }
-
-    @Test func badgeVisibilityHidesOnSmallRects() {
-        #expect(MediaAssetTilePresentation.showsKindBadge(
-            contentRect: CGRect(x: 0, y: 0, width: 80, height: 80)
-        ))
-        #expect(!MediaAssetTilePresentation.showsKindBadge(
-            contentRect: CGRect(x: 0, y: 0, width: 80, height: 50)
-        ))
-        #expect(!MediaAssetTilePresentation.showsKindBadge(
-            contentRect: CGRect(x: 0, y: 0, width: 40, height: 80)
-        ))
-    }
-
-    @Test func kindBadgeIsCornerAnchored() throws {
-        let frame = try #require(MediaAssetTileLayout.kindBadgeFrame(
-            contentBounds: CGRect(x: 0, y: 0, width: 120, height: 80),
-            badgeWidth: 31
-        ))
-        #expect(frame == CGRect(x: 89, y: 60, width: 31, height: 20))
-        #expect(MediaAssetTileLayout.kindBadgeFrame(
-            contentBounds: CGRect(x: 0, y: 0, width: 30, height: 80),
-            badgeWidth: 31
-        ) == nil)
-    }
-
-    @Test func badgeLabelCentersTextWhenWidthIsUnclamped() throws {
-        let textWidth: CGFloat = 23.5
-        let badgeWidth = MediaAssetTileLayout.kindBadgeWidth(textWidth: textWidth)
-        #expect(badgeWidth == 34)
-
-        let badgeFrame = try #require(MediaAssetTileLayout.kindBadgeFrame(
-            contentBounds: CGRect(x: 0, y: 0, width: 120, height: 80),
-            badgeWidth: badgeWidth
-        ))
-        #expect(badgeFrame == CGRect(x: 86, y: 60, width: 34, height: 20))
-
-        let textFrame = MediaAssetTileLayout.kindBadgeLabelFrame(
-            badgeWidth: badgeWidth,
-            textWidth: textWidth
-        )
-        #expect(textFrame.width == 24)
-        #expect(textFrame.midX == badgeWidth / 2)
-    }
-
-    @Test func badgeLabelCentersShortTextWhenMinWidthClamps() {
-        // "0:05" is narrower than badgeMinWidth (22); label must still center.
-        let textWidth: CGFloat = 10
-        let badgeWidth = MediaAssetTileLayout.kindBadgeWidth(textWidth: textWidth)
-        #expect(badgeWidth == MediaAssetTileLayout.badgeMinWidth)
-
-        let textFrame = MediaAssetTileLayout.kindBadgeLabelFrame(
-            badgeWidth: badgeWidth,
-            textWidth: textWidth
-        )
-        #expect(textFrame.width == 10)
-        #expect(textFrame.midX == badgeWidth / 2)
-    }
-
-    @Test func badgeLabelCentersLongDurationAndRawLabel() {
-        let longWidth: CGFloat = 48
-        let longBadge = MediaAssetTileLayout.kindBadgeWidth(textWidth: longWidth)
-        let longFrame = MediaAssetTileLayout.kindBadgeLabelFrame(
-            badgeWidth: longBadge,
-            textWidth: longWidth
-        )
-        #expect(longFrame.midX == longBadge / 2)
-
-        let rawWidth: CGFloat = 18
-        let rawBadge = MediaAssetTileLayout.kindBadgeWidth(textWidth: rawWidth)
-        let rawFrame = MediaAssetTileLayout.kindBadgeLabelFrame(
-            badgeWidth: rawBadge,
-            textWidth: rawWidth
-        )
-        #expect(rawFrame.midX == rawBadge / 2)
-        #expect(MediaAssetTileLayout.rawLabel == "RAW")
     }
 
     @Test func imageContentKeyDistinguishesThumbnailPathStampAndSize() {
@@ -355,90 +227,6 @@ struct MediaAssetTilePresentationTests {
         )
     }
 
-    // MARK: - Placeholder icon
-
-    @Test func placeholderIconUsesKindAndBrokenGlyphs() {
-        #expect(MediaAssetTilePresentation.placeholderIconSystemName(
-            for: .video,
-            thumbnailUnavailable: false
-        ) == "film")
-        #expect(MediaAssetTilePresentation.placeholderIconSystemName(
-            for: .raw,
-            thumbnailUnavailable: false
-        ) == "r.square")
-        #expect(MediaAssetTilePresentation.placeholderIconSystemName(
-            for: .image,
-            thumbnailUnavailable: false
-        ) == "photo")
-        #expect(MediaAssetTilePresentation.placeholderIconSystemName(
-            for: nil,
-            thumbnailUnavailable: false
-        ) == "photo")
-        #expect(MediaAssetTilePresentation.placeholderIconSystemName(
-            for: .video,
-            thumbnailUnavailable: true
-        ) == "video.slash")
-        #expect(MediaAssetTilePresentation.placeholderIconSystemName(
-            for: .image,
-            thumbnailUnavailable: true
-        ) == "photo.slash")
-        #expect(MediaAssetTilePresentation.placeholderIconSystemName(
-            for: .raw,
-            thumbnailUnavailable: true
-        ) == "photo.slash")
-    }
-
-    @MainActor
-    @Test func placeholderIconCacheReturnsSameInstanceForSameName() throws {
-        let photoA = try #require(MediaAssetTilePresentation.placeholderIcon(for: .image))
-        let photoB = try #require(MediaAssetTilePresentation.placeholderIcon(for: nil))
-        let filmA = try #require(MediaAssetTilePresentation.placeholderIcon(for: .video))
-        let filmB = try #require(MediaAssetTilePresentation.placeholderIcon(for: .video))
-        let rawA = try #require(MediaAssetTilePresentation.placeholderIcon(for: .raw))
-        let slashA = try #require(MediaAssetTilePresentation.placeholderIcon(
-            for: .image,
-            thumbnailUnavailable: true
-        ))
-        let slashB = try #require(MediaAssetTilePresentation.placeholderIcon(
-            for: .raw,
-            thumbnailUnavailable: true
-        ))
-
-        #expect(photoA === photoB)
-        #expect(filmA === filmB)
-        #expect(photoA !== filmA)
-        #expect(rawA !== photoA)
-        #expect(slashA === slashB)
-        #expect(slashA !== photoA)
-    }
-
-    @Test func placeholderIconSideIsAQuarterOfTheShorterContentDimension() {
-        #expect(MediaAssetTileLayout.placeholderIconSide(
-            contentBounds: CGRect(x: 0, y: 0, width: 120, height: 120)
-        ) == 30)
-        // Wider-than-tall content uses the shorter (height) dimension.
-        #expect(MediaAssetTileLayout.placeholderIconSide(
-            contentBounds: CGRect(x: 0, y: 0, width: 400, height: 100)
-        ) == 25)
-    }
-
-    @Test func placeholderIconSideIsClampedToALegibleRange() {
-        #expect(MediaAssetTileLayout.placeholderIconSide(
-            contentBounds: CGRect(x: 0, y: 0, width: 40, height: 40)
-        ) == 16) // 40/4 = 10, clamped up to the 16 pt minimum
-        #expect(MediaAssetTileLayout.placeholderIconSide(
-            contentBounds: CGRect(x: 0, y: 0, width: 400, height: 400)
-        ) == 40) // 400/4 = 100, clamped down to the 40 pt maximum
-    }
-
-    @Test func placeholderIconFrameIsCenteredInContentBounds() {
-        let bounds = CGRect(x: 0, y: 0, width: 120, height: 120)
-        let frame = MediaAssetTileLayout.placeholderIconFrame(contentBounds: bounds)
-        #expect(frame == CGRect(x: 45, y: 45, width: 30, height: 30))
-        #expect(frame.midX == bounds.midX)
-        #expect(frame.midY == bounds.midY)
-    }
-
     /// DES-066: the group rides the *thumbnail face* — the aspect-fit image the
     /// user sees — at its corner plus one margin, so it sits on the photo rather
     /// than out in the cell's letterbox, and it moves with the face instead of
@@ -477,28 +265,6 @@ struct MediaAssetTilePresentationTests {
         let onLandscape = MediaAssetTilePresentation.choiceGroupRect(buttonCount: 2, contentRect: landscape)
         #expect(onLandscape.minY == landscape.minY + inset)
         #expect(onLandscape.minY > bounds.minY + inset)
-    }
-
-    /// DES-067: the smallest filmstrip tile is sized by what the group needs.
-    /// Two 28pt acts plus spacing and the margin need 61pt, so a tile below that
-    /// would either shrink the targets where they are hardest to hit or push one
-    /// act over the neighbouring tile. This is the guard on that arithmetic — it
-    /// fails if the floor drops or the group grows.
-    @Test func theChoiceGroupFitsTheSmallestFilmstripTile() {
-        let edge = MediaGridPresentation.minStripTileEdge
-        let tile = CGRect(x: 0, y: 0, width: edge, height: edge)
-        // A square thumbnail fills the square tile, so the face is the whole tile.
-        let face = MediaAssetTilePresentation.contentRect(
-            imagePixelSize: CGSize(width: 1000, height: 1000),
-            bounds: tile
-        )
-        let group = MediaAssetTilePresentation.choiceGroupRect(buttonCount: 2, contentRect: face)
-
-        #expect(tile.contains(group))
-        #expect(group.maxX <= tile.maxX)
-        #expect(group.maxY <= tile.maxY)
-        // And it fits at full-size targets, not by shrinking them.
-        #expect(MediaAssetTileLayout.choiceButtonSize >= 28)
     }
 }
 

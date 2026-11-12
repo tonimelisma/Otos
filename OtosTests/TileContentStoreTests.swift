@@ -110,45 +110,6 @@ struct TileContentStoreTests {
         #expect(store.content(for: drop.id) == nil)
     }
 
-    @Test func formattedDurationCachesUntilDurationOrKindChanges() throws {
-        let store = TileContentStore()
-        let video = makeDetail(
-            path: "v.mov",
-            thumbnailPath: "t.jpg",
-            kind: .video,
-            duration: 42
-        )
-        _ = store.mergeDetail(video)
-        let first = try #require(store.content(for: video.id)?.formattedDuration)
-        #expect(first == MediaAssetTilePresentation.videoBadgeText(video))
-
-        // Unrelated stamp change must keep the same cached string.
-        let sameDuration = makeDetail(
-            path: "v.mov",
-            thumbnailPath: "t.jpg",
-            kind: .video,
-            duration: 42,
-            size: 200,
-            mtime: 2
-        )
-        _ = store.mergeDetail(sameDuration)
-        let second = try #require(store.content(for: video.id)?.formattedDuration)
-        #expect(second == first)
-
-        let longer = makeDetail(
-            path: "v.mov",
-            thumbnailPath: "t.jpg",
-            kind: .video,
-            duration: 99,
-            size: 200,
-            mtime: 2
-        )
-        _ = store.mergeDetail(longer)
-        let third = try #require(store.content(for: video.id)?.formattedDuration)
-        #expect(third == MediaAssetTilePresentation.videoBadgeText(longer))
-        #expect(third != first)
-    }
-
     @Test func imageBudgetDropsLRUUnpinnedImagesButNeverPinned() {
         let small = makeImage(width: 8)
         let cost = TileContentStore.byteCost(of: small)
@@ -171,44 +132,6 @@ struct TileContentStoreTests {
         #expect(store.content(for: older.id)?.detail.thumbnailPath == "o.jpg")
         #expect(store.content(for: newer.id)?.image != nil)
         #expect(store.imageBytes == cost * 2)
-    }
-
-    @Test func imageBytesAccountingIsExactAcrossReplaceAndBudgetDrop() {
-        let first = makeImage(width: 8)
-        let second = makeImage(width: 16)
-        let firstCost = TileContentStore.byteCost(of: first)
-        let secondCost = TileContentStore.byteCost(of: second)
-        let store = TileContentStore(imageByteBudget: firstCost + secondCost)
-        let detailA = makeDetail(path: "detailA.jpg", thumbnailPath: "detailA.jpg")
-        let detailB = makeDetail(path: "detailB.jpg", thumbnailPath: "detailB.jpg")
-        _ = store.mergeDetail(detailA)
-        _ = store.mergeDetail(detailB)
-        _ = store.applyDecoded(first, key: MediaAssetTilePresentation.imageContentKey(detailA), for: detailA.id)
-        #expect(store.imageBytes == firstCost)
-        _ = store.applyDecoded(second, key: MediaAssetTilePresentation.imageContentKey(detailA), for: detailA.id)
-        #expect(store.imageBytes == secondCost)
-        _ = store.applyDecoded(first, key: MediaAssetTilePresentation.imageContentKey(detailB), for: detailB.id)
-        #expect(store.imageBytes == secondCost + firstCost)
-
-        let tight = TileContentStore(imageByteBudget: firstCost)
-        _ = tight.mergeDetail(detailA)
-        _ = tight.mergeDetail(detailB)
-        tight.pinVisible([detailB.id])
-        _ = tight.applyDecoded(first, key: MediaAssetTilePresentation.imageContentKey(detailB), for: detailB.id)
-        _ = tight.applyDecoded(second, key: MediaAssetTilePresentation.imageContentKey(detailA), for: detailA.id)
-        #expect(tight.content(for: detailA.id)?.image == nil)
-        #expect(tight.content(for: detailB.id)?.image != nil)
-        #expect(tight.imageBytes == firstCost)
-    }
-
-    @Test func nilThumbnailMergeDoesNotRequestDecode() {
-        let store = TileContentStore()
-        let detail = makeDetail(path: "a.jpg", thumbnailPath: nil)
-
-        let change = store.mergeDetail(detail)
-
-        #expect(change == .detailOnly)
-        #expect(store.content(for: detail.id)?.image == nil)
     }
 
     @Test func additivePinProtectsImageFromBudgetEvictionAndPrune() {

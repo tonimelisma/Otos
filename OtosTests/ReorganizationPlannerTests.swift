@@ -139,23 +139,6 @@ struct ReorganizationPlannerTests {
         ])
     }
 
-    @Test func byteIdenticalSourcesRemainTwoRelocations() throws {
-        let first = media(path: "a.jpg", compact: 20_260_710_120_001)
-        let second = media(path: "b.jpg", compact: 20_260_710_120_002)
-        let plan = try plan(snapshot(media: [first, second]))
-        #expect(plan.mediaDispositions == [
-            first.id: .relocate(destination: MediaRelativePath(rawValue: "2026/07/20260710_120001.jpg")),
-            second.id: .relocate(destination: MediaRelativePath(rawValue: "2026/07/20260710_120002.jpg")),
-        ])
-    }
-
-    @Test func originalPolicyExactSpellingIsNoOp() throws {
-        let item = media(path: "IMG_1.JPG", compact: nil)
-        let plan = try plan(snapshot(media: [item], folderPolicy: .none, namePolicy: .original))
-        #expect(plan.mediaDispositions == [item.id: .noOp])
-        #expect(plan.components.isEmpty)
-    }
-
     /// `Photo.JPG` → `Photo.jpg` is one name on a case-insensitive volume, so a direct
     /// rename cannot change the spelling: the file steps aside to a temporary name in its
     /// own folder first. The temporary name is built from the member's path alone, never

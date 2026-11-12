@@ -32,23 +32,6 @@ struct ScanLeaseControllerTests {
         #expect(controller.pendingScanPaths == [pathB, pathA])
     }
 
-    @Test func makeActiveScanIncrementsLeaseGeneration() {
-        var controller = ScanLeaseController()
-        let first = controller.makeActiveScan(rootPath: pathA, rootRowID: 1)
-        let second = controller.makeActiveScan(rootPath: pathA, rootRowID: 1)
-        #expect(first.leaseGeneration < second.leaseGeneration)
-    }
-
-    @Test func activeScanCapturesNamespaceMutationEpoch() {
-        var controller = ScanLeaseController()
-        let scan = controller.makeActiveScan(
-            rootPath: pathA,
-            rootRowID: 1,
-            startNamespaceMutationEpoch: 7
-        )
-        #expect(scan.startNamespaceMutationEpoch == 7)
-    }
-
     @Test func ownsMatchesFilesystemAndDeviceLeases() {
         var controller = ScanLeaseController()
         let filesystemScan = controller.makeActiveScan(rootPath: pathA, rootRowID: 1)

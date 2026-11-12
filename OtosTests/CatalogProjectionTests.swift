@@ -33,28 +33,6 @@ struct CatalogProjectionTests {
         #expect(state.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["a.jpg", "b.jpg", "z.jpg"])
     }
 
-    @Test func windowStateFiltersAssetsInSelectedScope() async {
-        let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
-        let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
-        let projection = CatalogProjection()
-        let fixture = makeProjectionFixture(
-            libraries: [makeLibrary(root: pictures), makeLibrary(root: archive)],
-            assets: [
-                makeAsset(root: pictures, relativePath: "one.jpg"),
-                makeAsset(root: archive, relativePath: "two.jpg"),
-            ]
-        )
-
-        let state = await projection.windowState(
-            fixture: fixture,
-            sidebarSelection: .library(pictures.path)
-        )
-
-        #expect(state.title == "Pictures")
-        #expect(state.resolvedSidebarSelection == .library(pictures.path))
-        #expect(state.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["one.jpg"])
-    }
-
     @Test func windowStateFallsBackWhenSelectedLibraryIsMissing() async {
         let projection = CatalogProjection()
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))

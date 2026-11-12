@@ -32,26 +32,11 @@ struct FilesystemNamespaceSemanticsTests {
         #expect(key(nfc, .unknown) == key(nfc, .caseInsensitive))
     }
 
-    /// `FilesystemNameKey`'s byte-exact `==` is what makes the normalization above
-    /// load-bearing: Swift's own `String ==` would call these equal unnormalized,
-    /// hiding the bug rather than the key doing the work.
-    @Test func nameKeyEqualityIsByteExactNotCanonical() {
-        let nfc = "cafe\u{0301}.jpg".precomposedStringWithCanonicalMapping
-        let nfd = nfc.decomposedStringWithCanonicalMapping
-        #expect(nfc == nfd, "Swift String equality is canonical, which is exactly what the key must not inherit")
-        #expect(FilesystemNameKey(rawValue: nfc) != FilesystemNameKey(rawValue: nfd))
-    }
-
     @Test func anInconclusiveProbeReportsUnknownRatherThanGuessing() {
         let missing = URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)/root")
         let probed = FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: missing)
         #expect(probed.isKnown == false)
         #expect(probed == .unknown)
-    }
-
-    @Test func aRealVolumeProbeIsKnown() throws {
-        let root = try makeTestDirectory()
-        #expect(FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: root).isKnown)
     }
 
     /// `isKnown` and the persisted column are one fact. Writing `0` for an

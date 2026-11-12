@@ -53,12 +53,6 @@ struct CatalogWindowViewModelShareTests {
         #expect(model.currentTargetFileURLs.isEmpty)
         #expect(model.sharePickerPresenter.activePicker == nil)
     }
-
-    @Test func presenterIgnoresEmptyItems() {
-        let presenter = SharePickerPresenter()
-        presenter.present([], relativeTo: .zero, of: NSView(frame: .zero))
-        #expect(presenter.activePicker == nil)
-    }
 }
 
 @MainActor

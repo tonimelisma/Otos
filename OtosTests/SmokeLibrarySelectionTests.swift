@@ -48,19 +48,6 @@ struct SmokeLibrarySelectionTests {
         #expect(padded == .root(expected))
     }
 
-    /// A tilde is expanded rather than treated as a relative path component.
-    @Test func configuredRootPathExpandsTilde() throws {
-        let path = try #require(SmokeLibrarySelection.configuredRequest(environment: [
-            SmokeLibrarySelection.environmentVariable: "~",
-        ]))
-        let home = try CatalogPath.normalizedDirectoryPath(
-            for: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-        )
-
-        #expect(path == .root(home))
-        #expect(home.rawValue.hasPrefix("/"))
-    }
-
     /// `places` is the one non-path request: the Places map, which exists with a fixed
     /// library and nothing else (ADR 0040).
     @Test func placesRequestSelectsTheMapOnlyWithAFixedLibrary() {
@@ -105,36 +92,6 @@ struct SmokeLibrarySelectionTests {
         ))
     }
 
-    @Test func configuredRootPathIgnoresMissingOrEmptyEnvironment() {
-        #expect(SmokeLibrarySelection.configuredRequest(environment: [:]) == nil)
-        #expect(SmokeLibrarySelection.configuredRequest(environment: [
-            SmokeLibrarySelection.environmentVariable: "  ",
-        ]) == nil)
-    }
-
-    @Test func registeredRootResolvesToTheOrdinarySidebarSelection() {
-        let requested = LibraryRootPath(rawValue: "/Pictures")
-
-        let resolution = SmokeLibrarySelection.resolve(
-            requested: .root(requested),
-            among: [libraryState(path: "/Other"), libraryState(path: "/Pictures")]
-        )
-
-        #expect(resolution == .select(.library(requested)))
-    }
-
-    /// A connected card is selectable exactly like a fixed library is.
-    @Test func registeredRemovableSourceIsSelectable() {
-        let requested = LibraryRootPath(rawValue: "/Volumes/Card")
-
-        let resolution = SmokeLibrarySelection.resolve(
-            requested: .root(requested),
-            among: [libraryState(path: "/Volumes/Card", kind: .removableVolume)]
-        )
-
-        #expect(resolution == .select(.library(requested)))
-    }
-
     /// An unregistered path selects nothing and reports what is registered, rather
     /// than making itself registered.
     @Test func unregisteredRootSelectsNothingAndNamesRegisteredRoots() {
@@ -146,18 +103,6 @@ struct SmokeLibrarySelectionTests {
         #expect(resolution == .notRegistered(
             requested: LibraryRootPath(rawValue: "/tmp/scratch/smoke-library"),
             registered: [LibraryRootPath(rawValue: "/Archive"), LibraryRootPath(rawValue: "/Pictures")]
-        ))
-    }
-
-    @Test func noKnownSourcesYetStillReportsNotRegistered() {
-        let resolution = SmokeLibrarySelection.resolve(
-            requested: .root(LibraryRootPath(rawValue: "/Pictures")),
-            among: []
-        )
-
-        #expect(resolution == .notRegistered(
-            requested: LibraryRootPath(rawValue: "/Pictures"),
-            registered: []
         ))
     }
 

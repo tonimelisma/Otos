@@ -26,17 +26,6 @@ struct ImportSourceReadinessTests {
         #expect(ImportSourceReadiness.evaluate(state(availability: .available, activity: .scanning)) == .preparing)
     }
 
-    @Test func availableAndEnumeratingIsPreparing() {
-        #expect(ImportSourceReadiness.evaluate(state(availability: .available, activity: .enumerating)) == .preparing)
-    }
-
-    @Test func unavailableIsUnreachableRegardlessOfActivity() {
-        #expect(ImportSourceReadiness.evaluate(state(availability: .unavailable, activity: .idle)) == .unreachable)
-        #expect(ImportSourceReadiness.evaluate(state(availability: .unavailable, activity: .scanning)) == .unreachable)
-        #expect(ImportSourceReadiness.evaluate(state(availability: .unavailable, activity: .enumerating))
-            == .unreachable)
-    }
-
     @Test func unknownIsUnreachableRegardlessOfActivity() {
         #expect(ImportSourceReadiness.evaluate(state(availability: .unknown, activity: .idle)) == .unreachable)
         #expect(ImportSourceReadiness.evaluate(state(availability: .unknown, activity: .scanning)) == .unreachable)

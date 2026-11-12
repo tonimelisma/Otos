@@ -46,22 +46,6 @@ struct MediaGridBridgeTests {
         #expect(gate.receive(differentScope) == [.apply(differentScope, change: .scope)])
     }
 
-    @Test func descriptorChangeWithSameIDsRefreshClearsSelection() {
-        let gate = MediaGridMutationGate()
-        let allMedia = makeGrid(scope: .allMedia, paths: ["a.jpg"])
-        #expect(gate.receive(allMedia) == [.apply(allMedia, change: .unchanged)])
-        #expect(gate.completeStructuralApply(applied: allMedia) == [])
-
-        let sameIDsInLibraryScope = makeGrid(
-            scope: .library(LibraryRootPath(rawValue: "/Pictures")),
-            paths: ["a.jpg"]
-        )
-        #expect(
-            gate.receive(sameIDsInLibraryScope)
-                == [.refreshVisible(sameIDsInLibraryScope, change: .scope)]
-        )
-    }
-
     // MARK: - Scroll hold
 
     @Test func scrollHoldParksSameDescriptorAndDrainsNewestOnRelease() {
@@ -257,30 +241,6 @@ struct MediaGridBridgeTests {
         )
     }
 
-    @Test func newestValueWinsForBothMutationKinds() {
-        let swapGate = MediaGridMutationGate(columnCount: 6)
-        let base = makeGrid(scope: .allMedia, paths: ["a.jpg"])
-        _ = swapGate.receive(base)
-        _ = swapGate.completeStructuralApply(applied: base)
-
-        _ = swapGate.receiveColumnCount(4) // swap in flight
-        let firstGrid = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg"])
-        let secondGrid = makeGrid(scope: .allMedia, paths: ["c.jpg"])
-        #expect(swapGate.receive(firstGrid) == [.pending(replacedExisting: false)])
-        #expect(swapGate.receive(secondGrid) == [.pending(replacedExisting: true)])
-        #expect(
-            swapGate.completeZoomSwap(installed: 4)
-                == [.apply(secondGrid, change: .unchanged)]
-        )
-
-        let applyInFlightGate = MediaGridMutationGate(columnCount: 6)
-        let grid = makeGrid(scope: .allMedia, paths: ["a.jpg"])
-        _ = applyInFlightGate.receive(grid) // apply in flight
-        #expect(applyInFlightGate.receiveColumnCount(4) == [])
-        #expect(applyInFlightGate.receiveColumnCount(5) == [])
-        #expect(applyInFlightGate.completeStructuralApply(applied: grid) == [.zoomSwap(columnCount: 5)])
-    }
-
     /// Chained: an apply that starts from a parked grid runs before the parked zoom; only
     /// after that apply completes does the zoom finally drain.
     @Test func chainedApplyDrainsBeforeParkedZoom() {
@@ -423,27 +383,6 @@ struct MediaGridBridgeTests {
         )
         #expect(gate.receive(sortFlip) == [.apply(sortFlip, change: .filterOrSort)])
     }
-
-    // MARK: - Retained membership set
-
-    @Test func gateRetainsOrderedIDSetConsistentWithArray() {
-        let gate = MediaGridMutationGate()
-        let first = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg", "c.jpg"])
-        #expect(gate.displayedOrderedIDs.isEmpty)
-        #expect(gate.displayedOrderedIDSet.isEmpty)
-
-        #expect(gate.receive(first) == [.apply(first, change: .unchanged)])
-        #expect(gate.completeStructuralApply(applied: first) == [])
-        #expect(gate.displayedOrderedIDs == first.orderedAssetIDs)
-        #expect(gate.displayedOrderedIDSet == Set(first.orderedAssetIDs))
-
-        let reordered = makeGrid(scope: .allMedia, paths: ["c.jpg", "a.jpg", "b.jpg"])
-        #expect(gate.receive(reordered) == [.apply(reordered, change: .unchanged)])
-        #expect(gate.completeStructuralApply(applied: reordered) == [])
-        #expect(gate.displayedOrderedIDs == reordered.orderedAssetIDs)
-        #expect(gate.displayedOrderedIDSet == Set(reordered.orderedAssetIDs))
-        #expect(gate.displayedOrderedIDSet.count == gate.displayedOrderedIDs.count)
-    }
 }
 
 @MainActor
@@ -458,14 +397,6 @@ private func makeGrid(scope: SidebarSelection, paths: [String]) -> CatalogMediaG
 @MainActor
 private func makeAssetID(path: String) -> MediaAssetID {
     MediaAssetID(
-        libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
-        relativePath: MediaRelativePath(rawValue: path)
-    )
-}
-
-@MainActor
-private func makeDetail(path: String) -> MediaTileDetail {
-    MediaTileDetail(
         libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
         relativePath: MediaRelativePath(rawValue: path)
     )

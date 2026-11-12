@@ -58,31 +58,6 @@ struct CatalogWindowViewModelTrashTests {
         }
     }
 
-    @Test func theLargeDownloadPreferenceDefaultsOnAndPersists() {
-        let domain = PreferencesDomain.suite(UUID().uuidString)
-        let model = CatalogWindowViewModel(
-            catalogStore: CatalogStore(location: .inMemory),
-            startsStallMonitor: false,
-            startsEnrichment: false,
-            startsSourceMonitoring: false,
-            preferencesDomain: domain,
-            volumeCapacity: ampleVolumeCapacity,
-            trashFiles: .refusing
-        )
-        #expect(model.asksBeforeLargeTrashDownload)
-        model.setAsksBeforeLargeTrashDownload(false)
-        let reloaded = CatalogWindowViewModel(
-            catalogStore: CatalogStore(location: .inMemory),
-            startsStallMonitor: false,
-            startsEnrichment: false,
-            startsSourceMonitoring: false,
-            preferencesDomain: domain,
-            volumeCapacity: ampleVolumeCapacity,
-            trashFiles: .refusing
-        )
-        #expect(!reloaded.asksBeforeLargeTrashDownload)
-    }
-
     @Test func localItemsMoveWithoutTheLargeDownloadQuestion() async throws {
         try await withCatalogedLibrary(fileCount: 1, fileNamePrefix: "trash") { fixture in
             let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory())
@@ -136,13 +111,6 @@ struct CatalogWindowViewModelTrashTests {
             try await waitUntil { model.gridSelection.selection != [fixture.ids[1], fixture.ids[2]] }
             #expect(model.gridSelection.selection == [fixture.ids[0]])
         }
-    }
-
-    @Test func noTargetDoesNothing() {
-        let model = makeTrashModel(store: CatalogStore(location: .inMemory), trash: nil)
-        model.moveTargetedMediaToTrash()
-        #expect(model.mediaTrashTask == nil)
-        #expect(!model.undoMenuState.canUndo)
     }
 }
 

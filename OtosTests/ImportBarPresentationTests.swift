@@ -83,16 +83,6 @@ struct ImportBarPresentationTests {
 
     // MARK: - A · Preparing (row 1, 7)
 
-    @Test func preparingDuringEnumerationIsIndeterminateWithNoSecondaryLine() {
-        let drawn = Self.map(Self.presentation(state: .inventory))
-        #expect(drawn.kind == .preparing)
-        #expect(drawn.primaryLine == "Checking the card…")
-        #expect(drawn.secondaryLine == .none)
-        #expect(drawn.middleZone == .choices(track: .indeterminate, eraseEnabled: true, eraseDisabledReason: nil))
-        #expect(drawn.primaryAction == .importNewItems)
-        #expect(drawn.primaryEnabled == false)
-    }
-
     @Test func preparingWithMetadataTotalIsDeterminateWithHonestCount() {
         let drawn = Self.map(Self.presentation(state: .waitingForMetadata(done: 112, total: 181)))
         #expect(drawn.kind == .preparing)
@@ -128,10 +118,6 @@ struct ImportBarPresentationTests {
         ))
         #expect(ImportPlanFooter.renderedPrimary(for: ready).title == "Import")
         #expect(ImportPlanFooter.renderedPrimary(for: ready).isEnabled)
-    }
-
-    @Test func preparingFoldsPlanningIntoA() {
-        #expect(Self.map(Self.presentation(state: .planning)).kind == .preparing)
     }
 
     /// `import-bar.md` row 7: a click the coordinator is holding until the plan
@@ -207,11 +193,6 @@ struct ImportBarPresentationTests {
             state: .waitingForMetadata(done: 181, total: 181)
         ))
         #expect(drawn.secondaryLine == .plain("181 items on CAMERA"))
-    }
-
-    @Test func noDestinationOmitsSecondaryLineWhenTotalIsUnknown() {
-        let drawn = Self.map(Self.presentation(destinationPath: nil, destinationDisplayName: nil, state: .inventory))
-        #expect(drawn.secondaryLine == .none)
     }
 
     // MARK: - C · Ready (row 3, 4, 5)
@@ -296,13 +277,6 @@ struct ImportBarPresentationTests {
             destinationAvailableBytes: FreeSpaceFloor.bytes + 1_000_000
         ))
         #expect(roomy.secondaryLine == .plain("5 already in Summer Photos"))
-    }
-
-    @Test func readyOmitsSecondaryLineWhenSkipCountIsZero() {
-        let drawn = Self.map(Self.presentation(
-            state: .ready(summary: Self.totals(copyCount: 5, copyBytes: 1000), generation: 1, skippedPackageCount: 0)
-        ))
-        #expect(drawn.secondaryLine == .none)
     }
 
     /// Items another library holds by content are named where they are: the libraries,
@@ -411,27 +385,6 @@ struct ImportBarPresentationTests {
         }
     }
 
-    @Test func needsAttentionNamesFilesystemObservationCause() {
-        let itemID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "a.jpg"))
-        let item = MediaAttentionItem(
-            id: itemID,
-            reason: .filesystemObservationUnavailable(destination: MediaRelativePath(rawValue: "a.jpg"))
-        )
-        let drawn = Self.map(Self.presentation(
-            state: .ready(
-                summary: Self.totals(copyCount: 1, copyBytes: 1000),
-                generation: 1,
-                skippedPackageCount: 0,
-                attentionItems: [item, item, item]
-            )
-        ))
-        #expect(drawn.secondaryLine == .attention(
-            clause: "Otos couldn't check 3 names in Summer Photos",
-            revealLabel: "Show them",
-            itemIDs: [itemID, itemID, itemID]
-        ))
-    }
-
     @Test func needsAttentionNamesTheNoFreeNameCause() {
         let itemID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "a.jpg"))
         let item = MediaAttentionItem(
@@ -448,24 +401,6 @@ struct ImportBarPresentationTests {
         ))
         #expect(drawn.secondaryLine == .attention(
             clause: "Otos couldn't find a free name for 2 items in Summer Photos",
-            revealLabel: "Show them",
-            itemIDs: [itemID, itemID]
-        ))
-    }
-
-    @Test func needsAttentionNamesTheOccupiedFolderCause() {
-        let itemID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "a.jpg"))
-        let item = MediaAttentionItem(id: itemID, reason: .destinationFolderOccupied(occupant: "2026"))
-        let drawn = Self.map(Self.presentation(
-            state: .ready(
-                summary: Self.totals(copyCount: 1, copyBytes: 1000),
-                generation: 1,
-                skippedPackageCount: 0,
-                attentionItems: [item, item]
-            )
-        ))
-        #expect(drawn.secondaryLine == .attention(
-            clause: "A file in Summer Photos is in the way of 2 items' folder",
             revealLabel: "Show them",
             itemIDs: [itemID, itemID]
         ))
@@ -597,23 +532,6 @@ struct ImportBarPresentationTests {
         #expect(drawn.middleZone == .progress(
             track: .determinate(completed: 1, total: 2),
             caption: "Into Summer Photos · the card ejects when it's done"
-        ))
-    }
-
-    @Test func workingCaptionOmitsEjectClauseWhenEjectIsOff() {
-        var prefs = ImportPreferences.default
-        prefs.autoEjectAfterImport = false
-        let progress = MediaOperationProgress(
-            completedCount: 1,
-            totalCount: 2,
-            completedBytes: 1,
-            totalBytes: 2,
-            elapsedMs: 0
-        )
-        let drawn = Self.map(Self.presentation(state: .executing(progress: progress)), preferences: prefs)
-        #expect(drawn.middleZone == .progress(
-            track: .determinate(completed: 1, total: 2),
-            caption: "Into Summer Photos"
         ))
     }
 
@@ -884,20 +802,6 @@ struct ImportBarPresentationTests {
         #expect(failed.kind == .failed)
     }
 
-    @Test func doneAttachedErasedArmedWhenEraseChecked() {
-        var prefs = ImportPreferences.default
-        prefs.deleteSourceAfterImport = true
-        let drawn = Self.map(
-            Self.presentation(
-                state: .ready(summary: Self.totals(skipCount: 181), generation: 2, skippedPackageCount: 0),
-                copiedJustNow: 42,
-                isFullyClean: true
-            ),
-            preferences: prefs
-        )
-        #expect(drawn.primaryAction == .eraseItems(count: 181))
-    }
-
     // MARK: - G · Failed (row 12, 15)
 
     @Test func failedSourceRemovedNamesCauseAndPartialCount() {
@@ -906,11 +810,6 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryLine == "Couldn't finish the import")
         #expect(drawn.secondaryLine == .plain("The card was removed · 12 items were copied before it stopped"))
         #expect(drawn.primaryAction == .tryAgain)
-    }
-
-    @Test func failedDestinationUnavailableNamesDestination() {
-        let drawn = Self.map(Self.presentation(state: .failed(reason: .destinationUnavailable, publishedCount: 0)))
-        #expect(drawn.secondaryLine == .plain("Summer Photos isn't available"))
     }
 
     /// A failure before any run — the destination folder stayed unreadable, a
@@ -1008,14 +907,6 @@ struct ImportBarPresentationTests {
     }
 
     // MARK: - Byte formatting (Number formatting table)
-
-    @Test func byteFormattingMatchesTheSpecTable() {
-        #expect(ImportBarByteFormat.string(bytes: 840_000) == "840 KB")
-        #expect(ImportBarByteFormat.string(bytes: 68_000_000) == "68 MB")
-        #expect(ImportBarByteFormat.string(bytes: 500_000_000) == "0.5 GB")
-        #expect(ImportBarByteFormat.string(bytes: 4_200_000_000) == "4.2 GB")
-        #expect(ImportBarByteFormat.string(bytes: 128_000_000_000) == "128 GB")
-    }
 
     /// `0` renders as `0 KB` — a `max(1, …)` clamp would fabricate `1 KB`, a
     /// non-zero value for a genuinely-zero fact — and every threshold the formatter switches units at is

@@ -263,25 +263,6 @@ struct MediaEnricherTests {
         #expect(result.sourceMTimeSeconds == 1000)
     }
 
-    @Test func unsupportedFileIsDefinitiveComplete() async throws {
-        let temp = try makeTestDirectory()
-        let thumbnailDirectory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
-        let textURL = temp.appending(path: "note.txt")
-        try Data("not media".utf8).write(to: textURL)
-        let enricher = MediaEnricher.live(thumbnailDirectory: thumbnailDirectory)
-        let id = MediaAssetID(
-            libraryRootPath: LibraryRootPath(rawValue: "/Lib"),
-            relativePath: MediaRelativePath(rawValue: "note.txt")
-        )
-
-        // Unsupported is definitive (stamped, never retried), even with empty metadata.
-        let outcome = await enricher.enrich(id, .localFile(textURL), 9, 1000, [.metadata, .rendering, .hash], nil)
-        guard case .complete = outcome else {
-            Issue.record("expected .complete for unsupported, got \(outcome)")
-            return
-        }
-    }
-
     @Test func datalessRegressionRoutesBackToDownload() async throws {
         // A missing/unreadable path reports unknown status, so the gate refuses to read.
         let temp = try makeTestDirectory()

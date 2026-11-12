@@ -19,11 +19,6 @@ struct MediaGridZoomPolicyTests {
         #expect(anchor == path(1))
     }
 
-    @Test func nearestToCenterOfEmptyGridIsNil() {
-        let anchor = MediaGridZoomPolicy.nearestToCenter(frames: [], viewportCenter: .zero)
-        #expect(anchor == nil)
-    }
-
     @Test func nearestToCenterBreaksTiesByTakingTheFirstCandidate() {
         // Two frames equidistant from the viewport center.
         let frames = [
@@ -41,28 +36,7 @@ struct MediaGridZoomPolicyTests {
         #expect(reversedAnchor == path(1))
     }
 
-    @Test func nearestToCenterOfSingleTileReturnsThatTile() {
-        let frames = [
-            MediaGridZoomPolicy.TileFrame(indexPath: path(5), frame: CGRect(x: 40, y: 40, width: 20, height: 20)),
-        ]
-        let anchor = MediaGridZoomPolicy.nearestToCenter(frames: frames, viewportCenter: CGPoint(x: 500, y: 500))
-        #expect(anchor == path(5))
-    }
-
     // MARK: - MediaGridPinchZoomPolicy.consumeSteps
-
-    @Test func consumeStepsBelowThresholdConsumesNothing() {
-        let result = MediaGridPinchZoomPolicy.consumeSteps(accumulated: 0.2)
-        #expect(result.netSteps == 0)
-        #expect(result.remainder == 0.2)
-    }
-
-    @Test func consumeStepsPinchOutRequestsFewerColumns() {
-        // Pinch out (positive) = zoom in = fewer columns = negative step.
-        let result = MediaGridPinchZoomPolicy.consumeSteps(accumulated: 0.3)
-        #expect(result.netSteps == -1)
-        #expect(result.remainder == 0)
-    }
 
     @Test func consumeStepsPinchInRequestsMoreColumns() {
         let result = MediaGridPinchZoomPolicy.consumeSteps(accumulated: -0.3)

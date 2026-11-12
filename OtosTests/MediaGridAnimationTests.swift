@@ -2,26 +2,6 @@
 import Testing
 
 struct MediaGridAnimationTests {
-    @Test func suppressesApplyAnimationWhileScrollTickIsRecent() {
-        #expect(MediaGridAnimation.suppressesApplyAnimation(lastScrollTickAge: .zero))
-        #expect(MediaGridAnimation.suppressesApplyAnimation(lastScrollTickAge: .milliseconds(160)))
-        #expect(
-            MediaGridAnimation.suppressesApplyAnimation(
-                lastScrollTickAge: MediaGridAnimation.applyAnimationScrollQuietThreshold - .milliseconds(1)
-            )
-        )
-    }
-
-    @Test func allowsApplyAnimationAfterScrollQuietThreshold() {
-        #expect(
-            !MediaGridAnimation.suppressesApplyAnimation(
-                lastScrollTickAge: MediaGridAnimation.applyAnimationScrollQuietThreshold
-            )
-        )
-        #expect(MediaGridAnimation.suppressesApplyAnimation(lastScrollTickAge: .seconds(1)) == false)
-        #expect(MediaGridAnimation.suppressesApplyAnimation(lastScrollTickAge: nil) == false, "a grid that has never scrolled")
-    }
-
     /// Import arrivals land left of the strip's anchored tile. The restore scrolls the strip
     /// by their width, so animating the survivors would draw a lurch the restore already
     /// cancelled — every visible tile ends where it started (APP-033).

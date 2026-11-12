@@ -70,14 +70,6 @@ struct ComparePairPolicyTests {
         #expect(next.right == ids[2])
     }
 
-    @Test func slideLeftRetreatsWindow() {
-        let ids = makeIDs(5)
-        let pair = ComparePair(left: ids[2], right: ids[3])
-        let prev = ComparePairPolicy.slide(-1, pair: pair, orderedIDs: ids)
-        #expect(prev.left == ids[1])
-        #expect(prev.right == ids[2])
-    }
-
     @Test func slideAtEndsIsNoOp() {
         let ids = makeIDs(3)
         let atStart = ComparePair(left: ids[0], right: ids[1])

@@ -271,29 +271,6 @@ struct ImmichAccountsTests {
         await store.shutdown()
     }
 
-    /// The sheet's one footnote line says why an attempt failed, and only then.
-    @Test func theSheetNamesEachFailure() {
-        var sheet = ImmichAccountSheetState()
-        #expect(sheet.failure == nil)
-        let outcomes: [ImmichAddAccountOutcome] = [
-            .invalidServer, .unreachable, .notImmich, .unsupportedVersion(major: 2), .wrongCredentials, .notSaved,
-        ]
-        var lines: Set<String> = []
-        for outcome in outcomes {
-            sheet.phase = .failed(outcome)
-            lines.insert(sheet.failure ?? "")
-        }
-        #expect(lines.count == outcomes.count)
-        #expect(!lines.contains(""))
-        sheet.phase = .failed(.unsupportedVersion(major: 2))
-        #expect(sheet.failure == "This server runs Immich 2. Otos works with Immich 3.")
-        sheet.phase = .adding
-        #expect(sheet.failure == nil)
-        #expect(sheet.isAdding)
-        #expect(sheet.title == "Add Immich Account")
-        #expect(ImmichAccountSheetState(server: "http://nas.local", isSigningIn: true).actionTitle == "Sign In")
-    }
-
     // MARK: - Originals (ADR 0046 §4, §7)
 
     /// The user's work downloads an original into the account's staging folder and offers

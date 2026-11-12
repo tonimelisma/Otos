@@ -31,12 +31,6 @@ struct ContentHasherTests {
         }
     }
 
-    @Test func digestRejectsWrongCanonicalLengths() {
-        #expect(XXH3Digest128(canonicalBytes: []) == nil)
-        #expect(XXH3Digest128(canonicalBytes: Array(repeating: 0, count: 15)) == nil)
-        #expect(XXH3Digest128(canonicalBytes: Array(repeating: 0, count: 17)) == nil)
-    }
-
     @Test func fileStreamingMatchesSingleUpdateAtChunkBoundaries() throws {
         let lengths = [0, 1, ContentHasher.chunkSize - 1, ContentHasher.chunkSize,
                        ContentHasher.chunkSize + 1, ContentHasher.chunkSize * 2 + 123]

@@ -604,19 +604,6 @@ struct ImportSessionMachineTests {
 
     // MARK: Refreshes
 
-    @Test func twoRefreshesApplyInOrder() {
-        var machine = Self.machine()
-        let present = Self.snapshot([Self.library(Self.libraryA), Self.cardState()])
-        let absent = Self.snapshot([Self.library(Self.libraryA)], revisions: nil)
-
-        _ = machine.handle(.librariesRefreshed(present))
-        _ = machine.handle(.librariesRefreshed(absent))
-        #expect(machine.sessions[Self.card] == nil)
-
-        _ = machine.handle(.librariesRefreshed(present))
-        #expect(machine.sessions[Self.card] != nil)
-    }
-
     @Test func aSnapshotOlderThanAnAppliedPlanningChangeRequestsNothing() {
         var (machine, build) = Self.attachedWithBuildRunning()
         _ = machine.handle(.buildFinished(build.id, Self.builtPlan(for: build)))

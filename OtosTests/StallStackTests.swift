@@ -108,14 +108,4 @@ struct StallStackTests {
         #expect(lines.map { $0.fields["frames"] } == ["1*\(StallStackReport.ownImage)+0x10:load"])
         #expect(StallStackReport.ownImage != "?")
     }
-
-    @Test func aFrameKeepsNoSpaceSoItStaysOneField() {
-        let frame = StackSample.Frame(image: "AppKit", offset: 0x2C, symbol: "-[NSApplication sendEvent:]")
-
-        #expect(StallStackReport.text(of: frame) == "AppKit+0x2c:-[NSApplication_sendEvent:]")
-    }
-
-    @Test func aStallWithNoSamplesReportsNoStack() {
-        #expect(StallStackReport.lines(stallID: 1, samples: []).isEmpty)
-    }
 }

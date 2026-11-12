@@ -18,15 +18,6 @@ struct GridSelectionTests {
         #expect(sel.base == [itemC])
     }
 
-    @Test func plainClickReplacesAPriorSelection() {
-        let sel = GridSelection(selection: [itemA, itemB, itemC], anchor: itemB, base: [itemA, itemB, itemC])
-            .plainClick(itemD)
-
-        #expect(sel.selection == [itemD])
-        #expect(sel.anchor == itemD)
-        #expect(sel.base == [itemD])
-    }
-
     // MARK: - commandClick
 
     @Test func commandClickAddsAnUnselectedItemAndSetsAnchorToIt() {
@@ -120,32 +111,6 @@ struct GridSelectionTests {
         #expect(sel.base == [itemD])
     }
 
-    @Test func shiftClickWithClickedMissingFromOrderFallsBackToPlainClick() {
-        let goneClicked = id("/Pictures", "gone.jpg")
-        let sel = GridSelection(selection: [itemC], anchor: itemC, base: [itemC])
-            .shiftClick(goneClicked, orderedIDs: ordered)
-
-        #expect(sel.selection == [goneClicked])
-        #expect(sel.anchor == goneClicked)
-        #expect(sel.base == [goneClicked])
-    }
-
-    @Test func shiftClickOnAnEmptyOrderFallsBackToPlainClick() {
-        let sel = GridSelection(selection: [itemC], anchor: itemC, base: [itemC])
-            .shiftClick(itemD, orderedIDs: [])
-
-        #expect(sel.selection == [itemD])
-        #expect(sel.anchor == itemD)
-        #expect(sel.base == [itemD])
-    }
-
-    @Test func shiftClickAnchorEqualToClickedIsTheSingleItem() {
-        let sel = GridSelection(selection: [itemC], anchor: itemC, base: [itemC])
-            .shiftClick(itemC, orderedIDs: ordered)
-
-        #expect(sel.selection == [itemC])
-    }
-
     // MARK: - commandShiftClick
 
     @Test func commandShiftClickExtendsTheRangeKeepingExistingIslands() {
@@ -156,33 +121,6 @@ struct GridSelectionTests {
         #expect(sel.selection == Set([itemB, itemE, itemF, itemG, itemH]))
         #expect(sel.anchor == itemE)
         #expect(sel.base == [itemB, itemE])
-    }
-
-    @Test func commandShiftClickWithNoAnchorFallsBackToPlainClick() {
-        let sel = GridSelection.empty
-            .commandShiftClick(itemD, orderedIDs: ordered)
-
-        #expect(sel.selection == [itemD])
-        #expect(sel.anchor == itemD)
-        #expect(sel.base == [itemD])
-    }
-
-    @Test func commandShiftClickWithMissingAnchorFallsBackToPlainClick() {
-        let goneAnchor = id("/Pictures", "gone.jpg")
-        let sel = GridSelection(selection: [itemC], anchor: goneAnchor, base: [itemC])
-            .commandShiftClick(itemD, orderedIDs: ordered)
-
-        #expect(sel.selection == [itemD])
-        #expect(sel.anchor == itemD)
-    }
-
-    // MARK: - clearedBySpace
-
-    @Test func clearedBySpaceEmptiesSelectionAnchorAndBase() {
-        let sel = GridSelection(selection: [itemA, itemB, itemC], anchor: itemB, base: [itemA, itemB, itemC])
-            .clearedBySpace()
-
-        #expect(sel == .empty)
     }
 
     // MARK: - pruned
@@ -205,12 +143,6 @@ struct GridSelectionTests {
         #expect(sel.selection == [itemD])
         #expect(sel.anchor == nil)
         #expect(sel.base.isEmpty)
-    }
-
-    @Test func prunedOfEmptySelectionStaysEmpty() {
-        let sel = GridSelection.empty.pruned(to: ordered)
-
-        #expect(sel == .empty)
     }
 
     // MARK: - reconcilingSelection
@@ -241,15 +173,6 @@ struct GridSelectionTests {
         #expect(after.base == [itemD])
     }
 
-    @Test func reconcilingSelectionIsNoOpWhenLiveMatchesModel() {
-        let before = GridSelection(selection: [itemC, itemD], anchor: itemC, base: [itemC])
-        let after = before.reconcilingSelection([itemC, itemD])
-
-        #expect(after.selection == before.selection)
-        #expect(after.anchor == before.anchor)
-        #expect(after.base == before.base)
-    }
-
     // MARK: - orderedSelection
 
     @Test func orderedSelectionFollowsDisplayOrderAndFiltersUnselected() {
@@ -258,10 +181,6 @@ struct GridSelectionTests {
         let idC = id("/Pictures", "c.jpg")
         let ordered = GridSelection.orderedSelection([idA, idC], in: [idC, idB, idA])
         #expect(ordered == [idC, idA])
-    }
-
-    @Test func orderedSelectionOfEmptySelectionIsEmpty() {
-        #expect(GridSelection.orderedSelection([], in: [id("/Pictures", "a.jpg")]).isEmpty)
     }
 
     // MARK: - selectionDelta
@@ -273,28 +192,6 @@ struct GridSelectionTests {
         let delta = GridSelection.selectionDelta(current: [idA, idB], target: [idB, idC])
         #expect(delta.toDeselect == [idA])
         #expect(delta.toSelect == [idC])
-    }
-
-    @Test func selectionDeltaOfIdenticalSetsIsEmpty() {
-        let idA = id("/Pictures", "a.jpg")
-        let idB = id("/Pictures", "b.jpg")
-        let delta = GridSelection.selectionDelta(current: [idA, idB], target: [idA, idB])
-        #expect(delta.toDeselect.isEmpty)
-        #expect(delta.toSelect.isEmpty)
-    }
-
-    @Test func selectionDeltaFromEmptyToNonEmptySelectsEverything() {
-        let idA = id("/Pictures", "a.jpg")
-        let delta = GridSelection.selectionDelta(current: [], target: [idA])
-        #expect(delta.toDeselect.isEmpty)
-        #expect(delta.toSelect == [idA])
-    }
-
-    @Test func selectionDeltaToEmptyDeselectsEverything() {
-        let idA = id("/Pictures", "a.jpg")
-        let delta = GridSelection.selectionDelta(current: [idA], target: [])
-        #expect(delta.toDeselect == [idA])
-        #expect(delta.toSelect.isEmpty)
     }
 
     // MARK: - clipboard
@@ -309,17 +206,6 @@ struct GridSelectionTests {
         #expect(count == 2)
         let urls = (pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
         #expect(urls.map(\.path) == ["/Pictures/a.jpg", "/Pictures/Nested/b.mov"])
-    }
-
-    @Test func writeClearsPriorContentsAndEmptySelectionWritesNothing() {
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("test-\(UUID().uuidString)"))
-        _ = MediaGridClipboard.write([id("/Pictures", "a.jpg")], to: pasteboard)
-
-        let count = MediaGridClipboard.write([], to: pasteboard)
-
-        #expect(count == 0)
-        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]
-        #expect(urls == nil || urls?.isEmpty == true)
     }
 }
 

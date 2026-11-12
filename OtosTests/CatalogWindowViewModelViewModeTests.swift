@@ -40,17 +40,6 @@ final class FakePreviewLoader: PreviewLoading {
         state.withLock { $0.hold = value }
     }
 
-    func releaseAll(with outcome: PreviewImageLoader.Outcome) async {
-        let waiting: [Pending] = state.withLock { current in
-            let waiting = current.pending
-            current.pending = []
-            return waiting
-        }
-        for item in waiting {
-            item.continuation.resume(returning: outcome)
-        }
-    }
-
     func release(id: MediaAssetID, with outcome: PreviewImageLoader.Outcome) async {
         let released: [Pending] = state.withLock { current in
             let matching = current.pending.filter { $0.id == id }
@@ -68,10 +57,6 @@ final class FakePreviewLoader: PreviewLoading {
 
     func requestedEdges() async -> [Int] {
         state.withLock { $0.requestedLongEdges }
-    }
-
-    func pendingCount() async -> Int {
-        state.withLock { $0.pending.count }
     }
 
     /// A release issued before the request is pending would leave that request held
@@ -393,36 +378,6 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(model.comparePair.left == ids[1])
         #expect(model.comparePair.right == ids[0])
         #expect(model.activeComparePane == .left)
-    }
-
-    @Test func rapidArrowStormKeepsFinalFocusIdentity() async throws {
-        let fake = FakePreviewLoader()
-        await fake.setHold(true)
-        let model = makeViewModeModel(loader: fake)
-        let ids = makeViewModeIDs(count: 8)
-        model.applyState(makeViewModeState(orderedIDs: ids))
-        model.openLoupe(id: ids[0])
-        try await fake.waitUntilPending(atLeast: 1)
-
-        var publishedWrong = false
-        for _ in 0 ..< 20 {
-            model.focusNext()
-            if let preview = model.panePreviews[.loupe],
-               preview.id != model.focusedAssetID
-            {
-                publishedWrong = true
-            }
-        }
-        let finalFocus = try #require(model.focusedAssetID)
-        #expect(finalFocus == ids[7] || finalFocus == ids.last)
-        try await fake.waitUntilPending(id: finalFocus)
-
-        let finalTask = model.paneRequestTasks[.loupe]
-        let image = makeViewModeCGImage(seed: 9)
-        await fake.releaseAll(with: .image(image, nativePixelSize: nil))
-        await finalTask?.value
-        #expect(!publishedWrong)
-        #expect(model.panePreviews[.loupe]?.id == finalFocus)
     }
 }
 

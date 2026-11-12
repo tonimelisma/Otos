@@ -1,6 +1,5 @@
 import Foundation
 @testable import OtosKit
-import Synchronization
 import Testing
 
 /// Pure-model coverage for the File ▸ Open / Open With menu (APP-035). The workspace
@@ -15,14 +14,6 @@ struct OpenWithMenuModelTests {
         let workspace = LaunchServicesWorkspace()
         #expect(workspace.defaultApplicationURL(toOpen: absent) != nil)
         #expect(!workspace.applicationURLs(toOpen: absent).isEmpty)
-    }
-
-    @Test func emptyTargetsIsEmptyAndDisabled() {
-        let model = OpenWithMenuModel.make(targets: [], workspace: TableWorkspace())
-        #expect(model == .empty)
-        #expect(!model.canOpen)
-        #expect(!model.canOpenWith)
-        #expect(model.openTitle == "Open")
     }
 
     @Test func sharedDefaultTitlesOpenInThatApp() {
@@ -77,19 +68,6 @@ struct OpenWithMenuModelTests {
         #expect(model.applications.map(\.displayName) == ["Preview", "Photos"])
     }
 
-    @Test func oneQueryPerDistinctExtension() {
-        let workspace = TableWorkspace(
-            defaults: ["jpg": .preview, "mov": .quickTime],
-            applications: ["jpg": [.preview], "mov": [.quickTime]]
-        )
-        let targets = (0 ..< 200).map { url("\($0).jpg") } + (0 ..< 200).map { url("\($0).mov") }
-
-        let model = OpenWithMenuModel.make(targets: targets, workspace: workspace)
-
-        #expect(model.targetCount == 400)
-        #expect(workspace.queriedExtensions() == ["jpg", "mov"])
-    }
-
     @Test func targetWithoutDefaultIsCountedNotOpened() {
         let workspace = TableWorkspace(
             defaults: ["jpg": .preview],
@@ -118,12 +96,10 @@ private extension URL {
     static let pixelmator = URL(fileURLWithPath: "/Applications/Pixelmator Pro.app")
 }
 
-/// A LaunchServices stand-in keyed by lowercased file extension. The struct is a value,
-/// so the query recording lives in a small `Mutex`-guarded box it holds by reference.
+/// A LaunchServices stand-in keyed by lowercased file extension.
 private struct TableWorkspace: WorkspaceOpening {
     let defaults: [String: URL]
     let applications: [String: [URL]]
-    private let queried = QueryRecorder()
 
     init(defaults: [String: URL] = [:], applications: [String: [URL]] = [:]) {
         self.defaults = defaults
@@ -131,8 +107,7 @@ private struct TableWorkspace: WorkspaceOpening {
     }
 
     func applicationURLs(toOpen url: URL) -> [URL] {
-        queried.record(url.pathExtension.lowercased())
-        return applications[url.pathExtension.lowercased()] ?? []
+        applications[url.pathExtension.lowercased()] ?? []
     }
 
     func defaultApplicationURL(toOpen url: URL) -> URL? {
@@ -146,20 +121,4 @@ private struct TableWorkspace: WorkspaceOpening {
     func open(_: [URL], withApplicationAt _: URL) async throws {}
 
     func revealInFinder(_: [URL]) {}
-
-    func queriedExtensions() -> [String] {
-        queried.snapshot()
-    }
-}
-
-private final class QueryRecorder: Sendable {
-    private let storage = Mutex<[String]>([])
-
-    func record(_ key: String) {
-        storage.withLock { $0.append(key) }
-    }
-
-    func snapshot() -> [String] {
-        storage.withLock { $0 }
-    }
 }

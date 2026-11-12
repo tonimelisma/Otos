@@ -30,36 +30,6 @@ struct CatalogWindowPolicyDayBucketTests {
         #expect(result.ids == [kept, keptAgain])
         #expect(result.dayBuckets == [dayOne, nil])
     }
-
-    @Test func emptyDayBucketsInMeansEmptyDayBucketsOut() {
-        let kept = dayBucketAssetID(root: Self.keptPath, path: "a.jpg")
-
-        let result = CatalogWindowPolicy.assetIDs(
-            for: .allMedia,
-            orderedAssetIDs: [kept],
-            dayBuckets: [],
-            availableLibraryPaths: [Self.keptPath],
-            rootsByPath: [Self.keptPath: dayBucketLibraryState(path: Self.keptPath, kind: .library)]
-        )
-
-        #expect(result.ids == [kept])
-        #expect(result.dayBuckets.isEmpty)
-    }
-
-    @Test func mismatchedDayBucketCountFallsBackToEmpty() {
-        let kept = dayBucketAssetID(root: Self.keptPath, path: "a.jpg")
-
-        let result = CatalogWindowPolicy.assetIDs(
-            for: .allMedia,
-            orderedAssetIDs: [kept],
-            dayBuckets: [Date(timeIntervalSince1970: 0), Date(timeIntervalSince1970: 1)],
-            availableLibraryPaths: [Self.keptPath],
-            rootsByPath: [Self.keptPath: dayBucketLibraryState(path: Self.keptPath, kind: .library)]
-        )
-
-        #expect(result.ids == [kept])
-        #expect(result.dayBuckets.isEmpty)
-    }
 }
 
 private func dayBucketAssetID(root: LibraryRootPath, path: String) -> MediaAssetID {

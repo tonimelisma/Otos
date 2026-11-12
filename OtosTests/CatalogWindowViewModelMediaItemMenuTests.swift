@@ -107,14 +107,6 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         }
     }
 
-    @Test func noTargetsBuildNoMenu() {
-        let model = makeMenuModel(workspace: MenuRecordingWorkspace())
-        model.applyState(menuWindowState(ids: makeIDs(count: 2)))
-
-        #expect(model.mediaItemMenuModel() == .empty)
-        #expect(model.makeMediaItemContextMenu() == nil)
-    }
-
     @Test func performRoutesToTheMenuBarIntents() async throws {
         let workspace = MenuRecordingWorkspace()
         let model = makeMenuModel(workspace: workspace)

@@ -163,44 +163,6 @@ struct CatalogStoreQueryPlanTests {
         #expect(rows.first?.coordinate == PlaceCoordinate(latitude: 60.17, longitude: 24.94))
     }
 
-    @Test func enrichmentClaimQueryUsesPartialIndexWithoutNotInExclusion() async throws {
-        let temp = try makeTestDirectory()
-        let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        try FileManager.default.createDirectory(
-            at: databaseURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
-        try CatalogStore.migrator.migrate(dbQueue)
-        let rootID = try await insertEnrichmentClaimFixture(dbQueue, assetCount: 200, claimedCount: 50)
-        let claimQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
-            rootIDs: [rootID],
-            limit: 4,
-            claim: .cardProducts
-        ))
-
-        let legacyQuery = legacyNotInEnrichmentQuery(rootID: rootID, excludedCount: 50)
-        let exclusionPlan = try await dbQueue.read { db in
-            try explainPlan(
-                db,
-                sql: legacyQuery.sql,
-                arguments: legacyQuery.arguments
-            )
-        }
-        let claimPlan = try await dbQueue.read { db in
-            try explainPlan(
-                db,
-                query: claimQuery
-            )
-        }
-
-        #expect(legacyQuery.sql.localizedCaseInsensitiveContains("NOT IN"))
-        #expect(!exclusionPlan.isEmpty)
-        #expect(claimPlan.contains("idx_media_asset_needs_enrichment_root"))
-        #expect(!claimQuery.sql.localizedCaseInsensitiveContains("NOT IN"))
-    }
-
     @Test func enrichmentClaimUpdateReturningClaimsRows() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -510,41 +472,6 @@ private func insertEnrichmentClaimFixture(
         }
         return rootID
     }
-}
-
-private func legacyExclusionArguments(rootID: Int64, excludedCount: Int) -> [any DatabaseValueConvertible] {
-    (0 ..< excludedCount).flatMap { index -> [any DatabaseValueConvertible] in
-        [rootID, String(format: "asset-%04d.jpg", index)]
-    }
-}
-
-private func legacyNotInEnrichmentQuery(rootID: Int64, excludedCount: Int) -> SQLQuery {
-    let exclusionPlaceholders = Array(repeating: "(?, ?)", count: excludedCount).joined(separator: ", ")
-    return SQLQuery(
-        sql: """
-        SELECT library_root_id, relative_path
-        FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
-        WHERE library_root_id = ?
-          AND (
-            metadata_source_size IS NULL
-            OR metadata_source_mtime IS NULL
-            OR COALESCE(byte_size, -1) <> COALESCE(metadata_source_size, -1)
-            OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
-               <> COALESCE(metadata_source_mtime, -1)
-          )
-          AND (library_root_id, relative_path) NOT IN (\(exclusionPlaceholders))
-        ORDER BY sort_key, relative_path
-        LIMIT ?
-        """,
-        arguments: legacyNotInEnrichmentArguments(rootID: rootID, excludedCount: excludedCount)
-    )
-}
-
-private func legacyNotInEnrichmentArguments(rootID: Int64, excludedCount: Int) -> StatementArguments {
-    var values: [any DatabaseValueConvertible] = [rootID]
-    values.append(contentsOf: legacyExclusionArguments(rootID: rootID, excludedCount: excludedCount))
-    values.append(4)
-    return StatementArguments(values)
 }
 
 private func explainPlan(

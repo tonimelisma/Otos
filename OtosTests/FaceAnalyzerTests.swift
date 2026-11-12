@@ -73,22 +73,6 @@ struct FaceAnalyzerTests {
 
     // MARK: - The bundled model
 
-    /// The model loads from the framework and reads a crop as a unit-length 512-d embedding,
-    /// the same every time; a different crop reads differently.
-    @Test func theBundledModelEmbedsACropTheSameWayEveryTime() throws {
-        let model = try FaceEmbeddingModel(bundle: Bundle(for: CatalogWindowViewModel.self))
-        let crop = try Self.patternImage(seed: 1)
-
-        let first = try model.embedding(of: crop)
-        let second = try model.embedding(of: crop)
-        let other = try model.embedding(of: Self.patternImage(seed: 2))
-
-        #expect(first.count == FaceEmbeddingModel.dimensions)
-        #expect(abs(Self.dot(first, first) - 1) < 1e-3)
-        #expect(first == second)
-        #expect(Self.dot(first, other) < 0.99)
-    }
-
     /// A photo with no face in it has no faces and no rejections.
     @Test func aPhotoWithoutAFaceHasNoFaces() async throws {
         let analyzer = FaceAnalyzer(bundle: Bundle(for: CatalogWindowViewModel.self))

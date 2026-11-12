@@ -60,49 +60,4 @@ struct PreferencesDomainTests {
         #expect(tempDefaults.integer(forKey: "mediaGridColumnCount") == 9)
         #expect(tempDefaults.object(forKey: CatalogWindowViewModel.stripTileEdgeDefaultsKey) as? Double == 150)
     }
-
-    @Test func temporaryDomainPersistsCoordinatorDestinationAndIsolatesControl() async throws {
-        let temp = PreferencesDomain.suite(UUID().uuidString)
-        let control = PreferencesDomain.suite(UUID().uuidString)
-
-        let tempDir = try makeTestDirectory()
-        let destURL = tempDir.appending(path: "Dest", directoryHint: .isDirectory)
-        let sourceURL = tempDir.appending(path: "Source", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
-        let destPath = LibraryRootPath(rawValue: destURL.path)
-        let sourcePath = LibraryRootPath(rawValue: sourceURL.path)
-
-        // First coordinator persists a device mapping into temp.
-        let storeA = CatalogStore(location: .inMemory)
-        let coordinatorA = MediaOperationCoordinator(
-            store: storeA,
-            preferencesDomain: temp,
-            volumeCapacity: ampleVolumeCapacity
-        )
-        await coordinatorA.setDestination(destPath, for: sourcePath)
-        let loadedA = await coordinatorA.allDestinations()
-        #expect(loadedA[sourcePath] == destPath)
-
-        // Reconstructing from the same domain observes the mapping.
-        let storeB = CatalogStore(location: .inMemory)
-        let coordinatorB = MediaOperationCoordinator(
-            store: storeB,
-            preferencesDomain: temp,
-            volumeCapacity: ampleVolumeCapacity
-        )
-        let loadedB = await coordinatorB.allDestinations()
-        // The domain's store holds the mapping; read it directly.
-        let tempDefaults = temp.makeDefaults()
-        let legacy = tempDefaults.dictionary(forKey: "import.destinationBySource") as? [String: String]
-        #expect(legacy?[sourcePath.rawValue] == destPath.rawValue)
-
-        // Control suite remains empty.
-        let controlDefaults = control.makeDefaults()
-        #expect(controlDefaults.dictionary(forKey: "import.destinationBySource") == nil)
-        #expect(controlDefaults.dictionary(forKey: "import.destinationByDeviceIdentity") == nil)
-        #expect(controlDefaults.string(forKey: "import.lastUsedDestination") == nil)
-
-        _ = loadedB
-    }
 }

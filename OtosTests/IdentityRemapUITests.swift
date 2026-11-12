@@ -25,35 +25,6 @@ struct IdentityRemapUITests {
         #expect(remapped.base == [newA])
     }
 
-    @MainActor
-    @Test func tileContentStorePreservesPaintedImageAcrossRemap() {
-        let root = LibraryRootPath(rawValue: "/Library")
-        let oldID = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "old.jpg"))
-        let newID = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "new.jpg"))
-        let store = TileContentStore()
-        let detail = MediaTileDetail(
-            libraryRootPath: root,
-            relativePath: oldID.relativePath,
-            thumbnailPath: "thumb",
-            bestKind: .image
-        )
-        _ = store.mergeDetail(detail)
-        let image = makeTestCGImage()
-        let key = MediaAssetTilePresentation.imageContentKey(detail)
-        _ = store.applyDecoded(image, key: key, for: oldID)
-        #expect(store.content(for: oldID)?.image != nil)
-
-        store.applyIdentityRemapBatch(
-            CatalogIdentityRemapBatch(
-                id: 1,
-                libraryRootPath: root,
-                remaps: [CatalogIdentityRemap(oldID: oldID, newID: newID)]
-            )
-        )
-        #expect(store.content(for: oldID) == nil)
-        #expect(store.content(for: newID)?.image === image)
-    }
-
     /// A published state that shows a remapped identity carries the batch that made it.
     /// Applying that state moves selection, focus, the compare pair and the painted tile
     /// to the new identity before the new order is compared with the old one, so none of

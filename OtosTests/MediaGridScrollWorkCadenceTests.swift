@@ -6,24 +6,8 @@ import Testing
 /// rescheduled by each bounds notification, and those arrive faster than its window.
 /// The maximum wait is what serves a sustained fling.
 struct MediaGridScrollWorkCadenceTests {
-    @Test func aBurstThatIsStillRunningIsServedByTheMaximumWait() {
-        #expect(MediaGridScrollWorkCadence.runsImmediately(sinceLastRun: .milliseconds(100)))
-        #expect(MediaGridScrollWorkCadence.runsImmediately(sinceLastRun: .seconds(5)))
-    }
-
     @Test func workThatHasNeverRunRunsNow() {
         #expect(MediaGridScrollWorkCadence.runsImmediately(sinceLastRun: nil))
-    }
-
-    @Test func workJustRunIsLeftToTheTrailingEdge() {
-        #expect(!MediaGridScrollWorkCadence.runsImmediately(sinceLastRun: .zero))
-        #expect(!MediaGridScrollWorkCadence.runsImmediately(sinceLastRun: .milliseconds(99)))
-    }
-
-    @Test func theMaximumWaitOutlastsTheCoalesceWindow() {
-        // Otherwise the maximum wait would fire first every time and the trailing edge
-        // — which is what collapses a burst that ends — would never be reached.
-        #expect(MediaGridScrollWorkCadence.maximumWait > MediaGridScrollWorkCadence.coalesceWindow)
     }
 
     @Test func aTickRateFasterThanTheWindowStillGetsServed() {

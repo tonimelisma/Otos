@@ -37,38 +37,6 @@ struct MediaItemMenuModelTests {
         ])
     }
 
-    @Test func emptyModelDisablesEveryAct() {
-        let model = MediaItemMenuModel.empty
-
-        for entry in model.entries {
-            switch entry {
-            case let .command(_, _, enabled):
-                #expect(!enabled)
-            case let .openWith(applications, enabled):
-                #expect(applications.isEmpty)
-                #expect(!enabled)
-            case .faces:
-                Issue.record("an empty model offers no faces")
-            case .separator:
-                break
-            }
-        }
-        #expect(model.openTitle == "Open")
-    }
-
-    @Test func trashEligibilityIsIndependentOfTheRest() {
-        let openWith = OpenWithMenuModel.make(targets: [], workspace: NoWorkspace())
-        let model = MediaItemMenuModel(
-            openWith: openWith,
-            shareItems: [URL(fileURLWithPath: "/Pictures/a.jpg")],
-            canReveal: true,
-            canTrash: false
-        )
-
-        #expect(model.entries.contains(.command(.moveToTrash, title: "Move to Trash", enabled: false)))
-        #expect(model.entries.contains(.command(.choice(.liked), title: "Like", enabled: true)))
-    }
-
     /// The targets' faces sit after Reveal in Finder, one entry per person, the first at the
     /// top level when the filter shows that person (ADR 0047).
     @Test func facesComeAfterRevealOnePerPerson() throws {

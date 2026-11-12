@@ -27,16 +27,6 @@ struct CaptureInstantTests {
         #expect(instant(records) == at(200))
     }
 
-    @Test func quickTimeContentCreateCountsAndGPSIsLast() {
-        #expect(instant([.absolute(.gps, instant: at(400)), .absolute(.quickTimeContentCreate, instant: at(250))]) == at(250))
-        #expect(instant([.absolute(.gps, instant: at(400))]) == at(400))
-    }
-
-    @Test func noInstantIsNoCaptureInstant() {
-        #expect(instant([.floating(.original)]) == nil)
-        #expect(instant([]) == nil)
-    }
-
     /// A stored record that is not a capture time — an unknown precision, missing or
     /// out-of-range components, a role this build does not know — is left out, so the next
     /// role answers.

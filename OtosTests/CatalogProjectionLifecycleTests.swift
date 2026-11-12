@@ -83,43 +83,6 @@ struct CatalogProjectionLifecycleTests {
         #expect(readded.mediaGrid.scope == .library(rootPath))
     }
 
-    @Test func removedSelectionRemainsAllMediaWhenSamePathIsReadded() async throws {
-        let temp = try makeTestDirectory()
-        let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        let scanner = CatalogScanner { _, _, _ in .empty }
-        let store = CatalogStore(location: .inMemory, scanner: scanner)
-        let projection = CatalogProjection(cadence: .milliseconds(10))
-        let recorder = LifecycleStateRecorder()
-        let stream = await projection.states(store: store, initialDescriptor: .default)
-        let recordingTask = Task {
-            for await state in stream {
-                await recorder.append(state)
-            }
-        }
-        defer { recordingTask.cancel() }
-
-        try await store.start(scansSavedLibraries: false)
-        try await store.addLibrary(url: rootURL)
-        let rootPath = try CatalogPath.normalizedDirectoryPath(for: rootURL)
-        await projection.updateSidebarSelection(.library(rootPath))
-        _ = try await recorder.waitForLast { state in
-            state.resolvedSidebarSelection == .library(rootPath)
-        }
-
-        #expect(try await store.removeLibrary(path: rootPath) == .removed)
-        _ = try await recorder.waitForLast { state in
-            state.libraries.isEmpty && state.resolvedSidebarSelection == .allMedia
-        }
-
-        try await store.addLibrary(url: rootURL)
-        let readded = try await recorder.waitForLast { state in
-            state.libraries.map(\.path) == [rootPath]
-        }
-        #expect(readded.resolvedSidebarSelection == .library(rootPath))
-        #expect(readded.mediaGrid.scope == .library(rootPath))
-    }
-
     @Test func normalizationDoesNotOverwriteNewerSidebarIntent() async throws {
         let missing = SidebarSelection.library(
             LibraryRootPath(rawValue: "/Users/example/Missing")

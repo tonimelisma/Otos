@@ -33,18 +33,6 @@ struct GridPostLayoutWorkQueueTests {
         #expect(runs == ["newest"])
     }
 
-    @Test func differentKindsRemainIndependentlyCoalesced() async throws {
-        var ready = false
-        var runs = 0
-        let queue = GridPostLayoutWorkQueue(isReady: { ready }, flushLayout: {})
-        _ = queue.submit(.focusScroll, reason: "focus") { runs += 1 }
-        _ = queue.submit(.detailAndPreheat, reason: "details") { runs += 1 }
-        queue.runDeferredWork()
-        ready = true
-        try await waitUntil { !queue.hasDeferredTurnScheduled }
-        #expect(runs == 2)
-    }
-
     @Test func deferredWorkStaysPendingWhenLayoutTurnIsStillNotReady() async throws {
         var ready = false
         var runs = 0

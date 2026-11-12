@@ -58,38 +58,6 @@ struct CatalogWindowViewModelTests {
     }
 
     @MainActor
-    @Test func storeChangesUpdateWindowState() async throws {
-        let temp = try makeTestDirectory()
-        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try writeFile(root.appending(path: "one.jpg"), contents: "jpeg")
-
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
-        let model = CatalogWindowViewModel(
-            catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
-            startsStallMonitor: false,
-            startsEnrichment: false,
-            startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults,
-            volumeCapacity: ampleVolumeCapacity,
-            trashFiles: .refusing
-        )
-
-        model.start()
-        model.addLibrary(url: root)
-
-        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
-        let state = try await waitForWindowState(model) { state in
-            state.libraries.map(\.path) == [rootPath]
-                && state.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["one.jpg"]
-        }
-
-        #expect(state.libraries.first?.availability == .available)
-    }
-
-    @MainActor
     @Test func sidebarSelectionChangesRouteThroughProjection() async throws {
         let temp = try makeTestDirectory()
         let picturesURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)

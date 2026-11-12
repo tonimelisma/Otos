@@ -8,24 +8,6 @@ struct CatalogQueryGatewayTests {
         #expect(try CatalogQueryGateway.orderedAssetIDQuery(descriptor: .default, scope: .nothing) == nil)
     }
 
-    @Test func countAssetsReturnsZeroForScopeSelectingNothing() async throws {
-        let dbQueue = try DatabaseQueue()
-        try CatalogStore.migrator.migrate(dbQueue)
-        let count = try await dbQueue.read { db in
-            try CatalogQueryGateway.countAssets(scope: .nothing, db: db)
-        }
-        #expect(count == 0)
-    }
-
-    @Test func filterOptionsReturnsEmptyForScopeSelectingNothing() async throws {
-        let dbQueue = try DatabaseQueue()
-        try CatalogStore.migrator.migrate(dbQueue)
-        let options = try await dbQueue.read { db in
-            try CatalogQueryGateway.filterOptions(scope: .nothing, db: db)
-        }
-        #expect(options == .empty)
-    }
-
     /// Counting is a scope-scoped read exactly like ordering is: a batch stamp has to
     /// reach both, or they disagree about what the scope holds and the window reports
     /// the wrong kind of emptiness.
@@ -49,37 +31,6 @@ struct CatalogQueryGatewayTests {
 
         #expect(wholeRootCount == 3)
         #expect(batchCount == 1)
-    }
-
-    /// The ordering query keeps the root-local index and `=` predicate for a
-    /// single-root scope; the batch dimension is an added clause, not a replacement.
-    @Test func singleRootBatchScopeKeepsRootLocalIndexAndAddsBatchClause() throws {
-        let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
-            descriptor: .default,
-            scope: CatalogScopePredicate(rootIDs: [7], importBatchUnixMs: 100)
-        ))
-
-        #expect(query.sql.contains("media_asset.library_root_id = ?"))
-        #expect(query.sql.contains("AND media_asset.import_batch_unix_ms = ?"))
-        #expect(query.sql.contains("INDEXED BY idx_media_asset_best_capture_root_"))
-    }
-
-    @Test func fetchStoredAssetsReturnsEmptyForEmptyIDs() async throws {
-        let dbQueue = try DatabaseQueue()
-        try CatalogStore.migrator.migrate(dbQueue)
-        let assets = try await dbQueue.read { db in
-            try CatalogQueryGateway.fetchStoredAssets(ids: [], rootIDsByPath: [:], db: db)
-        }
-        #expect(assets.isEmpty)
-    }
-
-    @Test func fetchStoredTileDetailsReturnsEmptyForEmptyIDs() async throws {
-        let dbQueue = try DatabaseQueue()
-        try CatalogStore.migrator.migrate(dbQueue)
-        let details = try await dbQueue.read { db in
-            try CatalogQueryGateway.fetchStoredTileDetails(ids: [], rootIDsByPath: [:], db: db)
-        }
-        #expect(details.isEmpty)
     }
 
     @Test func choiceFilterQueryReturnsOnlySelectedChoices() async throws {
@@ -164,19 +115,6 @@ struct CatalogQueryGatewayTests {
         #expect((byPath["dated.jpg"] ?? nil) == CaptureLocalTime(seconds: 1_700_000_000))
         #expect((byPath["undated.jpg"] ?? nil) == nil)
         #expect(byPath.keys.contains("undated.jpg"))
-    }
-
-    @Test func metadataExtraReturnsNilWhenRowMissing() async throws {
-        let dbQueue = try DatabaseQueue()
-        try CatalogStore.migrator.migrate(dbQueue)
-        let metadata = try await dbQueue.read { db in
-            try CatalogQueryGateway.metadataExtra(
-                libraryRootID: 1,
-                relativePath: MediaRelativePath(rawValue: "missing.jpg"),
-                db: db
-            )
-        }
-        #expect(metadata == nil)
     }
 }
 

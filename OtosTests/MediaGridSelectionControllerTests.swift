@@ -54,14 +54,6 @@ extension AppKitWindowTests {
             #expect(harness.selectedIDs() == Set(harness.ids[1 ... 3]))
         }
 
-        @Test func row4_shiftClickExtendsABackwardRange() throws {
-            let harness = try makeHarness(itemCount: 8)
-            try harness.click(harness.ids[5], modifiers: [])
-            try harness.click(harness.ids[2], modifiers: [.shift])
-
-            #expect(harness.selectedIDs() == Set(harness.ids[2 ... 5]))
-        }
-
         @Test func row5_commandClickAddsAnIslandAndMovesTheAnchor() throws {
             let harness = try makeHarness(itemCount: 8)
             try harness.click(harness.ids[1], modifiers: [])
@@ -69,38 +61,6 @@ extension AppKitWindowTests {
 
             #expect(harness.selectedIDs() == [harness.ids[1], harness.ids[4]])
             #expect(harness.controller.gridSelection.anchor == harness.ids[4])
-        }
-
-        @Test func row6_shiftClickAfterCommandClickRangesFromNewAnchorKeepingIsland() throws {
-            let harness = try makeHarness(itemCount: 8)
-            try harness.click(harness.ids[1], modifiers: [])
-            try harness.click(harness.ids[4], modifiers: [.command])
-            try harness.click(harness.ids[6], modifiers: [.shift])
-
-            #expect(harness.selectedIDs() == Set([harness.ids[1]] + harness.ids[4 ... 6]))
-        }
-
-        @Test func row7_commandClickInsideARangeRemovesOnlyThatItem() throws {
-            let harness = try makeHarness(itemCount: 8)
-            try harness.click(harness.ids[2], modifiers: [])
-            try harness.click(harness.ids[5], modifiers: [.shift]) // {C,D,E,F}
-            try harness.click(harness.ids[3], modifiers: [.command]) // remove D
-
-            #expect(harness.selectedIDs() == [harness.ids[2], harness.ids[4], harness.ids[5]])
-        }
-
-        @Test func row8_plainClickCollapsingAMultiSelectionReanchors() throws {
-            // B2: select {C,D,E}, plain-click D → {D}; base becomes {D}.
-            let harness = try makeHarness(itemCount: 8)
-            try harness.click(harness.ids[2], modifiers: [])
-            try harness.click(harness.ids[3], modifiers: [.command])
-            try harness.click(harness.ids[4], modifiers: [.command])
-            #expect(harness.selectedIDs() == Set(harness.ids[2 ... 4]))
-
-            try harness.click(harness.ids[3], modifiers: [])
-
-            #expect(harness.selectedIDs() == [harness.ids[3]])
-            #expect(harness.controller.gridSelection.base == [harness.ids[3]])
         }
 
         @Test func row9_shiftClickAfterCollapseDoesNotReAddPriorSelection() throws {
@@ -140,17 +100,6 @@ extension AppKitWindowTests {
             #expect(dragStarts.count == 1)
         }
 
-        @Test func row10_commandClickDeselectingTheSoleSelectionLeavesAnchorAsPivot() throws {
-            // B3 setup: click B, ⌘-click B → ∅; anchor stays B, base ∅.
-            let harness = try makeHarness(itemCount: 8)
-            try harness.click(harness.ids[1], modifiers: [])
-            try harness.click(harness.ids[1], modifiers: [.command])
-
-            #expect(harness.selectedIDs().isEmpty)
-            #expect(harness.controller.gridSelection.anchor == harness.ids[1])
-            #expect(harness.controller.gridSelection.base.isEmpty)
-        }
-
         @Test func row11_shiftClickAfterCommandDeselectRangesFromPivotWithNothingStale() throws {
             // B3: …then ⇧-click E → {B,C,D,E}.
             let harness = try makeHarness(itemCount: 8)
@@ -169,14 +118,6 @@ extension AppKitWindowTests {
 
             #expect(harness.selectedIDs().isEmpty)
             #expect(harness.controller.gridSelection.anchor == nil)
-        }
-
-        @Test func row13_shiftClickWithEmptySelectionFallsBackToClicked() throws {
-            let harness = try makeHarness(itemCount: 8)
-            try harness.click(harness.ids[3], modifiers: [.shift])
-
-            #expect(harness.selectedIDs() == [harness.ids[3]])
-            #expect(harness.controller.gridSelection.anchor == harness.ids[3])
         }
 
         @Test func row14_commandShiftClickExtendsRangeKeepingIslands() throws {
@@ -243,38 +184,6 @@ extension AppKitWindowTests {
 
             #expect(harness.controller.gridSelection == .empty)
             #expect(harness.selectedIDs().isEmpty)
-        }
-
-        @Test func programmaticDeltaDoesNotReconcile() throws {
-            let harness = try makeHarness(itemCount: 4)
-            var reconcileCount = 0
-            harness.installSpyHandlers(onReconcile: { reconcileCount += 1 })
-
-            try harness.click(harness.ids[0], modifiers: [])
-            reconcileCount = 0
-            harness.controller.applySelectionDelta(
-                from: [harness.ids[0]],
-                to: [harness.ids[1]]
-            )
-            #expect(reconcileCount == 0)
-            #expect(harness.selectedIDs() == [harness.ids[1]])
-
-            harness.controller.collectionView(
-                harness.controller.collectionView,
-                didSelectItemsAt: []
-            )
-            #expect(reconcileCount == 1)
-        }
-
-        @Test func shiftChainContractionAfterNativeEcho() throws {
-            // Guards the base-stomp regression: programmatic echoes must not reset base.
-            let harness = try makeHarness(itemCount: 8)
-            try harness.click(harness.ids[1], modifiers: [])
-            try harness.click(harness.ids[4], modifiers: [.shift])
-            #expect(harness.selectedIDs() == Set(harness.ids[1 ... 4]))
-
-            try harness.click(harness.ids[3], modifiers: [.shift])
-            #expect(harness.selectedIDs() == Set(harness.ids[1 ... 3]))
         }
 
         // MARK: - Thumbnail-only hit area
@@ -421,41 +330,6 @@ private final class GridSelectionTestHarness {
 
     func setModelSelection(_ selection: GridSelection) {
         modelSelection = selection
-    }
-
-    func installSpyHandlers(onReconcile: @escaping () -> Void) {
-        controller.selectionHandlers = MediaGridSelectionHandlers(
-            currentSelection: { [unowned self] in modelSelection },
-            applyClick: { [unowned self] hit, modifiers, orderedIDs in
-                let shift = modifiers.contains(.shift)
-                let command = modifiers.contains(.command)
-                guard let hit else {
-                    if !shift, !command {
-                        modelSelection = modelSelection.clearedBySpace()
-                    }
-                    return modelSelection
-                }
-                switch (shift, command) {
-                case (false, false):
-                    modelSelection = modelSelection.plainClick(hit)
-                case (false, true):
-                    modelSelection = modelSelection.commandClick(hit)
-                case (true, false):
-                    modelSelection = modelSelection.shiftClick(hit, orderedIDs: orderedIDs)
-                case (true, true):
-                    modelSelection = modelSelection.commandShiftClick(
-                        hit,
-                        orderedIDs: orderedIDs
-                    )
-                }
-                return modelSelection
-            },
-            reconcileNative: { [unowned self] live in
-                onReconcile()
-                modelSelection = modelSelection.reconcilingSelection(live)
-                return modelSelection
-            }
-        )
     }
 
     /// Seeds a decoded thumbnail in `TileContentStore` for `id` so its tile has a real

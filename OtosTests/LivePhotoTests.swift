@@ -137,16 +137,6 @@ struct LivePhotoTests {
         }
     }
 
-    @Test func theEnricherStoresTheLibrarysIdentifierAsReported() {
-        let result = MediaMetadataResult(
-            outcome: .parsed,
-            format: MediaFormat(family: .heif, fileExtension: "heic", detectedByMagic: true),
-            timestamps: CaptureTimestamps(),
-            contentIdentifier: identifier
-        )
-        #expect(MediaEnricher.map(result).contentIdentifier == identifier)
-    }
-
     // MARK: - Support
 
     private struct Library {

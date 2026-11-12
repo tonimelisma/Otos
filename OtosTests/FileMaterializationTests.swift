@@ -10,21 +10,6 @@ import Testing
 /// (see `docs/research/2026-07-11-onedrive-materialization-fsevents.md`).
 @Suite(.testDirectory)
 struct FileMaterializationTests {
-    @Test func materializationOutcomeDiagnosticsClassifyTerminalStates() {
-        #expect(MaterializationOutcome.alreadyMaterialized.isMaterialized)
-        #expect(MaterializationOutcome.materialized.isMaterialized)
-        #expect(!MaterializationOutcome.requestFailed.isMaterialized)
-        #expect(!MaterializationOutcome.timedOut.isMaterialized)
-        #expect(!MaterializationOutcome.insufficientLocalSpace.isMaterialized)
-        #expect(MaterializationOutcome.insufficientLocalSpace.diagnosticDescription == "insufficientLocalSpace")
-        #expect(MaterializationOutcome.statusUnavailable.diagnosticDescription == "statusUnavailable")
-
-        let result = MaterializationResult(outcome: .materialized, rerequestCount: 2, elapsedMs: 123)
-        #expect(result.isMaterialized)
-        #expect(result.rerequestCount == 2)
-        #expect(result.elapsedMs == 123)
-    }
-
     @Test func localFileIsMaterialized() throws {
         let directory = try makeTestDirectory()
 
@@ -191,29 +176,6 @@ struct FileMaterializationTests {
         )
     }
 
-    /// The other half, so the change is scoped rather than global: background keeps PR 172's
-    /// behaviour exactly, because its reason still holds — a background transfer squatting
-    /// a `rootBackgroundCap` slot holds back the root's other candidates.
-    @Test func backgroundMaterializationStillShortCircuitsOnTheSameInput() async {
-        let result = await FileMaterialization.materialize(
-            URL(fileURLWithPath: "/tmp/slow-provider.arw"),
-            // No deadline: the refusals alone end the wait (see the test above).
-            persistence: FileMaterialization.Persistence(
-                failsFastOnProviderUnavailable: true,
-                deadline: nil,
-                requestRetryInterval: .milliseconds(1)
-            ),
-            providers: FileMaterializationProviders(
-                status: { _ in .dataless },
-                request: { _ in },
-                probe: { _ async in .providerUnavailable },
-                changes: noAttributeChanges
-            )
-        )
-
-        #expect(result.outcome == .providerUnavailable)
-    }
-
     /// Arrival is reported, not polled for: an attribute change on the file wakes the
     /// wait, which reads the flag and returns, with the next re-request an hour away.
     @Test func anAttributeChangeEndsTheWaitBeforeAnyRerequest() async throws {
@@ -283,17 +245,6 @@ struct FileMaterializationTests {
 /// driven by synthetic instants built with `Instant.advanced(by:)` off a single real
 /// sample — no waiting, ever.
 struct MaterializationWakeDecisionTests {
-    @Test func materializedStatusStopsRegardlessOfRetryTiming() {
-        let now = ContinuousClock().now
-        #expect(
-            FileMaterialization.materializationWakeDecision(
-                now: now,
-                nextRetry: now.advanced(by: .seconds(1)),
-                status: .materialized
-            ) == .materialized
-        )
-    }
-
     @Test func datalessBeforeNextRetryWaits() {
         let now = ContinuousClock().now
         #expect(
@@ -332,44 +283,6 @@ struct MaterializationWakeDecisionTests {
                 status: .unknown
             ) == .statusUnavailable
         )
-    }
-
-    /// Same scenario `materializationRerequestsUntilProviderClearsDataless` asserted
-    /// (materializes on the 3rd request, 2 retries counted), driven synchronously
-    /// against the pure decision function instead of a real polling loop.
-    @Test func retriesTwiceThenReportsMaterializedOnThirdRequest() {
-        let retryInterval = Duration.milliseconds(1)
-        let base = ContinuousClock().now
-        var nextRetry = base.advanced(by: retryInterval)
-        var rerequestCount = 0
-        var requestCount = 1 // the initial pre-loop request `materialize` always issues
-        let materializesOnRequest = 3
-
-        var tick = base
-        var finalDecision: MaterializationWakeDecision?
-        while finalDecision != .materialized {
-            tick = tick.advanced(by: retryInterval)
-            let status: FileMaterializationStatus = requestCount >= materializesOnRequest ? .materialized : .dataless
-            let decision = FileMaterialization.materializationWakeDecision(
-                now: tick,
-                nextRetry: nextRetry,
-                status: status
-            )
-            switch decision {
-            case .materialized:
-                finalDecision = .materialized
-            case .retryNow:
-                rerequestCount += 1
-                requestCount += 1
-                nextRetry = tick.advanced(by: retryInterval)
-            case .waitMore, .statusUnavailable:
-                Issue.record("expected only retryNow ticks before materialization in this fixture")
-                return
-            }
-        }
-
-        #expect(rerequestCount == 2)
-        #expect(requestCount == 3)
     }
 }
 

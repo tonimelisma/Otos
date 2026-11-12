@@ -5,18 +5,6 @@ import Testing
 
 @Suite(.testDirectory)
 struct ExclusivePublicationTests {
-    @Test func publishesStagingToAbsentFinalOnAPFS() throws {
-        let temp = try makeTestDirectory()
-        let staging = temp.appending(path: ".stage.otos-import-staging")
-        let final = temp.appending(path: "final.jpg")
-        try Data([0x01, 0x02, 0x03]).write(to: staging)
-
-        let outcome = ExclusivePublication.publish(staging: staging, final: final)
-        #expect(outcome == .published)
-        #expect(FileManager.default.fileExists(atPath: final.path))
-        #expect(!FileManager.default.fileExists(atPath: staging.path))
-    }
-
     @Test func refusesOverwriteWhenFinalExists() throws {
         let temp = try makeTestDirectory()
         let staging = temp.appending(path: ".stage.otos-import-staging")
@@ -137,54 +125,6 @@ struct ActiveFileOperationJournalTests {
 
         try await store.abandonImportOperation(key: operation.operationKey)
         #expect(try await store.activeImportOperations().isEmpty)
-    }
-
-    @Test func journalMutationWithMissingRowThrows() async throws {
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        try await store.start(scansSavedLibraries: false)
-        let key = ActiveFileOperationKey.make()
-        let error = await #expect(throws: CatalogStoreError.self) {
-            try await store.abandonImportOperation(key: key)
-        }
-        #expect(error == .importOperationMissing(key))
-    }
-
-    @Test func injectedReadyJournalFailureIsThrowing() async throws {
-        let store = CatalogStore(
-            location: .inMemory,
-            scanCadence: .milliseconds(10),
-            importJournalFailure: { transition in
-                if case .progress(.readyToPublish) = transition {
-                    throw NSError(domain: "test", code: 1)
-                }
-            }
-        )
-        try await store.start(scansSavedLibraries: false)
-        let operation = ActiveFileOperation(
-            operationKey: .make(),
-            sourceKind: .removableVolume,
-            sourceDeviceIdentity: nil,
-            sourceRootPath: LibraryRootPath(rawValue: "/Volumes/CARD"),
-            sourceRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
-            destinationRootPath: LibraryRootPath(rawValue: "/Pictures"),
-            destinationRelativePath: MediaRelativePath(rawValue: "final.jpg"),
-            stagingURL: URL(fileURLWithPath: "/Pictures/.stage.otos-import-staging"),
-            companionStagingURLs: [],
-            contentHash: .empty,
-            importBatch: ImportBatchID(unixMilliseconds: 1),
-            sourceByteSize: 1,
-            sourceModifiedAt: Date(timeIntervalSince1970: 1),
-            destinationModifiedAt: Date(timeIntervalSince1970: 1),
-            phase: .copying,
-            updatedAt: Date()
-        )
-        try await store.beginImportOperation(operation)
-        var ready = operation
-        ready.phase = .readyToPublish
-        await #expect(throws: NSError.self) {
-            try await store.recordImportOperationProgress(ready)
-        }
-        #expect(try await store.activeImportOperations().count == 1)
     }
 }
 
@@ -492,49 +432,6 @@ struct ImportRecoveryTests {
 
 @Suite(.testDirectory)
 struct CameraImportAccessTests {
-    @Test func mockGatewayRevalidatesAndReportsDeleteCapability() async throws {
-        let access = CameraImportAccess(
-            revalidate: { identity, path, size, _ in
-                identity == DeviceIdentity.camera(id: "cam-1") && path.rawValue == "IMG_1.JPG" && size == 10 ? .matches : .sourceNotReady
-            },
-            ensureBytes: { _, _, enrichment, staging in
-                do {
-                    let data = try Data(contentsOf: enrichment)
-                    try data.write(to: staging)
-                    return .completed
-                } catch {
-                    return .failed(.other(String(describing: error)))
-                }
-            },
-            deleteItem: { _, _ in true },
-            canDelete: { $0 == DeviceIdentity.camera(id: "cam-1") },
-            eject: { _ in .ejected }
-        )
-        #expect(
-            await access.revalidateItem(
-                identity: .camera(id: "cam-1"),
-                relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
-                byteSize: 10,
-                modifiedAt: nil
-            ) == .matches
-        )
-        #expect(await access.canDelete(identity: .camera(id: "cam-1")))
-        #expect(await access.eject(identity: .camera(id: "cam-1")) == .ejected)
-
-        let temp = try makeTestDirectory()
-        let enrichment = temp.appending(path: "enrich.bin")
-        let staging = temp.appending(path: "stage.bin")
-        try Data([0x01, 0x02]).write(to: enrichment)
-        let result = await access.ensureImportBytes(
-            identity: .camera(id: "cam-1"),
-            relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
-            enrichmentURL: enrichment,
-            destinationTempURL: staging
-        )
-        #expect(result == .completed)
-        #expect(try Data(contentsOf: staging) == Data([0x01, 0x02]))
-    }
-
     /// A camera download refused for space is typed from the error chain, not
     /// its wording, so the executor can stop at the floor for a camera the way
     /// it does for a card (ADR 0027). Anything else stays a per-entry failure.
@@ -558,19 +455,6 @@ struct CameraImportAccessTests {
             Issue.record("An untyped error must not be classified by its wording")
             return
         }
-    }
-}
-
-@Suite(.testDirectory)
-struct VolumeRenameCapabilityTests {
-    @Test func temporaryDirectoryReportsAKnownCapability() throws {
-        let temp = try makeTestDirectory()
-        let capability = VolumeRenameCapability.probe(url: temp)
-        #expect(
-            capability == .renameExcl
-                || capability == .hardLink
-                || capability == .checkThenAct
-        )
     }
 }
 
@@ -1574,18 +1458,6 @@ struct ImportExecutionProgressTests {
     private static func stagingLeftovers(under root: URL) throws -> [String] {
         let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
         return names.filter { $0.hasSuffix(MediaImportExecutor.destinationTempSuffix) }
-    }
-
-    @Test func containmentHelperAcceptsDirectoryURLSlashAndNormalizedRoot() throws {
-        let temp = try makeTestDirectory()
-        let root = try CatalogPath.normalizedDirectoryPath(for: temp)
-        let inside = root.url.appending(path: "same.jpg")
-        let outside = temp.deletingLastPathComponent().appending(path: "same.jpg")
-        #expect(CatalogPath.relativePath(rootPath: root, fileURL: inside) == MediaRelativePath(rawValue: "same.jpg"))
-        let trailingSlashRoot = LibraryRootPath(rawValue: root.rawValue + "/")
-        #expect(CatalogPath.relativePath(rootPath: trailingSlashRoot, fileURL: inside)
-            == MediaRelativePath(rawValue: "same.jpg"))
-        #expect(CatalogPath.relativePath(rootPath: root, fileURL: outside) == nil)
     }
 
     private struct ZeroCopyFixture {

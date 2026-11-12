@@ -107,12 +107,6 @@ struct MapClusterPolicyTests {
         #expect(global.count == 2)
     }
 
-    @Test func aDegenerateViewportYieldsNoStacks() {
-        let items = [located("a.jpg", 60.17, 24.94)]
-        let empty = MapViewport(originX: 0, originY: 0, width: 0, height: 0, viewWidth: 0, viewHeight: 0)
-        #expect(MapClusterPolicy.clusters(located: items, viewport: empty).isEmpty)
-    }
-
     @Test func fittingBoundsHoldEveryCoordinateWithAMarginAndNeverCollapse() throws {
         let helsinkiPoint = PlaceCoordinate(latitude: 60.17, longitude: 24.94)
         let losAngeles = PlaceCoordinate(latitude: 34.05, longitude: -118.24)

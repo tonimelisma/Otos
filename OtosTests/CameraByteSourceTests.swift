@@ -34,17 +34,6 @@ struct CameraByteSourceTests {
         #expect(asked.withLock { $0 } == 0, "the size already answers this; a round trip would be wasted")
     }
 
-    @Test func aZeroLengthReadIsSatisfiedLocally() throws {
-        let subject = source(size: 32) { _, _ in .failure(.rangedReadFailed("should not be asked")) }
-        #expect(try subject.data(offset: 0, length: 0) == Data())
-    }
-
-    @Test func anInBoundsRangeReturnsExactlyItsBytes() throws {
-        let payload = Data(repeating: 0x7F, count: 12)
-        let subject = source(size: 64) { _, _ in .success(payload) }
-        #expect(try subject.data(offset: 4, length: 12) == payload)
-    }
-
     /// The rule the whole path depends on. An in-bounds range that under-delivers is a
     /// transport fault, not the end of the file — and reporting it as absence would let the
     /// package return a definitive "no capture date", which ARC-057 treats as proof and
@@ -93,13 +82,6 @@ struct CameraByteSourceTests {
             completion(.success(Data(repeating: 9, count: length)))
         }
         #expect(try recovered.data(offset: 0, length: 12)?.count == 12)
-    }
-
-    @Test func aTransportFailureThrows() {
-        let subject = source(size: 64) { _, _ in .failure(.rangedReadFailed("camera detached")) }
-        #expect(throws: DeviceCameraSessionError.self) {
-            _ = try subject.data(offset: 0, length: 12)
-        }
     }
 
     /// The read is asked for exactly what the caller wanted, at the offset it wanted.

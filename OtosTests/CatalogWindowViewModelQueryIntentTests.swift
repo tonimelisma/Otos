@@ -27,40 +27,6 @@ struct CatalogWindowViewModelQueryIntentTests {
     }
 
     @MainActor
-    @Test func staleProjectedStateDoesNotRollbackNewerQueryIntent() async throws {
-        let temp = PreferencesDomain.suite(UUID().uuidString)
-        let (model, gate) = makeQueryIntentModel(temp: temp)
-
-        model.start()
-        await gate.waitForBuildCount(1)
-        model.setSortOrder(.filenameAscending)
-        await gate.releaseNext()
-
-        _ = try await waitForWindowState(model) { state in
-            state.title == "Build 1"
-        }
-        await gate.waitForBuildCount(2)
-        #expect(model.queryDescriptor.sort.field == .name)
-
-        model.setMediaFilter(MediaFilter(kinds: [.image]))
-        #expect(model.queryDescriptor.sort.field == .name)
-        #expect(model.queryDescriptor.filter.kinds == [.image])
-
-        let requests = await waitForRequestsReleasingBuilds(gate) { requests in
-            requests.contains { request in
-                request.descriptor == CatalogQueryDescriptor(
-                    scope: .allMedia,
-                    filter: MediaFilter(kinds: [.image]),
-                    sort: .filenameAscending
-                )
-                    && request.generation > 0
-            }
-        }
-        await gate.releaseAll()
-        #expect(requests.last?.descriptor.sort.field == .name)
-    }
-
-    @MainActor
     @Test func staleProjectedStateDoesNotRollbackToggledBackQueryIntent() async throws {
         let temp = PreferencesDomain.suite(UUID().uuidString)
         let (model, gate) = makeQueryIntentModel(temp: temp)

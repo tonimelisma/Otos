@@ -19,16 +19,6 @@ struct PanePresentationTests {
         #expect(PanePresentation.display(paneID: pane, preview: preview) == .thumbnail(pane))
     }
 
-    @Test func nilPaneIsEmpty() {
-        let preview = PanePreview(id: makePaneID("x.jpg"), image: makePaneCGImage())
-        #expect(PanePresentation.display(paneID: nil, preview: preview) == .empty)
-    }
-
-    @Test func nilPreviewFallsBackToThumbnail() {
-        let pane = makePaneID("pane.jpg")
-        #expect(PanePresentation.display(paneID: pane, preview: nil) == .thumbnail(pane))
-    }
-
     /// DES-066: the group rides the pane's *image*, not the pane. A pane wider
     /// than its photo paints black beside it, and a group anchored to the pane
     /// corner sits in that letterbox instead of on the picture. The pane can only

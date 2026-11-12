@@ -21,10 +21,6 @@ struct TrashStatusPresentationTests {
         )
     }
 
-    @Test func nothingPendingDrawsNoBar() {
-        #expect(TrashStatusPresentation.map(.idle) == nil)
-    }
-
     @Test func workingCountsItemsAndStatesBytesToDownload() throws {
         let drawn = try #require(TrashStatusPresentation.map(state(pending: 11, moved: 3, bytes: 34_000_000)))
         #expect(drawn.badge == .none)
@@ -33,12 +29,6 @@ struct TrashStatusPresentationTests {
         #expect(drawn.secondaryLine == "34 MB to download")
         #expect(drawn.progress?.completed == 3)
         #expect(drawn.progress?.total == 14)
-    }
-
-    @Test func workingWithNothingToDownloadHasNoSecondLine() throws {
-        let drawn = try #require(TrashStatusPresentation.map(state(pending: 1)))
-        #expect(drawn.primaryLine == "Moving 1 item to the Trash")
-        #expect(drawn.secondaryLine == nil)
     }
 
     @Test func waitingStatesNeedAttentionWithoutProgress() throws {

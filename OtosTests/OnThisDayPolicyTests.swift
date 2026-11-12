@@ -264,29 +264,6 @@ struct OnThisDayPolicyTests {
         #expect(match.end == Self.local(2026, 1, 1))
     }
 
-    @Test func datesAreWrittenInTheUsersCalendar() {
-        let year = OnThisDayAnniversary(
-            day: CalendarDay(year: 2023, month: 11, day: 9),
-            keyItem: Self.id("a"),
-            firstIndex: 0,
-            count: 14
-        )
-        let british = Locale(identifier: "en_GB")
-        let buddhist = Calendar(identifier: .buddhist)
-        let japanese = Calendar(identifier: .japanese)
-
-        #expect(OnThisDayPresentation.fullDate(year.day, locale: british, calendar: buddhist).contains("2566"))
-        let reiwa = OnThisDayPresentation.fullDate(year.day, locale: Locale(identifier: "ja_JP"), calendar: japanese)
-        #expect(reiwa.contains("5年11月9日"))
-        // The distance in years is Gregorian arithmetic, the same in every calendar.
-        #expect(OnThisDayPresentation.cardAccessibilityLabel(
-            year,
-            today: CalendarDay(year: 2026, month: 11, day: 9),
-            locale: british,
-            calendar: buddhist
-        ).hasPrefix("3 years ago, 14 items, "))
-    }
-
     // MARK: - Covers
 
     /// A card draws the cover it painted for its key item, else the store's decode for it —

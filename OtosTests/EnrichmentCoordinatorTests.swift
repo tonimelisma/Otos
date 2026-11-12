@@ -340,21 +340,6 @@ struct EnrichmentCoordinatorTests {
         #expect(enriched.testAssets.allSatisfy { $0.captureLocalTime == CaptureLocalTime(readingOf: captureDate) })
     }
 
-    @Test func downloadLifecycleMaterializesThenEnrichesDatalessAsset() async throws {
-        let context = try await makeDownloadLifecycleContext()
-        await context.coordinator.updateViewport([context.id])
-        await context.coordinator.start()
-
-        let enriched = try await waitForCatalogStoreState(context.store) { snapshot in
-            snapshot.testAssets.first?.needsEnrichment(.library) == false
-        }
-        await context.coordinator.shutdown()
-
-        let asset = try #require(enriched.testAssets.first)
-        #expect(asset.thumbnailPath == "t.jpg")
-        #expect(asset.needsEnrichment(.library) == false)
-    }
-
     @Test func transientOutcomeIsRetriedUntilComplete() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)

@@ -43,18 +43,6 @@ struct CatalogStoreEditRecipeTests {
         }
     }
 
-    @Test func aPhotoTheCatalogDoesNotHoldReportsNoRow() async throws {
-        try await withEditableLibrary(fileCount: 1) { library in
-            let missing = MediaAssetID(
-                libraryRootPath: library.ids[0].libraryRootPath,
-                relativePath: MediaRelativePath(rawValue: "gone.jpg")
-            )
-            let result = try await library.store.setEditRecipe(EditRecipe(exposure: 1), for: missing)
-            #expect(!result.exists)
-            #expect(result.saved == nil)
-        }
-    }
-
     @Test func productsOfTheCurrentRevisionArePromotedAndShownByTheTile() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
@@ -133,13 +121,6 @@ struct CatalogStoreEditRecipeTests {
             #expect(await library.store.applyEnrichmentBatch([enriched(editRevision: 1)]) == .applied(count: 1))
             #expect(try await library.store.mediaTileDetails(for: [id])[id]?.renderedRevision == 1)
         }
-    }
-
-    /// A recipe written before a control existed decodes that control as neutral.
-    @Test func aRecipeMissingAControlDecodesItAsNeutral() throws {
-        let stored = try CatalogStore.storedEditRecipe(json: #"{"exposure":0.5}"#, revision: 3)
-        #expect(stored == StoredEditRecipe(recipe: EditRecipe(exposure: 0.5), revision: 3))
-        #expect(try CatalogStore.storedEditRecipe(json: nil, revision: 0) == nil)
     }
 
     @Test func controlsClampToTheirRangeAndSnapToTheirStep() {

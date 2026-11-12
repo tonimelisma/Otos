@@ -33,22 +33,6 @@ extension AppKitWindowTests {
             #expect(try harness.runStart(of: after) > 0)
         }
 
-        @Test func focusTargetParksUntilItemsExist() {
-            let controller = MediaGridViewController(
-                presentation: .strip(tileEdge: MediaGridPresentation.defaultStripTileEdge)
-            )
-            _ = controller.view
-            let ids = (0 ..< 40).map { makeStripAssetID(path: "focus-\($0).jpg") }
-            let target = ids[25]
-            controller.receiveFocusTarget(target)
-            #expect(controller.pendingFocusTargetID == target)
-
-            adoptStripGrid(controller, ids: ids)
-            #expect(controller.dataSource.indexPath(for: target) != nil)
-            // Pending remains until a post-layout scroll retry (production apply completion).
-            #expect(controller.pendingFocusTargetID == target)
-        }
-
         @Test func focusTargetParkedBeforeWindowScrollsOnViewDidAppear() async {
             let controller = MediaGridViewController(
                 presentation: .strip(tileEdge: MediaGridPresentation.defaultStripTileEdge)

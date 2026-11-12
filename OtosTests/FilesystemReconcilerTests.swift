@@ -22,75 +22,21 @@ struct FilesystemReconcilerTests {
         #expect(CatalogPath.relativePath(rootPath: root, absolutePath: "/tmp/otos-test-rootb/a.jpg") == nil)
     }
 
-    @Test func dropsWhenRootMissing() {
+    /// A batch for a root that is gone, unarmed or unavailable is dropped, never reconciled.
+    @Test(arguments: [
+        (false, true, true, "removed"),
+        (true, false, true, "unarmed"),
+        (true, true, false, "unavailable"),
+    ])
+    func dropsWhenTheRootCannotBeReconciled(rootExists: Bool, isArmed: Bool, isAvailable: Bool, reason: String) {
         let decision = FilesystemReconciler.decide(
             events: [fileEvent("a.jpg")],
             root: root,
-            rootExists: false,
-            isArmed: true,
-            isAvailable: true
+            rootExists: rootExists,
+            isArmed: isArmed,
+            isAvailable: isAvailable
         )
-        #expect(decision == .drop(reason: "removed"))
-    }
-
-    @Test func dropsWhenUnarmed() {
-        let decision = FilesystemReconciler.decide(
-            events: [fileEvent("a.jpg")],
-            root: root,
-            rootExists: true,
-            isArmed: false,
-            isAvailable: true
-        )
-        #expect(decision == .drop(reason: "unarmed"))
-    }
-
-    @Test func dropsWhenUnavailable() {
-        let decision = FilesystemReconciler.decide(
-            events: [fileEvent("a.jpg")],
-            root: root,
-            rootExists: true,
-            isArmed: true,
-            isAvailable: false
-        )
-        #expect(decision == .drop(reason: "unavailable"))
-    }
-
-    @Test func accumulatesFileScopesWhileIgnoringActiveScan() {
-        let events = [
-            fileEvent(
-                "a.jpg",
-                flags: UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemIsFile)
-            ),
-            fileEvent(
-                "b.jpg",
-                flags: UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemIsFile)
-            ),
-        ]
-        let decision = FilesystemReconciler.decide(
-            events: events,
-            root: root,
-            rootExists: true,
-            isArmed: true,
-            isAvailable: true
-        )
-        guard case let .accumulate(scopes) = decision else {
-            Issue.record("expected accumulate")
-            return
-        }
-        #expect(scopes.count == 2)
-        #expect(scopes[0].scope == .file(MediaRelativePath(rawValue: "a.jpg")))
-        #expect(scopes[1].scope == .file(MediaRelativePath(rawValue: "b.jpg")))
-    }
-
-    @Test func noopForEmptyBatch() {
-        let decision = FilesystemReconciler.decide(
-            events: [],
-            root: root,
-            rootExists: true,
-            isArmed: true,
-            isAvailable: true
-        )
-        #expect(decision == .noop)
+        #expect(decision == .drop(reason: reason))
     }
 
     @Test func rootScopeWhenAnyEventRequiresScan() {

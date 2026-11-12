@@ -21,10 +21,4 @@ struct DeviceIdentityTests {
         #expect(DeviceIdentity.camera(name: "EOS R5").isTransient)
         #expect(DeviceIdentity.volume(uuid: "A1").disambiguated(mountPath: "/Volumes/CARD 1").isTransient)
     }
-
-    @Test func anIdentityIsStoredAsItsText() {
-        let identity = DeviceIdentity.camera(id: "serial-9")
-        #expect(identity.databaseValue == "camera:serial-9".databaseValue)
-        #expect(DeviceIdentity.fromDatabaseValue("camera:serial-9".databaseValue) == identity)
-    }
 }

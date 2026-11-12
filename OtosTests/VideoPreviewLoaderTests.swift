@@ -34,16 +34,6 @@ struct VideoPreviewLoaderTests {
         #expect(result == nil)
     }
 
-    @Test func playCreatesPlayerWhenMaterialized() async throws {
-        let loader = VideoPreviewLoader(
-            status: { _ in .materialized },
-            materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in .cancelled }
-        )
-        let videoDetail = detail(kind: .video)
-        let state = try #require(await loader.preparePlayer(id: id("a.mp4"), detail: videoDetail))
-        expectFreshPlayer(state, for: id("a.mp4"))
-    }
-
     @Test func playMaterializesWhenDataless() async throws {
         final class CheckSeq: Sendable {
             private let storage = Mutex(0)

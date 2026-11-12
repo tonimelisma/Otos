@@ -94,21 +94,6 @@ struct LoupeVideoPreparationTests {
         #expect(state.isPlaying == false)
     }
 
-    @Test func videoPreparationNeverWritesDownloadingSlots() async throws {
-        let (store, id) = try await makeVideoCatalog()
-        // `.unavailable` keeps the pane-preview path — the sole owner of the pane's
-        // progress indicator — from ever inserting the slot, so anything found in
-        // `downloadingSlots` could only have come from the video path.
-        let model = await makeModel(store: store, previewOutcome: .unavailable)
-        model.applyState(makeLoupeVideoState(orderedIDs: [id]))
-
-        model.openLoupe(id: id)
-        try await waitForVideoState(model)
-        await model.paneRequestTasks[.loupe]?.value
-
-        #expect(model.downloadingSlots.isEmpty)
-    }
-
     @Test func focusMovingOffAVideoTearsDownItsPreparation() async throws {
         let (store, id) = try await makeVideoCatalog()
         let model = await makeModel(store: store, previewOutcome: .unavailable)

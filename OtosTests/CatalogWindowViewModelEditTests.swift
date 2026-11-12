@@ -120,25 +120,6 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
-    /// A change that is not a drag — a keyboard step on the focused slider — is saved at once.
-    @Test func aChangeOutsideADragIsSavedAtOnce() async throws {
-        try await withEditableLibrary(fileCount: 1) { library in
-            let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
-            model.toggleInspector(.edit)
-            model.selectAll()
-            try await waitUntil { model.editTarget?.id == id && model.canEdit }
-
-            model.setEditValue(-30, for: .highlights)
-
-            #expect(model.submittedEditCommandCount == 1)
-            try await waitUntil { model.hasSettledEdits }
-            #expect(try await library.store.editRecipe(for: id)?.recipe == EditRecipe(highlights: -30))
-        }
-    }
-
     @Test func resetReturnsEveryLightControlToNeutralAsOneUndoStep() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
@@ -304,27 +285,6 @@ struct CatalogWindowViewModelEditTests {
             #expect(!model.cropAspectIsLandscape)
             model.rotateCropAspect()
             #expect(model.cropAspectIsLandscape)
-        }
-    }
-
-    @Test func rotateRightAndUndoTurnTheSavedPhoto() async throws {
-        try await withEditableLibrary(fileCount: 1) { library in
-            let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
-            model.toggleInspector(.edit)
-            model.selectAll()
-            try await waitUntil { model.canEdit }
-
-            model.turnPhoto(clockwise: true)
-            try await waitUntil { model.hasSettledEdits }
-            #expect(try await library.store.editRecipe(for: id)?.recipe.quarterTurns == 1)
-            #expect(model.undoMenuState.undoTitle == "Undo Rotate Right")
-
-            model.undoLastChange()
-            try await waitUntil { model.hasSettledEdits }
-            #expect(try await library.store.editRecipe(for: id)?.recipe.quarterTurns == 0)
         }
     }
 

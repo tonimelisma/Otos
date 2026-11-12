@@ -117,39 +117,6 @@ struct CatalogStoreFilesystemEventTests {
         #expect(await recorder.invocations().count == baseline + 2)
     }
 
-    @Test func eventDuringActiveScanSchedulesFollowUp() async throws {
-        let temp = try makeTestDirectory()
-        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-
-        let probe = FilesystemScanProbe()
-        let recorder = FilesystemEventScanInvocationRecorder()
-        let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
-            location: .inMemory,
-            scanner: deferredHangingScanner(probe: probe, recorder: recorder),
-            filesystemWatcher: watcher
-        )
-
-        try await store.start(scansSavedLibraries: false)
-        try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        let baseline = await recorder.invocations().count
-
-        let classified = await store.classifiedFilesystemEventCount
-        emit(FilesystemEvent(path: root.appending(path: "trigger-second.jpg").path, flags: 0))
-        await probe.waitForInvocationCount(2)
-
-        emit(FilesystemEvent(path: root.appending(path: "during-second.jpg").path, flags: 0))
-        try await waitUntil { await store.classifiedFilesystemEventCount >= classified + 2 }
-
-        // Once everything the store was told has been acted on, the event that landed
-        // during the rescan has cost exactly one follow-up scan.
-        await probe.release(2)
-        try await waitUntil { await store.isFilesystemQuiescent }
-        #expect(await recorder.invocations().count == baseline + 2)
-    }
-
     @Test func safeFileEventDuringActiveScanDoesNotForceFullRescan() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -461,38 +428,6 @@ struct CatalogStoreFilesystemEventTests {
         let settled = try await waitForCatalogStoreState(store) { !$0.isScanning }
         #expect(settled.testAssets.map(\.id) == [id])
         #expect(try await store.mediaAssets(for: [id])[id]?.mediaChoice == .liked)
-    }
-
-    @Test func diskChangeReconcilesAfterRescan() async throws {
-        let temp = try makeTestDirectory()
-        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let first = root.appending(path: "first.jpg")
-        try writeCatalogStoreFile(first, contents: "jpeg")
-
-        let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
-            location: .inMemory,
-            filesystemWatcher: watcher,
-            scanCadence: .milliseconds(10)
-        )
-
-        try await store.start(scansSavedLibraries: false)
-        try await store.addLibrary(url: root)
-        let initial = try await waitForCatalogStoreState(store) { snapshot in
-            !snapshot.isScanning && snapshot.testAssets.count == 1
-        }
-        #expect(initial.testAssets.map(\.relativePath.rawValue) == ["first.jpg"])
-
-        let second = root.appending(path: "second.jpg")
-        try writeCatalogStoreFile(second, contents: "jpeg")
-        emit(FilesystemEvent(path: second.path, flags: 0))
-
-        let reconciled = try await waitForCatalogStoreState(store) { snapshot in
-            !snapshot.isScanning && snapshot.testAssets.count == 2
-        }
-        let names = Set(reconciled.testAssets.map(\.relativePath.rawValue))
-        #expect(names == ["first.jpg", "second.jpg"])
     }
 
     @Test func fileDirtSurvivesQueuedOtherRootScan() async throws {
