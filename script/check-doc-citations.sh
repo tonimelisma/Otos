@@ -2,6 +2,8 @@
 # Keep source comments truthful: every cited current document must exist, and every
 # cited numbered plan must still be present while the plan is active. This gate scans
 # only app and script source so historical planning prose can remain in documentation.
+# It skips binary files (-I): Otos/ holds about 500 MB of Core ML weights and embedding
+# tables, and reading them took 24 of this gate's 25 seconds for no citation.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,7 +11,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 check_root() {
   local root="$1"
   local documents plans document plan status=0
-  documents="$(grep -rhoE 'docs/[A-Za-z0-9._/-]+\.md' "$root/Otos" "$root/script" 2>/dev/null | sort -u || true)"
+  documents="$(grep -rIhoE 'docs/[A-Za-z0-9._/-]+\.md' "$root/Otos" "$root/script" 2>/dev/null | sort -u || true)"
   while IFS= read -r document; do
     [[ -z "$document" ]] && continue
     if [[ ! -f "$root/$document" ]]; then
@@ -36,7 +38,7 @@ check_root() {
     done <<< "$(grep -oE '\]\([A-Za-z0-9._/-]+\)' "$root/docs/index.md" | sed -E 's/^\]\((.*)\)$/\1/' | sort -u)"
   fi
 
-  plans="$(grep -rhoE 'plan [0-9]{4}' "$root/Otos" "$root/script" 2>/dev/null | sed -E 's/.*plan ([0-9]{4}).*/\1/' | sort -u || true)"
+  plans="$(grep -rIhoE 'plan [0-9]{4}' "$root/Otos" "$root/script" 2>/dev/null | sed -E 's/.*plan ([0-9]{4}).*/\1/' | sort -u || true)"
   while IFS= read -r plan; do
     [[ -z "$plan" ]] && continue
     if ! compgen -G "$root/docs/plans/${plan}-*.md" > /dev/null; then

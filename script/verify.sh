@@ -54,20 +54,22 @@ run_guard_self_test() {
   return "$status"
 }
 
-# Guards, lint, and doc-citations share nothing with xcodebuild - run them
+# Guards and lint share nothing with xcodebuild - run them
 # while build-for-testing compiles instead of after it. The subshell's exit
 # status is collected below rather than aborting the script.
+# The unchecked-Sendable, doc-citation and design-system checks run once, in
+# script/check.sh's fast gates through ci-text-hygiene.sh; only the design-system
+# guard's self-test runs here, beside the other guards'.
 run_static_gates() {
   local status=0
-  "$ROOT_DIR/script/check-no-unchecked-sendable.sh" || status=1
   for guard_script in \
     guard-unsandboxed.sh guard-single-main-window.sh guard-view-passivity.sh \
     guard-no-audio.sh guard-no-writes-into-media.sh guard-smoke-run-busy.sh \
-    guard-design-system.sh guard-presentation-yield.sh; do
+    guard-presentation-yield.sh; do
     "$ROOT_DIR/script/$guard_script" || status=1
     run_guard_self_test "$ROOT_DIR/script/$guard_script" || status=1
   done
-  "$ROOT_DIR/script/check-doc-citations.sh" || status=1
+  run_guard_self_test "$ROOT_DIR/script/guard-design-system.sh" || status=1
   "$ROOT_DIR/script/lint.sh" || status=1
   return "$status"
 }
