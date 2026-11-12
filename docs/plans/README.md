@@ -3,6 +3,9 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
+- [Plan 0115: Stacks — RAW+JPEG pairs and bursts as one photo](0115-stacks.md), opened
+  2026-11-13 (ADR 0052).
+
 Plan 0114 (On This Day and its story player) is complete in one increment and was removed
 at closure. It opened 2026-11-09 from the survey
 `docs/research/2026-11-07-memories-and-highlights.md`. Its decisions live in ADR 0049,
