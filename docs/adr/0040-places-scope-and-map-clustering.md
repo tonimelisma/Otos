@@ -30,7 +30,7 @@ This ADR owns: what the Places and place scopes mean; where the map's content an
 clusters are computed; how the sidebar, toolbar and view modes behave while the map
 shows; how a stack is reached and left; and what the map never does (location
 services, reverse geocoding, editing). The Info pane's place name for one item is ADR
-0050's.
+0050's; place names for the Places filter are ADR 0051's.
 
 It references but does not own: scope resolution and the sidebar default policy (ADR
 0014); the query descriptor and scope predicate (ADR 0011, ADR 0010); the browser
@@ -104,9 +104,9 @@ Map view mode.
   decoded image warms the shared `TileContentStore`.
 - **What the map never does.** It never asks for the user's location (no
   `CLLocationManager`, no location button, no usage key); the map's tile requests are
-  its one network use, as in Photos. It never reverse-geocodes, never edits a location,
-  never infers one. Unknown stays unknown: an item without a stored location is counted
-  as left off, not placed.
+  its one network use, as in Photos. The map never reverse-geocodes (the Places filter's
+  place names are ADR 0051's), never edits a location, never infers one. Unknown stays
+  unknown: an item without a stored location is left off, not placed.
 
 ## Alternatives Considered
 

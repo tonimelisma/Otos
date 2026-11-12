@@ -196,6 +196,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.placeNamesMigrationIdentifier) { db in
+            for statement in CatalogSchema.placeNamesStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

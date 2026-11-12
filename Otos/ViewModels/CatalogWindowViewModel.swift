@@ -380,6 +380,8 @@ final class CatalogWindowViewModel {
     /// Reads Immich stills' faces from their stored previews (ADR 0047); starts with
     /// enrichment.
     @ObservationIgnored let previewFaceReader: PreviewFaceReader?
+    /// Names the map's cells for the Places filter (ADR 0040); starts with enrichment.
+    @ObservationIgnored let placeNameReader: PlaceNameReader?
     /// Keyword search's index (ADR 0048), paired with the live enrichment pipeline like the
     /// render signature refresher: it reads the thumbnails enrichment writes.
     @ObservationIgnored let photoSearchIndex: PhotoSearchIndex?
@@ -747,6 +749,7 @@ final class CatalogWindowViewModel {
         previewFaceReader = startsEnrichment && enrichmentCoordinator == nil
             ? PreviewFaceReader(store: catalogStore, thumbnailDirectory: catalogStore.thumbnailDirectory, analyzeFaces: analyzeFaces)
             : nil
+        placeNameReader = startsEnrichment && enrichmentCoordinator == nil ? PlaceNameReader(store: catalogStore) : nil
         photoSearchIndex = startsEnrichment && enrichmentCoordinator == nil
             ? PhotoSearchIndex(
                 store: catalogStore,
@@ -1044,7 +1047,7 @@ extension CatalogWindowViewModel {
         // `startCatalog` runs.
         enrichmentStartTask = Task { [
             coordinator, materializationCoordinator, metadataRefresher, renderSignatureRefresher, previewFaceReader, photoSearchIndex,
-            store = catalogStore
+            placeNameReader, store = catalogStore
         ] in
             do {
                 try await store.start()
@@ -1056,6 +1059,7 @@ extension CatalogWindowViewModel {
             await coordinator.start()
             await renderSignatureRefresher?.start()
             await previewFaceReader?.start()
+            await placeNameReader?.start()
             await photoSearchIndex?.start()
             await metadataRefresher?.refresh()
         }
@@ -1348,6 +1352,12 @@ extension CatalogWindowViewModel {
 
     func setMediaChoice(_ choice: MediaChoice, included: Bool) {
         setMediaFilter(queryDescriptor.filter.settingChoice(choice, included: included))
+    }
+
+    /// The Places filter (ADR 0040): a country, or one town in it.
+    func setPlaceFilter(_ place: PlaceFilterKey, included: Bool) {
+        let towns = state.filterOptions.countries.first { $0.name == place.country }?.towns ?? []
+        setMediaFilter(queryDescriptor.filter.settingPlace(place, included: included, towns: towns))
     }
 
     /// Choosing a sort while searching orders the results by it instead of by relevance.

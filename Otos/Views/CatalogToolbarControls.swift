@@ -17,6 +17,11 @@ struct PeopleFilterControls {
     let setMatch: (PeopleMatch) -> Void
 }
 
+/// The Places filter's intent (ADR 0040): a country or one town in it, checked or not.
+struct PlaceFilterControls {
+    let setPlace: (PlaceFilterKey, Bool) -> Void
+}
+
 struct CatalogFilterControl: View {
     let descriptor: CatalogQueryDescriptor
     let options: CatalogFilterOptions
@@ -25,6 +30,7 @@ struct CatalogFilterControl: View {
     let setFileType: (MediaFormatToken, MediaKind, Bool) -> Void
     let setChoice: (MediaChoice, Bool) -> Void
     let people: PeopleFilterControls
+    let places: PlaceFilterControls
     let clearFilters: () -> Void
 
     var body: some View {
@@ -43,6 +49,7 @@ struct CatalogFilterControl: View {
                 setFileType: setFileType,
                 setChoice: setChoice,
                 people: people,
+                places: places,
                 clearFilters: clearFilters
             )
             .frame(width: 260)
@@ -59,11 +66,15 @@ struct CatalogFilterPopoverContent: View {
     let setFileType: (MediaFormatToken, MediaKind, Bool) -> Void
     let setChoice: (MediaChoice, Bool) -> Void
     let people: PeopleFilterControls
+    let places: PlaceFilterControls
     let clearFilters: () -> Void
 
     /// A search field over the people once there are more than fit at a glance.
     @State private var peopleQuery = ""
     private static let peopleBeforeSearch = 8
+    /// A search field over the places once there are more countries than fit at a glance.
+    @State private var placesQuery = ""
+    private static let countriesBeforeSearch = 8
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -102,6 +113,8 @@ struct CatalogFilterPopoverContent: View {
             }
             Divider()
             peopleSection
+            Divider()
+            placesSection
             Divider()
             Button("Clear Filters", action: clearFilters)
                 .disabled(!descriptor.filter.isActive)
@@ -156,6 +169,86 @@ struct CatalogFilterPopoverContent: View {
             .pickerStyle(.menu)
             .disabled(checked < 2)
         }
+    }
+
+    /// Every country Maps named for the located items, each opening onto its towns; a country
+    /// with some towns checked is mixed. A checked place always shows, so the filter never
+    /// holds a row the user cannot see.
+    private var placesSection: some View {
+        let filter = descriptor.filter
+        let query = placesQuery.trimmingCharacters(in: .whitespaces)
+        var countries = options.countries
+        for held in filter.places where !countries.contains(where: { $0.name == held.country }) {
+            countries.append(PlaceFilterCountry(name: held.country, towns: held.town.map { [$0] } ?? []))
+        }
+        let shown = countries.compactMap { country -> PlaceFilterCountry? in
+            if query.isEmpty || filter.places.contains(where: { $0.country == country.name })
+                || country.name.localizedStandardContains(query)
+            {
+                return country
+            }
+            let towns = country.towns.filter { $0.localizedStandardContains(query) }
+            return towns.isEmpty ? nil : PlaceFilterCountry(name: country.name, towns: towns)
+        }
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Places")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            if countries.count > Self.countriesBeforeSearch {
+                TextField("Search Places", text: $placesQuery)
+                    .textFieldStyle(.roundedBorder)
+            }
+            if shown.isEmpty {
+                Text(countries.isEmpty ? "No places named yet" : "No matching places")
+                    .foregroundStyle(.secondary)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(shown) { country in
+                        DisclosureGroup {
+                            ForEach(country.towns, id: \.self) { town in
+                                Toggle(town, isOn: townBinding(town, in: country))
+                                    .padding(.leading, 4)
+                            }
+                        } label: {
+                            Toggle(country.name, sources: countrySources(country), isOn: \.isOn)
+                        }
+                    }
+                }
+                .toggleStyle(.checkbox)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 220)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func countrySources(_ country: PlaceFilterCountry) -> [MenuToggleSource] {
+        let whole = PlaceFilterKey(country: country.name, town: nil)
+        guard !country.towns.isEmpty else {
+            return [MenuToggleSource(isOn: Binding(
+                get: { descriptor.filter.places.contains(whole) },
+                set: { places.setPlace(whole, $0) }
+            ))]
+        }
+        return country.towns.map { town in
+            MenuToggleSource(isOn: Binding(
+                get: { isPlaceIncluded(town, in: country.name) },
+                set: { places.setPlace(whole, $0) }
+            ))
+        }
+    }
+
+    private func townBinding(_ town: String, in country: PlaceFilterCountry) -> Binding<Bool> {
+        Binding(
+            get: { isPlaceIncluded(town, in: country.name) },
+            set: { places.setPlace(PlaceFilterKey(country: country.name, town: town), $0) }
+        )
+    }
+
+    private func isPlaceIncluded(_ town: String, in country: String) -> Bool {
+        descriptor.filter.places.contains(PlaceFilterKey(country: country, town: nil))
+            || descriptor.filter.places.contains(PlaceFilterKey(country: country, town: town))
     }
 
     /// A collection-backed Toggle gives macOS its native mixed state. Every

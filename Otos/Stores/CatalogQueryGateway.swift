@@ -128,9 +128,40 @@ nonisolated enum CatalogQueryGateway {
             }
             formatsByKind[kind] = formats
         }
-        return CatalogFilterOptions(
-            formatsByKind: formatsByKind.mapValues { $0.sorted() }
+        return try CatalogFilterOptions(
+            formatsByKind: formatsByKind.mapValues { $0.sorted() },
+            countries: placeOptions(scope: scope, db: db)
         )
+    }
+
+    /// The countries and towns Maps named for the located items in scope, in the locale's
+    /// order (ADR 0040). A cell named nothing offers nothing.
+    static func placeOptions(scope: CatalogScopePredicate, db: Database) throws -> [PlaceFilterCountry] {
+        guard let scopeClause = try scopeClause(scope, db: db) else {
+            return []
+        }
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+            SELECT DISTINCT place_cell.country, place_cell.town
+            FROM media_asset\(scopeClause.join)
+            \(placeJoin)
+            WHERE \(scopeClause.sql) AND place_cell.country IS NOT NULL
+            """,
+            arguments: StatementArguments(scopeClause.arguments)
+        )
+        var towns: [String: Set<String>] = [:]
+        for row in rows {
+            let country: String = row["country"]
+            var set = towns[country, default: []]
+            if let town = row["town"] as String? {
+                set.insert(town)
+            }
+            towns[country] = set
+        }
+        return towns.map { country, towns in
+            PlaceFilterCountry(name: country, towns: towns.sorted { $0.localizedStandardCompare($1) == .orderedAscending })
+        }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     static func distinctFilterableTypesQuery(scope: CatalogScopePredicate, db: Database) throws -> SQLQuery? {
@@ -662,6 +693,18 @@ private nonisolated func earliestCaptureLocalTime(rootIDs: [Int64], db: Database
     ).map(CaptureLocalTime.init(seconds:))
 }
 
+/// Each row's place cell, through its primary location (ADR 0040). A row with no location,
+/// or in a cell not named yet, joins nothing.
+private nonisolated let placeJoin = """
+
+JOIN asset_metadata AS place_metadata
+  ON place_metadata.library_root_id = media_asset.library_root_id
+  AND place_metadata.relative_path = media_asset.relative_path
+JOIN place_cell
+  ON place_cell.cell_latitude = \(PlaceCell.sql("place_metadata.primary_latitude"))
+  AND place_cell.cell_longitude = \(PlaceCell.sql("place_metadata.primary_longitude"))
+"""
+
 private nonisolated let locationJoin = """
 
 JOIN asset_metadata
@@ -714,6 +757,30 @@ private nonisolated func filterPredicate(
     if !peopleClauses.isEmpty {
         let joiner = filter.peopleMatch == .all ? " AND " : " OR "
         clauses.append("(\(peopleClauses.joined(separator: joiner)))")
+    }
+    // The Places filter (ADR 0040): a photo whose cell Maps named as one of the countries or
+    // towns checked.
+    if !filter.places.isEmpty {
+        var placeClauses: [String] = []
+        for place in filter.places.sorted() {
+            if let town = place.town {
+                placeClauses.append("(place_cell.country = ? AND place_cell.town = ?)")
+                arguments.append(place.country)
+                arguments.append(town)
+            } else {
+                placeClauses.append("place_cell.country = ?")
+                arguments.append(place.country)
+            }
+        }
+        clauses.append("""
+        EXISTS (SELECT 1 FROM asset_metadata AS place_metadata
+            JOIN place_cell
+              ON place_cell.cell_latitude = \(PlaceCell.sql("place_metadata.primary_latitude"))
+              AND place_cell.cell_longitude = \(PlaceCell.sql("place_metadata.primary_longitude"))
+            WHERE place_metadata.library_root_id = media_asset.library_root_id
+              AND place_metadata.relative_path = media_asset.relative_path
+              AND (\(placeClauses.joined(separator: " OR "))))
+        """)
     }
     return (clauses.isEmpty ? nil : clauses.joined(separator: " AND "), arguments)
 }

@@ -24,7 +24,8 @@ struct BrowserPlaceTests {
                     choices: [.liked],
                     people: [PersonID(rawValue: 3), PersonID(rawValue: 9)],
                     unassignedFaces: true,
-                    peopleMatch: .all
+                    peopleMatch: .all,
+                    places: [PlaceFilterKey(country: "Finland", town: nil), PlaceFilterKey(country: "Australia", town: "Sydney NSW")]
                 ),
                 sort: MediaSortOrder(field: .likeness, direction: .ascending)
             ),
@@ -94,8 +95,8 @@ struct BrowserPlaceTests {
         BrowserPlace(descriptor: .default, viewMode: .grid, focus: nil, selection: []).save(to: preferences)
         let stored = try #require(preferences.string(forKey: BrowserPlace.defaultsKey))
         for (valid, invalid) in [
-            // A place stored before the filter held People.
-            ("\"version\":3", "\"version\":2"),
+            // A place stored before the filter held Places.
+            ("\"version\":4", "\"version\":3"),
             ("\"peopleMatch\":\"any\"", "\"peopleMatch\":\"some\""),
             ("\"sortField\":\"bestDate\"", "\"sortField\":\"rating\""),
             ("\"viewMode\":\"grid\"", "\"viewMode\":\"survey\""),

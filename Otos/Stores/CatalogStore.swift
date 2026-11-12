@@ -1792,6 +1792,55 @@ extension CatalogStore {
         return timedOptions.value
     }
 
+    // MARK: - Place names (ADR 0040)
+
+    /// Cells of the map holding a located item that Maps has not named in `locale` yet, at
+    /// most `limit`. Every located item counts, wherever it is cataloged, so a card's photos
+    /// are named before they are imported.
+    func unnamedPlaceCells(locale: String, limit: Int) async throws -> [PlaceCell] {
+        try await database().read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT DISTINCT cells.cell_latitude, cells.cell_longitude FROM (
+                    SELECT \(PlaceCell.sql("primary_latitude")) AS cell_latitude,
+                           \(PlaceCell.sql("primary_longitude")) AS cell_longitude
+                    FROM asset_metadata
+                    WHERE primary_latitude IS NOT NULL AND primary_longitude IS NOT NULL
+                ) AS cells
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM place_cell
+                    WHERE place_cell.cell_latitude = cells.cell_latitude
+                      AND place_cell.cell_longitude = cells.cell_longitude
+                      AND place_cell.locale = ?
+                )
+                ORDER BY cells.cell_latitude, cells.cell_longitude
+                LIMIT ?
+                """,
+                arguments: [locale, limit]
+            ).map { PlaceCell(latitude: $0["cell_latitude"], longitude: $0["cell_longitude"]) }
+        }
+    }
+
+    /// Stores what Maps named each cell in `locale`, replacing a naming in another language.
+    /// A catalog change: the Places filter offers what was named.
+    func applyPlaceNames(_ names: [PlaceCell: PlaceNames], locale: String) async throws {
+        guard !names.isEmpty else { return }
+        try await database().write { db in
+            for (cell, name) in names {
+                try db.execute(
+                    sql: """
+                    INSERT INTO place_cell (cell_latitude, cell_longitude, country, town, locale) VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(cell_latitude, cell_longitude) DO UPDATE SET
+                        country = excluded.country, town = excluded.town, locale = excluded.locale
+                    """,
+                    arguments: [cell.latitude, cell.longitude, name.country, name.town, locale]
+                )
+            }
+        }
+        notifyCatalogChanged()
+    }
+
     func mediaAssets(for ids: [MediaAssetID]) async throws -> [MediaAssetID: MediaAsset] {
         guard !ids.isEmpty else {
             return [:]

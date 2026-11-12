@@ -586,6 +586,29 @@ nonisolated enum CatalogSchema {
         ]
     }
 
+    /// Place names (ADR 0040): the country and town Apple Maps names for each cell of the map
+    /// a located photo falls in (`PlaceCell`), read once per cell by `PlaceNameReader` and
+    /// shared by every photo in it. A cell Maps names nothing for (open sea) is stored with no
+    /// names, so it is not asked again; `locale` is the language the names are in, and a cell
+    /// named in another language than the Mac's is asked again.
+    static let placeNamesMigrationIdentifier = "v27_place_names"
+
+    static var placeNamesStatements: [String] {
+        [
+            """
+            CREATE TABLE place_cell (
+                cell_latitude INTEGER NOT NULL,
+                cell_longitude INTEGER NOT NULL,
+                country TEXT,
+                town TEXT,
+                locale TEXT NOT NULL,
+                PRIMARY KEY (cell_latitude, cell_longitude)
+            )
+            """,
+            "CREATE INDEX idx_place_cell_names ON place_cell(country, town)",
+        ]
+    }
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

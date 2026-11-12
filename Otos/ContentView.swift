@@ -317,6 +317,7 @@ struct ContentView: View {
                     setFileType: viewModel.setMediaFileType,
                     setChoice: viewModel.setMediaChoice,
                     people: viewModel.peopleFilterControls,
+                    places: PlaceFilterControls(setPlace: viewModel.setPlaceFilter),
                     clearFilters: viewModel.clearMediaFilter
                 )
                 CatalogSortMenu(

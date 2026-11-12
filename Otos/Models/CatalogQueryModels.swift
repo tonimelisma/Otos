@@ -108,11 +108,13 @@ nonisolated struct MediaFilter: Hashable {
     /// The People filter's `Unassigned` row: photos holding a face with no person.
     var unassignedFaces = false
     var peopleMatch: PeopleMatch = .any
+    /// The Places filter (ADR 0051): photos taken in any of these countries or towns.
+    var places: Set<PlaceFilterKey> = []
 
     static let all = MediaFilter()
 
     var isActive: Bool {
-        !kinds.isEmpty || !fileTypes.isEmpty || !choices.isEmpty || filtersPeople
+        !kinds.isEmpty || !fileTypes.isEmpty || !choices.isEmpty || filtersPeople || !places.isEmpty
     }
 
     var filtersPeople: Bool {
@@ -132,6 +134,37 @@ nonisolated struct MediaFilter: Hashable {
             updated.people.insert(person)
         } else {
             updated.people.remove(person)
+        }
+        return updated
+    }
+
+    /// Checking a country includes all of it, so its towns leave the filter; checking a town
+    /// of a checked country narrows the country to the towns checked.
+    func settingPlace(_ place: PlaceFilterKey, included: Bool, towns: [String]) -> MediaFilter {
+        var updated = self
+        let country = PlaceFilterKey(country: place.country, town: nil)
+        if place.town == nil {
+            updated.places = updated.places.filter { $0.country != place.country }
+            if included {
+                updated.places.insert(country)
+            }
+            return updated
+        }
+        if updated.places.contains(country) {
+            // Narrowing a whole country: every other town stays.
+            updated.places.remove(country)
+            for town in towns where town != place.town {
+                updated.places.insert(PlaceFilterKey(country: place.country, town: town))
+            }
+            if included {
+                updated.places.insert(place)
+            }
+            return updated
+        }
+        if included {
+            updated.places.insert(place)
+        } else {
+            updated.places.remove(place)
         }
         return updated
     }
@@ -381,6 +414,7 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
         kinds=\(kindList.isEmpty ? "all" : kindList) \
         formats=\(formatList.isEmpty ? "all" : formatList) \
         choices=\(choiceList.isEmpty ? "all" : choiceList) \
+        places=\(filter.places.count) \
         people=\(filter.people.count)\(filter.unassignedFaces ? "+unassigned" : ""):\(filter.peopleMatch.rawValue) \
         search=\(search.map { "\($0.text.count)chars:\($0.order)" } ?? "none")
         """
@@ -399,6 +433,8 @@ nonisolated struct CatalogQueryRequest: Hashable {
 /// do too — a value chosen in one scope keeps its row in every other.
 nonisolated struct CatalogFilterOptions: Equatable {
     var formatsByKind: [MediaKind: [MediaFormatToken]] = [:]
+    /// The countries and towns Maps named for the located items, in the locale's order.
+    var countries: [PlaceFilterCountry] = []
 
     static let empty = CatalogFilterOptions()
 

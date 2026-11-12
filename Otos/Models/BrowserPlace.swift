@@ -19,7 +19,7 @@ import Foundation
 /// position, never their launch.
 nonisolated struct BrowserPlace: Equatable {
     static let defaultsKey = "browserPlace"
-    static let currentVersion = 3
+    static let currentVersion = 4
 
     var descriptor: CatalogQueryDescriptor
     var viewMode: BrowserViewMode
@@ -54,8 +54,8 @@ nonisolated struct BrowserPlace: Equatable {
 // MARK: - Wire format
 
 private nonisolated extension BrowserPlace {
-    /// Version 3 of the stored shape: a filter's file types carry their kind, and the filter
-    /// holds People. Plain values, so the domain types stay free of persistence conformances
+    /// Version 4 of the stored shape: a filter's file types carry their kind, and the filter
+    /// holds People and Places. Plain values, so the domain types stay free of persistence conformances
     /// and this file is the whole schema.
     nonisolated struct Record: Codable {
         nonisolated struct Scope: Codable {
@@ -76,6 +76,11 @@ private nonisolated extension BrowserPlace {
             var path: String
         }
 
+        nonisolated struct Place: Codable {
+            var country: String
+            var town: String?
+        }
+
         nonisolated struct FileType: Codable {
             var kind: String
             var format: String
@@ -91,6 +96,8 @@ private nonisolated extension BrowserPlace {
         var people: [Int64]
         var unassignedFaces: Bool
         var peopleMatch: String
+        /// The Places filter's rows: a country, or a town in it.
+        var places: [Place]
         var sortField: String
         var sortDirection: String
         var viewMode: String
@@ -129,7 +136,8 @@ private nonisolated extension BrowserPlace {
             choices: Set(choices),
             people: Set(record.people.map(PersonID.init(rawValue:))),
             unassignedFaces: record.unassignedFaces,
-            peopleMatch: peopleMatch
+            peopleMatch: peopleMatch,
+            places: Set(record.places.map { PlaceFilterKey(country: $0.country, town: $0.town) })
         )
         self.init(
             descriptor: CatalogQueryDescriptor(
@@ -194,6 +202,7 @@ private nonisolated extension BrowserPlace.Record {
             people: descriptor.filter.people.map(\.rawValue).sorted(),
             unassignedFaces: descriptor.filter.unassignedFaces,
             peopleMatch: descriptor.filter.peopleMatch.rawValue,
+            places: descriptor.filter.places.sorted().map { Place(country: $0.country, town: $0.town) },
             sortField: descriptor.sort.field.rawValue,
             sortDirection: descriptor.sort.direction.rawValue,
             viewMode: place.viewMode.rawValue,

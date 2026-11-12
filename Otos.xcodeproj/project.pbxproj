@@ -350,6 +350,8 @@
 				Resources/SigLIP2TokenEmbeddings-2.bin,
 				Resources/SigLIP2TokenEmbeddings-3.bin,
 				Resources/Licenses/SigLIP2-LICENSE.txt,
+				Models/PlaceModels.swift,
+				Services/PlaceNameReader.swift,
 			);
 			target = 3B44EB5D2FCEBA57007E4158 /* Otos */;
 		};
@@ -618,6 +620,8 @@
 				Resources/SigLIP2TokenEmbeddings-2.bin,
 				Resources/SigLIP2TokenEmbeddings-3.bin,
 				Resources/Licenses/SigLIP2-LICENSE.txt,
+				Models/PlaceModels.swift,
+				Services/PlaceNameReader.swift,
 			);
 			target = 5980D4726503709D9D7F52EB /* OtosXXH3 */;
 		};

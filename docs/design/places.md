@@ -132,6 +132,15 @@ stacks (SwiftUI annotations inside the map) do not, so the stacks are verified f
 the `op=map.cluster` log line, which carries each stack's count and position in view
 points.
 
+## The Places filter
+
+A section of the filter popover, under People (ADR 0051): every country Apple Maps named for
+the located items, each a checkbox opening onto its towns (`Springfield, IL`), a country
+with some towns checked shown mixed; `Search Places` once there are more than eight
+countries; `No places named yet` before any cell is named. Checking a country includes all
+of it; unchecking one town of a checked country narrows it to the rest. A checked place
+always shows. It narrows every scope, the map included.
+
 ## Not in this spec
 
 Place names on the map (the Info pane names one item's place, ADR 0050), assigning or moving a location, a filmstrip under the
