@@ -100,7 +100,7 @@ extension CatalogWindowViewModel {
                 return
             }
             guard !Task.isCancelled, let self, targetIDs(.current) == [id], showsInfo else { return }
-            photoInfo = read
+            photoInfo = read.withStack(state.mediaGrid.stacks.stack(shownBy: id))
             photoInfoTask = nil
             OtosLog.ui.debugOperation("photo.info", phase: "applied", fields: [
                 "id": id.relativePath.rawValue,

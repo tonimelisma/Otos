@@ -64,7 +64,12 @@ extension CatalogWindowViewModel {
             let targets = selectedDuplicatesToMove()
             moveMediaToTrash(targets.ids, carrying: targets.carries)
         } else {
-            moveMediaToTrash(targetIDs(.current))
+            // A collapsed stack is one photo of several files, and Move to Trash moves them
+            // all; a member of an expanded stack is a photo of its own (ADR 0052).
+            let stacks = state.mediaGrid.stacks
+            var seen = Set<MediaAssetID>()
+            let files = targetIDs(.current).flatMap(stacks.files(reachedThrough:)).filter { seen.insert($0).inserted }
+            moveMediaToTrash(files)
         }
     }
 

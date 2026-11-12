@@ -277,7 +277,7 @@ nonisolated enum PeopleStateBuilder {
                 birthday: person.birthday,
                 isHidden: person.isHidden,
                 isFavorite: person.isFavorite,
-                photoCount: Set(own.map(\.id.asset)).count,
+                photoCount: Set(own.map { snapshot.photoOfStackMember[$0.id.asset] ?? $0.id.asset }).count,
                 cover: keyPhoto ?? own.first,
                 userFaces: (userFaces[person.id] ?? []).sorted(by: newestFirst),
                 anchorPhotos: anchorPhotos[person.id] ?? []

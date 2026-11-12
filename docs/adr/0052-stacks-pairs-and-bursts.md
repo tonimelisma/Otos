@@ -1,6 +1,6 @@
 # ADR 0052: A RAW+JPEG pair and a burst are stacks, one photo until expanded
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-13
 
 ## Context
@@ -50,9 +50,11 @@ and never stacks; the overlay lifecycle (ADR 0008); the tile and loupe surfaces
   processed file carries the identifier is one frame of the burst; its two files expand as a
   pair inside the expanded burst.
 
-The identity of a stack is the derived key (`pair:` root, folder, stem key; `burst:` root,
-identifier). It is evaluated when the order is read, the way `LivePhotoSQL` is, and it is not
-stored. `media_asset.burst_identifier` becomes a column, written with every metadata record
+The identity of a stack is the derived key (`PhotoStackID`: kind, root, stem key). The Store
+reads every candidate still — each present RAW and processed image in a folder that holds a
+present RAW, whatever the scope or filter, so a filter that hides one file never unpairs the
+other — in the transaction that reads the order, and the pure `PhotoStackRule` decides the
+stacks in Swift, through the same stem key companions use. Nothing about the stack is stored. `media_asset.burst_identifier` becomes a column, written with every metadata record
 like `content_identifier` and backfilled from the stored metadata JSON.
 
 **The stem key has one owner.** Companion pairing, import naming bundles and stacks compare
@@ -66,9 +68,11 @@ today.
 - a burst's default key is its first Liked frame, else its first frame in capture order;
 - the user's choice, Make Key Photo, outranks the default.
 
-The choice is overlay: one row per stack naming its key member's path, purged with that member
-(ADR 0008), carried by Otos moves, and undoable. When the chosen member is gone, the default
-applies again.
+The choice is overlay on the member it names: `media_asset.stack_key_chosen_at_unix_ms`, so a
+move carries it and a deletion purges it with its row (ADR 0008), with no stack table that
+could outlive its files. The latest stamp among a stack's members wins; Make Key Photo stamps
+the chosen member and clears the others, and undo writes the previous stamps back. When the
+chosen member is gone, the default applies again.
 
 **Collapsing and expanding.** The Store reads the full order with each row's stack key. A pure
 projection pass after search collapses each stack to its key member, keeping the full order
@@ -94,6 +98,9 @@ when any member matches, and shows its key member. The duplicates scope never co
   expanding would need a new query and a scope change, which clears the selection.
 - **Store stacks as rows.** A stack is a fact of file names and capture metadata; storing it
   would make a second source of truth that drifts from the files.
+- **Evaluate the pair rule in SQL, as `LivePhotoSQL` is.** SQLite's `lower()` folds ASCII
+  only, and the stored path key does not follow every Otos move, so SQL could not apply the
+  volume's own stem equality; the rule runs in Swift over candidates SQL reads.
 - **Show the RAW by default, as Lightroom Classic does.** The owner chose the camera JPEG, as
   Apple Photos shows it.
 - **A separate burst view (Apple, Google).** A second browser duplicates every action; expanding
@@ -107,6 +114,6 @@ when any member matches, and shows its key member. The duplicates scope never co
 - The grid shows 5 338 fewer tiles on the owner's library, and On This Day stops doubling.
 - Every count reads stacks, so a consumer that counts asset IDs directly (People's photo count)
   changes to count stack keys.
-- A migration adds `burst_identifier` and the key-choice table.
+- Migration v32 adds the key-choice stamp; the burst increment adds `burst_identifier`.
 - The stem key change can pair a companion or naming bundle that differs only in Unicode
   normalization on a case-insensitive volume, where Finder already treats the names as equal.

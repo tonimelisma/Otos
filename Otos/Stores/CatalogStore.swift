@@ -879,6 +879,7 @@ extension CatalogStore {
     /// no longer cataloged are left out.
     func peopleSnapshot(availableLibraryPaths: Set<LibraryRootPath> = []) async throws -> PeopleSnapshot {
         let pathsByRowID = roots.pathsByRowID
+        let capabilitiesByRowID = pathsByRowID.compactMapValues { roots[$0]?.capabilities }
         let faceRootIDs = availableLibraryPaths.compactMap { path in
             roots[path].flatMap { $0.root.kind.readsFaces ? $0.rowID : nil }
         }.sorted()
@@ -955,12 +956,26 @@ extension CatalogStore {
                 db,
                 sql: "SELECT id, name, birthday, is_hidden, is_favorite FROM person ORDER BY id"
             ).map(Self.person)
+            var photoOfStackMember: [MediaAssetID: MediaAssetID] = [:]
+            for (rowID, candidates) in try PhotoStackSQL.fetchCandidates(rootIDs: faceRootIDs, db: db) {
+                guard let rootPath = pathsByRowID[rowID] else { continue }
+                for stack in PhotoStackRule.stacks(
+                    candidates: candidates,
+                    libraryRootPath: rootPath,
+                    capabilities: capabilitiesByRowID[rowID] ?? .unknown
+                ) {
+                    for member in stack.members {
+                        photoOfStackMember[member] = stack.key
+                    }
+                }
+            }
             return try PeopleSnapshot(
                 faces: faces,
                 tiles: tiles,
                 people: people,
                 likeness: likeness,
                 keyPhotos: keyPhotos,
+                photoOfStackMember: photoOfStackMember,
                 uncheckedPhotoCount: Self.uncheckedFacePhotoCount(rootIDs: faceRootIDs, db: db),
                 revision: revision
             )
@@ -1712,6 +1727,7 @@ extension CatalogStore {
         let dbWriter = try database()
         // One read transaction: a row this read sees under a new identity always comes
         // with the pending batch that renamed it (ARC-052).
+        let stackRootIDs = Array(scope.rootIDs)
         let timedRows = try await timedRead(dbWriter) { db in
             try (
                 rows: CatalogQueryGateway.fetchOrderedAssetIDRows(
@@ -1719,7 +1735,8 @@ extension CatalogStore {
                     scope: scope,
                     db: db
                 ),
-                pending: Self.fetchPendingIdentityRemapBatches(db: db)
+                pending: Self.fetchPendingIdentityRemapBatches(db: db),
+                stackCandidates: PhotoStackSQL.fetchCandidates(rootIDs: stackRootIDs, db: db)
             )
         }
         OtosSignpost.persistence.endInterval("CatalogStoreOrderedAssetIDQuery", signpost)
@@ -1787,13 +1804,25 @@ extension CatalogStore {
             ])
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
+            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) stackCandidates=\(timedRows.value.stackCandidates.values.reduce(0) { $0 + $1.count }, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )
+        var stacks: [PhotoStack] = []
+        for (rowID, candidates) in timedRows.value.stackCandidates {
+            guard let rootPath = validRootPathsByRowID[rowID] else {
+                continue
+            }
+            stacks += PhotoStackRule.stacks(
+                candidates: candidates,
+                libraryRootPath: rootPath,
+                capabilities: roots[rootPath]?.capabilities ?? .unknown
+            )
+        }
         return CatalogOrderedAssets(
             ids: ids,
             dayBuckets: dayBuckets,
             coordinates: coordinates,
-            pendingIdentityRemaps: timedRows.value.pending
+            pendingIdentityRemaps: timedRows.value.pending,
+            stacks: CatalogStacks(stacks)
         )
     }
 
@@ -2338,6 +2367,48 @@ extension CatalogStore {
 
     /// One transaction assigning a possibly different choice per asset. Rows that no
     /// longer exist are skipped; the result reports each existing row's prior value.
+    /// Writes each member's key-choice stamp (ADR 0052): Make Key Photo stamps the chosen
+    /// member now and clears the stack's other members; undo writes back what it returns.
+    /// Returns every member's previous stamp, for members that still exist; an empty result
+    /// changed nothing.
+    func setStackKeyChoices(_ stamps: [MediaAssetID: Int64?]) async throws -> [MediaAssetID: Int64?] {
+        guard !stamps.isEmpty else { return [:] }
+        let rootIDs = roots.rowIDSnapshot()
+        let dbWriter = try database()
+        let (previous, changed) = try await dbWriter.write { db -> ([MediaAssetID: Int64?], Int) in
+            var previous: [MediaAssetID: Int64?] = [:]
+            var changed = 0
+            for (id, stamp) in stamps {
+                guard let rootID = rootIDs[id.libraryRootPath],
+                      let row = try Row.fetchOne(
+                          db,
+                          sql: "SELECT stack_key_chosen_at_unix_ms FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                          arguments: [rootID, id.relativePath.rawValue]
+                      )
+                else {
+                    continue
+                }
+                previous[id] = row["stack_key_chosen_at_unix_ms"] as Int64?
+                try db.execute(
+                    sql: """
+                    UPDATE media_asset SET stack_key_chosen_at_unix_ms = ?
+                    WHERE library_root_id = ? AND relative_path = ? AND stack_key_chosen_at_unix_ms IS NOT ?
+                    """,
+                    arguments: [stamp, rootID, id.relativePath.rawValue, stamp]
+                )
+                changed += db.changesCount
+            }
+            return (previous, changed)
+        }
+        OtosLog.catalog.noticeOperation("stack.key", phase: "written", fields: [
+            "requested": "\(stamps.count)", "existing": "\(previous.count)", "changed": "\(changed)",
+        ])
+        if changed > 0 {
+            notifyCatalogChanged()
+        }
+        return previous
+    }
+
     func setMediaChoices(_ assignments: [MediaAssetID: MediaChoice]) async throws -> MediaChoiceMutationResult {
         guard !assignments.isEmpty else {
             return MediaChoiceMutationResult(existingCount: 0, changedCount: 0)

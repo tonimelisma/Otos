@@ -76,6 +76,8 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     var onArrowKey: (Int) -> Void = { _ in }
     var onMediaChoiceKey: (MediaChoice) -> Void = { _ in }
     var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
+    /// A click on a tile's stack badge (DES-116).
+    var onStackBadge: (MediaAssetID) -> Void = { _ in }
     /// Builds the context menu for the current targets after the controller has made
     /// the clicked tile a target (APP-037). `nil` shows no menu.
     var contextMenu: () -> NSMenu? = { nil }
@@ -107,6 +109,7 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
         controller.onArrowKey = onArrowKey
         controller.onMediaChoiceKey = onMediaChoiceKey
         controller.onMediaChoice = onMediaChoice
+        controller.onStackBadge = onStackBadge
         controller.contextMenu = contextMenu
         controller.receiveFaceOutlines(faceOutlines)
         controller.applyPresentation(presentation)
@@ -186,6 +189,8 @@ final class MediaGridViewController: NSViewController {
     /// The outlined faces' boxes by photo (ADR 0047), owned by the view model; each visible
     /// tile draws its own, re-asserted on every render like hover.
     private var faceOutlines: [MediaAssetID: [CGRect]] = [:]
+    /// How the last received grid state shows its stacks (ADR 0052).
+    private var gridStacks: CatalogGridStacks = .empty
     private var scrollBoundsTickCount = 0
     private var scrollFlushCount = 0
     private var scrollDetailQueryStarted = 0
@@ -238,6 +243,7 @@ final class MediaGridViewController: NSViewController {
     var onArrowKey: (Int) -> Void = { _ in }
     var onMediaChoiceKey: (MediaChoice) -> Void = { _ in }
     var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
+    var onStackBadge: (MediaAssetID) -> Void = { _ in }
     var contextMenu: () -> NSMenu? = { nil }
     /// Source for drag-out sessions (ADR 0028); one per controller, reused.
     let dragSource = MediaGridDragSource()
@@ -491,6 +497,10 @@ final class MediaGridViewController: NSViewController {
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStateReceive")
         defer { OtosSignpost.ui.endInterval("MediaGridStateReceive", signpost) }
 
+        if gridStacks != grid.stacks {
+            gridStacks = grid.stacks
+            applyStacksToVisibleTiles()
+        }
         let actions = mutationGate.receive(grid)
         OtosLog.ui.debug(
             """
@@ -536,6 +546,10 @@ extension MediaGridViewController {
         }
         collectionView.onMouseSelection = { [weak self] hit, modifiers in
             self?.applyMouseSelection(hit: hit, modifiers: modifiers)
+        }
+        collectionView.onStackBadgeHit = { [weak self] hit in
+            guard let self, let id = dataSource.itemIdentifier(for: hit) else { return }
+            onStackBadge(id)
         }
         collectionView.onDoubleClickHit = { [weak self] hit in
             guard let self, let id = dataSource.itemIdentifier(for: hit) else {
@@ -1167,6 +1181,17 @@ extension MediaGridViewController {
         item.render(content: content, change: change)
         applyHover(to: item, assetID: assetID)
         applyFaceOutlines(to: item, assetID: assetID)
+        item.setStackPresentation(TileStackPresentation.of(assetID, in: gridStacks))
+    }
+
+    /// Re-asserts every visible tile's stack presentation after the stacks changed.
+    private func applyStacksToVisibleTiles() {
+        for case let item as MediaGridItem in collectionView.visibleItems() {
+            guard let id = collectionView.indexPath(for: item).flatMap({ dataSource.itemIdentifier(for: $0) }) else {
+                continue
+            }
+            item.setStackPresentation(TileStackPresentation.of(id, in: gridStacks))
+        }
     }
 
     /// Ensures a store entry exists (empty detail stub if needed), starts decode when a

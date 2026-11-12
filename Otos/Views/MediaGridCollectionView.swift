@@ -25,6 +25,9 @@ final class MediaGridCollectionView: NSCollectionView {
     var onMouseSelection: ((IndexPath?, NSEvent.ModifierFlags) -> Void)?
     /// Unmodified double-click hit; the controller resolves the identity.
     var onDoubleClickHit: ((IndexPath) -> Void)?
+    /// A click on a tile's stack badge, the stack's expand-and-collapse control (DES-116).
+    /// It never selects: the badge is a button, not the picture.
+    var onStackBadgeHit: ((IndexPath) -> Void)?
     /// Grid: Return opens loupe. Strip: Esc exits; arrows move focus when forwarded.
     var onReturnKey: (() -> Void)?
     var onEscapeKey: (() -> Void)?
@@ -143,6 +146,14 @@ final class MediaGridCollectionView: NSCollectionView {
     override func mouseDown(with event: NSEvent) {
         let pointInCollectionView = convert(event.locationInWindow, from: nil)
         var hit = indexPathForItem(at: pointInCollectionView)
+        if let candidate = hit, event.clickCount == 1,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
+           (item(at: candidate) as? MediaGridItem)?.hitTestsStackBadge(at: event.locationInWindow) == true
+        {
+            window?.makeFirstResponder(self)
+            onStackBadgeHit?(candidate)
+            return
+        }
         if let candidate = hit, !clickHitsThumbnailFace(candidate, event: event) {
             hit = nil
         }

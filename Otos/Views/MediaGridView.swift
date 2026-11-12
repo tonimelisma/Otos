@@ -21,6 +21,7 @@ struct MediaGridView: View {
     var onReturnKey: () -> Void = {}
     var onMediaChoiceKey: (MediaChoice) -> Void = { _ in }
     var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
+    var onStackBadge: (MediaAssetID) -> Void = { _ in }
     var contextMenu: () -> NSMenu? = { nil }
     /// The outlined faces' boxes by photo (ADR 0047), drawn on their tiles.
     var faceOutlines: [MediaAssetID: [CGRect]] = [:]
@@ -73,6 +74,7 @@ struct MediaGridView: View {
                         onReturnKey: onReturnKey,
                         onMediaChoiceKey: onMediaChoiceKey,
                         onMediaChoice: onMediaChoice,
+                        onStackBadge: onStackBadge,
                         contextMenu: contextMenu,
                         faceOutlines: faceOutlines,
                         focusTargetID: focusTargetID

@@ -58,6 +58,8 @@ final class CatalogWindowViewModel {
 
     private(set) var sidebarSelection: SidebarSelection = .allMedia
     private(set) var queryDescriptor: CatalogQueryDescriptor = .default
+    /// The stacks the user expanded in the grid (ADR 0052), sent with every query request.
+    private(set) var expandedStacks: Set<PhotoStackID> = []
     private(set) var isFilterPresented = false
     /// The toolbar search field's text, as typed (ADR 0048); `queryDescriptor.search` is the
     /// search it makes.
@@ -421,6 +423,9 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let mutationContinuation: AsyncStream<CatalogMutationIntent>.Continuation
     @ObservationIgnored let mediaChoiceStream: AsyncStream<MediaChoiceCommand>
     @ObservationIgnored let mediaChoiceContinuation: AsyncStream<MediaChoiceCommand>.Continuation
+    /// Make Key Photo and its undo, in order, one consumer (ADR 0052).
+    @ObservationIgnored let stackKeyStream: AsyncStream<StackKeyCommand>
+    @ObservationIgnored let stackKeyContinuation: AsyncStream<StackKeyCommand>.Continuation
     // Newest-value: only the latest viewport is a useful priority hint; an obsolete
     // scroll position carries no value, so an intermediate one is dropped.
     @ObservationIgnored private let viewportStream: AsyncStream<[MediaAssetID]>
@@ -497,6 +502,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private var queryForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var mutationForwardingTask: Task<Void, Never>?
     @ObservationIgnored var mediaChoiceForwardingTask: Task<Void, Never>?
+    @ObservationIgnored var stackKeyForwardingTask: Task<Void, Never>?
     /// Choices sent to the forwarding consumer, and choices it has finished with —
     /// accepted, refused or failed. Equal means every choice's outcome has been applied.
     @ObservationIgnored var submittedMediaChoiceCount = 0
@@ -784,6 +790,9 @@ final class CatalogWindowViewModel {
         self.peopleIntentContinuation = peopleIntentContinuation
         self.mediaChoiceStream = mediaChoiceStream
         self.mediaChoiceContinuation = mediaChoiceContinuation
+        let stackKeyChannel = AsyncStream<StackKeyCommand>.makeStream(bufferingPolicy: .unbounded)
+        stackKeyStream = stackKeyChannel.stream
+        stackKeyContinuation = stackKeyChannel.continuation
         self.viewportStream = viewportStream
         self.viewportContinuation = viewportContinuation
         self.editRenderStream = editRenderStream
@@ -831,6 +840,7 @@ final class CatalogWindowViewModel {
         queryForwardingTask?.cancel()
         mutationForwardingTask?.cancel()
         mediaChoiceForwardingTask?.cancel()
+        stackKeyForwardingTask?.cancel()
         editTargetTask?.cancel()
         editRenderTask?.cancel()
         editCommandTask?.cancel()
@@ -877,6 +887,7 @@ final class CatalogWindowViewModel {
         duplicatesIntentContinuation.finish()
         peopleIntentContinuation.finish()
         mediaChoiceContinuation.finish()
+        stackKeyContinuation.finish()
         editRenderContinuation.finish()
         editCommandContinuation.finish()
         editAnalysisContinuation.finish()
@@ -952,6 +963,7 @@ extension CatalogWindowViewModel {
         startRecognizedRefresh()
         startMutationForwarding(store: store, coordinator: enrichmentCoordinator)
         startMediaChoiceForwarding(store: store)
+        startStackKeyForwarding(store: store)
         startEditing(store: store)
         startHandOff(store: store)
         startExport()
@@ -1012,7 +1024,26 @@ extension CatalogWindowViewModel {
         }
         queryContinuation.yield(CatalogQueryRequest(
             descriptor: descriptor,
-            generation: queryGeneration
+            generation: queryGeneration,
+            expandedStacks: expandedStacks
+        ))
+    }
+
+    /// The one writer of `expandedStacks`: Photo ▸ Expand Stack / Collapse Stack, S and a
+    /// click on a stack's badge all arrive here (ADR 0052). Expanding re-derives the order
+    /// under the same descriptor, so the selection and the browser place stay.
+    func setExpandedStacks(_ stacks: Set<PhotoStackID>) {
+        guard stacks != expandedStacks else { return }
+        expandedStacks = stacks
+        OtosLog.ui.noticeOperation("stack.expansion", phase: "submitted", fields: [
+            "vm": diagnosticID,
+            "expanded": "\(stacks.count)",
+            "generation": "\(queryGeneration)",
+        ])
+        queryContinuation.yield(CatalogQueryRequest(
+            descriptor: queryDescriptor,
+            generation: queryGeneration,
+            expandedStacks: stacks
         ))
     }
 
@@ -1215,6 +1246,7 @@ extension CatalogWindowViewModel {
         // Before anything compares the new order with the old: a remapped selection or
         // focus must already carry its new identity, or the prune below would drop it.
         applyPendingIdentityRemaps(nextState.pendingIdentityRemaps)
+        carrySelectionIntoStacks(nextState.mediaGrid.stacks)
         applyMapState(previous: previousState, next: nextState)
         applyOnThisDayState(previous: previousState, next: nextState)
         applyDuplicatesState(nextState)

@@ -27,6 +27,7 @@ extension CatalogProjection {
         let dayBuckets: [Date?]
         let coordinates: [PlaceCoordinate]
         let pendingIdentityRemaps: [CatalogIdentityRemapBatch]
+        let stacks: CatalogStacks
         let orderQueryMs: Int
         // The map's coordinates are read with the order and can move without it (a
         // re-enriched location), so a detail-only pass under the Places scope re-runs
@@ -39,6 +40,7 @@ extension CatalogProjection {
             dayBuckets = reuse.dayBuckets ?? []
             coordinates = []
             pendingIdentityRemaps = reuse.pendingIdentityRemaps ?? []
+            stacks = reuse.stacks
             orderQueryMs = 0
         } else {
             orderQueryCount &+= 1
@@ -51,6 +53,7 @@ extension CatalogProjection {
             dayBuckets = ordered.dayBuckets
             coordinates = ordered.coordinates
             pendingIdentityRemaps = ordered.pendingIdentityRemaps
+            stacks = ordered.stacks
             orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
         }
         // Tests inject controlled derivation while keeping the real publication loop.
@@ -71,6 +74,7 @@ extension CatalogProjection {
         if let search = resolvedDescriptor.effectiveSearch {
             try await applySearch(search, to: &unsearched, store: store)
         }
+        Self.collapseStacks(stacks, expanded: request.expandedStacks, in: &unsearched)
         let facts = unsearched
         // The supplementary reads are independent; an error in any fails the build.
         async let unfilteredVisibleAssetCount = unfilteredVisibleAssetCount(facts, store: store)
@@ -83,7 +87,36 @@ extension CatalogProjection {
             filterOptions: filterOptions
         )
         state.pendingIdentityRemaps = pendingIdentityRemaps
+        state.uncollapsedOrder = CatalogUncollapsedOrder(ids: orderedAssetIDs, dayBuckets: dayBuckets, stacks: stacks)
         return (state, metrics)
+    }
+
+    /// Collapses each stack in the scoped order to its shown member (ADR 0052), after the
+    /// search so a stack matches when any member does. The duplicates list shows every
+    /// copy as itself and never collapses.
+    static func collapseStacks(
+        _ stacks: CatalogStacks,
+        expanded: Set<PhotoStackID>,
+        in facts: inout CatalogProjectionBuildFacts
+    ) {
+        facts.stacks = stacks
+        switch facts.resolvedDescriptor.scope {
+        case .duplicates, .duplicateGroup:
+            return
+        case .allMedia, .library, .places, .mapArea, .mapStack, .onThisDay, .importBatch, .allImports, .people, .person:
+            break
+        }
+        let collapsed = PhotoStackCollapse.collapse(
+            ids: facts.scopedAssetIDs,
+            dayBuckets: facts.scopedDayBuckets,
+            coordinates: facts.scopedCoordinates,
+            stacks: stacks,
+            expanded: expanded
+        )
+        facts.scopedAssetIDs = collapsed.ids
+        facts.scopedDayBuckets = collapsed.dayBuckets
+        facts.scopedCoordinates = collapsed.coordinates
+        facts.gridStacks = collapsed.grid
     }
 
     /// Narrows the scope to what `search` matches (ADR 0048). With no index there is no
@@ -198,7 +231,8 @@ extension CatalogProjection {
                     for: facts.resolvedDescriptor,
                     scopedAssetIDs: facts.scopedAssetIDs,
                     scopedDayBuckets: facts.scopedDayBuckets
-                )
+                ),
+                gridStacks: facts.gridStacks
             ),
             detailRefreshGeneration: detailRefreshGeneration
         )

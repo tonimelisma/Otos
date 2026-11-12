@@ -21,6 +21,8 @@ nonisolated struct CatalogProjectionWindowStateParts {
     let map: CatalogMapState?
     /// On This Day's years; nil for every other scope (ADR 0049).
     let onThisDay: CatalogOnThisDayState?
+    /// How the scoped order shows its stacks (ADR 0052).
+    var gridStacks: CatalogGridStacks = .empty
 }
 
 /// The order a detail-only publication may reuse instead of re-running the ordered-asset
@@ -28,6 +30,8 @@ nonisolated struct CatalogProjectionWindowStateParts {
 nonisolated struct CatalogProjectionOrderReuse {
     let orderedAssetIDs: [MediaAssetID]?
     let dayBuckets: [Date?]?
+    /// The stacks the order was read with (ADR 0052); the order is the uncollapsed one.
+    var stacks: CatalogStacks = .empty
     /// Reused with the order it was read with: the order is unchanged, so no identity in
     /// it needs a batch the previous read did not carry.
     let pendingIdentityRemaps: [CatalogIdentityRemapBatch]?
@@ -58,6 +62,10 @@ nonisolated struct CatalogProjectionBuildFacts {
     let orderQueryMs: Int
     /// Set when a search narrowed the scope.
     var search: CatalogSearchOutcome?
+    /// The stacks read with the order (ADR 0052), and how the scoped order shows them once
+    /// collapsed.
+    var stacks: CatalogStacks = .empty
+    var gridStacks: CatalogGridStacks = .empty
 }
 
 /// What a search left of a scope, for the empty state (ADR 0048).

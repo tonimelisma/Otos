@@ -34,6 +34,10 @@ struct EditPanelView: View {
     let setLensCorrection: @MainActor (Bool) -> Void
     let resetControl: @MainActor (EditControl) -> Void
     let originalActions: EditPanelOriginalActions
+    /// The RAW+JPEG pair being edited, for the `JPEG | RAW` switch under the name (DES-117);
+    /// nil for any other photo.
+    var pair: (stack: PhotoStack, shown: MediaAssetID)?
+    var showPairMember: @MainActor (MediaAssetID) -> Void = { _ in }
 
     /// Section IDs the person folded, comma-separated.
     @AppStorage("editPanel.foldedSections") private var foldedSections = ""
@@ -50,6 +54,9 @@ struct EditPanelView: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .accessibilityAddTraits(.isHeader)
+                        if let pair {
+                            PairSwitch(pair: pair.stack, shown: pair.shown, onSelect: showPairMember)
+                        }
                         EditHistogramView(histogram: histogram)
                         originalRow
                     }

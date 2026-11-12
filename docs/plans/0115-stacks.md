@@ -31,46 +31,47 @@ Opened 2026-11-13. Decisions: ADR 0052. Survey:
 
 Each increment lands on `main` with its own DoD.
 
-1. **Docs:** the survey, ADR 0052 (Proposed) and this plan. *(this PR)*
-2. **One stem key.**
+1. **Docs:** the survey, ADR 0052 (Proposed) and this plan. *(done, #676)*
+2. **One stem key.** *(done, #680)*
    - One stem-key owner on `FilesystemNameKey` semantics, used by `MediaCompanionPairing`,
      `ImportNaming.bundles` and later stacks.
    - Tests cover case-insensitive and normalization-differing stems on both volume kinds.
-3. **Pairs collapse.**
-   - **Store:** the order rows carry a stack key (the pair rule only).
+3. **Pairs collapse, expand, and take a key.** *(this PR; increments 3 and 4 land together, so a
+   collapsed RAW is never unreachable between them)*
+   - **Store:** candidate stills read with the order (`PhotoStackSQL`), stacks decided in Swift
+     (`PhotoStackRule`).
    - **Projection:** the collapse pass keeps the full order for reuse
      (`CatalogProjectionOrderReuse`), and the key member defaults to the processed file.
    - **Counts:** day counts, On This Day and the map follow from the collapsed order. People's
      photo count counts stack keys.
-   - **Trash:** a collapsed pair trashes both files (`mediaTrashItems`). Reveal in Finder shows
-     both.
-   - **Info** lists both files.
-   - **Requirements:** ARC and APP rows, with their tests.
-4. **Expanding and the key choice.**
-   - **Migration:** the key-choice table, purged with its member, carried by moves and
-     undoable.
+   - **Trash:** a collapsed pair trashes both files (the window expands the targets). Reveal in
+     Finder shows both.
+   - **Info** lists both files (`Stack`).
+   - **Requirements:** ARC-062, APP-075, APP-076.
+   - **Migration v32:** the key-choice stamp on the member it names, carried by moves, purged
+     with its row, undoable.
    - **Expanding:** an expanded-stacks window intent outside the descriptor, with the tinted
      band and the outlined key.
-   - **The badge** acts as the expand control (an `NSButton` in the tile, like the curation
-     buttons), with S, ⇧S and Photo ▸ Expand Stack / Collapse Stack / Make Key Photo.
+   - **The badge** acts as the expand control (hit-tested by the collection view before
+     selection), with S, ⇧S and Photo ▸ Expand Stack / Collapse Stack / Make Key Photo.
    - **`JPEG | RAW`:** the segmented control in the edit panel header and the loupe capsule at
      the top trailing edge (DES-106's place).
    - **Trash** on an expanded member trashes that one file.
-   - **Design rules:** new `DES-*` rules in `docs/design/design-system.md`, with design review C
+   - **Design rules:** DES-116 and DES-117 in `docs/design/design-system.md`, with design review C
      run on light and dark screenshots, grayscale, keyboard and Reduce Motion.
-5. **iPhone bursts.**
+4. **iPhone bursts.**
    - **Migration:** `media_asset.burst_identifier`, written with metadata and backfilled from
      `metadata_extra_json`. It joins `EnrichmentOverlayBeforeWrite.changesStructure`.
    - **The burst rule:** a pair is one frame of a burst; the default key is the first Liked
      frame, else the first in capture order.
    - **Trash** on a collapsed burst trashes every frame.
    - **Info** reads `Burst · N photos`.
-6. **On This Day picks.**
+5. **On This Day picks.**
    - Leave out Disliked photos, put Liked photos first and cap each anniversary.
    - Leave out screenshots and documents, using the platform's utility classification once its
      availability on macOS 27 is verified and measured on the owner's library (a research note).
    - Choose the cap with the owner from that measurement.
-7. **Camera bursts: measurement first.**
+6. **Camera bursts: measurement first.**
    - A research note on detecting bursts from capture facts (body serial, sub-seconds, maker
      sequence numbers MediaMetadata can read) on the owner's library, before any rule ships.
    - A rule ships only after the owner decides from that note, with Remove from Burst for a

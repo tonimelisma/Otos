@@ -23,6 +23,37 @@ nonisolated enum TileBadgeContent: Equatable {
     case durationText(String)
     case filmIcon
     case rawLabel
+    /// A stack's badge (DES-116): `RAW+JPG` on a collapsed pair, a member's own file type
+    /// on an expanded one. It is the stack's expand-and-collapse control.
+    case stackLabel(String)
+}
+
+/// How a tile shows the stack it is in (ADR 0052, DES-116).
+nonisolated enum TileStackPresentation: Equatable {
+    case none
+    /// The one tile of a collapsed stack, badged with the stack's label.
+    case collapsed(label: String)
+    /// One member of an expanded stack: on the stack's band, badged with its own file
+    /// type, the key member outlined.
+    case expanded(label: String, isKey: Bool)
+
+    var badgeLabel: String? {
+        switch self {
+        case .none: nil
+        case let .collapsed(label), let .expanded(label, _): label
+        }
+    }
+
+    /// The stack presentation `stacks` gives the tile showing `id`.
+    static func of(_ id: MediaAssetID, in stacks: CatalogGridStacks) -> TileStackPresentation {
+        if let stack = stacks.collapsed[id] {
+            return .collapsed(label: stack.badgeLabel)
+        }
+        if let stack = stacks.expanded[id] {
+            return .expanded(label: stack.memberLabels[id] ?? "", isKey: stack.key == id)
+        }
+        return .none
+    }
 }
 
 nonisolated enum MediaAssetTileLayout {
@@ -135,10 +166,14 @@ nonisolated enum MediaAssetTilePresentation {
     static func badgeContent(
         detail: MediaTileDetail,
         thumbnailPainted: Bool,
-        formattedDuration: String? = nil
+        formattedDuration: String? = nil,
+        stack: TileStackPresentation = .none
     ) -> TileBadgeContent {
         guard thumbnailPainted, !detail.thumbnailUnavailable else {
             return .none
+        }
+        if let label = stack.badgeLabel {
+            return .stackLabel(label)
         }
         switch detail.bestKind {
         case .video:
@@ -160,7 +195,8 @@ nonisolated enum MediaAssetTilePresentation {
     /// query and does not widen `MediaTileDetail` (ENR-005).
     static func accessibilityLabel(
         detail: MediaTileDetail,
-        badgeContent: TileBadgeContent
+        badgeContent: TileBadgeContent,
+        stack: TileStackPresentation = .none
     ) -> String {
         let name = detail.relativePath.fileName
         let base: String = if detail.thumbnailUnavailable {
@@ -172,6 +208,7 @@ nonisolated enum MediaAssetTilePresentation {
             case let .durationText(text): "\(name), video, \(text)"
             case .filmIcon: "\(name), video"
             case .rawLabel: "\(name), RAW image"
+            case let .stackLabel(label): "\(name), \(label)"
             case .none:
                 switch detail.bestKind {
                 case .video: "\(name), video"
@@ -181,9 +218,14 @@ nonisolated enum MediaAssetTilePresentation {
                 }
             }
         }
+        let stackSuffix = switch stack {
+        case .none: ""
+        case .collapsed: ", stack"
+        case let .expanded(_, isKey): isKey ? ", in an expanded stack, key photo" : ", in an expanded stack"
+        }
         let editedSuffix = isEdited(detail) ? ", edited" : ""
         let emptySuffix = detail.byteSize == 0 ? ", empty file" : ""
-        return "\(base)\(editedSuffix)\(emptySuffix), \(detail.mediaChoice.accessibilityValue)"
+        return "\(base)\(stackSuffix)\(editedSuffix)\(emptySuffix), \(detail.mediaChoice.accessibilityValue)"
     }
 
     static func accessibilityValue(detail: MediaTileDetail) -> String {

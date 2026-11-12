@@ -128,10 +128,14 @@ nonisolated struct GridSelection: Equatable {
 
     /// Applies a catalog identity remap batch atomically (ARC-051).
     func remapped(by batch: CatalogIdentityRemapBatch) -> GridSelection {
-        guard !batch.remaps.isEmpty else {
+        remapped(by: Dictionary(uniqueKeysWithValues: batch.remaps.map { ($0.oldID, $0.newID) }))
+    }
+
+    /// Every selected identity `map` names, under its new identity; the rest as they are.
+    func remapped(by map: [MediaAssetID: MediaAssetID]) -> GridSelection {
+        guard !map.isEmpty else {
             return self
         }
-        let map = Dictionary(uniqueKeysWithValues: batch.remaps.map { ($0.oldID, $0.newID) })
         func mapID(_ id: MediaAssetID) -> MediaAssetID {
             map[id] ?? id
         }

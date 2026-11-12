@@ -426,8 +426,9 @@ private extension CatalogProjection {
                                                     let previous = lastPublishedState
         {
             CatalogProjectionOrderReuse(
-                orderedAssetIDs: previous.mediaGrid.orderedAssetIDs,
-                dayBuckets: previous.mediaGrid.dayBuckets,
+                orderedAssetIDs: previous.uncollapsedOrder.ids,
+                dayBuckets: previous.uncollapsedOrder.dayBuckets,
+                stacks: previous.uncollapsedOrder.stacks,
                 pendingIdentityRemaps: previous.pendingIdentityRemaps,
                 descriptor: previous.queryDescriptor
             )

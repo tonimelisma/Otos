@@ -308,6 +308,7 @@ everything expensive happens on an actor off the main thread.
 | --- | --- |
 | what the UI shows | `CatalogProjection` (derivation) or `CatalogWindowViewModel` (final assignment) — never a view |
 | what is stored | `CatalogStore` + a SQLite migration in `CatalogStorePersistence` + an ADR |
+| which files are one photo (RAW+JPEG pairs) / how a stack collapses | `PhotoStackRule` over candidates `PhotoStackSQL` reads with the order; `PhotoStackCollapse` in the projection after search; expansion and Make Key Photo in `CatalogWindowViewModelStacks` (ADR 0052) |
 | platform source handling | the ViewModel owns monitor/session lifetimes; the Store owns attach/detach/remap/persistence |
 | what a kind of root is or may do | `LibraryRootKind`'s capabilities (one exhaustive `switch` each; never compare kinds at a call site) and `StagingContainer` for kinds that stage originals (ADR 0046 §3) |
 | an Immich account's root | `CatalogStore.addImmichAccount` (identity `immich:<server>#<user>`, staging under `RemoteStaging`, `remote_base_url`); rows through the kind-neutral listing API (`beginSourceListing` …); available at launch from its stored listing (`availabilityAtLaunch`), claimed by enrichment for metadata only while its server answers (`RootRuntimeState.isSourceAnswering`, `RemoteRangeAccess`) (ADR 0046) |

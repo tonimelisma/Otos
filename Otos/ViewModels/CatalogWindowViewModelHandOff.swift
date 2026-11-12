@@ -86,7 +86,15 @@ extension CatalogWindowViewModel {
 
     /// Submits a hand-off of the current targets to the lane.
     func handOff(_ action: HandOffAction) {
-        let ids = targetIDs(.current)
+        // Reveal in Finder shows every file a collapsed stack is made of; every other
+        // hand-off gives the picture, the stack's shown member (ADR 0052).
+        let stacks = state.mediaGrid.stacks
+        let ids: [MediaAssetID] = switch action {
+        case .revealInFinder:
+            targetIDs(.current).flatMap(stacks.files(reachedThrough:))
+        case .copy, .share, .openDefault, .openWith:
+            targetIDs(.current)
+        }
         guard !ids.isEmpty else { return }
         handOffRequested &+= 1
         submittedHandOffCount += 1

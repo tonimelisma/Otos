@@ -157,6 +157,9 @@ final class MediaAssetTileView: NSView {
     private var faceOutlineBoxes: [CGRect] = []
     private var choiceButtons: [MediaChoiceButton] = []
     var onMediaChoice: ((MediaChoice) -> Void)?
+    /// How this tile shows the stack it is in (ADR 0052); `MediaGridBridge` owns it and
+    /// re-asserts it on every render, as it does hover and face outlines.
+    private(set) var stackPresentation: TileStackPresentation = .none
 
     /// Aspect-fit face size for the currently painted image; nil while placeholder.
     var paintedImagePixelSize: CGSize? {
@@ -347,7 +350,8 @@ extension MediaAssetTileView {
         let content = MediaAssetTilePresentation.badgeContent(
             detail: detail,
             thumbnailPainted: paintedImagePixelSize != nil,
-            formattedDuration: renderedFormattedDuration
+            formattedDuration: renderedFormattedDuration,
+            stack: stackPresentation
         )
         badgeContent = content
         if appliedBadgeContent != content {
@@ -355,7 +359,7 @@ extension MediaAssetTileView {
             appliedBadgeContent = content
         }
         setAccessibilityLabel(
-            MediaAssetTilePresentation.accessibilityLabel(detail: detail, badgeContent: content)
+            MediaAssetTilePresentation.accessibilityLabel(detail: detail, badgeContent: content, stack: stackPresentation)
         )
         setAccessibilityValue(MediaAssetTilePresentation.accessibilityValue(detail: detail))
         for button in choiceButtons {
@@ -371,6 +375,10 @@ extension MediaAssetTileView {
             filmIconView.isHidden = true
         case .rawLabel:
             badgeLabel.stringValue = Layout.rawLabel
+            badgeLabel.isHidden = false
+            filmIconView.isHidden = true
+        case let .stackLabel(label):
+            badgeLabel.stringValue = label
             badgeLabel.isHidden = false
             filmIconView.isHidden = true
         case .filmIcon:
@@ -414,6 +422,8 @@ extension MediaAssetTileView {
         choiceControl.isHidden = true
         faceOutlineBoxes = []
         faceOutlineLayer.isHidden = true
+        stackPresentation = .none
+        applyStackBand()
         for button in choiceButtons {
             button.setOn(false)
         }
@@ -421,6 +431,39 @@ extension MediaAssetTileView {
         setSelected(false, animated: false)
         setAccessibilityLabel(nil)
         setAccessibilityValue(nil)
+    }
+
+    func setStackPresentation(_ presentation: TileStackPresentation) {
+        guard stackPresentation != presentation else { return }
+        stackPresentation = presentation
+        applyStackBand()
+        configureBadge()
+        needsLayout = true
+    }
+
+    /// An expanded stack's members sit on one band (DES-116): the tile's whole cell, gutter
+    /// included, tinted, so neighbouring members read as one run; the key member's cell is
+    /// outlined in secondary label, apart from the selection's accent ring on the picture.
+    private func applyStackBand() {
+        wantsLayer = true
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            switch stackPresentation {
+            case let .expanded(_, isKey):
+                layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.14).cgColor
+                layer?.borderColor = NSColor.secondaryLabelColor.cgColor
+                layer?.borderWidth = isKey ? 1 : 0
+            case .none, .collapsed:
+                layer?.backgroundColor = nil
+                layer?.borderWidth = 0
+            }
+        }
+    }
+
+    /// Whether a click at `pointInWindow` lands on the stack badge, the stack's expand and
+    /// collapse control.
+    func hitTestsStackBadge(at pointInWindow: CGPoint) -> Bool {
+        guard stackPresentation != .none, !kindBadge.isHidden else { return false }
+        return kindBadge.bounds.contains(kindBadge.convert(pointInWindow, from: nil))
     }
 
     func hitTestsThumbnailFace(at pointInWindow: CGPoint) -> Bool {
@@ -514,6 +557,7 @@ extension MediaAssetTileView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         applyAppearanceColors()
+        applyStackBand()
     }
 
     /// A layer takes a `CGColor`, which is resolved once and does not follow appearance,
@@ -560,7 +604,7 @@ extension MediaAssetTileView {
         }
 
         let textWidth: CGFloat? = switch badgeContent {
-        case .durationText, .rawLabel:
+        case .durationText, .rawLabel, .stackLabel:
             badgeLabel.intrinsicContentSize.width
         case .filmIcon, .none:
             nil

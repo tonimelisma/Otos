@@ -66,6 +66,9 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     var likeness: [FaceID: Float] = [:]
     /// Each person's key photo, where the user chose one.
     var keyPhotos: [PersonID: FaceID] = [:]
+    /// Each file of a stack mapped to its stack's key (ADR 0052): a RAW and its JPEG are one
+    /// photo, so a person's photo count counts them once.
+    var photoOfStackMember: [MediaAssetID: MediaAssetID] = [:]
     /// Stills in the available libraries and Immich accounts whose faces are not yet read from
     /// their current stored preview, or whose preview is still to come.
     let uncheckedPhotoCount: Int

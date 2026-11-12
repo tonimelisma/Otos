@@ -422,6 +422,67 @@ nonisolated enum CatalogQueryGateway {
 /// are one Live Photo when they share a root, a folder and Apple's content identifier, and
 /// are the only still and the only movie there that do. Any other count pairs nothing.
 ///
+/// Whether a row's file is one the user sees at all: not waiting for the Trash, seen by its
+/// source's current attachment (ADR 0013), not hidden by its source (ADR 0046). The scope
+/// clause and the stack candidates (ADR 0052) share it, so a file on its way to the Trash
+/// neither shows nor holds another file in a stack.
+nonisolated enum CatalogVisibilitySQL {
+    static func isPresent(_ row: String) -> String {
+        """
+        \(row).pending_trash_batch_unix_ms IS NULL
+          AND \(row).awaiting_presence = 0
+          AND \(row).hidden_by_source = 0
+        """
+    }
+}
+
+/// The stills that can be in a stack (ADR 0052): every present RAW and processed image in
+/// a folder that holds a present RAW, in the given roots, whatever the scope or filter, so
+/// a filter that hides one file of a pair never unpairs the other. `PhotoStackRule`
+/// decides the stacks from these.
+nonisolated enum PhotoStackSQL {
+    static func fetchCandidates(
+        rootIDs: [Int64],
+        db: Database
+    ) throws -> [Int64: [PhotoStackCandidate]] {
+        guard !rootIDs.isEmpty else {
+            return [:]
+        }
+        let placeholders = sqlPlaceholders(count: rootIDs.count)
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+            WITH raw_folder AS (
+                SELECT DISTINCT library_root_id, parent_path FROM media_asset
+                WHERE library_root_id IN (\(placeholders)) AND best_kind = 'raw'
+                  AND \(CatalogVisibilitySQL.isPresent("media_asset"))
+            )
+            SELECT still.library_root_id, still.relative_path, still.best_kind, still.stack_key_chosen_at_unix_ms
+            FROM raw_folder
+            JOIN media_asset AS still
+              ON still.library_root_id = raw_folder.library_root_id
+              AND still.parent_path = raw_folder.parent_path
+            WHERE still.best_kind IN ('raw', 'image')
+              AND \(CatalogVisibilitySQL.isPresent("still"))
+            """,
+            arguments: StatementArguments(rootIDs)
+        )
+        var byRoot: [Int64: [PhotoStackCandidate]] = [:]
+        for row in rows {
+            let kindValue: String = row["best_kind"]
+            guard let kind = MediaKind(rawValue: kindValue) else {
+                continue
+            }
+            byRoot[row["library_root_id"], default: []].append(PhotoStackCandidate(
+                relativePath: MediaRelativePath(rawValue: row["relative_path"]),
+                kind: kind,
+                keyChosenAtUnixMs: row["stack_key_chosen_at_unix_ms"]
+            ))
+        }
+        return byRoot
+    }
+}
+
 /// The rule is evaluated where it is used, never stored: it reads only facts each row
 /// already holds, so a rename, move, deletion, enrichment or refresh can never leave it
 /// stale. `idx_media_asset_content_identifier` makes each test one indexed lookup, and only
@@ -623,9 +684,7 @@ private nonisolated func scopeClause(
     // this scope clause is the one choke point those queries share.
     var predicate = """
     \(rootPredicate)
-      AND media_asset.pending_trash_batch_unix_ms IS NULL
-      AND media_asset.awaiting_presence = 0
-      AND media_asset.hidden_by_source = 0
+      AND \(CatalogVisibilitySQL.isPresent("media_asset"))
       AND NOT \(LivePhotoSQL.isPairedMotion("media_asset"))
     """
     if let importBatchUnixMs = scope.importBatchUnixMs {

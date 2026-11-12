@@ -51,6 +51,14 @@ final class MediaGridItem: NSCollectionViewItem {
         tileView?.setFaceOutlines(boxes)
     }
 
+    func setStackPresentation(_ presentation: TileStackPresentation) {
+        tileView?.setStackPresentation(presentation)
+    }
+
+    func hitTestsStackBadge(at pointInWindow: CGPoint) -> Bool {
+        tileView?.hitTestsStackBadge(at: pointInWindow) ?? false
+    }
+
     var isChoiceControlVisible: Bool {
         tileView?.isChoiceControlVisible ?? false
     }

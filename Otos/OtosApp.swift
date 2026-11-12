@@ -270,6 +270,19 @@ public struct OtosApp: App {
                 .keyboardShortcut("x", modifiers: [])
                 .disabled(!catalogViewModel.hasMediaChoiceTarget)
                 Divider()
+                // Lightroom Classic's stacking keys: S expands and collapses, ⇧S makes the
+                // chosen photo the key (ADR 0052).
+                Button(catalogViewModel.stackExpansionTitle) {
+                    catalogViewModel.toggleStackExpansion()
+                }
+                .keyboardShortcut("s", modifiers: [])
+                .disabled(!catalogViewModel.canToggleStackExpansion)
+                Button("Make Key Photo") {
+                    catalogViewModel.makeKeyPhoto()
+                }
+                .keyboardShortcut("s", modifiers: .shift)
+                .disabled(!catalogViewModel.canMakeKeyPhoto)
+                Divider()
                 // Lightroom desktop's keys: C for the crop tool, ⌘[ and ⌘] for quarter turns.
                 Button(catalogViewModel.isCropping ? "Done Cropping" : "Crop") {
                     catalogViewModel.toggleCropTool()

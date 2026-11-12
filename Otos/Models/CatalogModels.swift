@@ -1072,6 +1072,8 @@ nonisolated struct CatalogMediaGridState: Equatable {
     var orderedAssetIDs: [MediaAssetID]
     var dayBuckets: [Date?] = []
     var detailRefreshGeneration: UInt64 = 0
+    /// How `orderedAssetIDs` shows each stack it holds (ADR 0052).
+    var stacks: CatalogGridStacks = .empty
 
     var scope: SidebarSelection {
         descriptor.scope

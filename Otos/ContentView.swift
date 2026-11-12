@@ -86,7 +86,11 @@ struct ContentView: View {
                 originalActions: EditPanelOriginalActions(
                     toggleShowOriginal: viewModel.toggleShowOriginal,
                     revert: viewModel.revertToOriginal
-                )
+                ),
+                pair: viewModel.shownPair.flatMap { pair in
+                    viewModel.editTarget.map { (stack: pair, shown: $0.id) }
+                },
+                showPairMember: { viewModel.showPairMember($0) }
             )
         }
     }
@@ -677,6 +681,7 @@ struct ContentView: View {
                 onMediaChoice: { id, choice in
                     viewModel.submitMediaChoice(choice, target: .item(id), origin: .inline)
                 },
+                onStackBadge: { viewModel.toggleStack(shownBy: $0) },
                 contextMenu: viewModel.makeMediaItemContextMenu,
                 faceOutlines: viewModel.outlinedFaceBoxes,
                 focusTargetID: viewModel.focusedAssetID,
@@ -740,7 +745,9 @@ struct ContentView: View {
                 onVideoTrimmed: viewModel.finishTrim(id:),
                 showsOriginal: viewModel.loupeShowsOriginal,
                 canPlayLivePhoto: viewModel.canPlayLivePhoto,
-                onPlayLivePhoto: { viewModel.playLivePhoto() }
+                onPlayLivePhoto: { viewModel.playLivePhoto() },
+                shownPair: viewModel.shownPair,
+                onShowPairMember: { viewModel.showPairMember($0) }
             )
             .navigationTitle(viewModel.windowTitle)
         case .compare:

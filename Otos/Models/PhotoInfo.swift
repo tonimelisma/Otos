@@ -71,7 +71,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
             case .location: ["Coordinates", "Altitude"]
             case .file: [
                     "Kind", "Dimensions", "Size", "Folder", "Original",
-                    "Created", "Modified", "Imported", "Companions", "Edits",
+                    "Created", "Modified", "Imported", "Companions", "Edits", "Stack",
                 ]
             }
         }
@@ -136,7 +136,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
     var uprightSize: CGSize?
     /// What search recognised in the item; nil with no single item.
     var recognized: Recognized?
-    private let sectionRows: [SectionID: [Row]]
+    private var sectionRows: [SectionID: [Row]]
     private let sectionOrder: [SectionID]
 
     var sections: [Section] {
@@ -429,7 +429,23 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
             Row(label: "Imported", value: imported),
             Row(label: "Companions", value: companions),
             Row(label: "Edits", value: edits),
+            Row(label: "Stack", value: notApplicable),
         ]
+    }
+
+    /// The same facts, with the File section's `Stack` row naming every file of the stack
+    /// this photo is in (ADR 0052): `DSC01234.ARW, DSC01234.JPG`. The stack is the
+    /// projection's fact, not the file's, so the window adds it to what the Store read.
+    func withStack(_ stack: PhotoStack?) -> PhotoInfo {
+        guard let stack, var rows = sectionRows[.file],
+              let index = rows.firstIndex(where: { $0.label == "Stack" })
+        else {
+            return self
+        }
+        rows[index] = Row(label: "Stack", value: stack.members.map(\.relativePath.fileName).joined(separator: ", "))
+        var info = self
+        info.sectionRows[.file] = rows
+        return info
     }
 
     private static func kindText(id: MediaAssetID, kind: MediaKind?) -> String {

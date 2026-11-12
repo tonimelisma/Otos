@@ -401,6 +401,9 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
 nonisolated struct CatalogQueryRequest: Hashable {
     var descriptor: CatalogQueryDescriptor
     var generation: UInt64
+    /// The stacks the user expanded (ADR 0052). Not part of the descriptor: expanding one
+    /// changes no scope, so it never clears the selection or resets the browser place.
+    var expandedStacks: Set<PhotoStackID> = []
 
     static let initial = CatalogQueryRequest(descriptor: .default, generation: 0)
 }
@@ -469,16 +472,21 @@ nonisolated struct CatalogOrderedAssets: Equatable, Sendable {
     /// requires a location (`.places`, `.place`), where every row has one (ADR 0040).
     let coordinates: [PlaceCoordinate]
     let pendingIdentityRemaps: [CatalogIdentityRemapBatch]
+    /// Every stack in the scope's roots, read in the same transaction as the IDs (ADR
+    /// 0052). The IDs are the full order: collapsing is the projection's.
+    let stacks: CatalogStacks
 
     init(
         ids: [MediaAssetID],
         dayBuckets: [Date?],
         coordinates: [PlaceCoordinate] = [],
-        pendingIdentityRemaps: [CatalogIdentityRemapBatch]
+        pendingIdentityRemaps: [CatalogIdentityRemapBatch],
+        stacks: CatalogStacks = .empty
     ) {
         self.ids = ids
         self.dayBuckets = dayBuckets
         self.coordinates = coordinates
         self.pendingIdentityRemaps = pendingIdentityRemaps
+        self.stacks = stacks
     }
 }

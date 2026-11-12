@@ -702,6 +702,17 @@ nonisolated enum CatalogSchema {
         ]
     }
 
+    /// When the user made a file its stack's key (Make Key Photo, ADR 0052), as Unix
+    /// milliseconds; NULL when never. The stack itself is derived from names and kinds and
+    /// stored nowhere; this is the one fact about it the user authors, kept on the member it
+    /// names so a move carries it and a deletion purges it (ADR 0008). The latest choice among
+    /// a stack's members wins.
+    static let stackKeyMigrationIdentifier = "v32_stack_key_chosen"
+
+    static let stackKeyStatements: [String] = [
+        "ALTER TABLE media_asset ADD COLUMN stack_key_chosen_at_unix_ms INTEGER",
+    ]
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 
