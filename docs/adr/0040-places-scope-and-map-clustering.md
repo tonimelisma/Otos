@@ -100,7 +100,13 @@ Map view mode.
   show, then left. Cameras requested: on entry, centered on the located items' average location (circular
   mean of longitude) and reaching every item, so a clamp keeps the average in view
   and on a filter change, the last viewport on return from an area, a quarter-span zoom
-  on a stack that can still split, a step on View ▸ Zoom In / Out.
+  on a stack that can still split, a step on View ▸ Zoom In / Out. The map also
+  holds one camera limit of its own: MapKit bounds only the camera's center, so the
+  view bounds the center to the world's height less half the visible height,
+  recomputed on every camera frame, and the flat map never shows past the poles
+  (`MapClusterPolicy.cameraCenterBounds`; the satellite globe, the one MapKit view
+  that zooms out to the whole Earth, was rejected by the owner on 2026-11-13,
+  `docs/research/2026-11-13-mapkit-zoom-out-and-poles.md`).
 - **The map is not a view mode; the modes open its area.** While the map shows, the
   view-mode picker selects no segment, and choosing one — or ⌘1 / ⌘2 / ⌘3 — opens the
   visible area in that mode. Loupe and Compare start on the area's first items once it

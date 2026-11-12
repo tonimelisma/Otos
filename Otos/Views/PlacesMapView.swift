@@ -30,6 +30,9 @@ struct PlacesMapView: View {
     @State private var appliedCameraRevision: UInt64 = 0
     @State private var viewSize: CGSize = .zero
     @State private var settledRect: MKMapRect?
+    /// Where the camera's center may go: follows the visible height while the camera
+    /// moves, so the map stops at the poles at every zoom (`cameraCenterBounds`).
+    @State private var centerBounds = MapClusterPolicy.cameraCenterBounds(visibleHeight: 0)
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -47,7 +50,7 @@ struct PlacesMapView: View {
     }
 
     private var mapContent: some View {
-        Map(position: $camera, interactionModes: [.pan, .zoom]) {
+        Map(position: $camera, bounds: cameraBounds, interactionModes: [.pan, .zoom]) {
             ForEach(clusters) { cluster in
                 Annotation("", coordinate: cluster.clCoordinate, anchor: .center) {
                     MapClusterStackView(
@@ -86,6 +89,12 @@ struct PlacesMapView: View {
             viewSize = size
             reportViewport()
         }
+        // MapKit bounds only the camera's center, and how far the center may go depends
+        // on how tall the view is in map points, so the bound follows every frame of a
+        // zoom; a pan leaves the height, and so the bound, unchanged.
+        .onMapCameraChange(frequency: .continuous) { context in
+            centerBounds = MapClusterPolicy.cameraCenterBounds(visibleHeight: context.rect.size.height)
+        }
         .onMapCameraChange(frequency: .onEnd) { context in
             settledRect = context.rect
             reportViewport()
@@ -94,6 +103,15 @@ struct PlacesMapView: View {
             applyCameraRequest()
         }
         .accessibilityLabel("Map")
+    }
+
+    private var cameraBounds: MapCameraBounds {
+        MapCameraBounds(centerCoordinateBounds: MKMapRect(
+            x: centerBounds.originX,
+            y: centerBounds.originY,
+            width: centerBounds.width,
+            height: centerBounds.height
+        ))
     }
 
     private func reportViewport() {

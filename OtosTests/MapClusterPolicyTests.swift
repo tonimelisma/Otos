@@ -257,6 +257,29 @@ struct MapClusterPolicyTests {
         #expect(abs(zoomedOut.centerY - (city.originY + city.height / 2)) < 1)
     }
 
+    /// The map stops at its top and bottom edges: a center inside the bound keeps the
+    /// visible rect inside the world at every zoom, and a pan east or west is never held.
+    @Test func cameraCenterBoundsKeepTheViewInsideTheWorld() {
+        let world = MapClusterPolicy.worldMapPoints
+        for visibleHeight in [world / 1000, world / 4, world * 0.9] {
+            let bounds = MapClusterPolicy.cameraCenterBounds(visibleHeight: visibleHeight)
+
+            #expect(abs(bounds.originY - visibleHeight / 2) < 1)
+            #expect(abs((bounds.originY + bounds.height + visibleHeight / 2) - world) < 1)
+            #expect(bounds.originX <= -world)
+            #expect(bounds.originX + bounds.width >= 2 * world)
+        }
+    }
+
+    /// A view taller than the world can only sit at its middle.
+    @Test func cameraCenterBoundsForAViewTallerThanTheWorldIsItsMiddle() {
+        let world = MapClusterPolicy.worldMapPoints
+        let bounds = MapClusterPolicy.cameraCenterBounds(visibleHeight: world * 2)
+
+        #expect(bounds.height == 0)
+        #expect(abs(bounds.originY - world / 2) < 1)
+    }
+
     @Test func accessibilityLabelLeadsWithTheCountThenThePlace() {
         let stack = MapPlaceCluster(
             id: id("a.jpg"),

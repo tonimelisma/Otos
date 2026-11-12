@@ -68,7 +68,12 @@ count moves while enrichment finds locations; nothing else on the bar does.
 
 Standard style, following light and dark; points of interest excluded **[deviation
 DES-104]**; pan and zoom only; `MapZoomStepper` and `MapScaleView` as the only chrome.
-No user-location control and no permission prompt.
+No user-location control and no permission prompt. The map stops at its top and bottom
+edges at every zoom: the camera's center is bounded to the world's height less half the
+visible height, so no pan or zoom shows past the poles; east–west it wraps. Zoom-out
+stops where MapKit's flat map does; only its satellite globe shows the whole world, and
+the owner chose the standard map (2026-11-13,
+`docs/research/2026-11-13-mapkit-zoom-out-and-poles.md`).
 
 Camera: on entering Places, center on the located items' average location (the circular
 mean of longitude, so items either side of the antimeridian average to it) and reach the

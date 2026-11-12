@@ -212,6 +212,17 @@ nonisolated enum MapClusterPolicy {
         MapBounds(originX: viewport.originX, originY: viewport.originY, width: viewport.width, height: viewport.height)
     }
 
+    /// Where the camera's center may go so the map never shows past its top or bottom
+    /// edge: the world's height inset by half the visible height. MapKit bounds only the
+    /// center, so the bound narrows as the view shows more of the map. East–west is free:
+    /// the map wraps at the antimeridian, so the bound spans three worlds, and a center
+    /// past either edge of one is the same place on the next.
+    static func cameraCenterBounds(visibleHeight: Double) -> MapBounds {
+        let world = worldMapPoints
+        let inset = min(max(visibleHeight, 0), world) / 2
+        return MapBounds(originX: -world, originY: inset, width: 3 * world, height: world - 2 * inset)
+    }
+
     /// The box of the earth the viewport shows: what Grid, Loupe and Compare open on the
     /// map. Web Mercator maps longitude to x and latitude to y monotonically, so the
     /// viewport's rect is exactly a latitude/longitude box. A rect past the world's
