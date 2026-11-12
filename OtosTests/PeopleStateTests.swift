@@ -255,6 +255,30 @@ struct PeopleStateTests {
         #expect(FaceOutline.path([box], in: frame).boundingBox == CGRect(x: 30, y: 40, width: 40, height: 10))
     }
 
+    /// The loupe and compare place outlines through the edit their own decode shows, so they
+    /// need nothing the Info pane reads (DES-113): a decode carries the original's upright
+    /// size and its edit, and its shown size follows from them.
+    @Test func aPaneDecodePlacesOutlinesThroughItsOwnEdit() throws {
+        let box = CGRect(x: 0.1, y: 0.2, width: 0.2, height: 0.1)
+        var cropped = EditRecipe()
+        cropped.crop = EditCrop(left: 0, top: 0, width: 0.5, height: 1)
+        let image = try #require(CGContext(
+            data: nil, width: 4, height: 2, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )?.makeImage())
+        let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Lib"), relativePath: MediaRelativePath(rawValue: "a.jpg"))
+        let upright = CGSize(width: 400, height: 200)
+
+        let edited = PanePreview(id: id, image: image, uprightPixelSize: upright, editRecipe: cropped)
+        #expect(edited.faceOutlines([box]) == [FaceOutline.onEditedPhoto(box, recipe: cropped, upright: upright)].compactMap(\.self))
+        #expect(edited.nativePixelSize == cropped.outputSize(ofOriginal: upright))
+
+        let original = PanePreview(id: id, image: image, uprightPixelSize: upright)
+        #expect(original.faceOutlines([box]) == [box])
+        #expect(original.nativePixelSize == upright)
+        #expect(PanePreview(id: id, image: image, editRecipe: cropped).faceOutlines([box]).isEmpty)
+    }
+
     static func tile(_ path: String, index: Int = 0, at seconds: Double?) -> FaceTile {
         FaceTile(
             id: FaceID(asset: MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Lib"), relativePath: MediaRelativePath(rawValue: path)), index: index),

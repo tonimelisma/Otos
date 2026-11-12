@@ -103,23 +103,16 @@ struct MediaItemContextMenuTests {
 }
 
 extension MediaItemContextMenuTests {
-    /// DES-113: a person without a name is `Unnamed Person ▸`, opening with Add Name…, and
-    /// highlighting a face item outlines the faces it acts on — the group's, or for a This Is
-    /// choice the faces it would give — so two people the menu names alike are told apart.
-    /// Closing the menu clears the outline.
+    /// DES-113: an unnamed person's entry counts every photo of them and opens with `Name
+    /// This Person` over the people to merge them into and `New Name…`; highlighting a face
+    /// item outlines the faces it acts on, so two people the menu names alike are told
+    /// apart. Closing the menu clears the outline.
     @Test func highlightingAFaceItemOutlinesItsFaces() throws {
         let asset = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/P"), relativePath: MediaRelativePath(rawValue: "a.jpg"))
         let first = FaceID(asset: asset, index: 0)
         let second = FaceID(asset: asset, index: 1)
-        let unnamed = FaceMenu.Group(
-            title: "Unnamed Person", person: PersonID(rawValue: 1), name: nil, faces: [first],
-            choices: [.init(person: PersonID(rawValue: 2), title: "Sam", faces: [first])],
-            newPersonFaces: [first], keyPhoto: first
-        )
-        let other = FaceMenu.Group(
-            title: "Unnamed Person", person: PersonID(rawValue: 3), name: nil, faces: [second],
-            choices: [], newPersonFaces: [second], keyPhoto: second
-        )
+        let unnamed = Self.unnamedGroup(PersonID(rawValue: 1), face: first, photos: 14)
+        let other = Self.unnamedGroup(PersonID(rawValue: 3), face: second, photos: 3)
         var model = MediaItemMenuModel(
             openTitle: "Open", canOpen: true, openWithApplications: [], canOpenWith: false,
             shareItems: [URL(fileURLWithPath: "/P/a.jpg")], canReveal: true, canChoose: true, canTrash: true
@@ -129,11 +122,11 @@ extension MediaItemContextMenuTests {
         let menu = MediaItemContextMenu.make(model: model, perform: { _ in }, outline: { recorder.outlines.append($0) })
         let delegate = try #require(menu.delegate)
 
-        let groups = menu.items.filter { $0.title == "Unnamed Person" }
-        #expect(groups.count == 2)
+        let groups = menu.items.filter { $0.title.hasPrefix("Unnamed Person · ") }
+        #expect(groups.map(\.title) == ["Unnamed Person · 14 Photos", "Unnamed Person · 3 Photos"])
         let submenu = try #require(groups[0].submenu)
-        #expect(submenu.items.first?.title == "Add Name…")
-        #expect(submenu.items.contains { $0.title == "Wrong Person" })
+        #expect(submenu.items.map(\.title) == ["Name This Person", "Sam", "New Name…", "", "This Is Not a Face"])
+        #expect(submenu.items.first?.isSectionHeader == true)
 
         delegate.menu?(menu, willHighlight: groups[0])
         delegate.menu?(menu, willHighlight: groups[1])
@@ -143,6 +136,55 @@ extension MediaItemContextMenuTests {
         delegate.menu?(menu, willHighlight: groups[0])
         delegate.menuDidClose?(menu)
         #expect(recorder.outlines == [[first], [second], [first], [], [first], []])
+    }
+
+    /// In a person's photos their acts sit at the top level, the list a submenu named by the
+    /// words it completes; each item performs its own command.
+    @Test func aFlattenedGroupKeepsItsListInOneSubmenu() throws {
+        let asset = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/P"), relativePath: MediaRelativePath(rawValue: "a.jpg"))
+        let face = FaceID(asset: asset, index: 0)
+        let sam = PersonID(rawValue: 1)
+        let ian = PersonID(rawValue: 2)
+        let group = FaceMenu.Group(
+            kind: .named("Sam"), person: sam, faces: [face], tile: nil, photoCount: nil,
+            listTitle: FaceActTitle.changeTo,
+            list: [
+                .init(title: "Ian", command: .giveTo([face], ian), faces: [face]),
+                .init(title: FaceActTitle.someoneElse, command: .someoneElse([face]), faces: [face]),
+            ],
+            corrections: [
+                .init(title: "This Is Not Sam", command: .notPerson([face]), faces: [face]),
+                .init(title: FaceActTitle.notAFace, command: .notAFace([face]), faces: [face]),
+                .init(title: "Make Key Photo for Sam", command: .makeKeyPhoto(face, sam), faces: [face]),
+            ]
+        )
+        var model = MediaItemMenuModel(
+            openTitle: "Open", canOpen: true, openWithApplications: [], canOpenWith: false,
+            shareItems: [URL(fileURLWithPath: "/P/a.jpg")], canReveal: true, canChoose: true, canTrash: true
+        )
+        model.faces = FaceMenu(groups: [group], flattensFirst: true)
+        let recorder = CommandRecorder()
+        let menu = MediaItemContextMenu.make(model: model, perform: { recorder.commands.append($0) })
+
+        let changeTo = try #require(menu.items.first { $0.title == "Change to" })
+        #expect(changeTo.submenu?.items.map(\.title) == ["Ian", "Someone Else…"])
+        #expect(menu.items.contains { $0.title == "This Is Not Sam" })
+        #expect(menu.items.contains { $0.title == "Make Key Photo for Sam" })
+        let ianItem = try #require(changeTo.submenu?.items.first)
+        _ = ianItem.target?.perform(ianItem.action, with: ianItem)
+        #expect(recorder.commands == [.giveTo([face], ian)])
+    }
+
+    static func unnamedGroup(_ person: PersonID, face: FaceID, photos: Int) -> FaceMenu.Group {
+        FaceMenu.Group(
+            kind: .unnamed, person: person, faces: [face], tile: nil, photoCount: photos,
+            listTitle: FaceActTitle.nameThisPerson,
+            list: [
+                .init(title: "Sam", command: .nameAs(person, PersonID(rawValue: 2)), faces: [face]),
+                .init(title: FaceActTitle.newName, command: .addName(person), faces: [face]),
+            ],
+            corrections: [.init(title: FaceActTitle.notAFace, command: .notAFace([face]), faces: [face])]
+        )
     }
 }
 

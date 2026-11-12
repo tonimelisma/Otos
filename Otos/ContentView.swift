@@ -35,11 +35,10 @@ struct ContentView: View {
                 info: viewModel.photoInfo,
                 people: InfoPanePeople(
                     faces: viewModel.targetFaces,
-                    name: { viewModel.peopleIndex.givenName($0) },
-                    choices: { faces, except in viewModel.choices(for: faces, in: viewModel.targetFaces, except: except) },
+                    menu: viewModel.faceMenu(),
                     images: viewModel.faceTileImages,
                     derivedImageDirectory: viewModel.thumbnailDirectory,
-                    actions: viewModel.faceActions,
+                    perform: viewModel.performMediaItemCommand,
                     hover: viewModel.outlineFaces
                 )
             )
@@ -723,7 +722,6 @@ struct ContentView: View {
                 onZoomDoubleClick: { viewModel.toggleLoupeZoom(at: $0) },
                 isPickingNeutral: viewModel.isPickingNeutral,
                 onPickNeutral: viewModel.pickNeutral(at:),
-                faceOutlines: viewModel.faceOutlines(on: viewModel.focusedAssetID),
                 faceOutlineBoxes: viewModel.outlinedFaceBoxes,
                 cropEditor: viewModel.isCropping
                     ? viewModel.editCropBase.map { base in
@@ -778,7 +776,6 @@ struct ContentView: View {
                 activePane: viewModel.activeComparePane,
                 onPaneActivated: viewModel.activateComparePane,
                 contextMenu: viewModel.makeMediaItemContextMenu,
-                faceOutlines: { viewModel.faceOutlines(on: $0) },
                 faceOutlineBoxes: viewModel.outlinedFaceBoxes
             )
             .navigationTitle(viewModel.windowTitle)
@@ -837,7 +834,7 @@ private struct AllImportsListView: View {
     )
 }
 
-/// Presents the Person sheet the view model asks for: one person's, or a new person's.
+/// Presents the Person sheet the view model asks for: one person's, or faces' to name.
 private struct PersonSheetHost: ViewModifier {
     let viewModel: CatalogWindowViewModel
 
@@ -851,7 +848,9 @@ private struct PersonSheetHost: ViewModifier {
             }
         )) { request in
             PersonSheetView(
-                person: request.person.flatMap { viewModel.peopleIndex.summaries[$0] },
+                context: viewModel.personSheetContext(request),
+                images: viewModel.faceTileImages,
+                derivedImageDirectory: viewModel.thumbnailDirectory,
                 refusal: { name, birthday in viewModel.personSheetRefusal(request.subject, name: name, birthday: birthday) },
                 save: { name, birthday in viewModel.savePersonSheet(request.subject, name: name, birthday: birthday) },
                 cancel: viewModel.cancelPersonSheet

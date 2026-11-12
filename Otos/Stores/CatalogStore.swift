@@ -1220,7 +1220,7 @@ extension CatalogStore {
         let outcome = PeopleActOutcome(restore: applied.restore, person: applied.person, revision: peopleRevision)
         notifyCatalogChanged()
         OtosLog.catalog.noticeOperation("people.act", phase: "applied", fields: [
-            "act": act.undoName, "faces": "\(act.faceCount)", "revision": "\(outcome.revision)",
+            "act": act.logName, "faces": "\(act.faceCount)", "revision": "\(outcome.revision)",
         ])
         return outcome
     }

@@ -12,49 +12,75 @@ nonisolated enum MediaItemCommand: Equatable, Sendable {
     case revealInFinder
     case choice(MediaChoice)
     case moveToTrash
-    /// The faces are this person's (This Is ▸ a person; ADR 0047).
-    case thisIs([FaceID], PersonID)
-    /// The faces are one new person's (This Is ▸ New Person…).
-    case newPerson([FaceID])
-    /// The person without a name gets one (Add Name…, the Person sheet).
+    /// The faces are this person's, on the user's word (`Change to ▸` or `Assign to ▸` a
+    /// person; ADR 0047).
+    case giveTo([FaceID], PersonID)
+    /// The Person sheet for the faces: a name gives them to the person who has it, or to a
+    /// new person (`Someone Else…`).
+    case someoneElse([FaceID])
+    /// The unnamed person is the named one, every photo of them: a merge, asked first
+    /// (`Name This Person ▸` a person).
+    case nameAs(PersonID, PersonID)
+    /// The Person sheet names the person (`New Name…`, `Add Name…`).
     case addName(PersonID)
-    /// The faces are not their person (This Is Not Sam, or Wrong Person).
+    /// The faces are not their person (`This Is Not Sam`, `Not the Same Person`).
     case notPerson([FaceID])
-    /// The detections are not faces (This Is Not a Face).
+    /// The detections are not faces (`This Is Not a Face`).
     case notAFace([FaceID])
     case makeKeyPhoto(FaceID, PersonID)
 }
 
-/// The faces of the targeted photos, grouped by person, as the context menu offers them
-/// (`docs/design/people.md`). Each group's acts act on its faces.
+/// The faces of the targeted photos, as the photo menus and the Info pane offer them
+/// (DES-113, `docs/design/people.md`): one group per visible person, and the unidentified
+/// faces, each with the acts it offers already worded. The view model builds it once; the
+/// AppKit menu and the Info pane's SwiftUI menu render the same items, so their words and
+/// order cannot drift.
 nonisolated struct FaceMenu: Equatable, Sendable {
-    nonisolated struct Choice: Equatable, Sendable {
-        let person: PersonID
+    /// One menu item: its words, what it does, and the faces it outlines while highlighted.
+    nonisolated struct Action: Equatable, Sendable {
         let title: String
-        /// The faces This Is gives this person: the group's, or for unidentified faces the
-        /// one in each photo most like them.
+        let command: MediaItemCommand
         let faces: [FaceID]
+    }
+
+    nonisolated enum Kind: Equatable, Sendable {
+        case named(String)
+        case unnamed
+        case unidentified
     }
 
     nonisolated struct Group: Equatable, Sendable {
-        /// The person's name, `Unnamed Person`, or `Unidentified Face(s)`.
-        let title: String
+        let kind: Kind
         /// Nil for unidentified faces.
         let person: PersonID?
-        /// The person's name; nil for a person without one, who is offered Add Name…, and
-        /// for unidentified faces.
-        let name: String?
         let faces: [FaceID]
-        /// Most likely first, then everyone else the hard rules allow.
-        let choices: [Choice]
-        /// The faces New Person… gives a new person: at most one per photo.
-        let newPersonFaces: [FaceID]
-        /// Make Key Photo, with one photo targeted.
-        let keyPhoto: FaceID?
+        /// The first face's tile, which the Info pane's row shows.
+        let tile: FaceTile?
+        /// The photos the group's acts change, where that is worth saying: every photo of an
+        /// unnamed person, and the targeted photos holding the faces when there are several.
+        let photoCount: Int?
+        /// `Change to`, `Assign to` or `Name This Person`: the words the list completes.
+        let listTitle: String
+        /// The five people the faces most likely are, then `Someone Else…` or `New Name…`.
+        let list: [Action]
+        /// `This Is Not Sam` or `Not the Same Person`, `This Is Not a Face`, `Make Key
+        /// Photo for Sam`.
+        let corrections: [Action]
+
+        /// The group's entry: `Sam`, `Sam · 3 Photos`, `Unnamed Person · 14 Photos`,
+        /// `Unidentified Face`, `Unidentified Faces · 3 Photos`.
+        var title: String {
+            let base = switch kind {
+            case let .named(name): name
+            case .unnamed: PersonSummary.displayName(nil)
+            case .unidentified: faces.count == 1 ? "Unidentified Face" : "Unidentified Faces"
+            }
+            return photoCount.map { "\(base) · \(PeopleText.count($0, "Photo"))" } ?? base
+        }
     }
 
     let groups: [Group]
-    /// The filter shows one person: their group's acts sit at the menu's top level.
+    /// The browser shows one person's photos: their group's acts sit at the menu's top level.
     let flattensFirst: Bool
 }
 

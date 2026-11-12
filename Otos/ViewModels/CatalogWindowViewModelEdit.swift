@@ -408,7 +408,7 @@ extension CatalogWindowViewModel {
                 id: original.id,
                 image: original.image,
                 mediaChoice: pane?.id == original.id ? pane?.mediaChoice : nil,
-                nativePixelSize: editOriginalPixelSize,
+                uprightPixelSize: editOriginalPixelSize,
                 renderedRevision: 0
             )
         }
@@ -423,8 +423,8 @@ extension CatalogWindowViewModel {
             id: live.id,
             image: live.image,
             mediaChoice: matching?.mediaChoice,
-            nativePixelSize: editOriginalPixelSize.map { live.recipe.outputSize(ofOriginal: $0) }
-                ?? matching?.nativePixelSize,
+            uprightPixelSize: editOriginalPixelSize ?? matching?.uprightPixelSize,
+            editRecipe: live.recipe,
             renderedRevision: live.revision ?? matching?.renderedRevision ?? 0
         )
     }

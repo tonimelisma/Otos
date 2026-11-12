@@ -181,19 +181,34 @@ nonisolated enum FaceOutline {
 }
 
 /// The face acts' words, the same on the photo menus, the Info pane and the undo stack
-/// (DES-113, `docs/design/people.md`).
+/// (DES-113, `docs/design/people.md`). An act is a verb phrase, and a list of people sits
+/// under the words its items complete (HIG Menus: `Sort by ▸ Date`), so `Change to ▸ Sam`
+/// reads as the act it is.
 nonisolated enum FaceActTitle {
-    static let thisIs = "This Is"
-    static let newPerson = "New Person…"
+    /// A named person's faces, given to someone else.
+    static let changeTo = "Change to"
+    /// Unidentified faces, given a person.
+    static let assignTo = "Assign to"
+    static let someoneElse = "Someone Else…"
+    /// An unnamed person, named as a whole.
+    static let nameThisPerson = "Name This Person"
+    static let newName = "New Name…"
     static let addName = "Add Name…"
-    static let wrongPerson = "Wrong Person"
+    /// An unnamed person's faces, in that person's own photos, are not theirs.
+    static let notTheSamePerson = "Not the Same Person"
     static let notAFace = "This Is Not a Face"
-    static let makeKeyPhoto = "Make Key Photo"
 
-    /// `This Is Not Sam`. A person without a name is known only by the other photos Otos
-    /// put the face with, so for them the act says the grouping is wrong: `Wrong Person`.
-    static func notPerson(_ name: String?) -> String {
-        name.map { "This Is Not \($0)" } ?? wrongPerson
+    static func notPerson(_ name: String) -> String {
+        "This Is Not \(name)"
+    }
+
+    static func makeKeyPhoto(_ name: String) -> String {
+        "Make Key Photo for \(name)"
+    }
+
+    /// The undo stack's name for giving faces a person, or naming one: `Name 3 Photos`.
+    static func name(photos: Int) -> String {
+        "Name \(PeopleText.count(photos, "Photo"))"
     }
 }
 
@@ -305,7 +320,7 @@ nonisolated struct SelectionFaces: Equatable, Sendable {
             .map(\.person)
     }
 
-    /// Per photo, the unidentified face most like `person`: the face `This Is ▸` gives them
+    /// Per photo, the unidentified face most like `person`: the face `Assign to ▸` gives them
     /// in each photo that holds one. A photo whose unidentified faces are not ranked gives its
     /// first one.
     func unidentifiedFacesToName(as person: PersonID) -> [FaceID] {
@@ -324,11 +339,12 @@ nonisolated struct SelectionFaces: Equatable, Sendable {
 /// One act of the user's on faces or people. Each is one store transaction, undone by the
 /// `PeopleRestore` the store returns for it.
 nonisolated enum PeopleAct: Equatable, Sendable {
-    /// The faces become this person's, on the user's word (This Is ▸).
+    /// The faces become this person's, on the user's word (`Change to ▸`, `Assign to ▸`).
     case move([FaceID], to: PersonID)
-    /// The faces become one new person's, with this name (New Person…).
+    /// The faces become one new person's, with this name (`Someone Else…`).
     case moveToNewPerson([FaceID], name: String?)
-    /// The faces lose their person and are never given one by Otos again (Not Sam).
+    /// The faces lose their person and are never given one by Otos again (`This Is Not Sam`,
+    /// `Not the Same Person`).
     case removeName([FaceID])
     /// The detections are not faces (This Is Not a Face).
     case notAFace([FaceID])
@@ -341,18 +357,19 @@ nonisolated enum PeopleAct: Equatable, Sendable {
     /// The face is its person's key photo.
     case makeKeyPhoto(FaceID, of: PersonID)
 
-    /// The name the undo stack shows, as `Undo <name>`.
-    var undoName: String {
+    /// The act's name in the log. The undo stack names it in the user's words, decided by
+    /// the view model when the act is submitted (`FaceActTitle`).
+    var logName: String {
         switch self {
-        case .move: FaceActTitle.thisIs
-        case .moveToNewPerson: "New Person"
-        case .removeName: FaceActTitle.wrongPerson
-        case .notAFace: FaceActTitle.notAFace
-        case .edit: "Edit Person"
-        case .merge: "Merge"
-        case let .setHidden(_, hidden): hidden ? "Hide" : "Unhide"
-        case let .setFavorite(_, favorite): favorite ? "Add to Favorites" : "Remove from Favorites"
-        case .makeKeyPhoto: FaceActTitle.makeKeyPhoto
+        case .move: "move"
+        case .moveToNewPerson: "moveToNewPerson"
+        case .removeName: "removeName"
+        case .notAFace: "notAFace"
+        case .edit: "edit"
+        case .merge: "merge"
+        case .setHidden: "setHidden"
+        case .setFavorite: "setFavorite"
+        case .makeKeyPhoto: "makeKeyPhoto"
         }
     }
 

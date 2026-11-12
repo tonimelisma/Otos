@@ -13,12 +13,13 @@ import OSLog
 // performs the act again. Buttons, keys, menus, drags and VoiceOver actions all call the
 // intents below.
 
-/// Add Name…, Rename… or Set Birthday… on one person, or New Person… for faces.
+/// Add Name…, New Name…, Rename… or Set Birthday… on one person, or Someone Else… for faces.
 nonisolated struct PersonSheetRequest: Equatable, Sendable, Identifiable {
     nonisolated enum Subject: Equatable, Sendable {
         case person(PersonID)
-        /// The faces the new person is made with when the sheet is saved.
-        case newPerson([FaceID])
+        /// `Someone Else…`: the faces go to the person the sheet names, a new one when no
+        /// one has the name.
+        case faces([FaceID])
     }
 
     let subject: Subject
@@ -26,7 +27,7 @@ nonisolated struct PersonSheetRequest: Equatable, Sendable, Identifiable {
     var id: String {
         switch subject {
         case let .person(person): "person:\(person.rawValue)"
-        case let .newPerson(faces): "new:\(faces.count):\(faces.first.map { "\($0.asset.relativePath.rawValue)#\($0.index)" } ?? "")"
+        case let .faces(faces): "faces:\(faces.count):\(faces.first.map { "\($0.asset.relativePath.rawValue)#\($0.index)" } ?? "")"
         }
     }
 
@@ -36,6 +37,19 @@ nonisolated struct PersonSheetRequest: Equatable, Sendable, Identifiable {
         }
         return nil
     }
+}
+
+/// What the Person sheet shows: the person's name and birthday as they are (nil when naming
+/// faces), its title, the photos Save changes, up to eight of the faces being named, newest
+/// first, and the visible people's names it suggests as the user types.
+nonisolated struct PersonSheetContext: Equatable, Sendable {
+    static let faceCount = 8
+
+    let person: PersonSummary?
+    let title: String
+    let photoCount: Int
+    let faces: [FaceTile]
+    let names: [String]
 }
 
 /// The question a merge asks first (owner decision, 2026-11-10): a drop of one person on
@@ -63,7 +77,9 @@ struct PeopleSession: Equatable {
 
 /// A People act on its way to the store, or the undo of one; a redo is the act again.
 nonisolated enum PeopleIntent: Sendable {
-    case perform(PeopleAct)
+    /// `title` is the act's name on the undo stack, decided when the act is submitted, from
+    /// the state it changes (`undoTitle(for:)`).
+    case perform(PeopleAct, title: String)
     case restore(PeopleRestore, act: PeopleAct)
 }
 
@@ -313,6 +329,38 @@ extension CatalogWindowViewModel {
         peopleSession.sheet = PersonSheetRequest(subject: .person(person))
     }
 
+    /// What the Person sheet shows for `request`: who is being named and how many photos
+    /// Save changes, a row of their faces, and the names it suggests (DES-113).
+    func personSheetContext(_ request: PersonSheetRequest) -> PersonSheetContext {
+        let names = (state.people?.visiblePeople ?? []).compactMap(\.name)
+        switch request.subject {
+        case let .person(person):
+            let summary = peopleIndex.summaries[person]
+            let faces = (state.people?.photoFaces.values.flatMap(\.self) ?? [])
+                .filter { $0.person == person }
+                .map(\.tile)
+                .sorted { ($0.captureSeconds ?? -.infinity) > ($1.captureSeconds ?? -.infinity) }
+            return PersonSheetContext(
+                person: summary,
+                title: summary?.name ?? FaceActTitle.nameThisPerson,
+                photoCount: summary?.photoCount ?? Set(faces.map(\.id.asset)).count,
+                faces: Array(faces.prefix(PersonSheetContext.faceCount)),
+                names: names.filter { $0 != summary?.name }
+            )
+        case let .faces(ids):
+            let tiles = ids.compactMap { id in
+                state.people?.photoFaces[id.asset]?.first { $0.id == id }?.tile
+            }
+            return PersonSheetContext(
+                person: nil,
+                title: ids.count == 1 ? "Name This Face" : "Name These Faces",
+                photoCount: Set(ids.map(\.asset)).count,
+                faces: Array(tiles.prefix(PersonSheetContext.faceCount)),
+                names: names
+            )
+        }
+    }
+
     func cancelPersonSheet() {
         peopleSession.sheet = nil
     }
@@ -322,7 +370,7 @@ extension CatalogWindowViewModel {
     }
 
     /// The sheet's Save. A name another person has asks whether they are the same person;
-    /// for New Person… it gives the faces to that person.
+    /// for `Someone Else…` it gives the faces to that person.
     func savePersonSheet(_ subject: PersonSheetRequest.Subject, name: String, birthday: String?) {
         guard personSheetRefusal(subject, name: name, birthday: birthday) == nil else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -336,7 +384,7 @@ extension CatalogWindowViewModel {
             }
             guard trimmed != summary.name || birthday != summary.birthday else { return }
             submitPeopleAct(.edit(person, name: trimmed, birthday: birthday))
-        case let .newPerson(faces):
+        case let .faces(faces):
             if let holder = peopleIndex.person(named: trimmed) {
                 submitPeopleAct(.move(faces, to: holder))
             } else {
@@ -428,42 +476,39 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// The people `faces` may be given, most likely first, then everyone else in gallery
-    /// order: the visible people with a name, since several unnamed ones would read alike
-    /// (an unnamed person is named first, in the gallery); people the hard rules forbid for
-    /// the faces are left out, and so is `except`.
-    func choices(for faces: [PhotoFace], in selection: SelectionFaces, except: PersonID?) -> [PersonSummary] {
-        let visible = (state.people?.visiblePeople ?? []).filter { $0.name != nil }
-        let likely = selection.likelyPeople(for: faces)
-        let rank = Dictionary(uniqueKeysWithValues: likely.enumerated().map { ($1, $0) })
-        return visible
-            .filter { $0.id != except && peopleIndex.moveRefusal(faces, to: $0.id) == nil }
+    /// How many people a face list offers before `Someone Else…` or `New Name…` (HIG: about
+    /// five items in a submenu).
+    static let faceListLength = 5
+
+    /// The people a face list offers for `faces`: the five they most likely are, most likely
+    /// first, filled in gallery order. Only visible people with a name, since several unnamed
+    /// ones would read alike, and only those `allowed` keeps: the hard rules of the act.
+    func likelyPeople(for faces: [PhotoFace], in selection: SelectionFaces, allowed: (PersonID) -> Bool) -> [PersonSummary] {
+        let rank = Dictionary(uniqueKeysWithValues: selection.likelyPeople(for: faces).enumerated().map { ($1, $0) })
+        return (state.people?.visiblePeople ?? [])
+            .filter { $0.name != nil && allowed($0.id) }
             .enumerated()
             .sorted { lhs, rhs in
                 (rank[lhs.element.id] ?? Int.max, lhs.offset) < (rank[rhs.element.id] ?? Int.max, rhs.offset)
             }
+            .prefix(Self.faceListLength)
             .map(\.element)
     }
 
-    /// This Is ▸ a person, on faces: on the user's word, they are that person's.
+    /// `Change to ▸` or `Assign to ▸` a person: on the user's word, the faces are theirs.
     func nameFaces(_ faces: [FaceID], as person: PersonID) {
         guard !faces.isEmpty else { return }
         submitPeopleAct(.move(faces, to: person))
     }
 
-    /// This Is ▸ a person, on the unidentified faces of the targeted photos: in each photo,
-    /// the face most like them.
-    func nameUnidentifiedFaces(as person: PersonID) {
-        nameFaces(targetFaces.unidentifiedFacesToName(as: person), as: person)
-    }
-
-    /// This Is ▸ New Person…: the sheet names the person, then the faces are theirs.
-    func beginNewPerson(_ faces: [FaceID]) {
+    /// `Someone Else…`: the sheet names the faces, then they are that person's.
+    func beginNamingFaces(_ faces: [FaceID]) {
         guard !faces.isEmpty else { return }
-        peopleSession.sheet = PersonSheetRequest(subject: .newPerson(faces))
+        peopleSession.sheet = PersonSheetRequest(subject: .faces(faces))
     }
 
-    /// Not Sam: the faces lose their person, and Otos never gives them one again.
+    /// `This Is Not Sam`, `Not the Same Person`: the faces lose their person, and Otos never
+    /// gives them one again.
     func removeNames(_ faces: [FaceID]) {
         guard !faces.isEmpty else { return }
         submitPeopleAct(.removeName(faces))
@@ -481,11 +526,42 @@ extension CatalogWindowViewModel {
     // MARK: - Delivery
 
     /// Hands an act to the one consumer.
-    private func submitPeopleAct(_ act: PeopleAct) {
+    private func submitPeopleAct(_ act: PeopleAct, title: String? = nil) {
+        let title = title ?? undoTitle(for: act)
         OtosLog.ui.noticeOperation("people.act", phase: "submit", fields: [
-            "act": act.undoName, "faces": "\(act.faceCount)",
+            "act": act.logName, "faces": "\(act.faceCount)",
         ])
-        submitPeopleIntent(.perform(act))
+        submitPeopleIntent(.perform(act, title: title))
+    }
+
+    /// The act's name on the undo stack, in the words of the item that made it and the
+    /// photos it changes (`docs/design/people.md` Undo). Read before the act, from the state
+    /// it changes: the person a face is losing, the photos of a person being named.
+    func undoTitle(for act: PeopleAct) -> String {
+        switch act {
+        case let .move(faces, _), let .moveToNewPerson(faces, _):
+            return FaceActTitle.name(photos: Set(faces.map(\.asset)).count)
+        case let .removeName(faces):
+            let person = faces.first.flatMap { face in
+                state.people?.photoFaces[face.asset]?.first { $0.id == face }?.person
+            }
+            return person.flatMap(peopleIndex.givenName).map(FaceActTitle.notPerson) ?? FaceActTitle.notTheSamePerson
+        case .notAFace:
+            return FaceActTitle.notAFace
+        case let .edit(person, name, _):
+            if let summary = peopleIndex.summaries[person], summary.name == nil, name != nil {
+                return FaceActTitle.name(photos: summary.photoCount)
+            }
+            return "Edit Person"
+        case .merge:
+            return "Merge"
+        case let .setHidden(_, hidden):
+            return hidden ? "Hide" : "Unhide"
+        case let .setFavorite(_, favorite):
+            return favorite ? "Add to Favorites" : "Remove from Favorites"
+        case let .makeKeyPhoto(_, person):
+            return FaceActTitle.makeKeyPhoto(peopleIndex.name(person))
+        }
     }
 
     private func submitPeopleIntent(_ intent: PeopleIntent) {
@@ -508,22 +584,22 @@ extension CatalogWindowViewModel {
         peopleIntentTask = Task { [weak self, store] in
             for await intent in intents {
                 switch intent {
-                case let .perform(act):
+                case let .perform(act, title):
                     do {
                         let outcome = try await store.perform(act)
-                        self?.didPerformPeopleAct(act, outcome: outcome)
+                        self?.didPerformPeopleAct(act, title: title, outcome: outcome)
                     } catch {
                         OtosLog.ui.errorOperation("people.act", phase: "refused", fields: [
-                            "act": act.undoName, "faces": "\(act.faceCount)", "error": String(describing: error),
+                            "act": act.logName, "faces": "\(act.faceCount)", "error": String(describing: error),
                         ])
                     }
                 case let .restore(record, act):
                     do {
                         try await store.restore(record)
-                        OtosLog.ui.noticeOperation("people.act", phase: "undone", fields: ["act": act.undoName])
+                        OtosLog.ui.noticeOperation("people.act", phase: "undone", fields: ["act": act.logName])
                     } catch {
                         OtosLog.ui.errorOperation("people.act", phase: "undoFailed", fields: [
-                            "act": act.undoName, "error": String(describing: error),
+                            "act": act.logName, "error": String(describing: error),
                         ])
                     }
                 }
@@ -535,23 +611,23 @@ extension CatalogWindowViewModel {
     }
 
     /// Registers the act's undo.
-    private func didPerformPeopleAct(_ act: PeopleAct, outcome: PeopleActOutcome) {
+    private func didPerformPeopleAct(_ act: PeopleAct, title: String, outcome: PeopleActOutcome) {
         windowUndoManager.beginUndoGrouping()
         windowUndoManager.registerUndo(withTarget: self) { model in
-            model.undoPeopleAct(act, restore: outcome.restore)
+            model.undoPeopleAct(act, title: title, restore: outcome.restore)
         }
-        windowUndoManager.setActionName(act.undoName)
+        windowUndoManager.setActionName(title)
         windowUndoManager.endUndoGrouping()
         publishUndoState()
     }
 
     /// Runs inside `UndoManager.undo()`: files the redo synchronously — the act again — then
     /// writes back what the act changed.
-    private func undoPeopleAct(_ act: PeopleAct, restore: PeopleRestore) {
+    private func undoPeopleAct(_ act: PeopleAct, title: String, restore: PeopleRestore) {
         windowUndoManager.registerUndo(withTarget: self) { model in
-            model.submitPeopleAct(act)
+            model.submitPeopleAct(act, title: title)
         }
-        windowUndoManager.setActionName(act.undoName)
+        windowUndoManager.setActionName(title)
         submitPeopleIntent(.restore(restore, act: act))
     }
 
@@ -571,7 +647,8 @@ extension CatalogWindowViewModel {
     }
 
     /// The outlined faces' boxes, by photo, as fractions of the upright photo from its
-    /// top-left corner. A grid tile places them on its own edited thumbnail.
+    /// top-left corner. Each surface places them on the picture it shows: a grid tile on
+    /// its edited thumbnail, the loupe and compare panes through their decode's edit.
     var outlinedFaceBoxes: [MediaAssetID: [CGRect]] {
         guard !outlinedFaces.isEmpty, let photoFaces = state.people?.photoFaces else { return [:] }
         var boxes: [MediaAssetID: [CGRect]] = [:]
@@ -581,13 +658,6 @@ extension CatalogWindowViewModel {
             }
         }
         return boxes
-    }
-
-    /// The outlines on the loupe's or the active compare pane's photo, as fractions of the
-    /// edited photo (`FaceOutline`); empty unless Info has read that photo's edit.
-    func faceOutlines(on asset: MediaAssetID?) -> [CGRect] {
-        guard let asset, let boxes = outlinedFaceBoxes[asset], let info = photoInfo, info.id == asset else { return [] }
-        return boxes.compactMap { FaceOutline.onEditedPhoto($0, recipe: info.editRecipe, upright: info.uprightSize) }
     }
 
     // MARK: - The People filter
@@ -630,19 +700,6 @@ extension CatalogWindowViewModel {
             setHidden: { [weak self] person, hidden in self?.setHidden(person, hidden) }
         )
     }
-
-    /// The Info pane's and the photo menus' face acts.
-    var faceActions: FaceActions {
-        FaceActions(
-            name: { [weak self] faces, person in self?.nameFaces(faces, as: person) },
-            nameUnidentified: { [weak self] person in self?.nameUnidentifiedFaces(as: person) },
-            newPerson: { [weak self] faces in self?.beginNewPerson(faces) },
-            addName: { [weak self] person in self?.beginEditingPerson(person) },
-            removeNames: { [weak self] faces in self?.removeNames(faces) },
-            notFaces: { [weak self] faces in self?.markNotFaces(faces) },
-            makeKeyPhoto: { [weak self] face, person in self?.makeKeyPhoto(face, of: person) }
-        )
-    }
 }
 
 /// The People gallery's intents, as values the passive views call.
@@ -656,15 +713,4 @@ struct PeopleActions {
     let answerMerge: (Bool) -> Void
     let setFavorite: (PersonID, Bool) -> Void
     let setHidden: (PersonID, Bool) -> Void
-}
-
-/// The face acts, as values the passive views call.
-struct FaceActions {
-    let name: ([FaceID], PersonID) -> Void
-    let nameUnidentified: (PersonID) -> Void
-    let newPerson: ([FaceID]) -> Void
-    let addName: (PersonID) -> Void
-    let removeNames: ([FaceID]) -> Void
-    let notFaces: ([FaceID]) -> Void
-    let makeKeyPhoto: (FaceID, PersonID) -> Void
 }

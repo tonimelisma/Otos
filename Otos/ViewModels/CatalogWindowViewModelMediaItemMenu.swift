@@ -42,9 +42,11 @@ extension CatalogWindowViewModel {
         return model
     }
 
-    /// The targets' faces as the context menu groups them: each visible person's in the
-    /// order their faces come, then the unidentified ones. In a person's photos, their
-    /// group comes first and sits at the top level.
+    /// The targets' faces as the photo menus and the Info pane offer them (DES-113): each
+    /// visible person's in the order their faces come, then the unidentified ones — one
+    /// group per face in one photo, and across several photos one group only when no photo
+    /// holds more than one, so every act means the faces it names. In a person's photos,
+    /// their group comes first and sits at the top level.
     func faceMenu() -> FaceMenu? {
         let selection = targetFaces
         guard !selection.faces.isEmpty else { return nil }
@@ -54,37 +56,79 @@ extension CatalogWindowViewModel {
             people.remove(at: index)
             people.insert(single, at: 0)
         }
-        let onePhoto = selection.photos.count == 1
-        var groups = people.map { person -> FaceMenu.Group in
-            let faces = selection.faces(of: person)
-            let ids = faces.map(\.id)
-            return FaceMenu.Group(
-                title: peopleIndex.name(person),
-                person: person,
-                name: peopleIndex.givenName(person),
-                faces: ids,
-                choices: choices(for: faces, in: selection, except: person).map { .init(person: $0.id, title: $0.displayName, faces: ids) },
-                newPersonFaces: ids,
-                keyPhoto: onePhoto ? ids.first : nil
-            )
+        let severalPhotos = selection.photos.count > 1
+        var groups = people.map { person in
+            personGroup(person, faces: selection.faces(of: person), in: selection, severalPhotos: severalPhotos, ownPhotos: single == person)
         }
         let unidentified = selection.unidentified
-        if !unidentified.isEmpty {
-            var seen: Set<MediaAssetID> = []
-            let onePerPhoto = unidentified.filter { seen.insert($0.id.asset).inserted }
-            groups.append(FaceMenu.Group(
-                title: unidentified.count == 1 ? "Unidentified Face" : "Unidentified Faces",
-                person: nil,
-                name: nil,
-                faces: unidentified.map(\.id),
-                choices: choices(for: onePerPhoto, in: selection, except: nil).map { person in
-                    .init(person: person.id, title: person.displayName, faces: selection.unidentifiedFacesToName(as: person.id))
-                },
-                newPersonFaces: onePerPhoto.map(\.id),
-                keyPhoto: nil
-            ))
+        if !severalPhotos {
+            groups += unidentified.map { unidentifiedGroup([$0], in: selection, photoCount: nil) }
+        } else if !unidentified.isEmpty, Set(unidentified.map(\.id.asset)).count == unidentified.count {
+            groups.append(unidentifiedGroup(unidentified, in: selection, photoCount: unidentified.count))
         }
         return FaceMenu(groups: groups, flattensFirst: single != nil && people.first == single)
+    }
+
+    private func personGroup(
+        _ person: PersonID,
+        faces: [PhotoFace],
+        in selection: SelectionFaces,
+        severalPhotos: Bool,
+        ownPhotos: Bool
+    ) -> FaceMenu.Group {
+        let ids = faces.map(\.id)
+        let notAFace = FaceMenu.Action(title: FaceActTitle.notAFace, command: .notAFace(ids), faces: ids)
+        guard let name = peopleIndex.givenName(person) else {
+            // An unnamed person is named as a whole: the list merges them into the person
+            // chosen, and the count is every photo of them.
+            let list = likelyPeople(for: faces, in: selection) { peopleIndex.mergeRefusal(person, into: $0) == nil }
+                .map { FaceMenu.Action(title: $0.displayName, command: .nameAs(person, $0.id), faces: ids) }
+            var corrections = [notAFace]
+            if ownPhotos {
+                corrections.insert(FaceMenu.Action(title: FaceActTitle.notTheSamePerson, command: .notPerson(ids), faces: ids), at: 0)
+            }
+            return FaceMenu.Group(
+                kind: .unnamed, person: person, faces: ids, tile: faces.first?.tile,
+                photoCount: peopleIndex.summaries[person]?.photoCount ?? Set(ids.map(\.asset)).count,
+                listTitle: FaceActTitle.nameThisPerson,
+                list: list + [FaceMenu.Action(title: FaceActTitle.newName, command: .addName(person), faces: ids)],
+                corrections: corrections
+            )
+        }
+        let list = likelyPeople(for: faces, in: selection) { $0 != person && peopleIndex.moveRefusal(faces, to: $0) == nil }
+            .map { FaceMenu.Action(title: $0.displayName, command: .giveTo(ids, $0.id), faces: ids) }
+        var corrections = [
+            FaceMenu.Action(title: FaceActTitle.notPerson(name), command: .notPerson(ids), faces: ids),
+            notAFace,
+        ]
+        if !severalPhotos, let face = ids.first {
+            corrections.append(FaceMenu.Action(title: FaceActTitle.makeKeyPhoto(name), command: .makeKeyPhoto(face, person), faces: [face]))
+        }
+        return FaceMenu.Group(
+            kind: .named(name), person: person, faces: ids, tile: faces.first?.tile,
+            photoCount: severalPhotos ? Set(ids.map(\.asset)).count : nil,
+            listTitle: FaceActTitle.changeTo,
+            list: list + [FaceMenu.Action(title: FaceActTitle.someoneElse, command: .someoneElse(ids), faces: ids)],
+            corrections: corrections
+        )
+    }
+
+    /// Unidentified faces, at most one per photo: `Assign to` gives each person, in each
+    /// photo, the face most like them.
+    private func unidentifiedGroup(_ faces: [PhotoFace], in selection: SelectionFaces, photoCount: Int?) -> FaceMenu.Group {
+        let ids = faces.map(\.id)
+        let list = likelyPeople(for: faces, in: selection) { peopleIndex.moveRefusal(faces, to: $0) == nil }
+            .map { person in
+                let given = faces.count == 1 ? ids : selection.unidentifiedFacesToName(as: person.id)
+                return FaceMenu.Action(title: person.displayName, command: .giveTo(given, person.id), faces: given)
+            }
+        return FaceMenu.Group(
+            kind: .unidentified, person: nil, faces: ids, tile: faces.first?.tile,
+            photoCount: photoCount,
+            listTitle: FaceActTitle.assignTo,
+            list: list + [FaceMenu.Action(title: FaceActTitle.someoneElse, command: .someoneElse(ids), faces: ids)],
+            corrections: [FaceMenu.Action(title: FaceActTitle.notAFace, command: .notAFace(ids), faces: ids)]
+        )
     }
 
     /// The `NSMenu` for the current targets; grid, filmstrip, loupe and compare all
@@ -120,10 +164,12 @@ extension CatalogWindowViewModel {
             submitMediaChoice(choice, origin: .contextMenu)
         case .moveToTrash:
             moveTargetedMediaToTrash()
-        case let .thisIs(faces, person):
+        case let .giveTo(faces, person):
             nameFaces(faces, as: person)
-        case let .newPerson(faces):
-            beginNewPerson(faces)
+        case let .someoneElse(faces):
+            beginNamingFaces(faces)
+        case let .nameAs(person, named):
+            askMerge(person, into: named)
         case let .addName(person):
             beginEditingPerson(person)
         case let .notPerson(faces):

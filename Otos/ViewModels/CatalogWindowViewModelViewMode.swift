@@ -459,11 +459,8 @@ extension CatalogWindowViewModel {
                         id: id,
                         image: image,
                         mediaChoice: detail?.mediaChoice,
-                        // The decode reports the original's size; the edited photo's is
-                        // what its geometry makes of it (ADR 0036).
-                        nativePixelSize: nativePixelSize.map { size in
-                            detail?.editRecipe.map { $0.outputSize(ofOriginal: size) } ?? size
-                        },
+                        uprightPixelSize: nativePixelSize,
+                        editRecipe: detail?.editRecipe,
                         renderedRevision: detail?.renderedRevision ?? 0
                     )
                     if slot == .loupe {

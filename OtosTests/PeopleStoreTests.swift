@@ -221,11 +221,11 @@ struct PeopleStoreTests {
         ] {
             let outcome = try await library.store.perform(act)
             let after = try await state()
-            #expect(after != before, "\(act.undoName) changed nothing")
+            #expect(after != before, "\(act.logName) changed nothing")
             let redo = try await library.store.restore(outcome.restore)
-            #expect(try await state() == before, "undoing \(act.undoName)")
+            #expect(try await state() == before, "undoing \(act.logName)")
             try await library.store.restore(redo)
-            #expect(try await state() == after, "redoing \(act.undoName)")
+            #expect(try await state() == after, "redoing \(act.logName)")
             try await library.store.restore(outcome.restore)
         }
         await library.store.shutdown()

@@ -400,7 +400,8 @@ extension CatalogWindowViewModel {
                 id: preview.id,
                 image: preview.image,
                 mediaChoice: choice,
-                nativePixelSize: preview.nativePixelSize,
+                uprightPixelSize: preview.uprightPixelSize,
+                editRecipe: preview.editRecipe,
                 renderedRevision: preview.renderedRevision
             )
         }

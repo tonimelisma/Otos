@@ -159,9 +159,10 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
-    /// The photo menu groups the targets' faces by person: Sam's face (guessed in b.jpg)
-    /// with everyone else to move it to, then the unidentified face, with Sam among the
-    /// people it may be. In her photos, her group sits at the top level.
+    /// The photo menu groups the targets' faces by person (DES-113): Sam's face (guessed in
+    /// b.jpg) under `Change to` with everyone else to move it to, then the unidentified face
+    /// under `Assign to`, with Sam among the people it may be. In her photos, her group sits
+    /// at the top level.
     @Test func thePhotoMenuGroupsTheTargetsFacesByPerson() async throws {
         let fixture = try await Fixture.make(in: makeTestDirectory())
         let ian = try #require(try await fixture.store.perform(.moveToNewPerson([], name: "Ian")).person)
@@ -174,10 +175,15 @@ struct PeopleViewModelTests {
         let menu = try #require(fixture.model.faceMenu())
         #expect(menu.groups.map(\.title) == ["Sam", "Unidentified Face"])
         #expect(menu.groups[0].faces == [fixture.like])
-        #expect(menu.groups[0].choices.map(\.person) == [ian])
-        #expect(menu.groups[0].keyPhoto == fixture.like)
-        #expect(menu.groups.map(\.name) == ["Sam", nil])
-        #expect(Set(menu.groups[1].choices.map(\.person)) == [fixture.sam, ian])
+        #expect(menu.groups[0].listTitle == "Change to")
+        #expect(menu.groups[0].list.map(\.title) == ["Ian", "Someone Else…"])
+        #expect(menu.groups[0].list.map(\.command) == [.giveTo([fixture.like], ian), .someoneElse([fixture.like])])
+        #expect(menu.groups[0].corrections.map(\.title) == ["This Is Not Sam", "This Is Not a Face", "Make Key Photo for Sam"])
+        #expect(menu.groups[0].corrections.last?.command == .makeKeyPhoto(fixture.like, fixture.sam))
+        #expect(menu.groups[1].listTitle == "Assign to")
+        #expect(Set(menu.groups[1].list.map(\.title)) == ["Sam", "Ian", "Someone Else…"])
+        #expect(menu.groups[1].list.last?.title == "Someone Else…")
+        #expect(menu.groups[1].corrections.map(\.title) == ["This Is Not a Face"])
         #expect(!menu.flattensFirst)
 
         // In Sam's photos her group flattens; a filter on her elsewhere does not.
@@ -192,20 +198,94 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
-    /// A person without a name is `Unnamed Person` in the photo menu, never offered a name
-    /// to deny, and Add Name… opens the Person sheet for them.
-    @Test func anUnnamedPersonIsOfferedAName() async throws {
+    /// A person without a name is named as a whole (DES-113): their entry counts every photo
+    /// of them, `Name This Person` offers the named people to merge them into and `New Name…`,
+    /// and nothing asks to correct a grouping the user cannot see — except in their own
+    /// photos, which offer `Not the Same Person`. They get no key photo.
+    @Test func anUnnamedPersonIsNamedAsAWhole() async throws {
         let fixture = try await Fixture.make(in: makeTestDirectory())
         let unnamed = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
         let photo = fixture.stranger.asset
-        try await fixture.show(fixture.people(), scope: .allMedia, grid: [photo])
+        let people = try await fixture.people()
+        fixture.show(people, scope: .allMedia, grid: [photo])
         fixture.model.selectAssets([photo])
 
         let group = try #require(fixture.model.faceMenu()?.groups.first { $0.person == unnamed })
-        #expect(group.title == "Unnamed Person")
-        #expect(group.name == nil)
+        #expect(group.title == "Unnamed Person · 1 Photo")
+        #expect(group.kind == .unnamed)
+        #expect(group.listTitle == "Name This Person")
+        #expect(group.list.map(\.command) == [.nameAs(unnamed, fixture.sam), .addName(unnamed)])
+        #expect(group.list.map(\.title) == ["Sam", "New Name…"])
+        #expect(group.corrections.map(\.title) == ["This Is Not a Face"])
+
+        fixture.model.performMediaItemCommand(.nameAs(unnamed, fixture.sam))
+        #expect(fixture.model.peopleSession.mergeQuestion == PeopleMergeQuestion(from: unnamed, into: fixture.sam))
+        fixture.model.answerMerge(false)
         fixture.model.performMediaItemCommand(.addName(unnamed))
         #expect(fixture.model.peopleSession.sheet?.subject == .person(unnamed))
+        fixture.model.cancelPersonSheet()
+
+        fixture.model.openPerson(unnamed)
+        fixture.show(people, scope: .person(unnamed), grid: [photo])
+        fixture.model.selectAssets([photo])
+        let own = try #require(fixture.model.faceMenu())
+        #expect(own.flattensFirst)
+        #expect(own.groups[0].corrections.map(\.title) == ["Not the Same Person", "This Is Not a Face"])
+        await fixture.store.shutdown()
+    }
+
+    /// With several photos, an entry counts the photos it changes, and Make Key Photo is
+    /// gone. Unidentified faces are offered only while no photo holds more than one, so no
+    /// act has to pick a face; with one photo, each unidentified face is its own entry.
+    @Test func severalPhotosCountAndOfferOnlyUnambiguousFaces() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let first = fixture.hers.asset
+        let second = fixture.like.asset
+        try await fixture.show(fixture.people(), scope: .allMedia, grid: [first, second])
+        fixture.model.selectAssets([first, second])
+
+        let menu = try #require(fixture.model.faceMenu())
+        #expect(menu.groups.map(\.title) == ["Sam · 2 Photos", "Unidentified Face · 1 Photo"])
+        #expect(!menu.groups[0].corrections.contains { $0.title.hasPrefix("Make Key Photo") })
+
+        // b.jpg's faces are each not Sam: assignment gives her the other face once one is
+        // held, so both are held, and b.jpg holds two unidentified faces.
+        _ = try await fixture.store.perform(.removeName([fixture.like]))
+        _ = try await fixture.people()
+        _ = try await fixture.store.perform(.removeName([fixture.stranger]))
+        try await fixture.show(fixture.people(), scope: .allMedia, grid: [first, second])
+        #expect(try await fixture.assignment(of: fixture.like) == .held)
+        #expect(try await fixture.assignment(of: fixture.stranger) == .held)
+        fixture.model.selectAssets([first, second])
+        #expect(fixture.model.faceMenu()?.groups.map(\.title) == ["Sam · 1 Photo"])
+        fixture.model.selectAssets([second])
+        let one = try #require(fixture.model.faceMenu())
+        #expect(one.groups.map(\.title) == ["Unidentified Face", "Unidentified Face"])
+        #expect(one.groups.map(\.faces) == [[fixture.like], [fixture.stranger]])
+        await fixture.store.shutdown()
+    }
+
+    /// The Person sheet says who it names and how many photos Save changes, and suggests the
+    /// people who already have a name.
+    @Test func thePersonSheetSaysWhoAndHowMany() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let unnamed = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
+        try await fixture.show(fixture.people(), scope: .allMedia)
+
+        let person = fixture.model.personSheetContext(PersonSheetRequest(subject: .person(unnamed)))
+        #expect(person.title == "Name This Person")
+        #expect(person.photoCount == 1)
+        #expect(person.faces.map(\.id) == [fixture.stranger])
+        #expect(person.names == ["Sam"])
+
+        let faces = fixture.model.personSheetContext(PersonSheetRequest(subject: .faces([fixture.like])))
+        #expect(faces.title == "Name This Face")
+        #expect(faces.photoCount == 1)
+        #expect(faces.faces.map(\.id) == [fixture.like])
+
+        let sam = fixture.model.personSheetContext(PersonSheetRequest(subject: .person(fixture.sam)))
+        #expect(sam.title == "Sam")
+        #expect(sam.names.isEmpty)
         await fixture.store.shutdown()
     }
 
@@ -226,7 +306,7 @@ struct PeopleViewModelTests {
     }
 
     /// Saving the Person sheet with a name another person has asks whether they are the same
-    /// person; Merge merges them. New Person… with a taken name gives the faces to that
+    /// person; Merge merges them. Someone Else… with a taken name gives the faces to that
     /// person.
     @Test func aTakenNameAsksToMerge() async throws {
         let fixture = try await Fixture.make(in: makeTestDirectory())
@@ -240,15 +320,16 @@ struct PeopleViewModelTests {
         try await Self.waitForStore(fixture.store) { try await fixture.assignment(of: fixture.stranger) == .user(fixture.sam) }
 
         try await fixture.show(fixture.people(), scope: .people)
-        fixture.model.beginNewPerson([fixture.like])
-        fixture.model.savePersonSheet(.newPerson([fixture.like]), name: "Sam", birthday: nil)
+        fixture.model.performMediaItemCommand(.someoneElse([fixture.like]))
+        #expect(fixture.model.peopleSession.sheet?.subject == .faces([fixture.like]))
+        fixture.model.savePersonSheet(.faces([fixture.like]), name: "Sam", birthday: nil)
         // b.jpg already holds Sam's face: the store refuses, and nothing changes.
         #expect(try await fixture.assignment(of: fixture.like) != .user(fixture.sam))
         await fixture.store.shutdown()
     }
 
-    /// This Is ▸ Sam on the unidentified face: undo writes the face back as it was, redo
-    /// gives it to her again.
+    /// Assign to ▸ Ian on the unidentified face: the undo item names the act and the photos
+    /// it changed; undo writes the face back as it was, redo gives it to him again.
     @Test func undoAndRedoAnAct() async throws {
         let fixture = try await Fixture.make(in: makeTestDirectory())
         let ian = try #require(try await fixture.store.perform(.moveToNewPerson([], name: "Ian")).person)
@@ -256,7 +337,7 @@ struct PeopleViewModelTests {
 
         fixture.model.nameFaces([fixture.stranger], as: ian)
         try await Self.waitForStore(fixture.store) { try await fixture.assignment(of: fixture.stranger) == .user(ian) }
-        try await Self.waitForUndo(fixture.model, title: "Undo This Is")
+        try await Self.waitForUndo(fixture.model, title: "Undo Name 1 Photo")
 
         fixture.model.undoLastChange()
         try await Self.waitForStore(fixture.store) { try await fixture.assignment(of: fixture.stranger)?.isGuessable == true }
@@ -265,14 +346,16 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
-    /// Not Sam: the face loses her and Otos never gives it to her again.
+    /// This Is Not Sam: the face loses her and Otos never gives it to her again; the undo
+    /// item says so in the menu's words.
     @Test func notThisPersonHoldsTheFace() async throws {
         let fixture = try await Fixture.make(in: makeTestDirectory())
         try await fixture.show(fixture.people(), scope: .allMedia)
         #expect(try await fixture.assignment(of: fixture.like) == .model(fixture.sam))
 
-        fixture.model.removeNames([fixture.like])
+        fixture.model.performMediaItemCommand(.notPerson([fixture.like]))
         try await Self.waitForStore(fixture.store) { try await fixture.assignment(of: fixture.like) == .held }
+        try await Self.waitForUndo(fixture.model, title: "Undo This Is Not Sam")
         _ = try await fixture.people()
         #expect(try await fixture.assignment(of: fixture.like) == .held)
         await fixture.store.shutdown()

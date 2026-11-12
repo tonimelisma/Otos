@@ -53,30 +53,27 @@ enum MediaItemContextMenu {
                 menu.addItem(item)
             case let .faces(group, flat):
                 if flat {
+                    // In a person's photos: the list as a submenu, the corrections beside it.
                     let first = menu.numberOfItems
-                    addName(group, to: menu, perform: perform)
-                    let thisIs = NSMenuItem(title: FaceActTitle.thisIs, action: nil, keyEquivalent: "")
-                    let submenu = outliner.submenu(title: FaceActTitle.thisIs)
+                    let list = NSMenuItem(title: group.listTitle, action: nil, keyEquivalent: "")
+                    let submenu = outliner.submenu(title: group.listTitle)
                     submenu.autoenablesItems = false
-                    addChoices(group, to: submenu, perform: perform)
-                    thisIs.submenu = submenu
-                    menu.addItem(thisIs)
-                    addCorrections(group, to: menu, perform: perform)
+                    add(group.list, to: submenu, perform: perform)
+                    list.submenu = submenu
+                    menu.addItem(list)
+                    add(group.corrections, to: menu, perform: perform)
                     carry(group.faces, to: menu.items[first...])
                 } else {
-                    // One level of submenu (HIG): the group's This Is choices sit under a
-                    // section header inside it rather than in a submenu of their own.
+                    // One level of submenu (HIG): the list sits under a section header inside
+                    // the group's submenu rather than in a submenu of its own.
                     let item = NSMenuItem(title: group.title, action: nil, keyEquivalent: "")
                     item.representedObject = group.faces
                     let submenu = outliner.submenu(title: group.title)
                     submenu.autoenablesItems = false
-                    if addName(group, to: submenu, perform: perform) {
-                        submenu.addItem(.separator())
-                    }
-                    submenu.addItem(NSMenuItem.sectionHeader(title: FaceActTitle.thisIs))
-                    addChoices(group, to: submenu, perform: perform)
+                    submenu.addItem(NSMenuItem.sectionHeader(title: group.listTitle))
+                    add(group.list, to: submenu, perform: perform)
                     submenu.addItem(.separator())
-                    addCorrections(group, to: submenu, perform: perform)
+                    add(group.corrections, to: submenu, perform: perform)
                     carry(group.faces, to: submenu.items[...])
                     item.submenu = submenu
                     menu.addItem(item)
@@ -88,40 +85,13 @@ enum MediaItemContextMenu {
         return menu
     }
 
-    /// Add Name… first for a person without a name: naming them is what the user most
-    /// likely came for. Returns whether it was added.
-    @discardableResult
-    private static func addName(_ group: FaceMenu.Group, to menu: NSMenu, perform: @escaping @MainActor (MediaItemCommand) -> Void) -> Bool {
-        guard let person = group.person, group.name == nil else { return false }
-        menu.addItem(ClosureMenuItem(title: FaceActTitle.addName) { perform(.addName(person)) })
-        return true
-    }
-
-    /// The people the group's faces may be, most likely first, then New Person….
-    private static func addChoices(_ group: FaceMenu.Group, to menu: NSMenu, perform: @escaping @MainActor (MediaItemCommand) -> Void) {
-        for choice in group.choices {
-            let item = ClosureMenuItem(title: choice.title) { perform(.thisIs(choice.faces, choice.person)) }
-            // The faces This Is would give: for unidentified faces, the one most like them.
-            item.representedObject = choice.faces
+    /// The group's acts as they are worded; each carries the faces it outlines.
+    private static func add(_ actions: [FaceMenu.Action], to menu: NSMenu, perform: @escaping @MainActor (MediaItemCommand) -> Void) {
+        for action in actions {
+            let command = action.command
+            let item = ClosureMenuItem(title: action.title) { perform(command) }
+            item.representedObject = action.faces
             menu.addItem(item)
-        }
-        if !group.choices.isEmpty {
-            menu.addItem(.separator())
-        }
-        let faces = group.newPersonFaces
-        menu.addItem(ClosureMenuItem(title: FaceActTitle.newPerson) { perform(.newPerson(faces)) })
-    }
-
-    /// This Is Not Sam (Wrong Person for a person without a name), This Is Not a Face,
-    /// and Make Key Photo with one photo targeted.
-    private static func addCorrections(_ group: FaceMenu.Group, to menu: NSMenu, perform: @escaping @MainActor (MediaItemCommand) -> Void) {
-        let faces = group.faces
-        if group.person != nil {
-            menu.addItem(ClosureMenuItem(title: FaceActTitle.notPerson(group.name)) { perform(.notPerson(faces)) })
-        }
-        menu.addItem(ClosureMenuItem(title: FaceActTitle.notAFace) { perform(.notAFace(faces)) })
-        if let face = group.keyPhoto, let person = group.person {
-            menu.addItem(ClosureMenuItem(title: FaceActTitle.makeKeyPhoto) { perform(.makeKeyPhoto(face, person)) })
         }
     }
 

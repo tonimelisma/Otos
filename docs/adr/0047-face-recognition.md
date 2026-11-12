@@ -145,7 +145,7 @@ grouping had put with the right child.
   - Two faces in one photo are never the same person.
   - A face from before a person's birthday is never theirs. A birthday may be only a year,
     which counts from 1 January (owner decision, 2026-11-10).
-  - A face the user said is not someone (`This Is Not Sam`, or `Wrong Person` for a person without a name) is held: Otos never gives it a person
+  - A face the user said is not someone (`This Is Not Sam`, or `Not the Same Person` in an unnamed person's own photos) is held: Otos never gives it a person
     again, and never offers that person for it.
 - **Corrections propagate:** a correction is a new anchor, and every guess is rebuilt from the
   anchors, so moving one face moves the guesses reached through it (owner decision,

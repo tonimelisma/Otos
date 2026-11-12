@@ -42,12 +42,12 @@ struct MediaItemMenuModelTests {
     @Test func facesComeAfterRevealOnePerPerson() throws {
         let face = FaceID(asset: MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/P"), relativePath: MediaRelativePath(rawValue: "a.jpg")), index: 0)
         let sam = FaceMenu.Group(
-            title: "Sam", person: PersonID(rawValue: 1), name: "Sam",
-            faces: [face], choices: [], newPersonFaces: [face], keyPhoto: face
+            kind: .named("Sam"), person: PersonID(rawValue: 1), faces: [face], tile: nil, photoCount: nil,
+            listTitle: FaceActTitle.changeTo, list: [], corrections: []
         )
         let unidentified = FaceMenu.Group(
-            title: "Unidentified Face", person: nil, name: nil,
-            faces: [face], choices: [], newPersonFaces: [face], keyPhoto: nil
+            kind: .unidentified, person: nil, faces: [face], tile: nil, photoCount: nil,
+            listTitle: FaceActTitle.assignTo, list: [], corrections: []
         )
         var model = MediaItemMenuModel(
             openWith: OpenWithMenuModel.make(targets: [], workspace: NoWorkspace()),

@@ -155,72 +155,101 @@ in force that the user did not just set.
 
 ## Face acts
 
-The same acts, names and rules on every surface (DES-113), each one undoable intent:
+A face is one of three: a **named** person's, an **unnamed** person's (a person Otos found
+whom the user has not named), or **unidentified**. Every act answers one question, who is
+this, and says how many photos it changes (owner, 2026-11-12). An act is a verb phrase, and
+a list of people sits under the words its items complete (HIG Menus: `Sort by ▸ Date`), so
+`Change to ▸ Sam` reads as the act it is. The same acts, names and rules on every surface
+(DES-113), each one undoable intent:
 
-| Act | Result |
-| --- | --- |
-| `This Is ▸` a person | The faces are that person's, on the user's word. The named people the faces most likely are come first, then every other named person the hard rules allow. An unnamed person is not offered, since several would read alike: naming them in the gallery makes them a choice. |
-| `This Is ▸ New Person…` | The Person sheet; Save makes a person of the faces. A name another person has gives the faces to them. |
-| `Add Name…` | For a person without a name, first: the Person sheet names them. |
-| `This Is Not Sam` / `Wrong Person` | The face loses its person and is never given one by Otos again; the people it most likely are stay offered, Sam left out. A person without a name is known only by the other photos Otos put the face with, so for them the act says the grouping is wrong: `Wrong Person`. |
-| `This Is Not a Face` | The detection leaves People until the photo's file changes: a face the finder saw in a print, a doll or a pattern. |
-| `Make Key Photo` | With one photo targeted: the person's cover in the gallery (Photos' name for it). |
+| Act | Offered on | Result |
+| --- | --- | --- |
+| `Change to ▸` a person | A named person's faces | The faces are that person's, on the user's word. |
+| `Assign to ▸` a person | Unidentified faces | The same; across several photos, the face in each most like them. |
+| `Someone Else…` | Last under `Change to` and `Assign to` | The Person sheet, which suggests people's names as the user types. Save gives the faces to the person with that name, or to a new person when no one has it. |
+| `Name This Person ▸` a person | An unnamed person | The whole person, every photo of them, is that person: a merge, asked first. Otos's grouping is trusted, so naming acts on all of it. |
+| `New Name…` | Last under `Name This Person` | The Person sheet names the whole person. A name another person has asks to merge. |
+| `This Is Not Sam` | A named person's faces | The faces lose their person and Otos never gives them one again; the people they most likely are stay offered, Sam left out. |
+| `Not the Same Person` | An unnamed person's faces, only in that person's own photos | The same act: there the user sees the photos the face was grouped with. Elsewhere an unnamed person is corrected by naming them first, then `This Is Not <name>`. |
+| `This Is Not a Face` | Every face | The detection leaves People until the photo's file changes: a face the finder saw in a print, a doll or a pattern. |
+| `Make Key Photo for Sam` | A named person, one photo targeted | That face is Sam's cover in the gallery (Photos' name for it). |
 
-**The hard rules** leave a person out of `This Is ▸` (DES-038): a photo the user already
-gave them another face of, two faces of one photo, a photo from before their birthday.
+**The lists** are short enough to read at a glance and need no typing in the usual case:
+the five people the faces most likely are, most likely first, filled in gallery order when
+fewer are likely; then `Someone Else…` or `New Name…` for everyone else. Only visible people
+with a name are listed, since several unnamed people would read alike; the hard rules leave
+out anyone the faces cannot be (DES-038): a photo the user already gave them another face
+of, two faces of one photo, a photo from before their birthday. Under `Name This Person`,
+the rules of a merge apply instead (see Merging).
+
+**Counts** say how many photos an act changes:
+- **An unnamed person:** always every photo of them, since naming acts on all of them:
+  `Unnamed Person · 14 Photos ▸`, and `14 photos` under the Info pane's `Add Name…`.
+- **A named person with several photos targeted:** how many of those photos hold them:
+  `Sam · 3 Photos ▸`. With one photo, no count: the acts change that one face.
+- **Unidentified faces across several photos:** `Unidentified Faces · 3 Photos ▸`.
 
 ### Photo menus
 
 The grid, filmstrip, loupe and compare context menu, after `Reveal in Finder`:
 - **One entry per visible person** with a face in the targeted photos, in the order their
-  faces come: `Sam ▸`, holding a `This Is` section header with the people, a separator,
-  `New Person…`, then `This Is Not Sam`, `This Is Not a Face` and `Make Key Photo`. A
-  person without a name is `Unnamed Person ▸`, opening with `Add Name…` and a separator, and
-  offers `Wrong Person` in place of `This Is Not <name>`. One level of
-  submenu (HIG).
-- **`Unidentified Face ▸` / `Unidentified Faces ▸`:** the same, without `This Is Not <name>`. This
-  Is gives the person, in each targeted photo, the unidentified face most like them.
-- **In a person's photos,** their entry's acts sit at the menu's top level:
-  `This Is ▸`, `This Is Not Sam`, `This Is Not a Face`, `Make Key Photo` (`Add Name…` first,
-  and `Wrong Person`, for a person without a name).
+  faces come. One level of submenu (HIG); a list sits under a section header inside it.
+  - **Named:** `Sam ▸` (`Sam · 3 Photos ▸` for several photos): `Change to` with the
+    people and `Someone Else…`, a separator, `This Is Not Sam`, `This Is Not a Face`, and
+    `Make Key Photo for Sam` with one photo.
+  - **Unnamed:** `Unnamed Person · 14 Photos ▸`: `Name This Person` with the people and
+    `New Name…`, a separator, `This Is Not a Face`.
+- **Unidentified:** with one photo, one `Unidentified Face ▸` per face, so every act means
+  one face: `Assign to` with the people and `Someone Else…`, a separator, `This Is Not a
+  Face`. With several photos, one `Unidentified Faces · 3 Photos ▸` entry, offered only when
+  no targeted photo holds more than one unidentified face; otherwise none, since no item
+  could say which face it means.
+- **In a person's photos,** their entry's acts sit at the menu's top level, the list as a
+  submenu: `Change to ▸`, `This Is Not Sam`, `This Is Not a Face`, `Make Key Photo for
+  Sam`; for an unnamed person, `Name This Person ▸`, `Not the Same Person`, `This Is Not a
+  Face`.
 
 ### Face outlines
 
 Highlighting a face item in a photo menu outlines the faces it acts on: a person's entry and
-every act under it, that person's faces; a `This Is` choice, the faces it would give. Two
-people without a name both read `Unnamed Person ▸`; the outline is how they are told apart.
-The faces are outlined wherever their photos show — the loupe, the active compare pane,
-grid and filmstrip tiles — in DES-061's 3 pt accent border, carried through the photo's
-saved crop and straighten; a tile still showing a placeholder draws none. Closing the menu
-clears them.
+every act under it, that person's faces; a choice, the faces it would give. Two people
+without a name both read `Unnamed Person`; the outline is how they are told apart. The
+faces are outlined wherever their photos show — the loupe, both compare panes, grid and
+filmstrip tiles — whether or not the Info pane is open, in DES-061's 3 pt accent border,
+carried through the edit the picture shows (its crop and straighten); a tile still showing
+a placeholder draws none. Closing the menu clears them.
 
 ### Info pane
 
 The first section (DES-088), `People`:
 - **One photo:** each face of a visible person or unidentified, in reading order: a 40 pt
-  face tile, the name, a link-style `Add Name…` for a person without one, or `Unidentified`
-  (secondary), and an `ellipsis.circle` menu with the face acts. An unidentified face shows the three people it most likely is as small
-  bordered buttons, one click each. `No Faces` once checked with none, `Not Checked Yet`
-  before.
-- **Several photos:** each visible person in them with `12 photos`, and the unidentified
-  faces with `5 faces`, the three people they most likely are as buttons.
+  face tile, the name, a link-style `Add Name…` with `14 photos` (L3) for a person without
+  one, or `Unidentified` (secondary), and an `ellipsis.circle` menu with the face acts, the
+  same words and sections as the photo menu's entry. An unidentified face shows the three
+  people it most likely is as small bordered buttons, one click each. `No Faces` once
+  checked with none, `Not Checked Yet` before.
+- **Several photos:** each visible person in them with `12 photos` (an unnamed person: every
+  photo of them), and the unidentified faces with `5 photos` and the three people they most
+  likely are as buttons, under the photo menu's rule: only when no photo holds more than one.
 - **Hover:** pointing at a row outlines its faces on their photos (see Face outlines).
 
 ## Person sheet
 
-`Add Name…`, `Rename…`, `Set Birthday…` and `New Person…` open one sheet (DES-041).
+`Add Name…`, `Rename…`, `Set Birthday…`, `New Name…` and `Someone Else…` open one sheet
+(DES-041).
 
 | String | Level |
 | --- | --- |
-| Title: the name, `Unnamed Person`, or `New Person` | L1 |
-| `Name` (text field), `Birthday`: a year field, then `Exact date` with a date picker, disabled, never removed, while unchecked (DES-053, DES-054). A year alone counts from 1 January. | L2 controls |
+| Title: the name; `Name This Person` for a person without one; `Name This Face` / `Name These Faces` for `Someone Else…` | L1 |
+| `14 photos`: the photos Save changes, over a row of up to eight of the faces, newest first, so the user sees who is being named | L3 |
+| `Name` (text field, suggesting the visible named people whose name holds what is typed), `Birthday`: a year field, then `Exact date` with a date picker, disabled, never removed, while unchecked (DES-053, DES-054). A year alone counts from 1 January. | L2 controls |
 | Footnote: `Faces from before this date are never given to Sam.` | L3 |
 
 - **Buttons:** `Save` (default) and `Cancel`.
 - **Save is disabled** with the reason as its tooltip: `Enter a name`; `Enter a year, or a
   full date`; `4 photos of Sam are from before this date` (photos the user gave her).
-- **A name another person has** is not refused: Save asks `Are these the same person?` and
-  merges on `Merge`.
+- **A name another person has** is not refused: for a person, Save asks `Are these the same
+  person?` and merges on `Merge`; for `Someone Else…`, the faces go to that person.
 
 ## Appearance and accessibility
 
@@ -236,17 +265,26 @@ The first section (DES-088), `People`:
 
 ## Undo
 
-Every act goes on the window's one undo stack (APP-039): `Undo This Is`, `Undo New Person`,
-`Undo Wrong Person`, `Undo This Is Not a Face`, `Undo Edit Person`, `Undo Merge`, `Undo Hide`,
-`Undo Unhide`, `Undo Add to Favorites`, `Undo Remove from Favorites`, `Undo Make Key Photo`. An undo writes back exactly what the act changed; the guesses that followed from it
-are rebuilt by assignment (ADR 0047). Entries live for the session.
+Every act goes on the window's one undo stack (APP-039), named by the item that made it and
+how many photos it changed: `Undo Name 3 Photos` (Change to, Assign to, Someone Else…, and
+naming an unnamed person), `Undo This Is Not Sam`, `Undo Not the Same Person`, `Undo This
+Is Not a Face`, `Undo Make Key Photo for Sam`, `Undo Edit Person`, `Undo Merge`, `Undo
+Hide`, `Undo Unhide`, `Undo Add to Favorites`, `Undo Remove from Favorites`. An undo writes
+back exactly what the act changed; the guesses that followed from it are rebuilt by
+assignment (ADR 0047). Entries live for the session.
 
 ## Owner decisions
 
+- 2026-11-12 (face menus): every act says who and how many: `Change to ▸` / `Assign to ▸`
+  with the five likeliest people and `Someone Else…`; an unnamed person is named as a whole
+  (`Name This Person ▸`, `New Name…`, with every photo of them counted), is corrected only
+  in their own photos (`Not the Same Person`), and gets no key photo; several photos offer
+  unidentified faces only when each holds at most one; faces are outlined on the loupe and
+  compare whether or not Info is open.
 - 2026-11-12: a person without a name never reads as a name (`Add Name…` where a control
   fits, `Unnamed Person` elsewhere) and is offered naming first; the face acts take Photos'
-  words and HIG title case: `This Is Not Sam`, `Wrong Person` for a person without a
-  name, `This Is Not a Face`, `Make Key Photo`.
+  words where they fit (`This Is Not Sam`, `This Is Not a Face`, key photo) and HIG title
+  case.
 - 2026-11-12: auto-tagged faces, named and unnamed one kind, no review; a removed name is
   never filled again by Otos; corrections move the guesses chained through them; people
   seen on one day stay out of the gallery until named; the likeness sort; hidden people

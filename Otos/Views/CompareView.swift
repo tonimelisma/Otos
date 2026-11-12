@@ -38,9 +38,8 @@ struct CompareView: View {
     /// Context menu for the active pane's asset (pane) and the clicked tile (strip).
     /// A pane context click activates that pane first, so the menu describes it.
     var contextMenu: () -> NSMenu? = { nil }
-    /// The outlined faces on a pane's photo, as fractions of the edited photo (ADR 0047).
-    var faceOutlines: (MediaAssetID) -> [CGRect] = { _ in [] }
-    /// The outlined faces' boxes by photo, which the filmstrip's tiles draw.
+    /// The outlined faces' boxes by photo (ADR 0047): the filmstrip's tiles draw them, and
+    /// each pane draws its photo's through the edit its decode shows.
     var faceOutlineBoxes: [MediaAssetID: [CGRect]] = [:]
     @Environment(\.colorScheme) private var colorScheme
 
@@ -146,8 +145,11 @@ struct CompareView: View {
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                     }
-                    // The outlined faces (ADR 0047) in DES-061's accent border, on the media.
-                    if let id, case let outlines = faceOutlines(id), !outlines.isEmpty {
+                    // The outlined faces (ADR 0047) in DES-061's accent border, on the media,
+                    // on either pane: a face is shown wherever its photo is (DES-113).
+                    if case .full = display, let preview,
+                       case let outlines = preview.faceOutlines(faceOutlineBoxes[preview.id] ?? []), !outlines.isEmpty
+                    {
                         GeometryReader { proxy in
                             let media = MediaAssetTilePresentation.contentRect(
                                 imagePixelSize: display.mediaPixelSize,
