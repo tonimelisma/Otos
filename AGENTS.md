@@ -454,6 +454,15 @@ for confirmation before relying on them.
 
 ## Git, CI, And Pull Requests
 
+- **Git reaches GitHub over SSH the moment HTTPS fails.** On the first HTTPS fetch,
+  pull, push or clone that fails or stalls (a TLS handshake timeout, `early EOF`, a
+  fetch killed by a signal, or a transfer with no progress), switch at once, with no
+  HTTPS retry, to the deploy key's host alias: `git fetch
+  git@github.com:tonimelisma/Otos.git main:refs/remotes/origin/main` and `git push
+  git@github.com:tonimelisma/Otos.git <branch>`. Use the alias for every later fetch
+  and push in that session. `gh` reaches GitHub's API over HTTPS only; when a `gh pr`
+  command times out, issue the same request once through `gh api` before reporting it
+  failed.
 - Branch with a conventional prefix matching the work (`feat/`, `fix/`, `refactor/`,
   `docs/`, `chore/`, `research/`). Start new work in a dedicated git worktree.
 - Never discard user work: do not remove worktrees/branches/stashes unless proven to
