@@ -16,11 +16,13 @@ nonisolated enum MediaItemCommand: Equatable, Sendable {
     case thisIs([FaceID], PersonID)
     /// The faces are one new person's (This Is ▸ New Person…).
     case newPerson([FaceID])
-    /// The faces are not their person (Not Sam).
+    /// The person without a name gets one (Add Name…, the Person sheet).
+    case addName(PersonID)
+    /// The faces are not their person (This Is Not Sam, or Wrong Person).
     case notPerson([FaceID])
-    /// The detections are not faces.
+    /// The detections are not faces (This Is Not a Face).
     case notAFace([FaceID])
-    case setFeaturePhoto(FaceID, PersonID)
+    case makeKeyPhoto(FaceID, PersonID)
 }
 
 /// The faces of the targeted photos, grouped by person, as the context menu offers them
@@ -35,17 +37,20 @@ nonisolated struct FaceMenu: Equatable, Sendable {
     }
 
     nonisolated struct Group: Equatable, Sendable {
-        /// The person's name, or `Unidentified Face(s)`.
+        /// The person's name, `Unnamed Person`, or `Unidentified Face(s)`.
         let title: String
         /// Nil for unidentified faces.
         let person: PersonID?
+        /// The person's name; nil for a person without one, who is offered Add Name…, and
+        /// for unidentified faces.
+        let name: String?
         let faces: [FaceID]
         /// Most likely first, then everyone else the hard rules allow.
         let choices: [Choice]
         /// The faces New Person… gives a new person: at most one per photo.
         let newPersonFaces: [FaceID]
-        /// Set as Feature Photo, with one photo targeted.
-        let feature: FaceID?
+        /// Make Key Photo, with one photo targeted.
+        let keyPhoto: FaceID?
     }
 
     let groups: [Group]

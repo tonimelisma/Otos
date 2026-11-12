@@ -46,8 +46,9 @@ enum MediaItemContextMenu {
                 menu.addItem(item)
             case let .faces(group, flat):
                 if flat {
-                    let thisIs = NSMenuItem(title: "This Is", action: nil, keyEquivalent: "")
-                    let submenu = NSMenu(title: "This Is")
+                    addName(group, to: menu, perform: perform)
+                    let thisIs = NSMenuItem(title: FaceActTitle.thisIs, action: nil, keyEquivalent: "")
+                    let submenu = NSMenu(title: FaceActTitle.thisIs)
                     submenu.autoenablesItems = false
                     addChoices(group, to: submenu, perform: perform)
                     thisIs.submenu = submenu
@@ -59,7 +60,10 @@ enum MediaItemContextMenu {
                     let item = NSMenuItem(title: group.title, action: nil, keyEquivalent: "")
                     let submenu = NSMenu(title: group.title)
                     submenu.autoenablesItems = false
-                    submenu.addItem(NSMenuItem.sectionHeader(title: "This Is"))
+                    if addName(group, to: submenu, perform: perform) {
+                        submenu.addItem(.separator())
+                    }
+                    submenu.addItem(NSMenuItem.sectionHeader(title: FaceActTitle.thisIs))
                     addChoices(group, to: submenu, perform: perform)
                     submenu.addItem(.separator())
                     addCorrections(group, to: submenu, perform: perform)
@@ -73,6 +77,15 @@ enum MediaItemContextMenu {
         return menu
     }
 
+    /// Add Name… first for a person without a name: naming them is what the user most
+    /// likely came for. Returns whether it was added.
+    @discardableResult
+    private static func addName(_ group: FaceMenu.Group, to menu: NSMenu, perform: @escaping @MainActor (MediaItemCommand) -> Void) -> Bool {
+        guard let person = group.person, group.name == nil else { return false }
+        menu.addItem(ClosureMenuItem(title: FaceActTitle.addName) { perform(.addName(person)) })
+        return true
+    }
+
     /// The people the group's faces may be, most likely first, then New Person….
     private static func addChoices(_ group: FaceMenu.Group, to menu: NSMenu, perform: @escaping @MainActor (MediaItemCommand) -> Void) {
         for choice in group.choices {
@@ -82,18 +95,19 @@ enum MediaItemContextMenu {
             menu.addItem(.separator())
         }
         let faces = group.newPersonFaces
-        menu.addItem(ClosureMenuItem(title: "New Person…") { perform(.newPerson(faces)) })
+        menu.addItem(ClosureMenuItem(title: FaceActTitle.newPerson) { perform(.newPerson(faces)) })
     }
 
-    /// Not Sam, Not a Face, and Set as Feature Photo with one photo targeted.
+    /// This Is Not Sam (Wrong Person for a person without a name), This Is Not a Face,
+    /// and Make Key Photo with one photo targeted.
     private static func addCorrections(_ group: FaceMenu.Group, to menu: NSMenu, perform: @escaping @MainActor (MediaItemCommand) -> Void) {
         let faces = group.faces
         if group.person != nil {
-            menu.addItem(ClosureMenuItem(title: "Not \(group.title)") { perform(.notPerson(faces)) })
+            menu.addItem(ClosureMenuItem(title: FaceActTitle.notPerson(group.name)) { perform(.notPerson(faces)) })
         }
-        menu.addItem(ClosureMenuItem(title: "Not a Face") { perform(.notAFace(faces)) })
-        if let face = group.feature, let person = group.person {
-            menu.addItem(ClosureMenuItem(title: "Set as Feature Photo") { perform(.setFeaturePhoto(face, person)) })
+        menu.addItem(ClosureMenuItem(title: FaceActTitle.notAFace) { perform(.notAFace(faces)) })
+        if let face = group.keyPhoto, let person = group.person {
+            menu.addItem(ClosureMenuItem(title: FaceActTitle.makeKeyPhoto) { perform(.makeKeyPhoto(face, person)) })
         }
     }
 

@@ -73,8 +73,14 @@ struct MediaItemMenuModelTests {
     /// top level when the filter shows that person (ADR 0047).
     @Test func facesComeAfterRevealOnePerPerson() throws {
         let face = FaceID(asset: MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/P"), relativePath: MediaRelativePath(rawValue: "a.jpg")), index: 0)
-        let sam = FaceMenu.Group(title: "Sam", person: PersonID(rawValue: 1), faces: [face], choices: [], newPersonFaces: [face], feature: face)
-        let unidentified = FaceMenu.Group(title: "Unidentified Face", person: nil, faces: [face], choices: [], newPersonFaces: [face], feature: nil)
+        let sam = FaceMenu.Group(
+            title: "Sam", person: PersonID(rawValue: 1), name: "Sam",
+            faces: [face], choices: [], newPersonFaces: [face], keyPhoto: face
+        )
+        let unidentified = FaceMenu.Group(
+            title: "Unidentified Face", person: nil, name: nil,
+            faces: [face], choices: [], newPersonFaces: [face], keyPhoto: nil
+        )
         var model = MediaItemMenuModel(
             openWith: OpenWithMenuModel.make(targets: [], workspace: NoWorkspace()),
             shareItems: [URL(fileURLWithPath: "/P/a.jpg")],

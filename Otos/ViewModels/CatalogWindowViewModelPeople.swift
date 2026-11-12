@@ -82,7 +82,12 @@ nonisolated struct PeopleIndex {
     }
 
     func name(_ person: PersonID) -> String {
-        summaries[person]?.displayName ?? "Unnamed"
+        PersonSummary.displayName(givenName(person))
+    }
+
+    /// The name the user gave the person; nil for a person without one.
+    func givenName(_ person: PersonID) -> String? {
+        summaries[person]?.name
     }
 
     /// Why `faces` cannot all be `person`'s, or nil when they can.
@@ -473,8 +478,8 @@ extension CatalogWindowViewModel {
         submitPeopleAct(.notAFace(faces))
     }
 
-    func setFeaturePhoto(_ face: FaceID, of person: PersonID) {
-        submitPeopleAct(.setFeature(face, of: person))
+    func makeKeyPhoto(_ face: FaceID, of person: PersonID) {
+        submitPeopleAct(.makeKeyPhoto(face, of: person))
     }
 
     // MARK: - Delivery
@@ -627,9 +632,10 @@ extension CatalogWindowViewModel {
             name: { [weak self] faces, person in self?.nameFaces(faces, as: person) },
             nameUnidentified: { [weak self] person in self?.nameUnidentifiedFaces(as: person) },
             newPerson: { [weak self] faces in self?.beginNewPerson(faces) },
+            addName: { [weak self] person in self?.beginEditingPerson(person) },
             removeNames: { [weak self] faces in self?.removeNames(faces) },
             notFaces: { [weak self] faces in self?.markNotFaces(faces) },
-            setFeature: { [weak self] face, person in self?.setFeaturePhoto(face, of: person) }
+            makeKeyPhoto: { [weak self] face, person in self?.makeKeyPhoto(face, of: person) }
         )
     }
 }
@@ -652,7 +658,8 @@ struct FaceActions {
     let name: ([FaceID], PersonID) -> Void
     let nameUnidentified: (PersonID) -> Void
     let newPerson: ([FaceID]) -> Void
+    let addName: (PersonID) -> Void
     let removeNames: ([FaceID]) -> Void
     let notFaces: ([FaceID]) -> Void
-    let setFeature: (FaceID, PersonID) -> Void
+    let makeKeyPhoto: (FaceID, PersonID) -> Void
 }

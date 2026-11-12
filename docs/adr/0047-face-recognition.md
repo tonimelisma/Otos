@@ -110,7 +110,7 @@ grouping had put with the right child.
   guess, a seed (one of the faces a person was first found from), the user's, or held (the
   user removed the name). The user's faces and the seeds are the anchors; every guess is
   rebuilt from them. Also on the face: its likeness to its person (the likeness sort) and
-  whether it is its person's feature photo, at most one per person.
+  whether it is its person's key photo (`is_key_photo`), at most one per person.
 - **Media folders:** nothing is written to them. Names exist only in the catalog. Otos never
   reads or writes face regions in files' XMP, and export writes no names (owner decision,
   2026-11-10).
@@ -145,7 +145,7 @@ grouping had put with the right child.
   - Two faces in one photo are never the same person.
   - A face from before a person's birthday is never theirs. A birthday may be only a year,
     which counts from 1 January (owner decision, 2026-11-10).
-  - A face the user said is not someone (`Not Sam`) is held: Otos never gives it a person
+  - A face the user said is not someone (`This Is Not Sam`, or `Wrong Person` for a person without a name) is held: Otos never gives it a person
     again, and never offers that person for it.
 - **Corrections propagate:** a correction is a new anchor, and every guess is rebuilt from the
   anchors, so moving one face moves the guesses reached through it (owner decision,
@@ -154,8 +154,8 @@ grouping had put with the right child.
 - **Settles on its own output:** assignment reads only the anchors, so run on what it wrote it
   writes nothing. A pass that wrote is followed by one that publishes.
 - **What the user's acts store** (overlay, ADR 0008; undoable): a face's person on their word;
-  a held face and its rejection; `Not a Face`, until the photo's file changes; a person's
-  name, birthday, hidden and favourite marks and feature photo. A person Otos found is
+  a held face and its rejection; `This Is Not a Face`, until the photo's file changes; a person's
+  name, birthday, hidden and favourite marks and key photo. A person Otos found is
   deleted once no face is theirs and the user said nothing about them.
 - **Immich accounts:** their photos are read for faces from the stored Immich preview, never
   the original (measured in the 2026-11-07 research note, section 7: no wrong match, about 7%

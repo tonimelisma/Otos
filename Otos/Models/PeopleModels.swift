@@ -58,8 +58,8 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     let people: [Person]
     /// Each face's stored likeness.
     var likeness: [FaceID: Float] = [:]
-    /// Each person's feature face, where the user chose one.
-    var features: [PersonID: FaceID] = [:]
+    /// Each person's key photo, where the user chose one.
+    var keyPhotos: [PersonID: FaceID] = [:]
     /// Stills in the available fixed libraries whose faces are not yet read for their current
     /// bytes (for an Immich account, its current preview).
     let uncheckedPhotoCount: Int
@@ -132,7 +132,7 @@ nonisolated struct PersonSummary: Hashable, Sendable, Identifiable {
     let isFavorite: Bool
     /// Photos holding a face of this person.
     let photoCount: Int
-    /// The feature face the user chose, else the newest face.
+    /// The key photo the user chose, else the newest face.
     let cover: FaceTile?
     /// The faces the user gave this person, newest first: the facts the hard rules hold
     /// them to.
@@ -141,13 +141,32 @@ nonisolated struct PersonSummary: Hashable, Sendable, Identifiable {
     /// people merged may not share.
     var anchorPhotos: Set<MediaAssetID> = []
 
-    /// What the person is called on every surface; a person without a name is `Unnamed`.
+    /// What the person is called where only text fits; a person without a name is
+    /// `Unnamed Person`, which no one is called. Where a control fits, a person without a
+    /// name shows `Add Name…` instead (`FaceActTitle.addName`).
     var displayName: String {
         Self.displayName(name)
     }
 
     static func displayName(_ name: String?) -> String {
-        name ?? "Unnamed"
+        name ?? "Unnamed Person"
+    }
+}
+
+/// The face acts' words, the same on the photo menus, the Info pane and the undo stack
+/// (DES-113, `docs/design/people.md`).
+nonisolated enum FaceActTitle {
+    static let thisIs = "This Is"
+    static let newPerson = "New Person…"
+    static let addName = "Add Name…"
+    static let wrongPerson = "Wrong Person"
+    static let notAFace = "This Is Not a Face"
+    static let makeKeyPhoto = "Make Key Photo"
+
+    /// `This Is Not Sam`. A person without a name is known only by the other photos Otos
+    /// put the face with, so for them the act says the grouping is wrong: `Wrong Person`.
+    static func notPerson(_ name: String?) -> String {
+        name.map { "This Is Not \($0)" } ?? wrongPerson
     }
 }
 
@@ -161,7 +180,7 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
     /// the photo menus and the Info pane show, at once.
     var photoFaces: [MediaAssetID: [PhotoFace]] = [:]
     let uncheckedPhotoCount: Int
-    /// Faces found that are still faces (not marked `Not a Face`).
+    /// Faces found that are still faces (not marked `This Is Not a Face`).
     let faceCount: Int
     /// The People revision the state was built from (`PeopleSnapshot.revision`).
     var revision: UInt64 = 0
@@ -284,7 +303,7 @@ nonisolated enum PeopleAct: Equatable, Sendable {
     case moveToNewPerson([FaceID], name: String?)
     /// The faces lose their person and are never given one by Otos again (Not Sam).
     case removeName([FaceID])
-    /// The detections are not faces (Not a Face).
+    /// The detections are not faces (This Is Not a Face).
     case notAFace([FaceID])
     /// Rename…, Add Name… and Set Birthday….
     case edit(PersonID, name: String?, birthday: String?)
@@ -292,21 +311,21 @@ nonisolated enum PeopleAct: Equatable, Sendable {
     case merge(PersonID, into: PersonID)
     case setHidden(PersonID, Bool)
     case setFavorite(PersonID, Bool)
-    /// The face is its person's feature photo.
-    case setFeature(FaceID, of: PersonID)
+    /// The face is its person's key photo.
+    case makeKeyPhoto(FaceID, of: PersonID)
 
     /// The name the undo stack shows, as `Undo <name>`.
     var undoName: String {
         switch self {
-        case .move: "This Is"
+        case .move: FaceActTitle.thisIs
         case .moveToNewPerson: "New Person"
-        case .removeName: "Not This Person"
-        case .notAFace: "Not a Face"
+        case .removeName: FaceActTitle.wrongPerson
+        case .notAFace: FaceActTitle.notAFace
         case .edit: "Edit Person"
         case .merge: "Merge"
         case let .setHidden(_, hidden): hidden ? "Hide" : "Unhide"
         case let .setFavorite(_, favorite): favorite ? "Add to Favorites" : "Remove from Favorites"
-        case .setFeature: "Set Feature Photo"
+        case .makeKeyPhoto: FaceActTitle.makeKeyPhoto
         }
     }
 
@@ -314,7 +333,7 @@ nonisolated enum PeopleAct: Equatable, Sendable {
         switch self {
         case let .move(faces, _), let .moveToNewPerson(faces, _), let .removeName(faces), let .notAFace(faces):
             faces.count
-        case .setFeature:
+        case .makeKeyPhoto:
             1
         case .edit, .merge, .setHidden, .setFavorite:
             0
@@ -330,7 +349,7 @@ nonisolated struct PeopleRestore: Equatable, Sendable {
         let face: FaceID
         let assignment: FaceAssignment
         let isNotFace: Bool
-        let isFeature: Bool
+        let isKeyPhoto: Bool
     }
 
     nonisolated struct Rejection: Hashable, Sendable {

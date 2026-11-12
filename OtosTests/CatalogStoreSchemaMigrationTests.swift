@@ -186,6 +186,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.decodeVerdictMigrationIdentifier,
             CatalogSchema.autoTaggedPeopleMigrationIdentifier,
             CatalogSchema.placeNamesMigrationIdentifier,
+            CatalogSchema.keyPhotoMigrationIdentifier,
         ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
@@ -286,6 +287,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.decodeVerdictMigrationIdentifier,
             CatalogSchema.autoTaggedPeopleMigrationIdentifier,
             CatalogSchema.placeNamesMigrationIdentifier,
+            CatalogSchema.keyPhotoMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -400,7 +402,7 @@ struct CatalogStoreSchemaMigrationTests {
                 )
             }
         }
-        try CatalogStore.migrator.migrate(queue)
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.autoTaggedPeopleMigrationIdentifier)
         let (assignments, faceColumns, personColumns) = try await queue.read { db in
             try (
                 Int.fetchAll(db, sql: "SELECT assignment FROM face ORDER BY face_index"),
@@ -412,6 +414,44 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(!faceColumns.contains("is_ignored"))
         #expect(faceColumns.isSuperset(of: ["assignment", "likeness", "is_feature"]))
         #expect(personColumns.isSuperset(of: ["is_hidden", "is_favorite"]))
+    }
+
+    /// ADR 0047: v28 names v26's feature flag the key photo. A person's chosen face stays
+    /// chosen, and the one-per-person rule holds under the new name.
+    @Test func theKeyPhotoMigrationKeepsEachPersonsChosenFace() async throws {
+        let queue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.placeNamesMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (path, kind) VALUES ('/Pictures', 'library')")
+            try db.execute(sql: """
+            INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key)
+            VALUES (1, 'a.jpg', 'a.jpg', 'a.jpg', 'a.jpg')
+            """)
+            try db.execute(sql: "INSERT INTO person (id, name) VALUES (1, 'Sam')")
+            for (index, chosen) in [(0, 0), (1, 1)] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO face (
+                        library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
+                        landmarks, quality, analysis_revision, embedding, person_id, is_feature
+                    ) VALUES (1, 'a.jpg', ?, 0, 0, 0.1, 0.1, x'', 0.5, 1, x'', 1, ?)
+                    """,
+                    arguments: [index, chosen]
+                )
+            }
+        }
+        try CatalogStore.migrator.migrate(queue)
+        let (chosen, columns) = try await queue.read { db in
+            try (
+                Int.fetchAll(db, sql: "SELECT is_key_photo FROM face ORDER BY face_index"),
+                Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_xinfo('face')"))
+            )
+        }
+        #expect(chosen == [0, 1])
+        #expect(!columns.contains("is_feature"))
+        await #expect(throws: DatabaseError.self) {
+            try await queue.write { db in try db.execute(sql: "UPDATE face SET is_key_photo = 1 WHERE face_index = 0") }
+        }
     }
 
     /// ADR 0039: v23 puts the timeline on local capture time. A row with a wall clock —

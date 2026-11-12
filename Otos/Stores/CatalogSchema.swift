@@ -609,6 +609,18 @@ nonisolated enum CatalogSchema {
         ]
     }
 
+    /// The face a person is shown by is their key photo, as Photos calls it (ADR 0047):
+    /// v26's `face.is_feature` and its index take that name. Nothing else changes.
+    static let keyPhotoMigrationIdentifier = "v28_face_key_photo"
+
+    static var keyPhotoStatements: [String] {
+        [
+            "DROP INDEX idx_face_feature",
+            "ALTER TABLE face RENAME COLUMN is_feature TO is_key_photo",
+            "CREATE UNIQUE INDEX idx_face_key_photo ON face(person_id) WHERE is_key_photo = 1",
+        ]
+    }
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

@@ -35,7 +35,7 @@ struct ContentView: View {
                 info: viewModel.photoInfo,
                 people: InfoPanePeople(
                     faces: viewModel.targetFaces,
-                    names: { viewModel.peopleIndex.name($0) },
+                    name: { viewModel.peopleIndex.givenName($0) },
                     choices: { faces, except in viewModel.choices(for: faces, in: viewModel.targetFaces, except: except) },
                     images: viewModel.faceTileImages,
                     derivedImageDirectory: viewModel.thumbnailDirectory,

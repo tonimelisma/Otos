@@ -139,7 +139,8 @@ struct PeopleViewModelTests {
         #expect(menu.groups.map(\.title) == ["Sam", "Unidentified Face"])
         #expect(menu.groups[0].faces == [fixture.like])
         #expect(menu.groups[0].choices.map(\.person) == [ian])
-        #expect(menu.groups[0].feature == fixture.like)
+        #expect(menu.groups[0].keyPhoto == fixture.like)
+        #expect(menu.groups.map(\.name) == ["Sam", nil])
         #expect(Set(menu.groups[1].choices.map(\.person)) == [fixture.sam, ian])
         #expect(!menu.flattensFirst)
 
@@ -147,6 +148,23 @@ struct PeopleViewModelTests {
         fixture.show(people, scope: .allMedia, grid: [photo])
         fixture.model.selectAssets([photo])
         #expect(fixture.model.faceMenu()?.flattensFirst == true)
+        await fixture.store.shutdown()
+    }
+
+    /// A person without a name is `Unnamed Person` in the photo menu, never offered a name
+    /// to deny, and Add Name… opens the Person sheet for them.
+    @Test func anUnnamedPersonIsOfferedAName() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let unnamed = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
+        let photo = fixture.stranger.asset
+        try await fixture.show(fixture.people(), scope: .allMedia, grid: [photo])
+        fixture.model.selectAssets([photo])
+
+        let group = try #require(fixture.model.faceMenu()?.groups.first { $0.person == unnamed })
+        #expect(group.title == "Unnamed Person")
+        #expect(group.name == nil)
+        fixture.model.performMediaItemCommand(.addName(unnamed))
+        #expect(fixture.model.peopleSession.sheet?.subject == .person(unnamed))
         await fixture.store.shutdown()
     }
 

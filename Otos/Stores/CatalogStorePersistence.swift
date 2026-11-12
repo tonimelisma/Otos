@@ -201,6 +201,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.keyPhotoMigrationIdentifier) { db in
+            for statement in CatalogSchema.keyPhotoStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -699,7 +704,7 @@ extension CatalogStore {
     /// A still's faces (ADR 0047): the reading replaces every face the asset held, and its
     /// stamp names the bytes it read, so a still with no face in it is not read again until
     /// it changes. What the user said about the faces it replaces — a person they gave, a
-    /// seed, a removed name, a feature photo, rejections — moves to the new face each
+    /// seed, a removed name, a key photo, rejections — moves to the new face each
     /// overlaps (`FaceCarryOver`); Otos's guesses do not, since assignment remakes them, and
     /// neither does "not a face", because a changed file is read afresh.
     static func writeFaces(_ faces: EnrichedFaces, stamp: ProductStamp, row: ProductRow, db: Database) throws {
@@ -707,7 +712,7 @@ extension CatalogStore {
         let previous = try Row.fetchAll(
             db,
             sql: """
-            SELECT face_index, box_x, box_y, box_width, box_height, person_id, assignment, is_feature
+            SELECT face_index, box_x, box_y, box_width, box_height, person_id, assignment, is_key_photo
             FROM face WHERE library_root_id = ? AND relative_path = ? ORDER BY face_index
             """,
             arguments: key
@@ -737,7 +742,7 @@ extension CatalogStore {
                 sql: """
                 INSERT INTO face (
                     library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
-                    landmarks, quality, analysis_revision, embedding, person_id, assignment, is_feature
+                    landmarks, quality, analysis_revision, embedding, person_id, assignment, is_key_photo
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 arguments: [
@@ -746,7 +751,7 @@ extension CatalogStore {
                     FaceStorage.landmarksData(face.landmarks), Double(face.quality), faces.analysisRevision,
                     FaceStorage.embeddingData(face.embedding),
                     kept.person?.rawValue, FaceAssignmentColumn(kept).rawValue,
-                    kept.person == nil ? 0 : (prior?["is_feature"] as Int?) ?? 0,
+                    kept.person == nil ? 0 : (prior?["is_key_photo"] as Int?) ?? 0,
                 ]
             )
             for person in priorIndex.flatMap({ rejections[$0] }) ?? [] {

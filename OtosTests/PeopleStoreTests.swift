@@ -102,7 +102,7 @@ struct PeopleStoreTests {
     }
 
     /// Reading a photo again keeps the user's word: their face and its rejections, the seed,
-    /// the removed name and the feature photo move to the new face that overlaps the old;
+    /// the removed name and the key photo move to the new face that overlaps the old;
     /// Otos's guess and "not a face" do not.
     @Test func aNewReadingKeepsTheUsersWord() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
@@ -113,7 +113,7 @@ struct PeopleStoreTests {
         let sam = try #require(try await library.store.perform(.moveToNewPerson([old[0]], name: "Sam")).person)
         let ian = try #require(try await library.store.perform(.moveToNewPerson([old[1]], name: "Ian")).person)
         _ = try await library.store.perform(.removeName([old[1]]))
-        _ = try await library.store.perform(.setFeature(old[0], of: sam))
+        _ = try await library.store.perform(.makeKeyPhoto(old[0], of: sam))
         try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [.init(face: old[2], person: .existing(ian))]))
 
         // The new reading finds the faces in another order, shifted a little.
@@ -127,7 +127,7 @@ struct PeopleStoreTests {
         #expect(byIndex[1]?.assignment == .held)
         #expect(byIndex[1]?.rejected == [ian])
         #expect(byIndex[0]?.assignment == .open)
-        #expect(snapshot.features[sam]?.index == 2)
+        #expect(snapshot.keyPhotos[sam]?.index == 2)
         await library.store.shutdown()
     }
 
@@ -168,8 +168,8 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
-    /// A person has one feature photo; a face that leaves them takes it along.
-    @Test func aFeaturePhotoIsOneFaceOfThePerson() async throws {
+    /// A person has one key photo; a face that leaves them takes it along.
+    @Test func aKeyPhotoIsOneFaceOfThePerson() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
         try await library.store.applyEnrichmentBatch([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1)]),
@@ -179,14 +179,14 @@ struct PeopleStoreTests {
         let b = FaceID(asset: library.id("b.jpg"), index: 0)
         let sam = try #require(try await library.store.perform(.moveToNewPerson([a], name: "Sam")).person)
         _ = try await library.store.perform(.move([b], to: sam))
-        _ = try await library.store.perform(.setFeature(a, of: sam))
-        _ = try await library.store.perform(.setFeature(b, of: sam))
-        #expect(try await library.store.peopleSnapshot().features == [sam: b])
+        _ = try await library.store.perform(.makeKeyPhoto(a, of: sam))
+        _ = try await library.store.perform(.makeKeyPhoto(b, of: sam))
+        #expect(try await library.store.peopleSnapshot().keyPhotos == [sam: b])
 
         _ = try await library.store.perform(.removeName([b]))
-        #expect(try await library.store.peopleSnapshot().features.isEmpty)
+        #expect(try await library.store.peopleSnapshot().keyPhotos.isEmpty)
         await #expect(throws: PeopleRuleViolation.unknownFace) {
-            _ = try await library.store.perform(.setFeature(b, of: sam))
+            _ = try await library.store.perform(.makeKeyPhoto(b, of: sam))
         }
         await library.store.shutdown()
     }
@@ -204,12 +204,12 @@ struct PeopleStoreTests {
         let sam = try #require(try await library.store.perform(.moveToNewPerson([a0], name: "Sam")).person)
         let ian = try #require(try await library.store.perform(.moveToNewPerson([b0], name: "Ian")).person)
         try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [.init(face: a1, person: .existing(ian))]))
-        _ = try await library.store.perform(.setFeature(b0, of: ian))
+        _ = try await library.store.perform(.makeKeyPhoto(b0, of: ian))
 
         func state() async throws -> PeopleSnapshot {
             let snapshot = try await library.store.peopleSnapshot()
             return PeopleSnapshot(
-                faces: snapshot.faces, tiles: [:], people: snapshot.people, features: snapshot.features,
+                faces: snapshot.faces, tiles: [:], people: snapshot.people, keyPhotos: snapshot.keyPhotos,
                 uncheckedPhotoCount: 0, revision: 0
             )
         }
@@ -217,7 +217,7 @@ struct PeopleStoreTests {
         for act: PeopleAct in [
             .move([a1], to: ian), .moveToNewPerson([a1], name: "Tyler"), .removeName([a0]), .notAFace([b0]),
             .edit(sam, name: "Sam M", birthday: "2020"), .merge(ian, into: sam),
-            .setHidden(ian, true), .setFavorite(sam, true), .setFeature(a0, of: sam),
+            .setHidden(ian, true), .setFavorite(sam, true), .makeKeyPhoto(a0, of: sam),
         ] {
             let outcome = try await library.store.perform(act)
             let after = try await state()

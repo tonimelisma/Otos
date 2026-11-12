@@ -879,12 +879,12 @@ extension CatalogStore {
             var faces: [FaceFact] = []
             var tiles: [FaceID: FaceTile] = [:]
             var likeness: [FaceID: Float] = [:]
-            var features: [PersonID: FaceID] = [:]
+            var keyPhotos: [PersonID: FaceID] = [:]
             for row in try Row.fetchAll(
                 db,
                 sql: """
                 SELECT f.library_root_id, f.relative_path, f.face_index, f.embedding, f.person_id,
-                       f.assignment, f.likeness, f.is_feature, f.is_not_face,
+                       f.assignment, f.likeness, f.is_key_photo, f.is_not_face,
                        f.box_x, f.box_y, f.box_width, f.box_height,
                        m.best_capture_local, m.preview_path
                 FROM face f
@@ -914,8 +914,8 @@ extension CatalogStore {
                 if let stored = row["likeness"] as Double? {
                     likeness[id] = Float(stored)
                 }
-                if let person, (row["is_feature"] as Int) != 0 {
-                    features[PersonID(rawValue: person)] = id
+                if let person, (row["is_key_photo"] as Int) != 0 {
+                    keyPhotos[PersonID(rawValue: person)] = id
                 }
                 tiles[id] = FaceTile(
                     id: id,
@@ -934,7 +934,7 @@ extension CatalogStore {
                 tiles: tiles,
                 people: people,
                 likeness: likeness,
-                features: features,
+                keyPhotos: keyPhotos,
                 uncheckedPhotoCount: Self.uncheckedFacePhotoCount(folderRootIDs: folders, accountRootIDs: accounts, db: db),
                 revision: revision
             )
@@ -1083,7 +1083,7 @@ extension CatalogStore {
                     guard let key = try? FaceRowKey(face, rowIDs: rowIDs) else { continue }
                     try db.execute(
                         sql: """
-                        UPDATE face SET person_id = ?, assignment = ?, is_feature = 0
+                        UPDATE face SET person_id = ?, assignment = ?, is_key_photo = 0
                         WHERE library_root_id = ? AND relative_path = ? AND face_index = ? AND is_not_face = 0 AND \(guessable)
                         """,
                         arguments: [person.rawValue, FaceAssignmentColumn.seed.rawValue, key.rootID, key.path.rawValue, key.index]
@@ -1101,7 +1101,7 @@ extension CatalogStore {
                 try db.execute(
                     sql: """
                     UPDATE face SET person_id = ?, assignment = ?,
-                        is_feature = CASE WHEN person_id IS ? THEN is_feature ELSE 0 END
+                        is_key_photo = CASE WHEN person_id IS ? THEN is_key_photo ELSE 0 END
                     WHERE library_root_id = ? AND relative_path = ? AND face_index = ? AND is_not_face = 0 AND \(guessable)
                       AND (? IS NULL OR EXISTS (SELECT 1 FROM person WHERE id = ?))
                     """,
@@ -1198,12 +1198,12 @@ extension CatalogStore {
                 try db.execute(sql: "UPDATE person SET is_hidden = ? WHERE id = ?", arguments: [hidden ? 1 : 0, person.rawValue])
             case let .setFavorite(person, favorite):
                 try db.execute(sql: "UPDATE person SET is_favorite = ? WHERE id = ?", arguments: [favorite ? 1 : 0, person.rawValue])
-            case let .setFeature(face, person):
+            case let .makeKeyPhoto(face, person):
                 let face = try key(face)
-                try db.execute(sql: "UPDATE face SET is_feature = 0 WHERE person_id = ?", arguments: [person.rawValue])
+                try db.execute(sql: "UPDATE face SET is_key_photo = 0 WHERE person_id = ?", arguments: [person.rawValue])
                 try db.execute(
                     sql: """
-                    UPDATE face SET is_feature = 1
+                    UPDATE face SET is_key_photo = 1
                     WHERE library_root_id = ? AND relative_path = ? AND face_index = ? AND person_id = ?
                     """,
                     arguments: [face.rootID, face.path.rawValue, face.index, person.rawValue]
@@ -1248,22 +1248,22 @@ extension CatalogStore {
                     )
                 }
             }
-            // A person holds one feature face: clear theirs before writing back the one the
+            // A person holds one key photo: clear theirs before writing back the one the
             // record holds.
-            for row in restore.faces where row.isFeature {
+            for row in restore.faces where row.isKeyPhoto {
                 if let person = row.assignment.person {
-                    try db.execute(sql: "UPDATE face SET is_feature = 0 WHERE person_id = ?", arguments: [person.rawValue])
+                    try db.execute(sql: "UPDATE face SET is_key_photo = 0 WHERE person_id = ?", arguments: [person.rawValue])
                 }
             }
             for row in restore.faces {
                 guard let key = try? FaceRowKey(row.face, rowIDs: rowIDs) else { continue }
                 try db.execute(
                     sql: """
-                    UPDATE face SET person_id = ?, assignment = ?, is_not_face = ?, is_feature = ?
+                    UPDATE face SET person_id = ?, assignment = ?, is_not_face = ?, is_key_photo = ?
                     WHERE library_root_id = ? AND relative_path = ? AND face_index = ?
                     """,
                     arguments: [row.assignment.person?.rawValue, FaceAssignmentColumn(row.assignment).rawValue,
-                                row.isNotFace ? 1 : 0, row.isFeature ? 1 : 0, key.rootID, key.path.rawValue, key.index]
+                                row.isNotFace ? 1 : 0, row.isKeyPhoto ? 1 : 0, key.rootID, key.path.rawValue, key.index]
                 )
             }
             try Self.deleteRejections(faces: faceKeys, people: people, db: db)
@@ -1329,7 +1329,7 @@ extension CatalogStore {
             guard earlier == 0 else { throw PeopleRuleViolation.confirmedBeforeBirthday(count: earlier) }
             try db.execute(
                 sql: """
-                UPDATE face SET person_id = NULL, assignment = \(FaceAssignmentColumn.open.rawValue), is_feature = 0
+                UPDATE face SET person_id = NULL, assignment = \(FaceAssignmentColumn.open.rawValue), is_key_photo = 0
                 WHERE (library_root_id, relative_path, face_index) IN (
                     SELECT f.library_root_id, f.relative_path, f.face_index \(before)
                 )
@@ -1373,7 +1373,7 @@ extension CatalogStore {
         for key in keys {
             try db.execute(
                 sql: """
-                UPDATE face SET person_id = NULL, assignment = \(FaceAssignmentColumn.open.rawValue), is_feature = 0
+                UPDATE face SET person_id = NULL, assignment = \(FaceAssignmentColumn.open.rawValue), is_key_photo = 0
                 WHERE library_root_id = ? AND relative_path = ? AND person_id = ? AND face_index <> ?
                 """,
                 arguments: [key.rootID, key.path.rawValue, person.rawValue, key.index]
@@ -1390,11 +1390,11 @@ extension CatalogStore {
     }
 
     /// Sets a face's person and whose word it is; a face that changes person stops being its
-    /// old person's feature photo.
+    /// old person's key photo.
     private static func setFace(_ key: FaceRowKey, person: PersonID?, assignment: FaceAssignmentColumn, db: Database) throws {
         try db.execute(
             sql: """
-            UPDATE face SET is_feature = CASE WHEN person_id IS ? THEN is_feature ELSE 0 END,
+            UPDATE face SET is_key_photo = CASE WHEN person_id IS ? THEN is_key_photo ELSE 0 END,
                 person_id = ?, assignment = ?
             WHERE library_root_id = ? AND relative_path = ? AND face_index = ?
             """,
@@ -1405,7 +1405,7 @@ extension CatalogStore {
     /// The first person's faces become the second's. Refused when the user gave both a face
     /// of one photo, or gave the first a photo from before the second's birthday. Where Otos
     /// had guessed both into one photo, the guesses there are dropped for assignment to redo.
-    /// The second keeps its name, birthday and feature photo, taking the first's where it
+    /// The second keeps its name, birthday and key photo, taking the first's where it
     /// has none, and is a favourite if either was.
     private static func mergePerson(_ from: PersonID, into: PersonID, db: Database) throws {
         let anchors = "(\(FaceAssignmentColumn.user.rawValue), \(FaceAssignmentColumn.seed.rawValue))"
@@ -1440,7 +1440,7 @@ extension CatalogStore {
         // Guesses of either in a photo the other is in.
         try db.execute(
             sql: """
-            UPDATE face SET person_id = NULL, assignment = \(FaceAssignmentColumn.open.rawValue), is_feature = 0
+            UPDATE face SET person_id = NULL, assignment = \(FaceAssignmentColumn.open.rawValue), is_key_photo = 0
             WHERE assignment = \(FaceAssignmentColumn.model.rawValue) AND person_id IN (?, ?) AND EXISTS (
                 SELECT 1 FROM face other WHERE other.library_root_id = face.library_root_id
                   AND other.relative_path = face.relative_path AND other.face_index <> face.face_index
@@ -1449,11 +1449,11 @@ extension CatalogStore {
             """,
             arguments: [from.rawValue, into.rawValue, from.rawValue, into.rawValue]
         )
-        let targetHasFeature = try Int.fetchOne(
-            db, sql: "SELECT COUNT(*) FROM face WHERE person_id = ? AND is_feature = 1", arguments: [into.rawValue]
+        let targetHasKeyPhoto = try Int.fetchOne(
+            db, sql: "SELECT COUNT(*) FROM face WHERE person_id = ? AND is_key_photo = 1", arguments: [into.rawValue]
         ) ?? 0 > 0
-        if targetHasFeature {
-            try db.execute(sql: "UPDATE face SET is_feature = 0 WHERE person_id = ?", arguments: [from.rawValue])
+        if targetHasKeyPhoto {
+            try db.execute(sql: "UPDATE face SET is_key_photo = 0 WHERE person_id = ?", arguments: [from.rawValue])
         }
         try db.execute(sql: "UPDATE face SET person_id = ? WHERE person_id = ?", arguments: [into.rawValue, from.rawValue])
         try db.execute(
@@ -1507,11 +1507,11 @@ extension CatalogStore {
                 ).map(PersonID.init(rawValue:))
             }
         }
-        func features(of people: [PersonID]) throws -> [FaceRowKey] {
+        func keyPhotos(of people: [PersonID]) throws -> [FaceRowKey] {
             try people.flatMap { person in
                 try Row.fetchAll(
                     db,
-                    sql: "SELECT library_root_id, relative_path, face_index FROM face WHERE person_id = ? AND is_feature = 1",
+                    sql: "SELECT library_root_id, relative_path, face_index FROM face WHERE person_id = ? AND is_key_photo = 1",
                     arguments: [person.rawValue]
                 ).map(FaceRowKey.init)
             }
@@ -1520,19 +1520,19 @@ extension CatalogStore {
         case let .move(named, person):
             let keys = try photos(named)
             let involved = try [person] + people(of: keys)
-            return try (keys + features(of: involved), involved)
+            return try (keys + keyPhotos(of: involved), involved)
         case let .moveToNewPerson(named, _), let .removeName(named), let .notAFace(named):
             let keys = try photos(named)
             let involved = try people(of: keys)
-            return try (keys + features(of: involved), involved)
+            return try (keys + keyPhotos(of: involved), involved)
         case let .edit(person, _, _):
             return try (faces(of: [person]), [person])
         case let .merge(from, into):
             return try (photosOf(faces(of: [from, into])), [from, into])
         case let .setHidden(person, _), let .setFavorite(person, _):
             return ([], [person])
-        case let .setFeature(face, person):
-            return try ([FaceRowKey(face, rowIDs: rowIDs)] + features(of: [person]), [person])
+        case let .makeKeyPhoto(face, person):
+            return try ([FaceRowKey(face, rowIDs: rowIDs)] + keyPhotos(of: [person]), [person])
         }
     }
 
@@ -1552,7 +1552,7 @@ extension CatalogStore {
             guard let id = faceID(key), let row = try Row.fetchOne(
                 db,
                 sql: """
-                SELECT person_id, assignment, is_not_face, is_feature FROM face
+                SELECT person_id, assignment, is_not_face, is_key_photo FROM face
                 WHERE library_root_id = ? AND relative_path = ? AND face_index = ?
                 """,
                 arguments: [key.rootID, key.path.rawValue, key.index]
@@ -1561,7 +1561,7 @@ extension CatalogStore {
                 face: id,
                 assignment: FaceAssignmentColumn.assignment(column: row["assignment"], person: row["person_id"]),
                 isNotFace: (row["is_not_face"] as Int) != 0,
-                isFeature: (row["is_feature"] as Int) != 0
+                isKeyPhoto: (row["is_key_photo"] as Int) != 0
             ))
             for person in try Int64.fetchAll(
                 db,

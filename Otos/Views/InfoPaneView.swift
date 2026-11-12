@@ -152,7 +152,8 @@ struct InfoPaneView: View {
 /// photos, the people each could be, and the face acts.
 struct InfoPanePeople {
     let faces: SelectionFaces
-    let names: (PersonID) -> String
+    /// The name the user gave a person; nil for a person without one.
+    let name: (PersonID) -> String?
     /// The people some faces may be given, most likely first; the person in the second
     /// argument is left out.
     let choices: ([PhotoFace], PersonID?) -> [PersonSummary]
@@ -163,11 +164,11 @@ struct InfoPanePeople {
     let hover: (FaceID?) -> Void
 }
 
-/// The People section: for one photo, each face as its crop with its person's name or
-/// `Unidentified`; for several, each person with how many of the photos hold them, and the
-/// unidentified faces. An unidentified face offers the three people it most likely is as
-/// buttons, and every row's menu holds This Is ▸, Not <name>, Not a Face and Set as Feature
-/// Photo — the photo menus' acts (`docs/design/people.md`).
+/// The People section: for one photo, each face as its crop with its person's name, `Add
+/// Name…` for a person without one, or `Unidentified`; for several, each person with how
+/// many of the photos hold them, and the unidentified faces. An unidentified face offers the
+/// three people it most likely is as buttons, and every row's menu holds the photo menus'
+/// acts in their words (`FaceActTitle`, `docs/design/people.md`).
 private struct InfoPanePeopleSection: View {
     let people: InfoPanePeople?
     let facesRead: Bool?
@@ -183,19 +184,19 @@ private struct InfoPanePeopleSection: View {
             } else if people.faces.photos.count == 1 {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(people.faces.faces) { face in
-                        row(people, faces: [face], tile: face.tile, title: face.person.map(people.names), person: face.person)
+                        row(people, faces: [face], tile: face.tile, person: face.person, name: face.person.flatMap(people.name))
                     }
                 }
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(people.faces.people, id: \.self) { person in
                         let faces = people.faces.faces(of: person)
-                        row(people, faces: faces, tile: faces.first?.tile, title: people.names(person), person: person,
+                        row(people, faces: faces, tile: faces.first?.tile, person: person, name: people.name(person),
                             detail: PeopleText.count(Set(faces.map(\.id.asset)).count, "photo"))
                     }
                     let unidentified = people.faces.unidentified
                     if !unidentified.isEmpty {
-                        row(people, faces: unidentified, tile: nil, title: nil, person: nil,
+                        row(people, faces: unidentified, tile: nil, person: nil, name: nil,
                             detail: PeopleText.count(unidentified.count, "face"))
                     }
                 }
@@ -210,8 +211,8 @@ private struct InfoPanePeopleSection: View {
         _ people: InfoPanePeople,
         faces: [PhotoFace],
         tile: FaceTile?,
-        title: String?,
         person: PersonID?,
+        name: String?,
         detail: String? = nil
     ) -> some View {
         let ids = faces.map(\.id)
@@ -229,9 +230,17 @@ private struct InfoPanePeopleSection: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(title ?? (faces.count == 1 ? "Unidentified" : "Unidentified Faces"))
-                        .foregroundStyle(title == nil ? .secondary : .primary)
-                        .lineLimit(1)
+                    if let person, name == nil {
+                        // A person without a name: the name's place offers naming them, so
+                        // it never reads as someone called Unnamed.
+                        Button(FaceActTitle.addName) { people.actions.addName(person) }
+                            .buttonStyle(.link)
+                            .lineLimit(1)
+                    } else {
+                        Text(name ?? (faces.count == 1 ? "Unidentified" : "Unidentified Faces"))
+                            .foregroundStyle(name == nil ? .secondary : .primary)
+                            .lineLimit(1)
+                    }
                     if let detail {
                         Text(detail)
                             .foregroundStyle(.secondary)
@@ -259,7 +268,11 @@ private struct InfoPanePeopleSection: View {
             }
             Spacer(minLength: 0)
             Menu {
-                Menu("This Is") {
+                if let person, name == nil {
+                    Button(FaceActTitle.addName) { people.actions.addName(person) }
+                    Divider()
+                }
+                Menu(FaceActTitle.thisIs) {
                     ForEach(choices) { choice in
                         Button(choice.displayName) {
                             if person == nil, faces.count > 1 {
@@ -272,15 +285,15 @@ private struct InfoPanePeopleSection: View {
                     if !choices.isEmpty {
                         Divider()
                     }
-                    Button("New Person…") { people.actions.newPerson(onePerPhoto.map(\.id)) }
+                    Button(FaceActTitle.newPerson) { people.actions.newPerson(onePerPhoto.map(\.id)) }
                 }
-                if let person, let title {
-                    Button("Not \(title)") { people.actions.removeNames(ids) }
+                if person != nil {
+                    Button(FaceActTitle.notPerson(name)) { people.actions.removeNames(ids) }
                 }
-                Button("Not a Face") { people.actions.notFaces(ids) }
+                Button(FaceActTitle.notAFace) { people.actions.notFaces(ids) }
                 if let person, faces.count == 1, let face = faces.first {
                     Divider()
-                    Button("Set as Feature Photo") { people.actions.setFeature(face.id, person) }
+                    Button(FaceActTitle.makeKeyPhoto) { people.actions.makeKeyPhoto(face.id, person) }
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -289,7 +302,7 @@ private struct InfoPanePeopleSection: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Face Actions")
-            .accessibilityLabel("Actions for \(title ?? "unidentified face")")
+            .accessibilityLabel("Actions for \(name ?? (person == nil ? "unidentified face" : "unnamed person"))")
         }
         .contentShape(Rectangle())
         .onHover { inside in

@@ -237,7 +237,7 @@ extension PeopleAssignment {
 /// Turns a `PeopleSnapshot` into the People gallery. Pure: the same snapshot always gives the
 /// same state, so it is tested without a catalog.
 /// - **A person:** every face with them, whoever gave it; the count is their photos; the
-///   cover is the feature face the user chose, else the newest face.
+///   cover is the key photo the user chose, else the newest face.
 /// - **Order:** favourites first, then most photos, then the name in the locale's order;
 ///   hidden people after everyone else, in the same order. A person with no face at all is
 ///   shown only when the user said something about them (a name, a birthday, a favourite,
@@ -270,7 +270,7 @@ nonisolated enum PeopleStateBuilder {
         let people = snapshot.people.compactMap { person -> PersonSummary? in
             let own = (faces[person.id] ?? []).sorted(by: newestFirst)
             guard !own.isEmpty || !person.isBare else { return nil }
-            let feature = snapshot.features[person.id].flatMap { id in own.first { $0.id == id } }
+            let keyPhoto = snapshot.keyPhotos[person.id].flatMap { id in own.first { $0.id == id } }
             return PersonSummary(
                 id: person.id,
                 name: person.name,
@@ -278,7 +278,7 @@ nonisolated enum PeopleStateBuilder {
                 isHidden: person.isHidden,
                 isFavorite: person.isFavorite,
                 photoCount: Set(own.map(\.id.asset)).count,
-                cover: feature ?? own.first,
+                cover: keyPhoto ?? own.first,
                 userFaces: (userFaces[person.id] ?? []).sorted(by: newestFirst),
                 anchorPhotos: anchorPhotos[person.id] ?? []
             )

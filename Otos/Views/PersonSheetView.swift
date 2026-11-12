@@ -54,7 +54,7 @@ struct PersonSheetView: View {
     var body: some View {
         let reason = refusal(name, birthday)
         VStack(alignment: .leading, spacing: 16) {
-            Text(person?.name ?? (person == nil ? "New Person" : "Unnamed"))
+            Text(person?.displayName ?? "New Person")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(DesignPalette.label(for: colorScheme))
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 8, verticalSpacing: 10) {

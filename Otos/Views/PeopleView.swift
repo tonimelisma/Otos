@@ -3,7 +3,7 @@ import SwiftUI
 
 // The detail pane for the `.people` scope (ADR 0047, `docs/design/people.md`): a 52 pt bar
 // stating how many people there are and how many photos are not yet checked; under it,
-// everyone as their feature face, name (or `Add Name…`) and photo count, favourites first,
+// everyone as their key photo, name (or `Add Name…`) and photo count, favourites first,
 // then most photos; then, under `Hidden`, the people the user hid, the one place they are
 // seen. Passive: strings come from `PeoplePresentation`, and every control calls a
 // view-model intent through `PeopleActions`.
@@ -225,7 +225,7 @@ private struct PeopleBar: View {
     }
 }
 
-/// One person: their feature face, their name (or `Add Name…`) and their photo count; a
+/// One person: their key photo, their name (or `Add Name…`) and their photo count; a
 /// heart before the name for a favourite. A hidden person is dimmed and offers only Unhide.
 /// Dragging one person onto another asks whether they are the same person.
 private struct PersonCell: View {

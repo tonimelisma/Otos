@@ -17,7 +17,7 @@ struct PeopleStateTests {
     static func snapshot(
         _ faces: [FaceFact],
         people: [PeopleSnapshot.Person]? = nil,
-        features: [PersonID: FaceID] = [:],
+        keyPhotos: [PersonID: FaceID] = [:],
         likeness: [FaceID: Float] = [:],
         unchecked: Int = 0
     ) -> PeopleSnapshot {
@@ -31,14 +31,14 @@ struct PeopleStateTests {
                 .init(id: ian, name: "Ian", birthday: nil),
             ],
             likeness: likeness,
-            features: features,
+            keyPhotos: keyPhotos,
             uncheckedPhotoCount: unchecked,
             revision: 0
         )
     }
 
     /// The gallery: favourites first, then most photos, a named person before an unnamed one
-    /// of the same count; hidden people last. The cover is the feature face, else the newest.
+    /// of the same count; hidden people last. The cover is the key photo, else the newest.
     @Test func theGalleryOrdersFavoritesThenPhotosAndHiddenLast() {
         let tyler = PersonID(rawValue: 3)
         let owen = PersonID(rawValue: 4)
@@ -57,7 +57,7 @@ struct PeopleStateTests {
             .init(id: owen, name: "Owen", birthday: nil, isFavorite: true),
         ]
 
-        let state = PeopleStateBuilder.state(from: Self.snapshot(faces, people: people, features: [Self.sam: faces[0].id]))
+        let state = PeopleStateBuilder.state(from: Self.snapshot(faces, people: people, keyPhotos: [Self.sam: faces[0].id]))
 
         #expect(state.people.map(\.id) == [owen, Self.sam, tyler, Self.ian])
         #expect(state.visiblePeople.map(\.id) == [owen, Self.sam, tyler])
@@ -190,6 +190,12 @@ struct PeopleStateTests {
         #expect(PeoplePresentation.uncheckedLine(0) == "Every photo has been checked")
         #expect(PeoplePresentation.uncheckedLine(1820) == "1,820 photos not yet checked for faces")
         #expect(PeopleText.names(["Sam"]) == "Sam")
+        #expect(PersonSummary.displayName(nil) == "Unnamed Person")
+        #expect(FaceActTitle.notPerson("Sam") == "This Is Not Sam")
+        #expect(FaceActTitle.notPerson(nil) == "Wrong Person")
+        #expect(FaceActTitle.notAFace == "This Is Not a Face")
+        #expect(FaceActTitle.makeKeyPhoto == "Make Key Photo")
+        #expect(FaceActTitle.addName == "Add Name…")
         #expect(PeopleText.names(["Sam", "Ian"]) == "Sam and Ian")
         #expect(PeopleText.names(["Sam", "Ian", "Tyler", "Owen"]) == "Sam, Ian and 2 Others")
         #expect(MediaSortOrder.likenessLeast.label(person: "Sam") == "Likeness — Least Like Sam First")

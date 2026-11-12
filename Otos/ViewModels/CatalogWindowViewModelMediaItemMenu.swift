@@ -54,17 +54,18 @@ extension CatalogWindowViewModel {
             people.remove(at: index)
             people.insert(single, at: 0)
         }
-        let feature = selection.photos.count == 1
+        let onePhoto = selection.photos.count == 1
         var groups = people.map { person -> FaceMenu.Group in
             let faces = selection.faces(of: person)
             let ids = faces.map(\.id)
             return FaceMenu.Group(
                 title: peopleIndex.name(person),
                 person: person,
+                name: peopleIndex.givenName(person),
                 faces: ids,
                 choices: choices(for: faces, in: selection, except: person).map { .init(person: $0.id, title: $0.displayName, faces: ids) },
                 newPersonFaces: ids,
-                feature: feature ? ids.first : nil
+                keyPhoto: onePhoto ? ids.first : nil
             )
         }
         let unidentified = selection.unidentified
@@ -74,12 +75,13 @@ extension CatalogWindowViewModel {
             groups.append(FaceMenu.Group(
                 title: unidentified.count == 1 ? "Unidentified Face" : "Unidentified Faces",
                 person: nil,
+                name: nil,
                 faces: unidentified.map(\.id),
                 choices: choices(for: onePerPhoto, in: selection, except: nil).map { person in
                     .init(person: person.id, title: person.displayName, faces: selection.unidentifiedFacesToName(as: person.id))
                 },
                 newPersonFaces: onePerPhoto.map(\.id),
-                feature: nil
+                keyPhoto: nil
             ))
         }
         return FaceMenu(groups: groups, flattensFirst: single != nil && people.first == single)
@@ -119,12 +121,14 @@ extension CatalogWindowViewModel {
             nameFaces(faces, as: person)
         case let .newPerson(faces):
             beginNewPerson(faces)
+        case let .addName(person):
+            beginEditingPerson(person)
         case let .notPerson(faces):
             removeNames(faces)
         case let .notAFace(faces):
             markNotFaces(faces)
-        case let .setFeaturePhoto(face, person):
-            setFeaturePhoto(face, of: person)
+        case let .makeKeyPhoto(face, person):
+            makeKeyPhoto(face, of: person)
         }
     }
 }
