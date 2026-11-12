@@ -92,6 +92,18 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
    from the primary checkout's copy (`ditto`), and xcodebuild then resolves the pins
    against it without the network. The folder is copied, never shared: two builds
    resolving into one package folder at once is not a case SwiftPM guards.
+10. **The diff picks the tier.** `check.sh` lists the paths the working tree changes
+    against its merge base with `origin/main`, untracked files included. When every one
+    is in `docs/`, `.github/`, `.claude/`, a Markdown file, the lint config, or a script
+    off the build path, it runs the **static** tier: every gate, no build, no tests.
+    Nothing in such a diff is read by the app build or the test suite, so their result
+    for it is the merge base's. Every other path takes the **full** tier, and so does any
+    path the list does not name and a tree with no diff, so a misread path costs a build,
+    never coverage. `check.sh`, `verify.sh`, `build.sh`, `test.sh` and `script/lib/` are
+    the build path itself and always take the full tier. `--only` runs always take it.
+    - **Rejected: choosing tests by changed source file.** OtosKit is one module; an edit
+      rebuilds all of it (§1), and its owners reach each other through the catalog, so
+      the map from a source file to the tests it can break would be a guess.
 
 ## Alternatives Considered
 

@@ -156,6 +156,38 @@ if [[ "$fast_failed" != "0" ]]; then
   exit 1
 fi
 echo "op=check.stage phase=pass stage=fast-gates"
+# What the change can reach decides what proves it (ADR 0044). A tree whose diff from its
+# merge base touches only paths the app build and the test suite never read takes the
+# static tier: every gate, no build, no tests. Any other path, including one this list
+# does not know, takes the full tier, so a path misread costs time, never coverage. A tree
+# with no diff takes the full tier too: it is a check of main itself.
+check_tier() {
+  local base path changed=0
+  base="$(git -C "$ROOT_DIR" merge-base origin/main HEAD)"
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    changed=1
+    case "$path" in
+      script/check.sh | script/verify.sh | script/build.sh | script/test.sh | script/lib/*)
+        echo full; return ;;
+      Otos/* | OtosTests/*)
+        echo full; return ;;
+      docs/* | .github/* | .claude/* | script/* | *.md | .swiftlint.yml | .swiftformat)
+        ;;
+      *)
+        echo full; return ;;
+    esac
+  done < <(git -C "$ROOT_DIR" diff --name-only "$base" "$snapshot")
+  if [[ "$changed" == 0 ]]; then echo full; else echo static; fi
+}
+if [[ -n "$OTOS_ONLY_TESTING" ]]; then
+  CHECK_TIER=full
+else
+  CHECK_TIER="$(check_tier)"
+fi
+echo "op=check.tier tier=$CHECK_TIER"
+export OTOS_CHECK_TIER="$CHECK_TIER"
+
 # Benchmarks run nightly, not here (ADR 0043). One line says whether main is clean, flagged,
 # or far enough past its last measured commit to need a run by hand.
 "$ROOT_DIR/script/bench.sh" status || true
@@ -348,6 +380,8 @@ if [[ "$verify_status" == "0" && "$final_tree" != "$MEASURED_TREE" ]]; then
   verify_status=1
 elif [[ "$verify_status" == "0" && -n "$OTOS_ONLY_TESTING" ]]; then
   echo "check: PASSED (scoped to $OTOS_ONLY_TESTING) — iteration feedback, NOT verification evidence"
+elif [[ "$verify_status" == "0" && "$CHECK_TIER" == "static" ]]; then
+  echo "check: PASSED (tier=static: every gate, no build or tests, because the diff reaches nothing they read) — evidence is valid only for the tree as it stands right now"
 elif [[ "$verify_status" == "0" ]]; then
   echo "check: PASSED — evidence is valid only for the tree as it stands right now"
 else

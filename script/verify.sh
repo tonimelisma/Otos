@@ -75,6 +75,21 @@ run_static_gates() {
 run_static_gates &
 static_gates_pid=$!
 
+# The static tier (script/check.sh decides it from the diff, ADR 0044) changed nothing the
+# build or the tests read, so it runs the gates alone and says so.
+if [[ "${OTOS_CHECK_TIER:-full}" == "static" ]]; then
+  echo "op=verify.stage stage=build phase=skipped reason=staticTier"
+  echo "op=verify.stage stage=test phase=skipped reason=staticTier"
+  wait "$static_gates_pid"
+  record "static-gates" "$?"
+  if [[ "${#failed_stages[@]}" -gt 0 ]]; then
+    echo "verify: FAILED stages: ${failed_stages[*]}" >&2
+    exit 1
+  fi
+  echo "verify: all stages passed (static tier: no build, no tests)"
+  exit 0
+fi
+
 "$ROOT_DIR/script/build.sh"
 build_status=$?
 record "build" "$build_status"

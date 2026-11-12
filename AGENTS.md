@@ -402,10 +402,15 @@ that nothing survives before starting the next run.
 Verification evidence must come from the run that measured the **final** tree. A
 green run followed by any edit the build or tests can see — source, tests, scripts,
 project, config, including a refactor or a comment — no longer proves anything;
-re-run and say which run the evidence is from. An edit confined to Markdown under
-`docs/` or to these instructions cannot change what the build and tests measured:
-after a green run, it needs only `script/requirements-authority-check.sh`,
-`script/check-doc-citations.sh` and `script/ci-text-hygiene.sh check`.
+re-run and say which run the evidence is from.
+
+`check.sh` picks its tier from the diff against the merge base (`op=check.tier`, ADR
+0044). A diff confined to `docs/`, Markdown, `.github/`, `.claude/`, lint config and
+scripts off the build path takes the **static** tier: every gate, no build, no tests,
+in seconds. Anything else takes the **full** tier, and so does any path the classifier
+does not know, and a tree with no diff. The build-path scripts (`check.sh`,
+`verify.sh`, `build.sh`, `test.sh`, `script/lib/`) take the full tier, because only a
+build proves them.
 
 ## Documentation
 
@@ -489,9 +494,8 @@ for confirmation before relying on them.
   the turn to wait for a CI notification: a green run may never send one.
 - **Doc-only increments** (the diff touches only documentation — `docs/`,
   `AGENTS.md`, and similar prose; no source, tests, scripts, or config) use a
-  lightweight path: skip the last-five-PRs review-comment sweep, skip
-  `script/check.sh` build/test (run `script/ci-text-hygiene.sh check` and
-  `script/requirements-authority-check.sh` locally instead), and integrate
+  lightweight path: skip the last-five-PRs review-comment sweep, run
+  `script/check.sh` (it takes the static tier), and integrate
   quickly — branch, PR, merge to remote `main`, remove the worktree/branch, and
   send the DoD report. The DoD report notes the doc-only scope; everything else
   about the DoD (one final report, posted on the PR and sent in full) still
