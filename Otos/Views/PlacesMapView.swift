@@ -30,9 +30,6 @@ struct PlacesMapView: View {
     @State private var appliedCameraRevision: UInt64 = 0
     @State private var viewSize: CGSize = .zero
     @State private var settledRect: MKMapRect?
-    /// The camera's visible height in map points, followed while the camera moves: with
-    /// the map's pan band it sets where the center may go (`cameraCenterBounds`).
-    @State private var visibleMapHeight: Double = 0
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -50,7 +47,7 @@ struct PlacesMapView: View {
     }
 
     private var mapContent: some View {
-        Map(position: $camera, bounds: cameraBounds, interactionModes: [.pan, .zoom]) {
+        Map(position: $camera, interactionModes: [.pan, .zoom]) {
             ForEach(clusters) { cluster in
                 Annotation("", coordinate: cluster.clCoordinate, anchor: .center) {
                     MapClusterStackView(
@@ -89,15 +86,16 @@ struct PlacesMapView: View {
             viewSize = size
             reportViewport()
         }
-        // MapKit bounds only the camera's center, and how far the center may go depends
-        // on how tall the view is in map points, so the bound follows every frame of a
-        // zoom; a pan leaves the height, and so the bound, unchanged.
-        .onMapCameraChange(frequency: .continuous) { context in
-            visibleMapHeight = context.rect.size.height
-        }
+        // The pan band is held where a camera settles, not by `MapCameraBounds`: with any
+        // bound MapKit's pan stops a center at the antimeridian going east, though it wraps
+        // going west (measured 2026-11-13).
         .onMapCameraChange(frequency: .onEnd) { context in
             settledRect = context.rect
             reportViewport()
+            keepInsidePanBand()
+        }
+        .onChange(of: map.panBand) { _, _ in
+            keepInsidePanBand()
         }
         .onChange(of: cameraRequest?.revision, initial: true) { _, _ in
             applyCameraRequest()
@@ -105,14 +103,26 @@ struct PlacesMapView: View {
         .accessibilityLabel("Map")
     }
 
-    private var cameraBounds: MapCameraBounds {
-        let centerBounds = MapClusterPolicy.cameraCenterBounds(visibleHeight: visibleMapHeight, band: map.panBand)
-        return MapCameraBounds(centerCoordinateBounds: MKMapRect(
-            x: centerBounds.originX,
-            y: centerBounds.originY,
-            width: centerBounds.width,
-            height: centerBounds.height
-        ))
+    /// Eases a camera that settled past the pan band back inside it, at the same zoom:
+    /// content moving into place (DES-070: 0.25 s ease-out), a snap under Reduce Motion
+    /// (DES-075). The settle that follows reports the viewport inside the band.
+    private func keepInsidePanBand() {
+        guard let rect = settledRect,
+              let inside = MapClusterPolicy.keptInside(
+                  MapBounds(
+                      originX: rect.origin.x,
+                      originY: rect.origin.y,
+                      width: rect.size.width,
+                      height: rect.size.height
+                  ),
+                  band: map.panBand
+              )
+        else {
+            return
+        }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
+            camera = .rect(MKMapRect(x: inside.originX, y: inside.originY, width: inside.width, height: inside.height))
+        }
     }
 
     private func reportViewport() {

@@ -71,9 +71,11 @@ DES-104]**; pan and zoom only; `MapZoomStepper` and `MapScaleView` as the only c
 No user-location control and no permission prompt. The map pans north and south only
 to 75°, or to the farthest located item plus 2° when one lies beyond, never past the
 map's own edge: Web Mercator stretches the polar regions many times over, so they stay
-off screen, and no item is ever out of reach (owner decision, 2026-11-13). The camera's
-center is bounded to that band less half the visible height, at every zoom; east–west it
-wraps. Zoom-out stops where MapKit's flat map does; only its satellite globe shows the
+off screen, and no item is ever out of reach (owner decision, 2026-11-13). A pan or zoom
+that settles past the band eases back to its edge at the same zoom (0.25 s ease-out,
+DES-070; a snap under Reduce Motion, DES-075), as a scroll view springs back from its
+end; east–west it wraps freely. MapKit's own camera bounds are not used: with any bound,
+its pan stops at the antimeridian going east. Zoom-out stops where MapKit's flat map does; only its satellite globe shows the
 whole world undistorted, and the owner chose the standard map
 (`docs/research/2026-11-13-mapkit-zoom-out-and-poles.md`).
 

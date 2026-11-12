@@ -261,34 +261,37 @@ struct MapClusterPolicyTests {
         MKMapPoint(CLLocationCoordinate2D(latitude: latitude, longitude: 0)).y
     }
 
-    /// The map pans to 75° north and south and no farther, so the stretched polar regions
-    /// stay off screen: a center inside the bound keeps the visible rect inside the band
-    /// at every zoom, and a pan east or west is never held.
-    @Test func cameraCenterBoundsKeepTheViewInsideThePanBand() {
+    /// A camera that settles past 75° comes back to the band's edge at the same size and
+    /// longitude; one inside is left alone; a view taller than the band sits at its middle.
+    @Test func aCameraPastThePanBandIsKeptInsideIt() {
         let world = MapClusterPolicy.worldMapPoints
         let band = MapClusterPolicy.panBand(for: [])
         let top = mapY(75)
         let bottom = mapY(-75)
-        for visibleHeight in [world / 1000, world / 4, (bottom - top) * 0.9] {
-            let bounds = MapClusterPolicy.cameraCenterBounds(visibleHeight: visibleHeight, band: band)
+        let size = world / 4
 
-            #expect(abs(bounds.originY - visibleHeight / 2 - top) < 1)
-            #expect(abs(bounds.originY + bounds.height + visibleHeight / 2 - bottom) < 1)
-            #expect(bounds.originX <= -world)
-            #expect(bounds.originX + bounds.width >= 2 * world)
-        }
-    }
-
-    /// A view taller than the band can only sit at its middle.
-    @Test func cameraCenterBoundsForAViewTallerThanTheBandIsItsMiddle() {
-        let band = MapClusterPolicy.panBand(for: [])
-        let bounds = MapClusterPolicy.cameraCenterBounds(
-            visibleHeight: MapClusterPolicy.worldMapPoints,
+        let north = MapClusterPolicy.keptInside(
+            MapBounds(originX: 0.9 * world, originY: top - size / 2, width: size, height: size),
             band: band
         )
+        #expect(north.map { abs($0.originY - top) < 1 } == true)
+        #expect(north?.originX == 0.9 * world)
+        #expect(north?.width == size)
 
-        #expect(bounds.height == 0)
-        #expect(abs(bounds.originY - (mapY(75) + mapY(-75)) / 2) < 1)
+        let south = MapClusterPolicy.keptInside(
+            MapBounds(originX: 0, originY: bottom - size / 2, width: size, height: size),
+            band: band
+        )
+        #expect(south.map { abs($0.originY + size - bottom) < 1 } == true)
+
+        let inside = MapBounds(originX: 0, originY: world / 2 - size / 2, width: size, height: size)
+        #expect(MapClusterPolicy.keptInside(inside, band: band) == nil)
+
+        let tall = MapClusterPolicy.keptInside(
+            MapBounds(originX: 0, originY: world / 10, width: world, height: world),
+            band: band
+        )
+        #expect(tall.map { abs($0.centerY - (top + bottom) / 2) < 1 } == true)
     }
 
     /// No located item is out of reach: the band widens past 75° to the farthest item

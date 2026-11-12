@@ -237,18 +237,27 @@ nonisolated enum MapClusterPolicy {
         )
     }
 
-    /// Where the camera's center may go so the view never shows past `band`: the band's
-    /// height in map points inset by half the visible height. MapKit bounds only the
-    /// center, so the bound narrows as the view shows more of the map; a view taller than
-    /// the band sits at its middle. East–west is free: the map wraps at the antimeridian,
-    /// so the bound spans three worlds, and a center past either edge of one is the same
-    /// place on the next.
-    static func cameraCenterBounds(visibleHeight: Double, band: MapLatitudeBand) -> MapBounds {
-        let world = worldMapPoints
+    /// `bounds` moved north or south, at the same size, so it shows nothing past `band`;
+    /// nil when it already does. A view taller than the band sits at its middle.
+    /// East–west is never touched: the map wraps at the antimeridian.
+    static func keptInside(_ bounds: MapBounds, band: MapLatitudeBand) -> MapBounds? {
         let top = mapPoint(PlaceCoordinate(latitude: band.north, longitude: 0)).y
         let bottom = mapPoint(PlaceCoordinate(latitude: band.south, longitude: 0)).y
-        let inset = min(max(visibleHeight, 0), bottom - top) / 2
-        return MapBounds(originX: -world, originY: top + inset, width: 3 * world, height: bottom - top - 2 * inset)
+        let originY: Double
+        if bounds.height >= bottom - top {
+            originY = (top + bottom - bounds.height) / 2
+        } else if bounds.originY < top {
+            originY = top
+        } else if bounds.originY + bounds.height > bottom {
+            originY = bottom - bounds.height
+        } else {
+            return nil
+        }
+        // Less than a map point is not a move: a camera already at the edge settles there.
+        guard abs(originY - bounds.originY) >= 1 else {
+            return nil
+        }
+        return MapBounds(originX: bounds.originX, originY: originY, width: bounds.width, height: bounds.height)
     }
 
     /// The box of the earth the viewport shows: what Grid, Loupe and Compare open on the
