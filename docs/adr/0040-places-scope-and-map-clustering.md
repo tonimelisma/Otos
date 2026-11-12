@@ -196,7 +196,8 @@ plan pinned by `CatalogStoreQueryPlanTests`).
 
 ## Consequences
 
-- The sidebar gains one top-level row, Places, under All Media. `SidebarSelection`
+- The sidebar gains one top-level row, Places, with the other ways to browse the whole
+  library: under All Media, On This Day and People (APP-002). `SidebarSelection`
   gains two cases, and every exhaustive switch over it names them; `BrowserPlace`
   persists both.
 - `CatalogWindowState` grows `map`; `CatalogProjectionChangeSummary` compares it so a

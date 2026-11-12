@@ -6,7 +6,7 @@ import SwiftUI
 struct SidebarView: View {
     let showsAllMedia: Bool
     let showsPlaces: Bool
-    /// People (ADR 0047): one row, first under Utilities, whenever a fixed library exists.
+    /// People (ADR 0047): one row, under On This Day, whenever a fixed library exists.
     let showsPeople: Bool
     /// Today, while the On This Day row exists (it shows whenever Places does); the row's
     /// tag is today's scope (ADR 0049).
@@ -70,12 +70,32 @@ struct SidebarView: View {
             }
             if let onThisDay {
                 // Items captured on today's month and day in earlier years, else on today's day
-                // of the month in earlier months (ADR 0049), second
-                // under All Media (owner decision, 2026-11-11). No count, as Places carries none.
+                // of the month in earlier months (ADR 0049), second under All Media (owner
+                // decision, 2026-11-11). No count, as Places carries none.
                 SidebarRow(systemImage: "calendar", title: "On This Day") {
                     EmptyView()
                 }
                 .tag(SidebarSelection.onThisDay(onThisDay))
+            }
+            // The other ways to browse the whole library, under On This Day: by who is in a
+            // photo and by where it was taken (owner decision, 2026-11-12). They exist from the
+            // moment a fixed library does, as On This Day does, so they never arrive under the
+            // pointer.
+            if showsPeople {
+                // The People list (ADR 0047); the row stays highlighted while a person
+                // or the review under it is open.
+                SidebarRow(systemImage: "person.crop.square", title: "People") {
+                    EmptyView()
+                }
+                .tag(SidebarSelection.people)
+            }
+            if showsPlaces {
+                // The map of every located item in the fixed libraries (ADR 0040); the
+                // row stays highlighted while a place under it is open.
+                SidebarRow(systemImage: "map", title: "Places") {
+                    EmptyView()
+                }
+                .tag(SidebarSelection.places)
             }
 
             // A header with no rows under it is a claim about nothing; before the catalog
@@ -129,39 +149,21 @@ struct SidebarView: View {
                 }
             }
 
-            // Last, so its rows' arrival pushes no row under the pointer (ADR 0042), under the
-            // header Photos gives Duplicates: People, Places, then Duplicates (owner decision,
-            // 2026-11-11).
-            if showsPeople || showsPlaces || showsDuplicates {
+            // Last, so its row's arrival pushes no row under the pointer (ADR 0042), under the
+            // header Photos gives it: Duplicates is upkeep, not a way to browse (owner decision,
+            // 2026-11-12).
+            if showsDuplicates {
                 Section("Utilities") {
-                    if showsPeople {
-                        // The People list (ADR 0047); the row stays highlighted while a person
-                        // or the review under it is open.
-                        SidebarRow(systemImage: "person.crop.square", title: "People") {
-                            EmptyView()
+                    // Its count is the bar's L1 unit: photos with duplicates.
+                    SidebarRow(systemImage: "square.on.square", title: "Duplicates") {
+                        if let duplicatesCount {
+                            Text("\(duplicatesCount)")
+                                .font(.subheadline)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
                         }
-                        .tag(SidebarSelection.people)
                     }
-                    if showsPlaces {
-                        // The map of every located item in the fixed libraries (ADR 0040); the
-                        // row stays highlighted while a place under it is open.
-                        SidebarRow(systemImage: "map", title: "Places") {
-                            EmptyView()
-                        }
-                        .tag(SidebarSelection.places)
-                    }
-                    if showsDuplicates {
-                        // Its count is the bar's L1 unit: photos with duplicates.
-                        SidebarRow(systemImage: "square.on.square", title: "Duplicates") {
-                            if let duplicatesCount {
-                                Text("\(duplicatesCount)")
-                                    .font(.subheadline)
-                                    .monospacedDigit()
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .tag(SidebarSelection.duplicates)
-                    }
+                    .tag(SidebarSelection.duplicates)
                 }
             }
         }

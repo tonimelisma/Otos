@@ -58,8 +58,9 @@ confidence, model.
 
 ## Sidebar
 
-- **The row:** `People`, SF Symbol `person.crop.square`, first under `Utilities`, before
-  `Places` and `Duplicates`. It exists whenever one fixed library exists (APP-057).
+- **The row:** `People`, SF Symbol `person.crop.square`, a top-level row under
+  `On This Day` and before `Places` — the ways to browse the whole library sit together
+  (owner decision, 2026-11-12). It exists whenever one fixed library exists (APP-057).
 - **No trailing count and no row per person.** The row stays highlighted while the gallery
   shows; a person's photos highlight the library or All Media row they show.
 - **No progress indicator.** Face reading is enrichment (DES-040).

@@ -31,8 +31,9 @@ Terms are Apple's: *location*, never *GPS* or *geotag*.
 
 ## Sidebar
 
-`Places`, SF Symbol `map`, under the `Utilities` header, after `People` and before
-`Duplicates` (owner decision, 2026-11-11). Present whenever one fixed library exists. No
+`Places`, SF Symbol `map`, a top-level row after `On This Day` and `People` (owner
+decision, 2026-11-12): browsing by place sits with the other ways to browse the whole
+library. Present whenever one fixed library exists. No
 trailing count, because library rows carry none. While an area is open the row stays
 highlighted: the area has no row of its own.
 
