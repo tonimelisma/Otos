@@ -5,19 +5,23 @@ import SwiftUI
 
 // Face tiles (`docs/design/people.md`, DES-110): a square cut from the photo's stored
 // preview (ADR 0035) around the face, the box enlarged by 1.6 and kept inside the photo.
+// The preview shows the saved edit, so the box, a fraction of the upright photo, is first
+// carried through that edit's quarter turns, flips, straighten and crop (`EditGeometry`).
 // Before the first decode the tile shows the `person.crop.square` glyph, and its slash
-// variant when the preview cannot be read. A tile that has painted keeps its image for the
+// variant when the preview cannot be read or the edit's crop leaves the face out. A tile that has painted keeps its image for the
 // same face: the view holds it, and `FaceTileImages` gives it back to a view made again for
 // the same face (a row closing up, a list switch), so it never blanks (the grid's no-blank
 // rule applied to faces).
 
-/// Decoded face crops for this process, by face and preview. A bounded cache: what it drops
-/// is decoded again from the stored preview.
+/// Decoded face crops for this process, by face, box and preview with its edit. A bounded
+/// cache: what it drops is decoded again from the stored preview. A new rendering keeps the
+/// preview's name, so its edit is part of the key.
 @MainActor
 final class FaceTileImages {
     nonisolated struct Key: Hashable {
         let face: FaceID
-        let previewName: String
+        let box: CGRect
+        let preview: FacePreview
     }
 
     private final nonisolated class Entry {
@@ -100,17 +104,17 @@ struct FaceTileView: View {
     }
 
     private func load() async {
-        guard let previewName = tile.previewName else {
+        guard let preview = tile.preview else {
             return
         }
-        let key = FaceTileImages.Key(face: tile.id, previewName: previewName)
+        let key = FaceTileImages.Key(face: tile.id, box: tile.box, preview: preview)
         if let cached = images?.image(for: key) {
             image = cached
             return
         }
         guard let derivedImageDirectory else { return }
         let pixels = Int((edge * displayScale).rounded(.up))
-        guard let decoded = await FaceCrop.decode(tile, previewName: previewName, in: derivedImageDirectory, pixelEdge: pixels) else {
+        guard let decoded = await FaceCrop.decode(tile.box, from: preview, in: derivedImageDirectory, pixelEdge: pixels) else {
             if !Task.isCancelled, image == nil {
                 unavailable = true
             }
@@ -128,25 +132,28 @@ nonisolated enum FaceCrop {
     static let enlargement: CGFloat = 1.6
 
     @concurrent
-    static func decode(_ tile: FaceTile, previewName: String, in directory: URL, pixelEdge: Int) async -> CGImage? {
+    static func decode(_ box: CGRect, from preview: FacePreview, in directory: URL, pixelEdge: Int) async -> CGImage? {
         let signpost = OtosSignpost.thumbnails.beginInterval("FaceTileDecode")
         defer { OtosSignpost.thumbnails.endInterval("FaceTileDecode", signpost) }
-        let url = ThumbnailStore.url(for: previewName, in: directory)
+        let url = ThumbnailStore.url(for: preview.name, in: directory)
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int
         else {
-            OtosLog.thumbnails.debugOperation("people.faceTile", phase: "unreadable", fields: ["name": previewName])
+            OtosLog.thumbnails.debugOperation("people.faceTile", phase: "unreadable", fields: ["name": preview.name])
             return nil
         }
-        // The box is a fraction of the upright photo; orientations 5–8 turn the stored
-        // pixels a quarter.
+        // Orientations 5–8 turn the stored pixels a quarter.
         let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
-        let upright = orientation >= 5 ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
-        let side = max(tile.box.width * upright.width, tile.box.height * upright.height) * enlargement
+        let shown = orientation >= 5 ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
+        guard let onPreview = self.box(box, onPreviewOf: shown, recipe: preview.recipe) else {
+            OtosLog.thumbnails.debugOperation("people.faceTile", phase: "outsideCrop", fields: ["name": preview.name])
+            return nil
+        }
+        let side = max(onPreview.width * shown.width, onPreview.height * shown.height) * enlargement
         guard side > 0 else { return nil }
-        let longEdge = max(upright.width, upright.height)
+        let longEdge = max(shown.width, shown.height)
         let scale = min(1, CGFloat(pixelEdge) / side)
         let options = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -156,7 +163,17 @@ nonisolated enum FaceCrop {
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else {
             return nil
         }
-        return crop(image, box: tile.box)
+        return crop(image, box: onPreview)
+    }
+
+    /// Where `box`, a fraction of the upright photo, shows on a preview of `size` made with
+    /// `recipe`, as a fraction of it from the top-left corner: the part inside the crop, nil
+    /// when the crop leaves all of it out. The preview's shape fixes the upright photo's
+    /// (`EditGeometry.developedSize(ofEdited:recipe:)`), which is all fractions need.
+    static func box(_ box: CGRect, onPreviewOf size: CGSize, recipe: EditRecipe) -> CGRect? {
+        guard size.width > 0, size.height > 0 else { return nil }
+        let upright = EditGeometry.developedSize(ofEdited: size, recipe: recipe)
+        return EditGeometry(recipe: recipe, developedSize: upright).editedRect(ofDevelopedFraction: box)
     }
 
     /// The square around `box` (fractions, top-left origin), enlarged and kept inside the

@@ -134,6 +134,28 @@ struct PreviewFaceReaderTests {
         await library.store.shutdown()
     }
 
+    /// A face tile is cut from the stored preview through the edit that preview shows: the
+    /// unedited photo until the rendering of a new edit lands, then that edit, and no preview
+    /// at all while a rendering of a newer edit is owed.
+    @Test func aFaceTileCarriesTheEditItsPreviewShows() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
+        let still = library.id("a.jpg")
+        let face = FaceID(asset: still, index: 0)
+        #expect(try await library.readFaces([library.result(for: "a.jpg", faces: [PeopleStoreTests.face(x: 0.6)])]) == 1)
+        let unedited = FacePreview(name: "preview-a.jpg.heic", recipe: .neutral)
+        #expect(try await library.store.peopleSnapshot().tiles[face]?.preview == unedited)
+
+        let saved = try #require(try await library.store.setEditRecipe(Self.leftHalf, for: still).saved)
+        #expect(try await library.store.peopleSnapshot().tiles[face]?.preview == unedited)
+        try await Self.render(still, in: library, editRevision: saved.revision, preview: unedited.name)
+        #expect(try await library.store.peopleSnapshot().tiles[face]?.preview == FacePreview(name: unedited.name, recipe: Self.leftHalf))
+
+        _ = try await library.store.setEditRecipe(EditRecipe(quarterTurns: 1), for: still)
+        let owed = try #require(try await library.store.peopleSnapshot().tiles[face])
+        #expect(owed.preview == nil)
+        await library.store.shutdown()
+    }
+
     /// A face read from a cropped preview lies on the upright photo where the crop shows it;
     /// one read from a preview turned a quarter clockwise lies where the turn took it from.
     @Test func aFaceReadThroughAnEditLandsOnTheUprightPhoto() {

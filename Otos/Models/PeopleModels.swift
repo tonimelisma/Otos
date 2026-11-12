@@ -15,8 +15,10 @@ nonisolated struct FaceTile: Hashable, Sendable, Identifiable {
     let id: FaceID
     /// Fractions of the upright photo, top-left origin.
     let box: CGRect
-    /// The stored preview's name in the derived-image directory; nil before one is made.
-    let previewName: String?
+    /// Nil before a preview is made, and while the one stored shows an edit no longer saved:
+    /// its rendering of the new edit is owed, and the tile waits for it rather than cut
+    /// through an edit it cannot know.
+    let preview: FacePreview?
     /// The photo's local capture time (`CaptureLocalTime.seconds`); nil when the photo has
     /// no date. Its UTC day is the day the photo was taken, the same day a birthday names.
     let captureSeconds: Double?
@@ -24,6 +26,14 @@ nonisolated struct FaceTile: Hashable, Sendable, Identifiable {
     var captureLocalTime: CaptureLocalTime? {
         captureSeconds.map(CaptureLocalTime.init(seconds:))
     }
+}
+
+/// A stored preview and the edit it shows (`.neutral` for the unedited photo): the face box,
+/// a fraction of the upright photo, is carried through that edit onto the preview.
+nonisolated struct FacePreview: Hashable, Sendable {
+    /// The preview's name in the derived-image directory.
+    let name: String
+    let recipe: EditRecipe
 }
 
 /// Everything People reads from the catalog, in one transaction.

@@ -877,7 +877,8 @@ extension CatalogStore {
                 SELECT f.library_root_id, f.relative_path, f.face_index, f.embedding, f.person_id,
                        f.assignment, f.likeness, f.is_key_photo, f.is_not_face,
                        f.box_x, f.box_y, f.box_width, f.box_height,
-                       m.best_capture_local, m.preview_path
+                       m.best_capture_local, m.preview_path, m.rendered_revision, m.edit_recipe_json,
+                       \(PreviewFaceSQL.previewEditIsKnown) AS preview_edit_is_known
                 FROM face f
                 JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
                 WHERE m.trash_path IS NULL
@@ -912,7 +913,7 @@ extension CatalogStore {
                     id: id,
                     box: CGRect(x: row["box_x"] as Double, y: row["box_y"] as Double,
                                 width: row["box_width"] as Double, height: row["box_height"] as Double),
-                    previewName: row["preview_path"],
+                    preview: Self.facePreview(row, asset: asset),
                     captureSeconds: capture
                 )
             }
@@ -929,6 +930,23 @@ extension CatalogStore {
                 uncheckedPhotoCount: Self.uncheckedFacePhotoCount(rootIDs: faceRootIDs, db: db),
                 revision: revision
             )
+        }
+    }
+
+    /// The stored preview a face tile is cut from, with the edit it shows: none before one is
+    /// made, while a rendering of a newer edit is owed, or when the edit cannot be read
+    /// (logged); the tile then shows its placeholder.
+    private static func facePreview(_ row: Row, asset: MediaAssetID) -> FacePreview? {
+        guard let name: String = row["preview_path"], (row["preview_edit_is_known"] as Int) != 0 else { return nil }
+        let renderedRevision: Int64 = row["rendered_revision"]
+        do {
+            let recipe = renderedRevision == 0 ? .neutral : try editRecipe(json: row["edit_recipe_json"]) ?? .neutral
+            return FacePreview(name: name, recipe: recipe)
+        } catch {
+            OtosLog.catalog.errorOperation("people.faceTile", phase: "recipeUnreadable", fields: [
+                "relativePath": asset.relativePath.rawValue, "error": String(describing: error),
+            ])
+            return nil
         }
     }
 

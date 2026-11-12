@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import ImageIO
 @testable import OtosKit
 import Testing
 
@@ -24,7 +25,10 @@ struct PeopleStateTests {
         PeopleSnapshot(
             faces: faces,
             tiles: Dictionary(uniqueKeysWithValues: faces.map {
-                ($0.id, FaceTile(id: $0.id, box: CGRect(x: 0.4, y: 0.3, width: 0.2, height: 0.2), previewName: "p", captureSeconds: $0.captureSeconds))
+                ($0.id, FaceTile(
+                    id: $0.id, box: CGRect(x: 0.4, y: 0.3, width: 0.2, height: 0.2),
+                    preview: FacePreview(name: "p", recipe: .neutral), captureSeconds: $0.captureSeconds
+                ))
             }),
             people: people ?? [
                 .init(id: sam, name: "Sam", birthday: nil),
@@ -255,6 +259,31 @@ struct PeopleStateTests {
         #expect(corner.width == 200 && corner.height == 200)
     }
 
+    /// A face tile of an edited photo shows the face: its box, a fraction of the upright
+    /// photo, is carried onto the stored preview through the crop and the quarter turn that
+    /// preview shows; a face the crop leaves out has no tile. The upright photo is 400 × 200
+    /// with the face at x 240–280, y 80–120.
+    @Test(.testDirectory) func anEditedPhotosFaceTileShowsTheFace() async throws {
+        let directory = try makeTestDirectory()
+        let box = CGRect(x: 0.6, y: 0.4, width: 0.1, height: 0.2)
+
+        // The right half kept: the face at x 40–80 of a 200 × 200 preview.
+        let rightHalf = EditRecipe(crop: EditCrop(left: 0.5, top: 0, width: 0.5, height: 1))
+        try Self.writePreview("cropped.png", width: 200, height: 200, face: CGRect(x: 40, y: 80, width: 40, height: 40), in: directory)
+        let cropped = try #require(await FaceCrop.decode(box, from: FacePreview(name: "cropped.png", recipe: rightHalf), in: directory, pixelEdge: 64))
+        #expect(Self.isFace(Self.centerPixel(of: cropped)))
+
+        // A quarter turn clockwise: the face at x 80–120, y 240–280 of a 200 × 400 preview.
+        let turned = EditRecipe(quarterTurns: 1)
+        try Self.writePreview("turned.png", width: 200, height: 400, face: CGRect(x: 80, y: 240, width: 40, height: 40), in: directory)
+        let quarter = try #require(await FaceCrop.decode(box, from: FacePreview(name: "turned.png", recipe: turned), in: directory, pixelEdge: 64))
+        #expect(Self.isFace(Self.centerPixel(of: quarter)))
+
+        // The left half kept: the face is not on the preview.
+        let leftHalf = EditRecipe(crop: EditCrop(left: 0, top: 0, width: 0.5, height: 1))
+        #expect(await FaceCrop.decode(box, from: FacePreview(name: "cropped.png", recipe: leftHalf), in: directory, pixelEdge: 64) == nil)
+    }
+
     /// A face's outline on the edited photo: the box itself without an edit, mapped through
     /// a quarter turn and a crop, and nothing when the crop leaves it out.
     @Test func aFacesOutlineFollowsTheEdit() throws {
@@ -314,10 +343,46 @@ struct PeopleStateTests {
         #expect(PanePreview(id: id, image: image, editRecipe: cropped).faceOutlines([box]).isEmpty)
     }
 
+    /// A blue preview of `width` × `height` with a red face at `face`, top-left origin.
+    static func writePreview(_ name: String, width: Int, height: Int, face: CGRect, in directory: URL) throws {
+        let context = try #require(CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.setFillColor(red: 0, green: 0, blue: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+        context.fill(CGRect(x: face.minX, y: CGFloat(height) - face.maxY, width: face.width, height: face.height))
+        let image = try #require(context.makeImage())
+        let destination = try #require(CGImageDestinationCreateWithURL(
+            directory.appending(path: name) as CFURL, "public.png" as CFString, 1, nil
+        ))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+    }
+
+    /// The image's center pixel as red, green, blue.
+    static func centerPixel(of image: CGImage) -> (UInt8, UInt8, UInt8) {
+        var pixel = [UInt8](repeating: 0, count: 4)
+        pixel.withUnsafeMutableBytes { bytes in
+            let context = CGContext(
+                data: bytes.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+            let center = CGPoint(x: image.width / 2, y: image.height / 2)
+            context?.draw(image, in: CGRect(x: -center.x, y: -center.y, width: CGFloat(image.width), height: CGFloat(image.height)))
+        }
+        return (pixel[0], pixel[1], pixel[2])
+    }
+
+    static func isFace(_ pixel: (UInt8, UInt8, UInt8)) -> Bool {
+        pixel.0 > 200 && pixel.2 < 50
+    }
+
     static func tile(_ path: String, index: Int = 0, at seconds: Double?) -> FaceTile {
         FaceTile(
             id: FaceID(asset: MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Lib"), relativePath: MediaRelativePath(rawValue: path)), index: index),
-            box: .zero, previewName: nil, captureSeconds: seconds
+            box: .zero, preview: nil, captureSeconds: seconds
         )
     }
 }
