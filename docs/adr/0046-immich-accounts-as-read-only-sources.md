@@ -253,7 +253,8 @@ Consequences per product:
 - A RAW shows libvips's development until RAW9 renders it, which happens lazily: when its
   original is downloaded for full-resolution zoom, an edit, export or hand-off. No
   background job downloads RAWs to render them (owner decision, 2026-11-09).
-- An edited still always shows Otos's rendering.
+- An edited still always shows Otos's rendering. It is never owed Immich's images, so none
+  is fetched for it or written to it, even when its file changes.
 - Duplicates compares render signatures only within one pipeline (ADR 0042), so an
   Immich thumbnail and an Otos rendering of the same photo do not confirm a same-photo
   pair until measurement shows they stay under its threshold.

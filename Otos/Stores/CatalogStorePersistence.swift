@@ -599,12 +599,31 @@ extension CatalogStore {
         )
     }
 
+    /// A row that shows its source's own thumbnail and preview (ADR 0046 §7): never
+    /// edited, so no rendering of an edit is owed, and not yet rendered by Otos. An edited
+    /// still always shows Otos's rendering, so the source's images are neither fetched for
+    /// it nor written to it. The one predicate both the fetch and its write test, so a row
+    /// is offered exactly when its products would be applied.
+    static let showsSourceProductsSQL = "(edit_revision = 0 AND rendered_source_size IS NULL)"
+
     static func enrichmentResultMatchesCurrentRow(
         _ result: EnrichmentResult,
         libraryRootID: Int64,
         db: Database
     ) throws -> Bool {
         let sourceMTimeSeconds = result.sourceMTimeSeconds ?? -1
+        // Only a thumbnail is drawn with the edit; metadata and a digest are the file's
+        // whatever the photo's edit.
+        let editCondition: String
+        var editArguments: StatementArguments = []
+        if result.rendering?.origin == .source {
+            editCondition = showsSourceProductsSQL
+        } else if result.rendering != nil || result.provisionalThumbnail != nil {
+            editCondition = "edit_revision = ?"
+            editArguments = [result.editRevision]
+        } else {
+            editCondition = "1"
+        }
         return try Row.fetchOne(
             db,
             sql: """
@@ -617,7 +636,7 @@ extension CatalogStore {
                     (content_modified_at_unix IS NULL AND ? = -1)
                     OR (content_modified_at_unix >= ? AND content_modified_at_unix < ?)
                 )
-                AND (? = 0 OR edit_revision = ?)
+                AND \(editCondition)
             """,
             arguments: [
                 libraryRootID,
@@ -626,11 +645,7 @@ extension CatalogStore {
                 sourceMTimeSeconds,
                 sourceMTimeSeconds,
                 sourceMTimeSeconds + 1,
-                // Only a thumbnail is drawn with the edit; metadata and a digest are the
-                // file's whatever the photo's edit.
-                result.rendering == nil && result.provisionalThumbnail == nil ? 0 : 1,
-                result.editRevision,
-            ]
+            ] + editArguments
         ) != nil
     }
 

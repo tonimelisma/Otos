@@ -4743,8 +4743,8 @@ extension CatalogStore {
     }
 
     /// Rows of `rootPath` owed their source's own thumbnail and preview: visible, sized,
-    /// not yet rendered by Otos, and with no source products or older ones than the file
-    /// (ADR 0046 §7). In path order after `cursor`, so a caller pages through them.
+    /// showing the source's images (never edited, not yet rendered by Otos), and with no
+    /// source products or older ones than the file (ADR 0046 §7). In path order after `cursor`, so a caller pages through them.
     func sourceProductCandidates(
         rootPath: LibraryRootPath,
         after cursor: MediaRelativePath?,
@@ -4765,7 +4765,7 @@ extension CatalogStore {
                   AND source_item_id IS NOT NULL
                   AND hidden_by_source = 0
                   AND byte_size IS NOT NULL
-                  AND rendered_source_size IS NULL
+                  AND \(Self.showsSourceProductsSQL)
                   AND (
                       source_products_size IS NOT byte_size
                       OR source_products_mtime IS NOT CAST(content_modified_at_unix AS INTEGER)

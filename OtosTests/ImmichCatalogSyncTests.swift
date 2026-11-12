@@ -375,6 +375,37 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    /// An edited still shows Otos's rendering, never the server's (ADR 0046 §7): once it
+    /// has an edit, a changed file does not ask for the server's preview again, on this
+    /// pass or any later one.
+    @Test func anEditedStillIsNeverOwedTheServersPreview() async throws {
+        let fixture = try await FileFixture.make()
+        let preview = try Self.jpeg(width: 600, height: 400)
+        let server = ScriptedServer(
+            [
+                [Self.asset("a", name: "IMG_1.JPG"), Self.exif("a", size: 10), Self.complete],
+                [Self.asset("a", name: "IMG_1.JPG", modified: 1_700_000_900), Self.complete],
+                [Self.complete],
+            ],
+            previews: { _ in preview }
+        )
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        let still = fixture.id("a/IMG_1.JPG")
+
+        _ = await sync.pass()
+        #expect(server.requestedPreviews == ["a"])
+        _ = try await fixture.store.setEditRecipe(EditRecipe(exposure: 1), for: still)
+
+        _ = await sync.pass()
+        _ = await sync.pass()
+        #expect(server.requestedPreviews == ["a"])
+        #expect(try await fixture.store.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
+            .isEmpty)
+        await fixture.store.shutdown()
+    }
+
     /// A preview that is no image is skipped and asked for again next pass; a server that
     /// stops answering ends the product pass, and the rest stay owed.
     @Test func productsTheServerCannotGiveStayOwed() async throws {
