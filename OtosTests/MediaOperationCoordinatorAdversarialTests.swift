@@ -133,9 +133,10 @@ struct MediaOperationCoordinatorAdversarialTests {
         }
         try await waitUntilNoPresentation(coordinator, source: cardPath)
 
-        // Resume old builder — should be stale and produce no presentation.
-        await builder.resumePendingBuild(for: cardPath)
+        // Detach cancelled the held build, which the builder answers with an empty plan;
+        // once that build has returned, the coordinator must have discarded it as stale.
         try await waitForCoordinatorQuiescence(coordinator)
+        #expect(await builder.recordedCancelled().contains(cardPath))
         let stillHas = await coordinator.currentPresentations().contains(where: { $0.sourcePath == cardPath })
         #expect(!stillHas, "Stale build after detach must not publish presentation")
         #expect(await coordinator.readyPlan(for: cardPath) == nil)
@@ -329,9 +330,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { snap in
             !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
         }
-        try await waitForCoordinatorQuiescence(coordinator)
-        // Resume the now-stale B build — must not publish.
-        await builder.resumePendingBuild(for: cardPath)
+        // Detach cancelled B's held build and it has returned: its empty plan must not publish.
         try await waitForCoordinatorQuiescence(coordinator)
         let has = await coordinator.currentPresentations().contains(where: { $0.sourcePath == cardPath })
         #expect(!has, "Detached B's stale build must not publish")
@@ -1855,11 +1854,9 @@ struct MediaOperationCoordinatorAdversarialTests {
         let hasB = await coordinator.currentPresentations().contains(where: { $0.sourcePath == cardBPath })
         #expect(!hasA && !hasB, "Shutdown should clear presentations")
 
-        // Resume old builds — they should be stale and not publish after shutdown.
-        // `shutdown()` cancelled and awaited both builds, so these resumes find
-        // nothing to release and nothing can publish afterwards.
-        await builder.resumePendingBuild(for: cardAPath)
-        await builder.resumePendingBuild(for: cardBPath)
+        // `shutdown()` cancelled and awaited both held builds, so nothing is left to
+        // release and nothing can publish afterwards.
+        #expect(await builder.recordedCancelled() == [cardAPath, cardBPath])
         let stillEmpty = await coordinator.currentPresentations().isEmpty
         #expect(stillEmpty, "No publication after shutdown even if old builds resume")
     }
@@ -2474,6 +2471,54 @@ struct MediaOperationCoordinatorAdversarialTests {
         } else {
             Issue.record("Expected executionUnavailable once readiness resolved, got \(resolved.state)")
         }
+        await coordinator.shutdown()
+    }
+
+    // MARK: - Harness: a release sent before its build arrives
+
+    @Test func aReleaseSentBeforeItsBuildArrivesStillReleasesIt() async throws {
+        let temp = try makeTestDirectory()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        try Data(repeating: 4, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: .volume(uuid: "early-release"),
+            displayName: "Card",
+            isEjectable: true
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
+        let builder = ControlledImportPlanBuilder()
+        await builder.suspendNextBuild(for: cardPath)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            planBuilder: builder,
+            volumeCapacity: ampleVolumeCapacity
+        )
+        // The release is sent before the build reaches the builder: the order
+        // `claimsReleaseOnCancel` met under load, when B's build arrived after A turned
+        // Ready and the test had already released it.
+        let release = Task { await builder.resumePendingBuild(for: cardPath) }
+        try await waitUntil { await builder.waitingReleaseCount(for: cardPath) == 1 }
+        await coordinator.start()
+        await release.value
+        let plan = try await waitForReady(coordinator, source: cardPath)
+        #expect(plan.totals.copyCount == 1)
         await coordinator.shutdown()
     }
 }

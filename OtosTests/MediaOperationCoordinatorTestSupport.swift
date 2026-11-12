@@ -6,6 +6,12 @@ import Foundation
 /// planner result, and records cancellation without assuming cancellation ends
 /// the continuation.
 ///
+/// A release waits for the build it releases. The coordinator's build reaches the
+/// builder only after its own Store reads, so a test that releases right after some
+/// other fact (another source turning Ready) can run before that build arrives; a
+/// release that found nothing held and returned would be lost, and the build would
+/// then hold forever.
+///
 /// The `build` method is actor-isolated, so concurrent coordinator builds for
 /// different sources suspend independently. Cancellation is observed via
 /// `withTaskCancellationHandler` and recorded, but the continuation remains
@@ -24,6 +30,8 @@ actor ControlledImportPlanBuilder {
         continuation: CheckedContinuation<ImportPlanBuildResult, Never>
     )]] = [:]
     private var suspendNext: [LibraryRootPath: Int] = [:]
+    /// Releases waiting for a build of their source to be held, woken when one is.
+    private var arrivalWaiters: [LibraryRootPath: [CheckedContinuation<Void, Never>]] = [:]
     private(set) var cancelled: Set<LibraryRootPath> = []
 
     /// Mark the next build for `source` as suspended. The next `build` call
@@ -33,13 +41,17 @@ actor ControlledImportPlanBuilder {
         suspendNext[source, default: 0] += 1
     }
 
-    /// Resume a suspended build for `source` with a real live result. The
-    /// result is computed via `LiveImportPlanBuilder` from the stored snapshot
-    /// and reserved set, preserving the live planner's semantics.
+    /// Resume the oldest suspended build for `source` with a real live result,
+    /// waiting first for one to be held if none is yet. The result is computed via
+    /// `LiveImportPlanBuilder` from the stored snapshot and reserved set, preserving
+    /// the live planner's semantics.
     func resumePendingBuild(for source: LibraryRootPath) async {
-        guard var queue = pending[source], !queue.isEmpty else {
-            return
+        // Re-read after every wake: the actor is reentrant, and a cancellation dummy
+        // may take the held build before this release runs.
+        while pending[source]?.isEmpty ?? true {
+            await withCheckedContinuation { arrivalWaiters[source, default: []].append($0) }
         }
+        guard var queue = pending[source] else { return }
         let entry = queue.removeFirst()
         if queue.isEmpty {
             pending.removeValue(forKey: source)
@@ -50,14 +62,8 @@ actor ControlledImportPlanBuilder {
         entry.continuation.resume(returning: result)
     }
 
-    /// Resume all pending builds with their live results.
-    func resumeAllPending() async {
-        let keys = Array(pending.keys)
-        for key in keys {
-            while let queued = pending[key], !queued.isEmpty {
-                await resumePendingBuild(for: key)
-            }
-        }
+    func waitingReleaseCount(for source: LibraryRootPath) -> Int {
+        arrivalWaiters[source]?.count ?? 0
     }
 
     func recordedRequests() -> [RecordedRequest] {
@@ -160,6 +166,9 @@ extension ControlledImportPlanBuilder: ImportPlanBuilding {
                         var queue = pending[source] ?? []
                         queue.append((snapshot, additionalReserved, continuation))
                         pending[source] = queue
+                        for waiter in arrivalWaiters.removeValue(forKey: source) ?? [] {
+                            waiter.resume()
+                        }
                     }
                 },
                 onCancel: {
