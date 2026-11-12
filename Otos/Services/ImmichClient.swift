@@ -55,24 +55,33 @@ nonisolated struct ImmichClient: Sendable {
     /// The types Otos syncs: owned assets and their EXIF (ADR 0046 §5: owned assets only).
     static let syncTypes = ["AssetsV2", "AssetExifsV1"]
 
-    /// One pass of the session's sync stream, as JSON Lines parsed one line at a time, so
-    /// a first sync of a large library never holds the whole stream.
+    /// One pass of the session's sync stream, received whole into a temporary file at the
+    /// network's pace, then parsed from it one JSON Line at a time, so a first sync of a
+    /// large library never holds the whole stream in memory. The transfer never waits on
+    /// the Store: a stream read straight from the connection as fast as the Store applies
+    /// it stops being read whenever applying is slower than the server sends, and
+    /// URLSession then times the request out (-1001) though the server is still sending
+    /// (`docs/research/2026-11-13-immich-stream-slow-reader.md`). The file is deleted when
+    /// the sequence is released.
     func syncEvents(token: String) async throws -> some AsyncSequence<ImmichSyncEvent, any Error> {
         var request = try request(
             "sync/stream", method: "POST", token: token,
             body: JSONEncoder().encode(["types": Self.syncTypes])
         )
         request.setValue("application/jsonlines+json", forHTTPHeaderField: "Accept")
-        let bytes: URLSession.AsyncBytes
+        let file: URL
         let response: URLResponse
         do {
-            (bytes, response) = try await session.bytes(for: request)
+            (file, response) = try await session.download(for: request)
         } catch {
             throw ImmichClientError(transport: error)
         }
+        let received = ReceivedDownload(file: file, op: "immich.sync")
         try Self.check(response)
-        return bytes.lines.map { line in
-            try ImmichSyncEvent(line: Data(line.utf8))
+        return received.file.lines.map { line in
+            try withExtendedLifetime(received) {
+                try ImmichSyncEvent(line: Data(line.utf8))
+            }
         }
     }
 
@@ -168,24 +177,45 @@ nonisolated struct ImmichClient: Sendable {
         do {
             try Self.check(response)
         } catch {
-            // The body was an error page, not the original: it is not kept. The file is
-            // URLSession's own temporary download, never anything of the user's.
-            let temporary = FileManager.default.temporaryDirectory.standardizedFileURL.path(percentEncoded: false)
-            guard file.standardizedFileURL.path(percentEncoded: false).hasPrefix(temporary) else {
-                throw error
-            }
-            do {
-                try FileManager.default.removeItem(at: file)
-            } catch where ErrorDiagnostics.isMissingFile(error) {
-                // Already gone.
-            } catch let removal {
-                OtosLog.mediaIO.errorOperation("immich.original", phase: "cleanupFailed", fields: [
-                    "path": file.path(percentEncoded: false), "error": String(describing: removal),
-                ])
-            }
+            // The body was an error page, not the original: it is not kept.
+            Self.discardDownload(file, op: "immich.original")
             throw error
         }
         return file
+    }
+
+    /// Deletes one of URLSession's own temporary downloads, never anything of the user's:
+    /// a file outside the temporary directory is left alone.
+    static func discardDownload(_ file: URL, op: String) {
+        let temporary = FileManager.default.temporaryDirectory.standardizedFileURL.path(percentEncoded: false)
+        guard file.standardizedFileURL.path(percentEncoded: false).hasPrefix(temporary) else {
+            return
+        }
+        do {
+            try FileManager.default.removeItem(at: file)
+        } catch where ErrorDiagnostics.isMissingFile(error) {
+            // Already gone.
+        } catch {
+            OtosLog.mediaIO.errorOperation(op, phase: "cleanupFailed", fields: [
+                "path": file.path(percentEncoded: false), "error": String(describing: error),
+            ])
+        }
+    }
+
+    /// A temporary download that lives as long as the sequence reading it: the last
+    /// reference deletes the file, whether the read finished, failed or was abandoned.
+    private final class ReceivedDownload: Sendable {
+        let file: URL
+        let op: String
+
+        init(file: URL, op: String) {
+            self.file = file
+            self.op = op
+        }
+
+        deinit {
+            ImmichClient.discardDownload(file, op: op)
+        }
     }
 
     /// One byte range of an asset's original (`/original` honours `Range`, answering 206),

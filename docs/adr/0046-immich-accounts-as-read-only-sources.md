@@ -190,7 +190,10 @@ EXIF is never used for these facts.
 
 Its thumbnail and preview are Immich's (§7).
 
-Otos acknowledges each batch only after the Store has applied it, so a crash replays a
+Each pass receives the stream whole into a temporary file at the network's pace and then
+applies it from the file, so the transfer never waits on the Store: a stream read only as fast
+as the Store applies it times out on the client while the server is still sending
+(`docs/research/2026-11-13-immich-stream-slow-reader.md`). Otos acknowledges each batch only after the Store has applied it, so a crash replays a
 batch rather than losing one. An asset with a non-null `deletedAt` (in Immich's trash) is
 hidden but keeps its overlay, the same rule as Otos's own Trash (ADR 0022): its row is
 marked `hidden_by_source` (migration v16), which the shared scope clause and Duplicates'

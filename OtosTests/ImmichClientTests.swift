@@ -186,6 +186,32 @@ struct ImmichClientTests {
         ])
     }
 
+    /// The stream is received whole before a line of it is read, so reading it needs no
+    /// connection: a Store slower than the server never leaves the transfer waiting until
+    /// URLSession times it out. A refused stream is an error, never an empty one.
+    @Test func theSyncStreamIsReceivedBeforeItIsRead() async throws {
+        let lines = try (0 ..< 3).map { index in
+            try Self.line("AssetDeleteV1", ["assetId": "gone\(index)"], ack: "AssetDeleteV1|\(index)")
+        }
+        let session = ImmichStubProtocol.session(host: "received.test") { request, _ in
+            request.value(forHTTPHeaderField: "Authorization") == "Bearer tok"
+                ? (200, Data(lines.joined(separator: "\n").utf8))
+                : (401, Data(#"{"message":"Invalid user token"}"#.utf8))
+        }
+        let client = try ImmichClient(server: #require(URL(string: "http://received.test")), session: session)
+        let events = try await client.syncEvents(token: "tok")
+        await #expect(throws: ImmichClientError.unauthorized) {
+            _ = try await client.syncEvents(token: "revoked")
+        }
+        session.invalidateAndCancel()
+
+        var deleted: [String] = []
+        for try await case let .assetDeleted(assetID, _) in events {
+            deleted.append(assetID)
+        }
+        #expect(deleted == ["gone0", "gone1", "gone2"])
+    }
+
     @Test func acknowledgingPostsTheAcksAndNothingWhenThereAreNone() async throws {
         let posts = Mutex<[[String]]>([])
         let session = ImmichStubProtocol.session(host: "ack.test") { request, body in
