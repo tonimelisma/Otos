@@ -111,22 +111,29 @@ actor ImmichCatalogSync {
         ring.finish()
     }
 
-    /// The loop: one pass per doorbell ring, until `finish()` or cancellation. `onPass`
-    /// hears each pass's outcome before the next ring is read.
-    func run(onPass: @Sendable (ImmichSyncPassOutcome) async -> Void = { _ in }) async {
+    /// The loop: one pass per doorbell ring, until `finish()` or cancellation. `onAnswered`
+    /// hears that a pass's server answered, once per pass, as soon as its first batch is
+    /// applied and acknowledged; `onPass` hears each pass's outcome before the next ring is
+    /// read. A first sync of a large library takes minutes, and its server has answered
+    /// long before it ends.
+    func run(
+        onAnswered: @escaping @Sendable () async -> Void = {},
+        onPass: @Sendable (ImmichSyncPassOutcome) async -> Void = { _ in }
+    ) async {
         for await _ in doorbell {
             guard !Task.isCancelled else {
                 return
             }
-            await onPass(pass())
+            await onPass(pass(onAnswered: onAnswered))
         }
     }
 
     /// One pass: the stream applied to its end, then the server's own images fetched for
     /// every row still owed them (ADR 0046 §7). The pass's outcome is the stream's; a
     /// product that could not be fetched stays owed and is asked for again next pass.
-    func pass() async -> ImmichSyncPassOutcome {
-        let outcome = await syncListing()
+    func pass(onAnswered: @escaping @Sendable () async -> Void = {}) async -> ImmichSyncPassOutcome {
+        var answered = Answered(report: onAnswered)
+        let outcome = await syncListing(answered: &answered)
         if case .synced = outcome {
             _ = await fetchProducts()
         }
@@ -134,12 +141,12 @@ actor ImmichCatalogSync {
     }
 
     /// The stream applied to its end. A reset turns it into one full resync.
-    private func syncListing() async -> ImmichSyncPassOutcome {
-        switch await stream(full: false) {
+    private func syncListing(answered: inout Answered) async -> ImmichSyncPassOutcome {
+        switch await stream(full: false, answered: &answered) {
         case let .done(outcome):
             return outcome
         case .resetRequested:
-            switch await stream(full: true) {
+            switch await stream(full: true, answered: &answered) {
             case let .done(outcome):
                 return outcome
             case .resetRequested:
@@ -156,7 +163,7 @@ actor ImmichCatalogSync {
         case resetRequested
     }
 
-    private func stream(full: Bool) async -> StreamResult {
+    private func stream(full: Bool, answered: inout Answered) async -> StreamResult {
         let scan: CatalogStore.ActiveScan
         do {
             scan = try await store.beginSourceListing(rootPath: rootPath)
@@ -168,7 +175,7 @@ actor ImmichCatalogSync {
         }
         var tally = Tally()
         do {
-            if try await read(scan: scan, into: &tally) {
+            if try await read(scan: scan, into: &tally, answered: &answered) {
                 await store.endSourceListing(scan: scan)
                 OtosLog.catalog.noticeOperation("catalog.immich.sync", phase: "reset", fields: [
                     "rootPath": rootPath.rawValue,
@@ -210,7 +217,11 @@ actor ImmichCatalogSync {
     /// Reads one stream to its end, applying it batch by batch. True when the server
     /// reset the cursor: the reset is acknowledged, and nothing of the stream is applied
     /// after it.
-    private func read(scan: CatalogStore.ActiveScan, into tally: inout Tally) async throws -> Bool {
+    private func read(
+        scan: CatalogStore.ActiveScan,
+        into tally: inout Tally,
+        answered: inout Answered
+    ) async throws -> Bool {
         var batch = Batch()
         var pass = PassMemory()
         for try await event in try await source.events() {
@@ -226,10 +237,31 @@ actor ImmichCatalogSync {
             }
             if batch.lineCount >= Self.batchSize {
                 try await apply(&batch, pass: &pass, scan: scan, into: &tally)
+                await answered.reportOnce()
             }
         }
         try await apply(&batch, pass: &pass, scan: scan, into: &tally)
+        await answered.reportOnce()
         return false
+    }
+
+    /// A pass's one report that its server answered: its stream was read and a batch of it
+    /// applied and acknowledged.
+    private struct Answered {
+        let report: @Sendable () async -> Void
+        private var reported = false
+
+        init(report: @escaping @Sendable () async -> Void) {
+            self.report = report
+        }
+
+        mutating func reportOnce() async {
+            guard !reported else {
+                return
+            }
+            reported = true
+            await report()
+        }
     }
 
     /// Applies the batch to the Store, then acknowledges its lines, then empties it. A

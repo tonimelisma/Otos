@@ -88,6 +88,50 @@ struct BenchmarkTests {
         await store.shutdown()
     }
 
+    /// An Immich account's sync applying one batch of 500 assets (ADR 0046 §5) to an account
+    /// that already holds 20,000: each asset's folder is listed in full, so the batch looks up
+    /// 500 folders' rows. The cost must not grow with the account, or a large library's
+    /// first sync stalls its own stream.
+    @Test func immichListingCases() async throws {
+        let temp = try makeTestDirectory()
+        let store = CatalogStore(location: .databaseFile(temp.appending(path: "Catalog.sqlite")))
+        try await store.start(scansSavedLibraries: false)
+        let rootPath = try await store.addImmichAccount(
+            server: #require(URL(string: "https://photos.example.com")), userID: "u1", displayName: "Family",
+            stagingContainer: temp.appending(path: "RemoteStaging")
+        )
+        func batch(_ range: Range<Int>) -> SourceListingChanges {
+            let items = range.map { index in
+                let folder = String(format: "asset-%06d", index)
+                return SourceListedItem(
+                    file: ScannedMediaFile(
+                        relativePath: MediaRelativePath(rawValue: "\(folder)/IMG_\(index).JPG"),
+                        name: "IMG_\(index).JPG",
+                        contentTypeIdentifier: "public.jpeg",
+                        byteSize: 1000,
+                        createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                        contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
+                    ),
+                    sourceItemID: folder,
+                    isHiddenBySource: false
+                )
+            }
+            return SourceListingChanges(listed: items, completeFolders: items.map(\.sourceItemID))
+        }
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
+        for start in stride(from: 0, to: 20000, by: 500) {
+            try await store.applySourceListingChanges(batch(start ..< start + 500), scan: scan)
+        }
+        let measured = batch(10000 ..< 10500)
+        try await Benchmark.measure("immich.listing.batch500.of20k") {
+            try await store.applySourceListingChanges(measured, scan: scan)
+        }
+        await store.endSourceListing(scan: scan)
+        let kept = try await store.sourceItemRows(["asset-010000", "asset-019999"], in: rootPath)
+        #expect(kept.count == 2)
+        await store.shutdown()
+    }
+
     /// The same day of the month in the month after `day`'s.
     private static func monthAfter(_ day: CalendarDay) -> CalendarDay {
         day.month == 12

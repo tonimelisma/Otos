@@ -1115,13 +1115,9 @@ extension CatalogStore {
                     trash_path
                 FROM media_asset
                 WHERE library_root_id = ?
-                  AND (relative_path = ? OR relative_path LIKE ? ESCAPE '\\')
+                  AND \(Self.subtreeSQL)
                 """,
-                arguments: [
-                    libraryRootID,
-                    underSubtree.rawValue,
-                    Self.sqlSubtreePrefixPattern(underSubtree),
-                ]
+                arguments: [libraryRootID] + Self.subtreeArguments(underSubtree)
             )
         } else {
             try Row.fetchAll(
@@ -1160,13 +1156,9 @@ extension CatalogStore {
                 SELECT relative_path
                 FROM media_companion
                 WHERE library_root_id = ?
-                  AND (relative_path = ? OR relative_path LIKE ? ESCAPE '\\')
+                  AND \(Self.subtreeSQL)
                 """,
-                arguments: [
-                    libraryRootID,
-                    underSubtree.rawValue,
-                    Self.sqlSubtreePrefixPattern(underSubtree),
-                ]
+                arguments: [libraryRootID] + Self.subtreeArguments(underSubtree)
             )
         } else {
             try String.fetchAll(
@@ -1182,13 +1174,19 @@ extension CatalogStore {
         return Set(paths.map(MediaRelativePath.init(rawValue:)))
     }
 
-    /// LIKE pattern for paths strictly inside `subtree/` with LIKE metacharacters escaped.
-    static func sqlSubtreePrefixPattern(_ subtree: MediaRelativePath) -> String {
-        let escaped = subtree.rawValue
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "%", with: "\\%")
-            .replacingOccurrences(of: "_", with: "\\_")
-        return escaped + "/%"
+    /// A `relative_path` that is `subtree` itself or inside `subtree/`, never a sibling
+    /// such as `subtree2` or `subtree.jpg`. One range of the binary-collated path,
+    /// `[subtree, subtree0)` (`0` is the byte after `/`), which the
+    /// `(library_root_id, relative_path)` key seeks; inside it, only `subtree` and paths at
+    /// or after `subtree/` are kept. A `LIKE` prefix, or an `OR` of two ranges, makes SQLite
+    /// read every row of the root once per folder. Bound with `subtreeArguments`.
+    static let subtreeSQL = """
+    (relative_path >= ? AND relative_path < ? AND (relative_path = ? OR relative_path >= ?))
+    """
+
+    static func subtreeArguments(_ subtree: MediaRelativePath) -> StatementArguments {
+        let path = subtree.rawValue
+        return [path, path + "0", path, path + "/"]
     }
 
     static func fetchCompanions(

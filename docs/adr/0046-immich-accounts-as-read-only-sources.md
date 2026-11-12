@@ -219,6 +219,9 @@ account's session, loop and status.
   the account in their alert (ADR 0037).
 - Reachability is learned from requests (a request answers or fails with a transport
   error); it is never assumed from elapsed time.
+- A pass's server has answered once its stream's first batch is applied and acknowledged,
+  so the account is online from then on, not only when the pass ends: a first sync of a
+  large library takes minutes.
 
 ### 7. Immich's images until the original is local
 

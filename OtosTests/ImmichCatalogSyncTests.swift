@@ -233,6 +233,31 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    /// A pass reports that its server answered as soon as its first batch is applied and
+    /// acknowledged, once, and before the pass ends, so a first sync that takes minutes is
+    /// online while it runs. A stream that fails before any batch reports nothing.
+    @Test func aPassReportsItsServerAnsweredBeforeItEnds() async throws {
+        let fixture = try await Fixture.make()
+        let lines = (0 ..< ImmichCatalogSync.batchSize * 2 + 1).map { Self.asset("x\($0)") }
+        let server = ScriptedServer([lines, lines], failAfter: [ImmichCatalogSync.batchSize * 2, 0])
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        let acksWhenAnswered = Mutex<[Int]>([])
+
+        let outcome = await sync.pass(onAnswered: {
+            acksWhenAnswered.withLock { $0.append(server.acknowledgements.count) }
+        })
+        #expect(outcome == .serverFailed(.unreachable(.networkConnectionLost)))
+        #expect(acksWhenAnswered.withLock { $0 } == [1])
+
+        _ = await sync.pass(onAnswered: {
+            acksWhenAnswered.withLock { $0.append(server.acknowledgements.count) }
+        })
+        #expect(acksWhenAnswered.withLock { $0 } == [1])
+        await fixture.store.shutdown()
+    }
+
     /// Every acknowledgement follows the Store's apply of its lines: a batch the
     /// connection dropped inside is never acknowledged, and the next pass replays it.
     @Test func aDroppedConnectionAcknowledgesOnlyAppliedBatches() async throws {
@@ -430,6 +455,40 @@ struct ImmichCatalogSyncTests {
         let owed = try await fixture.store.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
         #expect(owed.map(\.sourceItemID) == ["a", "c"])
         await fixture.store.shutdown()
+    }
+
+    /// A folder listed in full purges the rows inside it that the batch does not list, and
+    /// never a sibling: not one whose name sorts inside the folder's range (`a-b`, `a.jpg`),
+    /// nor one after it (`a2`).
+    @Test func aCompleteFolderPurgesOnlyTheRowsInsideIt() async throws {
+        let fixture = try await FileFixture.make()
+        let store = fixture.store
+        func item(_ path: String) -> SourceListedItem {
+            SourceListedItem(
+                file: ScannedMediaFile(
+                    relativePath: MediaRelativePath(rawValue: path),
+                    name: MediaRelativePath(rawValue: path).fileName,
+                    contentTypeIdentifier: "public.jpeg",
+                    byteSize: 10,
+                    createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                    contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
+                ),
+                sourceItemID: path,
+                isHiddenBySource: false
+            )
+        }
+        let paths = ["a-b/IMG.JPG", "a.jpg", "a/IMG.JPG", "a/IMG.MOV", "a/sub/IMG.JPG", "a2/IMG.JPG"]
+        let scan = try await store.beginSourceListing(rootPath: fixture.rootPath)
+        try await store.applySourceListingChanges(SourceListingChanges(listed: paths.map(item)), scan: scan)
+        try await store.applySourceListingChanges(
+            SourceListingChanges(listed: [item("a/IMG.JPG")], completeFolders: ["a"]), scan: scan
+        )
+        await store.endSourceListing(scan: scan)
+
+        let ids = paths.map(fixture.id)
+        let kept = try await store.mediaAssets(for: ids).keys.map(\.relativePath.rawValue).sorted()
+        #expect(kept == ["a-b/IMG.JPG", "a.jpg", "a/IMG.JPG", "a2/IMG.JPG"])
+        await store.shutdown()
     }
 
     // MARK: - Live Photos (ADR 0046 §2)

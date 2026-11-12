@@ -6,7 +6,8 @@ import OSLog
 nonisolated enum ImmichAccountStatus: Equatable, Sendable {
     /// No pass has answered yet this launch.
     case connecting
-    /// The last pass reached the server and applied its stream.
+    /// The server answered: the running pass has applied a batch of its stream, or the
+    /// last pass applied it to its end.
     case online
     /// The last request did not reach a server that answered. The account's rows,
     /// thumbnails and previews stay browsable.
@@ -365,9 +366,14 @@ actor ImmichAccounts {
         let path = root.path
         // The loop holds the sync, never this owner: a weak reference per pass report.
         let loop = Task { [sync] in
-            await sync.run { [weak self] outcome in
-                await self?.passEnded(outcome, for: path)
-            }
+            await sync.run(
+                onAnswered: { [weak self] in
+                    await self?.serverAnswered(for: path)
+                },
+                onPass: { [weak self] outcome in
+                    await self?.passEnded(outcome, for: path)
+                }
+            )
         }
         accounts[path] = Account(root: root, client: client, token: token, sync: sync, loop: loop)
         setStatus(.connecting, for: path)
@@ -381,6 +387,14 @@ actor ImmichAccounts {
         account.timer?.cancel()
         account.sync.finish()
         account.loop.cancel()
+    }
+
+    /// A running pass's server answered, so the account is online before its pass ends.
+    private func serverAnswered(for path: LibraryRootPath) {
+        guard accounts[path] != nil else {
+            return
+        }
+        setStatus(.online, for: path)
     }
 
     /// Records what the server answered and rings the next pass after the delay its
