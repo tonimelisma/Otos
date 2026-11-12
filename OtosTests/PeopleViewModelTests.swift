@@ -161,8 +161,8 @@ struct PeopleViewModelTests {
 
     /// The photo menu groups the targets' faces by person (DES-113): Sam's face (guessed in
     /// b.jpg) under `Change to` with everyone else to move it to, then the unidentified face
-    /// under `Assign to`, with Sam among the people it may be. In her photos, her group sits
-    /// at the top level.
+    /// under `Assign to`, with Sam among the people it may be. Two faces are two submenus,
+    /// wherever the photo shows; a photo with one face has its acts at the top level.
     @Test func thePhotoMenuGroupsTheTargetsFacesByPerson() async throws {
         let fixture = try await Fixture.make(in: makeTestDirectory())
         let ian = try #require(try await fixture.store.perform(.moveToNewPerson([], name: "Ian")).person)
@@ -184,17 +184,17 @@ struct PeopleViewModelTests {
         #expect(Set(menu.groups[1].list.map(\.title)) == ["Sam", "Ian", "Someone Else…"])
         #expect(menu.groups[1].list.last?.title == "Someone Else…")
         #expect(menu.groups[1].corrections.map(\.title) == ["This Is Not a Face"])
-        #expect(!menu.flattensFirst)
+        #expect(!menu.isFlat)
 
-        // In Sam's photos her group flattens; a filter on her elsewhere does not.
-        fixture.model.setPeopleFilter(fixture.sam, included: true)
-        fixture.show(people, scope: .allMedia, grid: [photo])
-        fixture.model.selectAssets([photo])
-        #expect(fixture.model.faceMenu()?.flattensFirst == false)
+        // In Sam's photos two faces are still two submenus, in the photo's order.
         fixture.model.openPerson(fixture.sam)
-        fixture.show(people, scope: .person(fixture.sam), grid: [photo])
+        fixture.show(people, scope: .person(fixture.sam), grid: [photo, fixture.hers.asset])
         fixture.model.selectAssets([photo])
-        #expect(fixture.model.faceMenu()?.flattensFirst == true)
+        #expect(fixture.model.faceMenu()?.isFlat == false)
+        #expect(fixture.model.faceMenu()?.groups.map(\.title) == ["Sam", "Unidentified Face"])
+        // a.jpg holds only her face: its acts sit at the top level.
+        fixture.model.selectAssets([fixture.hers.asset])
+        #expect(fixture.model.faceMenu()?.isFlat == true)
         await fixture.store.shutdown()
     }
 
@@ -229,8 +229,8 @@ struct PeopleViewModelTests {
         fixture.show(people, scope: .person(unnamed), grid: [photo])
         fixture.model.selectAssets([photo])
         let own = try #require(fixture.model.faceMenu())
-        #expect(own.flattensFirst)
-        #expect(own.groups[0].corrections.map(\.title) == ["Not the Same Person", "This Is Not a Face"])
+        let theirs = try #require(own.groups.first { $0.person == unnamed })
+        #expect(theirs.corrections.map(\.title) == ["Not the Same Person", "This Is Not a Face"])
         await fixture.store.shutdown()
     }
 

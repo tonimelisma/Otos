@@ -53,8 +53,10 @@ enum MediaItemContextMenu {
                 menu.addItem(item)
             case let .faces(group, flat):
                 if flat {
-                    // In a person's photos: the list as a submenu, the corrections beside it.
+                    // The only face: its acts at the top level under a heading naming whose
+                    // they are, the list as a submenu beside the corrections.
                     let first = menu.numberOfItems
+                    menu.addItem(NSMenuItem.sectionHeader(title: group.title))
                     let list = NSMenuItem(title: group.listTitle, action: nil, keyEquivalent: "")
                     let submenu = outliner.submenu(title: group.listTitle)
                     submenu.autoenablesItems = false

@@ -45,20 +45,15 @@ extension CatalogWindowViewModel {
     /// The targets' faces as the photo menus and the Info pane offer them (DES-113): each
     /// visible person's in the order their faces come, then the unidentified ones — one
     /// group per face in one photo, and across several photos one group only when no photo
-    /// holds more than one, so every act means the faces it names. In a person's photos,
-    /// their group comes first and sits at the top level.
+    /// holds more than one, so every act means the faces it names. A lone group sits at the
+    /// top level (`FaceMenu.isFlat`).
     func faceMenu() -> FaceMenu? {
         let selection = targetFaces
         guard !selection.faces.isEmpty else { return nil }
-        let single = shownPerson?.id
-        var people = selection.people
-        if let single, let index = people.firstIndex(of: single) {
-            people.remove(at: index)
-            people.insert(single, at: 0)
-        }
+        let shown = shownPerson?.id
         let severalPhotos = selection.photos.count > 1
-        var groups = people.map { person in
-            personGroup(person, faces: selection.faces(of: person), in: selection, severalPhotos: severalPhotos, ownPhotos: single == person)
+        var groups = selection.people.map { person in
+            personGroup(person, faces: selection.faces(of: person), in: selection, severalPhotos: severalPhotos, ownPhotos: shown == person)
         }
         let unidentified = selection.unidentified
         if !severalPhotos {
@@ -66,7 +61,7 @@ extension CatalogWindowViewModel {
         } else if !unidentified.isEmpty, Set(unidentified.map(\.id.asset)).count == unidentified.count {
             groups.append(unidentifiedGroup(unidentified, in: selection, photoCount: unidentified.count))
         }
-        return FaceMenu(groups: groups, flattensFirst: single != nil && people.first == single)
+        return FaceMenu(groups: groups)
     }
 
     private func personGroup(

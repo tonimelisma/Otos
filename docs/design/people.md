@@ -204,10 +204,12 @@ The grid, filmstrip, loupe and compare context menu, after `Reveal in Finder`:
   Face`. With several photos, one `Unidentified Faces · 3 Photos ▸` entry, offered only when
   no targeted photo holds more than one unidentified face; otherwise none, since no item
   could say which face it means.
-- **In a person's photos,** their entry's acts sit at the menu's top level, the list as a
-  submenu: `Change to ▸`, `This Is Not Sam`, `This Is Not a Face`, `Make Key Photo for
-  Sam`; for an unnamed person, `Name This Person ▸`, `Not the Same Person`, `This Is Not a
-  Face`.
+- **One entry only** (a photo with one face, wherever it shows): its acts sit at the menu's
+  top level under a section heading with the entry's title, the list as a submenu — `Sam`,
+  then `Change to ▸`, `This Is Not Sam`, `This Is Not a Face`, `Make Key Photo for Sam`.
+  No other face's acts are there to be mistaken for them, and the heading says whose they
+  are. With two or more entries, each is a submenu, in the order the faces come.
+- **In an unnamed person's own photos** their entry also offers `Not the Same Person`.
 
 ### Face outlines
 
@@ -281,6 +283,10 @@ assignment (ADR 0047). Entries live for the session.
   in their own photos (`Not the Same Person`), and gets no key photo; several photos offer
   unidentified faces only when each holds at most one; faces are outlined on the loupe and
   compare whether or not Info is open.
+- 2026-11-12 (one face): a photo menu with one face entry, wherever it opens, puts its acts at
+  the top level under a heading naming whose they are; the person whose photos are shown is
+  not moved first or flattened beside other faces (two faces flattened together read as one
+  list).
 - 2026-11-12: a person without a name never reads as a name (`Add Name…` where a control
   fits, `Unnamed Person` elsewhere) and is offered naming first; the face acts take Photos'
   words where they fit (`This Is Not Sam`, `This Is Not a Face`, key photo) and HIG title

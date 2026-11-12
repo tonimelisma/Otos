@@ -80,8 +80,12 @@ nonisolated struct FaceMenu: Equatable, Sendable {
     }
 
     let groups: [Group]
-    /// The browser shows one person's photos: their group's acts sit at the menu's top level.
-    let flattensFirst: Bool
+
+    /// One group: its acts sit at the menu's top level under a heading with its title, since
+    /// no other face's acts can be mistaken for them. With several, each is a submenu.
+    var isFlat: Bool {
+        groups.count == 1
+    }
 }
 
 /// Media context menu model guide
@@ -98,8 +102,8 @@ nonisolated struct MediaItemMenuModel: Equatable, Sendable {
     enum Entry: Equatable, Sendable {
         case command(MediaItemCommand, title: String, enabled: Bool)
         case openWith(applications: [OpenWithApplication], enabled: Bool)
-        /// One person's faces, or the unidentified ones: a submenu, or at the top level when
-        /// `flat`.
+        /// One person's faces, or the unidentified ones: a submenu, or at the top level under a
+        /// heading when `flat`.
         case faces(FaceMenu.Group, flat: Bool)
         case separator
     }
@@ -170,8 +174,8 @@ nonisolated struct MediaItemMenuModel: Equatable, Sendable {
             .separator,
         ]
         if let faces, !faces.groups.isEmpty {
-            for (index, group) in faces.groups.enumerated() {
-                entries.append(.faces(group, flat: faces.flattensFirst && index == 0))
+            for group in faces.groups {
+                entries.append(.faces(group, flat: faces.isFlat))
             }
             entries.append(.separator)
         }

@@ -37,8 +37,8 @@ struct MediaItemMenuModelTests {
         ])
     }
 
-    /// The targets' faces sit after Reveal in Finder, one entry per person, the first at the
-    /// top level when the filter shows that person (ADR 0047).
+    /// The targets' faces sit after Reveal in Finder, one entry per person; a lone entry sits
+    /// at the top level (DES-113).
     @Test func facesComeAfterRevealOnePerPerson() throws {
         let face = FaceID(asset: MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/P"), relativePath: MediaRelativePath(rawValue: "a.jpg")), index: 0)
         let sam = FaceMenu.Group(
@@ -55,13 +55,16 @@ struct MediaItemMenuModelTests {
             canReveal: true,
             canTrash: true
         )
-        model.faces = FaceMenu(groups: [sam, unidentified], flattensFirst: true)
+        model.faces = FaceMenu(groups: [sam, unidentified])
 
         let entries = model.entries
         let reveal = try #require(entries.firstIndex(of: .command(.revealInFinder, title: "Reveal in Finder", enabled: true)))
         #expect(Array(entries[(reveal + 2) ..< (reveal + 5)]) == [
-            .faces(sam, flat: true), .faces(unidentified, flat: false), .separator,
+            .faces(sam, flat: false), .faces(unidentified, flat: false), .separator,
         ])
+
+        model.faces = FaceMenu(groups: [sam])
+        #expect(Array(model.entries[(reveal + 2) ..< (reveal + 4)]) == [.faces(sam, flat: true), .separator])
     }
 }
 

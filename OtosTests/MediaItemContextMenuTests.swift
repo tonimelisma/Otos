@@ -117,7 +117,7 @@ extension MediaItemContextMenuTests {
             openTitle: "Open", canOpen: true, openWithApplications: [], canOpenWith: false,
             shareItems: [URL(fileURLWithPath: "/P/a.jpg")], canReveal: true, canChoose: true, canTrash: true
         )
-        model.faces = FaceMenu(groups: [unnamed, other], flattensFirst: false)
+        model.faces = FaceMenu(groups: [unnamed, other])
         let recorder = OutlineRecorder()
         let menu = MediaItemContextMenu.make(model: model, perform: { _ in }, outline: { recorder.outlines.append($0) })
         let delegate = try #require(menu.delegate)
@@ -138,8 +138,8 @@ extension MediaItemContextMenuTests {
         #expect(recorder.outlines == [[first], [second], [first], [], [first], []])
     }
 
-    /// In a person's photos their acts sit at the top level, the list a submenu named by the
-    /// words it completes; each item performs its own command.
+    /// The only face's acts sit at the top level under a heading naming whose they are, the
+    /// list a submenu named by the words it completes; each item performs its own command.
     @Test func aFlattenedGroupKeepsItsListInOneSubmenu() throws {
         let asset = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/P"), relativePath: MediaRelativePath(rawValue: "a.jpg"))
         let face = FaceID(asset: asset, index: 0)
@@ -162,10 +162,14 @@ extension MediaItemContextMenuTests {
             openTitle: "Open", canOpen: true, openWithApplications: [], canOpenWith: false,
             shareItems: [URL(fileURLWithPath: "/P/a.jpg")], canReveal: true, canChoose: true, canTrash: true
         )
-        model.faces = FaceMenu(groups: [group], flattensFirst: true)
+        model.faces = FaceMenu(groups: [group])
         let recorder = CommandRecorder()
         let menu = MediaItemContextMenu.make(model: model, perform: { recorder.commands.append($0) })
 
+        let heading = try #require(menu.items.first { $0.isSectionHeader })
+        #expect(heading.title == "Sam")
+        let headingIndex = menu.index(of: heading)
+        #expect(menu.items[headingIndex + 1].title == "Change to")
         let changeTo = try #require(menu.items.first { $0.title == "Change to" })
         #expect(changeTo.submenu?.items.map(\.title) == ["Ian", "Someone Else…"])
         #expect(menu.items.contains { $0.title == "This Is Not Sam" })
