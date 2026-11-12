@@ -1384,7 +1384,11 @@ extension CatalogStore {
             directoryKey: directoryKey,
             db: db
         )
-        let paired = MediaCompanionPairing.pair(companions: companions, primaries: primaries)
+        let paired = MediaCompanionPairing.pair(
+            companions: companions,
+            primaries: primaries,
+            capabilities: capabilities
+        )
         var changed = false
         for companion in paired {
             changed = try upsertCompanion(companion, libraryRootID: libraryRootID, capabilities: capabilities, db: db)
@@ -1411,7 +1415,8 @@ extension CatalogStore {
             )
             let paired = MediaCompanionPairing.pair(
                 companions: directoryCompanions,
-                primaries: primaries
+                primaries: primaries,
+                capabilities: capabilities
             )
             for companion in paired {
                 let changed = try upsertCompanion(

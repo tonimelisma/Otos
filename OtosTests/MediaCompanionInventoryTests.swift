@@ -12,7 +12,7 @@ struct MediaCompanionPairingTests {
             byteSize: 10,
             contentModifiedAt: nil
         )
-        let paired = MediaCompanionPairing.pair(companions: [companion], primaries: [primary])
+        let paired = MediaCompanionPairing.pair(companions: [companion], primaries: [primary], capabilities: .caseInsensitive)
         #expect(paired.count == 1)
         #expect(paired[0].primaryRelativePath?.rawValue == "IMG_1.JPG")
         #expect(paired[0].kind == .xmp)
@@ -27,8 +27,75 @@ struct MediaCompanionPairingTests {
             byteSize: nil,
             contentModifiedAt: nil
         )
-        let paired = MediaCompanionPairing.pair(companions: [companion], primaries: [jpeg, raw])
+        let paired = MediaCompanionPairing.pair(companions: [companion], primaries: [jpeg, raw], capabilities: .caseInsensitive)
         #expect(paired[0].primaryRelativePath?.rawValue == "IMG_1.CR2")
+    }
+
+    /// On a case-sensitive volume names that differ by case are different files, so they
+    /// share no stem; on a case-insensitive one they do (ADR 0052, ARC-056).
+    @Test func pairsByTheVolumesOwnStemEquality() {
+        let primary = scanned("IMG_1.JPG", kind: .image)
+        let companion = ScannedCompanionFile(
+            relativePath: MediaRelativePath(rawValue: "img_1.xmp"),
+            kind: .xmp,
+            byteSize: nil,
+            contentModifiedAt: nil
+        )
+        let insensitive = MediaCompanionPairing.pair(
+            companions: [companion],
+            primaries: [primary],
+            capabilities: .caseInsensitive
+        )
+        let sensitive = MediaCompanionPairing.pair(
+            companions: [companion],
+            primaries: [primary],
+            capabilities: .caseSensitive
+        )
+        #expect(insensitive[0].primaryRelativePath?.rawValue == "IMG_1.JPG")
+        #expect(sensitive[0].primaryRelativePath == nil)
+    }
+
+    /// A precomposed and a decomposed spelling of one stem are one stem on every volume.
+    @Test func pairsAcrossUnicodeNormalization() {
+        let composed = "Caf\u{00E9}"
+        let decomposed = "Cafe\u{0301}"
+        let primary = scanned("\(composed).JPG", kind: .image)
+        let companion = ScannedCompanionFile(
+            relativePath: MediaRelativePath(rawValue: "\(decomposed).xmp"),
+            kind: .xmp,
+            byteSize: nil,
+            contentModifiedAt: nil
+        )
+        for capabilities in [VolumeNamespaceCapabilities.caseSensitive, .caseInsensitive] {
+            let paired = MediaCompanionPairing.pair(
+                companions: [companion],
+                primaries: [primary],
+                capabilities: capabilities
+            )
+            #expect(paired[0].primaryRelativePath?.rawValue == "\(composed).JPG")
+        }
+    }
+
+    @Test func theStemKeyKeepsTheFolderAndDropsOnlyTheLastExtension() {
+        let raw = FilesystemNamespaceSemantics.stemKey(
+            relativePath: MediaRelativePath(rawValue: "2026/DSC01234.ARW"),
+            capabilities: .caseInsensitive
+        )
+        let jpeg = FilesystemNamespaceSemantics.stemKey(
+            relativePath: MediaRelativePath(rawValue: "2026/dsc01234.jpg"),
+            capabilities: .caseInsensitive
+        )
+        let otherFolder = FilesystemNamespaceSemantics.stemKey(
+            relativePath: MediaRelativePath(rawValue: "2027/DSC01234.JPG"),
+            capabilities: .caseInsensitive
+        )
+        let doubleExtension = FilesystemNamespaceSemantics.stemKey(
+            relativePath: MediaRelativePath(rawValue: "2026/DSC01234.ARW.xmp"),
+            capabilities: .caseInsensitive
+        )
+        #expect(raw == jpeg)
+        #expect(raw != otherFolder)
+        #expect(raw != doubleExtension)
     }
 
     @Test func doesNotRecognizeLRC() {

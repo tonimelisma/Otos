@@ -61,16 +61,24 @@ nonisolated struct CatalogScanObservation: Equatable, Sendable {
     }
 }
 
-/// Pure companion pairing for one directory. RAW+JPEG prefer-raw; otherwise the
-/// deterministically first primary by natural name.
+/// Pure companion pairing for one directory: a companion belongs to the media file whose
+/// stem key it shares (`FilesystemNamespaceSemantics.stemKey`, the volume's own name
+/// equality). RAW+JPEG prefer-raw; otherwise the deterministically first primary by
+/// natural name.
 nonisolated enum MediaCompanionPairing {
     static func pair(
         companions: [ScannedCompanionFile],
-        primaries: [ScannedMediaFile]
+        primaries: [ScannedMediaFile],
+        capabilities: VolumeNamespaceCapabilities
     ) -> [MediaCompanion] {
-        let primariesByStem = Dictionary(grouping: primaries) { stem(of: $0.relativePath) }
+        let primariesByStem = Dictionary(grouping: primaries) {
+            FilesystemNamespaceSemantics.stemKey(relativePath: $0.relativePath, capabilities: capabilities)
+        }
         return companions.map { companion in
-            let stem = stem(of: companion.relativePath)
+            let stem = FilesystemNamespaceSemantics.stemKey(
+                relativePath: companion.relativePath,
+                capabilities: capabilities
+            )
             let matches = primariesByStem[stem] ?? []
             let primary = preferredPrimary(among: matches)
             return MediaCompanion(
@@ -87,11 +95,6 @@ nonisolated enum MediaCompanionPairing {
     /// relative paths (targeted FSEvents / single-file reconcile).
     static func directoryKey(of relativePath: MediaRelativePath) -> String {
         relativePath.folder
-    }
-
-    static func stem(of relativePath: MediaRelativePath) -> String {
-        let name = relativePath.stem
-        return name.lowercased()
     }
 
     static func preferredPrimary(among matches: [ScannedMediaFile]) -> ScannedMediaFile? {

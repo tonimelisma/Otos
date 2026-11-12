@@ -107,9 +107,9 @@ struct LivePhotoTests {
                 deleteSourceAfterImport: false,
                 autoEjectAfterImport: false
             )
-            let bundles = ImportNaming.bundles(from: facts, policy: policy)
+            let bundles = ImportNaming.bundles(from: facts, policy: policy, capabilities: .caseInsensitive)
             #expect(bundles.count == 1)
-            #expect(bundles.first?.stem == "img_8")
+            #expect(Set(bundles.first?.members.map(\.relativePath.rawValue) ?? []) == ["IMG_8.HEIC", "MOTION_8.MOV"])
         }
     }
 

@@ -94,6 +94,21 @@ extension FilesystemNamespaceSemantics {
         return FilesystemNameKey(rawValue: normalized)
     }
 
+    /// The key two files share when they are one capture saved twice or a file and its
+    /// companion: the same folder and the same name without its last extension, compared
+    /// as `nameKey` compares whole names. `IMG_1.CR2`, `IMG_1.JPG` and `IMG_1.xmp` share
+    /// it; on a case-sensitive volume `IMG_1.CR2` and `img_1.JPG` do not, because there
+    /// they are different names. Companion pairing, naming bundles and stacks compare
+    /// stems through this one key (ADR 0052).
+    nonisolated static func stemKey(
+        relativePath: MediaRelativePath,
+        capabilities: VolumeNamespaceCapabilities
+    ) -> FilesystemNameKey {
+        let folder = relativePath.folder
+        let stemPath = folder.isEmpty ? relativePath.stem : folder + "/" + relativePath.stem
+        return nameKey(relativePath: MediaRelativePath(rawValue: stemPath), capabilities: capabilities)
+    }
+
     /// Probes case-sensitivity for a root URL, or reports `.unknown`.
     ///
     /// An inconclusive probe is *not* silently recorded as case-insensitive. That

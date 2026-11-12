@@ -18,7 +18,7 @@ nonisolated enum MediaTransferPlanner {
     /// further observation — the reason planning is one pass and not a fixed point.
     static func destinationFolders(for snapshot: ImportPlanningSnapshot) -> Set<String> {
         var folders: Set<String> = []
-        for bundle in ImportNaming.bundles(from: snapshot.sourceMedia, policy: snapshot.policy)
+        for bundle in ImportNaming.bundles(from: snapshot.sourceMedia, policy: snapshot.policy, capabilities: snapshot.destinationCapabilities)
             where bundle.isNameable(under: snapshot.policy)
         {
             let timestamp = ImportNaming.timestamp(of: bundle, calendar: snapshot.calendar, timeZone: snapshot.timeZone)
@@ -50,7 +50,7 @@ nonisolated enum MediaTransferPlanner {
                 capabilities: snapshot.destinationCapabilities
             )
         })
-        let bundles = ImportNaming.bundles(from: snapshot.sourceMedia, policy: snapshot.policy)
+        let bundles = ImportNaming.bundles(from: snapshot.sourceMedia, policy: snapshot.policy, capabilities: snapshot.destinationCapabilities)
         var entries: [MediaOperationPlanEntry] = []
 
         for bundle in bundles {

@@ -18,7 +18,7 @@ nonisolated enum ReorganizationPlanner {
     /// reads exactly these folders and passes the result to `plan`.
     static func destinationFolders(for snapshot: ReorganizationPlanningSnapshot) -> Set<String> {
         var folders: Set<String> = []
-        for bundle in ImportNaming.bundles(from: snapshot.media, policy: snapshot.policy)
+        for bundle in ImportNaming.bundles(from: snapshot.media, policy: snapshot.policy, capabilities: snapshot.capabilities)
             where bundle.isNameable(under: snapshot.policy)
         {
             let timestamp = ImportNaming.timestamp(of: bundle, calendar: snapshot.calendar, timeZone: snapshot.timeZone)
@@ -42,7 +42,7 @@ nonisolated enum ReorganizationPlanner {
         snapshot: ReorganizationPlanningSnapshot,
         namespace: DestinationNamespace
     ) -> ReorganizationPlanBuildOutcome {
-        let bundles = ImportNaming.bundles(from: snapshot.media, policy: snapshot.policy)
+        let bundles = ImportNaming.bundles(from: snapshot.media, policy: snapshot.policy, capabilities: snapshot.capabilities)
             .map { PlannedBundle(bundle: $0, snapshot: snapshot) }
         var staying = Set<Int>()
         var blocks: [Int: ReorganizationBlockReason] = [:]

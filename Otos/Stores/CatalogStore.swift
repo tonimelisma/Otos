@@ -6561,7 +6561,8 @@ private extension CatalogStore {
                     )
                     let paired = MediaCompanionPairing.pair(
                         companions: [companion],
-                        primaries: primaries
+                        primaries: primaries,
+                        capabilities: rootCapabilities
                     )
                     var companionChanged = false
                     for item in paired {

@@ -25,13 +25,12 @@ nonisolated struct CaptureWallComponents: Equatable, Sendable {
 /// copies; Reorganize uses it to apply the same policy to a library already in place
 /// (ARC-050), so the two can never name one file differently.
 nonisolated enum ImportNaming {
-    /// Files that name together: one folder, one stem compared case-insensitively — a
-    /// RAW and its JPEG, say — and a Live Photo's movie with its still, whatever its stem
-    /// (ADR 0041). They share one name date and one collision suffix.
+    /// Files that name together: one stem key (`FilesystemNamespaceSemantics.stemKey`,
+    /// one folder and one stem as the volume compares names) — a RAW and its JPEG, say —
+    /// and a Live Photo's movie with its still, whatever its stem (ADR 0041). They share
+    /// one name date and one collision suffix.
     struct Bundle: Equatable, Sendable {
         let members: [PlanningFileFacts]
-        let stem: String
-        let directoryKey: String
         /// The latest capture wall time any member has.
         let wallCompact: Int64?
         /// The earliest modification date any member has, used when no member has a
@@ -40,9 +39,6 @@ nonisolated enum ImportNaming {
 
         init(members: [PlanningFileFacts]) {
             self.members = members
-            let namedPath = members.first.map { $0.livePhotoStillPath ?? $0.relativePath }
-            stem = namedPath.map(MediaCompanionPairing.stem(of:)) ?? ""
-            directoryKey = namedPath.map(MediaCompanionPairing.directoryKey(of:)) ?? ""
             wallCompact = members.compactMap(\.captureWallCompact).max()
             fallbackModifiedAt = members.compactMap(\.contentModifiedAt).min()
         }
@@ -56,7 +52,11 @@ nonisolated enum ImportNaming {
 
     /// Groups files into naming bundles, in the order the policy names them: by capture
     /// time under a date-time name, then by natural file order.
-    static func bundles(from media: [PlanningFileFacts], policy: ImportPolicy) -> [Bundle] {
+    static func bundles(
+        from media: [PlanningFileFacts],
+        policy: ImportPolicy,
+        capabilities: VolumeNamespaceCapabilities
+    ) -> [Bundle] {
         let sorted = media.sorted { left, right in
             if policy.destinationNamePolicy == .captureDateTime {
                 let leftKey = left.captureWallCompact ?? Int64.max
@@ -77,13 +77,11 @@ nonisolated enum ImportNaming {
             }
             return left.relativePath.rawValue < right.relativePath.rawValue
         }
-        var groups: [String: [PlanningFileFacts]] = [:]
-        var order: [String] = []
+        var groups: [FilesystemNameKey: [PlanningFileFacts]] = [:]
+        var order: [FilesystemNameKey] = []
         for item in sorted {
             let namedPath = item.livePhotoStillPath ?? item.relativePath
-            let key = MediaCompanionPairing.directoryKey(of: namedPath)
-                + "\u{1}"
-                + MediaCompanionPairing.stem(of: namedPath)
+            let key = FilesystemNamespaceSemantics.stemKey(relativePath: namedPath, capabilities: capabilities)
             if groups[key] == nil {
                 order.append(key)
             }
