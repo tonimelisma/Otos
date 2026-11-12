@@ -330,7 +330,7 @@ struct ContentView: View {
                 // On This Day fixes its own order (DES-053: disabled in place; DES-038: the
                 // reason is the tooltip).
                 .disabled(!viewModel.canChangeSort)
-                .help(viewModel.canChangeSort ? "Sort" : "On This Day always shows the newest year first")
+                .help(viewModel.canChangeSort ? "Sort" : "On This Day always shows the newest first")
             }
             ToolbarSpacer(.fixed, placement: .primaryAction)
             // Acts on the current targets (APP-013, APP-036). File ▸ Share… and the Photo
@@ -630,7 +630,7 @@ struct ContentView: View {
                     tileContentStore: viewModel.tileContentStore,
                     thumbnailDirectory: viewModel.thumbnailDirectory,
                     detailReader: viewModel.tileDetailReader,
-                    play: { viewModel.playStory(year: $0) },
+                    play: { viewModel.playStory(anniversary: $0) },
                     clearFilters: viewModel.clearMediaFilter
                 )
             }

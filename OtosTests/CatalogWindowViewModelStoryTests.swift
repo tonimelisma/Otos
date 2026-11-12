@@ -56,10 +56,10 @@ struct CatalogWindowViewModelStoryTests {
     }
 
     /// Two years over `ids`: 2025 holds the first two, 2023 the rest, newest first.
-    private func years(_ ids: [MediaAssetID]) -> [OnThisDayYear] {
+    private func years(_ ids: [MediaAssetID]) -> [OnThisDayAnniversary] {
         [
-            OnThisDayYear(day: Self.today.inYear(2025), keyItem: ids[0], firstIndex: 0, count: 2),
-            OnThisDayYear(day: Self.today.inYear(2023), keyItem: ids[2], firstIndex: 2, count: ids.count - 2),
+            OnThisDayAnniversary(day: Self.today.inYear(2025), keyItem: ids[0], firstIndex: 0, count: 2),
+            OnThisDayAnniversary(day: Self.today.inYear(2023), keyItem: ids[2], firstIndex: 2, count: ids.count - 2),
         ]
     }
 
@@ -67,7 +67,7 @@ struct CatalogWindowViewModelStoryTests {
     private func onThisDayState(
         _ model: CatalogWindowViewModel,
         ids: [MediaAssetID],
-        years: [OnThisDayYear],
+        years: [OnThisDayAnniversary],
         remaps: [CatalogIdentityRemapBatch] = [],
         libraries: [CatalogLibraryState] = []
     ) -> CatalogWindowState {
@@ -88,7 +88,7 @@ struct CatalogWindowViewModelStoryTests {
             resolvedSidebarSelection: scope,
             mediaEmptyState: ids.isEmpty ? .nothingOnThisDay(Self.today) : .noMedia,
             deviceConnectionBanner: nil,
-            onThisDay: CatalogOnThisDayState(day: Self.today, years: years),
+            onThisDay: CatalogOnThisDayState(day: Self.today, anniversaries: years),
             queryGeneration: model.queryGeneration
         )
         state.pendingIdentityRemaps = remaps
@@ -183,7 +183,7 @@ struct CatalogWindowViewModelStoryTests {
             let model = makeModel(store: library.store)
             enterOnThisDay(model, ids: ids)
 
-            model.playStory(year: 2023)
+            model.playStory(anniversary: Self.today.inYear(2023))
             #expect(model.storyItem == ids[2])
             #expect(model.focusedAssetID == ids[2])
             #expect(model.viewMode == .loupe)
@@ -220,7 +220,7 @@ struct CatalogWindowViewModelStoryTests {
             await loader.setHold(true)
             let model = makeModel(store: library.store, loader: loader)
             enterOnThisDay(model, ids: ids)
-            model.playStory(year: 2025)
+            model.playStory(anniversary: Self.today.inYear(2025))
             let visit = try #require(model.story?.visit)
             try await loader.waitUntilPending(id: ids[0])
             try await waitUntil { model.focusedAssetKind == .image }
@@ -247,7 +247,7 @@ struct CatalogWindowViewModelStoryTests {
         try await withEditableLibrary(fileCount: 4) { library in
             let model = await makeModel(store: library.store, loader: picturingLoader())
             enterOnThisDay(model, ids: library.ids)
-            model.playStory(year: 2025)
+            model.playStory(anniversary: Self.today.inYear(2025))
             try await waitUntil { model.story?.hold != nil }
             let visit = try #require(model.story?.visit)
 
@@ -273,7 +273,7 @@ struct CatalogWindowViewModelStoryTests {
             let ids = library.ids
             let model = await makeModel(store: library.store, loader: picturingLoader())
             enterOnThisDay(model, ids: ids)
-            model.playStory(year: 2025)
+            model.playStory(anniversary: Self.today.inYear(2025))
             let firstVisit = try #require(model.story?.visit)
 
             model.storyNext()
@@ -295,7 +295,7 @@ struct CatalogWindowViewModelStoryTests {
         try await withEditableLibrary(fileCount: 4) { library in
             let model = makeModel(store: library.store)
             enterOnThisDay(model, ids: library.ids)
-            model.playStory(year: 2025)
+            model.playStory(anniversary: Self.today.inYear(2025))
 
             // The loader answers that there is no picture.
             try await waitUntil { model.story?.hold != nil }
@@ -308,7 +308,7 @@ struct CatalogWindowViewModelStoryTests {
             let ids = library.ids
             let model = makeModel(store: library.store)
             enterOnThisDay(model, ids: ids)
-            model.playStory(year: 2023)
+            model.playStory(anniversary: Self.today.inYear(2023))
             model.storyNext()
             #expect(model.storyItem == ids[3])
 
@@ -335,7 +335,7 @@ struct CatalogWindowViewModelStoryTests {
         try await withEditableLibrary(fileCount: 4) { library in
             let model = await makeModel(store: library.store, loader: picturingLoader())
             enterOnThisDay(model, ids: library.ids)
-            model.playStory(year: 2025)
+            model.playStory(anniversary: Self.today.inYear(2025))
             try await waitUntil { model.story?.hold != nil }
             let visit = try #require(model.story?.visit)
 
@@ -359,7 +359,7 @@ struct CatalogWindowViewModelStoryTests {
         ) { library in
             let model = await makeModel(store: library.store, loader: picturingLoader())
             enterOnThisDay(model, ids: library.ids)
-            model.playStory(year: 2025)
+            model.playStory(anniversary: Self.today.inYear(2025))
 
             try await waitUntil { model.story?.video == .unavailable && model.story?.hold != nil }
             #expect(model.focusedAssetKind == .video)
@@ -375,7 +375,7 @@ struct CatalogWindowViewModelStoryTests {
             let id = library.ids[0]
             let model = makeModel(store: library.store)
             enterOnThisDay(model, ids: library.ids)
-            model.playStory(year: 2025)
+            model.playStory(anniversary: Self.today.inYear(2025))
             try await waitUntil { model.focusedAssetKind == .image }
             model.focusedAssetKind = .video
             model.loupeVideoState = LoupeVideoState(id: id, player: AVPlayer(), isPlaying: false)
@@ -388,7 +388,7 @@ struct CatalogWindowViewModelStoryTests {
 
     // MARK: - Covers
 
-    /// The years' covers are pinned in the shared tile store while On This Day shows, as the
+    /// The anniversaries' covers are pinned in the shared tile store while On This Day shows, as the
     /// grid pins its visible tiles: a story's pictures filling the store past its budget
     /// cannot drop a painted cover, so the card made again when the story closes draws the
     /// same picture, never the placeholder. Leaving the scope releases them.
@@ -415,7 +415,7 @@ struct CatalogWindowViewModelStoryTests {
             let firstCover = paint(ids[0])
             let secondCover = paint(ids[2])
 
-            model.playStory(year: 2025)
+            model.playStory(anniversary: Self.today.inYear(2025))
             let others = (0 ..< 5).map { index in
                 MediaAssetID(
                     libraryRootPath: ids[0].libraryRootPath,
@@ -466,7 +466,7 @@ struct CatalogWindowViewModelStoryTests {
             enterOnThisDay(model, ids: ids, libraries: [
                 CatalogLibraryState(root: LibraryRoot(path: fixture.rootPath), availability: .available, activity: .idle),
             ])
-            model.playStory(year: 2023)
+            model.playStory(anniversary: Self.today.inYear(2023))
             let before = try #require(model.story?.visit)
             let expected = StoryPlaybackPolicy.survivor(
                 of: ids[2],
@@ -495,7 +495,7 @@ struct CatalogWindowViewModelStoryTests {
             let ids = library.ids
             let model = makeModel(store: library.store)
             enterOnThisDay(model, ids: ids)
-            model.playStory(year: 2025)
+            model.playStory(anniversary: Self.today.inYear(2025))
             model.storyNext()
             model.storyNext()
 
@@ -504,7 +504,7 @@ struct CatalogWindowViewModelStoryTests {
             #expect(model.story == nil)
             #expect(model.storyItem == nil)
             #expect(model.viewMode == .grid)
-            #expect(model.onThisDayFocusRequest?.year == 2023)
+            #expect(model.onThisDayFocusRequest?.anniversary == Self.today.inYear(2023))
             #expect(model.gridSelection.selection == [ids[2]])
             #expect(model.canPlayStory)
         }
@@ -515,13 +515,13 @@ struct CatalogWindowViewModelStoryTests {
             let ids = library.ids
             let model = makeModel(store: library.store)
             enterOnThisDay(model, ids: ids)
-            model.playStory(year: 2023)
+            model.playStory(anniversary: Self.today.inYear(2023))
             #expect(model.storyItem == ids[2])
 
             let remaining = ids.filter { $0 != ids[2] }
             model.applyState(onThisDayState(model, ids: remaining, years: [
                 years(ids)[0],
-                OnThisDayYear(day: Self.today.inYear(2023), keyItem: ids[3], firstIndex: 2, count: 2),
+                OnThisDayAnniversary(day: Self.today.inYear(2023), keyItem: ids[3], firstIndex: 2, count: 2),
             ]))
             #expect(model.storyItem == ids[3])
 
@@ -538,7 +538,7 @@ struct CatalogWindowViewModelStoryTests {
             let ids = library.ids
             let model = makeModel(store: library.store)
             enterOnThisDay(model, ids: ids)
-            model.playStory(year: 2023)
+            model.playStory(anniversary: Self.today.inYear(2023))
             let renamed = MediaAssetID(
                 libraryRootPath: ids[2].libraryRootPath,
                 relativePath: MediaRelativePath(rawValue: "2023/renamed.jpg")
@@ -565,7 +565,7 @@ struct CatalogWindowViewModelStoryTests {
         try await withEditableLibrary(fileCount: 4) { library in
             let model = makeModel(store: library.store)
             enterOnThisDay(model, ids: library.ids)
-            model.playStory(year: 2025)
+            model.playStory(anniversary: Self.today.inYear(2025))
 
             model.selectSidebar(.allMedia)
             model.applyState(CatalogWindowState(

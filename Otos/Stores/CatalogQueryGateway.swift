@@ -541,31 +541,70 @@ private nonisolated func orderPlan(
 /// single-root scope uses `=` so the root-local ordering indexes stay usable. A scope
 /// that requires a location joins `asset_metadata`, where the primary location lives,
 /// so the same read can also carry each row's coordinate; columns are qualified with
-/// their table so the join introduces no ambiguity. A scope with a date dimension reads
-/// its year floor — the earliest capture its roots hold — in `db`, the caller's read, so the
-/// anniversary ranges and the rows they select come from one snapshot (ADR 0049).
+/// their table so the join introduces no ambiguity. A scope with a date dimension decides
+/// its anniversary match in `db`, the caller's read (`anniversaryMatch`), so the match and
+/// the rows it selects come from one snapshot (ADR 0049).
 private nonisolated func scopeClause(
     _ scope: CatalogScopePredicate,
     db: Database
-) throws -> (join: String, sql: String, arguments: [any DatabaseValueConvertible])? {
+) throws -> ScopeClause? {
     guard !scope.selectsNothing else {
         return nil
     }
-    let captureRanges: [Range<Double>]?
     switch scope.date {
     case .any:
-        captureRanges = nil
+        return scopeClause(scope, anniversary: nil)
     case let .anniversary(day):
-        let ranges = try AnniversaryRanges.ranges(
-            for: day,
-            earliest: earliestCaptureLocalTime(rootIDs: scope.rootIDs, db: db)
-        )
-        // No earlier year holds a dated row: nothing can match, and SQLite is not asked.
-        guard !ranges.isEmpty else {
+        guard let match = try anniversaryMatch(for: day, scope: scope, db: db) else {
             return nil
         }
-        captureRanges = ranges
+        return scopeClause(scope, anniversary: match)
     }
+}
+
+private typealias ScopeClause = (join: String, sql: String, arguments: [any DatabaseValueConvertible])
+
+/// On This Day's match (ADR 0049): the day in earlier years while any row of the scope
+/// falls on one, else the day in earlier months. The question is asked of the scope alone
+/// — its roots and visibility rules — never of the filter, so the filter only narrows what
+/// the scope holds and never turns years into months. Nil only for a day no calendar
+/// starts, which `CalendarDay.today()` never is.
+private nonisolated func anniversaryMatch(
+    for day: CalendarDay,
+    scope: CatalogScopePredicate,
+    db: Database
+) throws -> AnniversaryMatch? {
+    if let years = AnniversaryMatch.years(for: day), let clause = scopeClause(scope, anniversary: years) {
+        let holdsAYear = try Bool.fetchOne(
+            db,
+            sql: "SELECT EXISTS (SELECT 1 FROM media_asset\(clause.join) WHERE \(clause.sql))",
+            arguments: StatementArguments(clause.arguments)
+        ) ?? false
+        if holdsAYear {
+            logAnniversaryMatch(day: day, unit: .years)
+            return years
+        }
+    }
+    let months = AnniversaryMatch.months(for: day)
+    if let months {
+        logAnniversaryMatch(day: day, unit: months.unit)
+    }
+    return months
+}
+
+private nonisolated func logAnniversaryMatch(day: CalendarDay, unit: AnniversaryMatch.Unit) {
+    OtosLog.catalog.noticeOperation("onThisDay.match", phase: "resolved", fields: [
+        "day": day.diagnosticDescription,
+        "unit": unit.rawValue,
+    ])
+}
+
+/// The scope's `FROM` join and `WHERE` fragment with its date dimension already decided
+/// (`anniversary` nil: any date), or nil when the scope selects nothing.
+private nonisolated func scopeClause(
+    _ scope: CatalogScopePredicate,
+    anniversary: AnniversaryMatch?
+) -> ScopeClause? {
     var arguments: [any DatabaseValueConvertible] = []
     let rootPredicate: String
     if scope.rootIDs.count == 1, let rootID = scope.rootIDs.first {
@@ -646,16 +685,10 @@ private nonisolated func scopeClause(
           )
         """
     }
-    if let captureRanges {
-        let clauses = Array(
-            repeating: "(media_asset.best_capture_local >= ? AND media_asset.best_capture_local < ?)",
-            count: captureRanges.count
-        )
-        predicate += "\n  AND (\(clauses.joined(separator: " OR ")))"
-        for range in captureRanges {
-            arguments.append(range.lowerBound)
-            arguments.append(range.upperBound)
-        }
+    if let anniversary {
+        predicate += "\n  AND \(anniversary.sql(column: "media_asset.best_capture_local"))"
+        arguments.append(anniversary.end)
+        arguments.append(anniversary.date)
     }
     var join = ""
     switch scope.location {
@@ -677,20 +710,6 @@ private nonisolated func scopeClause(
         predicate += "\n  AND (asset_metadata.primary_longitude >= ? \(longitude) asset_metadata.primary_longitude <= ?)"
     }
     return (join, predicate, arguments)
-}
-
-/// The earliest local capture time the roots hold, the floor of an anniversary scope's
-/// years. Every row of the roots counts, hidden or not: a lower floor only adds a range
-/// that matches nothing.
-private nonisolated func earliestCaptureLocalTime(rootIDs: [Int64], db: Database) throws -> CaptureLocalTime? {
-    try Double.fetchOne(
-        db,
-        sql: """
-        SELECT MIN(best_capture_local) FROM media_asset
-        WHERE library_root_id IN (\(sqlPlaceholders(count: rootIDs.count)))
-        """,
-        arguments: StatementArguments(rootIDs)
-    ).map(CaptureLocalTime.init(seconds:))
 }
 
 /// Each row's place cell, through its primary location (ADR 0040). A row with no location,

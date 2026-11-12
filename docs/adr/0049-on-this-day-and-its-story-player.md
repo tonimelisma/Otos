@@ -1,4 +1,4 @@
-# ADR 0049: On This Day is a scope of years, played as a story
+# ADR 0049: On This Day is a scope of anniversaries, played as a story
 
 - Status: Accepted
 - Date: 2026-11-09
@@ -10,6 +10,10 @@ Immich" after the survey `docs/research/2026-11-07-memories-and-highlights.md`, 
 chose, on 2026-11-09:
 
 - **the unit:** On This Day — items captured on today's month and day in earlier years;
+  and, on 2026-11-12, "show photos from months ago, if nothing newer is available": a
+  library with nothing from an earlier year on the day — the owner's own, seven months
+  deep, showed `Nothing on This Day` while holding 713 items taken on the 12th of earlier
+  months — shows the day of the month in earlier months instead;
 - **the content:** photos and videos;
 - **the presentation:** a story player like Immich's — one progress segment per item,
   stills hold, videos play their own length, keyboard navigation;
@@ -39,14 +43,15 @@ and materialization (ADR 0016, ADR 0023); the no-blank grid rule (ADR 0006).
 
 ## Decision
 
-**On This Day is a scope, and its years are what that scope looks like.** There is no
+**On This Day is a scope, and its anniversaries are what that scope looks like.** There is no
 view mode for it.
 
 1. **Placement (owner decision).** A sidebar row, `On This Day`, SF Symbol `calendar`,
    second under All Media, present whenever one fixed library exists, with no trailing count
    (owner decision, 2026-11-11).
 2. **What matches.** Rows of the available fixed libraries — All Media's membership —
-   whose day bucket has today's month and day in a year before today's. The day bucket
+   whose day bucket has today's month and day in a year before today's — or, only when no
+   such row exists, today's day of the month in a month before today's (§4). The day bucket
    is the day the item was taken on, on the clock where it was taken: the date of its
    local capture time, `best_capture_local` (ADR 0039). That is the same day
    `CatalogStore.orderedAssetIDs` buckets the grid by (DES-069), and it does not depend on
@@ -54,7 +59,7 @@ view mode for it.
    (`CalendarDay.calendar(in:)`), never `Calendar.current`, whose year is an era year
    under the Japanese calendar (Reiwa 8) and 2569 under the Buddhist one. What the user
    reads is formatted in their own calendar and locale. The match is exact: on a common year, 29 February
-   matches nothing. Undated rows never match. It is a live query, never a snapshot, so a
+   matches nothing, and a 30-day month has no 31st. Undated rows never match. It is a live query, never a snapshot, so a
    late import appears and a deleted file goes (ADR 0008).
 3. **Today is a typed value in the selection.** `SidebarSelection.onThisDay(CalendarDay)`,
    where `CalendarDay` is the Gregorian `{year, month, day}` in the user's time zone. The ViewModel owns
@@ -68,46 +73,56 @@ view mode for it.
 4. **The predicate carries the date dimension.** `CatalogScopePredicate.DateConstraint`
    is `.any` or `.anniversary(CalendarDay)`, resolved only by
    `RootRegistry.scopePredicate`, so ordered IDs and counts agree. The
-   gateway turns it into half-open `best_capture_local` ranges in the read's own
-   transaction: the earliest dated year comes from a `MIN(best_capture_local)` over the
-   scope's roots, and `AnniversaryRanges` (pure) builds one range per year from that
-   floor through `day.year − 1`, each from that day's midnight to the next on any clock.
-   A local time has no zone, so a daylight-saving day is still midnight to midnight. No
-   earlier dated year means no range, and the scope selects nothing without asking
-   SQLite for rows.
+   gateway turns it into one predicate over `best_capture_local` in the read's own
+   transaction (`AnniversaryMatch`, pure): that column is the clock's reading counted on a
+   UTC calendar, so SQLite's `strftime(…, 'unixepoch')` writes the date the clock showed
+   with no zone applied, and a daylight-saving day is midnight to midnight like any
+   other. Years match `strftime('%m-%d') = '11-12'` on rows taken before the day's year
+   began; months match `strftime('%d') = '12'` on rows taken before its month began. An
+   `EXISTS` over the scope with the years' match — its roots and visibility rules, never
+   the filter — decides the unit: any row keeps the years; none falls back to the months.
+   Because the filter takes no part, it only narrows: a video filter on a scope whose
+   year holds only photos shows nothing, never last month's videos. Every read decides
+   the same unit from the same snapshot, so order, counts and filter options agree, and
+   `op=onThisDay.match` logs the unit. The predicate's size does not depend on how many
+   years the library spans (`docs/research/2026-11-12-on-this-day-months.md`).
 5. **The scope fixes its order.** `SidebarSelection.fixedSort` is `dateNewest` for On
    This Day, and every read uses `CatalogQueryDescriptor.effectiveSort`. The user's sort
    stays in the descriptor as chosen, so leaving the scope restores it. The sort control
    and View ▸ Sort are disabled in place there, with the reason as the tooltip (DES-053,
-   DES-038). The filter applies and narrows each year. A keyword search (ADR 0048) also
+   DES-038). The filter applies and narrows each anniversary. A keyword search (ADR 0048) also
    only narrows: `CatalogQueryDescriptor.effectiveSearch` orders a fixed-order scope's
-   results by that order, never by relevance, so each year stays one contiguous run.
-6. **Projection publishes the years.** `CatalogWindowState.onThisDay` is
-   `CatalogOnThisDayState`: the day and one `OnThisDayYear` per earlier year with a match,
-   newest first, each a contiguous run of the ordered IDs with its key item (the run's
-   first, its newest capture) and count, grouped by `OnThisDayYearPolicy` from the day
-   buckets the fixed order carries.
+   results by that order, never by relevance, so each anniversary stays one contiguous run.
+6. **Projection publishes the anniversaries.** `CatalogWindowState.onThisDay` is
+   `CatalogOnThisDayState`: the day and one `OnThisDayAnniversary` per earlier year — or
+   month — with a match, newest first, each a contiguous run of the ordered IDs with its
+   key item (the run's first, its newest capture) and count, grouped by year and month by
+   `OnThisDayAnniversaryPolicy` from the day buckets the fixed order carries; the scope
+   holds at most one day a month, so a year and month names every run in either unit.
+   An anniversary's distance (`OnThisDayInterval`) is whole years when its month is
+   today's and months otherwise, so a run 14 months back reads `14 months ago`, never a
+   rounded year; the bar counts in years when every run is in today's month.
 7. **The pane is a grid of photo cards (owner decision).** A 52 pt bar in the Places
-   bar's place (L1 the day, `9 November`; L3 `14 photos and videos from 4 years`), over
-   an adaptive grid of 16:9 cards (260–420 pt wide, 16 pt gaps, 20 pt margins), one per
-   year, newest first. A card's key photo is aspect-filled — a cover stands for the year,
+   bar's place (L1 the day, `9 November`; L3 `14 photos and videos from 4 years`, or
+   `612 photos and videos from 4 months`), over an adaptive grid of 16:9 cards (260–420 pt
+   wide, 16 pt gaps, 20 pt margins), one per anniversary, newest first. A card's key photo is aspect-filled — a cover stands for the anniversary,
    it is not the photograph under review, and Immich, Apple and Google all crop covers
-   (`[deviation]` from DES-060A). `3 years ago` sits on the photo over a bottom scrim;
-   `9 Nov 2023 · 14` under it. A single click plays that year; Return or Space plays the
-   focused card; the arrow keys move focus. The years' covers are this pane's visible items, so they are pinned in the shared
+   (`[deviation]` from DES-060A). `3 years ago` (or `2 months ago`) sits on the photo over a bottom scrim;
+   `9 Nov 2023 · 14` under it. A single click plays that anniversary; Return or Space plays the
+   focused card; the arrow keys move focus. The anniversaries' covers are this pane's visible items, so they are pinned in the shared
    `TileContentStore` exactly as the grid pins its visible tiles (ADR 0006) while the scope
    shows, and released when it closes; a card made again reads its cover from there while
    rendering. There is no second cover cache. The view-mode picker is disabled, with no
    segment selected (DES-053, the Duplicates precedent). Rules: DES-112,
    `docs/design/on-this-day.md`.
 8. **The player replaces the cards while it plays.** It is not a view mode. Its bar is
-   52 pt: Close and the year (`1 year ago`) leading; Play / Pause, one segment per item of
-   that year and the position `1/20` in the center; Previous and Next trailing. The
+   52 pt: Close and the anniversary (`1 year ago`, `1 month ago`) leading; Play / Pause, one
+   segment per item of that anniversary and the position `1/20` in the center; Previous and Next trailing. The
    picture is aspect-fit on the `content` surface, the item's date on its top-left over a
    top scrim; a video plays inline with its sound and no player chrome; DES-086's
    indicator shows while bytes are awaited; DES-063's slash glyph when an item can have
    no picture. View ▸ Play Story (⌘Return, Lightroom Classic's Impromptu Slideshow key)
-   plays from the newest year; there is no toolbar button, since the cards are the way
+   plays from the newest anniversary; there is no toolbar button, since the cards are the way
    in.
 9. **Timing.** A still — a photo, or a Live Photo shown as its still — holds 5 s from the
    moment its picture is on screen (the pane published its decode), a product schedule
@@ -120,8 +135,8 @@ view mode for it.
    not advance, and a read that failed leaves it waiting with an `op=story.stalled` line. Pause freezes the hold's remainder (`StoryHold`, on
    `ContinuousClock`) and the video; Play resumes both. After the last item the player
    stays on it, paused, with Next and Play disabled.
-10. **Keys.** Space plays and pauses; ← and → move across years; Esc closes. Closing
-    returns to the cards with keyboard focus on the year the story was on and its item
+10. **Keys.** Space plays and pauses; ← and → move across anniversaries; Esc closes.
+    Closing returns to the cards with keyboard focus on the anniversary the story was on and its item
     selected. Changing the sidebar selection or the day closes it. P / X / U and the
     inspector act on the item on screen.
 11. **Reuse, not a second pipeline; focus is the item's one owner.** While a story plays
@@ -159,13 +174,24 @@ render these items a second time in All Media ("one fact, one owner").
 ### A snapshot of the day's items
 
 Immich builds memories once a day; its users' most common complaint is that late
-imports never appear. A live scope costs one indexed walk and follows the files.
+imports never appear. A live scope costs one walk of the scope and follows the files.
 
 ### SQLite `localtime` to bucket days in SQL
 
 `strftime('%m-%d', best_capture_unix, 'unixepoch', 'localtime')` (the instant column of the time) uses SQLite's notion of
 the zone, which is not `Calendar.current` and is fixed per connection; the grid's day
-bucket would then disagree with the scope's. It also cannot use the order index.
+bucket would then disagree with the scope's. The chosen predicate applies no zone: it
+writes `best_capture_local`, already the clock's reading.
+
+### One range of `best_capture_local` per earlier year or month
+
+The first build: an `OR` of half-open day ranges from the earliest dated capture,
+which the order index answers about 20× faster on 500,000 rows (6 ms against 106 ms).
+But SQLite refuses an expression deeper than 1,000 terms and more than 32,766 bound
+arguments, so one photo dated 1904 — a scan, or a camera that lost its clock — gives
+1,464 month ranges and the scope fails to read. A balanced `OR` tree avoids the depth
+but not the argument limit for a bogus year. The predicate costs 21 ms on the owner's
+19,500 items and stays linear; measure again before reaching for ranges.
 
 ### A fourth view mode, or the ordinary browser
 
@@ -178,6 +204,23 @@ for a map mode.
 Considered after the owner rejected the ordinary browser. No surveyed product uses
 circles as a full page; a circle centre-crops a scene photo
 (`docs/research/2026-11-09-on-this-day-layouts.md`).
+
+### Months beside years, always
+
+Showing last month's 12th next to 12 November three years ago crowds the years out of the
+cards in any library older than a few months, and the owner asked for months only "if
+nothing newer is available". Months are the fallback, never mixed in.
+
+### Deciding years or months with the filter applied
+
+Then a video filter over a scope whose year holds only photos would show last month's
+videos under the same day — the filter would widen the scope instead of narrowing it.
+The unit is the scope's, decided before the filter, as every other scope dimension is.
+
+### The nearest earlier day with photos
+
+Walking back to the closest day that holds anything answers "what happened recently",
+not "what happened on this day"; it would also need a search the ranges do not.
 
 ### A timer for midnight
 
@@ -192,9 +235,14 @@ loupe's owners already answer every case the story needs.
 
 - `SidebarSelection` gains `.onThisDay(CalendarDay)`; every exhaustive switch over it
   names it, and `BrowserPlace` persists it without its day.
-- `CatalogScopePredicate` gains `date`; the gateway's scope clause reads the floor in the
+- `CatalogScopePredicate` gains `date`; the gateway's scope clause decides the unit in the
   read's transaction, so `orderedAssetIDQuery` and `distinctFilterableTypesQuery` take
   the `Database`.
+- `DateConstraint.anniversary` resolves to years or months inside each read with one
+  extra `EXISTS`, which stops at its first row when a year holds the day; the scope's
+  reads filter rows by a function rather than an index range, linear in the scope's
+  rows, and `op=onThisDay.query` carries the cost. The benchmark cases
+  `projection.windowState.onThisDay.years` and `.months` watch it.
 - `CatalogWindowState` grows `onThisDay`; `CatalogMediaEmptyState` grows
   `nothingOnThisDay(CalendarDay)`.
 - A time-zone change that keeps the same calendar day does not re-query by itself; the
@@ -214,11 +262,12 @@ Nothing is replaced. The Places stack's thumbnail load moved to the shared
 - `docs/design/design-system.md`: DES-112; `docs/design/on-this-day.md`.
 - `docs/architecture.md`: dataflow, ViewModel row, where-to-change row.
 - `docs/research/2026-11-07-memories-and-highlights.md`,
-  `docs/research/2026-11-09-on-this-day-layouts.md`.
+  `docs/research/2026-11-09-on-this-day-layouts.md`,
+  `docs/research/2026-11-12-on-this-day-months.md`.
 
 ## Reversal Plan
 
 If the story must play another scope, the policy and the owner are scope-agnostic over
-ordered IDs and year runs; give that scope a fixed order and publish its runs. If the
-cards must change shape, `OnThisDayView` takes only the per-year values and can be
+ordered IDs and anniversary runs; give that scope a fixed order and publish its runs. If the
+cards must change shape, `OnThisDayView` takes only the per-anniversary values and can be
 swapped without touching the scope, the policy or the player.

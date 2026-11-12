@@ -3,10 +3,11 @@ import SwiftUI
 // On This Day guide (ADR 0049, `docs/design/on-this-day.md`)
 //
 // The detail pane for the `.onThisDay` scope: a bar naming the day, then one photo card
-// per earlier year that holds a match, newest year first. A click on a card, or Return or
-// Space on the focused card, plays that year's story. The view is passive: it renders
-// `CatalogOnThisDayState`, holds only keyboard focus as control state, applies the
-// ViewModel's focus request once per revision, and reports the year to play.
+// per earlier anniversary that holds a match — earlier years, or earlier months when no
+// year does — newest first. A click on a card, or Return or Space on the focused card,
+// plays that anniversary's story. The view is passive: it renders `CatalogOnThisDayState`,
+// holds only keyboard focus as control state, applies the ViewModel's focus request once
+// per revision, and reports the anniversary to play.
 
 struct OnThisDayView: View {
     let onThisDay: CatalogOnThisDayState?
@@ -16,9 +17,9 @@ struct OnThisDayView: View {
     var tileContentStore: TileContentStore?
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
-    let play: (Int) -> Void
+    let play: (CalendarDay) -> Void
     var clearFilters: () -> Void = {}
-    @FocusState private var focusedYear: Int?
+    @FocusState private var focused: CalendarDay?
     @State private var appliedFocusRevision: UInt64 = 0
     @State private var gridWidth: CGFloat = 0
     @Environment(\.colorScheme) private var colorScheme
@@ -34,8 +35,8 @@ struct OnThisDayView: View {
                 day: onThisDay?.day ?? today,
                 summary: OnThisDayPresentation.barSummary(onThisDay, emptyState: emptyState)
             )
-            if let years = onThisDay?.years, !years.isEmpty {
-                cards(years)
+            if let anniversaries = onThisDay?.anniversaries, !anniversaries.isEmpty {
+                cards(anniversaries)
             } else {
                 CatalogMediaEmptyStateView(emptyState: emptyState, clearFilters: clearFilters)
                     .background(DesignPalette.content(for: colorScheme))
@@ -44,7 +45,7 @@ struct OnThisDayView: View {
         .navigationTitle("On This Day")
     }
 
-    private func cards(_ years: [OnThisDayYear]) -> some View {
+    private func cards(_ anniversaries: [OnThisDayAnniversary]) -> some View {
         ScrollView {
             LazyVGrid(
                 columns: [GridItem(
@@ -55,11 +56,11 @@ struct OnThisDayView: View {
                 alignment: .leading,
                 spacing: Self.gap
             ) {
-                ForEach(years) { year in
+                ForEach(anniversaries) { anniversary in
                     OnThisDayCard(
-                        year: year,
+                        anniversary: anniversary,
                         today: today,
-                        isFocused: focusedYear == year.year,
+                        isFocused: focused == anniversary.day,
                         tileContentStore: tileContentStore,
                         thumbnailDirectory: thumbnailDirectory,
                         detailReader: detailReader
@@ -67,19 +68,19 @@ struct OnThisDayView: View {
                     // The system focus ring shows the keyboard target (DES-081); the card's
                     // 3 pt accent border marks the focused card as DES-061 does a tile.
                     .focusable(interactions: .activate)
-                    .focused($focusedYear, equals: year.year)
-                    .onTapGesture { play(year.year) }
-                    .accessibilityAction { play(year.year) }
+                    .focused($focused, equals: anniversary.day)
+                    .onTapGesture { play(anniversary.day) }
+                    .accessibilityAction { play(anniversary.day) }
                 }
             }
             // On the grid, inside the scroll view, so the focused card's keys reach these
             // before the scroll view takes the arrows for scrolling.
             .onKeyPress(.return) { playFocused() }
             .onKeyPress(.space) { playFocused() }
-            .onKeyPress(.leftArrow) { moveFocus(by: -1, in: years) }
-            .onKeyPress(.rightArrow) { moveFocus(by: 1, in: years) }
-            .onKeyPress(.upArrow) { moveFocus(by: -columnCount, in: years) }
-            .onKeyPress(.downArrow) { moveFocus(by: columnCount, in: years) }
+            .onKeyPress(.leftArrow) { moveFocus(by: -1, in: anniversaries) }
+            .onKeyPress(.rightArrow) { moveFocus(by: 1, in: anniversaries) }
+            .onKeyPress(.upArrow) { moveFocus(by: -columnCount, in: anniversaries) }
+            .onKeyPress(.downArrow) { moveFocus(by: columnCount, in: anniversaries) }
             .padding(Self.margin)
             .onGeometryChange(for: CGFloat.self) { proxy in
                 proxy.size.width
@@ -89,7 +90,7 @@ struct OnThisDayView: View {
         }
         .background(DesignPalette.content(for: colorScheme))
         .onChange(of: focusRequest?.revision, initial: true) { _, _ in
-            applyFocusRequest(years)
+            applyFocusRequest(anniversaries)
         }
     }
 
@@ -101,29 +102,30 @@ struct OnThisDayView: View {
     }
 
     private func playFocused() -> KeyPress.Result {
-        guard let focusedYear else {
+        guard let focused else {
             return .ignored
         }
-        play(focusedYear)
+        play(focused)
         return .handled
     }
 
-    private func moveFocus(by delta: Int, in years: [OnThisDayYear]) -> KeyPress.Result {
-        guard !years.isEmpty else {
+    private func moveFocus(by delta: Int, in anniversaries: [OnThisDayAnniversary]) -> KeyPress.Result {
+        guard !anniversaries.isEmpty else {
             return .ignored
         }
-        let index = focusedYear.flatMap { year in years.firstIndex { $0.year == year } }
-        let next = index.map { min(max($0 + delta, 0), years.count - 1) } ?? 0
-        focusedYear = years[next].year
+        let index = focused.flatMap { day in anniversaries.firstIndex { $0.day == day } }
+        let next = index.map { min(max($0 + delta, 0), anniversaries.count - 1) } ?? 0
+        focused = anniversaries[next].day
         return .handled
     }
 
-    private func applyFocusRequest(_ years: [OnThisDayYear]) {
+    private func applyFocusRequest(_ anniversaries: [OnThisDayAnniversary]) {
         guard let focusRequest, focusRequest.revision != appliedFocusRevision else {
             return
         }
         appliedFocusRevision = focusRequest.revision
-        focusedYear = years.contains { $0.year == focusRequest.year } ? focusRequest.year : years.first?.year
+        let requested = focusRequest.anniversary
+        focused = anniversaries.contains { $0.day == requested } ? requested : anniversaries.first?.day
     }
 }
 
@@ -157,11 +159,11 @@ private struct OnThisDayBar: View {
     }
 }
 
-/// One year: its key photo on a 16:9 card, aspect-filled **[deviation DES-060A]** — a
-/// cover stands for the year, it is not the photograph under review — with the year's
+/// One anniversary: its key photo on a 16:9 card, aspect-filled **[deviation DES-060A]** —
+/// a cover stands for the anniversary, it is not the photograph under review — with its
 /// distance on the photo and its date and count under it (DES-112).
 private struct OnThisDayCard: View {
-    let year: OnThisDayYear
+    let anniversary: OnThisDayAnniversary
     let today: CalendarDay
     let isFocused: Bool
     let tileContentStore: TileContentStore?
@@ -175,7 +177,7 @@ private struct OnThisDayCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             face
-            Text(OnThisDayPresentation.cardCaption(year))
+            Text(OnThisDayPresentation.cardCaption(anniversary))
                 .font(.subheadline)
                 .foregroundStyle(DesignPalette.l3(for: colorScheme))
                 .monospacedDigit()
@@ -183,9 +185,9 @@ private struct OnThisDayCard: View {
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(OnThisDayPresentation.cardAccessibilityLabel(year, today: today))
+        .accessibilityLabel(OnThisDayPresentation.cardAccessibilityLabel(anniversary, today: today))
         .accessibilityAddTraits(.isButton)
-        .task(id: year.keyItem) {
+        .task(id: anniversary.keyItem) {
             await loadCover()
         }
     }
@@ -195,7 +197,7 @@ private struct OnThisDayCard: View {
     /// story closes, or when the grid recycles it) paints its cover in its first frame
     /// instead of the placeholder.
     private var displayedCover: CGImage? {
-        OnThisDayCover.displayed(painted: cover, keyItem: year.keyItem, stored: tileContentStore?.image(for: year.keyItem))
+        OnThisDayCover.displayed(painted: cover, keyItem: anniversary.keyItem, stored: tileContentStore?.image(for: anniversary.keyItem))
     }
 
     private var face: some View {
@@ -219,7 +221,7 @@ private struct OnThisDayCard: View {
             .overlay(alignment: .bottomLeading) {
                 ZStack(alignment: .bottomLeading) {
                     LinearGradient(colors: [DesignPalette.photoScrim, .clear], startPoint: .bottom, endPoint: .top)
-                    Text(OnThisDayPresentation.yearsAgo(OnThisDayYearPolicy.yearsAgo(year, today: today)))
+                    Text(OnThisDayPresentation.ago(anniversary, today: today))
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(DesignPalette.photoLabel)
                         .padding(12)
@@ -236,12 +238,12 @@ private struct OnThisDayCard: View {
 
     /// Keeps the cover the store holds, and decodes one only on a miss.
     private func loadCover() async {
-        if let cached = tileContentStore?.image(for: year.keyItem) {
-            cover = (year.keyItem, cached)
+        if let cached = tileContentStore?.image(for: anniversary.keyItem) {
+            cover = (anniversary.keyItem, cached)
             return
         }
         guard let image = await ThumbnailLoad.image(
-            for: year.keyItem,
+            for: anniversary.keyItem,
             tileContentStore: tileContentStore,
             thumbnailDirectory: thumbnailDirectory,
             detailReader: detailReader,
@@ -249,7 +251,7 @@ private struct OnThisDayCard: View {
         ), !Task.isCancelled else {
             return
         }
-        cover = (year.keyItem, image)
+        cover = (anniversary.keyItem, image)
     }
 }
 

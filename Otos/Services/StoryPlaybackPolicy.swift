@@ -3,9 +3,9 @@ import Foundation
 /// Story playback policy guide
 ///
 /// Pure rules for the On This Day story player (ADR 0049). The story plays the scope's
-/// items in the scope's own order — newest year first, newest capture first within a
-/// year — so its order is the scope's ordered IDs and its year runs are the scope's
-/// `OnThisDayYear`s. This type decides where playback starts, what next and previous are,
+/// items in the scope's own order — newest anniversary first, newest capture first within
+/// one — so its order is the scope's ordered IDs and its runs are the scope's
+/// `OnThisDayAnniversary`s. This type decides where playback starts, what next and previous are,
 /// where it ends, what survives a catalog change, and when a still's hold may start; the
 /// ViewModel (`CatalogWindowViewModelStory.swift`) applies those answers.
 nonisolated enum StoryPlaybackPolicy {
@@ -13,17 +13,21 @@ nonisolated enum StoryPlaybackPolicy {
     /// Immich's default (ADR 0049).
     static let stillHold: Duration = .seconds(5)
 
-    /// The item a story starts on: the chosen year's first item, or the newest year's when
-    /// none is chosen. Nil when the scope holds nothing.
-    static func start(year: Int?, years: [OnThisDayYear], orderedIDs: [MediaAssetID]) -> MediaAssetID? {
-        let chosen = year.flatMap { year in years.first { $0.year == year } } ?? years.first
+    /// The item a story starts on: the chosen anniversary's first item, or the newest one's
+    /// when none is chosen. Nil when the scope holds nothing.
+    static func start(
+        anniversary: CalendarDay?,
+        anniversaries: [OnThisDayAnniversary],
+        orderedIDs: [MediaAssetID]
+    ) -> MediaAssetID? {
+        let chosen = anniversary.flatMap { day in anniversaries.first { $0.day == day } } ?? anniversaries.first
         guard let chosen, orderedIDs.indices.contains(chosen.firstIndex) else {
             return nil
         }
         return orderedIDs[chosen.firstIndex]
     }
 
-    /// The item after `current`, across years; nil at the end.
+    /// The item after `current`, across anniversaries; nil at the end.
     static func next(after current: MediaAssetID, in orderedIDs: [MediaAssetID]) -> MediaAssetID? {
         guard let index = orderedIDs.firstIndex(of: current), index + 1 < orderedIDs.count else {
             return nil
@@ -31,7 +35,7 @@ nonisolated enum StoryPlaybackPolicy {
         return orderedIDs[index + 1]
     }
 
-    /// The item before `current`, across years; nil at the start.
+    /// The item before `current`, across anniversaries; nil at the start.
     static func previous(before current: MediaAssetID, in orderedIDs: [MediaAssetID]) -> MediaAssetID? {
         guard let index = orderedIDs.firstIndex(of: current), index > 0 else {
             return nil
@@ -55,19 +59,19 @@ nonisolated enum StoryPlaybackPolicy {
         )
     }
 
-    /// Where `current` stands in its year: the year, its 1-based position and the year's
-    /// count. Nil when the item is in no year.
+    /// Where `current` stands in its anniversary: the anniversary and the item's 1-based
+    /// position in it. Nil when the item is in none.
     static func place(
         of current: MediaAssetID,
-        years: [OnThisDayYear],
+        anniversaries: [OnThisDayAnniversary],
         orderedIDs: [MediaAssetID]
-    ) -> (year: OnThisDayYear, position: Int)? {
+    ) -> (anniversary: OnThisDayAnniversary, position: Int)? {
         guard let index = orderedIDs.firstIndex(of: current),
-              let year = OnThisDayYearPolicy.year(containing: index, in: years)
+              let anniversary = OnThisDayAnniversaryPolicy.anniversary(containing: index, in: anniversaries)
         else {
             return nil
         }
-        return (year, index - year.firstIndex + 1)
+        return (anniversary, index - anniversary.firstIndex + 1)
     }
 
     /// Whether a still's hold may start: the item is known not to be a playable video,

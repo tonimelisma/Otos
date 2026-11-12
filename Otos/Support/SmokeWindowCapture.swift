@@ -14,7 +14,7 @@
     /// bar and the stacks are the real views.
     ///
     /// The capture waits on a fact, never on time (ADR 0033): for the Places map, the
-    /// first non-empty set of stacks; for On This Day, its published years or its known
+    /// first non-empty set of stacks; for On This Day, its published anniversaries or its known
     /// emptiness, or with `OTOS_SMOKE_PLAY_STORY` the story's first settled picture; for
     /// any grid, the first non-empty order. Both are
     /// published state the ViewModel owns. Thumbnails decode after that moment, so a
@@ -130,7 +130,7 @@
         }
 
         /// On This Day has something to show: the story's picture settled, or else the
-        /// years, or the scope known to hold none.
+        /// anniversaries, or the scope known to hold none.
         @MainActor
         private static func onThisDaySettled(_ viewModel: CatalogWindowViewModel, awaitsStory: Bool) -> Bool {
             if awaitsStory {
@@ -139,7 +139,7 @@
             if case .nothingOnThisDay = viewModel.state.mediaEmptyState {
                 return true
             }
-            return viewModel.state.onThisDay?.years.isEmpty == false
+            return viewModel.state.onThisDay?.anniversaries.isEmpty == false
         }
 
         /// Scrolls every scroll view in the main window to the given fraction of its

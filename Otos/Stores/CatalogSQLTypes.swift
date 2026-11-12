@@ -129,9 +129,9 @@ nonisolated struct CatalogScopePredicate: Equatable {
     /// What a scope requires of a row's day bucket (ADR 0049).
     enum DateConstraint: Equatable {
         case any
-        /// The row's day bucket has this day's month and day in an earlier year: On This
-        /// Day. The gateway turns it into capture ranges inside the read
-        /// (`AnniversaryRanges`).
+        /// The row's day bucket has this day's month and day in an earlier year — or, when
+        /// no row of the scope does, this day of the month in an earlier month: On This
+        /// Day. The gateway decides which inside the read (`AnniversaryMatch`).
         case anniversary(CalendarDay)
     }
 

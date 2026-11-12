@@ -33,7 +33,7 @@ import OSLog
 extension CatalogWindowViewModel {
     // MARK: - Scope
 
-    /// Whether the detail pane is On This Day's years, or the story over them. Read from
+    /// Whether the detail pane is On This Day's anniversaries, or the story over them. Read from
     /// the published scope, as `showsPlacesMap` is.
     var showsOnThisDay: Bool {
         if case .onThisDay = state.resolvedSidebarSelection {
@@ -100,17 +100,17 @@ extension CatalogWindowViewModel {
 
     // MARK: - Applying state
 
-    /// A story ends when its scope does; the scope's years are its one presentation, so a
+    /// A story ends when its scope does; the scope's anniversaries are its one presentation, so a
     /// loupe or compare left open in another scope closes on entering it.
     ///
-    /// The years' covers are this pane's visible items, so they are pinned in the shared
+    /// The anniversaries' covers are this pane's visible items, so they are pinned in the shared
     /// tile store exactly as the grid pins its visible tiles (`pinVisible`, ADR 0006): no
     /// budget pressure — a story's pictures warming the store included — can drop a cover
     /// already painted, and a card made again after the story closes paints it at once.
     /// Leaving the scope releases them; the next grid pass pins its own.
     func applyOnThisDayState(previous: CatalogWindowState, next: CatalogWindowState) {
         if let onThisDay = next.onThisDay {
-            tileContentStore.pinVisible(Set(onThisDay.years.map(\.keyItem)))
+            tileContentStore.pinVisible(Set(onThisDay.anniversaries.map(\.keyItem)))
         } else if previous.onThisDay != nil {
             tileContentStore.pinVisible([])
         }
@@ -126,7 +126,8 @@ extension CatalogWindowViewModel {
         if scopeChanged, let onThisDay = next.onThisDay {
             OtosLog.ui.noticeOperation("onThisDay.scope", phase: "entered", fields: [
                 "day": onThisDay.day.diagnosticDescription,
-                "years": "\(onThisDay.years.count)",
+                "unit": onThisDay.isYears ? "years" : "months",
+                "anniversaries": "\(onThisDay.anniversaries.count)",
                 "items": "\(onThisDay.itemCount)",
             ])
         }
@@ -161,24 +162,24 @@ extension CatalogWindowViewModel {
         story == nil ? nil : focusedAssetID
     }
 
-    /// Whether View ▸ Play Story acts: On This Day shows at least one year and no story
-    /// plays.
+    /// Whether View ▸ Play Story acts: On This Day shows at least one anniversary and no
+    /// story plays.
     var canPlayStory: Bool {
-        showsOnThisDay && story == nil && state.onThisDay?.years.isEmpty == false
+        showsOnThisDay && story == nil && state.onThisDay?.anniversaries.isEmpty == false
     }
 
-    /// View ▸ Play Story (⌘Return): from the newest year.
+    /// View ▸ Play Story (⌘Return): from the newest anniversary.
     func playStory() {
-        playStory(year: nil)
+        playStory(anniversary: nil)
     }
 
-    /// A year in the collection was clicked, or Return / Space pressed on it: its story,
-    /// from that year's first item, continuing into older years.
-    func playStory(year: Int?) {
+    /// An anniversary in the collection was clicked, or Return / Space pressed on it: its
+    /// story, from its first item, continuing into older ones.
+    func playStory(anniversary: CalendarDay?) {
         guard canPlayStory, let onThisDay = state.onThisDay,
               let first = StoryPlaybackPolicy.start(
-                  year: year,
-                  years: onThisDay.years,
+                  anniversary: anniversary,
+                  anniversaries: onThisDay.anniversaries,
                   orderedIDs: state.mediaGrid.orderedAssetIDs
               )
         else {
@@ -191,14 +192,14 @@ extension CatalogWindowViewModel {
         // The visit is set by the focus change below.
         story = StoryPlayback(visit: focusVisit)
         OtosLog.ui.noticeOperation("story.start", phase: "applied", fields: [
-            "year": year.map(String.init) ?? "newest",
+            "anniversary": anniversary?.diagnosticDescription ?? "newest",
             "items": "\(state.mediaGrid.orderedAssetIDs.count)",
-            "years": "\(onThisDay.years.count)",
+            "anniversaries": "\(onThisDay.anniversaries.count)",
         ])
         focusStoryItem(first)
     }
 
-    /// → and the player's Next: the next item, across years.
+    /// → and the player's Next: the next item, across anniversaries.
     func storyNext() {
         guard let current = storyItem,
               let next = StoryPlaybackPolicy.next(after: current, in: state.mediaGrid.orderedAssetIDs)
@@ -208,7 +209,7 @@ extension CatalogWindowViewModel {
         showStoryItem(next, reason: "next")
     }
 
-    /// ← and the player's Previous: the item before, across years.
+    /// ← and the player's Previous: the item before, across anniversaries.
     func storyPrevious() {
         guard let current = storyItem,
               let previous = StoryPlaybackPolicy.previous(before: current, in: state.mediaGrid.orderedAssetIDs)
@@ -264,8 +265,8 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// Esc and the player's Close: back to the years, with keyboard focus on the year the
-    /// story was on and its item selected.
+    /// Esc and the player's Close: back to the anniversaries, with keyboard focus on the one
+    /// the story was on and its item selected.
     func closeStory() {
         closeStory(reason: "user")
     }
@@ -275,18 +276,21 @@ extension CatalogWindowViewModel {
             return
         }
         let current = focusedAssetID
-        let year = current.flatMap { id in
+        let anniversary = current.flatMap { id in
             state.onThisDay.flatMap { onThisDay in
-                StoryPlaybackPolicy.place(of: id, years: onThisDay.years, orderedIDs: state.mediaGrid.orderedAssetIDs)?
-                    .year.year
+                StoryPlaybackPolicy.place(
+                    of: id,
+                    anniversaries: onThisDay.anniversaries,
+                    orderedIDs: state.mediaGrid.orderedAssetIDs
+                )?.anniversary.day
             }
         }
         cancelStoryWaits()
         story = nil
         exitToGrid()
-        if let year {
+        if let anniversary {
             onThisDayFocusRequest = OnThisDayFocusRequest(
-                year: year,
+                anniversary: anniversary,
                 revision: (onThisDayFocusRequest?.revision ?? 0) &+ 1
             )
         }
@@ -297,7 +301,7 @@ extension CatalogWindowViewModel {
         OtosLog.ui.noticeOperation("story.close", phase: "applied", fields: [
             "reason": reason,
             "id": current?.relativePath.rawValue ?? "none",
-            "year": year.map(String.init) ?? "none",
+            "anniversary": anniversary?.diagnosticDescription ?? "none",
         ])
     }
 
@@ -466,13 +470,13 @@ extension CatalogWindowViewModel {
     /// Moves the story to `id` by moving focus.
     private func showStoryItem(_ id: MediaAssetID, reason: String) {
         let position = state.onThisDay.flatMap { onThisDay in
-            StoryPlaybackPolicy.place(of: id, years: onThisDay.years, orderedIDs: state.mediaGrid.orderedAssetIDs)
+            StoryPlaybackPolicy.place(of: id, anniversaries: onThisDay.anniversaries, orderedIDs: state.mediaGrid.orderedAssetIDs)
         }
         OtosLog.ui.noticeOperation("story.advance", phase: "applied", fields: [
             "reason": reason,
             "id": id.relativePath.rawValue,
-            "year": position.map { String($0.year.year) } ?? "none",
-            "position": position.map { "\($0.position)/\($0.year.count)" } ?? "none",
+            "anniversary": position.map(\.anniversary.day.diagnosticDescription) ?? "none",
+            "position": position.map { "\($0.position)/\($0.anniversary.count)" } ?? "none",
         ])
         focusStoryItem(id)
     }

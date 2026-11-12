@@ -1122,7 +1122,8 @@ nonisolated struct CatalogMediaGridState: Equatable {
 /// one group's copies in the ordinary Compare, Loupe or grid.
 ///
 /// `.onThisDay` is every item in the fixed libraries captured on the day's month and day
-/// in an earlier year, presented as its years and played as a story (ADR 0049). The day is
+/// in an earlier year — or, when no earlier year holds one, on the day's day of the month in
+/// an earlier month — presented as its anniversaries and played as a story (ADR 0049). The day is
 /// today, which the ViewModel owns; when today changes, the ViewModel selects the new day.
 ///
 /// `.people` is the People gallery (ADR 0047, `docs/design/people.md`). A person's photos
@@ -1151,7 +1152,7 @@ nonisolated enum SidebarSelection: Hashable {
     }
 
     /// The order a scope fixes for itself, whatever the sort control says: On This Day plays
-    /// newest year first and newest item first within a year (ADR 0049), so its sort is not
+    /// newest anniversary first and newest item first within one (ADR 0049), so its sort is not
     /// the user's to choose. Nil for every scope the user sorts.
     var fixedSort: MediaSortOrder? {
         switch self {

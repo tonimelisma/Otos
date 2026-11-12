@@ -30,7 +30,7 @@
         static let duplicatesValue = "duplicates"
         /// The People list and its review (ADR 0047).
         static let peopleValue = "people"
-        /// With `onThisDay`: once its years publish, play the story from the newest year
+        /// With `onThisDay`: once its anniversaries publish, play the story from the newest one
         /// through the ordinary intent, so a capture shows the player (ADR 0049).
         static let playStoryVariable = "OTOS_SMOKE_PLAY_STORY"
 
@@ -185,7 +185,7 @@
                         return
                     }
                     if selected {
-                        // Following only to start the story once the years are on screen.
+                        // Following only to start the story once the anniversaries are on screen.
                         guard viewModel.canPlayStory else {
                             continue
                         }

@@ -69,7 +69,8 @@ struct SidebarView: View {
                 .tag(SidebarSelection.allMedia)
             }
             if let onThisDay {
-                // Items captured on today's month and day in earlier years (ADR 0049), second
+                // Items captured on today's month and day in earlier years, else on today's day
+                // of the month in earlier months (ADR 0049), second
                 // under All Media (owner decision, 2026-11-11). No count, as Places carries none.
                 SidebarRow(systemImage: "calendar", title: "On This Day") {
                     EmptyView()

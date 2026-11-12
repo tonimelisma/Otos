@@ -29,6 +29,30 @@ struct BenchmarkTests {
             #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkLibrary.stillCount)
         }
 
+        // On This Day's publication (ADR 0049) on the day a year after the fixture's, where
+        // earlier years hold the day, and on a day a month after it, where none does and the
+        // read falls back to earlier months: the scope's match, order and anniversaries.
+        let allMedia = try await store.orderedAssetIDs(
+            for: .default,
+            availableLibraryPaths: CatalogWindowPolicy.availablePaths(from: libraries)
+        )
+        let taken = try CalendarDay(#require(allMedia.dayBuckets.compactMap(\.self).first))
+        for (name, day) in [
+            ("projection.windowState.onThisDay.years", taken.inYear(taken.year + 1)),
+            ("projection.windowState.onThisDay.months", Self.monthAfter(taken)),
+        ] {
+            let onThisDay = CatalogQueryRequest(descriptor: CatalogQueryDescriptor(scope: .onThisDay(day)), generation: 0)
+            try await Benchmark.measure(name) {
+                let (state, _) = try await projection.buildWindowState(
+                    store: store,
+                    libraries: libraries,
+                    request: onThisDay,
+                    reuse: .none
+                )
+                #expect(state.onThisDay?.anniversaries.isEmpty == false)
+            }
+        }
+
         // A whole duplicates build, as `DuplicatesProjection` runs it after a catalog change.
         try await Benchmark.measure("duplicates.build") {
             let built = try await DuplicatesProjection.build(store: store, libraries: libraries)
@@ -62,6 +86,13 @@ struct BenchmarkTests {
             #expect(built.people.count >= 20)
         }
         await store.shutdown()
+    }
+
+    /// The same day of the month in the month after `day`'s.
+    private static func monthAfter(_ day: CalendarDay) -> CalendarDay {
+        day.month == 12
+            ? CalendarDay(year: day.year + 1, month: 1, day: day.day)
+            : CalendarDay(year: day.year, month: day.month + 1, day: day.day)
     }
 
     /// One face on each of the first `faces` stills, embedded as `groupingLibrary` makes them,

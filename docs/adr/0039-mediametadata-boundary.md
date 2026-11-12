@@ -107,7 +107,7 @@ what those facts mean. That covers:
     item moves when the Mac changes zone. Migration v23 made it for every existing row in
     the zone the migration ran in.
   - The grid's day sections (`CatalogStore.orderedAssetIDs`), the Date sort, On This Day
-    (`AnniversaryRanges`), search's date spans, People's birthday rules and Info's
+    (`AnniversaryMatch`), search's date spans, People's birthday rules and Info's
     Captured line all read this one value. Day sections are the reading's date. On This Day
     and search take a day on the Mac's calendar as the same readings on any clock. So the
     three always agree, and none of them depends on the Mac's zone.

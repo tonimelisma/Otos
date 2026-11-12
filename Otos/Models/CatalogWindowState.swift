@@ -19,7 +19,8 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
     /// a location yet (ADR 0040).
     case noLocatedMedia
     /// The On This Day scope holds nothing: no item in the fixed libraries was captured on
-    /// this day's month and day in an earlier year (ADR 0049).
+    /// this day's month and day in an earlier year, nor on its day of the month in an
+    /// earlier month (ADR 0049).
     case nothingOnThisDay(CalendarDay)
     case noFilterMatches
     /// A search matched nothing in a scope that holds items (ADR 0048). Carries the text and
@@ -94,7 +95,7 @@ nonisolated struct CatalogWindowState: Equatable {
     /// The Places map's content: the located items in display order and the count left
     /// off the map. Set only while the resolved scope is `.places` (ADR 0040).
     var map: CatalogMapState?
-    /// On This Day's years in play order. Set only while the resolved scope is
+    /// On This Day's anniversaries in play order. Set only while the resolved scope is
     /// `.onThisDay` (ADR 0049).
     var onThisDay: CatalogOnThisDayState?
     /// Duplicate groups across the fixed libraries (ADR 0042), in every scope: the sidebar's

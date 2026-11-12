@@ -217,15 +217,15 @@ nonisolated enum CatalogWindowPolicy {
         )
     }
 
-    /// On This Day's years for a resolved `.onThisDay` scope, from the scoped IDs and
-    /// their day buckets. Nil for every other scope, and when the buckets do not pair.
+    /// On This Day's anniversaries for a resolved `.onThisDay` scope, from the scoped IDs
+    /// and their day buckets. Nil for every other scope, and when the buckets do not pair.
     static func onThisDayState(
         for descriptor: CatalogQueryDescriptor,
         scopedAssetIDs: [MediaAssetID],
         scopedDayBuckets: [Date?]
     ) -> CatalogOnThisDayState? {
         guard case let .onThisDay(day) = descriptor.scope,
-              let years = OnThisDayYearPolicy.years(
+              let anniversaries = OnThisDayAnniversaryPolicy.anniversaries(
                   day: day,
                   orderedIDs: scopedAssetIDs,
                   dayBuckets: scopedDayBuckets
@@ -233,7 +233,7 @@ nonisolated enum CatalogWindowPolicy {
         else {
             return nil
         }
-        return CatalogOnThisDayState(day: day, years: years)
+        return CatalogOnThisDayState(day: day, anniversaries: anniversaries)
     }
 
     static func title(for sidebarSelection: SidebarSelection, libraries: [CatalogLibraryState]) -> String {
@@ -297,7 +297,7 @@ nonisolated enum CatalogWindowPolicy {
             return .noLocatedMedia
         case let .onThisDay(day):
             // The fixed libraries again: reachable libraries with nothing on this day mean
-            // no earlier year holds a match, never that there is no media.
+            // no earlier year or month holds a match, never that there is no media.
             let fixedLibraries = libraries.filter(\.kind.isMemberOfAllMedia)
             if fixedLibraries.contains(where: { $0.availability == .unknown }) {
                 return .checkingLibraries

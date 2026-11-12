@@ -381,7 +381,7 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
     }
 
     /// The search the scope's reads apply. A scope that fixes its order keeps it under a
-    /// search, which then only narrows: On This Day's years stay contiguous runs
+    /// search, which then only narrows: On This Day's anniversaries stay contiguous runs
     /// (ADR 0049). The user's `search.order` is kept as chosen for when they leave.
     var effectiveSearch: CatalogSearch? {
         guard var search else { return nil }

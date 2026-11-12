@@ -3,8 +3,9 @@ import SwiftUI
 
 // Story player guide (ADR 0049, `docs/design/on-this-day.md`, DES-112)
 //
-// The detail pane while an On This Day story plays: a 52 pt bar — Close and the year's
-// distance leading; Play / Pause, one segment per item of the year and the position in the
+// The detail pane while an On This Day story plays: a 52 pt bar — Close and the
+// anniversary's distance leading; Play / Pause, one segment per item of the anniversary
+// and the position in the
 // center; Previous and Next trailing — over the item's picture, aspect-fit on the
 // `content` surface, with its date on the picture's top-left. The view is passive: the
 // picture, the video and the wait are the loupe's own pane state, the position and timing
@@ -29,8 +30,8 @@ struct StoryPlayerView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var place: (year: OnThisDayYear, position: Int)? {
-        StoryPlaybackPolicy.place(of: item, years: onThisDay.years, orderedIDs: orderedIDs)
+    private var place: (anniversary: OnThisDayAnniversary, position: Int)? {
+        StoryPlaybackPolicy.place(of: item, anniversaries: onThisDay.anniversaries, orderedIDs: orderedIDs)
     }
 
     var body: some View {
@@ -128,7 +129,7 @@ struct StoryPlayerView: View {
         if let place {
             ZStack(alignment: .topLeading) {
                 LinearGradient(colors: [DesignPalette.photoScrim, .clear], startPoint: .top, endPoint: .center)
-                Text(OnThisDayPresentation.fullDate(place.year.day))
+                Text(OnThisDayPresentation.fullDate(place.anniversary.day))
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(DesignPalette.photoLabel)
                     .padding(12)
@@ -139,7 +140,7 @@ struct StoryPlayerView: View {
     }
 
     private var accessibilityLabel: String {
-        let date = place.map { OnThisDayPresentation.fullDate($0.year.day) } ?? ""
+        let date = place.map { OnThisDayPresentation.fullDate($0.anniversary.day) } ?? ""
         return kind == .video ? "Video, \(date)" : "Photo, \(date)"
     }
 }
@@ -159,7 +160,7 @@ struct StoryPlayerActions {
 private struct StoryPlayerBar: View {
     let story: StoryPlayback
     let item: MediaAssetID
-    let place: (year: OnThisDayYear, position: Int)?
+    let place: (anniversary: OnThisDayAnniversary, position: Int)?
     let today: CalendarDay
     let videoState: LoupeVideoState?
     let actions: StoryPlayerActions
@@ -168,7 +169,7 @@ private struct StoryPlayerBar: View {
     var body: some View {
         HStack(spacing: 12) {
             barButton("Close", systemImage: "xmark", isEnabled: true, action: actions.close)
-            Text(yearsAgo)
+            Text(ago)
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(DesignPalette.label(for: colorScheme))
                 .monospacedDigit()
@@ -182,7 +183,7 @@ private struct StoryPlayerBar: View {
             )
             StorySegments(story: story, item: item, place: place, videoState: videoState)
                 .frame(maxWidth: 360)
-            Text(place.map { OnThisDayPresentation.position($0.position, of: $0.year.count) } ?? "")
+            Text(place.map { OnThisDayPresentation.position($0.position, of: $0.anniversary.count) } ?? "")
                 .font(.subheadline)
                 .foregroundStyle(DesignPalette.l3(for: colorScheme))
                 .monospacedDigit()
@@ -199,8 +200,8 @@ private struct StoryPlayerBar: View {
         }
     }
 
-    private var yearsAgo: String {
-        place.map { OnThisDayPresentation.yearsAgo(OnThisDayYearPolicy.yearsAgo($0.year, today: today)) } ?? ""
+    private var ago: String {
+        place.map { OnThisDayPresentation.ago($0.anniversary, today: today) } ?? ""
     }
 
     private func barButton(
@@ -221,19 +222,19 @@ private struct StoryPlayerBar: View {
     }
 }
 
-/// One 4 pt segment per item of the year, 4 pt apart: behind filled, ahead empty, the
+/// One 4 pt segment per item of the anniversary, 4 pt apart: behind filled, ahead empty, the
 /// current one filling as it plays — determinate progress, so the accent on a tertiary
 /// track (DES-024).
 private struct StorySegments: View {
     let story: StoryPlayback
     let item: MediaAssetID
-    let place: (year: OnThisDayYear, position: Int)?
+    let place: (anniversary: OnThisDayAnniversary, position: Int)?
     let videoState: LoupeVideoState?
 
     var body: some View {
         HStack(spacing: 4) {
             if let place {
-                ForEach(1 ... place.year.count, id: \.self) { position in
+                ForEach(1 ... place.anniversary.count, id: \.self) { position in
                     segment(position: position, current: place.position)
                 }
             }
@@ -241,7 +242,7 @@ private struct StorySegments: View {
         .frame(height: 4)
         .accessibilityElement()
         .accessibilityLabel("Progress")
-        .accessibilityValue(place.map { "Item \($0.position) of \($0.year.count)" } ?? "")
+        .accessibilityValue(place.map { "Item \($0.position) of \($0.anniversary.count)" } ?? "")
     }
 
     @ViewBuilder
