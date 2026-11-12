@@ -89,6 +89,12 @@ nonisolated struct FaceRowKey: Hashable {
         index = row["face_index"]
     }
 
+    init(rootID: Int64, path: MediaRelativePath, index: Int) {
+        self.rootID = rootID
+        self.path = path
+        self.index = index
+    }
+
     /// The key of `face`; throws when its library is not cataloged.
     init(_ face: FaceID, rowIDs: [LibraryRootPath: Int64]) throws {
         guard let rootID = rowIDs[face.asset.libraryRootPath] else {
@@ -215,6 +221,40 @@ nonisolated struct PreviewFacePage: Equatable, Sendable {
 /// Which stored preview a still has and what its faces are owed, as SQL over `media_asset`
 /// (ADR 0047). The stored preview is Otos's rendering when it has one (ADR 0035), else the
 /// source's own preview (an Immich preview, ADR 0046 §7).
+/// The People snapshot's face columns, in `SELECT` order (`selectList`), so the snapshot
+/// reads each by position and the list and the reads cannot disagree.
+nonisolated enum PeopleFaceColumn: Int, CaseIterable {
+    case rootID, path, faceIndex, embedding, personID, assignment, likeness, isKeyPhoto, isNotFace
+    case boxX, boxY, boxWidth, boxHeight
+    case captureLocal, previewPath, renderedRevision, editRecipeJSON, previewEditIsKnown
+
+    /// The expression each column is read from, over `face f` joined to `media_asset m`.
+    var sql: String {
+        switch self {
+        case .rootID: "f.library_root_id"
+        case .path: "f.relative_path"
+        case .faceIndex: "f.face_index"
+        case .embedding: "f.embedding"
+        case .personID: "f.person_id"
+        case .assignment: "f.assignment"
+        case .likeness: "f.likeness"
+        case .isKeyPhoto: "f.is_key_photo"
+        case .isNotFace: "f.is_not_face"
+        case .boxX: "f.box_x"
+        case .boxY: "f.box_y"
+        case .boxWidth: "f.box_width"
+        case .boxHeight: "f.box_height"
+        case .captureLocal: "m.best_capture_local"
+        case .previewPath: "m.preview_path"
+        case .renderedRevision: "m.rendered_revision"
+        case .editRecipeJSON: "m.edit_recipe_json"
+        case .previewEditIsKnown: PreviewFaceSQL.previewEditIsKnown
+        }
+    }
+
+    static let selectList = allCases.map(\.sql).joined(separator: ", ")
+}
+
 nonisolated enum PreviewFaceSQL {
     /// The stamp of the source the stored preview was made from: the rendering's, else the
     /// source preview's. NULL when neither is known.

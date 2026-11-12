@@ -895,48 +895,58 @@ extension CatalogStore {
             var tiles: [FaceID: FaceTile] = [:]
             var likeness: [FaceID: Float] = [:]
             var keyPhotos: [PersonID: FaceID] = [:]
+            // Read by position (`PeopleFaceColumn`): a name lookup scans the row's columns,
+            // and at 18 columns over every face it was most of the read (bench
+            // people.snapshot.10k, 2026-11-13).
             for row in try Row.fetchAll(
                 db,
                 sql: """
-                SELECT f.library_root_id, f.relative_path, f.face_index, f.embedding, f.person_id,
-                       f.assignment, f.likeness, f.is_key_photo, f.is_not_face,
-                       f.box_x, f.box_y, f.box_width, f.box_height,
-                       m.best_capture_local, m.preview_path, m.rendered_revision, m.edit_recipe_json,
-                       \(PreviewFaceSQL.previewEditIsKnown) AS preview_edit_is_known
+                SELECT \(PeopleFaceColumn.selectList)
                 FROM face f
                 JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
                 WHERE m.trash_path IS NULL
                 ORDER BY f.library_root_id, f.relative_path, f.face_index
                 """
             ) {
-                let key = FaceRowKey(row)
+                let key = FaceRowKey(
+                    rootID: row[PeopleFaceColumn.rootID.rawValue],
+                    path: MediaRelativePath(rawValue: row[PeopleFaceColumn.path.rawValue]),
+                    index: row[PeopleFaceColumn.faceIndex.rawValue]
+                )
                 guard let rootPath = pathsByRowID[key.rootID] else { continue }
                 let asset = MediaAssetID(libraryRootPath: rootPath, relativePath: key.path)
-                let data: Data = row["embedding"]
+                let data: Data = row[PeopleFaceColumn.embedding.rawValue]
                 guard let embedding = FaceStorage.embedding(from: data) else {
                     throw CatalogStoreError.malformedFaceRow(asset)
                 }
                 let id = FaceID(asset: asset, index: key.index)
-                let capture: Double? = row["best_capture_local"]
-                let person: Int64? = row["person_id"]
+                let capture: Double? = row[PeopleFaceColumn.captureLocal.rawValue]
+                let person: Int64? = row[PeopleFaceColumn.personID.rawValue]
                 faces.append(FaceFact(
                     id: id,
                     captureSeconds: capture,
                     embedding: embedding,
-                    assignment: FaceAssignmentColumn.assignment(column: row["assignment"], person: person),
-                    isNotFace: (row["is_not_face"] as Int) != 0,
+                    assignment: FaceAssignmentColumn.assignment(
+                        column: row[PeopleFaceColumn.assignment.rawValue],
+                        person: person
+                    ),
+                    isNotFace: (row[PeopleFaceColumn.isNotFace.rawValue] as Int) != 0,
                     rejected: rejections[key] ?? []
                 ))
-                if let stored = row["likeness"] as Double? {
+                if let stored = row[PeopleFaceColumn.likeness.rawValue] as Double? {
                     likeness[id] = Float(stored)
                 }
-                if let person, (row["is_key_photo"] as Int) != 0 {
+                if let person, (row[PeopleFaceColumn.isKeyPhoto.rawValue] as Int) != 0 {
                     keyPhotos[PersonID(rawValue: person)] = id
                 }
                 tiles[id] = FaceTile(
                     id: id,
-                    box: CGRect(x: row["box_x"] as Double, y: row["box_y"] as Double,
-                                width: row["box_width"] as Double, height: row["box_height"] as Double),
+                    box: CGRect(
+                        x: row[PeopleFaceColumn.boxX.rawValue] as Double,
+                        y: row[PeopleFaceColumn.boxY.rawValue] as Double,
+                        width: row[PeopleFaceColumn.boxWidth.rawValue] as Double,
+                        height: row[PeopleFaceColumn.boxHeight.rawValue] as Double
+                    ),
                     preview: Self.facePreview(row, asset: asset),
                     captureSeconds: capture
                 )
@@ -961,10 +971,16 @@ extension CatalogStore {
     /// made, while a rendering of a newer edit is owed, or when the edit cannot be read
     /// (logged); the tile then shows its placeholder.
     private static func facePreview(_ row: Row, asset: MediaAssetID) -> FacePreview? {
-        guard let name: String = row["preview_path"], (row["preview_edit_is_known"] as Int) != 0 else { return nil }
-        let renderedRevision: Int64 = row["rendered_revision"]
+        guard let name: String = row[PeopleFaceColumn.previewPath.rawValue],
+              (row[PeopleFaceColumn.previewEditIsKnown.rawValue] as Int) != 0
+        else {
+            return nil
+        }
+        let renderedRevision: Int64 = row[PeopleFaceColumn.renderedRevision.rawValue]
         do {
-            let recipe = renderedRevision == 0 ? .neutral : try editRecipe(json: row["edit_recipe_json"]) ?? .neutral
+            let recipe = renderedRevision == 0
+                ? .neutral
+                : try editRecipe(json: row[PeopleFaceColumn.editRecipeJSON.rawValue]) ?? .neutral
             return FacePreview(name: name, recipe: recipe)
         } catch {
             OtosLog.catalog.errorOperation("people.faceTile", phase: "recipeUnreadable", fields: [
