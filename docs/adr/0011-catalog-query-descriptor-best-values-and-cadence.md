@@ -120,8 +120,11 @@ and Videos parent toggles directly above their child file types. Partial child
 selection gives the parent a mixed state; selecting every kind or clearing every
 selection canonicalizes back to the empty, all-items descriptor.
 
-The filter's options are not scoped. The descriptor's filter survives a scope change
-(APP-042), so a filter value and the rows that show it must span the same thing: the
+The filter's options are not scoped. The descriptor's filter belongs to the sidebar row
+it was set in: choosing another row starts it unfiltered, but the filter survives into
+that row's leaves and back (a map area or stack, a person, a duplicate group) and into a
+restored place (APP-042, `docs/design/people.md`), so a filter value and the rows that
+show it must span the same thing: the
 popover always lists all three kinds, and under each the file types present in any
 available source plus every file type the filter holds. A filter holds a file type
 under its kind (`FilterFileType`), which is what lets it draw a row for a type no

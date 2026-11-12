@@ -44,7 +44,9 @@ centering on a focus target to ADR 0006 and ADR 0016.
      first publication is already the user's collection, with no flash of the default.
   2. At the existing first-loaded-state latch (ADR 0014), a saved scope that still
      exists stands in place of `SidebarSelectionPolicy.defaultSelection`. One that is
-     gone gets the default, keeps the saved filter and sort, and drops the rest.
+     gone gets the default, keeps the saved sort, and drops the rest: the filter belonged
+     to the gone row, and another row starts unfiltered (`docs/design/people.md`, The
+     filter's reach).
   3. When the first non-empty result for the saved query arrives, the surviving
      selection is applied, then the mode. The grid centers on the saved item, the loupe
      opens on it, and compare re-enters from the restored selection. Each goes through

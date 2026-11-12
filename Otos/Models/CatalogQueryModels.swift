@@ -92,22 +92,15 @@ nonisolated struct FilterFileType: Hashable {
     let format: MediaFormatToken
 }
 
-/// How the People filter combines the people it holds: photos with any of them, or with
-/// all of them together.
-nonisolated enum PeopleMatch: String, Hashable, Sendable {
-    case any
-    case all
-}
-
 nonisolated struct MediaFilter: Hashable {
     var kinds: Set<MediaKind> = []
     var fileTypes: Set<FilterFileType> = []
     var choices: Set<MediaChoice> = []
-    /// The People filter (ADR 0047): photos holding a face of these people.
+    /// The People filter (ADR 0047): photos holding a face of every one of these people.
     var people: Set<PersonID> = []
-    /// The People filter's `Unassigned` row: photos holding a face with no person.
+    /// The People filter's `Unidentified Faces` row: photos holding, as well, a face with no
+    /// person.
     var unassignedFaces = false
-    var peopleMatch: PeopleMatch = .any
     /// The Places filter (ADR 0051): photos taken in any of these countries or towns.
     var places: Set<PlaceFilterKey> = []
 
@@ -119,13 +112,6 @@ nonisolated struct MediaFilter: Hashable {
 
     var filtersPeople: Bool {
         !people.isEmpty || unassignedFaces
-    }
-
-    /// The one person the filter shows, when it shows exactly one and nothing else of
-    /// People: a person's photos, which the likeness sort and the person's menu act on.
-    var singlePerson: PersonID? {
-        guard people.count == 1, !unassignedFaces else { return nil }
-        return people.first
     }
 
     func settingPerson(_ person: PersonID, included: Bool) -> MediaFilter {
@@ -166,15 +152,6 @@ nonisolated struct MediaFilter: Hashable {
         } else {
             updated.places.remove(place)
         }
-        return updated
-    }
-
-    /// The filter without its People part.
-    var withoutPeople: MediaFilter {
-        var updated = self
-        updated.people = []
-        updated.unassignedFaces = false
-        updated.peopleMatch = .any
         return updated
     }
 
@@ -392,13 +369,13 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
     }
 
     /// The order the scope's reads use: the scope's own when it fixes one, else the user's
-    /// `sort`, which is kept as chosen so leaving such a scope restores it. Likeness needs a
-    /// People filter of one person; without one the reads use the default order.
+    /// `sort`, which is kept as chosen so leaving such a scope restores it. Likeness needs one
+    /// person's photos (`.person`); elsewhere the reads use the default order.
     var effectiveSort: MediaSortOrder {
         if let fixed = scope.fixedSort {
             return fixed
         }
-        if sort.field == .likeness, filter.singlePerson == nil {
+        if sort.field == .likeness, scope.person == nil {
             return .defaultOrder
         }
         return sort
@@ -415,7 +392,7 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
         formats=\(formatList.isEmpty ? "all" : formatList) \
         choices=\(choiceList.isEmpty ? "all" : choiceList) \
         places=\(filter.places.count) \
-        people=\(filter.people.count)\(filter.unassignedFaces ? "+unassigned" : ""):\(filter.peopleMatch.rawValue) \
+        people=\(filter.people.count)\(filter.unassignedFaces ? "+unassigned" : "") \
         search=\(search.map { "\($0.text.count)chars:\($0.order)" } ?? "none")
         """
     }
@@ -433,7 +410,7 @@ nonisolated struct CatalogQueryRequest: Hashable {
 /// do too — a value chosen in one scope keeps its row in every other.
 nonisolated struct CatalogFilterOptions: Equatable {
     var formatsByKind: [MediaKind: [MediaFormatToken]] = [:]
-    /// The countries and towns Maps named for the located items, in the locale's order.
+    /// The countries and towns Maps named for the located items, most items first (ADR 0051).
     var countries: [PlaceFilterCountry] = []
 
     static let empty = CatalogFilterOptions()

@@ -56,7 +56,7 @@ struct CatalogWindowViewModelMapTests {
     }
 
     @MainActor
-    @Test func aViewportReportProducesStacksAndAStackClickSelectsItsMembers() async throws {
+    @Test func aViewportReportProducesStacksAndZoomStepsTheCamera() async throws {
         let model = makeViewModel()
         model.startMapClustering()
         model.selectSidebar(.places)
@@ -80,9 +80,6 @@ struct CatalogWindowViewModelMapTests {
         #expect(model.canZoomIn)
         #expect(model.canZoomOut)
 
-        model.selectMapCluster(clusters[0])
-        #expect(model.gridSelection.selection == Set(located.map(\.id)))
-
         // ⌘= on the map asks for a camera half the viewport's span, about the same center.
         let before = try #require(model.mapCameraRequest)
         model.zoomIn()
@@ -93,8 +90,10 @@ struct CatalogWindowViewModelMapTests {
         #expect(abs(after.bounds.centerX - (shown.originX + shown.width / 2)) < 1)
     }
 
+    /// A click on a stack no zoom can split opens exactly its items, as a double-click on any
+    /// stack does; Back to Map returns to the map as it was left.
     @MainActor
-    @Test func activatingAnExactStackOpensItsCoordinateAndBackReturnsToTheSameMap() async throws {
+    @Test func clickingAnExactStackOpensItsItemsAndBackReturnsToTheSameMap() async throws {
         let model = makeViewModel()
         model.startMapClustering()
         model.selectSidebar(.places)
@@ -103,16 +102,17 @@ struct CatalogWindowViewModelMapTests {
         model.mapViewportChanged(cityViewport())
         let clusters = try await waitForValue { model.mapClusters.isEmpty ? nil : model.mapClusters }
 
-        model.activateMapCluster(clusters[0])
+        model.zoomIntoMapCluster(clusters[0])
 
-        #expect(model.queryDescriptor.scope == .mapArea(.point(Self.helsinki)))
+        let stack = SidebarSelection.mapStack(MapStack(members: [id("a.jpg")]))
+        #expect(model.queryDescriptor.scope == stack)
         #expect(model.sidebarSelection.sidebarRow == .places)
         #expect(model.showsMapAreaLeaf)
         #expect(model.viewMode == .grid)
         // Until the area is published the pane still holds Places' items, so it stays
         // the map; a grid mounted now would draw all of Places and diff down to the area.
         #expect(model.showsPlacesMap)
-        model.applyState(windowState(model, scope: .mapArea(.point(Self.helsinki)), ids: [id("a.jpg")]))
+        model.applyState(windowState(model, scope: stack, ids: [id("a.jpg")]))
         #expect(!model.showsPlacesMap)
         #expect(model.canChangeViewMode)
         #expect(model.mapClusters.isEmpty)
@@ -128,8 +128,10 @@ struct CatalogWindowViewModelMapTests {
         #expect(request.bounds == MapClusterPolicy.bounds(of: cityViewport()))
     }
 
+    /// A click on a stack that can split zooms into it; a double-click opens exactly its
+    /// items, whatever the camera did after the first click.
     @MainActor
-    @Test func aStackThatCanSplitZoomsInsteadOfOpening() async throws {
+    @Test func aClickZoomsIntoAStackAndADoubleClickOpensIt() async throws {
         let model = makeViewModel()
         model.startMapClustering()
         model.selectSidebar(.places)
@@ -144,7 +146,7 @@ struct CatalogWindowViewModelMapTests {
         #expect(!clusters[0].isExactPlace)
         let before = try #require(model.mapCameraRequest)
 
-        model.activateMapCluster(clusters[0])
+        model.zoomIntoMapCluster(clusters[0])
 
         #expect(model.queryDescriptor.scope == .places)
         let after = try #require(model.mapCameraRequest)
@@ -152,6 +154,11 @@ struct CatalogWindowViewModelMapTests {
         #expect(after.revision == before.revision + 1)
         #expect(after.bounds.width <= shown.width / 4)
         #expect(abs(MapClusterPolicy.region(of: after.bounds).centerLatitude - 60.175) < 0.001)
+
+        model.openMapCluster(clusters[0])
+        #expect(model.queryDescriptor.scope == .mapStack(MapStack(members: located.map(\.id))))
+        #expect(model.showsMapAreaLeaf)
+        #expect(model.viewMode == .grid)
     }
 
     /// MapKit clamps a camera past its zoom-out. The viewport that follows a fit's own
@@ -196,16 +203,16 @@ struct CatalogWindowViewModelMapTests {
     }
 
     /// Loupe on the map (⌘2, the picker, the View menu): the area the map shows, starting
-    /// on the stack the user clicked, not on the area's first item.
+    /// on the area's first item; the map has no selection to carry in.
     @MainActor
-    @Test func loupeOnTheMapOpensTheVisibleAreaOnTheClickedStack() {
+    @Test func loupeOnTheMapOpensTheVisibleAreaOnItsFirstItem() {
         let model = makeViewModel()
         model.startMapClustering()
         model.selectSidebar(.places)
         let tallinn = PlaceCoordinate(latitude: 59.44, longitude: 24.75)
         let located = [
             LocatedAsset(id: id("near.jpg"), coordinate: PlaceCoordinate(latitude: 60.171, longitude: 24.941)),
-            LocatedAsset(id: id("stack.jpg"), coordinate: Self.helsinki),
+            LocatedAsset(id: id("helsinki.jpg"), coordinate: Self.helsinki),
             LocatedAsset(id: id("tallinn.jpg"), coordinate: tallinn),
         ]
         model.applyState(windowState(
@@ -217,8 +224,6 @@ struct CatalogWindowViewModelMapTests {
         #expect(!model.canChangeViewMode)
         model.mapViewportChanged(cityViewport())
         #expect(model.canChangeViewMode)
-        // A stack click selected these: one in view, one across the gulf.
-        model.selectAssets([id("stack.jpg"), id("tallinn.jpg")])
 
         model.setViewMode(.loupe)
 
@@ -240,13 +245,12 @@ struct CatalogWindowViewModelMapTests {
         ))
         #expect(model.viewMode == .loupe)
 
-        model.applyState(windowState(model, scope: .mapArea(area), ids: [id("near.jpg"), id("stack.jpg")]))
+        model.applyState(windowState(model, scope: .mapArea(area), ids: [id("near.jpg"), id("helsinki.jpg")]))
 
         #expect(!model.showsPlacesMap)
         #expect(model.showsMapAreaLeaf)
         #expect(model.viewMode == .loupe)
-        #expect(model.focusedAssetID == id("stack.jpg"))
-        #expect(model.gridSelection.selection == [id("stack.jpg")])
+        #expect(model.focusedAssetID == id("near.jpg"))
     }
 
     /// Grid on the map with nothing selected: the visible area as the grid, nothing

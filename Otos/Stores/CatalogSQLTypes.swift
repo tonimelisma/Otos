@@ -115,15 +115,30 @@ nonisolated struct CatalogScopePredicate: Equatable {
         case duplicated
         /// The row's current digest is exactly this: one group under Duplicates.
         case identical(XXH3Digest128)
-        /// The row is one of these: a same-photo group under Duplicates, by root row id and path.
+        /// The row is one of these, by root row id and path: a same-photo group under
+        /// Duplicates, or a stack opened from the map.
         case members([MemberKey])
         /// The row holds a face with a person: People (ADR 0047).
         case withPerson
+        /// The row holds a face of this person, by row id: one person under People.
+        case person(Int64)
     }
 
-    struct MemberKey: Equatable {
+    struct MemberKey: Equatable, Encodable {
         let rootID: Int64
         let relativePath: String
+
+        /// `[rootID, path]`: one element of the members read's argument.
+        func encode(to encoder: any Encoder) throws {
+            var row = encoder.unkeyedContainer()
+            try row.encode(rootID)
+            try row.encode(relativePath)
+        }
+
+        /// `[[rootID, path], …]`, the one argument the members read takes.
+        static func json(_ keys: [MemberKey]) throws -> String {
+            try String(decoding: JSONEncoder().encode(keys), as: UTF8.self)
+        }
     }
 
     /// What a scope requires of a row's day bucket (ADR 0049).

@@ -639,14 +639,13 @@ struct ContentView: View {
                 map: viewModel.state.map ?? .empty,
                 clusters: viewModel.mapClusters,
                 cameraRequest: viewModel.mapCameraRequest,
-                selection: viewModel.gridSelection.selection,
                 emptyState: viewModel.state.mediaEmptyState,
                 tileContentStore: viewModel.tileContentStore,
                 thumbnailDirectory: viewModel.thumbnailDirectory,
                 detailReader: viewModel.tileDetailReader,
                 onViewportChanged: viewModel.mapViewportChanged,
-                onClusterClick: viewModel.selectMapCluster,
-                onClusterDoubleClick: viewModel.activateMapCluster,
+                onClusterClick: viewModel.zoomIntoMapCluster,
+                onClusterDoubleClick: viewModel.openMapCluster,
                 clearFilters: viewModel.clearMediaFilter
             )
         } else {

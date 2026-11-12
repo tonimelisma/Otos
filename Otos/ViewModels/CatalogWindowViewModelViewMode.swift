@@ -263,9 +263,8 @@ extension CatalogWindowViewModel {
             return
         case .loupe:
             if scopeChanged {
-                // The selection the opening intent chose (`scopeEntrySelection`), else the
-                // first item.
-                let first = ordered.first(where: gridSelection.selection.contains) ?? ordered.first
+                // A new scope opens on its first item.
+                let first = ordered.first
                 setFocus(first)
                 if let focus = first {
                     gridSelection = gridSelection.plainClick(focus)

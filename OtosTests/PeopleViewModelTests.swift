@@ -85,39 +85,75 @@ struct PeopleViewModelTests {
         }
     }
 
-    /// A person's photos are every library with the People filter on them, titled with the
-    /// name and with Back to People, which clears the filter it set.
-    @Test func openingAPersonFiltersEveryLibraryToThem() async throws {
+    /// A person's photos are the leaf under People: every library's photos of them, titled
+    /// with the name, with Back to People; the filter set before is kept both ways.
+    @Test func openingAPersonShowsTheirPhotosUnderPeople() async throws {
         let fixture = try await Fixture.make(in: makeTestDirectory())
         let people = try await fixture.people()
         fixture.show(people, scope: .people)
+        fixture.model.setMediaFilter(MediaFilter(choices: [.liked]))
 
         fixture.model.openPerson(fixture.sam)
-        #expect(fixture.model.queryDescriptor.scope == .allMedia)
-        #expect(fixture.model.queryDescriptor.filter.people == [fixture.sam])
-        fixture.show(people, scope: .allMedia)
+        #expect(fixture.model.queryDescriptor.scope == .person(fixture.sam))
+        #expect(fixture.model.queryDescriptor.filter == MediaFilter(choices: [.liked]))
+        #expect(fixture.model.sidebarSelection.sidebarRow == .people)
+        fixture.show(people, scope: .person(fixture.sam))
         #expect(fixture.model.showsBackToPeople)
+        #expect(!fixture.model.showsMapAreaLeaf)
         #expect(fixture.model.windowTitle == "Sam")
         #expect(fixture.model.shownPerson?.id == fixture.sam)
 
         fixture.model.returnToPeople()
         #expect(fixture.model.queryDescriptor.scope == .people)
-        #expect(!fixture.model.queryDescriptor.filter.filtersPeople)
+        #expect(fixture.model.queryDescriptor.filter == MediaFilter(choices: [.liked]))
         await fixture.store.shutdown()
     }
 
-    /// A hidden person is seen only in the gallery: their photos do not open, and the
-    /// filter lets go of them.
-    @Test func aHiddenPersonLeavesTheFilter() async throws {
+    /// Choosing another sidebar row leaves the person and starts that row unfiltered, so no
+    /// back item and no filter follow the user there.
+    @Test func anotherRowLeavesThePersonUnfiltered() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let people = try await fixture.people()
+        fixture.show(people, scope: .people)
+        fixture.model.openPerson(fixture.sam)
+        fixture.model.setPeopleFilter(fixture.sam, included: true)
+        fixture.show(people, scope: .person(fixture.sam))
+
+        fixture.model.selectSidebar(.places)
+
+        #expect(fixture.model.queryDescriptor.scope == .places)
+        #expect(!fixture.model.queryDescriptor.filter.isActive)
+        #expect(!fixture.model.showsBackToPeople)
+        #expect(fixture.model.windowTitle != "Sam")
+        await fixture.store.shutdown()
+    }
+
+    /// The filter offers the people with a name; an unnamed one only while it is checked.
+    @Test func theFilterOffersUnnamedPeopleOnlyWhileChecked() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let unnamed = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
+        let people = try await fixture.people()
+        fixture.show(people, scope: .allMedia)
+        #expect(fixture.model.peopleFilterControls.people.map(\.id) == [fixture.sam])
+
+        fixture.model.setPeopleFilter(unnamed, included: true)
+        #expect(Set(fixture.model.peopleFilterControls.people.map(\.id)) == [fixture.sam, unnamed])
+        await fixture.store.shutdown()
+    }
+
+    /// A hidden person is seen only in the gallery: their photos close back to it, they do
+    /// not open, and the filter lets go of them.
+    @Test func aHiddenPersonLeavesTheirPhotosAndTheFilter() async throws {
         let fixture = try await Fixture.make(in: makeTestDirectory())
         try await fixture.show(fixture.people(), scope: .people)
         fixture.model.openPerson(fixture.sam)
+        fixture.model.setPeopleFilter(fixture.sam, included: true)
         _ = try await fixture.store.perform(.setHidden(fixture.sam, true))
 
-        try await fixture.show(fixture.people(), scope: .allMedia)
+        try await fixture.show(fixture.people(), scope: .person(fixture.sam))
 
+        #expect(fixture.model.queryDescriptor.scope == .people)
         #expect(!fixture.model.queryDescriptor.filter.people.contains(fixture.sam))
-        fixture.model.returnToPeople()
         fixture.model.openPerson(fixture.sam)
         #expect(fixture.model.queryDescriptor.scope == .people)
         await fixture.store.shutdown()
@@ -125,7 +161,7 @@ struct PeopleViewModelTests {
 
     /// The photo menu groups the targets' faces by person: Sam's face (guessed in b.jpg)
     /// with everyone else to move it to, then the unidentified face, with Sam among the
-    /// people it may be. With the filter on Sam, her group sits at the top level.
+    /// people it may be. In her photos, her group sits at the top level.
     @Test func thePhotoMenuGroupsTheTargetsFacesByPerson() async throws {
         let fixture = try await Fixture.make(in: makeTestDirectory())
         let ian = try #require(try await fixture.store.perform(.moveToNewPerson([], name: "Ian")).person)
@@ -144,8 +180,13 @@ struct PeopleViewModelTests {
         #expect(Set(menu.groups[1].choices.map(\.person)) == [fixture.sam, ian])
         #expect(!menu.flattensFirst)
 
+        // In Sam's photos her group flattens; a filter on her elsewhere does not.
         fixture.model.setPeopleFilter(fixture.sam, included: true)
         fixture.show(people, scope: .allMedia, grid: [photo])
+        fixture.model.selectAssets([photo])
+        #expect(fixture.model.faceMenu()?.flattensFirst == false)
+        fixture.model.openPerson(fixture.sam)
+        fixture.show(people, scope: .person(fixture.sam), grid: [photo])
         fixture.model.selectAssets([photo])
         #expect(fixture.model.faceMenu()?.flattensFirst == true)
         await fixture.store.shutdown()

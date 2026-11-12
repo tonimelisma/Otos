@@ -5,8 +5,8 @@ import Foundation
 // Value types for the Places map (ADR 0040). `PlaceCoordinate` is the stored primary
 // location of an asset, exactly as `asset_metadata.primary_latitude/longitude` hold it.
 // `MapArea` is a latitude/longitude box, the scope of the grid under the map
-// (`SidebarSelection.mapArea`): the visible map, or one coordinate as a box of no extent,
-// whose bounds compare exactly with the stored values. `CatalogMapState` is Projection's answer for the `.places`
+// (`SidebarSelection.mapArea`): the visible map, whose bounds compare exactly with the
+// stored values. `MapStack` is one stack opened from the map, by its members. `CatalogMapState` is Projection's answer for the `.places`
 // scope — every located item in display order plus how many items in scope have no
 // location — and `MapPlaceCluster` is what the ViewModel's cluster pass turns it into
 // for one viewport. None of these carry MapKit types: the view converts at its edge.
@@ -31,16 +31,6 @@ nonisolated struct MapArea: Hashable, Sendable {
     let west: Double
     let east: Double
 
-    /// The items at exactly one coordinate.
-    static func point(_ coordinate: PlaceCoordinate) -> MapArea {
-        MapArea(
-            south: coordinate.latitude,
-            north: coordinate.latitude,
-            west: coordinate.longitude,
-            east: coordinate.longitude
-        )
-    }
-
     var crossesAntimeridian: Bool {
         west > east
     }
@@ -56,6 +46,17 @@ nonisolated struct MapArea: Hashable, Sendable {
 
     var diagnosticDescription: String {
         "\(south),\(west)..\(north),\(east)"
+    }
+}
+
+/// One stack opened from the map (`SidebarSelection.mapStack`): exactly the items the stack
+/// counted, by identity, since neighbouring stacks' boxes overlap and a box would take in
+/// another stack's items.
+nonisolated struct MapStack: Hashable, Sendable {
+    let members: [MediaAssetID]
+
+    var diagnosticDescription: String {
+        "\(members.count)"
     }
 }
 
@@ -126,8 +127,8 @@ nonisolated struct MapPlaceCluster: Identifiable, Equatable, Sendable {
     let coordinate: PlaceCoordinate
     /// Members in display order; the representative is first.
     let memberIDs: [MediaAssetID]
-    /// Every member shares one coordinate: double-click opens the place rather than
-    /// zooming, because zooming could never separate them.
+    /// Every member shares one coordinate: a click opens the stack rather than zooming,
+    /// because zooming could never separate them.
     let isExactPlace: Bool
 
     var count: Int {

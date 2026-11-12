@@ -173,7 +173,10 @@ grouping had put with the right child.
 - **Assignment:** `PeopleAssignment`'s loop, asked after every catalog change, reads every face
   in one transaction, assigns off its actor, and writes a guess only where the face is still
   Otos's to decide, so an act the user made meanwhile always wins.
-- **People UI:** the People gallery, a person's photos as the People filter, the face acts in
+- **People UI:** the People gallery, a person's photos as the leaf under it
+  (`SidebarSelection.person`, so the sidebar keeps People highlighted and Back to People
+  exists only there), the People filter, whose several people are photos of them together,
+  the face acts in
   the photo menus and the Info pane (`docs/design/people.md`).
 
 ### Licences and attribution

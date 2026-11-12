@@ -47,14 +47,24 @@ Map view mode.
   location". Removable sources are excluded, as in All Media. The row exists as soon as
   one fixed library exists, located items or not, so it can be found and the sidebar
   never reflows as enrichment finds coordinates.
-- `SidebarSelection.mapArea(MapArea)` is the leaf: the items whose primary location
-  lies in one latitude/longitude box, edges included. The map opens it two ways: the
-  view-mode picker and ⌘1 / ⌘2 / ⌘3 open the box the viewport shows in that mode (Web
-  Mercator keeps longitude in x and latitude in y, so the viewport's rect is exactly a
-  box; a box past the antimeridian has `west > east`), and double-click on a stack whose
-  members share one coordinate opens that coordinate as a box of no extent, whose bounds
-  are the stored values' own doubles. It is not a sidebar row; the sidebar keeps Places
-  highlighted for it (`sidebarRow`). It is presented in the ordinary view modes, and a
+- `SidebarSelection.mapArea(MapArea)` is one leaf: the items whose primary location
+  lies in one latitude/longitude box, edges included. The view-mode picker and ⌘1 / ⌘2 /
+  ⌘3 open the box the viewport shows in that mode (Web Mercator keeps longitude in x and
+  latitude in y, so the viewport's rect is exactly a box; a box past the antimeridian has
+  `west > east`).
+- `SidebarSelection.mapStack(MapStack)` is the other: exactly the items one stack counted,
+  by identity, read as `ContentConstraint.members` with the members passed as one JSON
+  argument (a stack opened zoomed out holds more items than SQLite's bound-parameter
+  limit). A box would not do: stacks merge neighbouring cells, so their boxes overlap
+  and a stack's box takes in another stack's items. It is not written to the browser
+  place; a relaunch reopens the map. Neither leaf is a sidebar row; the sidebar keeps
+  Places highlighted for them (`sidebarRow`).
+- **A click drills in; a double-click opens** (owner decision, 2026-11-12). A click on a
+  stack zooms into it, as a click on a cluster does on nearly every map; one whose
+  members share a coordinate, which no zoom can split, opens. A double-click opens the
+  stack. The map has no selection. One tap gesture reads AppKit's click count, so the
+  click zooms at once rather than waiting out the double-click interval, and the
+  double-click's second click opens the stack its first click landed on. It is presented in the ordinary view modes, and a
   Back to Map toolbar item returns to the map at the viewport the user left. This is
   Photos' Grid, reached through Otos's own picker rather than a fourth control.
 - **The scope predicate carries the location dimension.** `CatalogScopePredicate`
@@ -92,10 +102,9 @@ Map view mode.
   on a stack that can still split, a step on View ▸ Zoom In / Out.
 - **The map is not a view mode; the modes open its area.** While the map shows, the
   view-mode picker selects no segment, and choosing one — or ⌘1 / ⌘2 / ⌘3 — opens the
-  visible area in that mode. The selection a stack click made carries into the area as
-  far as it lies inside, through `scopeEntrySelection`, so Loupe and Compare start on
-  it once the area publishes; until then the pane is still the map (the pane follows the
-  published scope). Before the map's first viewport there is no area, so the picker is
+  visible area in that mode. Loupe and Compare start on the area's first items once it
+  publishes; until then the pane is still the map (the pane follows the published
+  scope). Before the map's first viewport there is no area, so the picker is
   disabled, never hidden (DES-053). A loupe or compare left open elsewhere exits to grid
   on entering Places. The zoom control and View ▸ Zoom In / Out drive the map.
 - **Thumbnails follow the grid's rule.** A stack's identity is its representative, so a
@@ -134,6 +143,22 @@ Cons: photos taken a few meters apart never share a coordinate, so reaching them
 one double-click per zoom step — the owner counted seventeen (2026-11-01). Photos, Mylio
 and Lightroom Classic's Visible on Map filter all show an area's photos at whatever
 zoom the user stopped at.
+
+### Photos' clicks: a click does nothing, a double-click zooms
+
+The first build took Photos' double-click to zoom and gave the click to selection.
+
+Cons: the selection a stack click made was barely visible on the map (an accent border,
+the per-item controls, where Loupe began), so the easiest gesture did the least, and
+reaching an area's photos took a zoom per double-click then a mode switch. Every other
+clustering map zooms on a click.
+
+### Opening a stack as the box of its members
+
+Pros: one leaf kind, `mapArea`, persisted like the visible area.
+
+Cons: stacks merge neighbouring cells, so the box of one stack's members can hold another
+stack's items, and the grid would not show what the count said.
 
 ### Photos' Map / Grid toggle as its own control
 

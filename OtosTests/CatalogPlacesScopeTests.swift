@@ -11,6 +11,10 @@ import Testing
 struct CatalogPlacesScopeTests {
     private static let helsinki = PlaceCoordinate(latitude: 60.17, longitude: 24.94)
     private static let sydney = PlaceCoordinate(latitude: -33.87, longitude: 151.21)
+    /// A box of no extent: exactly the items at Helsinki's coordinate.
+    private static let helsinkiPoint = MapArea(
+        south: helsinki.latitude, north: helsinki.latitude, west: helsinki.longitude, east: helsinki.longitude
+    )
 
     @Test func placesHoldsLocatedItemsWithCoordinatesAndAnAreaHoldsWhatLiesInIt() async throws {
         let temp = try makeTestDirectory()
@@ -66,7 +70,14 @@ struct CatalogPlacesScopeTests {
             availableLibraryPaths: available
         )
         let helsinkiOnly = try await store.orderedAssetIDs(
-            for: CatalogQueryDescriptor(scope: .mapArea(.point(Self.helsinki))),
+            for: CatalogQueryDescriptor(scope: .mapArea(Self.helsinkiPoint)),
+            availableLibraryPaths: available
+        )
+        // A stack opened from the map holds exactly its members, in the scope's order.
+        let stack = try await store.orderedAssetIDs(
+            for: CatalogQueryDescriptor(
+                scope: .mapStack(MapStack(members: [places.ids[2], places.ids[1]])), sort: .dateNewest
+            ),
             availableLibraryPaths: available
         )
         // Northern Europe: Helsinki in, Sydney out.
@@ -100,6 +111,7 @@ struct CatalogPlacesScopeTests {
         #expect(helsinkiOnly.coordinates == [Self.helsinki, Self.helsinki])
         #expect(europe.ids.map(\.relativePath.rawValue) == ["helsinki-new.jpg", "helsinki-old.jpg"])
         #expect(pacific.ids.map(\.relativePath.rawValue) == ["sydney.mp4"])
+        #expect(stack.ids.map(\.relativePath.rawValue) == ["sydney.mp4", "helsinki-old.jpg"])
         // A scope without a location requirement carries no coordinates.
         #expect(allMedia.ids.count == 4)
         #expect(allMedia.coordinates.isEmpty)
@@ -115,15 +127,16 @@ struct CatalogPlacesScopeTests {
         #expect(CatalogWindowPolicy.resolvedSidebarSelection(.places, libraries: [pictures], removableSources: []) == .places)
         #expect(
             CatalogWindowPolicy.resolvedSidebarSelection(
-                .mapArea(.point(Self.helsinki)),
+                .mapArea(Self.helsinkiPoint),
                 libraries: [pictures],
                 removableSources: [card]
-            ) == .mapArea(.point(Self.helsinki))
+            ) == .mapArea(Self.helsinkiPoint)
         )
         // No fixed library: nothing to map, so the default applies (the card here).
         #expect(CatalogWindowPolicy.resolvedSidebarSelection(.places, libraries: [], removableSources: [card]) == .library(card.path))
         #expect(CatalogWindowPolicy.title(for: .places, libraries: [pictures]) == "Places")
-        #expect(CatalogWindowPolicy.title(for: .mapArea(.point(Self.helsinki)), libraries: [pictures]) == "Places")
+        #expect(CatalogWindowPolicy.title(for: .mapArea(Self.helsinkiPoint), libraries: [pictures]) == "Places")
+        #expect(CatalogWindowPolicy.title(for: .mapStack(MapStack(members: [])), libraries: [pictures]) == "Places")
     }
 
     @Test func mapStatePairsScopedIDsWithCoordinatesAndCountsWhatIsLeftOff() {

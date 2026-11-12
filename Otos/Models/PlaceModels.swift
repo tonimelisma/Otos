@@ -64,12 +64,19 @@ nonisolated struct PlaceFilterKey: Hashable, Sendable, Comparable {
     }
 }
 
-/// A country the Places filter offers, with its towns, in the locale's order.
+/// A country the Places filter offers, with its towns, most items first.
 nonisolated struct PlaceFilterCountry: Hashable, Sendable, Identifiable {
     let name: String
     let towns: [String]
 
     var id: String {
         name
+    }
+
+    /// Place names by the items they hold, most first; a tie in the locale's order.
+    static func mostItemsFirst(_ items: [String: Int]) -> [String] {
+        items.sorted { lhs, rhs in
+            lhs.value != rhs.value ? lhs.value > rhs.value : lhs.key.localizedStandardCompare(rhs.key) == .orderedAscending
+        }.map(\.key)
     }
 }

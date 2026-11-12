@@ -50,12 +50,12 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// Whether Back to Map applies: the browser shows an area under the map.
+    /// Whether Back to Map applies: the browser shows an area or a stack under the map.
     var showsMapAreaLeaf: Bool {
-        if case .mapArea = sidebarSelection {
-            return true
+        switch sidebarSelection {
+        case .mapArea, .mapStack: true
+        default: false
         }
-        return false
     }
 
     // MARK: - Lane
@@ -215,29 +215,39 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// Single click: the stack's members become the selection, as a click on a tile
-    /// would, so Info, Share and the Photo menu act on them.
-    func selectMapCluster(_ cluster: MapPlaceCluster) {
-        selectAssets(cluster.memberIDs)
-    }
-
-    /// Double-click: a stack that can still be split zooms the map into it; a stack
-    /// whose members share one coordinate, which no zoom can split, opens that coordinate
-    /// as the grid.
-    func activateMapCluster(_ cluster: MapPlaceCluster) {
+    /// A click on a stack drills in, as a click on a cluster does on every map: a stack that
+    /// can still be split zooms the map into it; one whose members share a coordinate, which
+    /// no zoom can split, opens (`openMapCluster`). The map has no selection.
+    func zoomIntoMapCluster(_ cluster: MapPlaceCluster) {
         if cluster.isExactPlace {
-            openMapArea(.point(cluster.coordinate), mode: .grid, reason: "stack")
+            openMapCluster(cluster)
             return
         }
         guard let viewport = mapViewport, let map = state.map else {
             return
         }
+        OtosLog.ui.noticeOperation("map.stack", phase: "zoom", fields: ["count": "\(cluster.count)"])
         let members = Set(cluster.memberIDs)
         let coordinates = map.located.filter { members.contains($0.id) }.map(\.coordinate)
         requestMapCamera(
             MapClusterPolicy.zoomBounds(into: cluster, members: coordinates, viewport: viewport),
             reason: "cluster"
         )
+    }
+
+    /// A double-click on a stack: exactly the items it counted, as the grid. The double-click's
+    /// first click has already asked to zoom; the stack is the one the click landed on, so
+    /// the camera moving underneath does not change what opens.
+    func openMapCluster(_ cluster: MapPlaceCluster) {
+        userHasChosenSource = true
+        OtosLog.ui.noticeOperation("map.stack", phase: "open", fields: ["count": "\(cluster.count)"])
+        setQueryDescriptor(CatalogQueryDescriptor(
+            scope: .mapStack(MapStack(members: cluster.memberIDs)),
+            filter: queryDescriptor.filter,
+            sort: queryDescriptor.sort,
+            search: queryDescriptor.search
+        ))
+        enterModeForOpeningScope(.grid)
     }
 
     /// View ▸ Zoom In / Zoom Out on the map: one step about the center.
@@ -248,31 +258,20 @@ extension CatalogWindowViewModel {
         requestMapCamera(MapClusterPolicy.scaledBounds(of: viewport, by: factor), reason: "step")
     }
 
-    /// Grid, Loupe or Compare on the map — the picker, ⌘1/2/3 and the View menu alike:
-    /// the area the map shows, in that mode.
+    /// Grid, Loupe or Compare on the map — the picker, ⌘1/2/3 and the View menu alike: the
+    /// area the map shows, in that mode. Not a sidebar row: the sidebar keeps Places
+    /// highlighted (`SidebarSelection.sidebarRow`). Loupe and Compare start on the area's
+    /// first items. The mode is set now and its focus settles when the area publishes,
+    /// because the pane keeps showing the map until then (`showsPlacesMap`).
     func openVisibleMapArea(mode: BrowserViewMode) {
         guard showsPlacesMap, let viewport = mapViewport else {
             return
         }
-        openMapArea(MapClusterPolicy.area(of: viewport), mode: mode, reason: "visible")
-    }
-
-    /// The items in one box of the map, in a view mode. Not a sidebar row: the sidebar
-    /// keeps Places highlighted (`SidebarSelection.sidebarRow`). The selection made on the
-    /// map — a clicked stack — carries into the area as far as it lies inside it, so Loupe
-    /// and Compare start on it; with none, they start on the area's first items. The mode
-    /// is set now and its focus settles when the area publishes, because the pane keeps
-    /// showing the map until then (`showsPlacesMap`).
-    func openMapArea(_ area: MapArea, mode: BrowserViewMode, reason: String) {
-        let located = state.map?.located ?? []
-        let selected = gridSelection.selection
-        let entry = located.filter { selected.contains($0.id) && area.contains($0.coordinate) }.map(\.id)
+        let area = MapClusterPolicy.area(of: viewport)
         userHasChosenSource = true
         OtosLog.ui.noticeOperation("map.area", phase: "enter", fields: [
             "area": area.diagnosticDescription,
             "mode": mode.rawValue,
-            "reason": reason,
-            "entrySelection": "\(entry.count)",
         ])
         setQueryDescriptor(CatalogQueryDescriptor(
             scope: .mapArea(area),
@@ -280,11 +279,10 @@ extension CatalogWindowViewModel {
             sort: queryDescriptor.sort,
             search: queryDescriptor.search
         ))
-        scopeEntrySelection = (queryGeneration, entry)
         enterModeForOpeningScope(mode)
     }
 
-    /// Back to Map from an area; the map returns to the viewport it was left at.
+    /// Back to Map from an area or a stack; the map returns to the viewport it was left at.
     func returnToPlaces() {
         guard showsMapAreaLeaf else {
             return

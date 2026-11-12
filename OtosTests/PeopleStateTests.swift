@@ -189,41 +189,36 @@ struct PeopleStateTests {
         #expect(PeoplePresentation.peopleLine(14) == "14 people")
         #expect(PeoplePresentation.uncheckedLine(0) == "Every photo has been checked")
         #expect(PeoplePresentation.uncheckedLine(1820) == "1,820 photos not yet checked for faces")
-        #expect(PeopleText.names(["Sam"]) == "Sam")
         #expect(PersonSummary.displayName(nil) == "Unnamed Person")
         #expect(FaceActTitle.notPerson("Sam") == "This Is Not Sam")
         #expect(FaceActTitle.notPerson(nil) == "Wrong Person")
         #expect(FaceActTitle.notAFace == "This Is Not a Face")
         #expect(FaceActTitle.makeKeyPhoto == "Make Key Photo")
         #expect(FaceActTitle.addName == "Add Name…")
-        #expect(PeopleText.names(["Sam", "Ian"]) == "Sam and Ian")
-        #expect(PeopleText.names(["Sam", "Ian", "Tyler", "Owen"]) == "Sam, Ian and 2 Others")
         #expect(MediaSortOrder.likenessLeast.label(person: "Sam") == "Likeness — Least Like Sam First")
         #expect(MediaSortOrder.likenessMost.label(person: "Sam") == "Likeness — Most Like Sam First")
         #expect(MediaSortOrder.likenessLeast.label(person: nil) == "Likeness — Least Alike First")
         #expect(MediaSortOrder.dateNewest.label(person: "Sam") == "Date — Newest First")
     }
 
-    /// Likeness orders photos only with one person filtered; otherwise the reads use the
-    /// default order, and the user's choice is kept for when one person is filtered again.
-    @Test func likenessNeedsOnePersonFiltered() {
+    /// Likeness orders one person's photos; elsewhere, a People filter of one person
+    /// included, the reads use the default order, and the user's choice is kept for the next
+    /// person's photos.
+    @Test func likenessNeedsOnePersonsPhotos() {
         var descriptor = CatalogQueryDescriptor(scope: .allMedia, sort: .likenessLeast)
         #expect(descriptor.effectiveSort == .defaultOrder)
         descriptor.filter.people = [Self.sam]
-        #expect(descriptor.effectiveSort == .likenessLeast)
-        descriptor.filter.unassignedFaces = true
         #expect(descriptor.effectiveSort == .defaultOrder)
+        descriptor.scope = .person(Self.sam)
+        #expect(descriptor.effectiveSort == .likenessLeast)
         #expect(descriptor.sort == .likenessLeast)
     }
 
     @Test func thePeopleFilterIsPartOfTheFilter() {
         var filter = MediaFilter.all.settingPerson(Self.sam, included: true)
-        #expect(filter.isActive && filter.singlePerson == Self.sam)
-        filter = filter.settingPerson(Self.ian, included: true)
-        #expect(filter.singlePerson == nil && filter.filtersPeople)
-        filter.peopleMatch = .all
-        filter.choices = [.liked]
-        #expect(filter.withoutPeople == MediaFilter(choices: [.liked]))
+        #expect(filter.isActive && filter.filtersPeople)
+        filter = filter.settingPerson(Self.sam, included: false)
+        #expect(!filter.isActive)
     }
 
     @Test func aDraggedPersonRoundTrips() {

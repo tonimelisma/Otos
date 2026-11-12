@@ -512,11 +512,6 @@ final class CatalogWindowViewModel {
     /// `restoreBrowserPlaceIfReady()`. Any other query drops it: once the user (or the
     /// launch default) has gone somewhere else, an old place would be a surprise jump.
     @ObservationIgnored var pendingPlaceRestore: BrowserPlace?
-    /// The selection an intent chose for the scope it opened — a stack clicked on the map
-    /// before opening its area — kept for the query generation that opens it. When
-    /// that scope publishes, its survivors become the selection instead of the scope
-    /// change clearing it, so Loupe and Compare start on them. A newer query drops it.
-    @ObservationIgnored var scopeEntrySelection: (generation: UInt64, ids: [MediaAssetID])?
     /// The grid's middle visible item from the newest viewport report — what quit saves
     /// as the grid's place, because the grid centers on it when it comes back.
     @ObservationIgnored var gridViewportCenterID: MediaAssetID?
@@ -1000,7 +995,6 @@ extension CatalogWindowViewModel {
             pendingPlaceRestore = nil
             OtosLog.ui.notice("op=browserPlace.restore phase=dropped reason=queryChanged")
         }
-        scopeEntrySelection = nil
         let scopeChanged = descriptor.scope != queryDescriptor.scope
         queryGeneration &+= 1
         queryDescriptor = descriptor
@@ -1229,8 +1223,8 @@ extension CatalogWindowViewModel {
         let descriptorChanged = previousState.mediaGrid.descriptor != nextState.mediaGrid.descriptor
         let scopeChanged = previousState.mediaGrid.descriptor.scope != nextState.mediaGrid.descriptor.scope
         let orderChanged = previousState.mediaGrid.orderedAssetIDs != nextState.mediaGrid.orderedAssetIDs
-        if scopeChanged || (orderChanged && holdsScopeEntrySelection(nextState)) {
-            applyScopeEntrySelection(nextState)
+        if scopeChanged {
+            clearGridSelection(reason: "scopeChange")
         } else if orderChanged {
             gridSelection = gridSelection.selection.isEmpty
                 ? .empty
@@ -1296,24 +1290,22 @@ extension CatalogWindowViewModel {
 extension CatalogWindowViewModel {
     func selectSidebar(_ selection: SidebarSelection) {
         userHasChosenSource = true
-        setQueryDescriptor(CatalogQueryDescriptor(
-            scope: selection,
-            filter: queryDescriptor.filter,
-            sort: queryDescriptor.sort,
-            search: queryDescriptor.search
-        ))
+        setQueryDescriptor(descriptorShowing(selection))
     }
 
-    /// Opens `scope` with `ids` selected. The items travel as the scope-entry selection
-    /// (`scopeEntrySelection`), which a state of this query applies once it holds them: a
-    /// new scope's first state would otherwise replace the selection, and in the scope
-    /// already shown the items may arrive in a later state than this call. They are also
-    /// selected at once, for the scope already shown when it holds them now.
-    func openScope(_ scope: SidebarSelection, selecting ids: [MediaAssetID]) {
-        selectSidebar(scope)
-        guard !ids.isEmpty else { return }
-        scopeEntrySelection = (queryGeneration, ids)
-        selectAssets(ids)
+    /// The descriptor for showing `selection`, by the user's choice or automatically. A
+    /// filter belongs to the sidebar row it was set in: another row starts unfiltered, while
+    /// the row's own leaves (an area or stack under the map, a person, a duplicate group)
+    /// keep it, so a stack's count is what it opens on (owner decision, 2026-11-12;
+    /// Lightroom Classic's unlocked Library filter). Sort and search stay.
+    func descriptorShowing(_ selection: SidebarSelection) -> CatalogQueryDescriptor {
+        let sameRow = selection.sidebarRow == queryDescriptor.scope.sidebarRow
+        return CatalogQueryDescriptor(
+            scope: selection,
+            filter: sameRow ? queryDescriptor.filter : .all,
+            sort: queryDescriptor.sort,
+            search: queryDescriptor.search
+        )
     }
 
     func setMediaFilter(_ filter: MediaFilter) {
@@ -1432,12 +1424,7 @@ extension CatalogWindowViewModel {
 
 extension CatalogWindowViewModel {
     func applyAutomaticSidebarSelection(_ selection: SidebarSelection) {
-        setQueryDescriptor(CatalogQueryDescriptor(
-            scope: selection,
-            filter: queryDescriptor.filter,
-            sort: queryDescriptor.sort,
-            search: queryDescriptor.search
-        ))
+        setQueryDescriptor(descriptorShowing(selection))
     }
 
     func dismissEjectAlert() {
@@ -1541,13 +1528,13 @@ extension CatalogWindowViewModel {
                 && !nextState.removableSources.contains { $0.path == path }
         case let .importBatch(batchID):
             !nextState.importBatches.contains { $0.batchID == batchID }
-        case .places, .mapArea, .onThisDay:
+        case .places, .mapArea, .mapStack, .onThisDay:
             !SidebarSelectionPolicy.showsPlaces(libraries: nextState.libraries)
         case let .duplicateGroup(group):
             // The group is gone — resolved, or its copies moved — so its leaf is too. Groups
             // not built yet say nothing about it.
             nextState.duplicates.map { !$0.groups.contains { $0.id == group } } ?? false
-        case .duplicates, .people:
+        case .duplicates, .people, .person:
             // Stays while selected, empty or not (ADR 0042, ADR 0047), while libraries exist.
             !SidebarSelectionPolicy.showsPlaces(libraries: nextState.libraries)
         case .allMedia, .allImports:

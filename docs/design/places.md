@@ -14,7 +14,7 @@ Photos' Places (macOS 27, observed 2026-11-01): a `Places` row, thumbnail stacks
 count on the map, double-click to zoom, and a Map / Satellite / Grid toggle whose Grid
 shows the photos in the area the map shows, in sections by place name and date
 (`docs/research/2026-10-31-map-views-in-photo-managers.md`). Otos takes the row, the
-stacks, the double-click and Grid's meaning, but not its control: Otos's own view-mode
+stacks and Grid's meaning, but not its control or its clicks (below): Otos's own view-mode
 picker plays Grid's part (and Loupe and Compare with it) and `Back to Map` plays Map's,
 so the toolbar gains nothing. It drops Satellite, keeps its day sections (place-name
 sections need reverse geocoding, which Otos does not do) and adds nothing of its own.
@@ -25,8 +25,8 @@ Terms are Apple's: *location*, never *GPS* or *geotag*.
 | Term | Means | Not |
 | --- | --- | --- |
 | **Places** | The sidebar row and its scope: every located item in the fixed libraries. | "Map" (a presentation, not a place to go) |
-| **Area** | The items in one box of the map: the area the map showed, or one stack's coordinate. Not named in the UI. | a region, a city, a pin |
-| **Stack** | One thumbnail on the map standing for the items in one cluster cell. | "pin", "marker", "annotation" |
+| **Area** | The items in one box of the map: the area the map showed. Not named in the UI. | a region, a city, a pin |
+| **Stack** | One thumbnail on the map standing for the items in one cluster cell; opened, exactly those items. | "pin", "marker", "annotation" |
 | **Located** | Has a stored primary location. | "geotagged" |
 
 ## Sidebar
@@ -41,12 +41,11 @@ highlighted: the area has no row of its own.
 The view-mode picker shows no segment selected, because the map is not one of the modes.
 Choosing one (or ⌘1 / ⌘2 / ⌘3, or the View menu) opens the area the map shows in that
 mode: Grid, Loupe or Compare over the photos located inside it. Loupe and Compare start
-on the stack the user clicked, as far as it lies inside the area; with none selected,
 on the area's first photos. The map stays on screen until the area is ready. The picker
 is disabled (DES-053) only before the map has first reported where it is. The filter,
 sort and zoom controls keep working: filter narrows the map, sort decides which photo
-fronts a stack, zoom steps the camera. The trailing per-item controls act on the
-selection a stack click made.
+fronts a stack, zoom steps the camera. The map has no selection, so the trailing
+per-item controls are disabled (DES-053).
 
 While an area is open, a `Back to Map` item (`chevron.left`) sits at the leading edge
 of the toolbar and returns to the map as it was left; the browser there is the
@@ -82,8 +81,8 @@ ease-out (DES-070), a snap under Reduce Motion (DES-075).
 ## Stacks (DES-103)
 
 A 48 pt square: the representative's thumbnail aspect-filled, radius 4 (DES-060), a
-2 pt white edge so it separates from any map; selection is the 3 pt accent border of
-a tile (DES-061). The member count sits at the lower right in `.footnote` tabular
+2 pt white edge so it separates from any map. A stack is never selected: a click
+drills in. The member count sits at the lower right in `.footnote` tabular
 digits on the DES-062 badge well, and appears only once the thumbnail has painted and
 only for two or more members. Before the thumbnail has ever decoded, the kind glyph at
 tertiary strength (DES-063). Once painted, the thumbnail stays as long as the stack's
@@ -96,13 +95,21 @@ gutter). Only cells touching the viewport, padded by one cell, are drawn.
 
 | Act | Result |
 | --- | --- |
-| Click | The stack's members become the selection. |
-| Double-click, members at several coordinates | The camera zooms into the stack: its extent, never wider than a quarter of the viewport. |
-| Double-click, members at one coordinate | That coordinate opens as the grid, since no zoom can split it. |
+| Click, members at several coordinates | The camera zooms into the stack: its extent, never wider than a quarter of the viewport. |
+| Click, members at one coordinate | The stack opens, since no zoom can split it. |
+| Double-click | The stack opens: exactly the items it counted, as the grid. |
+
+**[deviation]** from Photos, whose click does nothing and whose double-click zooms. A
+click drills in, as a click on a cluster does on nearly every map, and the double-click
+that ends the drilling opens the photos (owner decision, 2026-11-12). A double-click's
+first click has already started the zoom; what opens is the stack that click landed on,
+not whatever lies under the pointer once the camera moved. An opened stack is its items
+by identity, not a box: neighbouring stacks' boxes overlap, and a box would take in
+another stack's items.
 
 VoiceOver names a stack by what distinguishes it (DES-082): `12 items, 60.17 north,
-24.94 east`; a single item `1 item, …`. A stack is a button; a selected stack carries
-the selected trait.
+24.94 east`; a single item `1 item, …`. A stack is a button; pressing it zooms, and its
+`Show Photos` action opens it.
 
 ## Empty states
 
@@ -135,11 +142,15 @@ points.
 ## The Places filter
 
 A section of the filter popover, under People (ADR 0051): every country Apple Maps named for
-the located items, each a checkbox opening onto its towns (`Springfield, IL`), a country
-with some towns checked shown mixed; `Search Places` once there are more than eight
-countries; `No places named yet` before any cell is named. Checking a country includes all
-of it; unchecking one town of a checked country narrows it to the rest. A checked place
-always shows. It narrows every scope, the map included.
+the located items, most items first, each a checkbox opening onto its towns (`Springfield,
+IL`), most items first, a country with some towns checked shown mixed. The first five
+countries show, and within a country the first five towns; `Show All 14 Countries` /
+`Show All 9 Towns` lists the rest in place and `Show Less` folds it back, and the whole
+list of countries gains `Search Places` once there are more than eight. `No places named
+yet` before any cell is named. Checking a country includes all of it; unchecking one town
+of a checked country narrows it to the rest. A checked place always shows. It narrows the
+map and every scope, within the sidebar row it was set in (`docs/design/people.md`, The
+filter's reach).
 
 ## Not in this spec
 

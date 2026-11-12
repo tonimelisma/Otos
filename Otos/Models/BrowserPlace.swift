@@ -19,7 +19,7 @@ import Foundation
 /// position, never their launch.
 nonisolated struct BrowserPlace: Equatable {
     static let defaultsKey = "browserPlace"
-    static let currentVersion = 4
+    static let currentVersion = 5
 
     var descriptor: CatalogQueryDescriptor
     var viewMode: BrowserViewMode
@@ -95,7 +95,6 @@ private nonisolated extension BrowserPlace {
         /// nothing and is dropped when People is next published.
         var people: [Int64]
         var unassignedFaces: Bool
-        var peopleMatch: String
         /// The Places filter's rows: a country, or a town in it.
         var places: [Place]
         var sortField: String
@@ -110,8 +109,7 @@ private nonisolated extension BrowserPlace {
               let scope = Self.scope(record.scope, today: today),
               let field = MediaSortField(rawValue: record.sortField),
               let direction = MediaSortDirection(rawValue: record.sortDirection),
-              let viewMode = BrowserViewMode(rawValue: record.viewMode),
-              let peopleMatch = PeopleMatch(rawValue: record.peopleMatch)
+              let viewMode = BrowserViewMode(rawValue: record.viewMode)
         else {
             return nil
         }
@@ -136,7 +134,6 @@ private nonisolated extension BrowserPlace {
             choices: Set(choices),
             people: Set(record.people.map(PersonID.init(rawValue:))),
             unassignedFaces: record.unassignedFaces,
-            peopleMatch: peopleMatch,
             places: Set(record.places.map { PlaceFilterKey(country: $0.country, town: $0.town) })
         )
         self.init(
@@ -201,7 +198,6 @@ private nonisolated extension BrowserPlace.Record {
             choices: descriptor.filter.choices.map(\.rawValue).sorted(),
             people: descriptor.filter.people.map(\.rawValue).sorted(),
             unassignedFaces: descriptor.filter.unassignedFaces,
-            peopleMatch: descriptor.filter.peopleMatch.rawValue,
             places: descriptor.filter.places.sorted().map { Place(country: $0.country, town: $0.town) },
             sortField: descriptor.sort.field.rawValue,
             sortDirection: descriptor.sort.direction.rawValue,
@@ -215,7 +211,9 @@ private nonisolated extension BrowserPlace.Record {
         switch selection {
         case .allMedia:
             Scope(kind: "allMedia")
-        case .places:
+        case .places, .mapStack:
+            // A stack is named by its members, which are not written out: the window reopens
+            // on the map it was opened from.
             Scope(kind: "places")
         case let .mapArea(area):
             Scope(kind: "mapArea", south: area.south, north: area.north, west: area.west, east: area.east)
@@ -227,7 +225,8 @@ private nonisolated extension BrowserPlace.Record {
             // A group is named by its digest, which is never written out (ADR 0018); the
             // window reopens on the list it was reached from.
             Scope(kind: "duplicates")
-        case .people:
+        case .people, .person:
+            // The window reopens on the gallery, as a duplicate group reopens on its list.
             Scope(kind: "people")
         case .allImports:
             Scope(kind: "allImports")

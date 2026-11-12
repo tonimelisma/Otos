@@ -24,7 +24,6 @@ struct BrowserPlaceTests {
                     choices: [.liked],
                     people: [PersonID(rawValue: 3), PersonID(rawValue: 9)],
                     unassignedFaces: true,
-                    peopleMatch: .all,
                     places: [PlaceFilterKey(country: "Finland", town: nil), PlaceFilterKey(country: "Australia", town: "Sydney NSW")]
                 ),
                 sort: MediaSortOrder(field: .likeness, direction: .ascending)
@@ -95,9 +94,8 @@ struct BrowserPlaceTests {
         BrowserPlace(descriptor: .default, viewMode: .grid, focus: nil, selection: []).save(to: preferences)
         let stored = try #require(preferences.string(forKey: BrowserPlace.defaultsKey))
         for (valid, invalid) in [
-            // A place stored before the filter held Places.
-            ("\"version\":4", "\"version\":3"),
-            ("\"peopleMatch\":\"any\"", "\"peopleMatch\":\"some\""),
+            // A place stored while several people could mean any of them.
+            ("\"version\":5", "\"version\":4"),
             ("\"sortField\":\"bestDate\"", "\"sortField\":\"rating\""),
             ("\"viewMode\":\"grid\"", "\"viewMode\":\"survey\""),
             ("\"kind\":\"allMedia\"", "\"kind\":\"smartAlbum\""),
@@ -169,8 +167,9 @@ struct BrowserPlaceTests {
     }
 
     /// A restored library that was removed is a different collection: the launch default
-    /// applies, the filter and sort carry over, and nothing from the old place is applied.
-    @Test func aRemovedScopeFallsBackToTheDefaultKeepingFilterAndSort() {
+    /// applies with the sort carried over, unfiltered as any other row is entered, and
+    /// nothing from the old place is applied.
+    @Test func aRemovedScopeFallsBackToTheDefaultKeepingTheSort() {
         let domain = PreferencesDomain.suite(UUID().uuidString)
         let ids = makeIDs(3)
         let place = makePlace(viewMode: .loupe, focus: ids[0], selection: [ids[0]])
@@ -181,7 +180,8 @@ struct BrowserPlaceTests {
         model.applyState(loadedState(descriptor: place.descriptor, ids: [], libraries: [archive]))
 
         #expect(model.sidebarSelection == .library(archive))
-        #expect(model.queryDescriptor.filter == place.descriptor.filter)
+        #expect(place.descriptor.filter.isActive)
+        #expect(!model.queryDescriptor.filter.isActive)
         #expect(model.queryDescriptor.sort == place.descriptor.sort)
         #expect(model.pendingPlaceRestore == nil)
 

@@ -51,7 +51,9 @@ descriptor (APP-013, ADR 0011); the owner-state rules the reader follows (ADR 00
 - **The filter.** `MediaFilter.places` holds countries and towns. A photo matches when its
   cell is named one of them. Checking a country includes all of it; unchecking one town of a
   checked country narrows it to the rest. The popover offers the countries and towns named
-  for the located items in every available source, as it offers file types (APP-042).
+  for the located items in every available source, as it offers file types (APP-042),
+  each most items first (counted in the same read), since the places a library holds most
+  of are the ones filtered by; a tie goes in the locale's order.
 - **Not in the catalog of media.** Place names are derived, rebuildable overlay in
   Application Support (ADR 0008): nothing is written to media files.
 

@@ -56,7 +56,7 @@ nonisolated enum CatalogWindowPolicy {
                     removableSources: removableSources
                 )
             }
-        case .places, .mapArea, .onThisDay, .duplicates, .duplicateGroup, .people:
+        case .places, .mapArea, .mapStack, .onThisDay, .duplicates, .duplicateGroup, .people, .person:
             // Places, On This Day, Duplicates and People exist with the fixed libraries they
             // span; a leaf under any of them goes with it. Each resolves to the default once the last fixed
             // library is removed.
@@ -167,8 +167,8 @@ nonisolated enum CatalogWindowPolicy {
                 return false
             }
             switch sidebarSelection {
-            case .allMedia, .places, .mapArea, .onThisDay, .importBatch, .allImports, .duplicates, .duplicateGroup,
-                 .people:
+            case .allMedia, .places, .mapArea, .mapStack, .onThisDay, .importBatch, .allImports, .duplicates, .duplicateGroup,
+                 .people, .person:
                 // These scopes span the fixed libraries. Batch and location *membership*
                 // are applied by Store.orderedAssetIDs; this pass only re-applies the
                 // root-kind rule, which also holds for IDs carried over from a reused
@@ -242,11 +242,11 @@ nonisolated enum CatalogWindowPolicy {
             "All Media"
         case .onThisDay:
             "On This Day"
-        case .places, .mapArea:
+        case .places, .mapArea, .mapStack:
             "Places"
         case .duplicates, .duplicateGroup:
             "Duplicates"
-        case .people:
+        case .people, .person:
             "People"
         case let .library(path):
             libraries.first { $0.path == path }?.displayName ?? "Library"
@@ -274,7 +274,7 @@ nonisolated enum CatalogWindowPolicy {
         }
         let sidebarSelection = descriptor.scope
         switch sidebarSelection {
-        case .allMedia, .importBatch, .allImports, .duplicates, .duplicateGroup, .people:
+        case .allMedia, .importBatch, .allImports, .duplicates, .duplicateGroup, .people, .person:
             // These span the fixed libraries, so they answer emptiness the same way: a
             // batch whose rows exist but whose libraries are offline is unreachable,
             // not absent.
@@ -283,7 +283,7 @@ nonisolated enum CatalogWindowPolicy {
                 return .checkingLibraries
             }
             return allAssetCount == 0 ? .noMedia : .noAvailableMedia
-        case .places, .mapArea:
+        case .places, .mapArea, .mapStack:
             // The map spans the fixed libraries too. An empty map with reachable
             // libraries means no item carries a location — enrichment may still be
             // finding them — never that there is no media.

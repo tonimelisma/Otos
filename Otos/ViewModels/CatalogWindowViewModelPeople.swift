@@ -6,7 +6,7 @@ import OSLog
 //
 // `PeopleAssignment` publishes People on `CatalogWindowState.people` in every scope; this
 // file owns what is specific to working with it: the people the user selected in the
-// gallery, the sheet and the merge question, a person's photos (the People filter), the
+// gallery, the sheet and the merge question, a person's photos (the `.person` leaf), the
 // faces of the targeted photos with the people each could be, and every act. An act is one
 // `PeopleAct`, delivered in order on `peopleIntentStream` to `CatalogStore.perform(_:)`,
 // the one write path; its undo writes back the record the store returned, and its redo
@@ -59,8 +59,6 @@ struct PeopleSession: Equatable {
     var cursor: PersonID?
     var sheet: PersonSheetRequest?
     var mergeQuestion: PeopleMergeQuestion?
-    /// The browser was opened on a person from the gallery: `Back to People` returns.
-    var returnsToPeople = false
 }
 
 /// A People act on its way to the store, or the undo of one; a redo is the act again.
@@ -159,16 +157,6 @@ nonisolated enum PeopleText {
     static func count(_ value: Int, _ noun: String) -> String {
         "\(value.formatted()) \(value == 1 ? noun : noun + "s")"
     }
-
-    /// The people a filter shows, as a window title names them: `Sam`, `Sam and Ian`,
-    /// `Sam, Ian and 2 Others`.
-    static func names(_ names: [String]) -> String {
-        switch names.count {
-        case 0: ""
-        case 1, 2: names.formatted(.list(type: .and))
-        default: "\(names[0]), \(names[1]) and \(names.count - 2) Others"
-        }
-    }
 }
 
 extension CatalogWindowViewModel {
@@ -185,27 +173,22 @@ extension CatalogWindowViewModel {
         showsPlacesRow
     }
 
-    /// The one person the filter shows, if it shows exactly one visible person.
+    /// The person whose photos the browser shows (the leaf under People), while visible.
     var shownPerson: PersonSummary? {
-        queryDescriptor.filter.singlePerson.flatMap { person in
+        queryDescriptor.scope.person.flatMap { person in
             peopleIndex.summaries[person].flatMap { $0.isHidden ? nil : $0 }
         }
     }
 
-    /// `Back to People`, while the browser shows the people it was opened on from the gallery.
+    /// `Back to People`, while the browser shows one person's photos. Read from the intent,
+    /// like Back to Map, so it exists only in that leaf.
     var showsBackToPeople: Bool {
-        peopleSession.returnsToPeople && queryDescriptor.filter.filtersPeople && !showsPeopleList
+        queryDescriptor.scope.person != nil
     }
 
-    /// The window's title: the people the filter shows, else the published title.
+    /// The window's title: the person a person's photos show, else the published title.
     var windowTitle: String {
-        let filter = queryDescriptor.filter
-        guard filter.filtersPeople, !showsPeopleList else { return state.title }
-        var names = (state.people?.visiblePeople ?? []).filter { filter.people.contains($0.id) }.map(\.displayName)
-        if filter.unassignedFaces {
-            names.append("Unidentified Faces")
-        }
-        return names.isEmpty ? state.title : PeopleText.names(names)
+        shownPerson?.displayName ?? state.title
     }
 
     /// The published empty state.
@@ -227,8 +210,13 @@ extension CatalogWindowViewModel {
         if let person = peopleSession.sheet?.person, peopleIndex.summaries[person] == nil {
             peopleSession.sheet = nil
         }
-        // The filter offers only visible people: a hidden or merged one leaves it.
+        // A person hidden or merged away takes their photos with them: the window returns to
+        // the gallery, where a hidden person is still seen.
         let visible = Set(people.visiblePeople.map(\.id))
+        if let person = queryDescriptor.scope.person, !visible.contains(person) {
+            returnToPeople()
+        }
+        // The filter offers only visible people: a hidden or merged one leaves it.
         let filter = queryDescriptor.filter
         if !filter.people.isSubset(of: visible) {
             var kept = filter
@@ -246,30 +234,28 @@ extension CatalogWindowViewModel {
 
     // MARK: - Navigation
 
-    /// A person's photos: every library, with the People filter set to them. A hidden person
-    /// is seen only in the gallery, so their photos do not open until they are unhidden.
+    /// A person's photos: the leaf under People, every fixed library's photos of them, with
+    /// the filter kept, as an area under the map keeps it. A hidden person is seen only in the
+    /// gallery, so their photos do not open until they are unhidden.
     func openPerson(_ person: PersonID) {
         guard let summary = peopleIndex.summaries[person], !summary.isHidden else { return }
         OtosLog.ui.noticeOperation("people.person", phase: "open", fields: ["person": "\(person.rawValue)"])
-        var filter = queryDescriptor.filter.withoutPeople
-        filter.people = [person]
         setViewMode(.grid)
         setQueryDescriptor(CatalogQueryDescriptor(
-            scope: .allMedia,
-            filter: filter,
+            scope: .person(person),
+            filter: queryDescriptor.filter,
             sort: queryDescriptor.sort,
             search: queryDescriptor.search
         ))
-        peopleSession.returnsToPeople = true
     }
 
-    /// Back to People: the gallery, with the People filter the person was opened with cleared.
+    /// Back to People: the gallery, with the filter kept.
     func returnToPeople() {
-        peopleSession.returnsToPeople = false
+        guard showsBackToPeople else { return }
         setViewMode(.grid)
         setQueryDescriptor(CatalogQueryDescriptor(
             scope: .people,
-            filter: queryDescriptor.filter.withoutPeople,
+            filter: queryDescriptor.filter,
             sort: queryDescriptor.sort,
             search: queryDescriptor.search
         ))
@@ -375,6 +361,16 @@ extension CatalogWindowViewModel {
         guard merge, peopleIndex.mergeRefusal(question.from, into: question.into) == nil else { return }
         peopleSession.selectedPeople = [question.into]
         peopleSession.cursor = question.into
+        // The person merged away was being shown or filtered: the one they became takes their
+        // place, rather than the window leaving them.
+        if queryDescriptor.scope.person == question.from {
+            setQueryDescriptor(CatalogQueryDescriptor(
+                scope: .person(question.into),
+                filter: queryDescriptor.filter,
+                sort: queryDescriptor.sort,
+                search: queryDescriptor.search
+            ))
+        }
         if queryDescriptor.filter.people.contains(question.from) {
             var filter = queryDescriptor.filter
             filter.people.remove(question.from)
@@ -584,13 +580,16 @@ extension CatalogWindowViewModel {
 
     // MARK: - The People filter
 
-    /// The filter popover's People rows: the visible people, favourites first.
+    /// The filter popover's People rows: the visible people with a name, favourites first. An
+    /// unnamed person is one more `Unnamed Person` row no one can tell from the others, so it is
+    /// offered only while checked (named when checked, its name since removed), which keeps
+    /// every checked row seen.
     var peopleFilterControls: PeopleFilterControls {
-        PeopleFilterControls(
-            people: state.people?.visiblePeople ?? [],
+        let checked = queryDescriptor.filter.people
+        return PeopleFilterControls(
+            people: (state.people?.visiblePeople ?? []).filter { $0.name != nil || checked.contains($0.id) },
             setPerson: { [weak self] person, included in self?.setPeopleFilter(person, included: included) },
-            setUnidentified: { [weak self] included in self?.setUnidentifiedFilter(included) },
-            setMatch: { [weak self] match in self?.setPeopleMatch(match) }
+            setUnidentified: { [weak self] included in self?.setUnidentifiedFilter(included) }
         )
     }
 
@@ -601,12 +600,6 @@ extension CatalogWindowViewModel {
     func setUnidentifiedFilter(_ included: Bool) {
         var filter = queryDescriptor.filter
         filter.unassignedFaces = included
-        setMediaFilter(filter)
-    }
-
-    func setPeopleMatch(_ match: PeopleMatch) {
-        var filter = queryDescriptor.filter
-        filter.peopleMatch = match
         setMediaFilter(filter)
     }
 

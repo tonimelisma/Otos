@@ -1113,9 +1113,9 @@ nonisolated struct CatalogMediaGridState: Equatable {
 /// answers a different question.
 ///
 /// `.places` is every located item across the fixed libraries, presented as a map
-/// (ADR 0040). `.mapArea` is the leaf under it — the items in one box of the map, the
-/// area the map showed or one stack's coordinate — presented in the ordinary view modes;
-/// the sidebar keeps the Places row highlighted for it.
+/// (ADR 0040). `.mapArea` and `.mapStack` are the leaves under it — the items in the area
+/// the map showed, or the items one stack counted — presented in the ordinary view modes;
+/// the sidebar keeps the Places row highlighted for them.
 ///
 /// `.duplicates` is every copy in a duplicate group across the fixed libraries,
 /// presented as the duplicates list (ADR 0042); `.duplicateGroup` is the leaf under it —
@@ -1126,29 +1126,40 @@ nonisolated struct CatalogMediaGridState: Equatable {
 /// an earlier month — presented as its anniversaries and played as a story (ADR 0049). The day is
 /// today, which the ViewModel owns; when today changes, the ViewModel selects the new day.
 ///
-/// `.people` is the People gallery (ADR 0047, `docs/design/people.md`). A person's photos
-/// are not a scope of their own: they are the People filter (`MediaFilter.people`) over the
-/// libraries.
+/// `.people` is the People gallery (ADR 0047, `docs/design/people.md`); `.person` is the
+/// leaf under it — one person's photos across the fixed libraries, in the ordinary view
+/// modes, with the People row highlighted.
 nonisolated enum SidebarSelection: Hashable {
     case allMedia
     case places
     case mapArea(MapArea)
+    case mapStack(MapStack)
     case onThisDay(CalendarDay)
     case duplicates
     case duplicateGroup(DuplicateGroupID)
     case people
+    case person(PersonID)
     case library(LibraryRootPath)
     case importBatch(ImportBatchID)
     case allImports
 
-    /// The row the sidebar highlights for this scope: `.mapArea` has no row of its own and
-    /// highlights Places, the row it was reached from.
+    /// The row the sidebar highlights for this scope: a leaf has no row of its own and
+    /// highlights the row it was reached from.
     var sidebarRow: SidebarSelection {
         switch self {
-        case .mapArea: .places
+        case .mapArea, .mapStack: .places
         case .duplicateGroup: .duplicates
+        case .person: .people
         default: self
         }
+    }
+
+    /// The person whose photos the scope is: the leaf under People.
+    var person: PersonID? {
+        if case let .person(person) = self {
+            return person
+        }
+        return nil
     }
 
     /// The order a scope fixes for itself, whatever the sort control says: On This Day plays
@@ -1169,6 +1180,8 @@ nonisolated enum SidebarSelection: Hashable {
             "places"
         case let .mapArea(area):
             "mapArea:\(area.diagnosticDescription)"
+        case let .mapStack(stack):
+            "mapStack:\(stack.diagnosticDescription)"
         case let .onThisDay(day):
             "onThisDay:\(day.diagnosticDescription)"
         case .duplicates:
@@ -1177,6 +1190,8 @@ nonisolated enum SidebarSelection: Hashable {
             "duplicateGroup:\(group.kindName)"
         case .people:
             "people"
+        case let .person(person):
+            "person:\(person.rawValue)"
         case let .library(path):
             "library:\(path.rawValue)"
         case let .importBatch(batchID):

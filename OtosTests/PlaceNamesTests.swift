@@ -54,8 +54,8 @@ struct PlaceNamesTests {
         await library.store.shutdown()
     }
 
-    /// The filter offers the countries and towns named, and narrows by them: a country takes
-    /// all its towns, a town only its own photos.
+    /// The filter offers the countries and towns named, most items first, and narrows by them:
+    /// a country takes all its towns, a town only its own photos.
     @Test func theFilterNarrowsByCountryAndTown() async throws {
         let library = try await Self.library(in: makeTestDirectory())
         try await library.store.applyPlaceNames([
@@ -65,8 +65,8 @@ struct PlaceNamesTests {
         ], locale: "en_US")
         let options = try await library.store.filterOptions(availableLibraryPaths: [library.rootPath])
         #expect(options.countries == [
+            PlaceFilterCountry(name: "Finland", towns: ["Helsinki", "Espoo"]),
             PlaceFilterCountry(name: "Australia", towns: ["Sydney NSW"]),
-            PlaceFilterCountry(name: "Finland", towns: ["Espoo", "Helsinki"]),
         ])
         func photos(_ places: Set<PlaceFilterKey>) async throws -> [String] {
             try await library.store.orderedAssetIDs(
@@ -74,7 +74,7 @@ struct PlaceNamesTests {
                 availableLibraryPaths: [library.rootPath]
             ).ids.map(\.relativePath.rawValue)
         }
-        #expect(try await photos([PlaceFilterKey(country: "Finland", town: nil)]) == ["espoo.jpg", "helsinki.jpg"])
+        #expect(try await photos([PlaceFilterKey(country: "Finland", town: nil)]) == ["espoo.jpg", "harbour.jpg", "helsinki.jpg"])
         #expect(try await photos([PlaceFilterKey(country: "Finland", town: "Espoo")]) == ["espoo.jpg"])
         #expect(try await photos([
             PlaceFilterKey(country: "Finland", town: "Espoo"), PlaceFilterKey(country: "Australia", town: nil),
@@ -97,10 +97,11 @@ struct PlaceNamesTests {
 
     // MARK: - Fixtures
 
-    /// helsinki.jpg, espoo.jpg and sydney.mp4-like stills, each located; nowhere.jpg not.
+    /// helsinki.jpg and harbour.jpg in one Helsinki cell, espoo.jpg and sydney.jpg, each
+    /// located; nowhere.jpg not.
     static func library(in directory: URL) async throws -> FaceEnrichmentTests.ScannedLibrary {
         let files: [(String, PlaceCoordinate?)] = [
-            ("helsinki.jpg", helsinki), ("espoo.jpg", espoo), ("sydney.jpg", sydney), ("nowhere.jpg", nil),
+            ("helsinki.jpg", helsinki), ("harbour.jpg", helsinki), ("espoo.jpg", espoo), ("sydney.jpg", sydney), ("nowhere.jpg", nil),
         ]
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: files.map(\.0))
         for (name, coordinate) in files {

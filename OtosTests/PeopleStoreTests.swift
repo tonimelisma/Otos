@@ -264,8 +264,9 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
-    /// The People filter: photos with any of the people or all of them, `Unidentified` a face
-    /// with no person; the likeness order puts the face least like the person first.
+    /// A person's photos and the People filter: several people are photos of them together,
+    /// `Unidentified` a face with no person; in a person's photos the likeness order puts the
+    /// face least like them first.
     @Test func thePeopleFilterAndTheLikenessOrder() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg", "c.jpg", "d.jpg"])
         try await library.store.applyEnrichmentBatch([
@@ -283,19 +284,22 @@ struct PeopleStoreTests {
             guesses: [.init(face: b0, person: .existing(sam))],
             likeness: [a0: 0.9, b0: 0.5]
         ))
-        func photos(_ filter: MediaFilter, sort: MediaSortOrder = .filenameAscending) async throws -> [String] {
+        func photos(
+            _ filter: MediaFilter = .all, in scope: SidebarSelection? = nil, sort: MediaSortOrder = .filenameAscending
+        ) async throws -> [String] {
             try await library.store.orderedAssetIDs(
-                for: CatalogQueryDescriptor(scope: .library(library.rootPath), filter: filter, sort: sort),
+                for: CatalogQueryDescriptor(scope: scope ?? .library(library.rootPath), filter: filter, sort: sort),
                 availableLibraryPaths: [library.rootPath]
             ).ids.map(\.relativePath.rawValue)
         }
+        #expect(try await photos(in: .person(sam)) == ["a.jpg", "b.jpg"])
+        #expect(try await photos(in: .person(sam), sort: .likenessLeast) == ["b.jpg", "a.jpg"])
+        #expect(try await photos(in: .person(sam), sort: .likenessMost) == ["a.jpg", "b.jpg"])
+        #expect(try await photos(MediaFilter(people: [ian]), in: .person(sam)) == ["a.jpg"])
         var filter = MediaFilter(people: [sam])
         #expect(try await photos(filter) == ["a.jpg", "b.jpg"])
-        #expect(try await photos(filter, sort: .likenessLeast) == ["b.jpg", "a.jpg"])
-        #expect(try await photos(filter, sort: .likenessMost) == ["a.jpg", "b.jpg"])
+        // Several people are photos of them together.
         filter.people.insert(ian)
-        #expect(try await photos(filter) == ["a.jpg", "b.jpg"])
-        filter.peopleMatch = .all
         #expect(try await photos(filter) == ["a.jpg"])
         #expect(try await photos(MediaFilter(unassignedFaces: true)) == ["c.jpg"])
         await library.store.shutdown()

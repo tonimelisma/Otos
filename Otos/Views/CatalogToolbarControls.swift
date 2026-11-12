@@ -7,14 +7,28 @@ import SwiftUI
 // command calls a ViewModel intent so toolbar and menu-bar actions share the same
 // implementation path.
 
-/// The People filter's rows and intents (ADR 0047): the visible people, favourites first,
-/// and `Unidentified Faces`; with two or more rows checked, whether a photo needs any of
-/// them or all of them.
+/// The People filter's rows and intents (ADR 0047): the visible people with a name,
+/// favourites first, and `Unidentified Faces`; a photo needs every row checked.
 struct PeopleFilterControls {
     let people: [PersonSummary]
     let setPerson: (PersonID, Bool) -> Void
     let setUnidentified: (Bool) -> Void
-    let setMatch: (PeopleMatch) -> Void
+}
+
+/// The head of a long filter list (`docs/design/people.md`, `docs/design/places.md`): the
+/// first five rows in the list's own order, plus any checked row past them, so the filter
+/// never holds a row the user cannot see; the whole list once expanded.
+nonisolated enum FilterListHead {
+    static let length = 5
+    /// The whole list gains a search field past this many rows.
+    static let searchAfter = 8
+
+    /// The rows shown, and whether the list is longer than its head (so it offers Show All /
+    /// Show Less).
+    static func rows<Row>(_ rows: [Row], isChecked: (Row) -> Bool, isExpanded: Bool) -> (shown: [Row], isLong: Bool) {
+        let shown = isExpanded ? rows : rows.enumerated().filter { $0.offset < length || isChecked($0.element) }.map(\.element)
+        return (shown, rows.count > length)
+    }
 }
 
 /// The Places filter's intent (ADR 0040): a country or one town in it, checked or not.
@@ -69,12 +83,14 @@ struct CatalogFilterPopoverContent: View {
     let places: PlaceFilterControls
     let clearFilters: () -> Void
 
-    /// A search field over the people once there are more than fit at a glance.
+    /// People and countries show their head until Show All; the whole list gains a search
+    /// field once it is longer than fits at a glance.
+    @State private var showsAllPeople = false
     @State private var peopleQuery = ""
-    private static let peopleBeforeSearch = 8
-    /// A search field over the places once there are more countries than fit at a glance.
+    @State private var showsAllCountries = false
     @State private var placesQuery = ""
-    private static let countriesBeforeSearch = 8
+    /// The countries whose every town shows.
+    @State private var countriesShowingAllTowns: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -126,17 +142,17 @@ struct CatalogFilterPopoverContent: View {
     private var peopleSection: some View {
         let filter = descriptor.filter
         let query = peopleQuery.trimmingCharacters(in: .whitespaces)
-        // A checked person always shows, so the filter never holds a row the user cannot see.
-        let shown = people.people.filter { person in
-            query.isEmpty || filter.people.contains(person.id)
-                || person.displayName.localizedStandardContains(query)
+        let head = FilterListHead.rows(
+            people.people, isChecked: { filter.people.contains($0.id) }, isExpanded: showsAllPeople
+        )
+        let shown = head.shown.filter { person in
+            query.isEmpty || filter.people.contains(person.id) || person.displayName.localizedStandardContains(query)
         }
-        let checked = filter.people.count + (filter.unassignedFaces ? 1 : 0)
         return VStack(alignment: .leading, spacing: 6) {
             Text("People")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
-            if people.people.count > Self.peopleBeforeSearch {
+            if showsAllPeople, people.people.count > FilterListHead.searchAfter {
                 TextField("Search People", text: $peopleQuery)
                     .textFieldStyle(.roundedBorder)
             }
@@ -158,22 +174,26 @@ struct CatalogFilterPopoverContent: View {
             }
             .frame(maxHeight: 200)
             .fixedSize(horizontal: false, vertical: true)
-            // Disabled, never hidden, until two rows are checked (DES-053).
-            Picker("Show Photos With", selection: Binding(
-                get: { filter.peopleMatch },
-                set: { people.setMatch($0) }
-            )) {
-                Text("Any of Them").tag(PeopleMatch.any)
-                Text("All of Them").tag(PeopleMatch.all)
+            if head.isLong {
+                showAllButton(
+                    showsAll: showsAllPeople, total: people.people.count, noun: "People",
+                    toggle: { showsAllPeople.toggle()
+                        peopleQuery = ""
+                    }
+                )
             }
-            .pickerStyle(.menu)
-            .disabled(checked < 2)
         }
     }
 
-    /// Every country Maps named for the located items, each opening onto its towns; a country
-    /// with some towns checked is mixed. A checked place always shows, so the filter never
-    /// holds a row the user cannot see.
+    /// `Show All 23 People` under a list cut to its head, or `Show Less` under the whole.
+    private func showAllButton(showsAll: Bool, total: Int, noun: String, toggle: @escaping () -> Void) -> some View {
+        Button(showsAll ? "Show Less" : "Show All \(total.formatted()) \(noun)", action: toggle)
+            .buttonStyle(.link)
+    }
+
+    /// Every country Maps named for the located items, most items first, each opening onto its
+    /// towns; a country with some towns checked is mixed. Countries, and each country's towns,
+    /// show their head until Show All; a checked place always shows.
     private var placesSection: some View {
         let filter = descriptor.filter
         let query = placesQuery.trimmingCharacters(in: .whitespaces)
@@ -181,7 +201,11 @@ struct CatalogFilterPopoverContent: View {
         for held in filter.places where !countries.contains(where: { $0.name == held.country }) {
             countries.append(PlaceFilterCountry(name: held.country, towns: held.town.map { [$0] } ?? []))
         }
-        let shown = countries.compactMap { country -> PlaceFilterCountry? in
+        let head = FilterListHead.rows(
+            countries, isChecked: { country in filter.places.contains { $0.country == country.name } },
+            isExpanded: showsAllCountries
+        )
+        let shown = head.shown.compactMap { country -> PlaceFilterCountry? in
             if query.isEmpty || filter.places.contains(where: { $0.country == country.name })
                 || country.name.localizedStandardContains(query)
             {
@@ -194,7 +218,7 @@ struct CatalogFilterPopoverContent: View {
             Text("Places")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
-            if countries.count > Self.countriesBeforeSearch {
+            if showsAllCountries, countries.count > FilterListHead.searchAfter {
                 TextField("Search Places", text: $placesQuery)
                     .textFieldStyle(.roundedBorder)
             }
@@ -206,10 +230,7 @@ struct CatalogFilterPopoverContent: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(shown) { country in
                         DisclosureGroup {
-                            ForEach(country.towns, id: \.self) { town in
-                                Toggle(town, isOn: townBinding(town, in: country))
-                                    .padding(.leading, 4)
-                            }
+                            townRows(country, searching: !query.isEmpty)
                         } label: {
                             Toggle(country.name, sources: countrySources(country), isOn: \.isOn)
                         }
@@ -220,7 +241,43 @@ struct CatalogFilterPopoverContent: View {
             }
             .frame(maxHeight: 220)
             .fixedSize(horizontal: false, vertical: true)
+            if head.isLong {
+                showAllButton(
+                    showsAll: showsAllCountries, total: countries.count, noun: "Countries",
+                    toggle: { showsAllCountries.toggle()
+                        placesQuery = ""
+                    }
+                )
+            }
         }
+    }
+
+    /// One country's towns, their head until its own Show All; every match while searching.
+    private func townRows(_ country: PlaceFilterCountry, searching: Bool) -> some View {
+        let showsAll = searching || countriesShowingAllTowns.contains(country.name)
+        let head = FilterListHead.rows(
+            country.towns, isChecked: { isPlaceIncludedExplicitly($0, in: country.name) }, isExpanded: showsAll
+        )
+        // Leading-aligned: a disclosure group centers rows of unequal width.
+        return VStack(alignment: .leading, spacing: 6) {
+            ForEach(head.shown, id: \.self) { town in
+                Toggle(town, isOn: townBinding(town, in: country))
+            }
+            if head.isLong, !searching {
+                showAllButton(
+                    showsAll: showsAll, total: country.towns.count, noun: "Towns",
+                    toggle: {
+                        if showsAll {
+                            countriesShowingAllTowns.remove(country.name)
+                        } else {
+                            countriesShowingAllTowns.insert(country.name)
+                        }
+                    }
+                )
+            }
+        }
+        .padding(.leading, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func countrySources(_ country: PlaceFilterCountry) -> [MenuToggleSource] {
@@ -244,6 +301,11 @@ struct CatalogFilterPopoverContent: View {
             get: { isPlaceIncluded(town, in: country.name) },
             set: { places.setPlace(PlaceFilterKey(country: country.name, town: town), $0) }
         )
+    }
+
+    /// A town checked on its own, not through its whole country: the row a head must keep.
+    private func isPlaceIncludedExplicitly(_ town: String, in country: String) -> Bool {
+        descriptor.filter.places.contains(PlaceFilterKey(country: country, town: town))
     }
 
     private func isPlaceIncluded(_ town: String, in country: String) -> Bool {

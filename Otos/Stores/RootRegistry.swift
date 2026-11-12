@@ -81,6 +81,15 @@ nonisolated struct RootRegistry {
         Dictionary(uniqueKeysWithValues: statesByPath.map { ($0.key, $0.value.rowID) })
     }
 
+    /// Items by root row id and path; an item whose root is gone is no member.
+    private func memberKeys(_ members: [MediaAssetID]) -> [CatalogScopePredicate.MemberKey] {
+        members.compactMap { id in
+            statesByPath[id.libraryRootPath].map {
+                CatalogScopePredicate.MemberKey(rootID: $0.rowID, relativePath: id.relativePath.rawValue)
+            }
+        }
+    }
+
     /// Resolves a sidebar selection into the one predicate every scoped catalog read
     /// consumes. This is the sole translation from product scope to SQL scope, so
     /// ordered IDs and counts cannot disagree about what a selection means.
@@ -105,6 +114,11 @@ nonisolated struct RootRegistry {
                 rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
                 location: .within(area)
             )
+        case let .mapStack(stack):
+            return CatalogScopePredicate(
+                rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
+                content: .members(memberKeys(stack.members))
+            )
         case let .onThisDay(day):
             // The fixed libraries like All Media; membership is the extra day-bucket
             // dimension (ADR 0049).
@@ -125,16 +139,17 @@ nonisolated struct RootRegistry {
         case let .duplicateGroup(.samePhoto(members)):
             return CatalogScopePredicate(
                 rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
-                content: .members(members.compactMap { id in
-                    statesByPath[id.libraryRootPath].map {
-                        CatalogScopePredicate.MemberKey(rootID: $0.rowID, relativePath: id.relativePath.rawValue)
-                    }
-                })
+                content: .members(memberKeys(members))
             )
         case .people:
             return CatalogScopePredicate(
                 rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
                 content: .withPerson
+            )
+        case let .person(person):
+            return CatalogScopePredicate(
+                rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
+                content: .person(person.rawValue)
             )
         case let .library(path):
             guard availableLibraryPaths.contains(path),

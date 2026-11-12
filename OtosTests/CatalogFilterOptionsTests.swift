@@ -88,4 +88,15 @@ struct CatalogFilterOptionsTests {
             .video: [MediaFormatToken(rawValue: "MOV")],
         ])
     }
+
+    /// People and Places show their head: the first five rows, any checked row past them,
+    /// and the whole list once expanded; Show All is offered only past five rows.
+    @Test func aLongListShowsItsHeadAndEveryCheckedRow() {
+        let rows = Array(1 ... 8)
+        let collapsed = FilterListHead.rows(rows, isChecked: { $0 == 7 }, isExpanded: false)
+        #expect(collapsed.shown == [1, 2, 3, 4, 5, 7])
+        #expect(collapsed.isLong)
+        #expect(FilterListHead.rows(rows, isChecked: { _ in false }, isExpanded: true).shown == rows)
+        #expect(!FilterListHead.rows(Array(1 ... 5), isChecked: { _ in false }, isExpanded: false).isLong)
+    }
 }

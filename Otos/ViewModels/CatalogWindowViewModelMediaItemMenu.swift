@@ -43,8 +43,8 @@ extension CatalogWindowViewModel {
     }
 
     /// The targets' faces as the context menu groups them: each visible person's in the
-    /// order their faces come, then the unidentified ones. With the filter on one person,
-    /// their group comes first and sits at the top level.
+    /// order their faces come, then the unidentified ones. In a person's photos, their
+    /// group comes first and sits at the top level.
     func faceMenu() -> FaceMenu? {
         let selection = targetFaces
         guard !selection.faces.isEmpty else { return nil }

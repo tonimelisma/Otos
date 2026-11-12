@@ -24,8 +24,8 @@ field, menu item and empty state, and Lightroom's two orders. It adds nothing of
 - Typing searches as the text changes; Return is not needed, and an emptied field, or the
   field's clear button, ends the search. The newest text wins: a result for text since
   replaced is never shown.
-- The search stays when the sidebar scope changes: it narrows the new scope, as the filter
-  does. It is not restored on relaunch.
+- The search stays when the sidebar scope changes: it narrows the new scope. It is not
+  restored on relaunch.
 - Bare-key commands (DES-093) never fire while the field is being edited.
 
 ## Results

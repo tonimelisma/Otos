@@ -5,7 +5,7 @@ replacing the review of 2026-11-10); built (APP-072). Its rules are DES-109 to D
 DES-113.
 
 The surfaces for the people in the user's photos (ADR 0047): the **People gallery**, a
-**person's photos** (the People filter over the libraries), the **photo menus**' face acts
+**person's photos** (a leaf under People, over every library), the **photo menus**' face acts
 and the **Info pane**'s People section. Cites `docs/design/design-system.md` by ID; rules
 are not restated.
 
@@ -35,7 +35,8 @@ filters, from its English UI strings and web source (`i18n/en.json`;
 
 **What Otos takes:** Immich's one kind of person, its merge on a taken name, a person's
 settings, reassigning photos and its per-face editor; Lightroom desktop's drag to merge.
-**Where Otos deviates:** a person's photos are a filter, not a page of their own; a face
+**Where Otos deviates:** a person's photos are a leaf under People in the ordinary
+browser, not a page of their own; a face
 with its name removed is never given a person again by Otos; Otos ranks the people a face
 or a selection of faces could be; no face is drawn by hand (Immich's `Tag People`); nothing
 is written into media folders (ADR 0008).
@@ -110,28 +111,46 @@ different days.`, `Otos found no faces in your photos.`, or the shared `No Avail
 
 ## A person's photos
 
-- **What it is:** the ordinary browser over every fixed library (All Media, or the one
-  library) with the People filter set to the person. Every view mode, sort and filter works.
-- **Title:** the person's name; with several people filtered `Sam and Ian`, `Sam,
-  Ian and 2 Others`; with `Unidentified Faces`, that is named too.
-- **Toolbar:** `Back to People` (`chevron.left`) at the leading edge while the browser shows
-  the people it was opened on from the gallery; it clears the People filter it set. Beside
-  it, while exactly one visible person is filtered, a menu titled with their name and
+- **What it is:** a leaf under the People row, as an area is under Places: the ordinary
+  browser over every fixed library's photos of the person, with the People row still
+  highlighted. Every view mode, sort and filter works; the filter set in the gallery is
+  kept, and checking people in it narrows to photos with them too. Choosing any other
+  sidebar row leaves it.
+- **Title:** the person's name.
+- **Toolbar:** `Back to People` (`chevron.left`) at the leading edge; it keeps the filter.
+  It exists only in this leaf, so it never stands beside Back to Map. Beside it, a menu
+  titled with the person's name and
   `person.crop.circle`: `Add Name…`/`Rename…`, `Set Birthday…`, `Add to Favorites`/`Remove
   from Favorites`, `Merge Into ▸`, `Hide`.
 - **Likeness sort:** `Likeness — Least Like Sam First` and `Likeness — Most Like Sam
   First` in the Sort menu, beside Date, Filename and Size: how like the person each photo's
   face of theirs is, so the faces most likely wrong come first. Disabled, never hidden,
-  unless one person is filtered (DES-053); the reads then use the default order.
+  outside a person's photos (DES-053); the reads then use the default order.
+- **Hidden or merged away while shown:** hiding the person returns to the gallery, where a
+  hidden person is still seen; merging them into another shows the one they became.
 
 ## The People filter
 
 A section of the filter popover, under the file types:
-- **Rows:** a checkbox per visible person, favourites first; `Unidentified Faces`; a
-  `Search People` field once there are more than eight people. A checked person always
-  shows, so the filter never holds a row the user cannot see.
-- **`Show Photos With`:** `Any of Them` or `All of Them`, disabled until two rows are checked.
+- **Rows:** a checkbox per visible person with a name, in the gallery's order; then
+  `Unidentified Faces`. An unnamed person is not offered: every one reads `Unnamed Person`, so no
+  row could be told from another (owner, 2026-11-12). The first five people show;
+  `Show All 23 People` lists the rest in place and `Show Less` folds it back, and the whole
+  list gains `Search People` once there are more than eight. A checked person always shows,
+  so the filter never holds a row the user cannot see.
+- **Several rows checked** narrow to photos with all of them together: Sam and Ian is
+  the photos of the two of them, and with `Unidentified Faces` a face of no one besides
+  (owner, 2026-11-12). There is no "any of them".
 - **Hidden or merged people** leave the filter when People next publishes.
+
+## The filter's reach
+
+A filter belongs to the sidebar row it was set in (owner decision, 2026-11-12). Choosing
+another row starts that row unfiltered; the leaves under a row (a person under People, an
+area or a stack under Places, a group under Duplicates) and Back from them keep it, so a
+stack's count is what it opens on. This is Lightroom Classic's Library filter with its
+lock off; Otos has no lock and remembers no filter per row, since either is a filter
+in force that the user did not just set.
 
 ## Face acts
 
@@ -160,7 +179,7 @@ The grid, filmstrip, loupe and compare context menu, after `Reveal in Finder`:
   submenu (HIG).
 - **`Unidentified Face ▸` / `Unidentified Faces ▸`:** the same, without `This Is Not <name>`. This
   Is gives the person, in each targeted photo, the unidentified face most like them.
-- **With the filter on one person,** their entry's acts sit at the menu's top level:
+- **In a person's photos,** their entry's acts sit at the menu's top level:
   `This Is ▸`, `This Is Not Sam`, `This Is Not a Face`, `Make Key Photo` (`Add Name…` first,
   and `Wrong Person`, for a person without a name).
 

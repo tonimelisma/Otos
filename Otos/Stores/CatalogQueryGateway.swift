@@ -88,7 +88,7 @@ nonisolated enum CatalogQueryGateway {
         }
         let order = orderPlan(
             for: descriptor.effectiveSort,
-            person: descriptor.filter.singlePerson,
+            person: descriptor.scope.person,
             rootLocal: scope.rootIDs.count == 1
         )
         var arguments = scopeClause.arguments
@@ -134,8 +134,8 @@ nonisolated enum CatalogQueryGateway {
         )
     }
 
-    /// The countries and towns Maps named for the located items in scope, in the locale's
-    /// order (ADR 0040). A cell named nothing offers nothing.
+    /// The countries and towns Maps named for the located items in scope, most items first,
+    /// then the name in the locale's order (ADR 0051). A cell named nothing offers nothing.
     static func placeOptions(scope: CatalogScopePredicate, db: Database) throws -> [PlaceFilterCountry] {
         guard let scopeClause = try scopeClause(scope, db: db) else {
             return []
@@ -143,25 +143,27 @@ nonisolated enum CatalogQueryGateway {
         let rows = try Row.fetchAll(
             db,
             sql: """
-            SELECT DISTINCT place_cell.country, place_cell.town
+            SELECT place_cell.country, place_cell.town, COUNT(*) AS items
             FROM media_asset\(scopeClause.join)
             \(placeJoin)
             WHERE \(scopeClause.sql) AND place_cell.country IS NOT NULL
+            GROUP BY place_cell.country, place_cell.town
             """,
             arguments: StatementArguments(scopeClause.arguments)
         )
-        var towns: [String: Set<String>] = [:]
+        var countryItems: [String: Int] = [:]
+        var townItems: [String: [String: Int]] = [:]
         for row in rows {
             let country: String = row["country"]
-            var set = towns[country, default: []]
+            let items: Int = row["items"]
+            countryItems[country, default: 0] += items
             if let town = row["town"] as String? {
-                set.insert(town)
+                townItems[country, default: [:]][town, default: 0] += items
             }
-            towns[country] = set
         }
-        return towns.map { country, towns in
-            PlaceFilterCountry(name: country, towns: towns.sorted { $0.localizedStandardCompare($1) == .orderedAscending })
-        }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        return PlaceFilterCountry.mostItemsFirst(countryItems).map { country in
+            PlaceFilterCountry(name: country, towns: PlaceFilterCountry.mostItemsFirst(townItems[country] ?? [:]))
+        }
     }
 
     static func distinctFilterableTypesQuery(scope: CatalogScopePredicate, db: Database) throws -> SQLQuery? {
@@ -553,12 +555,12 @@ private nonisolated func scopeClause(
     }
     switch scope.date {
     case .any:
-        return scopeClause(scope, anniversary: nil)
+        return try scopeClause(scope, anniversary: nil)
     case let .anniversary(day):
         guard let match = try anniversaryMatch(for: day, scope: scope, db: db) else {
             return nil
         }
-        return scopeClause(scope, anniversary: match)
+        return try scopeClause(scope, anniversary: match)
     }
 }
 
@@ -574,7 +576,7 @@ private nonisolated func anniversaryMatch(
     scope: CatalogScopePredicate,
     db: Database
 ) throws -> AnniversaryMatch? {
-    if let years = AnniversaryMatch.years(for: day), let clause = scopeClause(scope, anniversary: years) {
+    if let years = AnniversaryMatch.years(for: day), let clause = try scopeClause(scope, anniversary: years) {
         let holdsAYear = try Bool.fetchOne(
             db,
             sql: "SELECT EXISTS (SELECT 1 FROM media_asset\(clause.join) WHERE \(clause.sql))",
@@ -604,7 +606,7 @@ private nonisolated func logAnniversaryMatch(day: CalendarDay, unit: Anniversary
 private nonisolated func scopeClause(
     _ scope: CatalogScopePredicate,
     anniversary: AnniversaryMatch?
-) -> ScopeClause? {
+) throws -> ScopeClause? {
     var arguments: [any DatabaseValueConvertible] = []
     let rootPredicate: String
     if scope.rootIDs.count == 1, let rootID = scope.rootIDs.first {
@@ -667,12 +669,16 @@ private nonisolated func scopeClause(
         guard !keys.isEmpty else {
             return nil
         }
-        let tuples = Array(repeating: "(?, ?)", count: keys.count).joined(separator: ", ")
-        predicate += "\n  AND (media_asset.library_root_id, media_asset.relative_path) IN (VALUES \(tuples))"
-        for key in keys {
-            arguments.append(key.rootID)
-            arguments.append(key.relativePath)
-        }
+        // One JSON argument, not two per member: a stack opened zoomed out holds tens of
+        // thousands of items, past SQLite's bound-parameter limit.
+        predicate += """
+
+          AND (media_asset.library_root_id, media_asset.relative_path) IN (
+              SELECT json_extract(member.value, '$[0]'), json_extract(member.value, '$[1]')
+              FROM json_each(?) AS member
+          )
+        """
+        try arguments.append(CatalogScopePredicate.MemberKey.json(keys))
     case .withPerson:
         predicate += """
 
@@ -684,6 +690,18 @@ private nonisolated func scopeClause(
                 AND face.person_id IS NOT NULL
           )
         """
+    case let .person(person):
+        predicate += """
+
+          AND EXISTS (
+              SELECT 1 FROM face
+              WHERE face.library_root_id = media_asset.library_root_id
+                AND face.relative_path = media_asset.relative_path
+                AND face.is_not_face = 0
+                AND face.person_id = ?
+          )
+        """
+        arguments.append(person)
     }
     if let anniversary {
         predicate += "\n  AND \(anniversary.sql(column: "media_asset.best_capture_local"))"
@@ -759,8 +777,8 @@ private nonisolated func filterPredicate(
         clauses.append("media_choice IN (\(sqlPlaceholders(count: choices.count)))")
         arguments.append(contentsOf: choices.map(\.rawValue))
     }
-    // The People filter (ADR 0047): a photo holding a face of each person (All Of) or of
-    // any of them (Any Of); `Unassigned` is a face with no person.
+    // The People filter (ADR 0047): a photo holding a face of each person checked, and with
+    // `Unidentified Faces` a face with no person too.
     var peopleClauses: [String] = []
     let face = """
     EXISTS (SELECT 1 FROM face WHERE face.library_root_id = media_asset.library_root_id
@@ -773,10 +791,7 @@ private nonisolated func filterPredicate(
     if filter.unassignedFaces {
         peopleClauses.append("\(face) face.person_id IS NULL)")
     }
-    if !peopleClauses.isEmpty {
-        let joiner = filter.peopleMatch == .all ? " AND " : " OR "
-        clauses.append("(\(peopleClauses.joined(separator: joiner)))")
-    }
+    clauses += peopleClauses
     // The Places filter (ADR 0040): a photo whose cell Maps named as one of the countries or
     // towns checked.
     if !filter.places.isEmpty {

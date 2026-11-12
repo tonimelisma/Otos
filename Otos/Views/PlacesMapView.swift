@@ -1,3 +1,4 @@
+import AppKit
 import MapKit
 import SwiftUI
 
@@ -17,7 +18,6 @@ struct PlacesMapView: View {
     let map: CatalogMapState
     let clusters: [MapPlaceCluster]
     let cameraRequest: MapCameraRequest?
-    let selection: Set<MediaAssetID>
     let emptyState: CatalogMediaEmptyState
     var tileContentStore: TileContentStore?
     var thumbnailDirectory: URL?
@@ -52,16 +52,22 @@ struct PlacesMapView: View {
                 Annotation("", coordinate: cluster.clCoordinate, anchor: .center) {
                     MapClusterStackView(
                         cluster: cluster,
-                        isSelected: cluster.memberIDs.allSatisfy(selection.contains),
                         tileContentStore: tileContentStore,
                         thumbnailDirectory: thumbnailDirectory,
                         detailReader: detailReader
                     )
-                    .onTapGesture(count: 2) {
-                        onClusterDoubleClick(cluster)
-                    }
+                    // One gesture, AppKit's click count deciding: a click zooms at once, and
+                    // the second click of a double-click opens. A SwiftUI double-tap beside a
+                    // single tap would hold every click back until no second one came.
                     .onTapGesture {
-                        onClusterClick(cluster)
+                        if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
+                            onClusterDoubleClick(cluster)
+                        } else {
+                            onClusterClick(cluster)
+                        }
+                    }
+                    .accessibilityAction(named: "Show Photos") {
+                        onClusterDoubleClick(cluster)
                     }
                 }
                 .annotationTitles(.hidden)
@@ -155,13 +161,11 @@ private struct PlacesMapBar: View {
 }
 
 /// One stack on the map: a 48 pt thumbnail of the representative, the member count at
-/// the lower right (DES-062), the selection border of a tile when its members are the
-/// selection (DES-061). The thumbnail follows the grid's rule: a placeholder only
+/// the lower right (DES-062), and a white edge. The map has no selection. The thumbnail follows the grid's rule: a placeholder only
 /// before it has ever decoded, and once painted it stays for as long as the stack's
 /// representative is the same item — which is what the stack's identity is.
 private struct MapClusterStackView: View {
     let cluster: MapPlaceCluster
-    let isSelected: Bool
     let tileContentStore: TileContentStore?
     let thumbnailDirectory: URL?
     let detailReader: MediaTileDetailReader?
@@ -199,14 +203,11 @@ private struct MapClusterStackView: View {
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .overlay {
             RoundedRectangle(cornerRadius: 4)
-                .strokeBorder(
-                    isSelected ? Color.accentColor : DesignPalette.mapStackEdge,
-                    lineWidth: isSelected ? 3 : 2
-                )
+                .strokeBorder(DesignPalette.mapStackEdge, lineWidth: 2)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(MapClusterPolicy.accessibilityLabel(for: cluster))
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAddTraits(.isButton)
         .task(id: cluster.id) {
             await loadThumbnail()
         }
