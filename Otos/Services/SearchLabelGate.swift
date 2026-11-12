@@ -35,22 +35,42 @@ nonisolated enum SearchLabelGate {
     }
 }
 
-/// Vision's scene classification of one picture: every label at or above
-/// `SearchLabelGate.minimumConfidence`.
+/// Vision's scene classification of one picture, read twice over:
+/// - **For the gate:** every label at or above `SearchLabelGate.minimumConfidence`, with its
+///   confidence — a loose reading on purpose, about 18 labels a photo on the owner's library,
+///   with echoes like a horse beside a wagon at 0.08.
+/// - **For the Info pane:** the labels that pass Vision's own high-precision test
+///   (`hasMinimumRecall(0.01, forPrecision: 0.9)`, Apple's recommended filter: each label's
+///   threshold comes from its precision-recall curve, not one cut for all). About five a photo,
+///   most confident first (`docs/research/2026-11-12-text-and-labels-in-the-info-pane.md`).
 nonisolated enum SearchSceneLabels {
     /// The classifier revision measured; part of `SearchEmbedding.revision`.
     static let revision = VNClassifyImageRequestRevision2
+    static let shownPrecision: Float = 0.9
+    static let shownRecall: Float = 0.01
 
-    static func classify(_ image: CGImage) throws -> [String: Float] {
+    static func classify(_ image: CGImage) throws -> SceneLabelReading {
         let request = VNClassifyImageRequest()
         request.revision = revision
         try VNImageRequestHandler(cgImage: image).perform([request])
+        let observations = request.results ?? []
         var labels: [String: Float] = [:]
-        for observation in request.results ?? [] where observation.confidence >= SearchLabelGate.minimumConfidence {
+        for observation in observations where observation.confidence >= SearchLabelGate.minimumConfidence {
             labels[observation.identifier] = observation.confidence
         }
-        return labels
+        let confident = observations
+            .filter { $0.hasMinimumRecall(shownRecall, forPrecision: shownPrecision) }
+            .sorted { ($0.confidence, $1.identifier) > ($1.confidence, $0.identifier) }
+            .map(\.identifier)
+        return SceneLabelReading(labels: labels, confident: confident)
     }
+}
+
+/// One picture's scene labels: the gate's loose reading and the confident ones the Info pane
+/// shows, most confident first.
+nonisolated struct SceneLabelReading: Equatable, Sendable {
+    var labels: [String: Float] = [:]
+    var confident: [String] = []
 }
 
 /// The classifier's label names embedded by the shipped text path (`SearchLabelEmbeddings.bin`:

@@ -193,6 +193,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.keyPhotoMigrationIdentifier,
             CatalogSchema.personAdmissionMigrationIdentifier,
             CatalogSchema.facesFromPreviewMigrationIdentifier,
+            CatalogSchema.inThisPhotoMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)

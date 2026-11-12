@@ -28,7 +28,7 @@ nonisolated enum SearchEmbedding {
 
     /// The model, its preprocessing and the scene labels read with it; stored with every
     /// image embedding, so a change makes every stored one stale.
-    static let revision = 2
+    static let revision = 3
 
     static let computeUnits = MLComputeUnits.cpuOnly
 

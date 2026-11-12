@@ -673,6 +673,35 @@ nonisolated enum CatalogSchema {
         ]
     }
 
+    /// The Info pane shows what Otos recognised in a photo (ADR 0048, ADR 0050):
+    /// - `search_embedding.confident_labels`: the scene labels that pass Vision's
+    ///   high-precision test, most confident first; `SearchEmbedding.revision` 3 makes every
+    ///   embedding owed again, so the column fills as they are read.
+    /// - `search_text` is rebuilt with `lines`, each recognised line with its confidence as
+    ///   JSON (`SearchTextStorage`), in place of the joined `text`: the accurate level's
+    ///   readings (`SearchTextReading.revision` 2) replace every fast-level one, so no old row
+    ///   would be current.
+    static let inThisPhotoMigrationIdentifier = "v31_in_this_photo"
+
+    static var inThisPhotoStatements: [String] {
+        [
+            "ALTER TABLE search_embedding ADD COLUMN confident_labels TEXT",
+            "DROP TABLE search_text",
+            """
+            CREATE TABLE search_text (
+                library_root_id INTEGER NOT NULL,
+                relative_path TEXT NOT NULL,
+                source TEXT NOT NULL,
+                lines TEXT NOT NULL,
+                PRIMARY KEY (library_root_id, relative_path),
+                FOREIGN KEY (library_root_id, relative_path)
+                    REFERENCES media_asset(library_root_id, relative_path)
+                    ON UPDATE CASCADE ON DELETE CASCADE
+            )
+            """,
+        ]
+    }
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

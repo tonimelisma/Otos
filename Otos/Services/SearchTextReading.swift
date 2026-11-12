@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreML
 import Foundation
 import ImageIO
 import OSLog
@@ -12,29 +13,53 @@ import Vision
 /// stored preview of each still is read for text, and a query whose words appear in it
 /// matches.
 ///
-/// Recognition runs at Vision's fast level on the 2,560 px preview, with language correction
-/// and automatic languages: 0.07 s a preview, and on the owner's screenshots it read menus,
-/// settings and forecasts cleanly. The accurate level failed on macOS 27 for every image after
-/// a process's first (`e5rt` error 13, research §9), with or without a pinned device; at
-/// 512 px the fast level read noise, so it reads the full preview. A line below 0.3 confidence
-/// is dropped.
+/// Recognition runs at Vision's accurate level on the 2,560 px preview, with language
+/// correction and automatic languages, pinned to the CPU as every Otos model is (ADR 0045): on
+/// the default device a reading stalled for 32 s under load, on the CPU it takes a median
+/// 0.15 s. The fast level, which search read with before, reports only two confidences and
+/// misreads texture as text at both (`*•9>•'•` at 0.5, beside real menu lines); the accurate
+/// level reports 1.0 for the lines it is sure of, and on the owner's previews those read
+/// cleanly (`docs/research/2026-11-12-text-and-labels-in-the-info-pane.md`). Every line from
+/// 0.3 is kept with its confidence: search matches them all, and the Info pane shows the
+/// certain ones (`certainConfidence`).
 nonisolated enum SearchTextReading {
     /// The recognition settings; stored with every reading, so a change makes them stale.
-    static let revision = 1
+    static let revision = 2
     static let minimumConfidence: Float = 0.3
+    /// A line the Info pane shows: what the accurate level reports for the lines it is sure of.
+    static let certainConfidence: Float = 1
 
-    /// The recognised lines of `image`, joined by newlines; empty when it holds no text.
-    static func read(_ image: CGImage) throws -> String {
+    /// The recognised lines of `image`, in reading order; empty when it holds no text.
+    static func read(_ image: CGImage) throws -> [RecognizedTextLine] {
         let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .fast
+        request.recognitionLevel = .accurate
         request.automaticallyDetectsLanguage = true
         request.usesLanguageCorrection = true
+        if let cpu = try request.supportedComputeStageDevices[.main]?.first(where: Self.isCPU) {
+            request.setComputeDevice(cpu, for: .main)
+        }
         try VNImageRequestHandler(cgImage: image).perform([request])
         return (request.results ?? [])
             .compactMap { $0.topCandidates(1).first }
             .filter { $0.confidence >= minimumConfidence }
-            .map(\.string)
-            .joined(separator: "\n")
+            .map { RecognizedTextLine(text: $0.string, confidence: $0.confidence) }
+    }
+
+    /// What search matches a query against: every kept line.
+    static func searchable(_ lines: [RecognizedTextLine]) -> String {
+        lines.map(\.text).joined(separator: "\n")
+    }
+
+    /// The lines the Info pane shows.
+    static func certain(_ lines: [RecognizedTextLine]) -> [String] {
+        lines.filter { $0.confidence >= certainConfidence }.map(\.text)
+    }
+
+    private static func isCPU(_ device: MLComputeDevice) -> Bool {
+        if case .cpu = device {
+            return true
+        }
+        return false
     }
 
     /// Whether every word of `query` appears in `text` at the start of a word, ignoring case
@@ -84,7 +109,8 @@ actor SearchTextReader {
     }
 
     /// One result per candidate. A preview that does not decode is recorded as holding no
-    /// text; a recognition that fails records nothing, so the still stays owed.
+    /// text; a recognition that fails records nothing, so the still stays owed and is read
+    /// again after the index's backoff.
     func read(_ page: [SearchTextCandidate], directory: URL?) -> [SearchTextResult] {
         guard let directory else { return [] }
         return page.compactMap { candidate in
@@ -92,10 +118,10 @@ actor SearchTextReader {
             guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
                   let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
             else {
-                return SearchTextResult(id: candidate.id, source: candidate.source, text: "")
+                return SearchTextResult(id: candidate.id, source: candidate.source, lines: [])
             }
             do {
-                return try SearchTextResult(id: candidate.id, source: candidate.source, text: SearchTextReading.read(image))
+                return try SearchTextResult(id: candidate.id, source: candidate.source, lines: SearchTextReading.read(image))
             } catch {
                 OtosLog.thumbnails.errorOperation("search.text", phase: "failed", fields: ["error": String(describing: error)])
                 return nil

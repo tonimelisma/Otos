@@ -40,7 +40,8 @@ struct ContentView: View {
                     derivedImageDirectory: viewModel.thumbnailDirectory,
                     perform: viewModel.performMediaItemCommand,
                     hover: viewModel.outlineFaces
-                )
+                ),
+                search: viewModel.setSearchText
             )
         case .edit:
             EditPanelView(

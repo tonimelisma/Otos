@@ -770,7 +770,9 @@ extension CatalogStore {
     }
 
     /// The overlay the Info pane shows for `id` (APP-041): its companion files, the import it
-    /// arrived in, and whether it carries an edit. Nil when the asset is not cataloged.
+    /// arrived in, whether it carries an edit, and what search recognised in it — the confident
+    /// scene labels of its current embedding row and the certain lines of its current text
+    /// reading, each nil while that reading is owed. Nil when the asset is not cataloged.
     func photoInfoOverlay(for id: MediaAssetID) async throws -> PhotoInfoOverlay? {
         guard let rootRowID = roots[id.libraryRootPath]?.rowID else {
             return nil
@@ -798,10 +800,32 @@ extension CatalogStore {
                 arguments: arguments
             ).map { MediaRelativePath(rawValue: $0["relative_path"]).fileName }
             let batch: Int64? = asset["import_batch_unix_ms"]
-            return PhotoInfoOverlay(
+            let labels = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT e.confident_labels FROM search_embedding AS e
+                JOIN media_asset AS a ON a.library_root_id = e.library_root_id AND a.relative_path = e.relative_path
+                WHERE e.library_root_id = ? AND e.relative_path = ?
+                  AND e.source = \(SearchEmbeddingStorage.currentSource("a"))
+                """,
+                arguments: arguments
+            ).map { SearchEmbeddingStorage.confidentLabels(from: $0[0]) }
+            let lines = try String.fetchOne(
+                db,
+                sql: """
+                SELECT t.lines FROM search_text AS t
+                JOIN media_asset AS a ON a.library_root_id = t.library_root_id AND a.relative_path = t.relative_path
+                WHERE t.library_root_id = ? AND t.relative_path = ?
+                  AND t.source = \(SearchTextStorage.currentSource("a"))
+                """,
+                arguments: arguments
+            )
+            return try PhotoInfoOverlay(
                 companionFileNames: companions,
                 importedAt: batch.map { Date(timeIntervalSince1970: Double($0) / 1000) },
-                isEdited: asset["edited"]
+                isEdited: asset["edited"],
+                sceneLabels: labels,
+                textLines: lines.map { try SearchTextReading.certain(SearchTextStorage.lines(fromJSON: $0)) }
             )
         }
         guard roots[id.libraryRootPath]?.rowID == rootRowID else {
@@ -7613,14 +7637,16 @@ extension CatalogStore {
                 }
                 try db.execute(
                     sql: """
-                    INSERT INTO search_embedding (library_root_id, relative_path, source, embedding, labels)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO search_embedding (library_root_id, relative_path, source, embedding, labels, confident_labels)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT (library_root_id, relative_path)
-                    DO UPDATE SET source = excluded.source, embedding = excluded.embedding, labels = excluded.labels
+                    DO UPDATE SET source = excluded.source, embedding = excluded.embedding, labels = excluded.labels,
+                        confident_labels = excluded.confident_labels
                     """,
                     arguments: [
                         rootID, path, result.source, result.embedding.map(SearchEmbeddingStorage.data),
                         SearchEmbeddingStorage.labelsText(result.labels),
+                        SearchEmbeddingStorage.confidentLabelsText(result.confidentLabels),
                     ]
                 )
                 written.append(result)
@@ -7795,10 +7821,10 @@ extension CatalogStore {
                 }
                 try db.execute(
                     sql: """
-                    INSERT INTO search_text (library_root_id, relative_path, source, text) VALUES (?, ?, ?, ?)
-                    ON CONFLICT (library_root_id, relative_path) DO UPDATE SET source = excluded.source, text = excluded.text
+                    INSERT INTO search_text (library_root_id, relative_path, source, lines) VALUES (?, ?, ?, ?)
+                    ON CONFLICT (library_root_id, relative_path) DO UPDATE SET source = excluded.source, lines = excluded.lines
                     """,
-                    arguments: [rootID, path, result.source, result.text]
+                    arguments: [rootID, path, result.source, SearchTextStorage.linesJSON(result.lines)]
                 )
                 written.append(result)
             }
@@ -7806,7 +7832,8 @@ extension CatalogStore {
         }
     }
 
-    /// The current, non-empty text readings in available roots.
+    /// The current, non-empty text readings in available roots, as search matches them
+    /// (`SearchTextReading.searchable`).
     func currentSearchTexts() async throws -> [MediaAssetID: String] {
         let rootIDs = availableRootRowIDs()
         guard !rootIDs.isEmpty else { return [:] }
@@ -7816,10 +7843,10 @@ extension CatalogStore {
             let rows = try Row.fetchCursor(
                 db,
                 sql: """
-                SELECT t.library_root_id, t.relative_path, t.text
+                SELECT t.library_root_id, t.relative_path, t.lines
                 FROM search_text AS t
                 JOIN media_asset AS a ON a.library_root_id = t.library_root_id AND a.relative_path = t.relative_path
-                WHERE t.library_root_id IN (\(placeholders)) AND t.text <> ''
+                WHERE t.library_root_id IN (\(placeholders)) AND t.lines <> '[]'
                   AND t.source = \(SearchTextStorage.currentSource("a"))
                 """,
                 arguments: StatementArguments(rootIDs)
@@ -7827,7 +7854,8 @@ extension CatalogStore {
             var texts: [MediaAssetID: String] = [:]
             while let row = try rows.next() {
                 guard let root = pathsByRowID[row[0]] else { continue }
-                texts[MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1]))] = row[2]
+                let text = try SearchTextReading.searchable(SearchTextStorage.lines(fromJSON: row[2]))
+                texts[MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1]))] = text
             }
             return texts
         }

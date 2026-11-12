@@ -136,7 +136,8 @@ right answers, so no cut on the cosine can tell them apart. The label gate below
 ### A second reading of each picture: scene labels gate a query that names a thing
 
 Vision's scene classifier (1,303 labels, built in) reads the same stored thumbnail as the
-embedding, and its labels are stored with it (`SearchEmbedding.revision` 2). A query names a
+embedding, and its labels are stored with it (`SearchEmbedding.revision` 3, which also stores the labels that pass
+Vision's high-precision test for the Info pane, ADR 0050). A query names a
 label when SigLIP's text tower puts the label's name within cosine 0.95 of the query's English
 (`SearchLabelVocabulary`, the names embedded ahead of time by the shipped text path): "cat"
 names cat, kitten and feline; a phrase names none. A named query keeps a photo only where the
@@ -155,11 +156,20 @@ its top 10 for 21% of them. So each still's stored preview is read for text (`se
 ignoring case and diacritics, matches whatever the cut. It ranks first only for a query that
 names no scene label: on 49 judged word queries recall@10 rose from 0.13 to 0.84, while
 picture queries kept 0.846; ranking text matches first for every query dropped picture
-queries to 0.739 ("cat" and "lake" are written on many signs and screens). Vision's fast
-level on the 2,560 px preview reads 0.07 s a photo and read the owner's screenshots cleanly; the
-accurate level failed on macOS 27 for every image after a process's first (`e5rt` error 13),
-pinned to the CPU or not; at 512 px the fast level read noise. Text is read after every
-embedding is made.
+queries to 0.739 ("cat" and "lake" are written on many signs and screens).
+
+The preview is read at Vision's accurate level, pinned to the CPU, and every line from 0.3
+confidence is stored with its confidence (`docs/research/2026-11-12-text-and-labels-in-the-info-pane.md`).
+On the 60 judged word queries it matched 213 of the 222 relevant photos against the fast
+level's 212, with 59 judged misreadings against 84, and about 180 real matches the fast level
+missed. Its lines at full confidence read cleanly, which the Info pane shows (ADR 0050); the
+fast level reported only 0.3 and 0.5 and misread texture at both. On the CPU it takes a median
+0.15 s a preview; on the default device it stalled for 32 s under load. The accurate level
+failed on macOS 27.0 for every image after a process's first (`e5rt` error 13) and does not on
+27.0.1 (10,065 previews, no error); a reading that fails stays owed and is retried after the
+index's backoff. At 512 px the fast level read noise, so the full preview is read; an original
+is not, since nearly every original in the owner's library is a cloud placeholder. Text is read
+after every embedding is made.
 
 ### Facts in the query: when, where, who
 

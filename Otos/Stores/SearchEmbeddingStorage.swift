@@ -19,7 +19,9 @@ import GRDB
 /// An embedding is `SearchEmbedding.dimensions` little-endian Float32 values. The row also
 /// holds the thumbnail's scene labels, Vision's classification of the same picture, as
 /// `identifier:confidence` pairs at or above `SearchSceneLabels.minimumConfidence`, comma
-/// separated — what the label gate reads (`SearchLabelGate`).
+/// separated — what the label gate reads (`SearchLabelGate`) — and, in `confident_labels`, the
+/// identifiers that pass Vision's high-precision test, most confident first, comma separated:
+/// what the Info pane shows (`SearchSceneLabels`).
 nonisolated enum SearchEmbeddingStorage {
     /// The source an asset's embedding must name to be current, for `row` (a table or alias).
     static func currentSource(_ row: String) -> String {
@@ -59,6 +61,15 @@ nonisolated enum SearchEmbeddingStorage {
         return labels
     }
 
+    static func confidentLabelsText(_ identifiers: [String]) -> String {
+        identifiers.joined(separator: ",")
+    }
+
+    static func confidentLabels(from text: String?) -> [String] {
+        guard let text, !text.isEmpty else { return [] }
+        return text.split(separator: ",").map(String.init)
+    }
+
     static func data(_ embedding: [Float]) -> Data {
         Float32Storage.data(embedding)
     }
@@ -84,6 +95,7 @@ nonisolated struct SearchEmbeddingResult: Equatable, Sendable {
     let source: String
     let embedding: [Float]?
     var labels: [String: Float] = [:]
+    var confidentLabels: [String] = []
 }
 
 /// One stored, current embedding and the scene labels read with it.

@@ -364,8 +364,8 @@ actor PhotoSearchIndex {
             let written = try await store.applySearchTexts(results)
             guard !written.isEmpty else { break }
             for result in written {
-                texts[result.id] = result.text.isEmpty ? nil : result.text
-                withText += result.text.isEmpty ? 0 : 1
+                texts[result.id] = result.lines.isEmpty ? nil : SearchTextReading.searchable(result.lines)
+                withText += result.lines.isEmpty ? 0 : 1
             }
             announce()
             read += written.count
@@ -468,11 +468,13 @@ actor SearchImageEmbedder {
                 return SearchEmbeddingResult(id: candidate.id, source: candidate.source, embedding: nil)
             }
             do {
+                let scene = try SearchSceneLabels.classify(image)
                 return try SearchEmbeddingResult(
                     id: candidate.id,
                     source: candidate.source,
                     embedding: model.embedding(of: image),
-                    labels: SearchSceneLabels.classify(image)
+                    labels: scene.labels,
+                    confidentLabels: scene.confident
                 )
             } catch {
                 // A prediction that fails is not a fact about the thumbnail: nothing is

@@ -5,10 +5,10 @@ import MediaMetadata
 /// Photo info guide
 ///
 /// What the inspector's Info pane shows for the current target (APP-041, DES-088): a
-/// header (the file name and when it was taken) and sections — People, Location, File,
-/// Camera, Exposure or Video — in the Edit pane's layout (DES-092). People is the faces of
-/// the selected photos, which the pane edits (`SelectionFaces`); the rest are label and
-/// value rows.
+/// header (the file name and when it was taken) and sections — People, In This Photo,
+/// Location, File, Camera, Exposure or Video — in the Edit pane's layout (DES-092). People is
+/// the faces of the selected photos, which the pane edits (`SelectionFaces`); In This Photo is
+/// what search recognised in it (`Recognized`); the rest are label and value rows.
 ///
 /// Every value is something Otos already holds: the asset row, the metadata record the
 /// library reported (ADR 0039), the overlay Otos keeps for the item, and where its original
@@ -29,6 +29,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         case exposure
         case video
         case people
+        case recognized
         case location
         case file
 
@@ -38,6 +39,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
             case .exposure: "Exposure"
             case .video: "Video"
             case .people: "People"
+            case .recognized: "In This Photo"
             case .location: "Location"
             case .file: "File"
             }
@@ -49,6 +51,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
             case .exposure: "camera.aperture"
             case .video: "film"
             case .people: "person.2"
+            case .recognized: "viewfinder"
             case .location: "mappin.and.ellipse"
             case .file: "doc"
             }
@@ -64,7 +67,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
                     "Program", "Metering", "Flash", "White Balance",
                 ]
             case .video: ["Duration", "Frame Rate", "Codec"]
-            case .people: []
+            case .people, .recognized: []
             case .location: ["Coordinates", "Altitude"]
             case .file: [
                     "Kind", "Dimensions", "Size", "Folder", "Original",
@@ -88,6 +91,31 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         let rows: [Row]
     }
 
+    /// What search recognised in the item, each part nil while its reading is owed: the
+    /// confident scene labels named in the Mac's language (`SceneLabelNames`), and the lines of
+    /// text Vision is certain of (`SearchTextReading.certain`). Only a still's preview is read
+    /// for text.
+    nonisolated struct Recognized: Equatable, Sendable {
+        var labels: [String]?
+        var text: [String]?
+
+        init(labels: [String]?, text: [String]?) {
+            self.labels = labels
+            self.text = text
+        }
+
+        /// The overlay's readings, its labels already named.
+        init(overlay: PhotoInfoOverlay?, labelNames: [String]?) {
+            self.init(labels: labelNames, text: overlay?.textLines)
+        }
+
+        /// A label's name as a chip shows it: its first letter capitalised in `locale`.
+        static func chipTitle(_ name: String, locale: Locale) -> String {
+            guard let first = name.first else { return name }
+            return String(first).uppercased(with: locale) + name.dropFirst()
+        }
+    }
+
     /// The asset these facts describe; nil with no single item.
     let id: MediaAssetID?
     /// L1: the file name, `No Selection`, or `3 Items`.
@@ -106,6 +134,8 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
     /// edited photo in the loupe.
     var editRecipe: EditRecipe?
     var uprightSize: CGSize?
+    /// What search recognised in the item; nil with no single item.
+    var recognized: Recognized?
     private let sectionRows: [SectionID: [Row]]
     private let sectionOrder: [SectionID]
 
@@ -140,10 +170,10 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         )
     }
 
-    /// People, Location and File first, the facts the user acts on and looks for, then the
-    /// capture's own: Camera, then Exposure for a still or Video for a movie.
+    /// People, In This Photo, Location and File first, the facts the user acts on and looks
+    /// for, then the capture's own: Camera, then Exposure for a still or Video for a movie.
     static func sectionOrder(kind: MediaKind?) -> [SectionID] {
-        [.people, .location, .file, .camera, kind == .video ? .video : .exposure]
+        [.people, .recognized, .location, .file, .camera, kind == .video ? .video : .exposure]
     }
 
     // MARK: - One item
@@ -162,6 +192,8 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         var libraryName: String?
         var locality: OriginalLocality?
         var editRecipe: EditRecipe?
+        /// The overlay's confident scene labels, named in the Mac's language.
+        var labelNames: [String]?
     }
 
     /// Everything Otos holds for one item, as the pane shows it.
@@ -175,6 +207,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         rows[.exposure] = exposureRows(metadata?.exposure?.exposure)
         rows[.video] = videoRows(metadata, asset: asset)
         rows[.people] = []
+        rows[.recognized] = []
         rows[.location] = locationRows(location)
         rows[.file] = fileRows(source, kind: resolvedKind, calendar: calendar)
         return PhotoInfo(
@@ -186,6 +219,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
             facesRead: asset?.facesSourceSize != nil,
             editRecipe: source.editRecipe,
             uprightSize: source.nativePixelSize,
+            recognized: Recognized(overlay: source.overlay, labelNames: source.labelNames),
             sectionRows: rows,
             sectionOrder: order
         )
@@ -440,9 +474,13 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
 }
 
 /// The overlay Otos holds for one asset that the Info pane shows: companion files, the
-/// import it arrived in, and whether it is edited.
+/// import it arrived in, whether it is edited, and what search recognised in it — Vision's
+/// confident scene-label identifiers and the certain lines of its text, each nil while that
+/// reading is owed.
 nonisolated struct PhotoInfoOverlay: Equatable, Sendable {
     var companionFileNames: [String]
     var importedAt: Date?
     var isEdited: Bool
+    var sceneLabels: [String]?
+    var textLines: [String]?
 }

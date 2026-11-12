@@ -247,7 +247,9 @@ struct PhotoSearchIndexTests {
             previewPath: "blue-preview.heic"
         )])
         let candidate = try #require(try await store.searchTextCandidates(limit: 10).first { $0.id == catalog.blue })
-        _ = try await store.applySearchTexts([SearchTextResult(id: blue.id, source: candidate.source, text: "Proof of Insurance")])
+        _ = try await store.applySearchTexts([SearchTextResult(
+            id: blue.id, source: candidate.source, lines: [RecognizedTextLine(text: "Proof of Insurance", confidence: 1)]
+        )])
         let index = PhotoSearchIndex(
             store: store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
         )

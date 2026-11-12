@@ -24,7 +24,9 @@ Which item the facts describe: its file name, `No Selection`, or `3 Items`.
 | --- | --- |
 | File name / `No Selection` / `3 Items` | L1 (`title2`, semibold, middle-truncated) |
 | When it was taken (`Saturday, November 7, 2026 at 3:42 PM UTC+02:00`) | L2 in secondary color (`body`) |
-| Section heading (`People`, `Location`, `File`, `Camera`, `Exposure`, `Video`) | `.title3`, regular, beside the section's symbol |
+| Section heading (`People`, `In This Photo`, `Location`, `File`, `Camera`, `Exposure`, `Video`) | `.title3`, regular, beside the section's symbol |
+| A scene label (`Pool`, `Blue sky`) | L2, a small bordered button (`.bordered`, `.controlSize(.small)`), as People's suggestions are |
+| `Text` over the recognised lines | L2 in secondary color, then the lines L2 (`body`), selectable |
 | Row label (`Shutter Speed`) | L2 in secondary color (`body`) |
 | Row value (`1/250 s`, `Unknown`, `—`) | L2 (`body`, `.monospacedDigit()`) |
 
@@ -34,21 +36,23 @@ Three sizes, two weights (DES-004).
 
 A header zone (name over date, 4 pt apart), then one zone per section, 12 pt either side
 of each section's hairline. A section's heading is the disclosure triangle, its symbol
-(`camera`, `camera.aperture`, `film`, `person.2`, `mappin.and.ellipse`, `doc`) and its
+(`camera`, `camera.aperture`, `film`, `person.2`, `viewfinder`, `mappin.and.ellipse`, `doc`) and its
 title; its rows sit 8 pt below, indented 16 pt so they start under the symbol, 4 pt apart.
 Labels share one leading edge; a long value wraps beside its label rather than under it.
 
 | Section | Rows |
 | --- | --- |
 | People | each face of the targeted photos, with the face acts (`docs/design/people.md`, DES-113) |
+| In This Photo | the scene labels Vision is confident of, as buttons wrapping in rows, most confident first; then `Text` and the lines Vision is certain of |
 | Location | a 140 pt still map with one pin (when located), Place, Coordinates, Altitude |
 | File | Kind, Dimensions, Size, Folder, Original, Created, Modified, Imported, Companions, Edits |
 | Camera | Camera, Lens, Serial Number |
 | Exposure (a still) | Shutter Speed, Aperture, ISO, Focal Length, Compensation, Program, Metering, Flash, White Balance |
 | Video (a movie) | Duration, Frame Rate, Codec |
 
-The order puts first what the user acts on and looks for — who is in the photo, where and
-which file it is — and the capture's own facts after (owner decision, 2026-11-12).
+The order puts first what the user acts on and looks for — who is in the photo, what is in
+it, where and which file it is — and the capture's own facts after (owner decision,
+2026-11-12).
 
 Which sections show depends only on the kind, so every still has the same rows and every
 movie the same rows (DES-053). With no single item the still layout shows with every
@@ -61,8 +65,27 @@ has a location to show, as a control whose subject does not exist is omitted (DE
   reads `Unknown` until MapKit names the coordinate.
 - **No item / several items:** `No Selection` or the count, every value `—` but People,
   which lists the people in the selected photos and their unidentified faces.
+- **In This Photo:** `Not Checked Yet` until search has read the item's thumbnail;
+  `Nothing Recognized` when it found no confident label and no certain text; the labels,
+  then `Text` and its lines when there are any (only a still's preview is read for text, so
+  a movie never has them). With no single item, `—`. A photo read while it is shown fills
+  in without being reselected.
 - **A read failed:** the pane keeps what it showed for the same item, or empties for
   another, and the next refresh reads again (APP-041).
+
+## In This Photo
+
+What search recognised in the photo, the two readings it already makes (ADR 0048): Vision's
+scene labels and the text in it. The owner asked for both to be listed, and for text to be
+shown only as far as Vision is sure of it (2026-11-12).
+
+- **Labels** are named in the Mac's language (`SceneLabelNames`, ADR 0050), or in English
+  where no checked name exists. A label is a button: clicking it searches for its name, as
+  typing it into the toolbar field does, and its tooltip says `Search for “pool”`.
+- **Text** is the lines Vision read with full confidence, in reading order, selectable so a
+  line can be copied. No line is shown that Vision was unsure of; search still matches those.
+- There is no sidebar row for text (owner, 2026-11-12): finding photos by their text is the
+  search field's.
 
 ## Keyboard and motion
 

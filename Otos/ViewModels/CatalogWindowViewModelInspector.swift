@@ -76,11 +76,13 @@ extension CatalogWindowViewModel {
         let reader = tileDetailReader
         let materialization = materializationCoordinator
         let libraryName = sourceName(for: id.libraryRootPath)
+        let labelNames = sceneLabelNames
         photoInfoTask = Task { [weak self] in
             let read: PhotoInfo
             do {
                 read = try await Self.readPhotoInfo(
-                    id: id, store: store, reader: reader, materialization: materialization, libraryName: libraryName
+                    id: id, store: store, reader: reader, materialization: materialization, libraryName: libraryName,
+                    labelNames: labelNames
                 )
             } catch {
                 guard !Task.isCancelled, let self, targetIDs(.current) == [id], showsInfo else { return }
@@ -112,13 +114,15 @@ extension CatalogWindowViewModel {
 
     /// Everything the pane shows for `id`, from the catalog and the original's locality. The
     /// metadata record and overlay are read whole, so a missing one is a fact (`Unknown`),
-    /// and any read that throws fails the whole refresh.
+    /// and any read that throws fails the whole refresh. The overlay's scene labels are named
+    /// in the Mac's language (`Locale.current`, as place names are, ADR 0051).
     private nonisolated static func readPhotoInfo(
         id: MediaAssetID,
         store: CatalogStore,
         reader: MediaTileDetailReader,
         materialization: MaterializationCoordinator,
-        libraryName: String?
+        libraryName: String?,
+        labelNames: SceneLabelNames
     ) async throws -> PhotoInfo {
         async let asset = store.mediaAssets(for: [id])[id]
         async let metadata = store.metadata(for: id)
@@ -127,17 +131,74 @@ extension CatalogWindowViewModel {
         async let locality = materialization.locality(of: id)
         async let recipe = store.editRecipe(for: id)
         let resolvedDetail = try await detail
+        let resolvedOverlay = try await overlay
+        let names = try await name(resolvedOverlay?.sceneLabels, labelNames: labelNames)
         return try await PhotoInfo.make(PhotoInfo.Source(
             id: id,
             asset: asset,
             metadata: metadata,
-            overlay: overlay,
+            overlay: resolvedOverlay,
             kind: resolvedDetail?.bestKind,
             nativePixelSize: resolvedDetail?.nativePixelSize,
             libraryName: libraryName,
             locality: locality,
-            editRecipe: recipe?.recipe
+            editRecipe: recipe?.recipe,
+            labelNames: names
         ))
+    }
+
+    /// A photo's scene labels named in the Mac's language (`Locale.current`, as place names
+    /// are, ADR 0051); nil while the reading is owed.
+    private nonisolated static func name(_ labels: [String]?, labelNames: SceneLabelNames) async throws -> [String]? {
+        guard let labels else { return nil }
+        return try await labelNames.names(of: labels, in: Locale.current.language)
+    }
+
+    /// The item In This Photo describes, while the Info pane shows one.
+    private var recognizedTarget: MediaAssetID? {
+        showsInfo ? photoInfo?.id : nil
+    }
+
+    /// Keeps In This Photo current while search reads: each time the index announces new
+    /// readings, the shown item's labels and text are read again and applied if it is still the
+    /// one shown. Only that section is re-read, so the place lookup is not restarted. One loop,
+    /// fed by the index's newest-wins `changes`; it holds the view model weakly across each wait
+    /// and ends with it. A failed read is logged and changes nothing (ADR 0032 rule 4).
+    func startRecognizedRefresh() {
+        guard let index = photoSearchIndex else { return }
+        let store = catalogStore
+        let labelNames = sceneLabelNames
+        recognizedRefreshTask = Task { [weak self] in
+            let changes = await index.changes()
+            for await _ in changes {
+                guard let id = self?.recognizedTarget else {
+                    if self == nil {
+                        return
+                    }
+                    continue
+                }
+                let recognized: PhotoInfo.Recognized
+                do {
+                    let overlay = try await store.photoInfoOverlay(for: id)
+                    recognized = try await PhotoInfo.Recognized(
+                        overlay: overlay, labelNames: Self.name(overlay?.sceneLabels, labelNames: labelNames)
+                    )
+                } catch {
+                    OtosLog.ui.errorOperation("photo.info.recognized", phase: "readFailed", fields: [
+                        "id": id.relativePath.rawValue,
+                        "error": String(describing: error),
+                    ])
+                    continue
+                }
+                guard !Task.isCancelled, let self, recognizedTarget == id, photoInfo?.recognized != recognized else { continue }
+                photoInfo?.recognized = recognized
+                OtosLog.ui.debugOperation("photo.info.recognized", phase: "applied", fields: [
+                    "id": id.relativePath.rawValue,
+                    "labels": recognized.labels.map { "\($0.count)" } ?? "owed",
+                    "lines": recognized.text.map { "\($0.count)" } ?? "owed",
+                ])
+            }
+        }
     }
 
     /// Looks up the place name for the pane's located item. It names the place in the

@@ -37,13 +37,36 @@ struct SearchReadingTests {
         #expect(SearchLabelGate.keeps(score: 0.14, best: 0.15, labels: [:], named: ["horse"]))
     }
 
-    /// Text drawn into a picture is read back.
+    /// Text drawn into a picture is read back, certain enough for the Info pane to show it.
     @Test func textInAPictureIsRead() throws {
         let image = try #require(Self.picture(saying: "OTOS SEARCH 2026"))
         let read = try SearchTextReading.read(image)
-        #expect(SearchTextReading.matches(query: "otos search", in: read))
+        #expect(SearchTextReading.matches(query: "otos search", in: SearchTextReading.searchable(read)))
+        #expect(SearchTextReading.certain(read) == ["OTOS SEARCH 2026"])
         let blank = SearchModelTests.solid(red: 0.4, green: 0.5, blue: 0.6, width: 1200, height: 800)
         #expect(try SearchTextReading.read(blank).isEmpty)
+    }
+
+    /// Search matches every kept line; the Info pane shows only the certain ones.
+    @Test func searchReadsEveryLineAndTheInfoPaneTheCertainOnes() {
+        let lines = [
+            RecognizedTextLine(text: "BRIDGE CLOSED AHEAD", confidence: 1),
+            RecognizedTextLine(text: "S6H3", confidence: 0.3),
+        ]
+        #expect(SearchTextReading.searchable(lines) == "BRIDGE CLOSED AHEAD\nS6H3")
+        #expect(SearchTextReading.certain(lines) == ["BRIDGE CLOSED AHEAD"])
+    }
+
+    /// Vision's classification keeps the gate's loose labels and the confident ones apart:
+    /// every confident label is one the gate holds, most confident first.
+    @Test func sceneLabelsHoldTheConfidentOnesMostConfidentFirst() throws {
+        let image = try #require(Self.picture(saying: "INVOICE 2026"))
+        let reading = try SearchSceneLabels.classify(image)
+        for label in reading.confident {
+            #expect(reading.labels[label] != nil)
+        }
+        let confidences = reading.confident.compactMap { reading.labels[$0] }
+        #expect(confidences == confidences.sorted(by: >))
     }
 
     /// A text reading is written only for the preview it was read from, and is current after.
@@ -64,10 +87,45 @@ struct SearchReadingTests {
         )])
         let candidate = try #require(try await store.searchTextCandidates(limit: 10).first)
         #expect(candidate.previewPath == "sign-preview.heic")
-        #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: "stale", text: "x")]).isEmpty)
-        #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: candidate.source, text: "OPEN")]).count == 1)
+        let open = [RecognizedTextLine(text: "OPEN", confidence: 1), RecognizedTextLine(text: "0p3n", confidence: 0.3)]
+        #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: "stale", lines: open)]).isEmpty)
+        #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: candidate.source, lines: open)]).count == 1)
         #expect(try await store.searchTextCandidates(limit: 10).isEmpty)
-        #expect(try await store.currentSearchTexts() == [asset.id: "OPEN"])
+        #expect(try await store.currentSearchTexts() == [asset.id: "OPEN\n0p3n"])
+        #expect(try await store.photoInfoOverlay(for: asset.id)?.textLines == ["OPEN"])
+        await store.shutdown()
+    }
+
+    /// The Info pane reads a still's confident scene labels from its current embedding row
+    /// only: none before it is read, the confident ones after, none again once its thumbnail
+    /// changes.
+    @Test func theInfoPaneReadsConfidentLabelsFromTheCurrentEmbedding() async throws {
+        let temp = try makeTestDirectory()
+        let library = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(library.appending(path: "pool.jpg"), contents: "jpeg pool")
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: library)
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        let asset = try #require(scanned.testAssets.first)
+        func enrich(thumbnail: String) async {
+            _ = await store.applyEnrichmentBatch([EnrichmentResult(
+                id: asset.id, metadata: AssetMetadata(), enrichedKind: .image, thumbnailPath: thumbnail,
+                sourceSize: asset.byteSize ?? 0, sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt), contentHash: nil
+            )])
+        }
+        await enrich(thumbnail: "pool-thumb.jpg")
+        #expect(try await store.photoInfoOverlay(for: asset.id)?.sceneLabels == nil)
+        let candidate = try #require(try await store.searchEmbeddingCandidates(limit: 10).first)
+        _ = try await store.applySearchEmbeddings([SearchEmbeddingResult(
+            id: asset.id, source: candidate.source, embedding: [Float](repeating: 1, count: SearchEmbedding.dimensions),
+            labels: ["water": 0.88, "pool": 0.88, "horse": 0.07], confidentLabels: ["pool", "water"]
+        )])
+        #expect(try await store.photoInfoOverlay(for: asset.id)?.sceneLabels == ["pool", "water"])
+        #expect(try await store.currentSearchEmbeddings().first?.labels["horse"] == 0.07)
+        await enrich(thumbnail: "pool-thumb-2.jpg")
+        #expect(try await store.photoInfoOverlay(for: asset.id)?.sceneLabels == nil)
         await store.shutdown()
     }
 

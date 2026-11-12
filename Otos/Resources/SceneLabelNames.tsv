@@ -1,0 +1,1309 @@
+# Scene label names (ADR 0050): every label Vision's classifier reports, named in each
+# language Apple Translation offers. Made by Translation as a photo's caption ("Photo: pool"),
+# then read back into English the same way; a name is kept only when the reading names the
+# same label by search's test (SearchLabelVocabulary, cosine 0.95), else left empty and read in
+# English. See docs/research/2026-11-12-text-and-labels-in-the-info-pane.md.
+identifier	fi	sv	de	fr	es	it	nl	da	nb
+abacus	abakso	abacus	Abakus	abacus	abaco	abaco	abacus	abacus	abacus
+accordion	akordioni	akordion	Akkordeon	accordéon	acordeón		accordéon		akordion
+acorn		ekollon
+acrobat	akrobatti	akrobat	Akrobat	acrobate	acrobata	acrobata	acrobat	akrobat	akrobat
+adult	aikuinen	vuxen	Erwachsener	adulte	adulto	adulto	volwassene	voksen	voksen
+adult_cat		vuxen katt	erwachsene Katze	chat adulte	gato adulto	gatto adulto	volwassen kat	voksen kat	voksen katt
+agriculture	maatalous	jordbruk	Landwirtschaft	agriculture	agricultura	agricoltura	landbouw	landbrug	landbruk
+aircraft	lentokone	flygplan	Flugzeug	avion	avión	aereo	vliegtuig	fly	fly
+airplane	lentokone	flygplan	Flugzeug	avion	avión	aereo	vliegtuig	fly	fly
+airport	lentoasema	flygplats	Flughafen	aéroport	aeropuerto	aeroporto	luchthaven	lufthavn	flyplass
+airshow		flygshow	Luftshow				luchtshow	luftshow	luftshow
+alley		gränd	Gasse	ruelle	callejón	vicolo	steeg	gyde	smug
+alligator_crocodile	alligatorikrokotiili	alligator krokodil	Alligatorkrokodil	alligator crocodile	caimán cocodrilo	alligatoro coccodrillo	alligator krokodil	alligator krokodille	alligator krokodille
+almond	manteli	mandel	Mandel	amande	almendra	mandorla	amandel	mandel	mandel
+ambulance	ambulanssi	ambulans	Krankenwagen	ambulance	ambulancia	ambulanza	ambulance	ambulance	ambulanse
+amusement_park	huvipuisto	nöjespark	Vergnügungspark	parc d'attractions	parque de atracciones	parco divertimenti	pretpark	forlystelsespark	fornøyelsespark
+anchovy		ansjovis	Anchovis	anchois	anchoa	acciughe	ansjovis	ansjovis	ansjovis
+angelfish	enkelikala	ängelfisk		poisson ange	pez ángel	angelfish		engelfisk	engelfisk
+animal	eläin	djur	Tier	animal	animal	animale	dier
+ant		myra	Ameise	fourmi	hormiga	formica	mier	myre	maur
+antipasti	antipasti	antipasti	Antipasti	antipasti			antipasti	antipasti	antipasti
+anvil
+apartment	asunto	lägenhet	Wohnung	appartement	apartamento	appartamento	appartement	lejlighed	leilighet
+apple	omena	apple	Apple	Apple	apple	apple	apple	æble	eple
+appliance			Haushaltsgerät	appareil électroménager	electrodoméstico
+apricot	aprikoosi	aprikos	Aprikose	abricot		albicocca	abrikoos	abrikos	aprikos
+apron			Schürze	tablier	delantal	grembiule
+aquarium	akvaario	akvarium	Aquarium	aquarium	acuario	acquario	aquarium	akvarium	akvarium
+arachnid				arachnide	arácnido	arachnide			edderkoppdyr
+arch		båge	Bogen		arco	arco	boog	bue	bue
+archery			Bogenschießen		tiro con arco	tiro con l'arco	boogschieten	bueskydning	bueskyting
+arena	areena	arena	Arena	arène		arena	arena	arena	arena
+armchair	nojatuoli	fåtölj	Sessel	fauteuil	sillón	poltrona	fauteuil	lænestol	armstol
+art	taide	konst	Kunst	art	arte	arte	kunst	kunst	kunst
+arthropods		leddjur	Arthropoden	arthropodes	artrópodos	artropodi	geleedpotigen	leddyr
+artichoke	artisokka	artisjock	Artischocke	artichaut	alcachofa	artichiole	artisjok	artiskok	artisjokk
+arugula	rucola	ruccola			rúcula	rucola		arugula
+asparagus	aspargi	sparris	Spargel	asperges	espárragos	asparagi	asperges	asparges	asparges
+athletics	yleisurheilu		Leichtathletik	athlétisme	atletismo		atletiek	atletik
+atm		atm	atm		cajero automático		atm	atm	atm
+atv	atv	atv	atv	atv	atv	atv	atv	atv	ATV
+auditorium	auditorio	auditorium	Auditorium	auditorium	auditorio	auditorium	auditorium	auditorium	auditorium
+aurora		aurora	Aurora	aurore boréale	aurora	aurora boreale	aurora	aurora	aurora
+australian_shepherd	australialainen paimenkoira	australisk herdehund	australischer Schäferhund	berger australien	pastor australiano	pastore australiano	Australische herder	australsk hyrdehund	australsk herdehund
+automobile				automobile
+avocado	avokado	avokado	Avocado		aguacate	avocado	avocado	avocado	avokado
+axe			Axt	hache	hacha	ascia		økse	øks
+baby	vauva	bebis	Baby	bébé	bebé	bambino	baby	baby	baby
+backgammon	backgammon	backgammon	Backgammon	backgammon	backgammon	backgammon	backgammon	backgammon	backgammon
+backhoe						escavatrice		baghængekran
+backpack	reppu	ryggsäck	Rucksack	sac à dos	mochila	zaino	rugzak	rygsæk	ryggsekk
+bacon	pekoni	bacon	Speck	bacon	tocino	pancetta	spek	bacon	bacon
+badminton		badminton	Badminton	badminton	bádminton	badminton	badminton	badminton	badminton
+bag	laukku	väska	Tasche	sac	bolsa	borsa	tas	taske
+bagel	bagel	bagel	Bagel	bagel	bagel	bagel	bagel	bagel	bagel
+baked_goods	leivonnaiset	bakverk	Backwaren	pâtisseries	productos horneados	prodotti da forno	gebakken goederen	bagværk	baktvarer
+baklava	baklava	baklava	Baklava	baklava	baklava	baklava	baklava	baklava	baklava
+balcony	parveke	balkong	Balkon	balcon	balcón	balcone	balkon	balkon	balkong
+ball	pallo	boll	Ball	balle	pelota	palla	bal	bold	ball
+ballet	baletti	balett	Ballett	ballet	ballet	balletto	ballet	ballet	ballett
+ballet_dancer	balettitanssija	balettdansare	Ballettdichterin	danseuse de ballet	bailarina de ballet	ballerina di balletto	balletdanseres	balletdanser	ballettdanser
+ballgames		bollspel	Ballspiele	jeux de balle	juegos de pelota		balspelen	boldspil	ballspill
+balloon	ilmapallo	ballong	Ballon	ballon	globo	palloncino	ballon	ballon	ballong
+balloon_hotair	ilmapallo kuuma ilma	ballonghotair	Ballon Heißluftballon	ballon hot air	globo hotair	palloncino hotair	ballon hotair	ballon-hotair	ballong-hotair
+banana	banaani	banan	Banane	banane	plátano	banana	banaan	banan	banan
+banner	banneri	banner	Banner	bannière		banner	banner	banner	banner
+bar	baari	bar	Bar	bar	bar	bar	bar	bar	bar
+barbell	painotangon	hantelstång			barra de pesas	bilanciere	halterstang	vægtstang	vektstang
+barge				barge
+barn	navetta		Scheune	grange	granero		schuur		låve
+barnacle						barnacolo
+barracuda	barracuda	barracuda	Barracuda	barracuda	barracuda	barracuda	barracuda	barracuda	barracuda
+barrel	tynnyri		Fass	fût	barril	barile		tønder
+baseball	baseball	baseboll	Baseball	baseball	béisbol	baseball	honkbal	baseball	baseball
+baseball_bat	baseballmaila		Baseballschläger	bâton de baseball	bate de béisbol	mazza da baseball	honkbalstok	baseballbat	baseballbat
+baseball_hat	baseballhattu		Baseballhut	casquette de baseball	gorra de béisbol	cappello da baseball	honkbalpet	baseballhat	baseballhatt
+basenji		basenji	Basenji	basenji	basenji	basenji	basenji	basenji	basenji
+basket_container		korgbehållare	Körbchenbehälter	conteneur en panier	contenedor de canasta	contenitore a cesto	mandcontainer
+basketball	koripallo	basket	Basketball	basket-ball	baloncesto	basket	basketbal	basketball	basketball
+basset	basset	basset	Basset	basset	basset	basset	basset	basset	basset
+bath				bain			bad	bad
+bathrobe	kylpytakki	badrock	Bademantel				badjas
+bathroom	kylpyhuone	badrum	Bad	salle de bain	baño	bagno	badkamer	badeværelse	bad
+bathroom_faucet	kylpyhuoneen hana		Badezimmerhahn	robinet de salle de bain	grifo del baño	rubinetto del bagno	badkamerkraan		badkran
+bathroom_room	kylpyhuonehuone	badrum	Badezimmer	salle de bain	habitación de baño	camera da bagno	badkamerkamer	badeværelsesrum	badrom
+beach	ranta	strand	Strand	plage	playa	spiaggia	strand	strand	strand
+beagle	beagle	beagle	Beagle	beagle	beagle	beagle	beagle	beagle	beagle
+bean			Bohnen	haricot	frijol	fagiolo	boon
+beanie								beanie
+bear	karhu	björn	Bär	ours	oso	orso	beer	bjørn	bjørn
+bed	sänky	säng	Bett	lit	cama	letto	bed	seng	seng
+bedding	vuodevaatteet	sängkläder	Bettwäsche	literie	ropa de cama	biancheria da letto	beddengoed	sengetøj	sengetøy
+bedroom	makuuhuone	sovrum	Schlafzimmer	chambre à coucher	dormitorio	camera da letto	slaapkamer	soveværelse	soverom
+bee	mehiläinen	bi	Biene	abeille	abeja	ape		bi	bie
+beef	naudanliha	nötkött	Rindfleisch	bœuf		manzo	rundvlees	oksekød	oksekjøtt
+beehive	mehiläiskotelo	bikupa	Bienenstock	ruche	colmena	alveare	bijenkorf	bikube	bikube
+beekeeping	mehiläishoitto			apiculture	apicultura	apicoltura	bijenteelt	bieravl
+beer	olut	öl	Bier	bière	cerveza	birra	bier	øl	øl
+beet			Rote Bete	betterave	remolacha	barbabietola	bieten	rødbede	rødbete
+begonia	begonia	begonia	Begonie	begonie	begonia	begonia	begonia	begonia	begonia
+bell			Glocke	cloche	campana		bel
+bell_pepper			Paprika					peberfrugt
+belltower		klocktorn	Glockenturm		campanario	campanile
+bellydance	vatsadanssi	magdans	Bauchtanz	danse du ventre	baile de vientre	bellydance	buikdans	mavedans	magedans
+bench	penkki	bänk		banc		panchina	bank	bænke	benk
+bernese_mountain	bernesiläinen vuori					montagna bernese	Bernese berg	bernese bjerg
+berry	marja		Beere		baya	bacca
+bib	bib			bib			bib
+bichon	bichon	bichon	Bichon	bichon		bichon	bichon	bichon	bichon
+bicycle	polkupyörä	cykel	Fahrrad	vélo	bicicleta	bicicletta	fiets	cykel	sykkel
+billboards				panneaux d'affichage		cartelloni pubblicitari	billboards	billboards	reklametavler
+billiards	biljardi	biljard	Billard	billard	billar	biliardo	biljart		biljard
+binoculars		kikare			binoculares	binocoli		kikkert	kikkert
+bird	lintu	fågel	Vogel	oiseau	pájaro	uccello	vogel	fugl	fugl
+birdhouse	lintuhuussi	fågelhus	Vogelhaus	cabane à oiseaux	casita de pájaros	casetta degli uccelli		fuglehus	fuglehus
+birthday_cake	syntymäpäiväkakku	födelsedagstårta	Geburtstagskuchen	gâteau d'anniversaire	pastel de cumpleaños	torta di compleanno	verjaardagstaart	fødselsdagskage	bursdagskake
+biryani	biryani	biryani	Biryani	biryani	biryani	biryani	biryani	biryani	biryani
+biscotti	biscotti	biscotti	Biscotti	biscotti	biscotti		biscotti	biscotti	biscotti
+biscuit				biscuit
+bison	bisoni	bison	Bison	bison	bisonte	bisonte	bizons	bison	bison
+blackberry			Brombeere
+bleachers				gradins	gradas	gradinate
+blender	tehosekoitin	blender	Mixer	mixeur	licuadora	frullatore	blender	blender	blender
+blizzard
+blocks	lohkot	block	Blöcke	blocs	bloques	blocchi	blokken	blokke	blokker
+blossom
+blue_sky	sininen taivas	blå himmel	blauer Himmel	ciel bleu	cielo azul	cielo azzurro	blauwe lucht	blå himmel	blå himmel
+blueberry		blåbär		myrtille	arándano	mirtillo	blauwe bes	blåbær	blåbær
+boar		vildsvin	Wildschwein	cochon	jabalí	maiale	varken	vildsvin	gris
+board_game	lautapeli	brädspel	Brettspiel	jeu de société	juego de mesa	gioco da tavolo	bordspel	brætspil	brettspill
+boat	vene	båt	Boot	bateau	barco	barca	boot	båd	båt
+boathouse			Bootshaus	boathouse		casetta delle barche	bootenhuis	bådhus	båthus
+bobcat	bobcat	bobcat	Bobcat	bobcat	bobcat	bobcat	bobcat	bobcat	bobcat
+bodyboard	bodyboardi	bodyboard	Bodyboard	bodyboard	bodyboard	bodyboard	bodyboard	bodyboard	bodyboard
+bongo_drum	bongorumpu				tambor bongo	tamburo bongo	bongo-trommel
+bonsai	bonsai	bonsai	Bonsai	bonsaï	bonsái	bonsai	bonsai	bonsai	bonsai
+book	kirja	bok	Buch	livre	libro	libro	boek	bog	bok
+bookshelf	kirjahylly	bokhylla	Bücherregal	étagère	estantería	scaffale	boekenkast	boghylde	bokhylle
+boot	saappaat	stövla	Stiefel	botte	bota	stivale	laarzen	støvle	støvle
+bottle	pullo	flaska	Flasche	bouteille	botella	bottiglia	fles	flaske	flaske
+bouquet		buket	Strauß	bouquet	ramo	bouquet	boeket	buket	buket
+bowl	kulho	skål	Schüssel	bol	bol	ciotola		skål	bolle
+bowling	keilailu	bowling	Bowling	bowling	bolos	bowling	bowling	bowling	bowling
+bowtie
+boxing	nyrkkeily	boxning		boxe	boxeo	boxe	boksen	boksning	boksing
+branch	haara	filial	Filiale	succursale	sucursal	filiale	tak	filial	filial
+brass_music	messingimusiikki		Blechmusik	musique de brass			messingmuziek	messingmusik	messingmusikk
+bread	leipä	bröd	Brot	pain	pan	pane	brood	brød	brød
+breakdancing	breakdance	breakdans	Breakdancing	breakdance	breakdance	breakdancing	breakdancen	breakdans	breakdans
+brick	tiili	tegelsten	Ziegel	brique	ladrillo	mattoncino	baksteen	mursten	murstein
+brick_oven		tegelugn	Ziegelofen	four en briques	horno de ladrillo		bakstenen oven
+bride		brud	Braut			sposa	bruid	brud	brud
+bridesmaid	morsiamenhoitaja	brudtärna	Brautjungferin	demoiselle d'honneur			bruidsmeisje
+bridge	silta	bro	Brücke	pont	puente	ponte	brug
+briefcase		resväska		mallette	maleta	valigia			koffert
+broccoli	brokoli	broccoli	Brokkoli	brocoli	brócoli	broccoli	broccoli	broccoli	brokkoli
+broom			Besen	balai	escoba	scopa	bezem
+brownie	brownie	brownie	Brownie	brownie	brownie	brownie	brownie	brownie	brownie
+bruschetta	bruschetta	bruschetta	Bruschetta	bruschetta	bruschetta	bruschetta	bruschetta	bruschetta	bruschetta
+bubble_tea	kuplatee	bubbelte	Bubble Tea	thé au bulles	té burbujas	bubble tea	bubbelthee
+bucket	ämpäri	hink	Eimer	seau		secchio	emmer		bøtte
+building	rakennus	byggnad	Gebäude	bâtiment	edificio	edificio	gebouw	bygning	bygning
+bulldog	bulldog	bulldog	Bulldogge	bouledogue	bulldog	bulldog	bulldog	bulldog	bulldog
+bulldozer		bulldozer	Bulldozer	bulldozer	excavadora	bulldozer	bulldozermachine	bulldozer	bulldoser
+bullfighting	härkätaistelu	tjurfäktning	Stierkampf		bullfighting	bullfighting	stierengevechten	tyrefægtning	tyrefekting
+bungee	bungee	bungee	Bungee	bungee	bungee	bungee	bungee	bungee	bungee
+burrito	burrito	burrito	Burrito	burrito	burrito	burrito	burrito	burrito	burrito
+bus	bussi	buss	Bus	bus	autobús	autobus	bus	bus	buss
+butter		smör	Butter	beurre	mantequilla	burro	boter	smør	smør
+butterfly	perhonen	fjäril	Schmetterling	papillon	mariposa	farfalla	vlinder	sommerfugl	sommerfugl
+cabinet	kaappi	skåp	Schrank				kast	skab	skap
+cableway	köysirata	kabelbana	Seilbahn	télécabine	teleférico		kabelbaan	kabelbane	kabelbane
+cactus		kaktus	Kakteen	cactus	cactus	cactus	cactus	kaktus	kaktus
+cage	häkki	bur	Käfig	cage	jaula	gabbia	kooi	bur	bur
+cake	kakku	tårta	Kuchen	gâteau	pastel	torta	taart	kage	kake
+cake_regular			Kuchen regulär	gâteau régulier	pastel regular	torta regolare	cake regulier		vanlig kake
+cakestand	kakkujalusta	tårtställ	Kuchenständer			supporto per torte	taartstandaard	kagestand	kakestand
+calculator	laskuri	kalkylator	Taschenrechner	calculatrice	calculadora	calcolatrice	rekenmachine	regnemaskine	kalkulator
+calendar	kalenteri	kalender	Kalender	calendrier	calendario	calendario	kalender	kalender	kalender
+caliper				caliper		calliper
+camel	kameli	kamel	Kamel	chameau	camello	cammello	kameel	kamel	kamel
+camera	kamera	kamera	Kamera	caméra	cámara	fotocamera	camera	kamera	kamera
+camping	leiriys	camping	Camping	camping	acampada	campeggio	kamperen	camping	camping
+candle	kynttilä		Kerze	bougie	vela	candela	kaars	stearinlys	stearinlys
+candlestick			Kerzenständer						stearinlysestake
+candy	makeisi	godis	Süßigkeiten	bonbon	dulce	caramella	snoep	slik	godteri
+candy_cane
+candy_other	makeisia muu	godis annat	Süßigkeiten andere	bonbon autre		caramella altra	snoep ander	slik andet	godteri annet
+canine	koira	hund	Hund	canin	canino	canino	hond	hund	hund
+canoe	kanootti	kanot	Kanu	canoë	canoa	canoa	kano	kano	kano
+cantaloupe	cantaloupe	cantaloup					cantaloupe	cantaloupe	cantaloupe
+canyon				canyon		canyon	kloof	kløft	canyon
+caprese	caprese	caprese	Caprese	caprese	caprese	caprese	caprese	caprese	caprese
+car	auto	bil	Auto	voiture	coche	auto	auto	bil	bil
+car_seat		bilstol		siège auto	asiento de coche	seggiolino auto	autostoel	bilstol	bilsete
+caramel	karamelli	karamell	Karamell	caramel	caramelo	caramello	karamel	karamel	karamell
+cardboard_box	pahvilaatikko	kartonglåda	Kartonbox	boîte en carton	caja de cartón	scatola di cartone	kartonnen doos	papkasse	pappeske
+carnation				carnation
+carnival	karnevaali	karneval	Karneval	carnaval	carnaval	carnevale	carnaval	karneval	karneval
+carousel	karuselli	karusell	Karussell	carrousel	carrusel		carrousel	karusel	karusell
+carrot	porkkana	morot	Karotte	carotte	zanahoria	carota	wortel	gulerod	gulrot
+cart	kärry	vagn		chariot	carrito		kar
+carton
+cashew	cashew	cashew	Cashew		anacardo	anacardo	cashew	cashew	cashew
+casino	kasino	kasino	Casino	casino	casino	casinò	casino	kasino	kasino
+casserole		gratäng					casserole
+cassette	kassetti	kassett	Kassette	cassette	cinta de casete		cassette	kassette	kassett
+castle	linna	slott	Schloss	château	castillo	castello	kasteel	slot	slott
+cat	kissa	katt	Katze	chat	gato	gatto	kat	kat	katt
+caterpillar			Raupe	chenille		bruco
+cauliflower	kukkakaali	blomkål		chou-fleur	coliflor	cavolfiore			blomkål
+cave	luola	grotta	Höhle	grotte	cueva	grotta	grot	hule	hule
+cd	cd	cd	cd	cd	cd	cd	cd	cd	cd
+celebration		firande		célébration	celebración	celebrazione	viering	fejring	feiring
+celery	selleri	selleri	Sellerie	céleri	apio	sedano	selderij	selleri	selleri
+celestial_body		himlakropp	Himmelskörper	corps céleste	cuerpo celeste	corpo celeste
+celestial_body_other	muu taivaallinen kappale	annat himlakropp		autre corps céleste
+cellar				cave	bodega	cantina	kelder
+cello	sello	cello	Cello	violoncelle	violonchelo	violoncello	cello	cello	cello
+centipede					centípedo		centipede
+cephalopod		cephalopod		céphalopode	cefalópodo	cefalopode	cephalopod	cephalopod
+cereal	muro			céréales	cereal	cereali	ontbijtgranen		frokostblanding
+ceremony	seremonia	ceremoni	Zeremonie	cérémonie	ceremonia	cerimonia	ceremonie	ceremoni	seremoni
+cetacean	valaseläin		Wal	cétacé	cetáceo	cetaceo		hval	hval
+chainsaw		motorsåg		tronçonneuse	motosierra	motosega			motorsag
+chair	tuoli	stol	Stuhl	chaise	silla	sedia	stoel	stol	stol
+chair_other	tuoli muu	stol annan		chaise autre		sedia altra	stoel ander	stol anden	stol annet
+chairlift
+chaise
+chalkboard				tableau noir	pizarra	lavagna	krijtbord	tavle	tavle
+chameleon	kameleontti	kameleont	Chamäleon	caméléon	camaleón	camaleonte		kameleon	kameleon
+chandelier			Kronleuchter	chandelier			kroonluchter
+chart	kaavio			graphique	gráfico		grafiek
+checkbook	tšekki-kirja	checkbok		livre de chèques	libreta de cheques	libretto di assegni	chequeboekje	checkbog	sjekkbok
+cheerleading			Cheerleading			cheerleader	cheerleading	cheerleading	cheerleading
+cheese	juusto	ost	Käse	fromage	queso	formaggio	kaas	ost	ost
+cheesecake	juustokakku	cheesecake	Cheesecake	cheesecake		cheesecake	cheesecake	cheesecake	cheesecake
+cheetah	gepardi	gepard	Gepard	guépard	guepardo	ghepardo	cheeta	gepard	gepard
+cherry	kirsikka	körsbär	Kirsche	cerise	cereza	ciliegia	kers	kirsebær	kirsebær
+chess	shakkipeli	schack	Schach		ajedrez	scacchi	schaken	skak	sjakk
+chestnut	kastanja	kastanj	Kastanie			castagno		kastanje	kastanje
+chewing_gum	purukumia		Kaugummi	chewing-gum	chicle	gomme da masticare	kauwgom	tyggegummi	tyggegummi
+chihuahua	chihuahua	chihuahua	Chihuahua	chihuahua	chihuahua	chihuahua	chihuahua	chihuahua	chihuahua
+child	lapsi	barn	Kind	enfant	niño	bambino	kind	barn	barn
+chimney	savupiiri	skorsten		cheminée			schoorsteen	skorsten	skorstein
+chinchilla	chinchilla	chinchilla	Chinchilla	chinchilla	chinchilla	chinchilla	chinchilla	chinchilla	chinchilla
+chives			Schnittlauch
+chocolate	suklaa	choklad	Schokolade	chocolat	chocolate	cioccolato	chocolade	chokolade	sjokolade
+chocolate_chip
+chopsticks									spisepinner
+christmas_decoration		juldekoration	Weihnachtsdekoration	décoration de Noël	decoración navideña	decorazione di Natale	kerstversiering	juledekoration	juledekorasjon
+christmas_tree	joulujoulukuusi	julgran	Weihnachtsbaum	sapin de Noël	árbol de Navidad	albero di Natale	kerstboom	juletræ	juletre
+chrysanthemum	krysantemiini	krysantemum	Chrysantheme	chrysanthème	crisantemo	crisantemo	chrysantemum	chrysantemum	krysantemum
+cigar
+cigarette	savukke	cigarett	Zigarette	cigarette	cigarrillo	sigaretta	sigaret	cigaret	sigarett
+cilantro	korianteri	koriander	Koriander	coriandre	cilantro	coriandolo	koriander	koriander	koriander
+circuit_board	piirilevy	kretskort		carte de circuit	placa de circuito		circuitkaart	kredsløbskort	kretskort
+circus	sirkus	cirkus	Zirkus	cirque	circo	circo	circus	cirkus	sirkus
+citrus_fruit		citrusfrukt	Zitrusfrucht		fruta cítrica		citrusvruchten	citrusfrugt	sitrusfrukt
+cityscape	kaupunkikuva		Stadtansicht	paysage urbain	paisaje urbano	paesaggio urbano	stadsgezicht		byutsikt
+clam
+clarinet	klarinetti	klarinett	Klarinette	clarinette	clarinete	clarinetto	klarinet	klarinet	klarinett
+classroom		klassrum	Klassenzimmer	salle de classe	aula	aula	klaslokaal	klasseværelse	klasserom
+cliff			Klippe	falaise	acantilado	scogliera	klif
+cloak
+clock	kello	klocka		horloge			klok		klokke
+clock_tower	kellotorni		Uhrturm		torre del reloj	torre dell'orologio	klokkentoren	klokketårn	klokketårn
+closet	vaatekaappi	garderob	Kleiderschrank	placard	armario	armadio			garderobe
+clothesline		tvättlina	Wäscheleine	corde à linge			waslijn
+clothespin
+clothing	vaatteet	kläder	Kleidung	vêtements	ropa	abbigliamento	kleding	tøj	klær
+cloudy	pilvinen	molnigt	bewölkt	nuageuse	nublado	nuvolosa	bewolkt		overskyet
+clover		klöver	Klee	trèfle	trébol	trifoglio	klaver	kløver
+clown		clown	Clown	clown	payaso	pagliaccio	clown	clown	klovn
+clownfish		clownfisk	Clownfisch	poisson clown	pez payaso	pesce pagliaccio	clownvissen	clownfisk	sirkelfisk
+cockatoo							cockatoe
+cocktail	cocktail	cocktail	Cocktail	cocktail	cóctel	cocktail	cocktail	cocktail	cocktail
+coconut		kokosnöt	Kokosnuss	noix de coco		cocco	kokosnoot	kokosnød	kokosnøtt
+coffee	kahvi	kaffe	Kaffee	café	café	caffè	koffie	kaffe	kaffe
+coffee_bean	kahvipähkinä	kaffebön		grain de café	grano de café	chicco di caffè	koffiebon	kaffebønne	kaffebønne
+coin	kolikko	mynt	Münze	pièce de monnaie	moneda	moneta	munt	mønt	mynt
+coleslaw		coleslaw					coleslaw	coleslaw	coleslaw
+collie	collie	collie	Collie		collie	collie	collie	collie	collie
+compass	kompassi	kompass	Kompass	boussole	brújula	bussola	kompas	kompas	kompass
+computer	tietokone	dator	Computer	ordinateur	ordenador	computer	computer	computer	datamaskin
+computer_keyboard	tietokoneen näppäimistö		Computer-Tastatur	clavier d'ordinateur	teclado de ordenador	tastiera del computer		computerskrivebordstastatur	datamaskin-tastatur
+computer_monitor	tietokoneen näyttö	datorskärm	Computerbildschirm	moniteur d'ordinateur	monitor de ordenador	monitor del computer	computerscherm	computerskærm	datamaskinmonitor
+computer_mouse	tietokonehiiri	datormus	Computermaus	souris d'ordinateur	ratón de ordenador	mouse per computer	computermuis	computerspilermus	datamaskinmus
+computer_tower	tietokoneen torni	datortorn	Computer-Turm	tour d'ordinateur	torre de ordenador	torre del computer			datamaskinstårn
+concert	konsertti	konsert	Konzert	concert	concierto	concerto	concert	koncert	konsert
+conch				conque
+condiment				condiment	condimento	condimento
+conference	konferenssi	konferens	Konferenz	conférence	conferencia	conferenza	conferentie	konference	konferanse
+consumer_electronics	kuluttajateknologia	konsumentelektronik	Verbraucherelektronik	électronique grand public	electrónica de consumo	elettronica di consumo	consumentenelektronica	forbrugerelektronik	forbrukerelektronikk
+container	kontti	containrar	Container	conteneur	contenedor	contenitore	container	container	container
+convertible		cabriolet	Cabriolet	cabriolet	convertible	convertible	cabriolet	cabriolet	cabriolet
+conveyance
+cookie			Cookie		galleta	biscotto	koekje
+cookware			Kochutensilien
+coral_reef	koralliriutta	korallrev	Korallenriff	récif corallien	arrecife de coral	barriera corallina	koraalriff	koralrev	korallrev
+cord				cordon
+corgi	corgi	corgi	Corgi	corgi	corgi	corgi	corgi	corgi	corgi
+corkscrew		korkscrev	Korkenzieher				korkscrew	korkscrelve	korkscrev
+corn	maissi	majs	Mais	maïs	maíz	mais	maïs	majs	mais
+cornflower	maissinkukka	majsblomma	Maisblume	fleur de maïs			maïsbloem	majsblomst	maisblomst
+cosmetic_tool	kosmetiikkatyökalu	kosmetiskt verktyg	Kosmetische Werkzeug	outil cosmétique	herramienta cosmética	strumento cosmetico	cosmetisch gereedschap	kosmetisk værktøj	kosmetisk verktøy
+costume			Kostüm		disfraz	costume	kostuum	kostume	kostyme
+cougar		cougar		cougar		cougar	cougar		cougar
+coupon	alennuskupongki	kupong		coupon	cupón		coupon	kupon	kupong
+cow	lehmä	ko	Kuh	vache	vaca	mucca	koe	ko	ku
+cowboy_hat		cowboyhatt	Cowboyhut	chapeau de cowboy	sombrero vaquero	cappello da cowboy	cowboyhoed	cowboyhat	cowboyhatt
+coyote_wolf			Kojote-Wolf	coyote loup	lobo coyote	lupo coyote	coyotewolf
+crab	rapu	krabba		crabe	cangrejo	granchio	krab	krabbe	krabbe
+cranberry		tranbär		canneberge					tranbär
+crane_construction			Kranbau	construction d'un grue	construcción de grúa	costruzione di gru		kranbygning
+crate
+credit_card	luottokortti	kreditkort	Kreditkarte	carte de crédit	tarjeta de crédito	carta di credito	creditcard	kreditkort	kredittkort
+creek	puro	bäck		ruisseau	arroyo	ruscello
+crepe	crepe	crêpe	Crêpe	crêpe	crepe	crêpe	crepe	crepes	crepe
+crib
+cricket_sport	krikettilaji		Cricket-Sport	sport du cricket	deporte del críquet	sport del cricket			cricketidrett
+croissant	croissantti	croissant	Croissant	croissant	croissant	croissant	croissant	croissant	croissant
+crosswalk		fotgängarövergång	Fußgängerüberweg	passage piéton			voetgangersoversteekplaats	fodgængerovergang	fotgjengerfelt
+crowd	väkijoukko	folkmassa		foule	multitud	folla	menigte	menneskemængde	folkemengde
+cruise_ship	risteilyalus	kryssningsfartyg	Kreuzfahrtschiff	navire de croisière	crucero	nave da crociera	cruiseschip	krydstogtskib	cruiseskip
+crutch		krycka			muleta			krykke
+cubicle					cubículo
+cucumber		gurka	Gurke	concombre	pepino	cetriolo	komkommer	agurk	agurk
+cup		kopp	Tasse	tasse	taza	tazza	beker	kop	kopp
+cupcake			Cupcake			cupcake	cupcake
+currency	valuutta	valuta	Währung			valuta	valuta	valuta	valuta
+curry	curry	curry	Curry	curry	curry	curry	curry	karry
+curtain	verho	gardin	Vorhang	rideau	cortina		gordijn	gardin	gardin
+cutting_board		skärbräda	Schneidebrett	planche à découper	tabla de cortar	piano da taglio	snijplank	skærebræt	skjærebrett
+cycling	pyöräily	cykling	Radfahren	cyclisme	ciclismo	ciclismo	fietsen	cykling	sykling
+dachshund	dachshund	dachshund	Dachshund	dachshund	dachshund	dachshund	dachshund	dachshund	dachshund
+daffodil
+dahlia	dahlia	dahlia	Dahlia	dahlia	dahlia	dahlia	dahlia	dahlia	dahlia
+daikon	daikon	daikon	Daikon	daikon	daikon	daikon	daikon	daikon	daikon
+daisy				marguerite					marguerite
+dalmatian	dalmatialainen	dalmatier	Dalmatiner	dalmatien	dalmático	dalmata	Dalmatische hond	dalmatier	dalmatier
+dam	padon		Damm	barrage	presa	diga	dam	dæmning	demning
+dancing	tanssiminen	dansande	Tanzen	dansant	bailando	ballando	dansen	dansende	dansing
+dandelion			Löwenzahn
+dartboard		dartbräda	Dartscheibe		tablero de dardos		dartbord	dartbord	dartbord
+dashboard	kojelaatta	instrumentbräda	Armaturenbrett	tableau de bord		cruscotto	dashboard		dashbord
+daytime	päiväaika	dagtid						dagtid	dagtid
+decanter		decanter	Dekanter	carafe	decantador	decanter	decanter	decanter	dekanter
+deck			Deck
+decoration	koristelu	dekoration	Dekoration	décoration	decoración	decorazione	decoratie	dekoration	dekorasjon
+decorative_plant	koristeellinen kasvi	dekorativ växt	Dekorationspflanze	plante décorative	planta decorativa	pianta decorativa	decoratieve plant	dekorativ plante	dekorativ plante
+deejay	deejay	deejay	DJ	deejay	deejay	dj	dj	deejay	deejay
+deer		hjort	Hirsch	cerf	ciervo	cervo	hert	hjort	hjort
+desert	aavikko	öken	Wüste	désert	desierto	deserto	woestijn	ørken	ørken
+desk		skrivbord	Schreibtisch		escritorio	scrivania		skrivebord	skrivebord
+dessert	jälkiruoka	efterrätt	Dessert	dessert	postre		dessert	dessert	dessert
+diagram		diagram	Diagramm		diagrama	diagramma	diagram	diagram	diagram
+dial			Zifferblatt	cadran	dial	quadrante	wijzerplaat
+diaper	vaippa	blöja	Windel		pañal	pannolino	luier	ble	bleie
+dice		tärning	Würfel		dados	dadi	dobbelsteen	terning	terning
+dill		dill	Dill				dille		dill
+dining_room		matsal	Esszimmer	salle à manger	sala de comedor	sala da pranzo	eetkamer	spisestue
+dinosaur	dinosaurus	dinosaurie	Dinosaurier	dinosaure	dinosaurio	dinosauro	dinosaurus	dinosaur	dinosaur
+diorama	diorama	diorama	Diorama	diorama	diorama	diorama	diorama	diorama	diorama
+dirt_road	hiekkatiie			route de terre	carretera de tierra	strada sterrata	onverharde weg
+disco_ball	disko-pallo	diskoboll	Disko-Kugel	boule disco	bola de discoteca	palla da discoteca		diskoballe	diskoballe
+dishwasher	astianpesukone	diskmaskin	Geschirrspüler	lave-vaisselle	lavavajillas	lavastoviglie	vaatwasser	opvaskemaskine	oppvaskmaskin
+diskette
+diving	sukellus	dykning	Tauchen	plongée	buceo	immersione subacquea	duiken	dykning	dykking
+doberman	doberman	doberman	Dobermann	doberman	doberman	doberman	doberman	doberman	doberman
+dock	laituri	kaj			muelle	molo		kaj
+document	asiakirja	dokument	Dokument	document	documento	documento	document	dokument	dokument
+dog	koira	hund	Hund	chien	perro	cane	hond	hund	hund
+doll	nukke	docka	Puppe	poupée	muñeca	bambola	pop	dukke	dukke
+dolphin	delfiini	delfin	Delfin	dauphin	delfín	delfino	dolfijn	delfin	delfin
+dome	kupoli	kupol	Kuppel	dôme	cúpula	cupola	koepel	kuppel	kuppel
+domicile
+domino	domino	domino	Domino	domino	domino	domino	domino	domino	domino
+donkey		åsna	Esel	âne	burro	asino	ezel	æsel	esel
+donut	donut	donut	Donut	beignet	donut	donut	donut	donut	donut
+door	ovi	dörr	Tür	porte	puerta	porta	deur	dør	dør
+dove		duva	Taube		paloma	colomba	duif	due	due
+dragon_parade	lohikäärmeiden paraati	drakeparad	Drachenparade	parade de dragons	desfile de dragones	sfilata di draghi	drakenparade	drageparade	drageparade
+dragonfly			Libelle	libellule	libélula	libellula	libel		libelle
+dressage		dressyr	Dressur	dressage	doma	dressage	dressuur	dressur	dressur
+drink	juoma	dryck	Getränk	boisson	bebida	bevanda	drankje	drik	drikke
+drinking_glass			Trinkglas	verre à boire	vaso de beber	bicchiere da bere	drinkglas	drikkeglas	drikkeglass
+driveway		uppfart					oprit	indkørsel	oppkjørsel
+drone_machine		drönarmaskin	Drohnenmaschine	machine de drone	máquina de dron	macchina da droni	drone machine	dronemaskine	dronemaskin
+drum	rumpu	trumma	Trommel	tambour	tambor	tamburo	trommel	tromme	tromme
+dumbbell		hantel	Hantel	haltère	mancuerna		halter
+dumpling	dumplingi	dumpling		dumpling			dumpling	dumpling	dumpling
+durian	durian	durian	Durian	durian	durián	durian	durian	durian	durian
+eagle		örn	Adler	aigle	águila	aquila	adelaar	ørn	ørn
+earmuffs
+easel
+easter_egg	pääsiäismuna	påskägg	Osterei	œuf de Pâques	huevo de Pascua	uovo pasquale	paaseitje	påskeæg	påskeegg
+edamame	edamame	edamame	Edamame	edamame	edamame	edamame	edamame	edamame	edamame
+egg	muna	ägg	Ei	œuf	huevo	uovo	ei	æg	egg
+eggplant		aubergine	Aubergine	aubergine	berenjena	melanzana	aubergine	aubergine	aubergine
+electric_fan	sähkötuuletin	elektrisk fläkt	elektrischer Ventilator	ventilateur électrique	ventilador eléctrico	ventilatore elettrico	elektrische ventilator	elektrisk vifte	elektrisk vifte
+elephant	norsu	elefant	Elefant	éléphant	elefante	elefante	olifant	elefant	elefant
+elevator	hissi	hissa	Aufzug	ascenseur	ascensor	ascensore	lift	elevator	heis
+elk
+embers				braises
+engine_vehicle
+entertainer	viihdyttäjä	underhållare	Unterhalter			intrattenitore	entertainer	underholder	underholder
+envelope	kirjekuori	kuvert		enveloppe		busta	envelop	konvolut	konvolutt
+equestrian			Reitsport	équestre	ecuestre	equestre
+escalator							roltrap
+eucalyptus_tree	eukalyptuspuu	eukalyptusträd	Eukalyptusbaum	arbre à eucaliptus	árbol de eucalipto	albero di eucalipto	eucalyptusboom	eukalyptusplante	eukalyptusplante
+evergreen	ikivihreä		immergrün			sempreverde		eviggrøn	eviggrønn
+extinguisher		brandsläckare	Feuerlöscher	extincteur	extintor	estintore		slukningsapparat
+eyeglasses	silmälasit	glasögon	Brille	lunettes	gafas de sol	occhiali da vista	brillen	briller	briller
+fairground
+falafel	falafel	falafel	Falafel	falafel	falafel	falafel	falafel	falafel	falafel
+farm	maatila	gård	Bauernhof	ferme	granja	fattoria	boerderij	gård	gård
+fedora	fedora	fedora	Fedora	fedora	fedora	fedora	fedora	fedora	fedora
+feline				félin	felino	felino
+fence	aidan	staket	Zaun	clôture	valla	recinzione	hek	hegn	gjerde
+fencing_sport	miekkailulaji		Fechten-Sport	sport d'escrime	deporte de esgrima
+ferns			Farnen	fougères	helechos		varens
+ferret						furetto
+ferris_wheel
+fig		fikon		figue	higo	fico	vijg		fiken
+figurine				figurine
+fire	tuli	eld	Feuer	feu	fuego	fuoco	vuur	ild	ild
+firecracker					petardillo
+fireplace	takka				chimenea	camino	open haard	pejs	peis
+firetruck	palokunta-auto	brandbil	Feuerwehrwagen	camion de pompiers	camión de bomberos		brandweerwagen	brandbil	brannbil
+fireworks	ilotulitukset	fyrverkerier	Feuerwerke	feux d'artifice	fuegos artificiales	fuochi d'artificio	vuurwerk	fyrværkeri	fyrverkeri
+fish	kala	fisk	Fisch	poisson	pez	pesce	vis	fisk	fisk
+fishbowl			Fischbecher	bol à poissons	cuenco de peces
+fishing	kalastus	fiske	Angeln	pêche	pesca	pesca	vissen	fiskeri	fiske
+fishtank		fisktank	Fischbecken	aquarium	acuario	acquario	visbak
+flag		flagga	Fahne	drapeau	bandera	bandiera	vlag	flag	flagg
+flagpole		flaggstång			asta de bandera			flagstang	flaggstang
+flame	lieke	flamma	Flamme	flamme	llama	fiamma	vlam	flamme	flamme
+flamingo	flamingo	flamingo	Flamingo	flamant rose		fenicottero	flamingo	flamingo	flamingo
+flan	flan	flan	Flan	flan	flan	flan	flan	flan	flan
+flashlight	taskulamppu		Taschenlampe	lampe de poche	linterna		zaklamp	lommelygte	lommelykt
+flipchart		flipchart	Flipchart	flipchart	flipchart	flipchart	flipchart
+flipper		flipper						flipper	flipper
+flower	kukka	blomma	Blume	fleur	flor	fiore	bloem	blomst	blomst
+flower_arrangement	kukka-asetelma	blommarrangemang	Blumenarrangement	arrangement de fleurs	arreglo de flores	disposizione di fiori	bloemenarrangement	blomsterarrangement	blomsterarrangement
+flute	huilu	flöjt	Flöte	flûte	flauta	flauto		fløjte	fløyte
+folding_chair	taittuva tuoli	fällstol	Klappstuhl	chaise pliante	silla plegable	sedia pieghevole	vouwstoel	sammenklappelig stol	sammenleggbar stol
+foliage		lövverk	Blätter	feuillage	follaje	fogliame	bladeren	løv	løvverk
+fondue	fondue	fondue	Fondue	fondue	fondue	fonduta	fondue	fondue	fondue
+food	ruoka	mat	Essen	nourriture	comida	cibo	eten	mad	mat
+foosball				foosball			foosbal
+football	jalkapallo	fotboll	Fußball	football	fútbol	calcio	voetbal	fodbold	fotball
+footwear		skor	Schuhe	chaussures	calzado	scarpe	schoenen	fodtøj	sko
+forest	metsä	skog	Wald	forêt	bosque	foresta	bos	skov	skog
+fork	haarukka	gaffel		fourchette	tenedor	forchetta	vork	gaffel	gaffel
+forklift	nosturiauto		Gabelstapler	chariot élévateur	montacargas	carrello elevatore	vorkheftruck		gaffeltruck
+formula_one_car	Formula 1 -auto	Formel 1-bil	Formel-1-Auto	voiture de Formule 1	coche de Fórmula 1	auto di Formula 1	Formule 1-auto	Formel 1-bil	Formel 1-bil
+fountain	suihkulähde	fontän	Brunnen	fontaine		fontana	fontein	springvand	fontene
+fox		räv	Fuchs	renard	zorro	volpe	vos	ræv	rev
+frame		ram	Rahmen	cadre		cornice	kader	ramme	ramme
+fried_chicken	paistettu kana	stekt kyckling	gebratener Hähnchen	poulet frit	pollo frito	pollo fritto	gefrituurde kip	stegt kylling	stekt kylling
+fried_egg	paistettu muna	stekt ägg	gebratener Ei	œuf frit	huevo frito	uovo fritto	gebakken ei	stegt æg	stekt egg
+fries	ranskalaiset perunat	pommes frites	Pommes frites	frites	patatas fritas	patatine fritte	friet	pommes frites	pommes frites
+frisbee	frisbee	frisbee	Frisbee	frisbee	frisbee	frisbee	frisbee	frisbee	frisbee
+frog	sammakko	groda	Frösche	grenouille	rana	rana	kikker		frosk
+frozen	jäätynyt	fryst	eingefroren	gelée	congelada	congelata	bevroren	frosset	frosset
+frozen_dessert	pakastettu jälkiruoka	fryst dessert	Gefrorenes Dessert	dessert glacé	postre helado	dessert surgelato	bevroren dessert	frosset dessert	frosset dessert
+fruit	hedelmä	frukt	Obst	fruit	fruta	frutta	fruit	frugt	frukt
+fruitcake	hedelmäkakku	fruktkaka	Obstkuchen	gâteau aux fruits	pastel de frutas	torta di frutta	vruchtcake	frugtkage	fruktkake
+furniture	huonekalut	möbler	Möbel	meubles	muebles	mobili	meubels	møbler	møbler
+gamepad		spelkontroll	Spielcontroller	manette de jeu	mando de juego	controller	gamecontroller	spilcontroller	spillkontroller
+games	pelit	spel	Spiele	jeux	juegos	giochi	spellen	spil	spill
+garage	autotalli	garage	Garage	garage	garaje	garage	garage	garage	garasje
+garden	puutarha	trädgård	Garten	jardin	jardín	giardino	tuin	have	hage
+gargoyle	gargoyle	gargoyla	Gargoyle	gargouille		gargoyle	gargoyle	gargoyle	gargoyle
+garlic	valkosipuli	vitlök	Knoblauch	ail	ajo	aglio	knoflook	hvidløg	hvitløk
+gas_mask	kaasumaski	gasmask	Gasmaske	masque à gaz	máscara de gas	maschera antigassosa	gasmasker	gasmaske	gassmaske
+gastropod		gastropod			gastrópodo	gastropodo	gastropode	gastropod	gastropod
+gazebo	gazebo		Gazebo	gazebo	gazebo	gazebo		gazebo	gazebo
+gears	vaihteet	växlar	Zahnräder	engrenages	engranajes	ingranaggi	tandwielen	tandhjul
+gecko	gekko	gekko	Gecko	geckos	lagarto	gecko	gekko	gekko	gekko
+gerbil	gerbiili	gerbil	Gerbil	gerbil	jerbíl	gerbillo	gerbil	gerbil	gerbil
+german_shepherd	saksalainen susikoiranrot	tysk herdehund	Deutscher Schäferhund	berger allemand	pastor alemán	pastore tedesco	Duitse herder	tysk hyrdehund	tysk herdehund
+geyser	geysir	gejsir	Geyser	geyser	géiser	geyser	geiser	gejsir	geysir
+gift	lahja	present	Geschenk	cadeau	regalo	regalo	cadeau	gave	gave
+gift_card	lahjakortti	presentkort	Geschenkgutschein	carte cadeau	tarjeta de regalo	carta regalo	cadeaubon	gavekort	gavekort
+gingerbread	piparkakku	pepparkaka	Lebkuchen				peperkoek
+giraffe	giraffi	giraff	Giraffe	girafe	jirafa	giraffa	giraf	giraff	giraff
+glacier	jäätikkö	glaciär	Gletscher		glaciar	ghiacciaio	gletsjer	gletsjer	isbre
+glove	hansikka	handskar	Handschuh	gants	guante	guanto	handschoen	handsker	hanske
+glove_other	hansikkaat muu	handskar annan		gants autre	guante otro	guanto altro	handschoen andere	handsker anden	hanske annen
+go_kart	go-kartti	go-kart	Go-Kart	go-kart	go kart	go-kart	go-kart	go-kart	go-kart
+goat	vuohi	get	Ziege	chèvre	cabra	capra	geit	ged	geit
+goggles		glasögon					brillen	briller	briller
+goldfish	kultakala	guldfisk	Goldfisch		pez dorado		goudvis	guldfisk	gullfisk
+golf	golf	golf	Golf	golf	golf	golf	golf	golf	golf
+golf_ball	golfpallo	golfboll	Golfball	balle de golf	pelota de golf	palla da golf	golfbal	golfbold	golfball
+golf_club	golflyömä	golfklubb	Golfclub	club de golf	club de golf	club da golf	golfclub	golfklub	golfklubb
+golf_course	golfkenttä	golfbana	Golfplatz	parcours de golf	campo de golf	campo da golf	golfbaan	golfbane	golfbane
+gown	mekko	klänning	Kleid	robe	vestido		jurk	kjole	kjole
+graduation	valmistuminen	examen	Abschlussfeier	remise des diplômes	graduación	laurea	afstuderen	dimission
+graffiti	graffiti	graffitis	Graffiti	graffiti	graffiti	graffiti	graffiti	graffiti	graffiti
+grain	jyvä	korn		grain	grano	grano	graan	korn	korn
+grand_prix	Grand Prix	Grand Prix	Grand Prix	grand prix	gran premio	gran premio	Grand Prix	Grand Prix	Grand Prix
+grape	viinirypäle	druva	Traube	raisin	uva	uva	druif	druer	drue
+grapefruit		grapefrukt	Grapefruit		pomelo	pompelmo	grapefruit		grapefrukt
+grass	ruoho	gräs	Gras	herbe	hierba	erba	gras	græs	gress
+grater	raastin			râpeuse	rallador	grattugia
+grave	hautamuuri	grav	Grab				graf	grav	grav
+green_beans	vihreät pavut	gröna bönor	Grüne Bohnen	haricots verts	judías verdes	fagiolini verdi	groene bonen	grønne bønner	grønne bønner
+greenhouse	kasvihuone	växthus	Gewächshaus	serre	invernadero	serra	kas	drivhus	drivhus
+greyhound			Greyhound	greyhound	galgo	greyhound	greyhound	greyhound	greyhound
+grill	grilli	grill	Grill		parrilla	griglia	grill	grill	grill
+grilled_chicken	grillaattu kana	grillad kyckling	gegrilltes Hähnchen	poulet grillé	pollo a la parrilla	pollo alla griglia	gegrilde kip	grillet kylling	grillet kylling
+groom		brudgummen	Bräutigam			sposo	bruidegom	brudgom	brudgom
+guacamole	guacamole	guacamole	Guacamole	guacamole	guacamole	guacamole	guacamole	guacamole	guacamole
+guava	guava	guava	Guave	guave	guayaba	guava	guava	guava	guava
+guitar	kitara	gitarr	Gitarre	guitare	guitarra	chitarra	gitaar	guitar	gitar
+gull		mås	Möwe	mouette	gaviota	gabbiano	meeuw	måge	måke
+guppy	guppy	guppy	Guppy	guppy	guppy	guppy	guppy	guppy	guppy
+gymnastics	voimistelu	gymnastik	Turnen	gymnastique	gimnasia	ginnastica	gymnastiek	gymnastik	gymnastikk
+gyoza	gyoza	gyoza	Gyoza	gyoza	gyoza	gyoza	gyoza	gyoza	gyoza
+habanero	habanero	habanero	Habanero	habanero	habanero	habanero	habanero	habanero	habanero
+ham	kinkku	skinka	Schinken	jambon	jamón	prosciutto	ham	skinke	skinke
+hamburger	hampurilainen	hamburgare		hamburger	hamburguesa	hamburger	hamburger	hamburger	hamburger
+hammer	vasara	hammare	Hammer	marteau	martillo	mazza	hamer	hammer	hammere
+hammock		hammock	Hängematte	hamac	hamaca				hengekøye
+hamster	hamsteri	hamster	Hamster	hamster	hámster	criceto	hamster	hamster	hamster
+handwriting		handstil	Handschrift	écriture manuscrite	escritura a mano	scrittura a mano	handschrift	håndskrift	håndskrift
+hangar	hangari	hangar	Hangar	hangar	hangar	hangar	hangar	hangar	hangar
+hangglider
+harbour	satama	hamn	Hafen	port	puerto	porto	haven	havn	havn
+hardhat
+harp		harpa	Harfe	harpe	arpa	arpa	harp	harpe	harpe
+hat	hattu	hatt	Hut	chapeau	sombrero	cappello	hoed	hat	hatt
+haze
+headgear	päähineet
+headphones	kuulokkeet	hörlurar	Kopfhörer	écouteurs	auriculares	cuffie	koptelefoons	hovedtelefoner	hodetelefoner
+health_club		hälsoklubb
+hedgehog		igelkott	Igel	hérisson	erizo		egel
+helicopter	helikopteri	helikopter	Hubschrauber	hélicoptère	helicóptero	elicottero	helikopter	helikopter	helikopter
+helmet	kypärä	hjälm	Helm	casque	casco	casco	helm	hjelm	hjelm
+henna	henna	henna	Henna	henné	henna	henna	henna	henna	henna
+herb	yrtti	ört	Kräuter				kruid	urt	urt
+heron		häger	Reiher	héron					hegre
+high_chair	korkea tuoli	högstol	Hochstuhl		silla alta	seggiolino alto	hoge stoel	høj stol
+high_heel	korkokenkä	högklack	High Heel	talons hauts	tacón alto	tacco alto	hoge hak		høye hæler
+hiking	vaellus	vandring	Wandern	randonnée	senderismo	escursione		vandretur	fottur
+hill	kukkula	kulle	Hügel	colline	colina	collina	heuvel	bakke	ås
+hippopotamus	hippopotami	flodhäst	Nilpferd	hippopotame	hipopótamo	ippopotamo		flodhest	flodhest
+hockey	jääkiekko	hockey	Eishockey	hockey	hockey	hockey	hockey	hockey	hockey
+holly	holly	holly			holly	holly	hulst	holly	holly
+honey	hunaja	honung	Honig	miel	miel	miele	honing	honning	honning
+honeydew			Honigtau	honeydew
+hoodie	huppari	tröja med huva	Kapuzenpullover	sweat à capuche	sudadera con capucha	felpa con cappuccio	hoodie	hættetrøje	hettegenser
+hookah	shisha	shisha	Hookah	shisha	shisha	shisha	shisha	shisha	shisha
+horse	hevonen	häst	Pferd	cheval	caballo	cavallo	paard	hest	hest
+horseshoe	hevosenkenkä					ferro di cavallo		hestesko	hestesko
+hospital	sairaala	sjukhus	Krankenhaus	hôpital	hospital	ospedale	ziekenhuis	hospital	sykehus
+hotdog	hotdog		Hotdog	hot-dog	hotdog	hotdog	hotdog	hotdog	hotdog
+hound
+hourglass			Sanduhr		reloj de arena	orologio a sabbia
+house_single
+houseboat		husbåt	Hausboot				huisboot	husbåd	husbåt
+housewares		hushållsartiklar	Haushaltsartikel		artículos para el hogar	articoli per la casa	huishoudelijke artikelen	husholdningsartikler	husholdningsartikler
+hula	hula	hula	Hula	hula	hula	hula	hula	hula	hula
+hummingbird		kolibri					kolibri
+hummus	hummus	hummus	Hummus	houmous	hummus	hummus	hummus	hummus	hummus
+hunting	metsästys	jakt	Jagd	chasse	caza	caccia	jagen	jagt	jakt
+hurdle
+husky	husky	husky	Husky	husky	husky	husky	husky	husky	husky
+hydrant					hidrante		hydrant
+hyena		hyena	Hyäne	hyène	hiena	iena	hyena	hyena	hyena
+ice	jäätä	is			hielo	ghiaccio	ijs	is	is
+ice_cream	jäätelö	glass	Eis	glace	helado	gelato			iskrem
+ice_skates		isskridskor	Eislaufschuhe	patins à glace	patines de hielo	pattini da ghiaccio
+ice_skating	luistelu	isskridskoåkning	Eislaufen	patinage sur glace	patinaje sobre hielo	pattinaggio su ghiaccio	schaatsen	skøjteløb	skøyting på isen
+iceberg		isberg	Eisberg	iceberg	iceberg	iceberg	ijsberg
+igloo	igloo	igloo		igloo	iglú	igloo	iglo	iglo	iglo
+iguana	iguanat	iguan	Iguana	iguane	iguana	iguana	iguana	iguan	iguan
+illustrations	kuvitukset	illustrationer	Illustrationen	illustrations	ilustraciones	illustrazioni	illustraties	illustrationer	illustrasjoner
+insect	hyönteinen	insekt	Insekt	insecte	insecto	insetto	insect	insekt	insekt
+interior_room		inre rum		pièce intérieure	habitación interior	stanza interna	interieur kamer	indvendig rum	innvendig rom
+interior_shop	sisustusmyymälä		Innenraum des Ladens	magasin intérieur	tienda interior	interno negozio	interieurwinkel	indvendig butik	interiørbutikk
+irish_wolfhound	irlantilainen susihoundi		Irischer Wolfshund	wolfhound irlandais			Ierse wolfshond		irsk ulvhund
+iron_clothing				vêtements à repasser
+island	saari		Insel	île	isla	isola	eiland
+ivy			Efeu			edera
+jack_o_lantern	jack o lantern	jacko lanterna	Jack-o-Lantern		calabaza de jack o lantern	zucca di Halloween	jack-o-lantern		gresskar
+jack_russell_terrier	jack russell terrieri	jack russell terrier	Jack Russell Terrier	jack russell terrier	jack russell terrier	jack russell terrier	jack russell terrier	jack russell terrier	jack russell terrier
+jacket	takki	jacka	Jacke	veste	chaqueta	giacca	jas	jakke	jakke
+jacuzzi		jacuzzi	Jacuzzi	jacuzzi	jacuzzi	jacuzzi	jacuzzi	jacuzzi	jacuzzi
+jalapeno	jalapeno	jalapeno	Jalapeño	jalapeno	jalapeño	jalapeno	jalapeño	jalapeno	jalapeno
+jar	purkki	burk			frasco	barattolo
+jeans	farkut	jeans	Jeans	jeans	vaqueros	jeans	spijkerbroek	jeans	jeans
+jeep	jeep	jeep	Jeep	jeep	jeep	jeep	jeep	jeep	jeep
+jello			Jell-O				jello	jello	jello
+jelly		gelé
+jellyfish	meduusa		Quallen	méduse	medusa	medusa	kwallen
+jetski	jet ski	jetski	Jetski	jet ski	jet ski	jet ski	jetski	jetski	jetski
+jewelry	korut	smycken	Schmuck	bijoux	joyas	gioielli	sieraden	smykker	smykker
+jigsaw
+jockey_horse		jockeyhäst	Jockeypferd	cheval de jockey			paard van de jockey	jockeyhest	jockeyhest
+joystick		joystick	Joystick			joystick	joystick	joystick
+jug
+juggling	jongleily	jonglering	Jonglieren	jonglerie	malabarismo	giocoleria	jongleren	jonglering	jonglering
+juice	mehu	saft	Saft	jus	zumo	succo	sap	saft	saft
+juicer								saftpresser	saftpresser
+jungle	sademetsä	djungel	Dschungel	jungle	selva	giungla	jungle	jungle	jungel
+kangaroo	kenguru	känguru	Känguru	kangourou	canguro	canguro	kangoeroe	kengurú	kenguru
+karaoke	karaoke	karaoke	Karaoke	karaoké	karaoke	karaoke	karaoke	karaoke	karaoke
+kayak	kajakki	kajak	Kajak	kayak	kayak	kayak	kajak	kajak	kajakk
+kebab	kebab	kebab	Kebab	kebab	kebab	kebab	kebab	kebab	kebab
+keg									kegge
+kettle			Wasserkocher	bouilloire	tetera	bollitore		kogekande
+keypad
+kickboxing	potkunyrkkeily	kickboxning	Kickboxen	kickboxing	kickboxing	kickboxing	kickboksen	kickboksning	kickboksing
+kilt		kilt	Kilt	kilts	kilt	kilts	kilts	kilt
+kimono	kimono	kimono	Kimono	kimono	kimono	kimono	kimono	kimono	kimono
+kitchen	keittiö	kök	Küche	cuisine	cocina	cucina	keuken	køkken	kjøkken
+kitchen_countertop	keittiön työtaso	köksbänkskiva	Küchenarbeitsplatte	plan de travail de la cuisine	encimera de la cocina	piano di lavoro della cucina	keukentafelblad	køkkenbordplade	kjøkkenbenk
+kitchen_faucet	keittiön hana	kökskran	Küchenhahn	robinet de cuisine	grifo de la cocina	rubinetto della cucina	keukenkran		kjøkkenkran
+kitchen_oven	keittiön uuni	köksugn	Küchenofen	four de cuisine	horno de cocina	forno da cucina		køkkenovn	kjøkkenovn
+kitchen_room		köksrum	Küchenraum				keukenkamer		kjøkkenrom
+kitchen_sink	keittiön pesuallas	köksdiskho	Küchenwaschbecken	évier de cuisine	fregadero de la cocina	lavello della cucina		køkkenvask	kjøkkenvask
+kite							vlieger
+kiteboarding		kiteboarding	Kiteboarding	kiteboard	kiteboarding	kiteboarding	kiteboarden	kiteboarding	kiteboarding
+kitten	kissanpentu	kattunge	Kätzchen	chaton	gatito	gattino	kitten	killing	kattunge
+kiwi	kiivi	kiwi	Kiwi	kiwi	kiwi	kiwi	kiwi	kiwi	kiwi
+knife	veitsi	kniv	Messer	couteau	cuchillo	coltello	mes	kniv	kniv
+koala	koala	koala	Koala	koala	koala	koala	koala	koala	koala
+kohlrabi	kohlrabi		Kohlrabi
+koi	koi	koi	Koi	koi	koi	koi	koi	koi	koi
+lab_coat	laboratoriopuku		Laborkittel		bata de laboratorio		laboratoriumjas
+ladle
+ladybug			Marienkäfer	coccinelle		coccinella	lieveheersbeestje
+lake	järvi	sjö	See	lac	lago	lago		sø	innsjø
+lamp	lamppu	lampa	Lampe	lampe	lámpara	lampada	lamp	lampe	lampe
+lamppost	lamppupylväs	lampstolpe		poteau de lumière		lampione	straatlantaarn	gadelygte	lysstolpe
+land	maa
+lantern	lyhty		Laterne	lanterne		lanterna	lantaarn	lanterne	lantern
+laptop	kannettava tietokone	bärbar dator	Laptop	ordinateur portable	portátil	laptop	laptop	bærbart computer	bærbar datamaskin
+laundry_machine	pesukone	tvättmaskin	Waschmaschine	machine à laver	lavadora	lavatrice	wasmachine	vaskemaskine	vaskemaskin
+lava		lava	Lava				lava	lava	lava
+leash		koppel				guinzaglio
+leek		purjolök	Lauch						purre
+lemon	sitruuna	citron	Zitrone	citron	limón	limone	citroen	citron	sitron
+lemongrass		citrongräs	Zitronengras	citronnelle	hierba limón		citroengras		sitrongress
+lemur	lemuri	lemur	Lemur		lémur	lemuro	lemur	lemur	lemur
+leopard	leopardi	leopard	Leopard	léopard	leopardo	leopardo	luipaard	leopard	leopard
+leotard	leotardti	leotard	Leotard	leotard	leotard		leotard	leotard	leotard
+lettuce				laitue	lechuga	lattuga	sla
+library	kirjasto	bibliotek	Bibliothek	bibliothèque	biblioteca	biblioteca	bibliotheek	bibliotek	bibliotek
+license_plate	rekisterikilpi	registreringsskylt	Kennzeichen	plaque d'immatriculation	matrícula	targa	kentekenplaat		registreringsskilt
+lifejacket	pelastusliivi		Rettungsweste	gilet de sauvetage	chaleco salvavidas	gilet di salvataggio	reddingsvest	redningsvest	livvest
+lifesaver
+light	valo	ljus	Licht	lumière	luz	luce	licht	lys	lys
+light_bulb		glödlampa	Glühbirne	ampoule	bombilla	lampadina		lyspære	lyspære
+lighter		tändare		allume-feu	encendedor	accendino	aansteker	lighter	lighter
+lighthouse	majakka		Leuchtturm	phare	faro	faro	vuurtoren	fyrtårn
+lightning	salama				relámpago	fulmine	bliksem	lyn	lyn
+lily	lily	lily	Lily	lily	lily	lily	lily	lilje	lily
+lime		lime	Limette		lima	lime	limoen	lime
+limousine	limousini	limousin		limousine	limusina	limousine	limousine	limousine	limousin
+lion	leijona	lejon	Löwe	lion	león	leone	leeuw	løve	løve
+lionfish	leijonakala	lejonfisk	Löwenfisch		pez león	pesce leone	leeuwenvis	løvefisk	løvefisk
+liquid	neste	vätska	Flüssigkeit	liquide	líquido	liquido	vloeistof	væske	væske
+liquor	alkoholi	spritdryck		alcool	licor		alcohol		alkohol
+living_room	olohuone	vardagsrum	Wohnzimmer	salon	salón	soggiorno	woonkamer	stue	stue
+lizard		ödla	Leguan	lézard	lagarto	lucertola	hagedis	leguan	øgle
+llama		lama	Lama	lama			lama	lama	lama
+loafer	loafer	loafer	Loafer					loafer	loafer
+lobster	hummeri	hummer	Hummer	homard	langosta			hummer	hummer
+lollipop	lollipop		Lutscher	bonbon en bâton			lolly	slikpind
+luggage	matkatavarat	bagage	Gepäck	bagages	equipaje	bagagli	bagage	bagage	bagasje
+lychee		lychee	Lychee	lychee		lychee	lychee	lychee	lychee
+lynx		lodjur	Lynx	lynx		lince	lynx	lynx
+macadamia	makadamia	makadamianöt	Macadamia	macadamia	macadamia	macadamia	macadamia	makadamia	makadamia
+machine	kone	maskin	Maschine	machine	máquina		machine	maskine	maskin
+mackerel	makrillikala	makrill		maquereau			makreel	makrel	makrell
+magazine			Magazin	magazine	revista	rivista	tijdschrift	magasin	magasin
+mailbox	postilaatikko	brevlåda	Briefkasten	boîte aux lettres	buzón de correos	cassetta della posta	brievenbus	postkasse	postkasse
+malamute	malamutti		Malamute	malamute	malamute	malamute	malamute	malamute	malamute
+malinois	malinois	malinois	Malinois	malinois	malinois	malinois	malinois	malinois	malinois
+mallet
+mammal	nisäkäs	däggdjur	Säugetier	mammifère	mamífero	mammifero	zoogdier	pattedyr	pattedyr
+mandarine	mandariini	mandarin	Mandarine	mandarine	mandarina	mandarino	mandarijn	mandarin	mandarin
+mango	mango	mango	Mango	mangue	mango	mango	mango	mango	mango
+mangosteen	mangosteeni	mangosteen	Mangosteen	mangoustine	mangostén	mangosteen	mangosteen	mangosteen	mangosteen
+mangrove	mangrove	mangroveskog	Mangrovenwald	mangrove	mangrovera	mangrovia	mangrove	mangroveskov	mangroveskog
+manhole
+map	kartta	karta	Karte	carte	mapa	mappa	kaart	kort	kart
+maple_tree	vaahterapuu			érable			esdoornboom
+margarita	margarita	margarita	Margarita	margarita	margarita	margarita	margarita	margarita	margarita
+marigold		marigold					marigold	marigold	marigold
+marshmallow		marshmallow	Marshmallow	marshmallow	malvavisco	marshmallow	marshmallow	marshmallow	marshmallows
+marsupial	marsupiali	pungdjur	Marsupial	marsupial	marsupial	marsupiale	marsupiaal	pungdyr	pungdyr
+martial_arts	taistelulajit	kampsport	Kampfsportarten	arts martiaux	artes marciales	arti marziali	vechtsporten	kampsport	kampsport
+martini	martini	martini	Martini	martini	martini	martini	martini	martini	martini
+mask	maski	mask	Maske	masque	máscara	maschera	masker	maske	maske
+mast		mast	Mast	mât	mástil		mast	mast	mast
+mastiff	mastiffi	mastiff	Mastiff	mastiff	mastín	mastino	mastiff	mastiff	mastiff
+matches	ottelut	matcher		matchs	partidos	partite	wedstrijden
+material	materiaali	material	Material	matériau	material	materiale	materiaal	materiale	materiale
+matzo	matzo	matzo	Matzo	matzo	matzo	matzo	matzo	matzo	matzo
+measuring_tape			Maßband	ruban à mesurer	cinta métrica		meetlint		målebånd
+meat	liha	kött	Fleisch	viande	carne	carne	vlees	kød	kjøtt
+meatball		köttbulla	Fleischbällchen	boulette de viande	albóndigas	polpette	gehaktbal	kødbolle	kjøttbolle
+medal	mitali	medalj	Medaille	médaille	medalla	medaglia	medaille	medalje	medalje
+media	media	media	Medien	médias	medios		media	medier	media
+medicine	lääke	medicin	Medizin	médecine	medicina	medicina	medicijn	medicin	medisin
+megalith	megalitti	megalit	Megalith	mégalith	megalito	megalito	megaliet	megalit	megalitt
+megaphone					megafon		megafoon		megafon
+melon		melon		melon					melon
+microphone	mikrofoni	mikrofon	Mikrofon	microphone	micrófono	microfono	microfoon	mikrofon	mikrofon
+microscope	mikroskooppi	mikroskop	Mikroskop	microscope	microscopio	microscopio	microscoop	mikroskop	mikroskop
+microwave	mikroaaltouuni	mikrovågsugn	Mikrowelle	micro-ondes	microondas	microonde	magnetron	mikrobølgeovn	mikrobølgeovn
+military_uniform	sotilaspuku	militäruniform	Militäruniform	uniforme militaire	uniforme militar	uniforme militare	militaire uniform	militæruniform	militæruniform
+milkshake	milkshake		Milchshake	milkshake		milkshake	milkshake	milkshake	milkshake
+millipede								tusindben
+mistletoe		mistel					mistelbes	mistelten	misteltein
+mitten
+moccasin	moccasin	moccasin	Moccasin	mocassin	mocasín	mocassino	moccasin	moccasin	moccasin
+mojito	mojito	mojito	Mojito	mojito	mojito	mojito	mojito	mojito	mojito
+mollusk	nilviäinen	blötdjur		mollusque	molusco	mollusco		bløddyr	bløtdyr
+money	raha	pengar	Geld		dinero	soldi	geld	penge	penger
+monitor_lizard	monitorikäärme	monitorödla		lézard de moniteur	lagarto monitor	lucertola monitor	monitorhagedis	monitorøglen
+monorail	monorata	monorail		monorail		monorail	monorail	monorail	monorail
+monument	muistomerkki	monument	Denkmal	monument	monumento	monumento	monument	monument	monument
+moon	kuu	måne	Mond	lune	luna	luna	maan	måne	måne
+moose	hirvi	älg	Elch					elg
+mop	mopki	mopp			mopa		mopa	moppe	moppe
+moss	sammal	mossa	Moos		musgo	muschio	mos	mos	mose
+moth			Motte		polilla	falena	mot	møl
+motocross		motocross	Motocross	motocross	motocross	motocross	motorcross	motocross	motocross
+motorcycle	moottoripyörä	motorcykel	Motorrad	moto	motocicleta	moto	motorfiets	motorcykel	motorsykkel
+motorhome		husbil	Wohnmobil	camping-car
+motorsport	moottoriurheilu	motorsport	Motorsport		automovilismo	motorsport	motorsport	motorsport	motorsport
+mountain	vuori	berg	Berg	montagne	montaña	montagna	berg	bjerg	fjell
+mousetrap		mössfälla		piège à souris	trampilla para ratones	trappola per topi	muisval
+mower		gräsklippare	Rasenmäher	tondeuse à gazon	cortacésped		maaimachine	græsslåmaskine	gressklipper
+muffin	muffin	muffins	Muffin	muffin	muffin	muffin	muffin	muffin	muffins
+mug		mugg					mok
+museum	museo	museum	Museum	musée	museo	museo	museum	museum	museum
+mushroom	sieni	svamp	Pilz	champignon	hongo	fungo	paddenstoel	svamp	sopp
+music	musiikki	musik	Musik	musique	música	musica	muziek	musik	musikk
+musical_instrument		musikinstrument	Musikinstrument	instrument de musique	instrumento musical	strumento musicale	muziekinstrument	musikalsk instrument	musikkinstrument
+mussel	simpukka	mussel				cozze	mossel	musling	musling
+mustard	sinappi	senap	Senf	moutarde	mostaza	senape	mosterd	sennep	sennep
+naan	naan	naan	Naan	naan	naan	naan	naan	naan	naan
+nachos	nachos	nachos	Nachos	nachos	nachos	nachos	nachos	nachos	nachos
+nascar	nascar	nascar	nascar	nascar	nascar	nascar	nascar	nascar	nascar
+necktie		slips	Krawatte	cravate	corbata	cravatta	stropdas	slips	slips
+nectarine	nektariini	nektarin		nectarine	nectarina	nectarina	nectarine	nektarin	nektarin
+nest	pesä		Nest	nid	nido	nido	nest	rede	rede
+newfoundland	Newfoundland	Newfoundland	Neufundland		Terranova		Newfoundland	Newfoundland	Newfoundland
+newspaper	sanomalehti	tidning	Zeitung	journal	periódico	giornale	krant	avis	avis
+night_sky	yötaivas	nattens himmel		ciel nocturne	cielo nocturno	cielo notturno	nachthemel	nattehimlen	nattlig himmel
+nightclub	yökerho	nattklubb	Nachtclub	boîte de nuit			nachtclub	natklub	nattklubb
+nut	pähkinä	nöt	Nuss	noix			noot		nøtte
+oak_tree					árbol de roble	albero di quercia	eikenboom	egetræ	eiketre
+oar
+oatmeal					avena	avena	havermout	havregryn
+obelisk	obeliski	obelisk	Obelisk	obélisque	obelisco	obelisco	obelisk	obelisk	obelisk
+ocean	meri	hav	Ozean	océan	océano	oceano	oceaan	hav	hav
+office_supplies	toimistotarvikkeet	kontorsartiklar	Bürobedarf	fournitures de bureau	suministros de oficina	forniture per ufficio	kantoorbenodigdheden	kontorartikler	kontorutstyr
+omelet		omelett	Omelett	omelette	tortilla	frittata	omelet	omelet	omelett
+onion	sipuli	lök	Zwiebel	oignon	cebolla	cipolla	ui	løg	løk
+optical_equipment	optinen laite	optisk utrustning	optische Ausrüstung	équipement optique	equipo óptico	attrezzatura ottica	optische apparatuur	optisk udstyr	optisk utstyr
+oranges	appelsiinit	apelsiner	Orangen	oranges	naranjas	arance	sinaasappels	appelsiner	appelsiner
+orchard	omenapuutarha			verger		frutteto	fruitboomgaard
+orchestra	orkesteri	orkester	Orchester	orchestre	orquesta	orchestra	orkest	orkester	orkester
+orchid	orkidea	orkidé	Orchidee	orchidée	orquídea	orchidea	orchidee	orkidé	orkide
+organ_instrument	urkku	organsinstrument	Orgelinstrument		instrumento de órgano		orgaaninstrument	orgelinstrument	organsinstrument
+origami	origami	origami	Origami	origami	origami	origami	origami	origami	origami
+ostrich	strutsi	struts		autruche	avestruz	struzzo	struisvogel
+otter	ottero		Otter			lontra	otter	odder	oter
+outdoor		utomhus			al aire libre	all'aperto		udendørs	utendørs
+oven	uuni	ugn	Ofen	four	horno	forno	oven	ovn	ovn
+owl		uggla	Uhu	hibou	búho	gufo	uil	ugle	ugle
+oyster		ostron	Austern	huître	almeja	ostrica	oester	østers	østers
+pacifier				tétine	chupete	ciuccio
+paella	paella	paella	Paella	paella	paella	paella	paella	paella	paella
+paintball	paintball	paintball	Paintball	paintball	paintball	paintball	paintball	paintball	paintball
+paintbrush				pinceau à peinture
+painting	maalaus	målning	Gemälde	peinture	pintura	dipinto	schilderij	maleri	maleri
+palm_tree	palmu	palmträd	Palmenbaum	palme	palmera	palma	palmboom	palmeplante	palmeplante
+pan	pannu						pan
+pancake	pannukakku	pannkaka	Pfannkuchen			frittella	pannenkoek	pandekage	pannekake
+panda	panda	panda	Panda	panda	panda	panda	panda	panda	panda
+papaya		papaya	Papaya	papaye	papaya	papaya	papaja	papaya	papaya
+paper_bag	paperipussi	papperspåse	Papierbeutel	sac en papier	bolsa de papel	borsa di carta	papieren zak	papirpose	papirpose
+parachute	laskuvarjo	fallskärm	Fallschirm	parachute		paracadute	parachute	fallskærm	fallskjerm
+parade	paraati	parad	Parade	parade	desfile	sfilata	parade	parade	parade
+parakeet	papukaija	papegoja	Papagei	perroquet	loro	pappagallo	papegaai	papegøje	papegøye
+parasailing	parasailingi	parasailing	Parasailing				parasailen	parasailing	parasailing
+park	puisto	park	Park	parc	parque	parco	park	park	park
+parking_lot	pysäköintialue	parkeringsplats	Parkplatz	parking	aparcamiento	parcheggio	parkeerplaats	parkeringsplads	parkeringsplass
+parrot	papukaija	papegoja	Papagei	perroquet	loro	pappagallo	papegaai	papegøje	papegøye
+passionfruit	passionhedelmä	passionfrukt	Passionsfrucht	passion fruit	maracuyá		passievrucht	passionfrugt	passionfrukt
+passport	passi	pass	Reisepass	passeport	pasaporte	passaporto	paspoort	pas	pass
+pasta	pastaa	pasta	Nudeln	pâtes	pasta	pasta	pasta	pasta	pasta
+pastry	leivonnainen	bakverk	Gebäck		repostería		gebak	bagværk	bakverk
+path	polku	stig		chemin	camino		pad	sti	sti
+patio	terassi	terrass	Terrasse	patio		patio	terras	terrasse	terrasse
+payphone				téléphone payant
+pea	herne			pois	guisante	pisello	erwten		erte
+peach	persikka		Pfirsich		melocotón		perzik
+peacock			Pfau	paon	pavón	pavone	pauw
+peanut	maapähkinä	jordnöt	Erdnuss	cacahuète	cacahuete	arachide	pinda	jordnød	jordnøtt
+pear		päron	Birne	poire	pera	pera	peer	pære
+pecan		pekannöt	Pekannuss	noix de pécan	nuez de pecan		pecannot	pecan	pekannøtt
+pelican	pelikaani	pelikan		pelican	pelícano	pelicano	pelikaan	pelikan	pelikan
+pen	kynä	penna	Stift	stylo	bolígrafo	penna	pen	pen	penn
+penguin	pingviini	pingvin	Pinguin	pingouin	pingüino	pinguino	pinguïn	pingvin	pingvin
+people	ihmiset	människor	Menschen		personas	persone	mensen	mennesker	mennesker
+pepper_veggie
+pepperoni	pepperoni	pepperoni	Pepperoni	pepperoni	pepperoni	pepperoni	pepperoni	pepperoni	pepperoni
+peregrine				faucon pèlerin		falco pellegrino	peregrijn
+performance		prestation	Leistung	performance	actuación	performance	prestatie	optræden	opptreden
+pergola	pergola	pergola		pergola	pérgola	pergola	pergola	pergola	pergola
+persimmon			Persimmon	persimmon				persimmon
+petunia	petunia	petunia	Petunie	pétunia	petunia	petunia	petunia	petunia	petunia
+phone	puhelin	telefon	Telefon	téléphone	teléfono	telefono	telefoon	telefon	telefon
+piano	piano	piano	Klavier	piano	piano	pianoforte	piano	klaver	piano
+pickle				cornichon			augurk
+pie	piirakka			tarte
+pier	laituri		Pier		muelle	molo	pier
+pierogi	pierogi	pierogi	Pierogi	pierogi	pierogi	pierogi	pierogi	pierogi	pierogi
+pig	sika	gris	Schwein	porc	cerdo	maiale	varken	gris	gris
+pigeon				pigeon		piccione
+piggybank							spaarpot	sparegris	sparegris
+pillow	tyyny	kudde	Kissen	oreiller	almohada	cuscino	kussen	pude	pute
+pineapple	ananas	ananas	Ananas	ananas	piña	ananas	ananas	ananas	ananas
+ping_pong	pingis	pingis	Tischtennis	ping-pong	ping-pong	ping pong	pingpong	bordtennis	ping pong
+pipe	putki		Rohr	tuyau	tubería		pijp	rør	rør
+pistachio	pistachioli	pistage	Pistazie	pistache	pistacho	pistacchio	pistache	pistacie	pistasje
+pita	pita	pita	Pita	pita	pita	pita	pita	pita	pita
+pitbull	pitbull	pitbull	Pitbull	pitbull	pitbull	pitbull	pitbull	pitbull	pitbull
+pizza	pizza	pizza	Pizza	pizza	pizza	pizza	pizza	pizza	pizza
+plant	kasvi	växt	Pflanze	plante	planta	pianta	plant	plante	plante
+plate	lautanen	tallrik	Platte	assiette	plato	piatto		tallerken	tallerken
+play_card		spela kort			jugar la carta		speel kaart	leg kort	spill kort
+playground	leikkikenttä	lekplats	Spielplatz	aire de jeux		parco giochi	speeltuin	legeplads	lekeplass
+pliers
+plum	luumu	plommon	Pflaume	prune	ciruela		pruim
+podium		podium	Podest	podium	podio	podio		podieum	podie
+poinsettia	poinsettia	poinsettia	Poinsettia	poinsettie	poinsettia	poinsettia	poinsettia	poinsettia	poinsettia
+poker	pokeri	poker	Poker	poker	póker	poker	pokerspel	poker	poker
+pole		stolpe	Pfahl	poteau		palo			stolpe
+police_car	poliisiasema-auto	polisbil	Polizeiwagen	voiture de police	coche de policía	auto della polizia	politieauto	politibil	politibil
+polka_dots	polka-ruudut	prickar			puntos de polka	macchie a pois	polka's	prikker	prikker
+polo	polo	polo	Polo	polo	polo	polo	polo	polo	polo
+pomegranate	granatiini	granateple	Granatapfel		granada	granata	granaatappel	granatæble	granateple
+pomeranian		pomeranian	Pomeranian	poméranien	pomerano	pomeraniano	pomeraanse hond	pomeranian	pomeranian
+poncho	poncho	poncho	Poncho	poncho	poncho	poncho	poncho	poncho	poncho
+poodle	poodeli	pudel	Pudel	poodle	pudel		pudel	pudel	pudel
+pool	uima-allas	pool	Pool	piscine	piscina	piscina	zwembad	pool	basseng
+popcorn	popcorni	popcorn	Popcorn	pop-corn	palomitas de maíz	popcorn	popcorn	popcorn	popcorn
+popsicle
+porch				porche	porche
+porcupine								pindsvin	piggsvin
+portal	portaali	portal	Portal	portail	portal	portale	portaal	portal	portal
+porthole	porthole	porthål		porthole		porthole	porthole
+pot_cooking				cuisson dans une casserole	cocción en olla	cottura in pentola	pot koken
+potato	peruna	potatis	Kartoffel	pomme de terre	patata	patata	aardappel	kartoffel	potet
+poultry			Geflügel	volaille	aves de corral	pollame	gevogelte	fjerkræ	fjærfe
+power_saw		kraftsåg	Elektrosäge	scie électrique	sierra eléctrica	sega a potenza	elektrische zaag	kraftsav
+prairie_dog	prairiekoira	präriehund	Präriehund			procione della prateria	prairiehond	præriehund	præriehund
+pretzel	pretzel	pretzels	Brezel	bretzel	pretzel	pretzel	pretzels	pretzels	pretzel
+printed_page	painettu sivu	tryckt sida	gedruckte Seite	page imprimée	página impresa	pagina stampata	gedrukte pagina	trykt side	trykt side
+printer	tulostin	skrivare	Drucker	imprimante	impresora	stampante	printer	printer
+propeller	propellori	propeller	Propeller	hélice	hélices	elica	propiel	propel	propelse
+puck		pucka		puck			puck	puck	puck
+pudding		pudding	Pudding	pudding	pudín	budino	pudding	pudding	pudding
+puffer_fish		pufferfisk	Pufferfisch					pufferfisk	pufferfisk
+puffin		puffin		puffin		puffino	puffin		puffin
+pug	pug			pug	pug	pug	pug	pug	pug
+pulley		remskiva		poulie	polea			remskive
+pumpkin	kurpitsa	pumpa	Kürbis	citrouille	calabaza	zucca	pompoen
+puppet				marionnette		burattina
+purse	lompakko	väska	Handtasche	sac à main	bolso	borsa	tas	taske	veske
+putt	putt	putt	Putt	putt	putt		putt	putt
+puzzles	palapelit	pussel	Rätsel	puzzles	rompecabezas	puzzle	puzzels	puslespil	puslespill
+pylon							pylon	pylon	pylon
+pyramid	pyramidi	pyramid	Pyramide	pyramide	pirámide	piramide	piramide	pyramide	pyramide
+pyrotechnics	piroteknikka			pyrotechnie		pirotecnica	pyrotechniek	pyroteknik	pyroteknikk
+python	python	python	Python	python	python	python	python	python	python
+quesadilla	quesadilla	quesadilla	Quesadilla	quesadilla	quesadilla	quesadilla	quesadilla	quesadilla	quesadilla
+quinoa	quinoa	quinoa	Quinoa	quinoa	quinoa	quinoa	quinoa	quinoa	quinoa
+rabbit		kanin	Hase	lapin	conejo	coniglio	konijn	kanin	kanin
+raccoon				raton laveur		procione
+racquet		racket			raqueta	racchetta	racket		racket
+radish		radish	Radieschen	radis	rábano	ravanello	radijs	radise
+rafting		rafting	Rafting	rafting	rafting	rafting	raften	rafting	rafting
+railroad	rautatie	järnväg	Eisenbahn	chemin de fer	ferrocarril	ferrovia	spoorweg	jernbane	jernbane
+rainbow	sateenkaari	regnbåge	Regenbogen	arc-en-ciel	arcoíris	arcobaleno	regenboog	regnbue	regnbue
+rake					rastrillo	rastrello	hark
+rambutan	rambutan	rambutan	Rambutan	ramboutan	rambután	rambutan	ramboutan	rambutan	rambutan
+ramen	ramen	ramen	Ramen	ramen	ramen	ramen		ramen	ramen
+rangoli	rangoli	rangoli	Rangoli	rangoli	rangoli	rangoli	rangoli	rangoli	rangoli
+raptor								rovfugl	rovfugl
+raspberry		hallon	Himbeere		frambuesa		framboos	hindbær	bringebær
+rat	rotta	råtta	Ratte	rat	rata		rat		rotte
+ratchet		ratchet						ratchet	ratchet
+rattlesnake		rattlesnakeslång					rattlesnake		rattleslange
+raven		kråka	Raben	corbeau	cuervo	corvo	kraai	ravn	ravn
+raw_glass	raaka lasi	rå glas	rohes Glas	verre brut	vidrio crudo	vetro grezzo	rauw glas	rå glas	råt glass
+receipt	kuitti	kvittot	Quittung	reçu	recibo	ricevuta	bon	kvittering	kvittering
+record		rekord					record	rekord	rekord
+recreation	virkistys	rekreation		récréation	recreación	ricreazione	recreatie	rekreation	rekreasjon
+red_envelope	punainen kirjekuori	röd konvolut	roter Umschlag	enveloppe rouge		busta rossa	rode envelop	rød konvolut	rød konvolutt
+red_wine	punaviini	rödvin	Rotwein	vin rouge	vino tinto	vino rosso	rode wijn	rødvin	rødvin
+refrigerator	jääkaappi	kylskåp	Kühlschrank	réfrigérateur	nevera	frigorifero	koelkast	køleskab	kjøleskap
+reptile	matelija	reptil	Reptil	reptile	reptil	rettile	reptiel	krybdyr	krypdyr
+restaurant	ravintola	restaurang	Restaurant	restaurant	restaurante	ristorante	restaurant	restaurant	restaurant
+retriever		retriever	Retriever	retriever		retriever	retriever	retriever	retriever
+rhinoceros		noshörning	Nashorn	rhinocéros	rinoceronte	rinoceronte	neushoorn	næsehorn	neshorn
+rhubarb		rabarber		rhubarbe		rabarbaro	rabarber	rabarber	rabarber
+rice	riisi	ris	Reis	riz	arroz	riso	rijst	ris	ris
+rice_field	riisikenttä	risfält	Reisfeld	champ de riz	campo de arroz	campo di riso	rijstveld	rismarker	risfelt
+rickshaw	rickshaw	rickshaw	Rickshaw	rickshaw	rickshaw	rickshaw	rickshaw	rickshaw	rickshaw
+ridgeback	ridgeback	ridgeback	Ridgeback	ridgeback	ridgeback	ridgeback	ridgeback	ridgeback	ridgeback
+rim
+rink		isbana	Eishalle	patinoire			ijsbaan	isbane	isbane
+risotto	risotto	risotto	Risotto	risotto	risotto	risotto	risotto	risotto	risotto
+river	joki	flod	Fluss	rivière	río	fiume	rivier	flod	elv
+road	tie	väg	Straße	route	carretera	strada		vej	vei
+road_other	tie muu	väg annan		route autre					vei annen
+road_safety_equipment	tieolosuhteiden turvavarusteet	vägssäkerhetsutrustning	Straßenverkehrssicherheitseinrichtungen	équipement de sécurité routière		attrezzatura di sicurezza stradale	verkeersveiligheidsuitrusting	køresikkerhedsudstyr	kjøretøyssikkerhetsutstyr
+rock_climbing	kiipeily	klättring	Klettern	grimpe à la roche	escalada en roca	arrampicata su rocce	rotsklimmen	klatring	klatring
+rocket	raketti	rakett	Rakete	fusée	cohete	razzo	raket	raket	rakett
+rocks	kivet	stenar	Felsen	rochers	rocas	rocce	rotsen		steiner
+rodent		gnagare	Nagetier	rongeur	roedor	roditore	knaagdier	gnaver	gnager
+rodeo	rodeo	rodeo	Rodeo	rodéo	rodeo	rodeo	rodeo	rodeo	rodeo
+roe		roe	Roe	roe	roe	roe
+rollercoaster		berg-och-dalbana	Achterbahn		montaña rusa	montagne russe	achtbaan	rutsjebane	berg- og dalbane
+rollerskates		rullskor	Rollschuhe	patins à roulettes	patines de ruedas	pattini da rotelle	rolschaatsen	rulleskøjter	rulleskøyter
+rollerskating	rullaluistelu	rullskridskoåkning	Rollschuhlaufen	patinage sur roulettes	patinaje en ruedas	pattinaggio su rotelle	rolschaatsen	rulleskøjteløb	rulleskøyting
+rolling_pin					rodillo de repostería
+roof	katto	tak	Dach	toit		tetto	dak		tak
+rope	köysi	rep	Seil	corde	cuerda	corda	touw		tau
+rose	ruusu	ros	Rose				roos	rose	rose
+rosemary		rosmarin	Rosmarin	romarin	romero	rosmarino	rozemarijn	rosmarin	rosmarin
+rotisserie		rotisserie				rotisserie	rotisserie	rotisserie	rotisserie
+rottweiler	rottweiler	rottweiler	Rottweiler	rottweiler	rottweiler	rottweiler	rottweiler	rottweiler	rottweiler
+roulette	roulette	roulette	Roulette	roulette	ruleta	roulette	roulette	roulette	roulette
+rowboat	soutuvene	roddbåt	Ruderboot		barca de remos	barca a remi	roeiboot	rodbåd
+rugby	rugby	rugby	Rugby	rugby	rugby	rugby	rugby	rugby	rugby
+ruins	rauniot	ruiner	Ruinen	ruines	ruinas	rovine	ruïnes	ruiner	ruiner
+sack
+saddle		sadel	Sattel	selle		sella	zadel	sadel	sadel
+safety_vest		säkerhetsväst		gilet de sécurité	chaleco de seguridad	gilet di sicurezza	veiligheidsvest	sikkerhedsvest	sikkerhetsvest
+sailboat	purjevene	segelbåt	Segelboot	voilier	velero	barca a vela	zeilboot	sejlskib	seilbåt
+saint_bernard	pyhä Bernard	Sankt Bernard	Heiliger Bernhard	saint bernard	san bernardo	san bernardo	Sint-Bernardus	Sankt Bernard	Saint Bernard
+salad	salaatti	sallad	Salat	salade	ensalada	insalata	salade	salat	salat
+salami	salami	salami	Salami	salami	salami	salame	salami	salami	salami
+salmon	lohi	lax	Lachs	saumon	salmón	salmone	zalm	laks	laks
+samba	samba	samba	Samba	samba	samba	samba	samba	samba	samba
+samosa	samosa	samosa	Samosa	samosa	samosa	samosa	samosa	samosa	samosa
+sand	hiekka	sand	Sand	sable	arena	sabbia	zand	sand	sand
+sand_dune	hiekkadyyni	sanddyne	Sanddünen	dune de sable	duna de arena	dune di sabbia	zandduin	sanddyne	sanddyn
+sandal	sandaali	sandal	Sandale	sandale	sandalia	sandalo	sandale	sandal	sandal
+sandcastle		sandslott		château de sable	castillo de arena	castello di sabbia	zandkasteel	sandslot	sandslott
+sandpiper		sandpipare				sandpiper	zandvogel		sandpiper
+sandwich	voileipä	smörgås	Sandwich	sandwich	sándwich	panino	sandwich	sandwich	smørbrød
+sangria	sangria	sangria	Sangria	sangria		sangria	sangria	sangria	sangria
+santa_claus	joulupukki	jultomten	Weihnachtsmann	Père Noël	Papá Noel	Babbo Natale	kerstman	julemanden	julemannen
+sardine	sardina	sardin	Sardine	sardine	sardina	sardina	sardine	sardine	sardine
+sari	sari	sari	Sari	sari	sari	sari	sari	sari	sari
+satay	satay	satay	Satay	satay	satay	satay	satay	satay	satay
+sauerkraut	hapankaali	surkål	Sauerkraut	choucroute	chucrut	crauti	zuurkool	surkål	surkål
+sausage		korv	Wurst	saucisse	salchicha	salsiccia	worst	pølse	pølse
+saxophone	saksofoni	saxofon	Saxophon	saxophone	saxofón	sassofono	saxofoon	saksofon	saksofon
+scallop
+scarab	scarab			scarabeau			scarab	skarabé	skarabé
+scarecrow							schrikkop
+scarf	huivi	halsduk	Schal	écharpe	bufanda	sciarpa	sjaal		skjerf
+schnauzer	schnauzer	schnauzer	Schnauzer	schnauzer	schnauzer	schnauzer	schnauzer	schnauzer	schnauzer
+scissors	sakset	saxar	Schere	ciseaux	tijeras	forbici	schaar	saks
+scone	scone	scones	Scone	scone	scone	scone	scone	scones	scones
+scooter	skootteri	skoter	Roller	scooter	patinete	scooter	scooter	scooter	scooter
+scoreboard			Punktestand			tabellone dei punteggi	scorebord	scorebord
+scorpion			Skorpion	scorpion
+scrambled_eggs			Rührei	œufs brouillés	huevos revueltos	uova strapazzate
+screenshot	kuvakaappaus	skärmdump	Screenshot	capture d'écran	captura de pantalla	screenshot	screenshot	skærmbillede	skjermbilde
+screwdriver	ruuvimeitta	skruvmejsel	Schraubendreher	tournevis	destornillador	cacciavite	schroefdraaier	skruetrækker	skrutrekker
+scuba		dykning	Tauchen	plongée sous-marine	buceo	immersioni subacquee	duiken	dykning	dykking
+seabass		havsabborre				branzino	zeebaars	havabborre	sjøabbor
+seafood	merenelävät	skaldjur	Meeresfrüchte	fruits de mer	mariscos	frutti di mare	zeevruchten	skaldyr	sjømat
+seahorse			Seepferdchen		caballito de mar	seahorse		havhest	sjøhest
+seal	merileijona		Seehund	phoque	foca	foca	zeehond	sæl	sjøløve
+sealion	merileijona	sjölejon		phoque	foca		zeeleeuw	sæl	sjøløve
+seashell				coquille de mer	concha de mar		schelpen	skaller
+seasonings	mausteet	kryddor	Gewürze	épices	condimentos	spezie		krydderier	krydder
+seat	istuin	säte	Sitz	siège	asiento	sedile		sæde	sete
+seaweed	merilevä						zeewier	tang	tare
+seed	siemen	frö	Saatgut	graine	semilla	seme	zaad	frø	frø
+seesaw	seesaw							seesaw	seesaw
+semi_truck
+sequoia	sequoia	sequoia	Sequoia	séquoie	secuoya	sequoia	sequoia	sequoia	sequoia
+sesame	seesami	sesam	Sesam	sésame	sésamo	sesamo	sesam	sesam	sesam
+setter	setteri	setter	Setter	setter	setter	setter	setter	setter
+sewing	ompelu	syning	Nähen	couture	costura		naaien	syning	sying
+shark	hai	haj	Hai	requin	tiburón	squalo	haai	haj	hai
+shawarma	shawarma	shawarma	Shawarma	shawarma	shawarma	shawarma	shawarma	shawarma	shawarma
+shed		skjul			cobertizo	capanno		skur
+sheep	lampa	får	Schaf	mouton	oveja	pecore	schapen	får	sau
+sheepdog	lampaanpaimenkoira	fårhund	Schafhund			cane da pecora	schaapshond	fårhund	sauehund
+shellfish		skaldjur	Meeresfrüchte		mariscos	frutti di mare		skaldyr	skjelldyr
+shellfish_prepared	valmistetut merenelävät		zubereitete Meeresfrüchte		mariscos preparados	frutti di mare preparati	schelpdieren bereid	skaldyr tilberedt	skalldyr tilberedt
+shipyard	telakka	skeppsvarv	Werft	chantier naval	astillero		scheepswerf	skibsværft	skipsverft
+shoes	kengät	skor	Schuhe	chaussures	zapatos	scarpe	schoenen	sko	sko
+shopping_cart	ostoskori	varukorg	Warenkorb		carrito de compras	carrello degli acquisti	winkelwagen	indkøbskurv	handlekurv
+shore			Küste	rivage	orilla	costa	kust
+shower	suihku	dusch	Dusche	douche	ducha	doccia	douche	brusebad	dusj
+shrub					arbusto		struik
+sidewalk	jalkakäytävä	trottoar	Gehweg	trottoir	acera	marciapiede	stoep	fortov	fortau
+sign	kyltti	skylt	Schild		señal	cartello		skilte	skilt
+silo	silo	silo	Silo	silo	silo	silo	silo	silo	silo
+singer	laulaja	sångare	Sänger	chanteur	cantante	cantante	zanger	sanger	sanger
+skateboard	skateboardi	skateboard	Skateboard	skateboard		skateboard	skateboard	skateboard	skateboard
+skateboarding	skeittailu	skateboardåkning	Skateboarden	skateboard		skateboarding	skateboarden	skateboardning	skateboarding
+skatepark	skeittipuisto	skatepark	Skatepark	skatepark	skatepark	skatepark	skatepark	skatepark	skatepark
+skating	luistelu	skridskoåkning	Schlittschuhlaufen	patinage	patinaje	pattinaggio	schaatsen	skøjteløb	skøyting
+skeleton		skelett	Skelett	squelette	esqueleto	scheletro	skelet	skelet	skjelett
+ski_boot		skidstövla	Skischuh	botte de ski	zapatilla de esquí	scarpa da sci	ski-laarzen		skistøvle
+ski_equipment	hiihtovarusteet	skidutrustning	Skiausrüstung	équipement de ski		attrezzatura da sci	ski-uitrusting	skiludstyr	skiutstyr
+skiing	hiihto	skidåkning	Skifahren	ski	esquí	sci	skiën	skiløb	skiing
+skull	kallos	skalle	Schädel	crâne	cráneo	scheletro	schedel	kranie	hodeskalle
+skunk		skunk						stinkskunk
+sky	taivas	himmel	Himmel	ciel	cielo	cielo	hemel	himmel	himmel
+skydiving	laskuvarjohyppy	fallskärmshoppning					skydiven	skydiving	fallskjermhopping
+skyscraper	pilvenpiirtäjä	skyskrapa	Wolkenkratzer	gratte-ciel	rascacielos	grattacielo	wolkenkrabber	skyskraber	skyskraper
+sled		släde	Schlitten		trineo	slitta	slee	slæde	slede
+sledding									sledding
+slide_toy			Rutschespielzeug	jouet de glissade					sklisleke
+smokestack								røgstabel	røykstabel
+smoking_item	tupakoiva esine	rökande föremål	Raucherartikel			oggetto da fumare	roken item
+smoothie	smoothie	smoothie	Smoothie	smoothie	batido	frullato	smoothie	smoothie	smoothie
+snail		snigel	Schnecke		caracol		slak	snegle	snegel
+snake	käärme	orm	Schlange	serpent	serpiente	serpente	slang	slange	slange
+snake_other	käärme muu	orm annan	Schlange andere	serpent autre		serpente altro	slang ander	slange anden	slange annen
+snapdragon	snapdragon	snapdragon	Snapdragon	snapdragon	snapdragon	snapdragon	snapdragon	snapdragon	snapdragon
+snapper		snapper					snapper	snapper
+sneaker	lenkkarit	sneakers	Sneaker	sneaker		scarpa da ginnastica	sneakers	sneakers
+snorkeling	snorklaus	snorkling	Schnorcheln	snorkeling	buceo en snorkel	snorkeling	snorkelen	snorkling	snorkling
+snow	lumi	snö	Schnee	neige	nieve	neve	sneeuw	sne	snø
+snowball	lumipallo	snöboll	Schneeball	boule de neige	bola de nieve	palla di neve	sneeuwbal	snebold	snøball
+snowboard	lumilautailu	snowboard	Snowboard	snowboard	snowboard	snowboard	snowboard	snowboard	snowboard
+snowboarding	lumilautailu	snowboardning	Snowboarden	snowboard	esquí de nieve	snowboard	snowboarden	snowboardning	snowboarding
+snowman	lumimies	snögubbe	Schneemann	bonhomme de neige	muñeco de nieve	pupazzo di neve	sneeuwpop		snømann
+snowmobile		snöskoter	Schneemobil	motoneige		snowmobile
+snowshoe			Schneeschuh
+soccer	jalkapallo	fotboll	Fußball	football	fútbol	calcio	voetbal	fodbold	fotball
+sock	sukat		Socke	chaussette	calcetín	calzino	sok	sok	sokk
+soda		läsk		soda	refresco	bibita gassata	frisdrank	sodavand	brus
+sofa	sohva	soffa	Sofa	canapé	sofá	divano		sofa	sofa
+softball	softball	softball	Softball	softball		softball	softbal	softball	softball
+solar_panel	aurinkopaneeli	solpanel	Solarpaneel	panneau solaire	panel solar	pannello solare	zonnepanel	solcellepanel	solcellepanel
+sombrero	sombrero	sombrero	Sombrero	sombrero		sombrero	sombrero	sombrero	sombrero
+souffle	soufflé	soufflé	Soufflé		soufflé		soufflé	soufflé	soufflé
+soup	keitto	soppa	Suppe	soupe	sopa	zuppa	soep	suppe	suppe
+souvlaki	souvlaki	souvlaki	Souvlaki	souvlaki	souvlaki	souvlaki	souvlaki	souvlaki	souvlaki
+spaghetti	spagetti	spagetti	Spaghetti	spaghetti	espaguetis	spaghetti	spaghetti	spaghetti	spaghetti
+spaniel	spaniel		Spaniel		spaniel		spaniel
+spareribs	spareribit			côtes de porc			spareribs
+sparkler		gnistlare	Funkenwerfer		chisporroteador
+sparkling_wine	kupliva viini	mousserande vin		vin mousseux	vino espumoso	vino frizzante	mousserende wijn	mousserende vin	mousserende vin
+sparrow				moineau	gorrión				spurv
+spatula	spatula			spatule	espátula	spatola	spatel	spatel
+speakers_music	kaiuttimien musiikki	högtalarsmusik	Lautsprechermusik	musique des haut-parleurs	música de altavoces	musica dei altoparlanti	luidsprekersmuziek	højttalernes musik	høyttalermusikk
+speedboat	nopeusvene	snabbbåt	Schnellboot		lancha rápida	motoscafo	speedboot	hurtigbåd
+spice	mauste	krydda	Gewürz	épices	especias	spezia		krydderi	krydder
+spider	hämähäkki	spindel	Spinne	araignée	araña	ragno	spin	edderkop	edderkopp
+spiderweb	hämähäkinverkko	spindelnät	Spinnwebe	toile d'araignée	telaraña	ragnatela	spinnenweb	edderkoppevæv	edderkoppnett
+spinach	pinaatti	spenat	Spinat	épinards	espinacas	spinaci	spinazie	spinat	spinat
+spoon	lusikka	sked	Löffel	cuillère	cuchara	cucchiaio	lepel	ske	skje
+sport	urheilu	sport	Sport	sport	deporte	sport	sport	sport	sport
+sports_equipment	urheiluvälineet	sportutrustning	Sportausrüstung	équipement de sport		attrezzatura sportiva	sportuitrusting	sportsudstyr	sportsutstyr
+sportscar	urheiluauto	sportbil	Sportwagen	voiture de sport	coche deportivo	sportscar	sportauto	sportbil	sportbil
+spotlight		spotlight	Spotlicht				spotlight
+springroll		vårrulle	Frühlingsrollen	rouleau de printemps	rollo de primavera	rollatini di primavera	lenterol	forårsrulle	vårrull
+sprinkler		sprinklar	Sprinkler	arrosoir	aspersor	irrigatore	sprinkelaar	sprinkler	sprinkler
+squash_sport	squash-urheilu	squashsport	Squashsport	sport du squash	deporte de squash	sport del squash	squashsport	squashsport	squashsport
+squirrel	orava	ekorre	Eichhörnchen	écureuil	ardilla	scoiattolo	eekhoorn	egern	ekorn
+stadium	stadion	stadion	Stadion	stade	estadio	stadio	stadion	stadion	stadion
+stained_glass	lasimaalaus		Glasmalerei	vitrail		vetrata	glas-in-lood		glassmaleri
+stairs	portaat	trappor	Treppe	escaliers	escaleras	scale	trappen	trapper	trapper
+starfish		sjöstjärna	Seesterne	étoile de mer	estrella de mar	stella marina		stjernefisk	sjøstjerne
+starfruit	tähdenhedelmä	stjärnfrukt	Sternfrucht		fruta estrella		sterfruit	stjernefrugt	stjernefrukt
+statue	patsas	staty	Statue	statue	estatua	statua	standbeeld	statue	statue
+steak	pihvi	biff	Steak	steak	bistec	bistecca	steak	steak	biff
+steamer_cookware	höyrykeitinastiat		Dampfkochgeschirr
+stereo			Stereo	stéréo	estéreo	stereo	stereo
+stethoscope	stetoskoppi	stetoskop	Stethoskop	stéthoscope	estetoscopio	stetoscopio	stethoscoop	stetoskop	stetoskop
+sticky_note					nota adhesiva	nota adesiva
+stingray	pistokala	stingray					stekelvissen	stingray	stingray
+stir_fry						stir-fry		stir-fry
+stool			Hocker	tabouret	taburete	sgabello
+stopwatch	sekuntikello	stoppur	Stoppuhr	chronomètre	cronómetro	cronometro		stopur
+storefront			Ladenfront		fachada de la tienda		winkelfront	butiksfacade
+stork		stork	Storch	cigogne		cicogna		stork	stork
+storm	myrsky	storm	Sturm	tempête	tormenta	tempesta	storm	storm	storm
+stove	liesi	spis	Herd		estufa	fornello	fornuis	komfur	komfyr
+straw_drinking			Strohtrinken	boire avec une paille	bebiendo con pajita				å drikke med sugerør
+straw_hay							stro hooi	halm hø
+strawberry	mansikka	jordgubbe	Erdbeere	fraise	fresa	fragola	aardbei	jordbær	jordbær
+street	katu	gata	Straße	rue	calle	strada	straat	gade	gate
+street_sign	kadunmerkki		Straßenschild	panneau de rue	letrero de calle	cartello stradale	straatbord
+streetcar	raitiovaunu	spårvagn	Straßenbahn		tranvía	tranvía	tram	sporvogn	trikk
+stretcher		bår					stretcher		båre
+string_instrument		stränginstrument	Saiteninstrument	instrument à cordes	instrumento de cuerda	strumento a corde	snaarinstrument	strengeinstrument	strenginstrument
+stroller		barnvagn	Kinderwagen	poussette	cochecito	passeggino	kinderwagen	barnevogn	barnevogn
+structure	rakenne	struktur	Struktur	structure	estructura	struttura	structuur	struktur	struktur
+strudel	strudel	strudel	Strudel	strudel	strudel	strudel	strudel	strudel	strudel
+stuffed_animals			Kuscheltiere	peluches	peluches	peluche	knuffeldieren
+submarine_water	sukellusveneen vesi	ubåtsvatten	U-Boot-Wasser	eau de sous-marin		acqua del sottomarino	onderzeeërwater	ubådsvand	ubåtsvann
+sugar_cube				cube de sucre	cubo de azúcar	cubetto di zucchero
+suit		kostym	Anzug	costume	traje				dress
+suitcase	matkalaukku	resväska	Koffer	valise	maleta	valigia	koffer	kuffert	koffert
+sumo	sumo	sumo	Sumo	sumo	sumo	sumo	sumo	sumo	sumo
+sun	aurinko	sol	Sonne	soleil	sol	sole	zon	sol	sol
+sunbathing		solbadning	Sonnenbaden		tomando el sol	fare il sole	zonnebaden	solbadning	solbadning
+sundial	aurinkokello	solur			reloj de sol			solur	solur
+sunfish		solfisk						solfisk	solfisk
+sunflower	auringonkukka	solros	Sonnenblume	tournesol	girasol	girasole	zonnebloem	solsikke	solsikke
+sunflower_seeds	auringonkukkansiemenet	solrosfrön	Sonnenblumenkerne	graines de tournesol	semillas de girasol	semi di girasole	zonnebloemzaden	solsikkefrø	solsikkefrø
+sunglasses	aurinkolasit	solglasögon	Sonnenbrille	lunettes de soleil	gafas de sol	occhiali da sole	zonnebril	solbriller	solbriller
+sunhat	aurinkohattu	solhatt	Sonnenhut	chapeau de soleil	gorra de sol	cappello da sole	zonnehoed	solhat	solhatt
+sunset_sunrise	auringonlasku auringonnous	solnedgång soluppgång	Sonnenuntergang Sonnenaufgang	coucher du soleil lever du soleil	atardecer amanecer	tramonto sorgere del sole	zonsondergang zonsopgang	solnedgang solopgang	solnedgang soloppgang
+surfboard	surffilauta	surfbräda	Surfbrett	planche de surf	tabla de surf	tavola da surf	surfplank	surfbræt	surfbrett
+surfing	surffaus	surfing	Surfen	surf	surfando	surfare	surfen	surfing	surfing
+sushi	sushi	sushi	Sushi	sushi	sushi	sushi	sushi	sushi	sushi
+suv	SUV	SUV	SUV	SUV	SUV	SUV	SUV	SUV	SUV
+swan				cygne	cisne		zwaan		svan
+swimming	uinti	simning	Schwimmen	natation	nadando	nuoto	zwemmen	svømning	svømming
+swimsuit	uimapuku	badkläder	Badeanzug	maillot de bain	traje de baño	costume da bagno	badpak	badetøj	badetøy
+swing_playground	keinuleikkipaikka		Schaukelspielplatz		parque de columpios			svinglegeplads	svingpark
+swivel_chair	pyörähtävä tuoli		Drehstuhl	chaise rotative	silla giratoria	sedia girevole	draaibare stoel		svivlerstol
+sword	miekka	svärd	Schwert	épée	espada	spada	zwaard	sværd	sverd
+swordfish	miekkakala	svärdfisk	Schwertfisch			pesce spada	zwaardvis	sværdfisk	sverdfisk
+syringe			Spritze	seringue	jeringa	siringa
+tabbouleh	tabbouleh	tabbouleh	Tabbouleh	tabbouleh	tabbouleh	tabbouleh	tabbouleh	tabbouleh	tabbouleh
+table	pöytä	bord	Tisch	table	mesa	tavolo	tafel	bord	bord
+tableware		bestick			vajilla	stoviglie	bestek	bestik	servise
+tachometer			Tachometer	tachomètre	tacómetro		tachometer	tachometer	tachometer
+taco	taco	taco	Taco	taco	taco	taco	taco	taco	taco
+taffy	taffy	taffy		taffy	taffy	taffy	taffy	taffy	taffy
+tambourine		tamburin	Tamburin	tambourine	tamborina
+tapas	tapas	tapas	Tapas	tapas		tapas	tapas	tapas	tapas
+tapioca_pearls		tapiokapärlor	Tapiokaperlen	perles de tapioca	perlas de tapioca	perle di tapioca	tapioca parels	tapiokakorn	tapiokakorn
+taro	taro	taro	Taro	taro	taro	taro	taro	taro	taro
+tattoo	tatuointi	tatuering	Tätowierung	tatouage	tatuaje	tatuaggio	tatoeage	tatovering	tatovering
+tea_drink	teetä	te dryck	Teesgetränk	boisson de thé	bebida de té	bevanda al tè	thee drankje	te-drikke	te-drikk
+teapot	teekannu		Teetopf	théière	tetera			tekoppe
+teen	teini-ikäinen	tonåring	Teenager	ado	adolescente	adolescente	tiener	teenager	tenåring
+telescope	teleskooppi	teleskop	Teleskop	télescope	telescopio	telescopio	telescoop	teleskop	teleskop
+television	televisio	television	Fernsehen	télévision	televisión	televisione	televisie	fjernsyn	TV
+tempura	tempura	tempura	Tempura	tempura	tempura	tempura	tempura	tempura	tempura
+tennis	tennistä	tennis	Tennis	tennis	tenis	tennis	tennis	tennis	tennis
+tent	teltta	tält	Zelt	tente		tenda	tent	telt	telt
+tequila	tequila	tequila	Tequila	tequila	tequila	tequila	tequila	tequila	tequila
+teriyaki	teriyaki	teriyaki	Teriyaki	teriyaki	teriyaki	teriyaki	teriyaki	teriyaki	teriyaki
+terrarium	terrariumi	terrarium	Terrarium	terrarium	terrario	terrario	terrarium	terrarium	terrarium
+terrier	terrieri	terrier	Terrier		terrier	terrier	terrier	terrier	terrier
+textile	tekstiili	textil	Textil	textile	textil	tessile	textiel	tekstil	tekstil
+theater	teatteri	teater	Theater	théâtre	teatro	teatro	theater	teater	teater
+thermometer	lämpötilamittari	termometer	Thermometer	thermomètre	termómetro	termometro	thermometer	termometer	termometer
+thermos	termos	termos	Thermoskanne	thermos	termo		thermos		termos
+thermostat		termostat	Thermostat	thermostat	termostato	termostato	thermostaat	termostat	termostat
+thunderstorm	ukkosmyrsky		Gewitter	orage	tormenta eléctrica	temporale	onweer	tordenvejr	tordenvær
+tiara	tiara	tiara	Tiara	tiara	tiara	tiara	tiara	tiara	tiara
+ticket	lippu	biljett	Ticket	billet	boleto	biglietto	ticket	billet	billett
+tiger	tiikeri	tiger	Tiger	tigre	tigre	tigre	tijger	tiger	tiger
+timepiece				montre	reloj	orologio	horloge
+tiramisu	tiramisu	tiramisu	Tiramisu	tiramisu	tiramisú	tiramisu	tiramisu	tiramisu	tiramisu
+tire		däck	Reifen	pneu	neumático	pneumatico			dekk
+toad
+toaster		brödrost		grille-pain	tostadora	tostapane	toster	brødrister	brødrister
+toaster_oven		brödrostugn				forno tostapane	tosteroven	brødristerovn	brødristerovn
+toilet_seat	wc-istuimen istuin	toalettstolen		siège de toilette	asiento del inodoro	sedile del water	toiletstoel		toalettsete
+tomato	tomaatti	tomat	Tomate	tomate	tomate	pomodoro	tomaat	tomat	tomat
+tool	työkalu		Werkzeug	outil	herramienta	strumento		værktøj
+toolbox		verktygslåda	Werkzeugkiste	boîte à outils	caja de herramientas	scatola degli attrezzi	gereedschapskist	værktøjskasse	verktøykasse
+tornado	tornado		Tornado	tornade		tornado	tornado	tornado	tornado
+tortilla	tortilla	tortilla	Tortilla	tortilla		tortilla	tortilla	tortilla	tortilla
+tortoise	kilpikonna	sköldpadda	Schildkröte	tortue	tortuga	tartaruga	schildpad	skildpadde	skilpadde
+toucan		tukan	Tukan	toucan	tucán	tucano	toucan	toucan	tukan
+tower	torni	torn	Turm		torre	torre	toren	tårn	tårn
+toy	lelu	leksak	Spielzeug	jouet	juguete	giocattolo	speeltje	legetøj	leketøy
+track_rail					riel de pista	binario della pista
+tractor	traktori		Traktor	tracteur	tractor	trattore	tractor	traktor	traktor
+traffic_light		trafikljus	Ampel	feu de circulation	semáforo	semaforo	verkeerslicht	trafiklys	trafikklys
+trail				sentier	sendero	sentiero
+train	juna	tåg	Zug	train	tren	treno	trein	tog	tog
+train_real	juna todellinen	tåg verkligt	Zug echt	train réel	tren real		trein echt		tog ekte
+train_station	rautatieasema	tågstation		gare de train	estación de tren	stazione ferroviaria	treinstation	togstation	togstasjon
+train_toy	junalelu		Zugspielzeug	jouet de train	juguete de tren	giocattolo ferroviario		toglegetøj	togleketøy
+trampoline	trampoliini	trampolin	Trampolin	trampoline	trampolín	trampolino	trampoline	trampolin	trampoline
+tramway	raitiovaunu	spårvagn	Straßenbahn	tramway	tranvía	tranvia	tram	sporvogn	trikk
+trash_can	roskakori	sopkorg	Mülleimer	poubelle	cubo de basura	cestino della spazzatura	prullenbak	skraldespand	søppelkasse
+treadmill	juoksumatto		Laufband	tapis roulant	cinta de correr	tapis roulant	loopband	løbebånd
+tree	puu	träd	Baum	arbre	árbol	albero	boom	træ	tre
+tricycle			Dreirad	tricycle	triciclo	triciclo	driewieler	trehjulscykel
+tripod		stativ	Stativ	trépied	trípode	tripode	statief	stativ	stativ
+trombone	trombone	trombon		trombone		trombone		trombone	trombone
+trophy	pokaali	trofé	Trophäe	trophée	trofeo	trofeo	trofee	trofæ	trofé
+trout		öring	Forelle	truite	trucha	trota			ørret
+truck	kuorma-auto	lastbil	LKW	camion	camión	camion	vrachtwagen	lastbil	lastebil
+trumpet	trumpetti	trumpet	Trompete	trompette	trompeta	tromba	trompet	trompet	trompet
+tuba	tuba	tuba	Tuba	tuba	tuba		tuba	tuba	tuba
+tulip	tulppaani	tulpan	Tulpe	tulipe	tulipán	tulipano	tulpen	tulipan	tulipan
+tuna	tonnikala	tonfisk	Thunfisch	thon	atún	tonno	tonijn	tun	tunfisk
+tunnel	tunneli	tunnel	Tunnel	tunnel	túnel	tunnel	tunnel	tunnel	tunnel
+turmeric		gurkmeja	Kurkuma	curcuma	cúrcuma	curcuma	kurkuma	gurkemeje	gurkemeie
+turntable
+turtle	kilpikonna	sköldpadda	Schildkröte	tortue	tortuga	tartaruga	schildpad	skildpadde	skilpadde
+tuxedo
+typewriter	kirjoituskonetta	skrivmaskin	Schreibmaschine	machine à écrire	máquina de escribir	macchina da scrivere	typewriter	skrivemaskine	skrivemaskin
+ukulele	ukulele	ukulele	Ukulele	ukulélé	ukulele	ukulele	ukulele	ukulele	ukulele
+umbrella	sateenvarjo	paraply	Regenschirm	parapluie	paraguas	ombrello	paraplu	paraply	paraply
+underwater	veden alla	under vattnet	unter Wasser	sous l'eau	bajo el agua	sott'acqua	onder water	under vandet	under vann
+ungulates				ungulés					hovdyr
+urchin
+utensil				ustensile	utensilio		keukengerei
+vacuum	imu	vakuum	Vakuum				vacuüm	vakuum	vakuum
+van			Van	camionnette	furgoneta	furgone			varebil
+vase	maljakko	vas	Vase	vase		vaso	vaas	vas	vas
+vegetable	vihannes	grönsak	Gemüse	légume	vegetal	verdura	groente	grøntsag	grønnsak
+vegetation	kasvillisuus	växtlighet	Vegetation	végétation	vegetación	vegetazione	vegetatie	vegetation	vegetasjon
+vehicle	ajoneuvo	fordon	Fahrzeug	véhicule	vehículo	veicolo	voertuig	køretøj	kjøretøy
+vehicle_toy	ajoneuvolelu	fordonstoy	Fahrzeugspielzeug	jouet de véhicule	juguete de vehículo		voertuigspeelgoed	køretøjslegetøj	kjøretøyleketøy
+videogame	videopeli	videospel	Videospiel	jeu vidéo	videojuego	videogioco	videogame	videospil	videospill
+vineyard	viinitila	vingård	Weinberg	vignoble	viñedo	vigneto	wijngaard	vinmark	vingård
+violin		fiol	Geige	violon	violín	violino	viool	violin	fiolin
+vizsla	vizsla	vizsla	Vizsla	vizsla	vizsla	vizsla	vizsla	vizsla	vizsla
+volcano	tulivuori	vulkan	Vulkan	volcan	volcán	vulcano	vulkaan	vulkan	vulkan
+volleyball	lentopallo	volleyboll	Volleyball	volley-ball	voleibol	pallavolo	volleybal	volleyball	volleyball
+vulture				vautour
+waffle	vohveli		Waffel	gaufre	waffle	waffle	wafel	vafler	vafler
+wagon				wagon	vagón
+wakeboarding	wakeboarding	wakeboarding	Wakeboarding	wakeboard	wakeboarding	wakeboarding	wakeboarden	wakeboarding	wakeboarding
+wallet	lompakko	plånbok	Geldbörse	portefeuille	cartera	portafoglio	portemonnee	lommebog	lommebok
+walrus		valross	Walross	walrus		walrus		hvalross	hvalross
+warship	sodankäynninalus	krigsfartyg	Kriegsschiff	navire de guerre	buque de guerra	nave da guerra	oorlogsschip	krigsskib	krigsskip
+wasabi	wasabi	wasabi	Wasabi	wasabi	wasabi	wasabi	wasabi	wasabi	wasabi
+washbasin	pesualtaa	handfat	Waschbecken	lavabo	lavabo	lavandino	wastafel	vaskebassin
+watch			Uhr	montre	reloj	orologio	horloge	ur
+water	vesi	vatten	Wasser	eau	agua	acqua	water	vand	vann
+water_body			Gewässer			corpo idrico	waterlichaam	vandlegeme	vannlegeme
+watercraft	vesialukset		Wasserfahrzeuge		embarcaciones acuáticas		watervaartuig	vandfartøjer	vannfartøy
+waterfall	vesiputous	vattenfall	Wasserfall	cascade	cascada	cascata	waterval	vandfald	fossefall
+watering_can			Gießkanne	seau d'arrosage	maceta de regar	secchio da annaffiatura		vandingkande
+watermelon	vesimeloni	vattenmelon	Wassermelone	pastèque	sandía	melone	watermeloen	vandmelon	vannmelon
+watermill		vattenkvarn	Wassermühle	moulin à eau	molino de agua	mulino a acqua	watermolen	vandmølle	vannmølle
+waterpolo	vesipallo	vattenpolo		water-polo	waterpolo	waterpolo	waterpolo	vandpolo	vannpolo
+watersport		vattensport	Wassersport	sports nautiques	deportes acuáticos	sport acquatici	watersport	vandsport	vannsport
+waterways		vattenvägar	Wasserwege	voies navigables	vías navegables		waterwegen	vandveje	vannveier
+wedding	häät	bröllop	Hochzeit	mariage	boda	matrimonio	bruiloft	bryllup	bryllup
+wedding_cake		bröllopstårta	Hochzeitskuchen	gâteau de mariage	pastel de boda	torta nuziale	bruiloftstaart	bryllupskage	bryllupskake
+wedding_dress	häätakki	brudklänning	Hochzeitskleid	robe de mariée	vestido de novia	abito da sposa	bruidsjurk	bryllupskjole	bryllupskjole
+weight_scale		viktmätare		balance de poids	báscula de peso				vektskål
+weimaraner	weimaraner	weimaraner	Weimaraner	weimaraner	weimaraner	weimaraner	weimaraner	weimaraner	weimaraner
+wetland		våtmark	Feuchtgebiet	zone humide	humedal			vådområde	våtmark
+wetsuit	märkäpuku						wetsuit
+whale	valas		Wal	baleine	ballena	balena	walvis	hval	hval
+wheat	vehnä	vete	Weizen	blé	trigo		tarwe	hvede	hvete
+wheel		hjul		roue	rueda	ruota	wiel	hjul	hjul
+wheelbarrow
+wheelchair	pyörätuoli	rullstol	Rollstuhl	fauteuil roulant	silla de ruedas	sedia a rotelle	rolstoel	kørestol	rullestol
+whisk		visp						visp	visp
+white_bread	valkoinen leipä	vitt bröd	Weißbrot	pain blanc	pan blanco	pane bianco	wit brood	hvid brød	hvitt brød
+white_wine	valkoviini	vitt vin	Weißwein	vin blanc	vino blanco	vino bianco	wit wijn	hvidvin	hvitt vin
+whiteboard			Whiteboard	tableau blanc	pizarra blanca	lavagna bianca	whiteboard
+willow				saule		salice	wilg
+winch	vinssi	vinsch					winch	vinsj	vinsj
+wind_turbine		vindkraftverk	Windkraftwerk	éolienne	turbina eólica	turbina eolica	windturbine	vindmølle	vindturbin
+windmill	tuulimylly	vindmulle	Windmühle	moulin à vent	molino de viento	mulino a vento		vindmølle	vindmølle
+window	ikkuna	fönster	Fenster	fenêtre	ventana	finestra	raam	vindue	vindu
+windsurfing		vindsurfing	Windsurfen	windsurf	windsurf	windsurf	windsurfen	vindsurfing	vindsurfing
+wine	viini	vin	Wein	vin	vino	vino	wijn	vin	vin
+wine_bottle	viinipullo	vinflaska	Weinflasche	bouteille de vin	botella de vino	bottiglia di vino		vinflaske	vinflaske
+winter_sport	talviurheilu	vinteridrott	Wintersport	sport d'hiver	deporte de invierno	sport invernale	wintersport	vintersport	vinteridrett
+wonton	wonton	wonton	Wonton	wonton	wonton	wonton	wonton	wonton	wonton
+wood_natural		naturligt trä		bois naturel	madera natural	legno naturale	hout natuurlijk	naturligt træ
+wood_processed	käsitelty puu	bearbetat trä	verarbeitetes Holz		madera procesada		verwerkt hout		bearbeidet tre
+woodpecker		hackspätta	Specht			piccione carpintero
+woodwind		träblåsinstrument	Holzblasinstrument				houtblazers
+workout
+worm					gusano	verme	worm	orm	orm
+wreath		krans						krans	krans
+wrench
+wrestling	paini	brottning	Wrestling		lucha libre		worstelen	brydning	bryting
+xylophone	xylofoni	xylofon	Xylophon	xylophone	xilofón	xilofono	xylofoon	xylofon	xylofon
+yacht	jahdi	yacht	Yacht	yacht	yate	yacht		yacht	yacht
+yarn	lanka	tråd	Garn		hilo	filato	draad	tråd	tråd
+yoga	jooga	yoga	Yoga	yoga	yoga	yoga	yoga	yoga	yoga
+yogurt	jogurtti	yoghurt	Joghurt	yaourt	yogur	yogurt	yoghurt	yoghurt	yoghurt
+yolk	keltuainen				yema	tuorlo
+zebra		zebra	Zebra	zèbre	cebra	zebra	zebra	zebra	zebra
+zoo	eläintarha	djurpark	Zoo	zoo	zoológico	zoo	dierentuin	zoologisk have	dyrepark
+zucchini	kesäkurpitsa	zucchini	Zucchini	courgette	calabacín	zucchina	courgette	zucchini	zucchini

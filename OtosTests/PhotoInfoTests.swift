@@ -76,7 +76,7 @@ struct PhotoInfoTests {
             calendar: Calendar(identifier: .gregorian)
         )
 
-        #expect(info.sections.map(\.id) == [.people, .location, .file, .camera, .exposure])
+        #expect(info.sections.map(\.id) == [.people, .recognized, .location, .file, .camera, .exposure])
         #expect(info.captured.hasSuffix(" UTC+02:00"))
         #expect(info.value("Camera") == "SONY ILCE-7M4")
         #expect(info.value("Lens") == "FE 24-70mm F2.8 GM II")
@@ -116,7 +116,7 @@ struct PhotoInfoTests {
             id: id, metadata: metadata, kind: .video, nativePixelSize: CGSize(width: 3840, height: 2160), locality: .local
         ))
 
-        #expect(info.sections.map(\.id) == [.people, .location, .file, .camera, .video])
+        #expect(info.sections.map(\.id) == [.people, .recognized, .location, .file, .camera, .video])
         #expect(info.value("Duration") == "1:15")
         #expect(info.value("Frame Rate") == "29.97 fps")
         #expect(info.value("Codec") == "HEVC")
@@ -141,9 +141,25 @@ struct PhotoInfoTests {
         let several = PhotoInfo.none(itemCount: 3)
         #expect(none.title == "No Selection")
         #expect(several.title == "3 Items")
-        #expect(none.sections.map(\.id) == [.people, .location, .file, .camera, .exposure])
+        #expect(none.sections.map(\.id) == [.people, .recognized, .location, .file, .camera, .exposure])
         #expect(none.sections.flatMap(\.rows).allSatisfy { $0.value == PhotoInfo.notApplicable })
         #expect(none.captured == PhotoInfo.notApplicable)
+    }
+
+    /// In This Photo holds the named labels and the certain text; a reading still owed stays
+    /// unknown rather than empty, and with no single item there is nothing to show.
+    @Test func inThisPhotoShowsWhatSearchRecognised() {
+        let overlay = PhotoInfoOverlay(
+            companionFileNames: [], importedAt: nil, isEdited: false,
+            sceneLabels: ["document", "screenshot"], textLines: ["BRIDGE CLOSED AHEAD"]
+        )
+        let read = PhotoInfo.make(PhotoInfo.Source(id: still, overlay: overlay, kind: .image, labelNames: ["asiakirja", "kuvakaappaus"]))
+        #expect(read.recognized == PhotoInfo.Recognized(labels: ["asiakirja", "kuvakaappaus"], text: ["BRIDGE CLOSED AHEAD"]))
+        let owed = PhotoInfo.make(PhotoInfo.Source(id: still, overlay: PhotoInfoOverlay(companionFileNames: [], importedAt: nil, isEdited: false)))
+        #expect(owed.recognized == PhotoInfo.Recognized(labels: nil, text: nil))
+        #expect(PhotoInfo.none(itemCount: 2).recognized == nil)
+        #expect(PhotoInfo.Recognized.chipTitle("baseball hat", locale: Locale(identifier: "en_US")) == "Baseball hat")
+        #expect(PhotoInfo.Recognized.chipTitle("iltapäivä", locale: Locale(identifier: "fi_FI")) == "Iltapäivä")
     }
 
     @Test func valuesAreWrittenAsPhotographersWriteThem() {

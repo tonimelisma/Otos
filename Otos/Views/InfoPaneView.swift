@@ -8,10 +8,12 @@ import SwiftUI
 ///
 /// Passive: it renders the `PhotoInfo` it is given. Its rows keep their place for every item
 /// of a kind (DES-053); with no single item they read `—`. Which sections are folded is the
-/// person's, remembered across launches like the Edit pane's.
+/// person's, remembered across launches like the Edit pane's. A scene label in In This Photo
+/// is a button that searches for its name, through the toolbar field's own intent (`search`).
 struct InfoPaneView: View {
     let info: PhotoInfo?
     let people: InfoPanePeople?
+    let search: (String) -> Void
 
     /// Section IDs the person folded, comma-separated.
     @AppStorage("infoPane.foldedSections") private var foldedSections = ""
@@ -99,6 +101,8 @@ struct InfoPaneView: View {
                     }
                     if section.id == .people {
                         InfoPanePeopleSection(people: people, facesRead: shown.facesRead)
+                    } else if section.id == .recognized {
+                        InfoPaneRecognizedSection(recognized: shown.recognized, search: search)
                     } else {
                         rows(section.rows)
                     }
@@ -145,6 +149,102 @@ struct InfoPaneView: View {
         .frame(height: 140)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .accessibilityLabel("Map of \(shown.placeName ?? "where it was taken")")
+    }
+}
+
+/// The In This Photo section: Vision's confident scene labels as buttons that search for
+/// them, then the text it is certain of, selectable. A reading still owed reads `Not Checked
+/// Yet`; one that found nothing, `Nothing Recognized`; with no single item, `—`.
+private struct InfoPaneRecognizedSection: View {
+    let recognized: PhotoInfo.Recognized?
+    let search: (String) -> Void
+    @Environment(\.locale) private var locale
+
+    var body: some View {
+        if let recognized {
+            if let labels = recognized.labels, !labels.isEmpty || !(recognized.text ?? []).isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !labels.isEmpty {
+                        ChipFlowLayout(spacing: 4) {
+                            ForEach(labels, id: \.self) { name in
+                                let title = PhotoInfo.Recognized.chipTitle(name, locale: locale)
+                                Button(title) { search(name) }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .lineLimit(1)
+                                    .help("Search for “\(name)”")
+                            }
+                        }
+                    }
+                    if let text = recognized.text, !text.isEmpty {
+                        Text("Text")
+                            .foregroundStyle(.secondary)
+                        Text(text.joined(separator: "\n"))
+                            .foregroundStyle(.primary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            } else {
+                Text(recognized.labels == nil ? "Not Checked Yet" : "Nothing Recognized")
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Text(PhotoInfo.notApplicable)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Lays chips out in rows, left to right, wrapping when the next one would not fit.
+private struct ChipFlowLayout: Layout {
+    let spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache _: inout ()) -> CGSize {
+        let rows = rows(for: subviews, width: proposal.width ?? .infinity)
+        let width = rows.map(\.width).max() ?? 0
+        let height = rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(rows.count - 1, 0))
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal _: ProposedViewSize, subviews: Subviews, cache _: inout ()) {
+        var y = bounds.minY
+        for row in rows(for: subviews, width: bounds.width) {
+            var x = bounds.minX
+            for index in row.indices {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private struct Row {
+        var indices: [Int] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private func rows(for subviews: Subviews, width: CGFloat) -> [Row] {
+        var rows: [Row] = []
+        var current = Row()
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            let needed = current.indices.isEmpty ? size.width : current.width + spacing + size.width
+            if needed > width, !current.indices.isEmpty {
+                rows.append(current)
+                current = Row()
+            }
+            current.width = current.indices.isEmpty ? size.width : current.width + spacing + size.width
+            current.height = max(current.height, size.height)
+            current.indices.append(index)
+        }
+        if !current.indices.isEmpty {
+            rows.append(current)
+        }
+        return rows
     }
 }
 
