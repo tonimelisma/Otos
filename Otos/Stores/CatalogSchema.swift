@@ -713,6 +713,19 @@ nonisolated enum CatalogSchema {
         "ALTER TABLE media_asset ADD COLUMN stack_key_chosen_at_unix_ms INTEGER",
     ]
 
+    /// The stack candidates' read (`PhotoStackSQL`, ADR 0052) finds the folders holding a RAW
+    /// and then each one's stills by kind and folder. Without this index each folder was a scan
+    /// of its whole root: on the owner's library, 10,917 RAW folders over 166,528 rows held the
+    /// window's first publication for minutes. With it the read measured 65 ms there.
+    static let stackCandidateIndexMigrationIdentifier = "v33_stack_candidate_index"
+
+    static let stackCandidateIndexStatements: [String] = [
+        """
+        CREATE INDEX idx_media_asset_stack_candidate
+        ON media_asset(library_root_id, best_kind, parent_path)
+        """,
+    ]
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

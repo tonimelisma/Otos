@@ -203,6 +203,24 @@ struct CatalogStoreQueryPlanTests {
     /// index. Assert the index choice on EXPLAIN QUERY PLAN — a correctness-only
     /// assertion would not catch a narrow query silently planning against the broad
     /// index.
+    /// ADR 0052: the stack candidates' read seeks the RAW folders and each folder's stills
+    /// through the candidate index. Without it each folder scanned its whole root, and on the
+    /// owner's 10,917 RAW folders the window's first publication took minutes.
+    @Test func stackCandidatesSeekTheirFoldersThroughTheCandidateIndex() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        let query = try #require(PhotoStackSQL.candidateQuery(rootIDs: [rootID1, rootID2]))
+        let plan = try await dbQueue.read { db in try explainPlan(db, query: query) }
+        #expect(plan.contains("SEARCH still USING INDEX idx_media_asset_stack_candidate"))
+    }
+
     @Test func metadataOnlyClaimQueriesUseMetadataOnlyIndexes() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")

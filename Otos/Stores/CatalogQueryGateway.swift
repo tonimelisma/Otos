@@ -445,12 +445,33 @@ nonisolated enum PhotoStackSQL {
         rootIDs: [Int64],
         db: Database
     ) throws -> [Int64: [PhotoStackCandidate]] {
-        guard !rootIDs.isEmpty else {
+        guard let query = candidateQuery(rootIDs: rootIDs) else {
             return [:]
         }
+        let rows = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments)
+        var byRoot: [Int64: [PhotoStackCandidate]] = [:]
+        for row in rows {
+            let kindValue: String = row["best_kind"]
+            guard let kind = MediaKind(rawValue: kindValue) else {
+                continue
+            }
+            byRoot[row["library_root_id"], default: []].append(PhotoStackCandidate(
+                relativePath: MediaRelativePath(rawValue: row["relative_path"]),
+                kind: kind,
+                keyChosenAtUnixMs: row["stack_key_chosen_at_unix_ms"]
+            ))
+        }
+        return byRoot
+    }
+
+    /// The candidates' read: the folders holding a present RAW, then each folder's present
+    /// stills, both through `idx_media_asset_stack_candidate` (root, kind, folder).
+    static func candidateQuery(rootIDs: [Int64]) -> SQLQuery? {
+        guard !rootIDs.isEmpty else {
+            return nil
+        }
         let placeholders = sqlPlaceholders(count: rootIDs.count)
-        let rows = try Row.fetchAll(
-            db,
+        return SQLQuery(
             sql: """
             WITH raw_folder AS (
                 SELECT DISTINCT library_root_id, parent_path FROM media_asset
@@ -467,19 +488,6 @@ nonisolated enum PhotoStackSQL {
             """,
             arguments: StatementArguments(rootIDs)
         )
-        var byRoot: [Int64: [PhotoStackCandidate]] = [:]
-        for row in rows {
-            let kindValue: String = row["best_kind"]
-            guard let kind = MediaKind(rawValue: kindValue) else {
-                continue
-            }
-            byRoot[row["library_root_id"], default: []].append(PhotoStackCandidate(
-                relativePath: MediaRelativePath(rawValue: row["relative_path"]),
-                kind: kind,
-                keyChosenAtUnixMs: row["stack_key_chosen_at_unix_ms"]
-            ))
-        }
-        return byRoot
     }
 }
 
