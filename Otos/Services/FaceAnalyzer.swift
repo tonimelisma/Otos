@@ -22,6 +22,9 @@ nonisolated struct FaceAnalysis: Sendable, Equatable {
     let faces: [DetectedFace]
     /// Below `FaceAnalyzer.minimumQuality`.
     let rejectedForQuality: Int
+    /// No person seen around the face (`FaceAnalyzer.minimumPersonConfidence`): an object
+    /// Vision took for a face.
+    let rejectedAsNoPerson: Int
     /// Box height × alignment scale outside `FaceAlignment.admittedScaledHeight`: the landmarks
     /// were not one face.
     let rejectedForAlignment: Int
@@ -32,7 +35,8 @@ nonisolated struct FaceAnalysis: Sendable, Equatable {
 /// Face analyzer guide
 ///
 /// Finds the faces in one upright photo and reads each with the embedding model (ADR 0047):
-/// Vision's face landmarks and capture quality, the admission rules, the five-point alignment
+/// Vision's face landmarks and capture quality, the admission rules (among them Vision's image
+/// classifier seeing a person around the face), the five-point alignment
 /// (`FaceAlignment`), an opaque 112 × 112 crop, and `FaceEmbeddingModel`.
 ///
 /// Every step is blocking CPU work and the model is 66 MB, so the actor runs on its own serial
@@ -41,16 +45,30 @@ nonisolated struct FaceAnalysis: Sendable, Equatable {
 /// oriented upright; a face is never read from a downscaled preview.
 ///
 /// The settings are the ones the bake-off measured
-/// (`docs/research/2026-11-07-face-recognition-models.md`), and `revision` names them: Vision's
-/// landmark and quality revision 3, the admission thresholds, the alignment and the model. A
-/// change to any of them is a new revision, which makes every stored face stale.
+/// (`docs/research/2026-11-07-face-recognition-models.md`,
+/// `docs/research/2026-11-12-face-person-admission.md`), and `revision` names them: Vision's
+/// landmark and quality revision 3, its classifier revision 2, the admission thresholds, the
+/// alignment and the model. A change to any of them is a new revision, with a migration that
+/// makes the faces it changes stale.
 actor FaceAnalyzer {
     /// The analysis these settings produce; stored with every face.
-    static let revision = 1
+    static let revision = 2
 
     /// Vision's capture quality below which a face is not read: the admission rule every
     /// measured face passed.
     static let minimumQuality: Float = 0.3
+
+    /// The person-label confidence below which a detection is not read as a face. Vision's
+    /// capture quality says how well a face was photographed, not whether it is one: lace, a
+    /// bucket, a storefront and drawings passed it and grouped into a person of their own.
+    /// Vision's image classifier, shown a square twice the face box, says whether a person is
+    /// there. Measured on the owner's catalog
+    /// (`docs/research/2026-11-12-face-person-admission.md`): every face the user named reads
+    /// 0.28 or more, while 7 of that group's 9 objects read under 0.13.
+    static let minimumPersonConfidence: Float = 0.2
+
+    /// The classifier labels that are a person.
+    static let personLabels: Set<String> = ["people", "adult", "child", "baby", "teen", "crowd"]
 
     private let queue = DispatchSerialQueue(label: "net.melisma.Otos.face.analysis", qos: .utility)
     private let bundle: Bundle
@@ -76,7 +94,7 @@ actor FaceAnalyzer {
 
         let source = CIImage(cgImage: image)
         var faces: [DetectedFace] = []
-        var lowQuality = 0, misaligned = 0, noLandmarks = 0
+        var lowQuality = 0, misaligned = 0, noLandmarks = 0, noPerson = 0
         for observation in observations {
             guard let quality = qualities[observation.uuid], quality >= Self.minimumQuality else {
                 lowQuality += 1
@@ -96,6 +114,10 @@ actor FaceAnalyzer {
             guard let crop = Self.alignedCrop(of: source, transform: transform, context: context) else {
                 throw AnalysisError.cropFailed
             }
+            guard try Self.personConfidence(around: observation.boundingBox, in: image) >= Self.minimumPersonConfidence else {
+                noPerson += 1
+                continue
+            }
             let embedding = try embeddingModel().embedding(of: crop)
             faces.append(DetectedFace(
                 box: Self.topLeft(observation.boundingBox),
@@ -112,12 +134,14 @@ actor FaceAnalyzer {
             "lowQuality": "\(lowQuality)",
             "misaligned": "\(misaligned)",
             "noLandmarks": "\(noLandmarks)",
+            "noPerson": "\(noPerson)",
             "visionMs": "\(DiagnosticsTiming.milliseconds(visionElapsed))",
             "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
         return FaceAnalysis(
             faces: faces,
             rejectedForQuality: lowQuality,
+            rejectedAsNoPerson: noPerson,
             rejectedForAlignment: misaligned,
             rejectedForLandmarks: noLandmarks
         )
@@ -144,6 +168,25 @@ actor FaceAnalyzer {
             }
         }
         return (observations, qualities)
+    }
+
+    /// The classifier's highest person-label confidence for a square twice the size of the face
+    /// box (Vision's bottom-left normalized box), centred on it and kept inside the photo: the
+    /// face with its head and shoulders, which the classifier needs to see a person.
+    static func personConfidence(around box: CGRect, in image: CGImage) throws -> Float {
+        let width = Double(image.width), height = Double(image.height)
+        let side = max(box.width * width, box.height * height) * 2
+        let centre = CGPoint(x: box.midX * width, y: (1 - box.midY) * height)
+        let square = CGRect(x: centre.x - side / 2, y: centre.y - side / 2, width: side, height: side)
+            .integral
+            .intersection(CGRect(x: 0, y: 0, width: width, height: height))
+        guard let context = image.cropping(to: square) else {
+            throw AnalysisError.cropFailed
+        }
+        let request = VNClassifyImageRequest()
+        request.revision = VNClassifyImageRequestRevision2
+        try VNImageRequestHandler(cgImage: context).perform([request])
+        return (request.results ?? []).filter { personLabels.contains($0.identifier) }.map(\.confidence).max() ?? 0
     }
 
     enum AnalysisError: Error {

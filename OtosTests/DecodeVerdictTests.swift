@@ -15,7 +15,7 @@ struct DecodeVerdictTests {
         try MediaEnricher.live(
             thumbnailDirectory: makeTestDirectory(),
             analyzeFaces: { _ in
-                FaceAnalysis(faces: [], rejectedForQuality: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
+                FaceAnalysis(faces: [], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
             }
         )
     }

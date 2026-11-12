@@ -40,10 +40,6 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
             birthday.flatMap(PersonBirthday.seconds)
         }
 
-        var fact: PersonFact {
-            PersonFact(id: id, birthdaySeconds: birthdaySeconds)
-        }
-
         /// Nothing the user said about the person: no name, birthday, favourite or hidden. A
         /// person Otos found is forgotten once nothing of theirs is left.
         var isBare: Bool {
@@ -66,6 +62,14 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     /// The store's People revision the snapshot was read under: it includes every act whose
     /// `PeopleActOutcome.revision` is at most this.
     let revision: UInt64
+
+    /// The people as assignment reads them. A key photo is the user's word about a person,
+    /// so a person with one is not bare.
+    var personFacts: [PersonFact] {
+        people.map {
+            PersonFact(id: $0.id, birthdaySeconds: $0.birthdaySeconds, isBare: $0.isBare && keyPhotos[$0.id] == nil)
+        }
+    }
 }
 
 /// What one assignment changes in the catalog: only what differs from the snapshot it was
@@ -86,9 +90,13 @@ nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
     /// People Otos found who had a face and now have none; each is deleted if, when written,
     /// it still has none and the user has said nothing about them.
     var emptied: [PersonID] = []
+    /// Seeds whose group no longer stands, with the person each was a seed of: each loses its
+    /// person if, when written, it is still that person's seed. Written before the guesses
+    /// and new people, which may give it out again.
+    var lapsedSeeds: [FaceID: PersonID] = [:]
 
     var isEmpty: Bool {
-        guesses.isEmpty && newPeople.isEmpty && likeness.isEmpty && emptied.isEmpty
+        guesses.isEmpty && newPeople.isEmpty && likeness.isEmpty && emptied.isEmpty && lapsedSeeds.isEmpty
     }
 
     /// The changes that take the snapshot to `result`.
@@ -102,10 +110,19 @@ nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
             if snapshot.likeness[face.id] != computed {
                 plan.likeness[face.id] = .some(computed)
             }
+            let lapsed = result.lapsedSeeds.contains(face.id)
+            if lapsed, let person = face.assignment.person {
+                plan.lapsedSeeds[face.id] = person
+            }
             guard !seeded.contains(face.id) else { continue }
             let target = result.guesses[face.id]
             let kept: FaceAssignmentResult.Person?
-            if face.assignment.isGuessable {
+            if lapsed {
+                kept = target
+                if target != nil {
+                    plan.guesses.append(Guess(face: face.id, person: target))
+                }
+            } else if face.assignment.isGuessable {
                 kept = target
                 if face.assignment.person.map(FaceAssignmentResult.Person.existing) != target {
                     plan.guesses.append(Guess(face: face.id, person: target))

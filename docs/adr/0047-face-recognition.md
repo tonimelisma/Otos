@@ -3,8 +3,11 @@
 ## Status
 
 Accepted, 2026-11-10; assignment rewritten 2026-11-12, when the owner redesigned People
-around auto-tagged faces. The model, precision and face-admission rules are decided on
-measured evidence (`docs/research/2026-11-07-face-recognition-models.md`); assignment on
+around auto-tagged faces; the person-admission rule and lapsed seeds added 2026-11-12, after
+objects Vision took for faces became a person of their own. The model, precision and
+face-admission rules are decided on measured evidence
+(`docs/research/2026-11-07-face-recognition-models.md`,
+`docs/research/2026-11-12-face-person-admission.md`); assignment on
 `docs/research/2026-11-12-face-auto-assignment.md`.
 
 Built: detection, the analyser and the model (#593), faces as a stored enrichment product
@@ -59,6 +62,13 @@ grouping had put with the right child.
   - **Alignment:** the face box height in pixels times the alignment scale is between 50 and
     150. Below that, Vision's landmarks were spread over the scene, and the crop is not a face
     (59 of 3,293 measured faces).
+  - **A person:** Vision's image classifier (`VNClassifyImageRequest`, revision 2), shown a
+    square twice the face box, gives a person label (`people`, `adult`, `child`, `baby`,
+    `teen` or `crowd`) a confidence of at least 0.2. Capture quality says how well a face was
+    photographed, not whether it is one. Measured on the owner's catalog: every face the user
+    named reads 0.28 or more, while lace, a bucket, a storefront and drawings that had passed
+    every other rule read 0.01 to 0.13. Of the 2,196 labelled faces of the model bake-off, one
+    reads under 0.2.
 - **Alignment:** a least-squares similarity transform from five Vision points to the ArcFace
   112 × 112 template. The points are the eye centres, the lowest nose-crest point, and the
   outer-lip corners.
@@ -79,9 +89,10 @@ grouping had put with the right child.
 - **Engine:** the CPU only, the same as ADR 0045. 33 ms a face, against about 1.5 s to decode
   the original it comes from.
 - **Model revision:** a revision number (`FaceAnalyzer.revision`) that names the model, Vision's
-  revision and the admission rules, stored with each face. A new revision ships with a migration
-  that clears every faces stamp, as metadata's revision changes do, so the claim stays a pure
-  stamp predicate and every still is read again.
+  revisions and the admission rules, stored with each face. A new revision ships with a
+  migration that clears the faces stamp of every still whose faces it can change, as metadata's
+  revision changes do, so the claim stays a pure stamp predicate. Revision 2 (the person rule)
+  only turns more detections away, so it re-reads only stills that have a face.
 
 ### Storage
 
@@ -141,6 +152,12 @@ grouping had put with the right child.
   faces from two or more days becomes a new, unnamed person seeded with them, and chaining
   runs again from scratch with the seeds as anchors. A face like no one, or seen on one day
   only, stays unidentified, so a stranger caught once never becomes a person.
+- **Lapsed seeds:** a person the user said nothing about (no name, birthday, favourite, hidden
+  mark or key photo, and no face on their word) keeps their seeds only while the seeds span two
+  or more days, as a new person's must. When faces leave such a person (re-read under stricter
+  admission, deleted, or moved by the user), the seeds left are Otos's to decide again, and the
+  person is forgotten once no face is theirs. A person the user said anything about keeps
+  their seeds.
 - **Hard rules:**
   - Two faces in one photo are never the same person.
   - A face from before a person's birthday is never theirs. A birthday may be only a year,
@@ -217,6 +234,17 @@ grouping had put with the right child.
   names; rebuilding from the anchors makes it move the guesses chained through it.
 - **Writing names into the user's files or sidecars:** forbidden by ADR 0008. Names are overlay.
 - **Reading face regions from files' XMP (MWG):** never (owner decision, 2026-11-10).
+- **AdaFace's feature norm as the admission rule:** AdaFace trains the length of its feature
+  vector to track how recognisable a face is, and the shipped package can expose it without
+  changing a weight. On the owner's catalog it does not separate objects from faces: a cartoon
+  reads 21.9 and a mascot 17.8, while a clear frontal face reads 9.99.
+- **A higher capture-quality floor:** 15% of the catalog's faces are under 0.4 and a named
+  adult's median is 0.43, so a floor high enough for the objects would drop real faces.
+- **Classifying the aligned crop:** the 112 px crop shows the classifier only skin and features.
+  On it a face the user named reads as low as 0.074, and on the wider square 0.279.
+- **Seeds that anchor until the user moves them, for every person:** a person Otos found from
+  objects and a few unrecognisable faces outlived the objects' removal through the seeds left,
+  all from one day.
 
 ## Consequences
 
@@ -225,7 +253,10 @@ grouping had put with the right child.
   start, the seeded run and the corrections against the last run.
 - **App size:** the app grows by 66 MB.
 - **Downloads and time:** analysing a library means downloading and decoding every original
-  photo once: about 1.5 s a photo, mostly decode, in the background.
+  photo once: about 1.5 s a photo, mostly decode, in the background. The person rule adds one
+  classification per detected face.
+- **Hidden faces are turned away too:** a face behind a mask or a net, or a face printed on a
+  document, can read under the person rule and stay unread (3 of 5,477 measured).
 - **Model change:** a new model is a new revision that re-analyses every photo, and stored names
   carry over through the user's faces and the seeds.
 - **Wrong guesses are shown:** a face can carry the wrong person until the user corrects it;

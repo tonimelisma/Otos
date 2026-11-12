@@ -192,7 +192,7 @@ extension PeopleAssignment {
     /// Assignment, off the actor.
     @concurrent
     private static func assign(_ snapshot: PeopleSnapshot) async -> FaceAssignmentPlan {
-        let result = FaceAssignmentPolicy.assign(faces: snapshot.faces, people: snapshot.people.map(\.fact))
+        let result = FaceAssignmentPolicy.assign(faces: snapshot.faces, people: snapshot.personFacts)
         return FaceAssignmentPlan.changes(from: snapshot, to: result)
     }
 
@@ -201,7 +201,7 @@ extension PeopleAssignment {
     private static func derive(_ snapshot: PeopleSnapshot) async -> (state: CatalogPeopleState, ranker: FaceRanker) {
         let state = PeopleStateBuilder.state(from: snapshot)
         let offered = Set(state.visiblePeople.map(\.id))
-        return (state, FaceRanker(faces: snapshot.faces, people: snapshot.people.map(\.fact), offered: offered))
+        return (state, FaceRanker(faces: snapshot.faces, people: snapshot.personFacts, offered: offered))
     }
 
     /// The faces of the selected photos most likely to need ranking: at most this many faces

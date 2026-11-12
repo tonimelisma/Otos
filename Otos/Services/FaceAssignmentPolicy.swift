@@ -56,6 +56,12 @@ nonisolated struct FaceFact: Sendable, Equatable {
     let isNotFace: Bool
     /// People the user said this face is not (Remove Name).
     let rejected: Set<PersonID>
+
+    /// The same face with no person: a seed whose group no longer stands is Otos's to decide
+    /// again.
+    var opened: FaceFact {
+        FaceFact(id: id, captureSeconds: captureSeconds, embedding: embedding, assignment: .open, isNotFace: isNotFace, rejected: rejected)
+    }
 }
 
 /// One face of one photo: the photo's identity and the face's place in its reading.
@@ -79,6 +85,10 @@ nonisolated struct PersonFact: Sendable, Equatable {
     /// Midnight UTC of the birthday, seconds since 1970; a face captured before it is never
     /// this person's.
     let birthdaySeconds: Double?
+    /// The user said nothing about the person: no name, birthday, favourite or hidden mark,
+    /// and no key photo. Such a person is Otos's own finding, and keeps its seeds only while
+    /// they would still make a new person.
+    let isBare: Bool
 }
 
 /// What assignment decided (ADR 0047): the person each guessable face goes to, the people
@@ -98,6 +108,9 @@ nonisolated struct FaceAssignmentResult: Sendable, Equatable {
     /// How like its person each face with a person is: its best similarity to that person's
     /// other faces within reach. Missing when no other face of theirs is within reach.
     var likeness: [FaceID: Float] = [:]
+    /// Seeds whose group no longer stands (`lapsedSeeds`): each loses its person and is given
+    /// out like any face Otos decides, in `guesses` or in `newPeople`.
+    var lapsedSeeds: Set<FaceID> = []
 }
 
 /// Face assignment policy guide
@@ -127,6 +140,10 @@ nonisolated struct FaceAssignmentResult: Sendable, Equatable {
 ///   joined strongest first, never two faces of one photo. A group of faces from two or more
 ///   days becomes a new person, seeded with its faces, and chaining runs again with them. A
 ///   face matching nobody and like no face of another day stays without a person.
+/// - **Lapsed seeds:** a person the user said nothing about keeps its seeds only while they
+///   still span two or more days, as a new person's must. When faces leave it (re-read
+///   under stricter admission, deleted, or moved by the user), the seeds left are Otos's to
+///   decide again, and the person is forgotten once no face is theirs.
 nonisolated enum FaceAssignmentPolicy {
     static let threshold: Float = 0.434
     static let margin: Float = 0.16
@@ -146,7 +163,8 @@ nonisolated enum FaceAssignmentPolicy {
     static let maximumGroupings = 8
 
     static func assign(faces: [FaceFact], people: [PersonFact]) -> FaceAssignmentResult {
-        let usable = faces.filter { !$0.isNotFace }
+        let lapsed = lapsedSeeds(faces.filter { !$0.isNotFace }, people: people)
+        let usable = faces.filter { !$0.isNotFace }.map { lapsed.contains($0.id) ? $0.opened : $0 }
         let birthdays = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.birthdaySeconds) })
         var anchors: [Int: FaceAssignmentResult.Person] = [:]
         for (index, face) in usable.enumerated() where face.assignment.isAnchor {
@@ -154,6 +172,7 @@ nonisolated enum FaceAssignmentPolicy {
             anchors[index] = .existing(person)
         }
         var result = FaceAssignmentResult()
+        result.lapsedSeeds = lapsed
         var fill = Fill.run(faces: usable, anchors: anchors, birthdays: birthdays)
         for _ in 0 ..< maximumGroupings {
             let groups = unnamedGroups(fill.leftover.map { usable[$0] })
@@ -178,6 +197,32 @@ nonisolated enum FaceAssignmentPolicy {
         }
         result.likeness = likeness(faces: usable, assigned: fill.assigned, birthdays: birthdays)
         return result
+    }
+
+    /// The seeds of each person the user said nothing about and gave no face, when the dated
+    /// seeds left span fewer than two days: the group the person was found from no longer
+    /// stands.
+    static func lapsedSeeds(_ faces: [FaceFact], people: [PersonFact]) -> Set<FaceID> {
+        let bare = Set(people.filter(\.isBare).map(\.id))
+        var seeds: [PersonID: [FaceFact]] = [:]
+        var claimed: Set<PersonID> = []
+        for face in faces {
+            switch face.assignment {
+            case let .seed(person) where bare.contains(person):
+                seeds[person, default: []].append(face)
+            case let .user(person):
+                claimed.insert(person)
+            default:
+                break
+            }
+        }
+        var lapsed: Set<FaceID> = []
+        for (person, faces) in seeds where !claimed.contains(person) {
+            if Set(faces.compactMap { day($0.captureSeconds) }).count < 2 {
+                lapsed.formUnion(faces.map(\.id))
+            }
+        }
+        return lapsed
     }
 
     /// The faces linked strongest first at `groupLink` or above, never joining two faces of

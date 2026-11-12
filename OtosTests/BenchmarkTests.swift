@@ -328,6 +328,6 @@ struct BenchmarkTests {
                 rejected: []
             ))
         }
-        return (faces, (1 ... people).map { PersonFact(id: PersonID(rawValue: Int64($0)), birthdaySeconds: nil) })
+        return (faces, (1 ... people).map { PersonFact(id: PersonID(rawValue: Int64($0)), birthdaySeconds: nil, isBare: false) })
     }
 }

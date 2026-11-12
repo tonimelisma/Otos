@@ -4,6 +4,7 @@ import Foundation
 import ImageIO
 @testable import OtosKit
 import Testing
+import Vision
 
 /// Face analysis (ADR 0047): the alignment geometry, the admission rules, the opaque crop and
 /// the bundled embedding model.
@@ -80,8 +81,24 @@ struct FaceAnalyzerTests {
         let analysis = try await analyzer.analyze(Self.patternImage(seed: 3, size: 640))
 
         #expect(analysis == FaceAnalysis(
-            faces: [], rejectedForQuality: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0
+            faces: [], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0
         ))
+    }
+
+    /// Vision's classifier sees a person around a real face and none around a pattern: a
+    /// portrait's face box reads at or above `FaceAnalyzer.minimumPersonConfidence`, the same
+    /// box over a patterned image below it.
+    @Test func theClassifierSeesAPersonAroundAFaceAndNoneAroundAnObject() throws {
+        let portrait = try Self.portrait("williams-2018")
+        let request = VNDetectFaceRectanglesRequest()
+        try VNImageRequestHandler(cgImage: portrait).perform([request])
+        let box = try #require(request.results?.first).boundingBox
+
+        let face = try FaceAnalyzer.personConfidence(around: box, in: portrait)
+        let object = try FaceAnalyzer.personConfidence(around: box, in: Self.patternImage(seed: 3, size: 640))
+
+        #expect(face >= FaceAnalyzer.minimumPersonConfidence, "face \(face)")
+        #expect(object < FaceAnalyzer.minimumPersonConfidence, "object \(object)")
     }
 
     // MARK: - Real faces
@@ -95,6 +112,7 @@ struct FaceAnalyzerTests {
         for name in ["williams-2006", "williams-2018", "obama-2013"] {
             let analysis = try await analyzer.analyze(Self.portrait(name))
             #expect(analysis.rejectedForQuality == 0, "\(name)")
+            #expect(analysis.rejectedAsNoPerson == 0, "\(name)")
             #expect(analysis.rejectedForAlignment == 0, "\(name)")
             #expect(analysis.rejectedForLandmarks == 0, "\(name)")
             let face = try #require(analysis.faces.count == 1 ? analysis.faces.first : nil, "\(name)")

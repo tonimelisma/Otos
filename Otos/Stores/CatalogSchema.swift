@@ -621,6 +621,28 @@ nonisolated enum CatalogSchema {
         ]
     }
 
+    /// Faces analysis revision 2 (ADR 0047) admits a face only when Vision's classifier sees
+    /// a person around it. It reads the same detections with the same model and only turns
+    /// more of them away, so a photo stamped with no face has none under it either. A photo
+    /// with faces read under an earlier revision owes faces again: its stamp is cleared, and
+    /// its re-reading carries each kept face's person over by its box.
+    static let personAdmissionMigrationIdentifier = "v29_faces_person_admission"
+
+    static var personAdmissionStatements: [String] {
+        [
+            """
+            UPDATE media_asset SET faces_source_size = NULL, faces_source_mtime = NULL
+            WHERE faces_source_size IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM face
+                  WHERE face.library_root_id = media_asset.library_root_id
+                    AND face.relative_path = media_asset.relative_path
+                    AND face.analysis_revision < 2
+              )
+            """,
+        ]
+    }
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

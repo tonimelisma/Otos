@@ -54,7 +54,7 @@ struct FaceEnrichmentTests {
             thumbnailDirectory: makeTestDirectory(),
             analyzeFaces: { image in
                 recorder.record(image)
-                return FaceAnalysis(faces: [face], rejectedForQuality: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
+                return FaceAnalysis(faces: [face], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
             }
         )
 
@@ -78,7 +78,7 @@ struct FaceEnrichmentTests {
             thumbnailDirectory: makeTestDirectory(),
             analyzeFaces: { image in
                 recorder.record(image)
-                return FaceAnalysis(faces: [], rejectedForQuality: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
+                return FaceAnalysis(faces: [], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
             }
         )
 

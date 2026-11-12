@@ -125,6 +125,41 @@ struct PeopleStateTests {
         #expect(plan.emptied == [tyler])
     }
 
+    /// A lapsed seed is released from its person and given out again: the plan names the
+    /// person it was a seed of, carries its new guess when it has one, and empties the
+    /// person it leaves with no face.
+    @Test func aPlanReleasesLapsedSeeds() {
+        let found = PersonID(rawValue: 7)
+        let faces = [
+            Fixture.face("a.jpg", toward: [0: 1], at: 0, assignment: .user(Self.sam)),
+            Fixture.face("b.jpg", toward: [5: 1], at: 0, assignment: .seed(found)),
+            Fixture.face("c.jpg", toward: [5: 1], at: 0, assignment: .seed(found)),
+        ]
+        let people: [PeopleSnapshot.Person] = [
+            .init(id: Self.sam, name: "Sam", birthday: nil), .init(id: found, name: nil, birthday: nil),
+        ]
+        var result = FaceAssignmentResult()
+        result.lapsedSeeds = [faces[1].id, faces[2].id]
+        result.guesses = [faces[2].id: .existing(Self.sam)]
+
+        let plan = FaceAssignmentPlan.changes(from: Self.snapshot(faces, people: people), to: result)
+
+        #expect(plan.lapsedSeeds == [faces[1].id: found, faces[2].id: found])
+        #expect(plan.guesses == [.init(face: faces[2].id, person: .existing(Self.sam))])
+        #expect(plan.emptied == [found])
+    }
+
+    /// Assignment reads a person as Otos's own only when the user said nothing about them;
+    /// a key photo the user chose is their word.
+    @Test func aKeyPhotoMakesAPersonTheUsers() {
+        let found = PersonID(rawValue: 7)
+        let face = Fixture.face("a.jpg", toward: [5: 1], at: 0, assignment: .seed(found))
+        var snapshot = Self.snapshot([face], people: [.init(id: found, name: nil, birthday: nil)])
+        #expect(snapshot.personFacts.map(\.isBare) == [true])
+        snapshot.keyPhotos = [found: face.id]
+        #expect(snapshot.personFacts.map(\.isBare) == [false])
+    }
+
     /// Across a selection, the people its unidentified faces most likely are; This Is gives
     /// a person the face most like them in each photo.
     @Test func theSelectionsLikelyPeopleAndTheFacesTheyAreGiven() {

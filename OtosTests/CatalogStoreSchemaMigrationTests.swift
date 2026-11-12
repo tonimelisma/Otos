@@ -191,6 +191,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.autoTaggedPeopleMigrationIdentifier,
             CatalogSchema.placeNamesMigrationIdentifier,
             CatalogSchema.keyPhotoMigrationIdentifier,
+            CatalogSchema.personAdmissionMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -610,6 +611,60 @@ struct CatalogStoreSchemaMigrationTests {
             ))
         }
         #expect(stamped == ["withFace.arw", "still.jpg"])
+    }
+
+    /// Faces revision 2 only turns more detections away, so the migration clears the faces
+    /// stamp of a photo with a face read under revision 1, and leaves a photo stamped with no
+    /// face, a photo whose faces revision 2 read, and an unread photo as they were.
+    @Test func thePersonAdmissionMigrationReReadsOnlyPhotosWithEarlierFaces() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let fresh = CatalogStore(location: .databaseFile(databaseURL))
+        try await fresh.start(scansSavedLibraries: false)
+        await fresh.shutdown()
+
+        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            let rows: [(String, Int?)] = [("faceless.jpg", 10), ("earlier.jpg", 10), ("current.jpg", 10), ("unread.jpg", nil)]
+            for (path, stamp) in rows {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
+                        name_sort_key, kind, faces_source_size, faces_source_mtime)
+                    VALUES (1, ?, ?, ?, ?, 'image', ?, ?)
+                    """,
+                    arguments: [path, path, path, path, stamp, stamp]
+                )
+            }
+            for (path, revision) in [("earlier.jpg", 1), ("current.jpg", 2)] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
+                        landmarks, quality, analysis_revision, embedding)
+                    VALUES (1, ?, 0, 0, 0, 0.5, 0.5, x'00', 0.9, ?, x'00')
+                    """,
+                    arguments: [path, revision]
+                )
+            }
+            try db.execute(
+                sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
+                arguments: [CatalogSchema.personAdmissionMigrationIdentifier]
+            )
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
+
+        let stamped = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try Set(String.fetchAll(
+                db, sql: "SELECT relative_path FROM media_asset WHERE faces_source_size IS NOT NULL"
+            ))
+        }
+        #expect(stamped == ["faceless.jpg", "current.jpg"])
     }
 
     /// A HEIF rotated by its `irot` property was cataloged with no orientation before

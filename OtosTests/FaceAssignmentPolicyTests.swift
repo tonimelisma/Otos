@@ -13,7 +13,7 @@ struct FaceAssignmentPolicyTests {
     static let day: Double = 86400
     /// The fixtures' time zero, seconds since 1970.
     static let epoch: Double = 1_600_000_000
-    static let people = [PersonFact(id: sam, birthdaySeconds: nil), PersonFact(id: ian, birthdaySeconds: nil)]
+    static let people = [PersonFact(id: sam, birthdaySeconds: nil, isBare: false), PersonFact(id: ian, birthdaySeconds: nil, isBare: false)]
 
     @Test func aFaceGoesToThePersonItMatches() {
         let anchor = Self.face("ref.jpg", toward: [0: 1], at: 0, assignment: .user(Self.sam))
@@ -42,8 +42,8 @@ struct FaceAssignmentPolicyTests {
     /// reached; an adult's is.
     @Test func anAdultIsComparedAcrossAllYearsAndAChildIsNot() {
         let people = [
-            PersonFact(id: Self.sam, birthdaySeconds: Self.epoch - 3 * Self.year),
-            PersonFact(id: Self.ian, birthdaySeconds: Self.epoch - 30 * Self.year),
+            PersonFact(id: Self.sam, birthdaySeconds: Self.epoch - 3 * Self.year, isBare: false),
+            PersonFact(id: Self.ian, birthdaySeconds: Self.epoch - 30 * Self.year, isBare: false),
         ]
         let child = Self.face("child.jpg", toward: [0: 1], at: 0, assignment: .user(Self.sam))
         let adult = Self.face("adult.jpg", toward: [1: 1], at: 0, assignment: .user(Self.ian))
@@ -85,8 +85,8 @@ struct FaceAssignmentPolicyTests {
 
     @Test func theUsersWordHoldsEveryGuess() {
         let people = [
-            PersonFact(id: Self.sam, birthdaySeconds: Self.epoch + Self.year),
-            PersonFact(id: Self.ian, birthdaySeconds: nil),
+            PersonFact(id: Self.sam, birthdaySeconds: Self.epoch + Self.year, isBare: false),
+            PersonFact(id: Self.ian, birthdaySeconds: nil, isBare: false),
         ]
         let sam = Self.face("s.jpg", toward: [0: 1], at: 2 * Self.year, assignment: .user(Self.sam))
         let beforeBirthday = Self.face("baby.jpg", toward: [0: 1], at: 0)
@@ -133,7 +133,7 @@ struct FaceAssignmentPolicyTests {
     @Test func assigningItsOwnOutputChangesNothing() {
         var generator = SplitMix64(seed: 5)
         let faces = Self.randomFaces(count: 300, people: 4, generator: &generator)
-        let people = (1 ... 4).map { PersonFact(id: PersonID(rawValue: Int64($0)), birthdaySeconds: nil) }
+        let people = (1 ... 4).map { PersonFact(id: PersonID(rawValue: Int64($0)), birthdaySeconds: nil, isBare: false) }
 
         let first = FaceAssignmentPolicy.assign(faces: faces, people: people)
         var created: [Int: PersonID] = [:]
@@ -162,7 +162,7 @@ struct FaceAssignmentPolicyTests {
                 assignment: assignment, isNotFace: face.isNotFace, rejected: face.rejected
             )
         }
-        let everyone = people + created.values.map { PersonFact(id: $0, birthdaySeconds: nil) }
+        let everyone = people + created.values.map { PersonFact(id: $0, birthdaySeconds: nil, isBare: true) }
 
         let second = FaceAssignmentPolicy.assign(faces: written, people: everyone)
 
@@ -170,6 +170,44 @@ struct FaceAssignmentPolicyTests {
         #expect(second.newPeople.isEmpty)
         #expect(second.guesses == first.guesses.filter { seeds[$0.key] == nil }.mapValues { .existing(id($0)) })
         #expect(second.likeness == first.likeness)
+    }
+
+    /// A person Otos found keeps its seeds only while they span two or more days. When seeds
+    /// of the other days are gone, the ones left lapse: they lose their person and, like no
+    /// one and from one day, stay without one.
+    @Test func seedsOfOneDayLeftOfABarePersonLapse() {
+        let found = PersonID(rawValue: 7)
+        let seeds = [
+            Self.face("halloween-1.jpg", toward: [5: 1], at: 0, assignment: .seed(found)),
+            Self.face("halloween-2.jpg", toward: [5: 1, 6: 0.3], at: 60, assignment: .seed(found)),
+        ]
+        let sam = Self.face("sam.jpg", toward: [0: 1], at: 0, assignment: .user(Self.sam))
+        let people = Self.people + [PersonFact(id: found, birthdaySeconds: nil, isBare: true)]
+
+        let result = FaceAssignmentPolicy.assign(faces: seeds + [sam], people: people)
+
+        #expect(result.lapsedSeeds == Set(seeds.map(\.id)))
+        #expect(result.guesses.isEmpty)
+        #expect(result.newPeople.isEmpty)
+    }
+
+    /// Seeds lapse only for a person the user said nothing about and gave no face, and only
+    /// when they span fewer than two days.
+    @Test func seedsStandWhileTheUserSaidSomethingOrTheyStillSpanTwoDays() {
+        let found = PersonID(rawValue: 7)
+        let oneDay = [
+            Self.face("a.jpg", toward: [5: 1], at: 0, assignment: .seed(found)),
+            Self.face("b.jpg", toward: [5: 1, 6: 0.3], at: 60, assignment: .seed(found)),
+        ]
+        let named = Self.people + [PersonFact(id: found, birthdaySeconds: nil, isBare: false)]
+        let bare = Self.people + [PersonFact(id: found, birthdaySeconds: nil, isBare: true)]
+        let usersFace = Self.face("c.jpg", toward: [5: 1, 8: 0.3], at: 120, assignment: .user(found))
+        let otherDay = Self.face("d.jpg", toward: [5: 1, 9: 0.3], at: Self.day * 3, assignment: .seed(found))
+
+        #expect(FaceAssignmentPolicy.assign(faces: oneDay, people: named).lapsedSeeds.isEmpty)
+        #expect(FaceAssignmentPolicy.assign(faces: oneDay + [usersFace], people: bare).lapsedSeeds.isEmpty)
+        #expect(FaceAssignmentPolicy.assign(faces: oneDay + [otherDay], people: bare).lapsedSeeds.isEmpty)
+        #expect(FaceAssignmentPolicy.assign(faces: oneDay, people: bare).lapsedSeeds == Set(oneDay.map(\.id)))
     }
 
     @Test func likenessIsTheBestSimilarityToTheOtherFacesOfThePerson() {
@@ -191,8 +229,8 @@ struct FaceAssignmentPolicyTests {
         let tyler = PersonID(rawValue: 3)
         let owen = PersonID(rawValue: 4)
         let people = Self.people + [
-            PersonFact(id: tyler, birthdaySeconds: nil),
-            PersonFact(id: owen, birthdaySeconds: Self.epoch + Self.year),
+            PersonFact(id: tyler, birthdaySeconds: nil, isBare: false),
+            PersonFact(id: owen, birthdaySeconds: Self.epoch + Self.year, isBare: false),
         ]
         let faces = [
             Self.face("s.jpg", toward: [0: 1], at: 0, assignment: .user(Self.sam)),
@@ -221,7 +259,7 @@ struct FaceAssignmentPolicyTests {
             case 4: Self.epoch - 20 * Self.year
             default: nil
             }
-            return PersonFact(id: PersonID(rawValue: Int64(index)), birthdaySeconds: birthday)
+            return PersonFact(id: PersonID(rawValue: Int64(index)), birthdaySeconds: birthday, isBare: false)
         }
         let faces = Self.randomFaces(count: 400, people: 5, generator: &generator).filter { !$0.isNotFace }
         let birthdays = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.birthdaySeconds) })

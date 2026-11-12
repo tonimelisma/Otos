@@ -264,6 +264,35 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    /// A lapsed seed loses its person only while it is still that person's seed, and the
+    /// person Otos found is gone once no face is theirs; a seed the user moved meanwhile
+    /// keeps the user's word.
+    @Test func aLapsedSeedIsReleasedOnlyWhileStillASeed() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
+        try await library.store.applyEnrichmentBatch([
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1)]),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
+        ])
+        let a = FaceID(asset: library.id("a.jpg"), index: 0)
+        let b = FaceID(asset: library.id("b.jpg"), index: 0)
+        var seeding = FaceAssignmentPlan()
+        seeding.newPeople = [[a, b]]
+        try await library.store.applyAssignment(seeding)
+        let found = try #require(try await library.store.peopleSnapshot().people.last?.id)
+        let ian = try #require(try await library.store.perform(.moveToNewPerson([b], name: "Ian")).person)
+
+        // Planned before the move: a is released, b keeps the user's word, and the person
+        // Otos found has no face left.
+        #expect(try await library.store.applyAssignment(FaceAssignmentPlan(
+            emptied: [found], lapsedSeeds: [a: found, b: found]
+        )) == 2)
+
+        let snapshot = try await library.store.peopleSnapshot()
+        #expect(snapshot.faces.map(\.assignment) == [.open, .user(ian)])
+        #expect(snapshot.people.map(\.id) == [ian])
+        await library.store.shutdown()
+    }
+
     /// A person's photos and the People filter: several people are photos of them together,
     /// `Unidentified` a face with no person; in a person's photos the likeness order puts the
     /// face least like them first.

@@ -75,7 +75,7 @@ struct PreviewFaceReaderTests {
             thumbnailDirectory: directory,
             analyzeFaces: { _ in
                 analysed.record()
-                return FaceAnalysis(faces: [face], rejectedForQuality: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
+                return FaceAnalysis(faces: [face], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
             }
         )
 

@@ -1064,9 +1064,10 @@ extension CatalogStore {
         }
     }
 
-    /// Writes what one assignment changed (ADR 0047), in one transaction. A guess or a seed
-    /// is written only where the face is still Otos's to decide (none or a guess), so an act
-    /// the user made since the snapshot always wins; the next assignment sees it. Returns
+    /// Writes what one assignment changed (ADR 0047), in one transaction. A lapsed seed is
+    /// released only while it is still that person's seed, and a guess or a seed is written
+    /// only where the face is still Otos's to decide (none or a guess), so an act the user
+    /// made since the snapshot always wins; the next assignment sees it. Returns
     /// the rows written; zero means the catalog already held the plan.
     @discardableResult
     func applyAssignment(_ plan: FaceAssignmentPlan) async throws -> Int {
@@ -1076,6 +1077,21 @@ extension CatalogStore {
             var written = 0
             var created: [Int: PersonID] = [:]
             let guessable = "assignment IN (\(FaceAssignmentColumn.open.rawValue), \(FaceAssignmentColumn.model.rawValue))"
+            for (face, person) in plan.lapsedSeeds {
+                guard let key = try? FaceRowKey(face, rowIDs: rowIDs) else { continue }
+                try db.execute(
+                    sql: """
+                    UPDATE face SET person_id = NULL, assignment = ?, is_key_photo = 0
+                    WHERE library_root_id = ? AND relative_path = ? AND face_index = ?
+                      AND assignment = ? AND person_id = ?
+                    """,
+                    arguments: [
+                        FaceAssignmentColumn.open.rawValue, key.rootID, key.path.rawValue, key.index,
+                        FaceAssignmentColumn.seed.rawValue, person.rawValue,
+                    ]
+                )
+                written += db.changesCount
+            }
             for (index, seeds) in plan.newPeople.enumerated() {
                 let person = try Self.insertPerson(name: nil, birthday: nil, db: db)
                 created[index] = person
@@ -1138,7 +1154,8 @@ extension CatalogStore {
         }
         OtosLog.catalog.debugOperation("people.assignment", phase: "applied", fields: [
             "guesses": "\(plan.guesses.count)", "newPeople": "\(plan.newPeople.count)",
-            "likeness": "\(plan.likeness.count)", "emptied": "\(plan.emptied.count)", "rows": "\(written)",
+            "likeness": "\(plan.likeness.count)", "emptied": "\(plan.emptied.count)",
+            "lapsedSeeds": "\(plan.lapsedSeeds.count)", "rows": "\(written)",
         ])
         return written
     }
