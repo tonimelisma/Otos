@@ -153,6 +153,33 @@ nonisolated struct PersonSummary: Hashable, Sendable, Identifiable {
     }
 }
 
+/// Where a face's outline sits on its photo as shown. A face box is a fraction of the upright
+/// photo from its top-left corner; the photo is shown through its saved edit's crop and
+/// straighten, so the box is carried through them.
+nonisolated enum FaceOutline {
+    /// Nil when the photo has an edit but its upright size is unknown: the outline is not
+    /// drawn rather than drawn in the wrong place.
+    static func onEditedPhoto(_ box: CGRect, recipe: EditRecipe?, upright: CGSize?) -> CGRect? {
+        guard let recipe else { return box }
+        guard let upright, upright.width > 0, upright.height > 0 else { return nil }
+        return EditGeometry(recipe: recipe, developedSize: upright).editedRect(ofDevelopedFraction: box)
+    }
+
+    /// The outlines, fractions of `frame` from its top-left corner, as one path of rounded
+    /// rectangles in a top-left-origin space.
+    static func path(_ outlines: [CGRect], in frame: CGRect) -> CGPath {
+        let path = CGMutablePath()
+        for rect in outlines {
+            let box = CGRect(
+                x: frame.minX + rect.minX * frame.width, y: frame.minY + rect.minY * frame.height,
+                width: rect.width * frame.width, height: rect.height * frame.height
+            )
+            path.addRoundedRect(in: box, cornerWidth: 4, cornerHeight: 4)
+        }
+        return path
+    }
+}
+
 /// The face acts' words, the same on the photo menus, the Info pane and the undo stack
 /// (DES-113, `docs/design/people.md`).
 nonisolated enum FaceActTitle {

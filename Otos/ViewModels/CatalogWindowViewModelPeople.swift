@@ -555,27 +555,39 @@ extension CatalogWindowViewModel {
         submitPeopleIntent(.restore(restore, act: act))
     }
 
-    // MARK: - A face's outline
+    // MARK: - Face outlines
 
-    /// The Info pane's pointer over a face: the loupe outlines it while it shows its photo.
-    func setHoveredFace(_ face: FaceID?) {
-        guard hoveredFace != face else { return }
-        hoveredFace = face
+    /// Outlines these faces wherever their photos show, and no others: the Info pane's
+    /// pointer over a face, or the highlighted item of a photo's face menu, which is how two
+    /// people the menu names alike are told apart (DES-113). Empty clears.
+    func outlineFaces(_ faces: [FaceID]) {
+        guard outlinedFaces != faces else { return }
+        outlinedFaces = faces
+        OtosLog.ui.debugOperation("people.faceOutline", phase: faces.isEmpty ? "cleared" : "shown", fields: [
+            "faces": "\(faces.count)",
+            "photos": "\(Set(faces.map(\.asset)).count)",
+            "mode": viewMode.rawValue,
+        ])
     }
 
-    /// The hovered face's outline on the loupe's photo, as fractions of the edited photo
-    /// from its top-left corner (the saved edit's crop and straighten applied); nil unless
-    /// the loupe shows the face's photo and Info has read its edit.
-    var loupeFaceHighlight: CGRect? {
-        guard let face = hoveredFace, viewMode == .loupe, focusedAssetID == face.asset,
-              let tile = state.people?.photoFaces[face.asset]?.first(where: { $0.id == face })?.tile,
-              let info = photoInfo, info.id == face.asset
-        else { return nil }
-        guard let recipe = info.editRecipe else { return tile.box }
-        // The geometry needs the upright photo's shape; without it the outline is not drawn
-        // rather than drawn in the wrong place.
-        guard let upright = info.uprightSize, upright.width > 0, upright.height > 0 else { return nil }
-        return EditGeometry(recipe: recipe, developedSize: upright).editedRect(ofDevelopedFraction: tile.box)
+    /// The outlined faces' boxes, by photo, as fractions of the upright photo from its
+    /// top-left corner. A grid tile places them on its own edited thumbnail.
+    var outlinedFaceBoxes: [MediaAssetID: [CGRect]] {
+        guard !outlinedFaces.isEmpty, let photoFaces = state.people?.photoFaces else { return [:] }
+        var boxes: [MediaAssetID: [CGRect]] = [:]
+        for face in outlinedFaces {
+            if let tile = photoFaces[face.asset]?.first(where: { $0.id == face })?.tile {
+                boxes[face.asset, default: []].append(tile.box)
+            }
+        }
+        return boxes
+    }
+
+    /// The outlines on the loupe's or the active compare pane's photo, as fractions of the
+    /// edited photo (`FaceOutline`); empty unless Info has read that photo's edit.
+    func faceOutlines(on asset: MediaAssetID?) -> [CGRect] {
+        guard let asset, let boxes = outlinedFaceBoxes[asset], let info = photoInfo, info.id == asset else { return [] }
+        return boxes.compactMap { FaceOutline.onEditedPhoto($0, recipe: info.editRecipe, upright: info.uprightSize) }
     }
 
     // MARK: - The People filter

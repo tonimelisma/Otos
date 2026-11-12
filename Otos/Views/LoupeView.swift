@@ -37,8 +37,10 @@ struct LoupeView: View {
     var onZoomDoubleClick: (CGPoint) -> Void = { _ in }
     var isPickingNeutral = false
     var onPickNeutral: (CGPoint) -> Void = { _ in }
-    /// The face the Info pane points at, outlined on the photo (ADR 0047).
-    var faceHighlight: CGRect?
+    /// The outlined faces on the photo, as fractions of the edited photo (ADR 0047).
+    var faceOutlines: [CGRect] = []
+    /// The outlined faces' boxes by photo, which the filmstrip's tiles draw.
+    var faceOutlineBoxes: [MediaAssetID: [CGRect]] = [:]
     /// While the crop tool is on: the whole frame it draws over, and the crop.
     var cropEditor: CropEditorInput?
     var videoTrimCommand: VideoTrimCommand?
@@ -118,7 +120,7 @@ struct LoupeView: View {
                             onDoubleClick: onZoomDoubleClick,
                             isPicking: isPickingNeutral,
                             onPick: onPickNeutral,
-                            faceHighlight: faceHighlight
+                            faceOutlines: faceOutlines
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .accessibilityElement()
@@ -234,6 +236,7 @@ struct LoupeView: View {
             onMediaChoiceKey: onMediaChoiceKey,
             onMediaChoice: onMediaChoice,
             contextMenu: contextMenu,
+            faceOutlines: faceOutlineBoxes,
             focusTargetID: focusedAssetID
         )
     }

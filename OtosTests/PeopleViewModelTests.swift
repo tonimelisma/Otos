@@ -209,6 +209,22 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    /// The outlined faces are the view model's: by photo, each face's box, so every surface
+    /// showing the photo draws them; empty clears (DES-113).
+    @Test func outlinedFacesAreGroupedByPhoto() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let people = try await fixture.people()
+        let photo = fixture.like.asset
+        fixture.show(people, scope: .allMedia, grid: [photo])
+        let box = try #require(people.photoFaces[photo]?.first { $0.id == fixture.like }?.tile.box)
+
+        fixture.model.outlineFaces([fixture.like])
+        #expect(fixture.model.outlinedFaceBoxes == [photo: [box]])
+        fixture.model.outlineFaces([])
+        #expect(fixture.model.outlinedFaceBoxes.isEmpty)
+        await fixture.store.shutdown()
+    }
+
     /// Saving the Person sheet with a name another person has asks whether they are the same
     /// person; Merge merges them. New Person… with a taken name gives the faces to that
     /// person.

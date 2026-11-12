@@ -22,6 +22,8 @@ struct MediaGridView: View {
     var onMediaChoiceKey: (MediaChoice) -> Void = { _ in }
     var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
     var contextMenu: () -> NSMenu? = { nil }
+    /// The outlined faces' boxes by photo (ADR 0047), drawn on their tiles.
+    var faceOutlines: [MediaAssetID: [CGRect]] = [:]
     /// Centers the grid on this asset after loupe/compare exit (fresh controller).
     var focusTargetID: MediaAssetID?
     var dismissedCameraBannerIdentities: Set<DeviceIdentity> = []
@@ -72,6 +74,7 @@ struct MediaGridView: View {
                         onMediaChoiceKey: onMediaChoiceKey,
                         onMediaChoice: onMediaChoice,
                         contextMenu: contextMenu,
+                        faceOutlines: faceOutlines,
                         focusTargetID: focusTargetID
                     )
                 }

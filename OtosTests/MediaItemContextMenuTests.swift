@@ -109,6 +109,55 @@ struct MediaItemContextMenuTests {
     }
 }
 
+extension MediaItemContextMenuTests {
+    /// DES-113: a person without a name is `Unnamed Person ▸`, opening with Add Name…, and
+    /// highlighting a face item outlines the faces it acts on — the group's, or for a This Is
+    /// choice the faces it would give — so two people the menu names alike are told apart.
+    /// Closing the menu clears the outline.
+    @Test func highlightingAFaceItemOutlinesItsFaces() throws {
+        let asset = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/P"), relativePath: MediaRelativePath(rawValue: "a.jpg"))
+        let first = FaceID(asset: asset, index: 0)
+        let second = FaceID(asset: asset, index: 1)
+        let unnamed = FaceMenu.Group(
+            title: "Unnamed Person", person: PersonID(rawValue: 1), name: nil, faces: [first],
+            choices: [.init(person: PersonID(rawValue: 2), title: "Sam", faces: [first])],
+            newPersonFaces: [first], keyPhoto: first
+        )
+        let other = FaceMenu.Group(
+            title: "Unnamed Person", person: PersonID(rawValue: 3), name: nil, faces: [second],
+            choices: [], newPersonFaces: [second], keyPhoto: second
+        )
+        var model = MediaItemMenuModel(
+            openTitle: "Open", canOpen: true, openWithApplications: [], canOpenWith: false,
+            shareItems: [URL(fileURLWithPath: "/P/a.jpg")], canReveal: true, canChoose: true, canTrash: true
+        )
+        model.faces = FaceMenu(groups: [unnamed, other], flattensFirst: false)
+        let recorder = OutlineRecorder()
+        let menu = MediaItemContextMenu.make(model: model, perform: { _ in }, outline: { recorder.outlines.append($0) })
+        let delegate = try #require(menu.delegate)
+
+        let groups = menu.items.filter { $0.title == "Unnamed Person" }
+        #expect(groups.count == 2)
+        let submenu = try #require(groups[0].submenu)
+        #expect(submenu.items.first?.title == "Add Name…")
+        #expect(submenu.items.contains { $0.title == "Wrong Person" })
+
+        delegate.menu?(menu, willHighlight: groups[0])
+        delegate.menu?(menu, willHighlight: groups[1])
+        let sam = try #require(submenu.items.first { $0.title == "Sam" })
+        submenu.delegate?.menu?(submenu, willHighlight: sam)
+        delegate.menu?(menu, willHighlight: menu.items.first { $0.title == "Copy" })
+        delegate.menu?(menu, willHighlight: groups[0])
+        delegate.menuDidClose?(menu)
+        #expect(recorder.outlines == [[first], [second], [first], [], [first], []])
+    }
+}
+
+@MainActor
+private final class OutlineRecorder {
+    var outlines: [[FaceID]] = []
+}
+
 @MainActor
 private final class CommandRecorder {
     var commands: [MediaItemCommand] = []

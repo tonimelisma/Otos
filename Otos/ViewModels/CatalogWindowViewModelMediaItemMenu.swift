@@ -94,9 +94,12 @@ extension CatalogWindowViewModel {
         guard !model.shareItems.isEmpty else { return nil }
         let mode = viewMode.rawValue
         OtosLog.ui.notice("op=ui.contextMenu.open count=\(model.shareItems.count, privacy: .public) mode=\(mode, privacy: .public)")
-        return MediaItemContextMenu.make(model: model, icons: openWithApplicationIcons) { [weak self] command in
-            self?.performMediaItemCommand(command)
-        }
+        return MediaItemContextMenu.make(
+            model: model,
+            icons: openWithApplicationIcons,
+            perform: { [weak self] command in self?.performMediaItemCommand(command) },
+            outline: { [weak self] faces in self?.outlineFaces(faces) }
+        )
     }
 
     func performMediaItemCommand(_ command: MediaItemCommand) {

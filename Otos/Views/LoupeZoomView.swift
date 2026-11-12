@@ -29,8 +29,8 @@ struct LoupeZoomView: NSViewRepresentable {
     /// fraction of the image from its top-left corner, and the cursor is a crosshair.
     var isPicking = false
     var onPick: (CGPoint) -> Void = { _ in }
-    /// A face's outline, as fractions of the image from its top-left corner (ADR 0047).
-    var faceHighlight: CGRect?
+    /// Face outlines, as fractions of the image from its top-left corner (ADR 0047).
+    var faceOutlines: [CGRect] = []
 
     func makeNSView(context _: Context) -> LoupeZoomScrollView {
         LoupeZoomScrollView(frame: .zero)
@@ -40,7 +40,7 @@ struct LoupeZoomView: NSViewRepresentable {
         view.onReport = onReport
         view.onDoubleClick = onDoubleClick
         view.setPicking(isPicking, onPick: onPick)
-        view.setFaceHighlight(faceHighlight)
+        view.setFaceOutlines(faceOutlines)
         view.setContent(image: image, nativeLongEdge: nativeLongEdge, assetID: assetID)
         view.apply(command)
     }
@@ -103,8 +103,8 @@ final class LoupeZoomScrollView: NSScrollView {
         LoupeZoomPolicy.fitMagnification(documentSize: document.frame.size, paneSize: bounds.size)
     }
 
-    func setFaceHighlight(_ rect: CGRect?) {
-        document.faceHighlight = rect
+    func setFaceOutlines(_ rects: [CGRect]) {
+        document.faceOutlines = rects
     }
 
     func setPicking(_ picking: Bool, onPick: @escaping (CGPoint) -> Void) {
@@ -210,11 +210,11 @@ final class LoupeZoomDocumentView: NSView {
         }
     }
 
-    /// A face's outline in fractions of the image, drawn as a sublayer so it zooms and pans
+    /// Face outlines in fractions of the image, drawn as a sublayer so they zoom and pan
     /// with the photo: the accent selection border (DES-061).
-    var faceHighlight: CGRect? {
+    var faceOutlines: [CGRect] = [] {
         didSet {
-            if faceHighlight != oldValue {
+            if faceOutlines != oldValue {
                 needsLayout = true
             }
         }
@@ -229,19 +229,15 @@ final class LoupeZoomDocumentView: NSView {
 
     override func layout() {
         super.layout()
-        guard let rect = faceHighlight, bounds.width > 0 else {
+        guard !faceOutlines.isEmpty, bounds.width > 0 else {
             highlightLayer.isHidden = true
             return
         }
         // Flipped, so the fraction is measured from the top-left corner already.
-        let box = CGRect(
-            x: rect.minX * bounds.width, y: rect.minY * bounds.height,
-            width: rect.width * bounds.width, height: rect.height * bounds.height
-        )
         highlightLayer.strokeColor = NSColor.controlAccentColor.cgColor
         // The stroke keeps 3 pt on screen at any zoom.
         highlightLayer.lineWidth = 3 / max(enclosingScrollView?.magnification ?? 1, 0.01)
-        highlightLayer.path = CGPath(roundedRect: box, cornerWidth: 4, cornerHeight: 4, transform: nil)
+        highlightLayer.path = FaceOutline.path(faceOutlines, in: bounds)
         highlightLayer.isHidden = false
     }
 

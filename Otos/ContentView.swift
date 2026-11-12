@@ -40,7 +40,7 @@ struct ContentView: View {
                     images: viewModel.faceTileImages,
                     derivedImageDirectory: viewModel.thumbnailDirectory,
                     actions: viewModel.faceActions,
-                    hover: viewModel.setHoveredFace
+                    hover: viewModel.outlineFaces
                 )
             )
         case .edit:
@@ -678,6 +678,7 @@ struct ContentView: View {
                     viewModel.submitMediaChoice(choice, target: .item(id), origin: .inline)
                 },
                 contextMenu: viewModel.makeMediaItemContextMenu,
+                faceOutlines: viewModel.outlinedFaceBoxes,
                 focusTargetID: viewModel.focusedAssetID,
                 dismissedCameraBannerIdentities: viewModel.dismissedCameraBannerIdentities,
                 onDismissCameraBanner: { viewModel.dismissCameraConnectionBanner($0.identity) }
@@ -722,7 +723,8 @@ struct ContentView: View {
                 onZoomDoubleClick: { viewModel.toggleLoupeZoom(at: $0) },
                 isPickingNeutral: viewModel.isPickingNeutral,
                 onPickNeutral: viewModel.pickNeutral(at:),
-                faceHighlight: viewModel.loupeFaceHighlight,
+                faceOutlines: viewModel.faceOutlines(on: viewModel.focusedAssetID),
+                faceOutlineBoxes: viewModel.outlinedFaceBoxes,
                 cropEditor: viewModel.isCropping
                     ? viewModel.editCropBase.map { base in
                         CropEditorInput(
@@ -775,7 +777,9 @@ struct ContentView: View {
                 },
                 activePane: viewModel.activeComparePane,
                 onPaneActivated: viewModel.activateComparePane,
-                contextMenu: viewModel.makeMediaItemContextMenu
+                contextMenu: viewModel.makeMediaItemContextMenu,
+                faceOutlines: { viewModel.faceOutlines(on: $0) },
+                faceOutlineBoxes: viewModel.outlinedFaceBoxes
             )
             .navigationTitle(viewModel.windowTitle)
         }

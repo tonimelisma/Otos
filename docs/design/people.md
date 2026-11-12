@@ -184,6 +184,16 @@ The grid, filmstrip, loupe and compare context menu, after `Reveal in Finder`:
   `This Is ▸`, `This Is Not Sam`, `This Is Not a Face`, `Make Key Photo` (`Add Name…` first,
   and `Wrong Person`, for a person without a name).
 
+### Face outlines
+
+Highlighting a face item in a photo menu outlines the faces it acts on: a person's entry and
+every act under it, that person's faces; a `This Is` choice, the faces it would give. Two
+people without a name both read `Unnamed Person ▸`; the outline is how they are told apart.
+The faces are outlined wherever their photos show — the loupe, the active compare pane,
+grid and filmstrip tiles — in DES-061's 3 pt accent border, carried through the photo's
+saved crop and straighten; a tile still showing a placeholder draws none. Closing the menu
+clears them.
+
 ### Info pane
 
 The first section (DES-088), `People`:
@@ -194,8 +204,7 @@ The first section (DES-088), `People`:
   before.
 - **Several photos:** each visible person in them with `12 photos`, and the unidentified
   faces with `5 faces`, the three people they most likely are as buttons.
-- **Hover:** pointing at a face outlines it on the loupe's photo in DES-061's 3 pt accent
-  border, mapped through the photo's saved crop and straighten.
+- **Hover:** pointing at a row outlines its faces on their photos (see Face outlines).
 
 ## Person sheet
 

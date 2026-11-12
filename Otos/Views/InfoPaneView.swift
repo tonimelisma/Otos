@@ -160,8 +160,8 @@ struct InfoPanePeople {
     let images: FaceTileImages?
     let derivedImageDirectory: URL?
     let actions: FaceActions
-    /// The pointer over a face, or off every face.
-    let hover: (FaceID?) -> Void
+    /// The pointer over a row outlines its faces on their photos; off every row, none.
+    let hover: ([FaceID]) -> Void
 }
 
 /// The People section: for one photo, each face as its crop with its person's name, `Add
@@ -306,7 +306,7 @@ private struct InfoPanePeopleSection: View {
         }
         .contentShape(Rectangle())
         .onHover { inside in
-            people.hover(inside && faces.count == 1 ? faces.first?.id : nil)
+            people.hover(inside ? ids : [])
         }
         .accessibilityElement(children: .contain)
     }

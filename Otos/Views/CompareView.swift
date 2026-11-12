@@ -38,6 +38,10 @@ struct CompareView: View {
     /// Context menu for the active pane's asset (pane) and the clicked tile (strip).
     /// A pane context click activates that pane first, so the menu describes it.
     var contextMenu: () -> NSMenu? = { nil }
+    /// The outlined faces on a pane's photo, as fractions of the edited photo (ADR 0047).
+    var faceOutlines: (MediaAssetID) -> [CGRect] = { _ in [] }
+    /// The outlined faces' boxes by photo, which the filmstrip's tiles draw.
+    var faceOutlineBoxes: [MediaAssetID: [CGRect]] = [:]
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -142,6 +146,19 @@ struct CompareView: View {
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                     }
+                    // The outlined faces (ADR 0047) in DES-061's accent border, on the media.
+                    if let id, case let outlines = faceOutlines(id), !outlines.isEmpty {
+                        GeometryReader { proxy in
+                            let media = MediaAssetTilePresentation.contentRect(
+                                imagePixelSize: display.mediaPixelSize,
+                                bounds: CGRect(origin: .zero, size: proxy.size)
+                            )
+                            Path(FaceOutline.path(outlines, in: media))
+                                .stroke(Color.accentColor, lineWidth: MediaAssetTilePresentation.selectionBorderWidth)
+                        }
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                    }
                     // Centered like the loupe pane (DES-086) — one pane idiom for waiting.
                     if isDownloading {
                         ProgressView()
@@ -181,6 +198,7 @@ struct CompareView: View {
             onMediaChoiceKey: onMediaChoiceKey,
             onMediaChoice: onMediaChoice,
             contextMenu: contextMenu,
+            faceOutlines: faceOutlineBoxes,
             focusTargetID: focusTargetID
         )
     }

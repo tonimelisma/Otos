@@ -13,14 +13,21 @@ import SwiftUI
 /// through a closure — the renderer knows no intent by name. Share is not AppKit's
 /// `standardShareMenuItem` because that anchors its popover to the whole view the menu
 /// was shown on; the ViewModel presents it from the toolbar Share button instead.
+///
+/// Each face item carries the faces it acts on as its `representedObject`; while it is
+/// highlighted, `outline` receives them, so the photo shows which face an entry means —
+/// two people without a name read alike otherwise (DES-113).
 @MainActor
 enum MediaItemContextMenu {
     static func make(
         model: MediaItemMenuModel,
         icons: [URL: NSImage] = [:],
-        perform: @escaping @MainActor (MediaItemCommand) -> Void
+        perform: @escaping @MainActor (MediaItemCommand) -> Void,
+        outline: @escaping @MainActor ([FaceID]) -> Void = { _ in }
     ) -> NSMenu {
-        let menu = NSMenu()
+        let outliner = FaceOutliner(outline: outline)
+        let menu = FaceOutliningMenu(outliner: outliner)
+        menu.delegate = outliner
         menu.autoenablesItems = false
         for entry in model.entries {
             switch entry {
@@ -46,19 +53,22 @@ enum MediaItemContextMenu {
                 menu.addItem(item)
             case let .faces(group, flat):
                 if flat {
+                    let first = menu.numberOfItems
                     addName(group, to: menu, perform: perform)
                     let thisIs = NSMenuItem(title: FaceActTitle.thisIs, action: nil, keyEquivalent: "")
-                    let submenu = NSMenu(title: FaceActTitle.thisIs)
+                    let submenu = outliner.submenu(title: FaceActTitle.thisIs)
                     submenu.autoenablesItems = false
                     addChoices(group, to: submenu, perform: perform)
                     thisIs.submenu = submenu
                     menu.addItem(thisIs)
                     addCorrections(group, to: menu, perform: perform)
+                    carry(group.faces, to: menu.items[first...])
                 } else {
                     // One level of submenu (HIG): the group's This Is choices sit under a
                     // section header inside it rather than in a submenu of their own.
                     let item = NSMenuItem(title: group.title, action: nil, keyEquivalent: "")
-                    let submenu = NSMenu(title: group.title)
+                    item.representedObject = group.faces
+                    let submenu = outliner.submenu(title: group.title)
                     submenu.autoenablesItems = false
                     if addName(group, to: submenu, perform: perform) {
                         submenu.addItem(.separator())
@@ -67,6 +77,7 @@ enum MediaItemContextMenu {
                     addChoices(group, to: submenu, perform: perform)
                     submenu.addItem(.separator())
                     addCorrections(group, to: submenu, perform: perform)
+                    carry(group.faces, to: submenu.items[...])
                     item.submenu = submenu
                     menu.addItem(item)
                 }
@@ -89,7 +100,10 @@ enum MediaItemContextMenu {
     /// The people the group's faces may be, most likely first, then New Person….
     private static func addChoices(_ group: FaceMenu.Group, to menu: NSMenu, perform: @escaping @MainActor (MediaItemCommand) -> Void) {
         for choice in group.choices {
-            menu.addItem(ClosureMenuItem(title: choice.title) { perform(.thisIs(choice.faces, choice.person)) })
+            let item = ClosureMenuItem(title: choice.title) { perform(.thisIs(choice.faces, choice.person)) }
+            // The faces This Is would give: for unidentified faces, the one most like them.
+            item.representedObject = choice.faces
+            menu.addItem(item)
         }
         if !group.choices.isEmpty {
             menu.addItem(.separator())
@@ -111,10 +125,65 @@ enum MediaItemContextMenu {
         }
     }
 
+    /// The group's faces on each of its items that carries none of its own, separators
+    /// and headers included, so moving through the group keeps its faces outlined.
+    private static func carry(_ faces: [FaceID], to items: ArraySlice<NSMenuItem>) {
+        for item in items where item.representedObject == nil {
+            item.representedObject = faces
+        }
+    }
+
     private static func menuSized(_ image: NSImage) -> NSImage {
         let copy = image.copy() as? NSImage ?? image
         copy.size = NSSize(width: 16, height: 16)
         return copy
+    }
+}
+
+/// Outlines the faces of a context menu's highlighted item (`representedObject`) on their
+/// photos. It is the delegate of the menu and of its face submenus; inside a submenu with
+/// nothing highlighted, the faces of the item that opened it stay outlined. Closing the
+/// menu clears the outline.
+final class FaceOutliner: NSObject, NSMenuDelegate {
+    private let outline: @MainActor ([FaceID]) -> Void
+
+    init(outline: @escaping @MainActor ([FaceID]) -> Void) {
+        self.outline = outline
+    }
+
+    /// A submenu whose highlight this outliner reports.
+    func submenu(title: String) -> NSMenu {
+        let submenu = NSMenu(title: title)
+        submenu.delegate = self
+        return submenu
+    }
+
+    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        let faces = item?.representedObject ?? menu.supermenu?.highlightedItem?.representedObject
+        outline(faces as? [FaceID] ?? [])
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        if menu.supermenu == nil {
+            outline([])
+        }
+    }
+}
+
+/// The context menu, which keeps its `FaceOutliner` alive: `NSMenu.delegate` is weak.
+/// `NSMenu` is nonisolated in AppKit, so the class is too; the outliner is main-actor
+/// isolated and so Sendable.
+final nonisolated class FaceOutliningMenu: NSMenu {
+    let outliner: FaceOutliner
+
+    init(outliner: FaceOutliner) {
+        self.outliner = outliner
+        super.init(title: "")
+    }
+
+    @available(*, unavailable)
+    required init(coder _: NSCoder) {
+        fatalError("FaceOutliningMenu is never decoded")
     }
 }
 

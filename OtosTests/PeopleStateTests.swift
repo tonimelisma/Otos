@@ -258,6 +258,21 @@ struct PeopleStateTests {
         #expect(abs(half.minX - 0.2) < 1e-9 && abs(half.width - 0.4) < 1e-9 && abs(half.minY - 0.2) < 1e-9)
     }
 
+    /// `FaceOutline` places a box on the photo as shown: as is without an edit, through the
+    /// edit with the upright size, nowhere with an edit and no size; and draws each outline
+    /// in its frame from the top-left corner.
+    @Test func anOutlineIsPlacedThroughTheEdit() throws {
+        let box = CGRect(x: 0.1, y: 0.2, width: 0.2, height: 0.1)
+        var cropped = EditRecipe()
+        cropped.crop = EditCrop(left: 0, top: 0, width: 0.5, height: 1)
+        #expect(FaceOutline.onEditedPhoto(box, recipe: nil, upright: nil) == box)
+        #expect(FaceOutline.onEditedPhoto(box, recipe: cropped, upright: nil) == nil)
+        let half = try #require(FaceOutline.onEditedPhoto(box, recipe: cropped, upright: CGSize(width: 400, height: 200)))
+        #expect(abs(half.minX - 0.2) < 1e-9 && abs(half.width - 0.4) < 1e-9)
+        let frame = CGRect(x: 10, y: 20, width: 200, height: 100)
+        #expect(FaceOutline.path([box], in: frame).boundingBox == CGRect(x: 30, y: 40, width: 40, height: 10))
+    }
+
     static func tile(_ path: String, index: Int = 0, at seconds: Double?) -> FaceTile {
         FaceTile(
             id: FaceID(asset: MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Lib"), relativePath: MediaRelativePath(rawValue: path)), index: index),

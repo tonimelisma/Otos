@@ -137,8 +137,9 @@ final class CatalogWindowViewModel {
     /// The people each face of the targets could be, as `PeopleAssignment` last ranked them
     /// for those photos (`refreshFaceCandidates`).
     var faceCandidates = FaceCandidates.none
-    /// The face the pointer is over in the Info pane, which the loupe outlines.
-    var hoveredFace: FaceID?
+    /// The faces outlined on their photos: the face the pointer is over in the Info pane, or
+    /// the faces of the face-menu item highlighted in a photo's context menu.
+    var outlinedFaces: [FaceID] = []
     /// Lookups over the last People state, rebuilt when it changes (`applyPeopleState`).
     @ObservationIgnored var peopleIndex = PeopleIndex(.empty)
     /// Face crops decoded this process, shared by every face tile (DES-110).
