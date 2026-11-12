@@ -153,8 +153,7 @@ struct MetadataRefresherTests {
                 thumbnailPath: "old.jpg",
                 sourceSize: asset.byteSize,
                 sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
-                contentHash: hash,
-                faces: .noneFound
+                contentHash: hash
             )
         })
 
@@ -162,8 +161,8 @@ struct MetadataRefresherTests {
 
         #expect(summary == MetadataRefreshSummary(read: 0, written: 0, skipped: 1, downloadsRequested: 1, failed: false))
         let handedOver = try await catalogStoreTestState(store).testAssets
-        #expect(handedOver.first { $0.id == apple }?.needsEnrichment(.cardProducts) == true)
-        #expect(handedOver.first { $0.id == other }?.needsEnrichment(.cardProducts) == false)
+        #expect(handedOver.first { $0.id == apple }?.needsEnrichment(.products) == true)
+        #expect(handedOver.first { $0.id == other }?.needsEnrichment(.products) == false)
 
         let state = FakeMaterialization(dataless: [apple.fileURL.path(percentEncoded: false)])
         let downloads = TestCounter()
@@ -188,8 +187,7 @@ struct MetadataRefresherTests {
                     thumbnailPath: "new.jpg",
                     sourceSize: size,
                     sourceMTimeSeconds: mtime,
-                    contentHash: hash,
-                    faces: .noneFound
+                    contentHash: hash
                 ))
             },
             materialize: { url in
@@ -201,7 +199,7 @@ struct MetadataRefresherTests {
         )
         await coordinator.start()
         let enriched = try await waitForCatalogStoreState(store) { snapshot in
-            snapshot.testAssets.allSatisfy { !$0.needsEnrichment(.cardProducts) }
+            snapshot.testAssets.allSatisfy { !$0.needsEnrichment(.products) }
         }
         await coordinator.shutdown()
 

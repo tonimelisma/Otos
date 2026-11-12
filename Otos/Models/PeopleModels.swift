@@ -56,8 +56,8 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     var likeness: [FaceID: Float] = [:]
     /// Each person's key photo, where the user chose one.
     var keyPhotos: [PersonID: FaceID] = [:]
-    /// Stills in the available fixed libraries whose faces are not yet read for their current
-    /// bytes (for an Immich account, its current preview).
+    /// Stills in the available libraries and Immich accounts whose faces are not yet read from
+    /// their current stored preview, or whose preview is still to come.
     let uncheckedPhotoCount: Int
     /// The store's People revision the snapshot was read under: it includes every act whose
     /// `PeopleActOutcome.revision` is at most this.

@@ -192,6 +192,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.placeNamesMigrationIdentifier,
             CatalogSchema.keyPhotoMigrationIdentifier,
             CatalogSchema.personAdmissionMigrationIdentifier,
+            CatalogSchema.facesFromPreviewMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -665,6 +666,63 @@ struct CatalogStoreSchemaMigrationTests {
             ))
         }
         #expect(stamped == ["faceless.jpg", "current.jpg"])
+    }
+
+    /// Faces read from originals become faces read from stored previews (ADR 0047): the
+    /// migration drops the library claim's index pair, which owed faces, and clears every
+    /// faces stamp, with faces or without, so every still is read again from its preview; the
+    /// faces themselves stay until each re-reading replaces them.
+    @Test func theFacesFromPreviewMigrationReReadsEveryStill() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let fresh = CatalogStore(location: .databaseFile(databaseURL))
+        try await fresh.start(scansSavedLibraries: false)
+        await fresh.shutdown()
+
+        let libraryIndexes = ["idx_media_asset_needs_enrichment_global_library", "idx_media_asset_needs_enrichment_root_library"]
+        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            for path in ["faceless.jpg", "withFace.jpg"] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
+                        name_sort_key, kind, faces_source_size, faces_source_mtime)
+                    VALUES (1, ?, ?, ?, ?, 'image', 10, 10)
+                    """,
+                    arguments: [path, path, path, path]
+                )
+            }
+            try db.execute(sql: """
+            INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
+                landmarks, quality, analysis_revision, embedding)
+            VALUES (1, 'withFace.jpg', 0, 0, 0, 0.5, 0.5, x'00', 0.9, 2, x'00')
+            """)
+            for name in libraryIndexes {
+                try db.execute(sql: "CREATE INDEX \(name) ON media_asset(relative_path)")
+            }
+            try db.execute(
+                sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
+                arguments: [CatalogSchema.facesFromPreviewMigrationIdentifier]
+            )
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
+
+        let (stamped, faces, indexes) = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try (
+                Int.fetchOne(db, sql: "SELECT COUNT(*) FROM media_asset WHERE faces_source_size IS NOT NULL") ?? -1,
+                Int.fetchOne(db, sql: "SELECT COUNT(*) FROM face") ?? -1,
+                Set(String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index'"))
+            )
+        }
+        #expect(stamped == 0)
+        #expect(faces == 1)
+        #expect(indexes.isDisjoint(with: libraryIndexes))
     }
 
     /// A HEIF rotated by its `irot` property was cataloged with no orientation before

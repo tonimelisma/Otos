@@ -56,11 +56,9 @@ struct EnrichmentClaimGatewayTests {
             renderedSourceMTimeSeconds: 1,
             contentHash: XXH3Digest128.empty,
             contentHashSourceSize: 1024,
-            contentHashSourceMTimeSeconds: 1,
-            facesSourceSize: 1024,
-            facesSourceMTimeSeconds: 1
+            contentHashSourceMTimeSeconds: 1
         )
-        #expect(currentAsset.needsEnrichment(.library) == false)
+        #expect(currentAsset.needsEnrichment(.products) == false)
         let assetsByID = [
             id: staleAsset,
             currentAsset.id: currentAsset,
@@ -72,7 +70,7 @@ struct EnrichmentClaimGatewayTests {
             assetsByID: assetsByID,
             rootIDsByPath: rootIDsByPath,
             isRootEnrichable: { $0 == rootPath },
-            firstClaim: { _ in .library }
+            firstClaim: { _ in .products }
         )
 
         #expect(eligible.count == 1)

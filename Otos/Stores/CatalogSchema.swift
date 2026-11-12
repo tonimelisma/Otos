@@ -300,8 +300,8 @@ nonisolated enum CatalogSchema {
                 AND preview_path IS NULL
             )
             """,
-            claimIndex(EnrichmentClaimGateway.broadGlobalIndexName, global: true, claim: .cardProducts, orderColumn: "best_capture_unix"),
-            claimIndex(EnrichmentClaimGateway.broadRootIndexName, global: false, claim: .cardProducts, orderColumn: "best_capture_unix"),
+            claimIndex(EnrichmentClaimGateway.broadGlobalIndexName, global: true, claim: .products, orderColumn: "best_capture_unix"),
+            claimIndex(EnrichmentClaimGateway.broadRootIndexName, global: false, claim: .products, orderColumn: "best_capture_unix"),
             claimIndex(EnrichmentClaimGateway.metadataOnlyGlobalIndexName, global: true, claim: .metadata, orderColumn: "best_capture_unix"),
             claimIndex(EnrichmentClaimGateway.metadataOnlyRootIndexName, global: false, claim: .metadata, orderColumn: "best_capture_unix"),
         ]
@@ -354,13 +354,13 @@ nonisolated enum CatalogSchema {
         "ALTER TABLE media_asset ADD COLUMN source_products_mtime INTEGER",
     ]
 
-    /// Faces (ADR 0047). `FaceAnalyzer` reads a fixed library's stills for faces: each face
-    /// it reads is a row of `face`, overlay on its asset, so a move carries it
-    /// (`ON UPDATE CASCADE`, the move witness of ADR 0034 included) and the asset's proven
-    /// deletion or its library's removal ends it (`ON DELETE CASCADE`). The faces stamp names
-    /// the `(size, mtime)` they were read from (ADR 0009); a new reading replaces every face
-    /// of the asset. Only `EnrichmentClaim.library` owes faces, so it gets its own pair of
-    /// claim indexes; the card-products and metadata pairs are unchanged.
+    /// Faces (ADR 0047). Each face `FaceAnalyzer` reads is a row of `face`, overlay on its
+    /// asset, so a move carries it (`ON UPDATE CASCADE`, the move witness of ADR 0034
+    /// included) and the asset's proven deletion or its library's removal ends it
+    /// (`ON DELETE CASCADE`). The faces stamp names the `(size, mtime)` they were read for
+    /// (ADR 0009); a new reading replaces every face of the asset. This migration also made a
+    /// claim index pair for a library's rows that owed faces, which `v30_faces_from_preview`
+    /// drops.
     ///
     /// A face row holds the box and the five alignment points as fractions of the upright
     /// photo (top-left origin), Vision's capture quality, the analysis revision that read it
@@ -390,9 +390,24 @@ nonisolated enum CatalogSchema {
                     ON UPDATE CASCADE ON DELETE CASCADE
             )
             """,
-            claimIndex(EnrichmentClaimGateway.libraryGlobalIndexName, global: true, claim: .library, orderColumn: "best_capture_unix"),
-            claimIndex(EnrichmentClaimGateway.libraryRootIndexName, global: false, claim: .library, orderColumn: "best_capture_unix"),
+            claimIndex(libraryGlobalIndexName, global: true, predicate: libraryClaimPredicate, orderColumn: "best_capture_unix"),
+            claimIndex(libraryRootIndexName, global: false, predicate: libraryClaimPredicate, orderColumn: "best_capture_unix"),
         ]
+    }
+
+    /// The claim index pair `v18_faces` made for a library's rows, and the products they
+    /// owed: every product, faces included. `v30_faces_from_preview` drops them.
+    private static let libraryGlobalIndexName = "idx_media_asset_needs_enrichment_global_library"
+    private static let libraryRootIndexName = "idx_media_asset_needs_enrichment_root_library"
+    private static var libraryClaimPredicate: String {
+        """
+        \(EnrichmentClaimGateway.stalenessSQLPredicate(.products))
+           OR faces_source_size IS NULL
+           OR faces_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(faces_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(faces_source_mtime, -1)
+        """
     }
 
     /// People (ADR 0047). What the user decides about faces is overlay, and it outlives a
@@ -402,8 +417,8 @@ nonisolated enum CatalogSchema {
     ///   `YYYY-MM-DD`.
     /// - `face.person_id`: the person the user confirmed the face as; removing the person
     ///   returns the face to unnamed (`ON DELETE SET NULL`).
-    /// - `face.is_not_face`: the user said this detection is not a face. Not carried to a new
-    ///   reading: a changed file is read afresh.
+    /// - `face.is_not_face`: the user said this detection is not a face. Carried to a new
+    ///   reading of the same source; a changed file is read afresh.
     /// - `face.is_ignored`: the face belongs to a group the user ignored.
     /// - `face_rejection`: "not this person", so the suggestion never returns; removing the
     ///   person forgets them.
@@ -640,6 +655,21 @@ nonisolated enum CatalogSchema {
                     AND face.analysis_revision < 2
               )
             """,
+        ]
+    }
+
+    /// Faces are read from each still's stored preview, never from its original (ADR 0047,
+    /// analysis revision 3): enrichment no longer owes them, so the library claim's index
+    /// pair goes, and the faces stamp now names the source the preview was made from. Every
+    /// stamp is cleared, so every still with a preview is read again from it, and each
+    /// re-reading carries what the user said about a face over by its box.
+    static let facesFromPreviewMigrationIdentifier = "v30_faces_from_preview"
+
+    static var facesFromPreviewStatements: [String] {
+        [
+            "DROP INDEX \(libraryGlobalIndexName)",
+            "DROP INDEX \(libraryRootIndexName)",
+            "UPDATE media_asset SET faces_source_size = NULL, faces_source_mtime = NULL",
         ]
     }
 

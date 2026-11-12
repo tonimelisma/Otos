@@ -29,7 +29,7 @@ struct CatalogStoreThumbnailLifecycleTests {
         let storedAssets = try await catalogStoreTestState(fixture.store).testAssets
         let current = try #require(storedAssets.first { $0.id == fixture.id })
         #expect(current.thumbnailPath == generated.finalRelativePath)
-        #expect(!current.needsEnrichment(.cardProducts))
+        #expect(!current.needsEnrichment(.products))
     }
 
     /// ADR 0035: a result carrying a thumbnail and a preview promotes both, stamps both
@@ -86,7 +86,7 @@ struct CatalogStoreThumbnailLifecycleTests {
         let storedAssets = try await catalogStoreTestState(fixture.store).testAssets
         let current = try #require(storedAssets.first { $0.id == fixture.id })
         #expect(current.thumbnailPath == finalName)
-        #expect(current.needsEnrichment(.cardProducts))
+        #expect(current.needsEnrichment(.products))
     }
 
     @Test func acceptedThumbnaillessResultDeletesSupersededAppOwnedThumbnail() async throws {
@@ -114,7 +114,7 @@ struct CatalogStoreThumbnailLifecycleTests {
             try await catalogStoreTestState(fixture.store).testAssets.first { $0.id == fixture.id }
         )
         #expect(current.thumbnailPath == nil)
-        #expect(!current.needsEnrichment(.cardProducts))
+        #expect(!current.needsEnrichment(.products))
     }
 
     @Test func failedThumbnailPromotionReleasesEnrichmentClaimForRetry() async throws {
@@ -187,7 +187,7 @@ struct CatalogStoreThumbnailLifecycleTests {
         let storedAssets = try await catalogStoreTestState(fixture.store).testAssets
         let current = try #require(storedAssets.first { $0.id == fixture.id })
         #expect(current.thumbnailPath == accepted.finalRelativePath)
-        #expect(!current.needsEnrichment(.cardProducts))
+        #expect(!current.needsEnrichment(.products))
     }
 }
 

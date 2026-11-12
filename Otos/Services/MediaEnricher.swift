@@ -12,9 +12,9 @@ import UniformTypeIdentifiers
 /// `MediaMetadata` library, byte-reading, synchronous), and a rendering — for a still, one
 /// `ImageRenderer` development that becomes the stored 2560 px preview and the 256 px
 /// thumbnail drawn from it (ADR 0035); for a video, or a still the renderer cannot read,
-/// QuickLook's thumbnail and no preview. A fixed library's still is also read for its faces
-/// (ADR 0047), from the same read, decoded upright at full resolution with no edit. A card's
-/// metadata pass makes a provisional QuickLook thumbnail instead of a rendering. It is a small `Sendable` value with one
+/// QuickLook's thumbnail and no preview. A card's metadata pass makes a provisional QuickLook
+/// thumbnail instead of a rendering. Faces are not an enrichment product: they are read from
+/// the stored preview this rendering makes (`PreviewFaceReader`, ADR 0047). It is a small `Sendable` value with one
 /// injectable closure, mirroring `CatalogScanner`, so the coordinator, the import and tests
 /// can substitute a fake.
 ///
@@ -46,15 +46,13 @@ nonisolated struct MediaEnricher {
     /// signature stays small; the coordinator supplies the catalog's thumbnail
     /// directory. `contentHasher` is injectable so tests can prove a
     /// `.removableVolume` source performs no full-file read — the digest read is the
-    /// only byte source that reads a whole file. `analyzeFaces` is injectable so tests can
-    /// stand in for the model.
+    /// only byte source that reads a whole file.
     static func live(
         thumbnailDirectory: URL,
         readinessChecker: any EnrichmentReadinessChecking = LiveEnrichmentReadinessChecker(),
         contentHasher: @escaping @Sendable (URL) -> ContentHasher.Outcome = { url in
             ContentHasher().hashMaterializedFile(at: url)
-        },
-        analyzeFaces: @escaping FaceAnalysisReader = bundledFaceAnalysis()
+        }
     ) -> MediaEnricher {
         MediaEnricher { id, access, sourceSize, sourceMTimeSeconds, scope, recipe in
             // A camera row has no local file, so the readiness checker — which asks the
@@ -146,17 +144,9 @@ nonisolated struct MediaEnricher {
                 ),
                 contentHash: contentHash,
                 thumbnailDirectory: thumbnailDirectory,
-                readinessChecker: readinessChecker,
-                analyzeFaces: analyzeFaces
+                readinessChecker: readinessChecker
             )
         }
-    }
-
-    /// Face analysis by the bundled model, owned by the enricher it is made for: one
-    /// `FaceAnalyzer`, which loads the model the first time a still is read for faces.
-    static func bundledFaceAnalysis() -> FaceAnalysisReader {
-        let analyzer = FaceAnalyzer(bundle: Bundle(for: CatalogWindowViewModel.self))
-        return { image in try await analyzer.analyze(image) }
     }
 
     /// Enriches a row whose bytes are ranges on an attached camera.
@@ -358,14 +348,13 @@ nonisolated struct MediaEnricher {
     }
 
     /// Makes the scope's products other than the digest from a local file whose bytes are
-    /// already read for it: metadata, then a rendering or a provisional thumbnail, and the
-    /// faces. Each is present in the result only when the scope covered it (ADR 0009).
+    /// already read for it: metadata, then a rendering or a provisional thumbnail. Each is
+    /// present in the result only when the scope covered it (ADR 0009).
     private static func produce(
         _ read: LocalRead,
         contentHash: XXH3Digest128?,
         thumbnailDirectory: URL,
-        readinessChecker: any EnrichmentReadinessChecking,
-        analyzeFaces: @escaping FaceAnalysisReader
+        readinessChecker: any EnrichmentReadinessChecking
     ) async -> EnrichmentOutcome {
         let (id, url, scope, recipe) = (read.id, read.url, read.scope, read.recipe)
         var metadata: EnrichedMetadata?
@@ -389,35 +378,26 @@ nonisolated struct MediaEnricher {
         let productsStart = ContinuousClock.now
         var rendering: EnrichedRendering?
         var provisionalThumbnail: StagedDerivedImage?
-        var faces: EnrichedFaces?
         var verdict: DecodeVerdict?
         var products: [String] = []
-        if scope.contains(.rendering) || scope.contains(.faces) {
-            let still = await Self.readStill(
-                id: id, url: url, recipe: recipe?.recipe ?? .neutral, directory: thumbnailDirectory,
-                render: scope.contains(.rendering), faces: scope.contains(.faces), analyzeFaces: analyzeFaces
-            )
-            if case .transient = still.faces {
+        if scope.contains(.rendering) {
+            guard let still = await Self.renderStill(
+                id: id, url: url, recipe: recipe?.recipe ?? .neutral, directory: thumbnailDirectory
+            ) else {
                 return .transient
             }
             verdict = still.verdict
             if case .undecodable = still.verdict {
                 products.append("undecodable")
             }
-            if scope.contains(.rendering) {
-                if let rendered = still.rendering {
-                    rendering = EnrichedRendering(generatedThumbnail: rendered.thumbnail, generatedPreview: rendered.preview)
-                    products.append("rendered")
-                } else {
-                    rendering = await EnrichedRendering(
-                        generatedThumbnail: Self.generateThumbnail(id: id, url: url, directory: thumbnailDirectory)
-                    )
-                    products.append("quickLook")
-                }
-            }
-            if case let .read(read) = still.faces {
-                faces = read
-                products.append("faces=\(read.faces.count)")
+            if let rendered = still.rendering {
+                rendering = EnrichedRendering(generatedThumbnail: rendered.thumbnail, generatedPreview: rendered.preview)
+                products.append("rendered")
+            } else {
+                rendering = await EnrichedRendering(
+                    generatedThumbnail: Self.generateThumbnail(id: id, url: url, directory: thumbnailDirectory)
+                )
+                products.append("quickLook")
             }
         } else if scope.contains(.provisionalThumbnail), recipe?.recipe.isNeutral ?? true {
             // An edited photo's thumbnail must show the edit, which only a rendering does;
@@ -426,8 +406,7 @@ nonisolated struct MediaEnricher {
             products.append("provisional")
         }
         // The item's costs apart: the metadata read is what an import's naming waits on,
-        // the products (a development, QuickLook's thumbnail, the faces) what the grid and
-        // People wait on.
+        // the products (a development, QuickLook's thumbnail) what the grid waits on.
         OtosLog.metadata.noticeOperation("enrichment.item", phase: "finish", fields: [
             "rootPath": id.libraryRootPath.rawValue,
             "relativePath": id.relativePath.rawValue,
@@ -445,91 +424,52 @@ nonisolated struct MediaEnricher {
                 sourceSize: read.sourceSize ?? -1,
                 sourceMTimeSeconds: read.sourceMTimeSeconds ?? -1,
                 contentHash: contentHash,
-                faces: faces,
                 editRevision: recipe?.revision ?? 0,
                 decodeVerdict: verdict
             )
         )
     }
 
-    /// Reads a still's faces from its upright original (ADR 0047): `FaceAnalyzer.analyze`
-    /// in production, a stub in tests.
-    typealias FaceAnalysisReader = @Sendable (CGImage) async throws -> FaceAnalysis
-
-    /// The faces a still read produced.
-    enum FacesRead {
-        /// Not asked for.
-        case notAsked
-        /// The faces, every one the analyzer admitted; none for a video or a still no
-        /// decoder can read, which have no faces Otos can find.
-        case read(EnrichedFaces)
-        /// The bytes could not be read, or the analysis failed: nothing is known, so the
-        /// row is retried rather than stamped with no faces.
-        case transient
-    }
-
-    /// What one read of a still made: its staged rendering, when asked for and the renderer
-    /// could make one, its faces, and whether the renderer could decode it at all.
-    struct StillRead {
+    /// What one rendering of a still made: its staged rendering, when the renderer could make
+    /// one, and whether the renderer could decode it at all.
+    struct StillRendering {
         let rendering: (thumbnail: StagedDerivedImage, preview: StagedDerivedImage)?
-        let faces: FacesRead
-        /// nil when the still was not handed to the renderer (a video, or nothing asked).
+        /// nil when the file was not handed to the renderer (a video).
         let verdict: DecodeVerdict?
     }
 
-    /// Reads a still once (ADR 0009) for its loupe preview and the grid thumbnail drawn from
-    /// it, both staged (ADR 0035), and for its faces from the upright original (ADR 0047). A
-    /// video is not read: it has no rendering here, and no faces. When the renderer cannot
-    /// decode the file the caller takes the thumbnail from QuickLook, and the still has no
-    /// faces; when the file could not be read at all, or the analysis failed, the faces are
-    /// `.transient` and any staged rendering is discarded.
-    private static func readStill(
+    /// Renders a still once (ADR 0009) as its loupe preview and the grid thumbnail drawn from
+    /// it, both staged (ADR 0035). A video is not rendered here. When the renderer cannot
+    /// decode the file, the caller takes the thumbnail from QuickLook. Nil when the file's
+    /// bytes could not be read: nothing is known about the still, so nothing is stamped and
+    /// the row is retried, rather than stamped with no preview and so no faces (ADR 0047).
+    private static func renderStill(
         id: MediaAssetID,
         url: URL,
         recipe: EditRecipe,
-        directory: URL,
-        render: Bool,
-        faces wantsFaces: Bool,
-        analyzeFaces: @escaping FaceAnalysisReader
-    ) async -> StillRead {
-        let noFaces: FacesRead = wantsFaces ? .read(.noneFound) : .notAsked
+        directory: URL
+    ) async -> StillRendering? {
         guard UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true else {
-            return StillRead(rendering: nil, faces: noFaces, verdict: nil)
+            return StillRendering(rendering: nil, verdict: nil)
         }
-        let products: ImageRenderer.StillProducts
+        let rendered: ImageRenderer.Rendered
         do {
-            products = try await ImageRenderer.background.read(
-                url,
-                rendering: render ? ImageRenderer.RenderRequest(longEdge: ThumbnailStore.previewMaxPixelSize, recipe: recipe) : nil,
-                upright: wantsFaces
+            rendered = try await ImageRenderer.background.render(
+                url, longEdge: ThumbnailStore.previewMaxPixelSize, recipe: recipe
             )
         } catch is ImageRenderer.RenderError {
             // The decoder's verdict, not the photo's: it is stored with the decoder that
             // gave it, and a later decoder tries again (ENR-029).
-            return StillRead(
-                rendering: nil, faces: noFaces, verdict: .undecodable(decoder: ImageRenderer.decoderIdentity)
-            )
+            return StillRendering(rendering: nil, verdict: .undecodable(decoder: ImageRenderer.decoderIdentity))
         } catch {
-            return StillRead(rendering: nil, faces: wantsFaces ? .transient : .notAsked, verdict: nil)
+            OtosLog.rendering.errorOperation("render.still", phase: "unreadable", fields: [
+                "rootPath": id.libraryRootPath.rawValue,
+                "relativePath": id.relativePath.rawValue,
+                "error": String(describing: error),
+            ])
+            return nil
         }
-        var faces: FacesRead = .notAsked
-        if wantsFaces, let upright = products.upright {
-            do {
-                let analysis = try await analyzeFaces(upright)
-                faces = .read(EnrichedFaces(faces: analysis.faces, analysisRevision: FaceAnalyzer.revision))
-            } catch {
-                OtosLog.metadata.errorOperation("face.analyse", phase: "failed", fields: [
-                    "rootPath": id.libraryRootPath.rawValue,
-                    "relativePath": id.relativePath.rawValue,
-                    "error": String(describing: error),
-                ])
-                return StillRead(rendering: nil, faces: .transient, verdict: nil)
-            }
-        }
-        guard let rendered = products.rendered else {
-            return StillRead(rendering: nil, faces: faces, verdict: .decoded)
-        }
-        return StillRead(rendering: stage(rendered, id: id, directory: directory), faces: faces, verdict: .decoded)
+        return StillRendering(rendering: stage(rendered, id: id, directory: directory), verdict: .decoded)
     }
 
     /// Stages a rendering as the loupe preview and the grid thumbnail drawn from it; nil

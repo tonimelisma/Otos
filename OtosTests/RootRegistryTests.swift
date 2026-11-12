@@ -107,7 +107,7 @@ struct RootRegistryTests {
         registry.upsert(volume)
 
         #expect(registry.enrichableRootIDsByRemovablePriority().removable.isEmpty)
-        #expect(registry.enrichableRootIDsByProductClaim().metadataFirst.isEmpty)
+        #expect(registry.enrichableRootIDsByFirstClaim().metadataFirst.isEmpty)
         #expect(registry.enrichableRootIDsByRemovablePriority().fixed == [1])
     }
 
@@ -117,8 +117,8 @@ struct RootRegistryTests {
         registry.upsert(volumeState(rowID: 2))
         registry.upsert(libraryState(path: otherPath, rowID: 3, availability: .unavailable))
 
-        let partitioned = registry.enrichableRootIDsByProductClaim()
-        #expect(partitioned.library == [1])
+        let partitioned = registry.enrichableRootIDsByFirstClaim()
+        #expect(partitioned.products == [1])
         #expect(partitioned.metadataFirst == [2])
     }
 

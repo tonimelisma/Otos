@@ -70,7 +70,7 @@ struct BenchmarkTests {
 
         // People at a family archive's scale (ADR 0047): 10,000 faces, 1,000 of them the
         // user's across 20 people. `PeopleAssignment` runs a whole pass after every catalog
-        // change while enrichment reads faces; the snapshot is its catalog read alone, and a
+        // change while previews are read for faces; the snapshot is its catalog read alone, and a
         // settled pass reads, assigns, finds nothing to write and builds the gallery.
         try await Self.addFaces(to: store, faces: 10000, people: 20, confirmedEach: 50)
         try await Benchmark.measure("people.snapshot.10k", iterations: 3) {
@@ -103,7 +103,8 @@ struct BenchmarkTests {
             .prefix(count)
         let (facts, _) = groupingLibrary(faces: count, people: people, confirmedEach: confirmedEach)
         var named: [PersonID: [FaceID]] = [:]
-        var results: [EnrichmentResult] = []
+        var renderings: [EnrichmentResult] = []
+        var readings: [PreviewFaceResult] = []
         for (asset, fact) in zip(assets, facts) {
             let face = DetectedFace(
                 box: CGRect(x: 0.4, y: 0.3, width: 0.2, height: 0.25),
@@ -111,21 +112,29 @@ struct BenchmarkTests {
                 quality: 0.8,
                 embedding: fact.embedding
             )
-            results.append(EnrichmentResult(
+            let preview = "preview-\(asset.id.relativePath.rawValue).heic"
+            renderings.append(EnrichmentResult(
                 id: asset.id,
                 metadata: nil,
-                rendering: nil,
+                rendering: EnrichedRendering(thumbnailPath: "thumb.jpg", previewPath: preview),
                 sourceSize: asset.byteSize,
                 sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
-                contentHash: nil,
+                contentHash: nil
+            ))
+            readings.append(PreviewFaceResult(
+                candidate: PreviewFaceCandidate(
+                    id: asset.id, previewPath: preview, sourceSize: asset.byteSize,
+                    sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt), renderedRevision: 0, recipe: .neutral
+                ),
                 faces: EnrichedFaces(faces: [face], analysisRevision: FaceAnalyzer.revision)
             ))
             if let person = fact.assignment.person {
                 named[person, default: []].append(FaceID(asset: asset.id, index: 0))
             }
         }
-        for start in stride(from: 0, to: results.count, by: 500) {
-            _ = await store.applyEnrichmentBatch(Array(results[start ..< min(start + 500, results.count)]))
+        for start in stride(from: 0, to: renderings.count, by: 500) {
+            _ = await store.applyEnrichmentBatch(Array(renderings[start ..< min(start + 500, renderings.count)]))
+            try await store.applyPreviewFaces(Array(readings[start ..< min(start + 500, readings.count)]))
         }
         for (person, faces) in named.sorted(by: { $0.key < $1.key }) {
             let created = try #require(try await store.perform(.moveToNewPerson([], name: "Person \(person.rawValue)")).person)

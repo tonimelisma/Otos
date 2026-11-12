@@ -14,30 +14,26 @@ import GRDB
 /// expiry stands in for "the claimant is still alive".
 nonisolated enum EnrichmentClaimGateway {
     /// Partial-index names for the claim queries' `INDEXED BY`, one pair per
-    /// `EnrichmentClaim` (ADR 0009, ADR 0018, ADR 0047): metadata only, for a card's first
-    /// pass, a camera and an Immich account, which leave it as soon as their metadata is
-    /// current; the card products (metadata, rendering, digest), for a card's second pass;
-    /// and a library's every product, faces included.
+    /// `EnrichmentClaim` (ADR 0009, ADR 0018): metadata only, for a card's first pass, a
+    /// camera and an Immich account, which leave it as soon as their metadata is current;
+    /// and the products (metadata, rendering, digest), for a fixed library and a card's
+    /// second pass.
     static let broadGlobalIndexName = "idx_media_asset_needs_enrichment_global"
     static let broadRootIndexName = "idx_media_asset_needs_enrichment_root"
     static let metadataOnlyGlobalIndexName = "idx_media_asset_needs_enrichment_global_metadata_only"
     static let metadataOnlyRootIndexName = "idx_media_asset_needs_enrichment_root_metadata_only"
-    static let libraryGlobalIndexName = "idx_media_asset_needs_enrichment_global_library"
-    static let libraryRootIndexName = "idx_media_asset_needs_enrichment_root_library"
 
     static func globalIndexName(_ claim: EnrichmentClaim) -> String {
         switch claim {
         case .metadata: metadataOnlyGlobalIndexName
-        case .cardProducts: broadGlobalIndexName
-        case .library: libraryGlobalIndexName
+        case .products: broadGlobalIndexName
         }
     }
 
     static func rootIndexName(_ claim: EnrichmentClaim) -> String {
         switch claim {
         case .metadata: metadataOnlyRootIndexName
-        case .cardProducts: broadRootIndexName
-        case .library: libraryRootIndexName
+        case .products: broadRootIndexName
         }
     }
 
@@ -103,12 +99,6 @@ nonisolated enum EnrichmentClaimGateway {
         stampStalenessSQL(stamp: "rendered_source")
     }
 
-    /// The faces (`FaceAnalyzer`'s reading of a still, ADR 0047) were read from bytes other
-    /// than the current `(size, mtime)`, or never.
-    static func facesStalenessSQLPredicate() -> String {
-        stampStalenessSQL(stamp: "faces_source")
-    }
-
     static func hashStalenessSQLPredicate() -> String {
         """
         content_hash_xxh3_128 IS NULL
@@ -123,7 +113,7 @@ nonisolated enum EnrichmentClaimGateway {
 
     /// The Swift-side twin of `MediaAsset.needsEnrichment(_:)`, and the `WHERE` clause of
     /// the claim indexes `CatalogSchema` creates from it. `.metadata` yields the metadata
-    /// predicate verbatim (not `OR FALSE`), and `.cardProducts` the text the v13 indexes
+    /// predicate verbatim (not `OR FALSE`), and `.products` the text the v13 indexes
     /// were made from, so those indexes still match it.
     ///
     /// The claim queries and the indexes share this one text because SQLite's `INDEXED
@@ -135,18 +125,11 @@ nonisolated enum EnrichmentClaimGateway {
         switch claim {
         case .metadata:
             metadataStalenessSQLPredicate()
-        case .cardProducts:
+        case .products:
             """
             \(metadataStalenessSQLPredicate())
                OR \(renderingStalenessSQLPredicate())
                OR \(hashStalenessSQLPredicate())
-            """
-        case .library:
-            """
-            \(metadataStalenessSQLPredicate())
-               OR \(renderingStalenessSQLPredicate())
-               OR \(hashStalenessSQLPredicate())
-               OR \(facesStalenessSQLPredicate())
             """
         }
     }

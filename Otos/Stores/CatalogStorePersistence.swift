@@ -211,6 +211,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.facesFromPreviewMigrationIdentifier) { db in
+            for statement in CatalogSchema.facesFromPreviewStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -677,9 +682,6 @@ extension CatalogStore {
         if let metadata = result.metadata {
             try writeMetadata(metadata, stamp: (result.sourceSize, result.sourceMTimeSeconds), row: row, db: db)
         }
-        if let faces = result.faces {
-            try writeFaces(faces, stamp: (result.sourceSize, result.sourceMTimeSeconds), row: row, db: db)
-        }
         if let verdict = result.decodeVerdict {
             try db.execute(
                 sql: "UPDATE media_asset SET undecodable_by = ? WHERE library_root_id = ? AND relative_path = ?",
@@ -689,15 +691,14 @@ extension CatalogStore {
     }
 
     /// Hands every still that a decoder other than `decoder` could not decode back to
-    /// enrichment (ENR-029): its rendering and faces stamps are cleared, so it is rendered
-    /// and read for faces again, and the verdict with them, which the new reading records
-    /// afresh. Returns how many stills were released.
+    /// enrichment (ENR-029): its rendering stamp is cleared, so it is rendered again, and the
+    /// verdict with it, which the new rendering records afresh. Returns how many stills were
+    /// released.
     static func releaseStillsUndecodedByAnotherDecoder(_ decoder: String, db: Database) throws -> Int {
         try db.execute(
             sql: """
             UPDATE media_asset SET
                 rendered_source_size = NULL, rendered_source_mtime = NULL,
-                faces_source_size = NULL, faces_source_mtime = NULL,
                 undecodable_by = NULL
             WHERE undecodable_by IS NOT NULL AND undecodable_by <> ?
             """,
@@ -706,18 +707,35 @@ extension CatalogStore {
         return db.changesCount
     }
 
-    /// A still's faces (ADR 0047): the reading replaces every face the asset held, and its
-    /// stamp names the bytes it read, so a still with no face in it is not read again until
-    /// it changes. What the user said about the faces it replaces — a person they gave, a
-    /// seed, a removed name, a key photo, rejections — moves to the new face each
-    /// overlaps (`FaceCarryOver`); Otos's guesses do not, since assignment remakes them, and
-    /// neither does "not a face", because a changed file is read afresh.
+    /// A still's faces (ADR 0047): the reading replaces the faces the asset held, and its
+    /// stamp names the source its preview was made from, so a still with no face in it is
+    /// not read again until a preview of other bytes arrives.
+    ///
+    /// What the user said about a face is overlay, and outlives a new reading of the same
+    /// source (an analysis revision, a reading through an edit that hides part of the photo):
+    /// each act — a person they gave, a removed name, a key photo, rejections, "not a face" —
+    /// moves to the new face that overlaps it (`FaceCarryOver`), and a face the user said
+    /// something about that the new reading does not find is kept as it was read. Otos's
+    /// guesses and seeds do not carry, since assignment remakes them. A reading of other
+    /// bytes than the faces were read from is a changed file, read afresh: its faces replace
+    /// every face, and only a person given, a removed name, a key photo and rejections carry,
+    /// by overlap.
     static func writeFaces(_ faces: EnrichedFaces, stamp: ProductStamp, row: ProductRow, db: Database) throws {
         let key: StatementArguments = [row.rootID, row.relativePath.rawValue]
+        let readStamp = try Row.fetchOne(
+            db,
+            sql: "SELECT faces_source_size, faces_source_mtime FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+            arguments: key
+        )
+        let readSize: Int64? = readStamp?["faces_source_size"]
+        let readMTime: Int? = readStamp?["faces_source_mtime"]
+        // A cleared stamp (a new analysis revision) still names the faces' own source.
+        let sameSource = readSize == nil || readMTime == nil || (readSize == stamp.size && readMTime == stamp.mtimeSeconds)
         let previous = try Row.fetchAll(
             db,
             sql: """
-            SELECT face_index, box_x, box_y, box_width, box_height, person_id, assignment, is_key_photo
+            SELECT face_index, box_x, box_y, box_width, box_height, landmarks, quality, analysis_revision,
+                   embedding, person_id, assignment, is_key_photo, is_not_face
             FROM face WHERE library_root_id = ? AND relative_path = ? ORDER BY face_index
             """,
             arguments: key
@@ -735,39 +753,47 @@ extension CatalogStore {
                    width: face["box_width"] as Double, height: face["box_height"] as Double)
         }
         let carried = FaceCarryOver.matches(previous: previousBoxes, new: faces.faces.map(\.box))
+        let unmatched = Set(previous.indices).subtracting(carried.values)
+        let keptAsRead = sameSource ? unmatched.sorted().filter { index in
+            let face = previous[index]
+            let said = FaceAssignmentColumn.assignment(column: face["assignment"], person: face["person_id"])
+            return said.isUserWord || (face["is_not_face"] as Int) != 0 || rejections[face["face_index"]] != nil
+        } : []
         try db.execute(sql: "DELETE FROM face WHERE library_root_id = ? AND relative_path = ?", arguments: key)
         for (index, face) in faces.faces.enumerated() {
             let prior = carried[index].map { previous[$0] }
-            let priorIndex: Int? = prior?["face_index"]
             let carriedAssignment = prior.map {
                 FaceAssignmentColumn.assignment(column: $0["assignment"], person: $0["person_id"])
             } ?? .open
             let kept: FaceAssignment = carriedAssignment.isGuessable ? .open : carriedAssignment
-            try db.execute(
-                sql: """
-                INSERT INTO face (
-                    library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
-                    landmarks, quality, analysis_revision, embedding, person_id, assignment, is_key_photo
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                arguments: [
-                    row.rootID, row.relativePath.rawValue, index,
-                    Double(face.box.minX), Double(face.box.minY), Double(face.box.width), Double(face.box.height),
-                    FaceStorage.landmarksData(face.landmarks), Double(face.quality), faces.analysisRevision,
-                    FaceStorage.embeddingData(face.embedding),
-                    kept.person?.rawValue, FaceAssignmentColumn(kept).rawValue,
-                    kept.person == nil ? 0 : (prior?["is_key_photo"] as Int?) ?? 0,
-                ]
-            )
-            for person in priorIndex.flatMap({ rejections[$0] }) ?? [] {
-                try db.execute(
-                    sql: """
-                    INSERT INTO face_rejection (library_root_id, relative_path, face_index, person_id)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    arguments: [row.rootID, row.relativePath.rawValue, index, person]
-                )
-            }
+            try insertFace(FaceRowValues(
+                index: index,
+                box: face.box,
+                landmarks: FaceStorage.landmarksData(face.landmarks),
+                quality: Double(face.quality),
+                analysisRevision: faces.analysisRevision,
+                embedding: FaceStorage.embeddingData(face.embedding),
+                assignment: kept,
+                isKeyPhoto: kept.person == nil ? false : ((prior?["is_key_photo"] as Int?) ?? 0) != 0,
+                isNotFace: sameSource && ((prior?["is_not_face"] as Int?) ?? 0) != 0,
+                rejections: (prior?["face_index"] as Int?).flatMap { rejections[$0] } ?? []
+            ), row: row, db: db)
+        }
+        for (offset, priorIndex) in keptAsRead.enumerated() {
+            let prior = previous[priorIndex]
+            let said = FaceAssignmentColumn.assignment(column: prior["assignment"], person: prior["person_id"])
+            try insertFace(FaceRowValues(
+                index: faces.faces.count + offset,
+                box: previousBoxes[priorIndex],
+                landmarks: prior["landmarks"],
+                quality: prior["quality"],
+                analysisRevision: prior["analysis_revision"],
+                embedding: prior["embedding"],
+                assignment: said.isGuessable ? .open : said,
+                isKeyPhoto: (prior["is_key_photo"] as Int) != 0,
+                isNotFace: (prior["is_not_face"] as Int) != 0,
+                rejections: rejections[prior["face_index"]] ?? []
+            ), row: row, db: db)
         }
         try db.execute(
             sql: """
@@ -776,6 +802,47 @@ extension CatalogStore {
             """,
             arguments: [stamp.size, stamp.mtimeSeconds, row.rootID, row.relativePath.rawValue]
         )
+    }
+
+    /// One face row as `writeFaces` writes it, with the user's acts it carries.
+    private struct FaceRowValues {
+        let index: Int
+        let box: CGRect
+        let landmarks: Data
+        let quality: Double
+        let analysisRevision: Int
+        let embedding: Data
+        let assignment: FaceAssignment
+        let isKeyPhoto: Bool
+        let isNotFace: Bool
+        let rejections: [Int64]
+    }
+
+    private static func insertFace(_ face: FaceRowValues, row: ProductRow, db: Database) throws {
+        try db.execute(
+            sql: """
+            INSERT INTO face (
+                library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
+                landmarks, quality, analysis_revision, embedding, person_id, assignment, is_key_photo, is_not_face
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            arguments: [
+                row.rootID, row.relativePath.rawValue, face.index,
+                Double(face.box.minX), Double(face.box.minY), Double(face.box.width), Double(face.box.height),
+                face.landmarks, face.quality, face.analysisRevision, face.embedding,
+                face.assignment.person?.rawValue, FaceAssignmentColumn(face.assignment).rawValue,
+                face.isKeyPhoto ? 1 : 0, face.isNotFace ? 1 : 0,
+            ]
+        )
+        for person in face.rejections {
+            try db.execute(
+                sql: """
+                INSERT INTO face_rejection (library_root_id, relative_path, face_index, person_id)
+                VALUES (?, ?, ?, ?)
+                """,
+                arguments: [row.rootID, row.relativePath.rawValue, face.index, person]
+            )
+        }
     }
 
     /// The row a product write targets.

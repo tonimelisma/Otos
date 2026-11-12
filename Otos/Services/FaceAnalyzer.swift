@@ -41,22 +41,26 @@ nonisolated struct FaceAnalysis: Sendable, Equatable {
 ///
 /// Every step is blocking CPU work and the model is 66 MB, so the actor runs on its own serial
 /// queue rather than the shared pool (ADR 0032 rule 6), loads the model on first use, and the
-/// model never leaves it. The caller hands it the original's pixels at full resolution, already
-/// oriented upright; a face is never read from a downscaled preview.
+/// model never leaves it. The caller hands it a still's stored preview, decoded upright
+/// (`PreviewFaceReader`); faces are never read from an original.
 ///
 /// The settings are the ones the bake-off measured
 /// (`docs/research/2026-11-07-face-recognition-models.md`,
-/// `docs/research/2026-11-12-face-person-admission.md`), and `revision` names them: Vision's
-/// landmark and quality revision 3, its classifier revision 2, the admission thresholds, the
-/// alignment and the model. A change to any of them is a new revision, with a migration that
+/// `docs/research/2026-11-12-face-person-admission.md`,
+/// `docs/research/2026-11-12-faces-from-the-preview.md`), and `revision` names them: the
+/// stored preview as the image read, Vision's landmark and quality revision 3, its classifier
+/// revision 2, the admission thresholds, the alignment and the model. A change to any of them is a new revision, with a migration that
 /// makes the faces it changes stale.
 actor FaceAnalyzer {
     /// The analysis these settings produce; stored with every face.
-    static let revision = 2
+    static let revision = 3
 
-    /// Vision's capture quality below which a face is not read: the admission rule every
-    /// measured face passed.
-    static let minimumQuality: Float = 0.3
+    /// Vision's capture quality below which a face is not read. Read on the 2560 px preview,
+    /// Vision scores a face about 0.015 lower than on the original at full resolution, so
+    /// 0.28 here admits as many faces as the bake-off's 0.3 did on originals: of the owner's
+    /// 5,471 faces read from originals, 123 are not found and 153 others are, against 212 and
+    /// 91 at 0.3 (`docs/research/2026-11-12-faces-from-the-preview.md`).
+    static let minimumQuality: Float = 0.28
 
     /// The person-label confidence below which a detection is not read as a face. Vision's
     /// capture quality says how well a face was photographed, not whether it is one: lace, a
@@ -85,7 +89,7 @@ actor FaceAnalyzer {
         self.bundle = bundle
     }
 
-    /// The faces in `image`, an upright photo at full resolution.
+    /// The faces in `image`, a still's upright stored preview.
     func analyze(_ image: CGImage) throws -> FaceAnalysis {
         let start = ContinuousClock.now
         let size = CGSize(width: image.width, height: image.height)

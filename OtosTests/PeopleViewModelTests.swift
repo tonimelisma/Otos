@@ -31,7 +31,7 @@ struct PeopleViewModelTests {
 
         static func make(in directory: URL) async throws -> Fixture {
             let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: ["a.jpg", "b.jpg"])
-            try await library.store.applyEnrichmentBatch([
+            try await library.readFaces([
                 library.result(for: "a.jpg", faces: [PeopleStoreTests.face(x: 0.1)]),
                 library.result(for: "b.jpg", faces: [PeopleStoreTests.face(x: 0.1), PeopleStoreTests.face(x: 0.65)]),
             ])

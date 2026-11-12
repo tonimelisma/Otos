@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import GRDB
 @testable import OtosKit
 import Testing
 
@@ -32,6 +33,33 @@ struct CatalogStoreEditRecipeTests {
                     == StoredEditRecipe(recipe: EditRecipe(exposure: 1, contrast: 20), revision: 2)
             )
         }
+    }
+
+    /// A photo whose edit was taken back to none keeps counting from its last revision, so a
+    /// new edit never reuses a revision a rendering of another edit was made at.
+    @Test func anEditAfterNoEditCountsOnFromTheLastRevision() async throws {
+        let databaseURL = try makeTestDirectory().appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let fresh = CatalogStore(location: .databaseFile(databaseURL))
+        try await fresh.start(scansSavedLibraries: false)
+        await fresh.shutdown()
+        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            try db.execute(sql: """
+            INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key,
+                kind, edit_recipe_json, edit_revision, rendered_revision)
+            VALUES (1, 'a.jpg', 'a.jpg', 'a.jpg', 'a.jpg', 'image', NULL, 2, 1)
+            """)
+        }
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Pictures"), relativePath: MediaRelativePath(rawValue: "a.jpg"))
+
+        let saved = try await store.setEditRecipe(EditRecipe(quarterTurns: 1), for: id)
+
+        #expect(saved.previous == nil)
+        #expect(saved.saved?.revision == 3)
+        await store.shutdown()
     }
 
     @Test func savingNeutralOnAnUneditedPhotoChangesNothing() async throws {

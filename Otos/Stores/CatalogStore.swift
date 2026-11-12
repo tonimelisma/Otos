@@ -855,21 +855,12 @@ extension CatalogStore {
     /// no longer cataloged are left out.
     func peopleSnapshot(availableLibraryPaths: Set<LibraryRootPath> = []) async throws -> PeopleSnapshot {
         let pathsByRowID = roots.pathsByRowID
-        var folderRootIDs: [Int64] = []
-        var accountRootIDs: [Int64] = []
-        for path in availableLibraryPaths {
-            guard let state = roots[path] else { continue }
-            switch state.root.kind {
-            case .library: folderRootIDs.append(state.rowID)
-            case .immichAccount: accountRootIDs.append(state.rowID)
-            case .removableVolume, .deviceMTP: break
-            }
-        }
-        let folders = folderRootIDs
+        let faceRootIDs = availableLibraryPaths.compactMap { path in
+            roots[path].flatMap { $0.root.kind.readsFaces ? $0.rowID : nil }
+        }.sorted()
         // Read before the transaction: every write it counts committed before it was bumped,
         // so the snapshot includes at least those.
         let revision = peopleRevision
-        let accounts = accountRootIDs
         let dbWriter = try database()
         return try await dbWriter.read { db in
             var rejections: [FaceRowKey: Set<PersonID>] = [:]
@@ -935,7 +926,7 @@ extension CatalogStore {
                 people: people,
                 likeness: likeness,
                 keyPhotos: keyPhotos,
-                uncheckedPhotoCount: Self.uncheckedFacePhotoCount(folderRootIDs: folders, accountRootIDs: accounts, db: db),
+                uncheckedPhotoCount: Self.uncheckedFacePhotoCount(rootIDs: faceRootIDs, db: db),
                 revision: revision
             )
         }
@@ -951,104 +942,108 @@ extension CatalogStore {
         )
     }
 
-    /// Stills not yet read for faces: in a folder library, the faces stamp does not name the
-    /// file's current bytes; in an Immich account, it does not name the current preview's
-    /// source, or there is no preview yet (ADR 0047). Videos are never read for faces.
-    private static func uncheckedFacePhotoCount(folderRootIDs: [Int64], accountRootIDs: [Int64], db: Database) throws -> Int {
-        let visible = """
-          AND kind IN ('image', 'raw')
-          AND trash_path IS NULL
-          AND pending_trash_batch_unix_ms IS NULL
-          AND hidden_by_source = 0
-        """
-        var count = 0
-        if !folderRootIDs.isEmpty {
-            count += try Int.fetchOne(
-                db,
-                sql: """
-                SELECT COUNT(*) FROM media_asset
-                WHERE library_root_id IN (\(Array(repeating: "?", count: folderRootIDs.count).joined(separator: ", ")))
-                  \(visible)
-                  AND awaiting_presence = 0
-                  AND (\(EnrichmentClaimGateway.facesStalenessSQLPredicate()))
-                """,
-                arguments: StatementArguments(folderRootIDs)
-            ) ?? 0
-        }
-        if !accountRootIDs.isEmpty {
-            count += try Int.fetchOne(
-                db,
-                sql: """
-                SELECT COUNT(*) FROM media_asset
-                WHERE library_root_id IN (\(Array(repeating: "?", count: accountRootIDs.count).joined(separator: ", ")))
-                  \(visible)
-                  AND (source_products_size IS NULL
-                       OR faces_source_size IS NOT source_products_size
-                       OR faces_source_mtime IS NOT source_products_mtime)
-                """,
-                arguments: StatementArguments(accountRootIDs)
-            ) ?? 0
-        }
-        return count
+    /// Stills not yet read for faces (ADR 0047): their stored preview is still to come, or
+    /// their faces were not read from the one they have. Videos are never read for faces.
+    private static func uncheckedFacePhotoCount(rootIDs: [Int64], db: Database) throws -> Int {
+        guard !rootIDs.isEmpty else { return 0 }
+        return try Int.fetchOne(
+            db,
+            sql: """
+            SELECT COUNT(*) FROM media_asset
+            WHERE library_root_id IN (\(Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")))
+              AND kind IN ('image', 'raw')
+              AND trash_path IS NULL
+              AND pending_trash_batch_unix_ms IS NULL
+              AND hidden_by_source = 0
+              AND awaiting_presence = 0
+              AND ((\(PreviewFaceSQL.owesFaces)) OR (\(PreviewFaceSQL.awaitsPreview)))
+            """,
+            arguments: StatementArguments(rootIDs)
+        ) ?? 0
     }
 
-    /// Immich stills whose faces have not been read from their stored preview, or were read
-    /// from an older one (ADR 0047): the faces stamp is compared with the source stamp the
-    /// preview was made for. Videos are never read for faces.
-    func previewFaceCandidates(limit: Int) async throws -> [PreviewFaceCandidate] {
-        let accounts = roots.values.filter { $0.root.kind == .immichAccount }
-        guard !accounts.isEmpty else { return [] }
-        let rootIDs = accounts.map(\.rowID).sorted()
+    /// Stills whose faces are owed from their stored preview (ADR 0047), in every library and
+    /// Immich account: the preview's edit is known, and the faces stamp does not name the
+    /// source that preview was made from. Videos are never read for faces. In catalog order,
+    /// after `cursor`; a row whose edit cannot be read is passed over and logged.
+    func previewFaceCandidates(after cursor: PreviewFaceCursor? = nil, limit: Int) async throws -> PreviewFacePage {
+        let rootIDs = roots.values.filter(\.root.kind.readsFaces).map(\.rowID).sorted()
+        guard !rootIDs.isEmpty else { return PreviewFacePage(candidates: [], next: nil) }
         let pathsByRowID = roots.pathsByRowID
         let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
+        let arguments = StatementArguments(rootIDs) + [cursor?.rootID ?? Int64.min, cursor?.relativePath ?? "", limit]
         return try await database().read { db in
-            try Row.fetchAll(
+            let rows = try Row.fetchAll(
                 db,
                 sql: """
-                SELECT library_root_id, relative_path, preview_path, source_products_size, source_products_mtime
+                SELECT library_root_id, relative_path, preview_path, rendered_revision, edit_recipe_json,
+                       \(PreviewFaceSQL.previewSize) AS preview_source_size,
+                       \(PreviewFaceSQL.previewMTime) AS preview_source_mtime
                 FROM media_asset
                 WHERE library_root_id IN (\(placeholders))
-                  AND preview_path IS NOT NULL
-                  AND source_products_size IS NOT NULL
                   AND kind IN ('image', 'raw')
                   AND trash_path IS NULL
-                  AND (faces_source_size IS NOT source_products_size
-                       OR faces_source_mtime IS NOT source_products_mtime)
+                  AND \(PreviewFaceSQL.previewEditIsKnown)
+                  AND \(PreviewFaceSQL.owesFaces)
+                  AND (library_root_id, relative_path) > (?, ?)
                 ORDER BY library_root_id, relative_path
                 LIMIT ?
                 """,
-                arguments: StatementArguments(rootIDs + [limit])
-            ).compactMap { row in
+                arguments: arguments
+            )
+            let candidates = rows.compactMap { row -> PreviewFaceCandidate? in
                 guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
+                let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"]))
+                let renderedRevision: Int64 = row["rendered_revision"]
+                let recipe: EditRecipe
+                do {
+                    recipe = renderedRevision == 0 ? .neutral : try Self.editRecipe(json: row["edit_recipe_json"]) ?? .neutral
+                } catch {
+                    OtosLog.metadata.errorOperation("face.preview", phase: "recipeUnreadable", fields: [
+                        "relativePath": id.relativePath.rawValue, "error": String(describing: error),
+                    ])
+                    return nil
+                }
                 return PreviewFaceCandidate(
-                    id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"])),
+                    id: id,
                     previewPath: row["preview_path"],
-                    sourceSize: row["source_products_size"],
-                    sourceMTimeSeconds: row["source_products_mtime"]
+                    sourceSize: row["preview_source_size"],
+                    sourceMTimeSeconds: row["preview_source_mtime"],
+                    renderedRevision: renderedRevision,
+                    recipe: recipe
                 )
             }
+            let next = rows.count < limit ? nil : rows.last.map {
+                PreviewFaceCursor(rootID: $0["library_root_id"], relativePath: $0["relative_path"])
+            }
+            return PreviewFacePage(candidates: candidates, next: next)
         }
     }
 
     /// Writes faces read from stored previews, for rows whose preview is still the one read;
-    /// the faces are stamped with the preview's source stamp. Returns the rows written.
+    /// the faces are stamped with the preview's source stamp. Returns the rows written, and
+    /// rings the change notifications when any was.
     @discardableResult
     func applyPreviewFaces(_ results: [PreviewFaceResult]) async throws -> Int {
         let rowIDs = roots.rowIDSnapshot()
-        return try await database().write { db -> Int in
+        let written = try await database().write { db -> Int in
             var written = 0
             for result in results {
                 guard let rootID = rowIDs[result.candidate.id.libraryRootPath] else { continue }
+                // The preview file's name is the asset's own, so a new rendering keeps it: the
+                // source stamp and the edit revision it shows say whether it is the one read.
                 let current = try Row.fetchOne(
                     db,
                     sql: """
                     SELECT 1 FROM media_asset
                     WHERE library_root_id = ? AND relative_path = ? AND preview_path IS ?
-                      AND source_products_size IS ? AND source_products_mtime IS ?
+                      AND (\(PreviewFaceSQL.previewSize)) IS ? AND (\(PreviewFaceSQL.previewMTime)) IS ?
+                      AND rendered_revision = ?
                     """,
                     arguments: [
                         rootID, result.candidate.id.relativePath.rawValue, result.candidate.previewPath,
                         result.candidate.sourceSize, result.candidate.sourceMTimeSeconds,
+                        result.candidate.renderedRevision,
                     ]
                 )
                 guard current != nil else { continue }
@@ -1062,6 +1057,11 @@ extension CatalogStore {
             }
             return written
         }
+        // People and the grid's faces read what was written.
+        if written > 0 {
+            notifyCatalogChanged(.assetsDetailChanged)
+        }
+        return written
     }
 
     /// Writes what one assignment changed (ADR 0047), in one transaction. A lapsed seed is
@@ -2380,7 +2380,10 @@ extension CatalogStore {
             }
             let modified: Double? = row["content_modified_at_unix"]
             let isVideo = (row["best_kind"] as String?) == MediaKind.video.rawValue
-            let revision = (previous?.revision ?? 0) + 1
+            // The row's revision, not the saved edit's: a photo with no edit saved (a reset, an
+            // undone first edit) still counts on from its last revision, so a revision never
+            // names two edits and a rendering of one is never taken for the other.
+            let revision = (row["edit_revision"] as Int64) + 1
             try Self.writeEditRecipe(
                 json: json,
                 revision: revision,
@@ -2775,8 +2778,8 @@ extension CatalogStore {
 
     /// `bytesAreLocal` marks rows whose bytes just became local: a root first claimed for
     /// metadata alone (a card, a camera, an Immich account) is claimed for its rendering and
-    /// digest too (`EnrichmentClaim.cardProducts`), while a fixed library keeps its own claim.
-    /// Faces stay a library's product (ADR 0047).
+    /// digest too (`EnrichmentClaim.products`), which a fixed library is claimed under from
+    /// the start.
     private func priorityEnrichmentCandidates(
         ids: [MediaAssetID],
         limit: Int,
@@ -2792,7 +2795,7 @@ extension CatalogStore {
             isRootEnrichable: { [roots] path in roots[path]?.isEnrichable == true },
             firstClaim: { [roots] path in
                 let first = roots[path]?.root.firstClaim ?? .metadata
-                return bytesAreLocal && first == .metadata ? .cardProducts : first
+                return bytesAreLocal && first == .metadata ? .products : first
             }
         )
         guard !eligibleClaims.isEmpty else {
@@ -2845,13 +2848,13 @@ extension CatalogStore {
         -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]>
     {
         let prioritizedRootIDs = roots.enrichableRootIDsByRemovablePriority()
-        let (libraryClaimRootIDs, metadataFirstRootIDs) = roots.enrichableRootIDsByProductClaim()
+        let (productsFirstRootIDs, metadataFirstRootIDs) = roots.enrichableRootIDsByFirstClaim()
         let cardRootIDs = roots.enrichableCardRootIDs()
         let dbWriter = try database()
         let timedStoredAssets = try await timedWrite(dbWriter) { db in
             var storedAssets: [(asset: StoredAsset, claim: EnrichmentClaim)] = []
             // The fallback spans roots of mixed kinds (ADR 0018): a fixed library's rows are
-            // claimed for every product they owe at once (`EnrichmentClaim.library`), the
+            // claimed for every product they owe at once (`EnrichmentClaim.products`), the
             // others (`.removableVolume`, `.deviceMTP`, `.immichAccount`) for metadata first.
             // `INDEXED BY` forbids one statement across claims, so partition by claim within
             // each priority tier: removable roots first (ENR-011), then a card's
@@ -2862,16 +2865,15 @@ extension CatalogStore {
             // no row of that card still needs metadata, so developing and checksumming
             // every byte never delays the import (ADR 0009). Claimed under the broad
             // products, those rows' metadata is current, so their scope is the rendering and
-            // the digest, made from one read. A card's rows are never read for faces: they
-            // are analysed once imported into a library.
+            // the digest, made from one read.
             let cardsReadyForProducts = try cardRootIDs.filter { rootID in
                 try !EnrichmentClaimGateway.hasRowsNeedingMetadata(rootID: rootID, db: db)
             }
             let claimGroups: [(rootIDs: [Int64], claim: EnrichmentClaim)] = [
-                (removableRoots.intersection(libraryClaimRootIDs).sorted(), .library),
+                (removableRoots.intersection(productsFirstRootIDs).sorted(), .products),
                 (removableRoots.intersection(metadataFirstRootIDs).sorted(), .metadata),
-                (cardsReadyForProducts, .cardProducts),
-                (fixedRoots.intersection(libraryClaimRootIDs).sorted(), .library),
+                (cardsReadyForProducts, .products),
+                (fixedRoots.intersection(productsFirstRootIDs).sorted(), .products),
                 (fixedRoots.intersection(metadataFirstRootIDs).sorted(), .metadata),
             ]
             for group in claimGroups where storedAssets.count < limit && !group.rootIDs.isEmpty {

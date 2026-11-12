@@ -421,6 +421,15 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
         }
     }
 
+    /// Its stills are read for faces, from their stored previews (ADR 0047). A card's or a
+    /// camera's are read once imported into a library, where their overlay lives on.
+    var readsFaces: Bool {
+        switch self {
+        case .library, .immichAccount: true
+        case .removableVolume, .deviceMTP: false
+        }
+    }
+
     /// Where an import may copy media to, and whose digests an import trusts as
     /// "already in a library".
     var isImportDestination: Bool {
@@ -519,11 +528,11 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
         }
     }
 
-    /// The claim a row of this kind is first enriched under (ADR 0018, ADR 0047): a fixed
-    /// library's every product, faces included, or metadata first. A card's renderings and
-    /// digests come later, under `EnrichmentClaim.cardProducts`.
+    /// The claim a row of this kind is first enriched under (ADR 0018): a fixed library's
+    /// every product, or metadata first. A card's renderings and digests come later, under
+    /// the same `EnrichmentClaim.products`.
     var firstClaim: EnrichmentClaim {
-        claimsEveryProductTogether ? .library : .metadata
+        claimsEveryProductTogether ? .products : .metadata
     }
 
     /// The kinds that have `capability`, as a SQL list of quoted `library_root.kind`
@@ -903,13 +912,6 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
             || !stampIsCurrent(size: contentHashSourceSize, mtimeSeconds: contentHashSourceMTimeSeconds)
     }
 
-    /// True when the faces stamp (`FaceAnalyzer`'s reading of a still, ADR 0047) is not valid
-    /// for the current filesystem signature. Owed only by a row claimed under
-    /// `EnrichmentClaim.library`; callers gate it behind the claim.
-    var facesStale: Bool {
-        !stampIsCurrent(size: facesSourceSize, mtimeSeconds: facesSourceMTimeSeconds)
-    }
-
     /// Whether a product's stamp names the file's current `(size, mtime-seconds)`: the one
     /// staleness rule every product shares (ADR 0009).
     private func stampIsCurrent(size: Int64?, mtimeSeconds: Int?) -> Bool {
@@ -923,8 +925,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     func needsEnrichment(_ claim: EnrichmentClaim) -> Bool {
         switch claim {
         case .metadata: metadataStale
-        case .cardProducts: metadataStale || renderingStale || hashStale
-        case .library: metadataStale || renderingStale || hashStale || facesStale
+        case .products: metadataStale || renderingStale || hashStale
         }
     }
 }

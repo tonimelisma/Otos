@@ -1,111 +1,24 @@
 import CoreGraphics
 import CoreServices
 import Foundation
-import ImageIO
 @testable import OtosKit
-import Synchronization
 import Testing
 
-/// Faces as an enrichment product (ADR 0047): which claims owe them, how one read of a still
-/// produces them, and how the catalog stores, replaces, moves and purges them.
+/// Faces in the catalog (ADR 0047): enrichment never reads them, and the catalog stores,
+/// replaces, moves and purges a still's faces read from its stored preview.
 @Suite(.testDirectory)
 struct FaceEnrichmentTests {
-    /// What the stand-in analyzer was handed.
-    private final class AnalysisRecorder: Sendable {
-        private let sizes = Mutex<[CGSize]>([])
+    // MARK: - Enrichment
 
-        func record(_ image: CGImage) {
-            sizes.withLock { $0.append(CGSize(width: image.width, height: image.height)) }
-        }
-
-        var imageSizes: [CGSize] {
-            sizes.withLock { $0 }
-        }
-    }
-
-    // MARK: - Which claims owe faces
-
-    /// A fixed library's row owes faces; a card's second pass and a metadata claim never do,
-    /// because a card's rows are read for faces once imported into a library.
-    @Test func onlyALibraryClaimOwesFaces() {
-        let owed = Self.asset(facesStamped: false)
-
-        #expect(owed.needsEnrichment(.library))
-        #expect(!owed.needsEnrichment(.cardProducts))
-        #expect(!owed.needsEnrichment(.metadata))
-        #expect(EnrichmentScope(claim: .library, asset: owed) == [.faces])
-        #expect(EnrichmentScope(claim: .cardProducts, asset: owed).isEmpty)
-        #expect(!EnrichmentScope(claim: .metadata, asset: owed).contains(.faces))
-
-        let read = Self.asset(facesStamped: true)
-        #expect(!read.needsEnrichment(.library))
-    }
-
-    // MARK: - One read of a still
-
-    /// A still is read once for its faces, from the original turned upright at full
-    /// resolution, and the analyzer's faces come back as the result's faces.
-    @Test func aStillIsReadForItsFacesAtFullResolution() async throws {
-        let url = SourceTree.mediaFixtures.appending(path: "jpeg-exif-offset-date.jpg")
-        let recorder = AnalysisRecorder()
-        let face = Self.face(seed: 1)
-        let expectedSize = try Self.uprightSize(of: url)
-        let enricher = try MediaEnricher.live(
-            thumbnailDirectory: makeTestDirectory(),
-            analyzeFaces: { image in
-                recorder.record(image)
-                return FaceAnalysis(faces: [face], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
-            }
-        )
-
-        let outcome = await enricher.enrich(Self.id("a.jpg"), .localFile(url), 100, 1000, [.rendering, .faces], nil)
-
-        guard case let .complete(result) = outcome else {
-            Issue.record("expected .complete, got \(outcome)")
-            return
-        }
-        #expect(result.faces == EnrichedFaces(faces: [face], analysisRevision: FaceAnalyzer.revision))
-        #expect(result.rendering?.generatedPreview != nil)
-        #expect(recorder.imageSizes == [expectedSize])
-    }
-
-    /// A video has no faces Otos reads: it is stamped with none and never handed to the
-    /// analyzer.
-    @Test func aVideoHasNoFacesAndIsNotAnalysed() async throws {
-        let url = SourceTree.mediaFixtures.appending(path: "mov-no-embedded-capture-date.mov")
-        let recorder = AnalysisRecorder()
-        let enricher = try MediaEnricher.live(
-            thumbnailDirectory: makeTestDirectory(),
-            analyzeFaces: { image in
-                recorder.record(image)
-                return FaceAnalysis(faces: [], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
-            }
-        )
-
-        let outcome = await enricher.enrich(Self.id("a.mov"), .localFile(url), 100, 1000, [.faces], nil)
-
-        guard case let .complete(result) = outcome else {
-            Issue.record("expected .complete, got \(outcome)")
-            return
-        }
-        #expect(result.faces == .noneFound)
-        #expect(recorder.imageSizes.isEmpty)
-    }
-
-    /// A failed analysis is not "no faces": nothing is stamped and the row is retried.
-    @Test func aFailedAnalysisIsRetriedNotStampedEmpty() async throws {
-        struct AnalysisFailed: Error {}
-        let url = SourceTree.mediaFixtures.appending(path: "jpeg-exif-offset-date.jpg")
-        let enricher = try MediaEnricher.live(
-            thumbnailDirectory: makeTestDirectory(),
-            analyzeFaces: { _ in throw AnalysisFailed() }
-        )
-
-        let outcome = await enricher.enrich(Self.id("a.jpg"), .localFile(url), 100, 1000, [.faces], nil)
-
-        guard case .transient = outcome else {
-            Issue.record("expected .transient, got \(outcome)")
-            return
+    /// Faces are not an enrichment product: a library row whose metadata, rendering and
+    /// digest are current is not claimed, whether or not its faces were read, so no original
+    /// is downloaded for them.
+    @Test func enrichmentNeverClaimsARowForItsFaces() {
+        for read in [false, true] {
+            let asset = Self.asset(facesStamped: read)
+            #expect(!asset.needsEnrichment(.products))
+            #expect(!asset.needsEnrichment(.metadata))
+            #expect(EnrichmentScope(claim: .products, asset: asset).isEmpty)
         }
     }
 
@@ -117,30 +30,68 @@ struct FaceEnrichmentTests {
         let library = try await ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
         let first = [Self.face(seed: 1), Self.face(seed: 2)]
 
-        try await library.store.applyEnrichmentBatch([library.result(for: "a.jpg", faces: first)])
+        try await library.readFaces([library.result(for: "a.jpg", faces: first)])
 
         #expect(try await library.store.faces(of: library.id("a.jpg")) == first)
-        let enriched = try #require(try await catalogStoreTestState(library.store).testAssets.first)
-        #expect(!enriched.needsEnrichment(.library))
+        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.isEmpty)
 
         let second = [Self.face(seed: 3)]
-        try await library.store.applyEnrichmentBatch([library.result(for: "a.jpg", faces: second)])
+        try await library.readFaces([library.result(for: "a.jpg", faces: second)])
         #expect(try await library.store.faces(of: library.id("a.jpg")) == second)
         await library.store.shutdown()
     }
 
-    /// A reading of bytes the file no longer has is rejected whole: no faces are stored and
-    /// the row still owes them.
+    /// A reading of a preview of bytes the row's preview was not made from is rejected
+    /// whole: no faces are stored and the row still owes them.
     @Test func aReadingOfOtherBytesStoresNoFaces() async throws {
         let library = try await ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
 
-        try await library.store.applyEnrichmentBatch([
+        try await library.readFaces([
             library.result(for: "a.jpg", faces: [Self.face(seed: 1)], sizeOffset: 1),
         ])
 
         #expect(try await library.store.faces(of: library.id("a.jpg")).isEmpty)
-        let asset = try #require(try await catalogStoreTestState(library.store).testAssets.first)
-        #expect(asset.needsEnrichment(.library))
+        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg")])
+        await library.store.shutdown()
+    }
+
+    /// What the user said about a face outlives a new reading of the same source that does not
+    /// find it (an analysis revision, an edit hiding part of the photo): a named face and a
+    /// face marked not a face stay as they were read, and a found face keeps its mark. A
+    /// changed file is read afresh: only what overlaps a new face carries.
+    @Test func aReReadingKeepsWhatTheUserSaidAboutFacesItDoesNotFind() async throws {
+        let library = try await ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
+        let named = Self.face(seed: 1), marked = Self.face(seed: 5)
+        try await library.readFaces([library.result(for: "a.jpg", faces: [named, marked])])
+        let a0 = FaceID(asset: library.id("a.jpg"), index: 0), a1 = FaceID(asset: library.id("a.jpg"), index: 1)
+        let sam = try #require(try await library.store.perform(.moveToNewPerson([a0], name: "Sam")).person)
+        _ = try await library.store.perform(.notAFace([a1]))
+
+        try await library.readFaces([library.result(for: "a.jpg", faces: [marked])])
+        var facts = try await library.store.peopleSnapshot().faces
+        #expect(try await library.store.faces(of: library.id("a.jpg")) == [marked, named])
+        #expect(facts.map(\.isNotFace) == [true, false])
+        #expect(facts.map(\.assignment) == [.open, .user(sam)])
+
+        try await library.readFaces([library.result(for: "a.jpg", faces: [])])
+        facts = try await library.store.peopleSnapshot().faces
+        #expect(try await library.store.faces(of: library.id("a.jpg")) == [marked, named])
+        #expect(facts.map(\.assignment) == [.open, .user(sam)])
+
+        let file = library.root.appending(path: "a.jpg")
+        try Data("a changed photo, longer than before".utf8).write(to: file)
+        library.emit(FilesystemEvent(
+            path: file.path,
+            flags: UInt32(kFSEventStreamEventFlagItemModified | kFSEventStreamEventFlagItemIsFile)
+        ))
+        _ = try await waitForCatalogStoreState(library.store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.first?.byteSize == 35
+        }
+        try await library.readFaces([library.result(for: "a.jpg", faces: [named])])
+        facts = try await library.store.peopleSnapshot().faces
+        #expect(try await library.store.faces(of: library.id("a.jpg")) == [named])
+        #expect(facts.map(\.isNotFace) == [false])
+        #expect(facts.map(\.assignment) == [.user(sam)])
         await library.store.shutdown()
     }
 
@@ -148,7 +99,7 @@ struct FaceEnrichmentTests {
     @Test func aRenamedPhotoKeepsItsFaces() async throws {
         let library = try await ScannedLibrary.make(in: makeTestDirectory(), files: ["before.jpg"])
         let faces = [Self.face(seed: 1)]
-        try await library.store.applyEnrichmentBatch([library.result(for: "before.jpg", faces: faces)])
+        try await library.readFaces([library.result(for: "before.jpg", faces: faces)])
 
         let original = library.root.appending(path: "before.jpg")
         let renamed = library.root.appending(path: "after.jpg")
@@ -168,7 +119,7 @@ struct FaceEnrichmentTests {
     /// A photo proven deleted takes its faces with it.
     @Test func aRemovedPhotoTakesItsFacesWithIt() async throws {
         let library = try await ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
-        try await library.store.applyEnrichmentBatch([library.result(for: "a.jpg", faces: [Self.face(seed: 1)])])
+        try await library.readFaces([library.result(for: "a.jpg", faces: [Self.face(seed: 1)])])
 
         let file = library.root.appending(path: "a.jpg")
         try FileManager.default.removeItem(at: file)
@@ -213,20 +164,48 @@ struct FaceEnrichmentTests {
             MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: name))
         }
 
-        /// Every product current for the file as scanned, with `faces`; `sizeOffset` makes
-        /// the result name other bytes.
-        func result(for name: String, faces: [DetectedFace], sizeOffset: Int64 = 0) async throws -> EnrichmentResult {
-            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
-            let size = try #require(asset.byteSize)
-            return EnrichmentResult(
-                id: id(name),
-                metadata: AssetMetadata(),
-                thumbnailPath: nil,
-                sourceSize: size + sizeOffset,
-                sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
-                contentHash: .empty,
-                faces: EnrichedFaces(faces: faces, analysisRevision: FaceAnalyzer.revision)
-            )
+        /// One still's faces, read from a stored preview of the file as scanned; `sizeOffset`
+        /// makes it a reading of a preview of other bytes.
+        struct FaceReading {
+            let name: String
+            let faces: [DetectedFace]
+            let sizeOffset: Int64
+        }
+
+        func result(for name: String, faces: [DetectedFace], sizeOffset: Int64 = 0) -> FaceReading {
+            FaceReading(name: name, faces: faces, sizeOffset: sizeOffset)
+        }
+
+        /// Gives each still a stored preview with every product current for the file as
+        /// scanned, then writes each reading's faces as `PreviewFaceReader` does. Returns the
+        /// rows written.
+        @discardableResult
+        func readFaces(_ readings: [FaceReading]) async throws -> Int {
+            var renderings: [EnrichmentResult] = []
+            var candidates: [PreviewFaceCandidate] = []
+            for reading in readings {
+                let asset = try #require(try await store.mediaAssets(for: [id(reading.name)])[id(reading.name)])
+                let size = try #require(asset.byteSize)
+                let mtime = MediaAsset.mtimeSeconds(asset.contentModifiedAt)
+                renderings.append(EnrichmentResult(
+                    id: id(reading.name),
+                    metadata: AssetMetadata(),
+                    thumbnailPath: "thumb-\(reading.name).jpg",
+                    sourceSize: size,
+                    sourceMTimeSeconds: mtime,
+                    contentHash: .empty,
+                    previewPath: "preview-\(reading.name).heic"
+                ))
+                candidates.append(PreviewFaceCandidate(
+                    id: id(reading.name), previewPath: "preview-\(reading.name).heic",
+                    sourceSize: size + reading.sizeOffset, sourceMTimeSeconds: mtime,
+                    renderedRevision: 0, recipe: .neutral
+                ))
+            }
+            _ = await store.applyEnrichmentBatch(renderings)
+            return try await store.applyPreviewFaces(zip(readings, candidates).map { reading, candidate in
+                PreviewFaceResult(candidate: candidate, faces: EnrichedFaces(faces: reading.faces, analysisRevision: FaceAnalyzer.revision))
+            })
         }
     }
 
@@ -269,15 +248,5 @@ struct FaceEnrichmentTests {
             quality: 0.5,
             embedding: (0 ..< FaceEmbeddingModel.dimensions).map { Float(($0 + seed) % 7) / 8 }
         )
-    }
-
-    /// The fixture's size once turned upright by its orientation.
-    static func uprightSize(of url: URL) throws -> CGSize {
-        let source = try #require(CGImageSourceCreateWithURL(url as CFURL, nil))
-        let properties = try #require(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
-        let width = try #require(properties[kCGImagePropertyPixelWidth] as? Int)
-        let height = try #require(properties[kCGImagePropertyPixelHeight] as? Int)
-        let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
-        return orientation >= 5 ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
     }
 }

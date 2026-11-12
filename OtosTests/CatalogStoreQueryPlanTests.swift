@@ -71,12 +71,12 @@ struct CatalogStoreQueryPlanTests {
         let rootEnrichmentQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID1],
             limit: 4,
-            claim: .cardProducts
+            claim: .products
         ))
         let globalEnrichmentQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [rootID1, rootID2],
             limit: 4,
-            claim: .cardProducts
+            claim: .products
         ))
 
         let plans = try await dbQueue.read { db in
@@ -179,7 +179,7 @@ struct CatalogStoreQueryPlanTests {
             try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [rootID],
                 limit: 2,
-                claim: .cardProducts,
+                claim: .products,
                 db: db
             )
         }
@@ -279,7 +279,7 @@ struct CatalogStoreQueryPlanTests {
             try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [rootID],
                 limit: 4,
-                claim: .cardProducts,
+                claim: .products,
                 db: db
             )
         }

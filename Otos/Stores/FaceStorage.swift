@@ -186,13 +186,62 @@ nonisolated enum PeopleRuleViolation: Error, Equatable {
     case invalidBirthday
 }
 
-/// An Immich still whose faces are owed from its stored preview (ADR 0047): the preview's
-/// file under the thumbnail directory, and the source stamp it was made for.
+/// A still whose faces are owed from its stored preview (ADR 0047): the preview's file under
+/// the thumbnail directory, the source stamp it was made from, the edit revision it shows and
+/// that edit, by which its faces are carried back onto the upright photo.
 nonisolated struct PreviewFaceCandidate: Equatable, Sendable {
     let id: MediaAssetID
     let previewPath: String
     let sourceSize: Int64?
     let sourceMTimeSeconds: Int?
+    let renderedRevision: Int64
+    /// The edit the preview shows; neutral for a preview of the unedited photo.
+    let recipe: EditRecipe
+}
+
+/// Where a page of preview face candidates ended: its last row, in catalog order.
+nonisolated struct PreviewFaceCursor: Equatable, Sendable {
+    let rootID: Int64
+    let relativePath: String
+}
+
+/// One page of stills owed faces, and where the next page starts; no next page when this one
+/// reached the end.
+nonisolated struct PreviewFacePage: Equatable, Sendable {
+    let candidates: [PreviewFaceCandidate]
+    let next: PreviewFaceCursor?
+}
+
+/// Which stored preview a still has and what its faces are owed, as SQL over `media_asset`
+/// (ADR 0047). The stored preview is Otos's rendering when it has one (ADR 0035), else the
+/// source's own preview (an Immich preview, ADR 0046 §7).
+nonisolated enum PreviewFaceSQL {
+    /// The stamp of the source the stored preview was made from: the rendering's, else the
+    /// source preview's. NULL when neither is known.
+    static let previewSize = "CASE WHEN rendered_source_size IS NOT NULL THEN rendered_source_size ELSE source_products_size END"
+    static let previewMTime = "CASE WHEN rendered_source_size IS NOT NULL THEN rendered_source_mtime ELSE source_products_mtime END"
+
+    /// The stored preview's edit is known: revision 0, the unedited photo, or the edit the
+    /// row holds now. Otherwise a rendering of the new edit is owed, and its faces wait for
+    /// it rather than be read through an edit no longer stored.
+    static let previewEditIsKnown = "(rendered_revision = 0 OR rendered_revision = edit_revision)"
+
+    /// A still with a stored preview whose faces were not read from it: their stamp does not
+    /// name that preview's source.
+    static let owesFaces = """
+    preview_path IS NOT NULL
+      AND (\(previewSize)) IS NOT NULL
+      AND (faces_source_size IS NOT (\(previewSize)) OR faces_source_mtime IS NOT (\(previewMTime)))
+    """
+
+    /// A still whose stored preview is still to come: no preview yet, and a rendering or a
+    /// source preview still owed. A still rendered without a preview (QuickLook's thumbnail,
+    /// a decoder that could not read it) is not waiting: it has no faces Otos can read.
+    static let awaitsPreview = """
+    preview_path IS NULL
+      AND source_products_size IS NULL
+      AND (\(EnrichmentClaimGateway.renderingStalenessSQLPredicate()))
+    """
 }
 
 /// The faces read from one candidate's preview; none when the preview does not decode, which

@@ -11,7 +11,7 @@ import Testing
 struct PeopleStoreTests {
     @Test func theUsersActsAreReadBackAsFacts() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
-        try await library.store.applyEnrichmentBatch([
+        try await library.readFaces([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)]),
             library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
         ])
@@ -46,7 +46,7 @@ struct PeopleStoreTests {
     /// of the photo is refused; Otos's guess in the photo makes way.
     @Test func aPersonIsInAPhotoOnce() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
-        try await library.store.applyEnrichmentBatch([
+        try await library.readFaces([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)]),
         ])
         let faces = [0, 1].map { FaceID(asset: library.id("a.jpg"), index: $0) }
@@ -84,7 +84,7 @@ struct PeopleStoreTests {
     /// photo the user gave the person is refused; Otos's guesses from before it lose them.
     @Test func aBirthdayHoldsTheUsersFacesAndDropsEarlierGuesses() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
-        try await library.store.applyEnrichmentBatch([
+        try await library.readFaces([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1)]),
             library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
         ])
@@ -106,7 +106,7 @@ struct PeopleStoreTests {
     /// Otos's guess and "not a face" do not.
     @Test func aNewReadingKeepsTheUsersWord() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
-        try await library.store.applyEnrichmentBatch([
+        try await library.readFaces([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.4), Self.face(x: 0.7)]),
         ])
         let old = [0, 1, 2].map { FaceID(asset: library.id("a.jpg"), index: $0) }
@@ -117,7 +117,7 @@ struct PeopleStoreTests {
         try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [.init(face: old[2], person: .existing(ian))]))
 
         // The new reading finds the faces in another order, shifted a little.
-        try await library.store.applyEnrichmentBatch([
+        try await library.readFaces([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.71), Self.face(x: 0.41), Self.face(x: 0.11)]),
         ])
 
@@ -137,7 +137,7 @@ struct PeopleStoreTests {
     /// dropped.
     @Test func mergingPeople() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
-        try await library.store.applyEnrichmentBatch([
+        try await library.readFaces([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)]),
             library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
         ])
@@ -171,7 +171,7 @@ struct PeopleStoreTests {
     /// A person has one key photo; a face that leaves them takes it along.
     @Test func aKeyPhotoIsOneFaceOfThePerson() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
-        try await library.store.applyEnrichmentBatch([
+        try await library.readFaces([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1)]),
             library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
         ])
@@ -194,7 +194,7 @@ struct PeopleStoreTests {
     /// Undo writes back exactly what each act changed, and redo is the act again.
     @Test func undoRestoresEveryAct() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
-        try await library.store.applyEnrichmentBatch([
+        try await library.readFaces([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)]),
             library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
         ])
@@ -236,7 +236,7 @@ struct PeopleStoreTests {
     /// once they have no face left and the user said nothing about them.
     @Test func assignmentNeverOverwritesTheUsersWord() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
-        try await library.store.applyEnrichmentBatch([
+        try await library.readFaces([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1)]),
             library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
         ])
@@ -269,7 +269,7 @@ struct PeopleStoreTests {
     /// keeps the user's word.
     @Test func aLapsedSeedIsReleasedOnlyWhileStillASeed() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
-        try await library.store.applyEnrichmentBatch([
+        try await library.readFaces([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1)]),
             library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
         ])
@@ -298,7 +298,7 @@ struct PeopleStoreTests {
     /// face least like them first.
     @Test func thePeopleFilterAndTheLikenessOrder() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg", "c.jpg", "d.jpg"])
-        try await library.store.applyEnrichmentBatch([
+        try await library.readFaces([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)]),
             library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
             library.result(for: "c.jpg", faces: [Self.face(x: 0.5)]),
@@ -337,7 +337,7 @@ struct PeopleStoreTests {
     /// People acts and assignments that wrote reach the window: each is a catalog change.
     @Test func anActOrAnAssignmentIsACatalogChange() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
-        try await library.store.applyEnrichmentBatch([library.result(for: "a.jpg", faces: [Self.face(x: 0.1)])])
+        try await library.readFaces([library.result(for: "a.jpg", faces: [Self.face(x: 0.1)])])
         var changes = await library.store.changeNotifications().makeAsyncIterator()
         let sam = try #require(try await library.store.perform(.moveToNewPerson([], name: "Sam")).person)
         #expect(await changes.next() == .catalogChanged)

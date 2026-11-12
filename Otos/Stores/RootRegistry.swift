@@ -217,21 +217,21 @@ nonisolated struct RootRegistry {
     }
 
     /// Partitions enrichable roots by the claim their rows are first enriched under
-    /// (ADR 0018, `LibraryRoot.firstClaim`): a library's every product at once, or metadata
-    /// first. Orthogonal to `enrichableRootIDsByRemovablePriority`, which partitions by claim
+    /// (ADR 0018, `LibraryRoot.firstClaim`): every product at once, or metadata first.
+    /// Orthogonal to `enrichableRootIDsByRemovablePriority`, which partitions by claim
     /// *priority*. A card's later rendering-and-digest pass is `enrichableCardRootIDs`.
-    func enrichableRootIDsByProductClaim() -> (library: Set<Int64>, metadataFirst: Set<Int64>) {
-        var library: Set<Int64> = []
+    func enrichableRootIDsByFirstClaim() -> (products: Set<Int64>, metadataFirst: Set<Int64>) {
+        var products: Set<Int64> = []
         var metadataFirst: Set<Int64> = []
         for state in statesByPath.values where state.isEnrichable {
             switch state.root.firstClaim {
-            case .library:
-                library.insert(state.rowID)
-            case .metadata, .cardProducts:
+            case .products:
+                products.insert(state.rowID)
+            case .metadata:
                 metadataFirst.insert(state.rowID)
             }
         }
-        return (library, metadataFirst)
+        return (products, metadataFirst)
     }
 
     func validateNoOverlap(_ path: LibraryRootPath, ignoring existingRootRowID: Int64? = nil) throws {

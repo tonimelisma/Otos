@@ -57,6 +57,25 @@ nonisolated struct EditGeometry: Equatable {
         return framePoint.applying(transform.inverted())
     }
 
+    /// The developed image's size for an edited photo of `editedSize` made with `recipe`:
+    /// the crop is a fraction of the frame, and the frame is the developed image after its
+    /// quarter turns, so the frame's shape follows from the edited photo's. Its scale is the
+    /// edited photo's, which is all fractions of it need.
+    static func developedSize(ofEdited editedSize: CGSize, recipe: EditRecipe) -> CGSize {
+        let crop = recipe.crop ?? .whole
+        guard crop.width > 0, crop.height > 0 else { return editedSize }
+        let frame = CGSize(width: editedSize.width / crop.width, height: editedSize.height / crop.height)
+        return recipe.quarterTurns % 2 == 0 ? frame : CGSize(width: frame.height, height: frame.width)
+    }
+
+    /// The point of the developed image shown at `point` of the edited photo, both as
+    /// fractions of their width and height from the top-left corner: a face read from the
+    /// stored preview, placed on the upright photo (ADR 0047).
+    func developedFraction(atEditedFraction point: CGPoint) -> CGPoint {
+        let developed = developedPoint(atEditedFraction: point)
+        return CGPoint(x: developed.x / developedSize.width, y: 1 - developed.y / developedSize.height)
+    }
+
     /// Where `rect` of the developed image shows on the edited photo, both as fractions from
     /// the top-left corner: the bounds of its corners after the geometry, clipped to the
     /// photo. Nil when none of it is inside the crop. A face's outline on the loupe.

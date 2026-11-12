@@ -11,13 +11,8 @@ struct DecodeVerdictTests {
         MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Pictures"), relativePath: MediaRelativePath(rawValue: name))
     }
 
-    private static func noFacesEnricher() throws -> MediaEnricher {
-        try MediaEnricher.live(
-            thumbnailDirectory: makeTestDirectory(),
-            analyzeFaces: { _ in
-                FaceAnalysis(faces: [], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
-            }
-        )
+    private static func enricher() throws -> MediaEnricher {
+        try MediaEnricher.live(thumbnailDirectory: makeTestDirectory())
     }
 
     @Test func aStillNoDecoderCanReadNamesTheDecoderThatSaidSo() async throws {
@@ -25,8 +20,8 @@ struct DecodeVerdictTests {
         let broken = directory.appending(path: "broken.jpg")
         try Data("not an image".utf8).write(to: broken)
 
-        let outcome = try await Self.noFacesEnricher().enrich(
-            Self.id("broken.jpg"), .localFile(broken), 12, 1000, [.rendering, .faces], nil
+        let outcome = try await Self.enricher().enrich(
+            Self.id("broken.jpg"), .localFile(broken), 12, 1000, [.rendering], nil
         )
 
         guard case let .complete(result) = outcome else {
@@ -34,14 +29,33 @@ struct DecodeVerdictTests {
             return
         }
         #expect(result.decodeVerdict == .undecodable(decoder: ImageRenderer.decoderIdentity))
-        #expect(result.faces == .noneFound)
         #expect(result.rendering?.generatedPreview == nil)
+    }
+
+    /// A still whose bytes cannot be read is not judged: nothing is stamped and the row is
+    /// retried, rather than stamped with QuickLook's thumbnail and no preview, which would
+    /// leave it with no faces (ADR 0047).
+    @Test func aStillWhoseBytesCannotBeReadIsRetried() async throws {
+        struct AlwaysLocal: EnrichmentReadinessChecking {
+            func status(of url: URL) -> FileMaterializationStatus {
+                .materialized
+            }
+        }
+        let missing = try makeTestDirectory().appending(path: "gone.jpg")
+        let enricher = try MediaEnricher.live(thumbnailDirectory: makeTestDirectory(), readinessChecker: AlwaysLocal())
+
+        let outcome = await enricher.enrich(Self.id("gone.jpg"), .localFile(missing), 12, 1000, [.rendering], nil)
+
+        guard case .transient = outcome else {
+            Issue.record("expected .transient, got \(outcome)")
+            return
+        }
     }
 
     @Test func aStillTheDecoderReadsIsDecoded() async throws {
         let url = SourceTree.mediaFixtures.appending(path: "jpeg-exif-offset-date.jpg")
 
-        let outcome = try await Self.noFacesEnricher().enrich(Self.id("a.jpg"), .localFile(url), 100, 1000, [.faces], nil)
+        let outcome = try await Self.enricher().enrich(Self.id("a.jpg"), .localFile(url), 100, 1000, [.rendering], nil)
 
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete, got \(outcome)")
@@ -50,9 +64,9 @@ struct DecodeVerdictTests {
         #expect(result.decodeVerdict == .decoded)
     }
 
-    /// At launch a still another decoder could not read loses its rendering and faces
-    /// stamps, so enrichment tries it; one this decoder could not read keeps them, and a
-    /// decoded still is untouched.
+    /// At launch a still another decoder could not read loses its rendering stamp, so
+    /// enrichment tries it; one this decoder could not read keeps it, and a decoded still is
+    /// untouched.
     @Test func launchReleasesOnlyStillsAnotherDecoderCouldNotRead() async throws {
         let databaseURL = try makeTestDirectory().appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -75,9 +89,9 @@ struct DecodeVerdictTests {
         await store.shutdown()
 
         let rows = try await Self.stamps(databaseURL)
-        #expect(rows["earlierDecoder.jpg"] == Stamps(rendered: false, faces: false, undecodableBy: nil))
-        #expect(rows["thisDecoder.jpg"] == Stamps(rendered: true, faces: true, undecodableBy: ImageRenderer.decoderIdentity))
-        #expect(rows["decoded.jpg"] == Stamps(rendered: true, faces: true, undecodableBy: nil))
+        #expect(rows["earlierDecoder.jpg"] == Stamps(rendered: false, undecodableBy: nil))
+        #expect(rows["thisDecoder.jpg"] == Stamps(rendered: true, undecodableBy: ImageRenderer.decoderIdentity))
+        #expect(rows["decoded.jpg"] == Stamps(rendered: true, undecodableBy: nil))
     }
 
     /// Before the verdict was stored, a still the renderer could not read was rendered
@@ -107,14 +121,13 @@ struct DecodeVerdictTests {
         await store.shutdown()
 
         let rows = try await Self.stamps(databaseURL)
-        #expect(rows["fallback.jpg"] == Stamps(rendered: false, faces: false, undecodableBy: nil))
-        #expect(rows["previewed.jpg"] == Stamps(rendered: true, faces: true, undecodableBy: nil))
-        #expect(rows["clip.mov"] == Stamps(rendered: true, faces: true, undecodableBy: nil))
+        #expect(rows["fallback.jpg"] == Stamps(rendered: false, undecodableBy: nil))
+        #expect(rows["previewed.jpg"] == Stamps(rendered: true, undecodableBy: nil))
+        #expect(rows["clip.mov"] == Stamps(rendered: true, undecodableBy: nil))
     }
 
     private struct Stamps: Equatable {
         let rendered: Bool
-        let faces: Bool
         let undecodableBy: String?
     }
 
@@ -135,9 +148,9 @@ struct DecodeVerdictTests {
         try db.execute(
             sql: """
             INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key,
-                kind, preview_path, rendered_source_size, rendered_source_mtime, faces_source_size, faces_source_mtime
+                kind, preview_path, rendered_source_size, rendered_source_mtime
                 \(verdictColumn))
-            VALUES (1, ?, ?, ?, ?, ?, ?, 10, 20, 10, 20\(verdictValue))
+            VALUES (1, ?, ?, ?, ?, ?, ?, 10, 20\(verdictValue))
             """,
             arguments: StatementArguments(arguments)
         )
@@ -147,11 +160,10 @@ struct DecodeVerdictTests {
         try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Dictionary(uniqueKeysWithValues: Row.fetchAll(
                 db,
-                sql: "SELECT relative_path, rendered_source_size, faces_source_size, undecodable_by FROM media_asset"
+                sql: "SELECT relative_path, rendered_source_size, undecodable_by FROM media_asset"
             ).map { row in
                 (row["relative_path"] as String, Stamps(
                     rendered: (row["rendered_source_size"] as Int64?) != nil,
-                    faces: (row["faces_source_size"] as Int64?) != nil,
                     undecodableBy: row["undecodable_by"]
                 ))
             })

@@ -223,20 +223,21 @@ nonisolated struct StagedDerivedImage: Equatable {
 /// work; the store stamps those so a file changed mid-enrichment is detected as stale.
 /// A generated thumbnail or preview may be staged, in which case `thumbnailPath` /
 /// `previewPath` is the final path to stamp only after Store promotes the staged file.
-/// Which of a row's products one claim covers (ADR 0009, ADR 0018, ADR 0047): the claim's
-/// staleness predicate, and the pair of partial indexes the claim queries walk.
+/// Which of a row's products one claim covers (ADR 0009, ADR 0018): the claim's staleness
+/// predicate, and the pair of partial indexes the claim queries walk.
 ///
-/// A row is owed the products its root's kind makes, and each claim names one of three sets,
+/// A row is owed the products its root's kind makes, and each claim names one of two sets,
 /// so a product a root never makes can never hold its rows in a claim index:
 /// - `metadata`: a card's or camera's first pass, and an Immich account.
-/// - `cardProducts`: metadata, the rendering and the digest; a card's second pass, once its
-///   metadata is current (`LibraryRootKind.producesAfterMetadata`).
-/// - `library`: every product a fixed library's row owes, faces included; read for all of
-///   them at once (`LibraryRootKind.claimsEveryProductTogether`).
+/// - `products`: metadata, the rendering and the digest. A fixed library's every product,
+///   read for all of them at once (`LibraryRootKind.claimsEveryProductTogether`), and a
+///   card's second pass, once its metadata is current (`LibraryRootKind.producesAfterMetadata`).
+///
+/// Faces are not an enrichment product: they are read from the stored preview the rendering
+/// makes (`PreviewFaceReader`, ADR 0047), so no claim downloads an original for them.
 nonisolated enum EnrichmentClaim: Hashable, Sendable, CaseIterable {
     case metadata
-    case cardProducts
-    case library
+    case products
 }
 
 /// The products one enrichment of a claimed row makes (ADR 0009, ADR 0018): the set of
@@ -255,14 +256,12 @@ nonisolated struct EnrichmentScope: OptionSet, Hashable, Sendable {
     /// A thumbnail that is not a rendering and is not stamped: QuickLook's in a card's
     /// metadata pass, or a camera's embedded preview, shown until the rendering lands.
     static let provisionalThumbnail = EnrichmentScope(rawValue: 1 << 3)
-    /// The faces in a still, read at full resolution by `FaceAnalyzer` (ADR 0047).
-    static let faces = EnrichmentScope(rawValue: 1 << 4)
 
     /// Whether the claim needs only what ranged reads can give: metadata, and a
-    /// provisional thumbnail a remote source already supplies. A rendering, a digest or
-    /// faces need the whole original, local (ADR 0046 §5, §7; ADR 0047).
+    /// provisional thumbnail a remote source already supplies. A rendering or a digest
+    /// needs the whole original, local (ADR 0046 §5, §7).
     var isReadableInRanges: Bool {
-        isDisjoint(with: [.rendering, .hash, .faces])
+        isDisjoint(with: [.rendering, .hash])
     }
 
     /// The scope for `asset` claimed under `claim`. Every stale product of a row claimed for
@@ -284,9 +283,6 @@ nonisolated struct EnrichmentScope: OptionSet, Hashable, Sendable {
         if asset.hashStale {
             scope.insert(.hash)
         }
-        if claim == .library, asset.facesStale {
-            scope.insert(.faces)
-        }
         self = scope
     }
 
@@ -300,7 +296,7 @@ nonisolated extension EnrichmentScope: CustomStringConvertible {
     var description: String {
         let names: [(EnrichmentScope, String)] = [
             (.metadata, "metadata"), (.rendering, "rendering"), (.hash, "hash"),
-            (.provisionalThumbnail, "provisionalThumbnail"), (.faces, "faces"),
+            (.provisionalThumbnail, "provisionalThumbnail"),
         ]
         let present = names.filter { contains($0.0) }.map(\.1)
         return present.isEmpty ? "none" : present.joined(separator: "+")
@@ -359,13 +355,10 @@ nonisolated struct EnrichedRendering: Equatable {
     }
 }
 
-/// What one enrichment made for one row, each product present only when the scope
-/// covered it (ADR 0009). The store writes each present product with its own stamp, the
-/// `(sourceSize, sourceMTimeSeconds)` the bytes were read at, and leaves the others as
-/// they are.
-/// The faces one reading of a still found (ADR 0047): every face `FaceAnalyzer` admitted,
-/// in the order it read them, and the analysis revision that read them. A still with no face
-/// in it, a video, and a still the decoder cannot read all have none.
+/// The faces one reading of a still's stored preview found (ADR 0047): every face
+/// `FaceAnalyzer` admitted, in the order it read them, placed on the upright photo, and the
+/// analysis revision that read them. A still with no face in it, and a preview that does not
+/// decode, have none.
 nonisolated struct EnrichedFaces: Equatable, Sendable {
     let faces: [DetectedFace]
     let analysisRevision: Int
@@ -376,8 +369,8 @@ nonisolated struct EnrichedFaces: Equatable, Sendable {
 
 /// What a still's decoder said about it (ENR-029). "Cannot decode" is a fact about that
 /// decoder, never about the photo, so it names the decoder: a still whose rendering fell
-/// back to QuickLook's thumbnail, or that was stamped with no faces, because no decoder
-/// could read it is tried again once the decoder changes.
+/// back to QuickLook's thumbnail because no decoder could read it is tried again once the
+/// decoder changes.
 nonisolated enum DecodeVerdict: Equatable, Sendable {
     case decoded
     case undecodable(decoder: String)
@@ -391,6 +384,10 @@ nonisolated enum DecodeVerdict: Equatable, Sendable {
     }
 }
 
+/// What one enrichment made for one row, each product present only when the scope
+/// covered it (ADR 0009). The store writes each present product with its own stamp, the
+/// `(sourceSize, sourceMTimeSeconds)` the bytes were read at, and leaves the others as
+/// they are.
 nonisolated struct EnrichmentResult: Equatable {
     let id: MediaAssetID
     let metadata: EnrichedMetadata?
@@ -406,11 +403,8 @@ nonisolated struct EnrichmentResult: Equatable {
     /// Absent when the scope did not cover the digest. The store then leaves the row's
     /// existing hash columns untouched rather than clearing them.
     let contentHash: XXH3Digest128?
-    /// Absent when the scope did not cover faces. Present, it replaces every face the asset
-    /// held, and stamps them, even when it holds none (ADR 0047).
-    let faces: EnrichedFaces?
-    /// Whether the renderer could decode the still, when the result covers a product it
-    /// decodes for (the rendering or the faces); nil leaves the stored verdict as it is.
+    /// Whether the renderer could decode the still, when the result covers its rendering;
+    /// nil leaves the stored verdict as it is.
     let decodeVerdict: DecodeVerdict?
 
     init(
@@ -421,7 +415,6 @@ nonisolated struct EnrichmentResult: Equatable {
         sourceSize: Int64?,
         sourceMTimeSeconds: Int?,
         contentHash: XXH3Digest128?,
-        faces: EnrichedFaces? = nil,
         editRevision: Int64 = 0,
         decodeVerdict: DecodeVerdict? = nil
     ) {
@@ -433,7 +426,6 @@ nonisolated struct EnrichmentResult: Equatable {
         self.sourceSize = sourceSize
         self.sourceMTimeSeconds = sourceMTimeSeconds
         self.contentHash = contentHash
-        self.faces = faces
         self.decodeVerdict = decodeVerdict
     }
 
@@ -451,7 +443,6 @@ nonisolated struct EnrichmentResult: Equatable {
         generatedThumbnail: StagedDerivedImage? = nil,
         previewPath: String? = nil,
         generatedPreview: StagedDerivedImage? = nil,
-        faces: EnrichedFaces? = nil,
         editRevision: Int64 = 0
     ) {
         self.init(
@@ -466,7 +457,6 @@ nonisolated struct EnrichmentResult: Equatable {
             sourceSize: sourceSize,
             sourceMTimeSeconds: sourceMTimeSeconds,
             contentHash: contentHash,
-            faces: faces,
             editRevision: editRevision
         )
     }

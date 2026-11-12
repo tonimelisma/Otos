@@ -4,14 +4,16 @@
 
 Accepted, 2026-11-10; assignment rewritten 2026-11-12, when the owner redesigned People
 around auto-tagged faces; the person-admission rule and lapsed seeds added 2026-11-12, after
-objects Vision took for faces became a person of their own. The model, precision and
-face-admission rules are decided on measured evidence
+objects Vision took for faces became a person of their own; the image read rewritten
+2026-11-12, when faces moved from the original at full resolution to the stored preview. The
+model, precision and face-admission rules are decided on measured evidence
 (`docs/research/2026-11-07-face-recognition-models.md`,
-`docs/research/2026-11-12-face-person-admission.md`); assignment on
+`docs/research/2026-11-12-face-person-admission.md`); the image read on
+`docs/research/2026-11-12-faces-from-the-preview.md`; assignment on
 `docs/research/2026-11-12-face-auto-assignment.md`.
 
-Built: detection, the analyser and the model (#593), faces as a stored enrichment product
-(#601), faces for Immich accounts from their stored previews (`PreviewFaceReader`, #605),
+Built: detection, the analyser and the model (#593), stored faces (#601), faces read from
+stored previews (`PreviewFaceReader`, for Immich accounts in #605 and for every still since),
 and People (`docs/design/people.md`): `PeopleAssignment` gives every face its person and
 publishes the gallery, and every act of the user's is one `PeopleAct` that
 `CatalogStore.perform` applies in one transaction, returning the record that undoes it.
@@ -27,10 +29,15 @@ few years later.
 no public API that returns a face embedding. Photos' own people recognition is not available
 to other apps. Recognition therefore needs a face-embedding model of Otos's own.
 
-**Owner decisions (2026-11-07):**
-- Otos is non-commercial, so non-commercial model licences are acceptable.
-- Downloading dataless originals for face analysis is approved.
-- A model of about 250 MB is acceptable if it gets great results.
+**Owner decisions:**
+- Otos is non-commercial, so non-commercial model licences are acceptable (2026-11-07).
+- A model of about 250 MB is acceptable if it gets great results (2026-11-07).
+- Face size does not matter much: a tiny face in a photo is one the owner does not care about,
+  and his children's faces are prominent in theirs (2026-11-12).
+
+**Most originals are not on this Mac:** 2,993 of 3,000 random originals in the owner's library
+are dataless cloud placeholders, and decoding an original at full resolution takes about 1.5 s.
+Every still already has a stored preview (ADR 0035, ADR 0046 §7).
 
 **Measured** on 5,810 of the owner's photos from 2012–2026, against 2,196 faces of 33 people
 that the owner labelled, including 744 faces of the three children
@@ -53,12 +60,31 @@ grouping had put with the right child.
 
 ## Decision
 
+### The image read
+
+- **The stored preview, never the original:** every still in a library or an Immich account is
+  read for faces from its stored preview, decoded upright: Otos's 2560 px rendering, or until
+  Otos renders it, the source's own preview (Immich's). No original is downloaded or decoded
+  for faces. `PreviewFaceReader` is the one reader.
+- **Measured** (`docs/research/2026-11-12-faces-from-the-preview.md`), from previews against
+  originals, on the owner's 1,819 hand-placed faces and on the bake-off's labels:
+  - no labelled face goes to the wrong person in the owner's library, and no sibling is
+    confused that was not before;
+  - embeddings move little: median cosine 0.993 between a face's two readings;
+  - the faces the preview loses are those at the quality floor, not the small ones.
+- **An edit:** a preview shows the photo's saved edit. A face read from it is carried back
+  through the edit's geometry (`EditGeometry`) onto the upright photo, where faces are stored.
+  A preview of an edit the photo no longer holds is not read until its new rendering lands; an
+  unedited preview is read as the unedited photo until the rendering of a first edit replaces it.
+  A tone edit is not undone.
+
 ### Detection and admission
 
-- **Detector:** Apple Vision's face landmarks and face capture quality, run on the original at
-  full resolution.
+- **Detector:** Apple Vision's face landmarks and face capture quality, run on the preview.
 - **Admission:** a face is embedded only when all of these hold:
-  - **Quality:** Vision's capture quality is at least 0.3.
+  - **Quality:** Vision's capture quality is at least 0.28. On the preview Vision scores a face
+    about 0.015 lower than on the original, so 0.28 admits as many faces as the bake-off's 0.3
+    did on originals (with the person rule, 5,493 against 5,471 on the owner's library).
   - **Alignment:** the face box height in pixels times the alignment scale is between 50 and
     150. Below that, Vision's landmarks were spread over the scene, and the crop is not a face
     (59 of 3,293 measured faces).
@@ -86,13 +112,14 @@ grouping had put with the right child.
   - **Why int8:** against fp32 it changed one decision of 2,196 (an adult's face left
     unassigned, not a wrong match), and none on a child's face.
   - **Why not fp16:** 131 MB, which exceeds GitHub's 100 MB per-file limit.
-- **Engine:** the CPU only, the same as ADR 0045. 33 ms a face, against about 1.5 s to decode
-  the original it comes from.
+- **Engine:** the CPU only, the same as ADR 0045. 33 ms a face; reading a preview and its faces
+  takes about 66 ms a still.
 - **Model revision:** a revision number (`FaceAnalyzer.revision`) that names the model, Vision's
   revisions and the admission rules, stored with each face. A new revision ships with a
   migration that clears the faces stamp of every still whose faces it can change, as metadata's
-  revision changes do, so the claim stays a pure stamp predicate. Revision 2 (the person rule)
-  only turns more detections away, so it re-reads only stills that have a face.
+  revision changes do. Revision 2 (the person rule) only turns more detections away, so it
+  re-reads only stills that have a face. Revision 3 (the preview, and the 0.28 floor) re-reads
+  every still, from its preview.
 
 ### Storage
 
@@ -107,12 +134,12 @@ grouping had put with the right child.
 
   Its person and whose word it is come with assignment.
 - **The faces stamp** is on the asset (`faces_source_size`, `faces_source_mtime`): the
-  `(size, mtime)` the reading was made from, a product of its own in ADR 0009's sense. A reading
-  replaces every face of its asset, and a still with no face has the stamp and no rows, so it is
-  not read again until it changes.
-- **The claim:** only a fixed library's rows owe faces, under their own claim
-  (`EnrichmentClaim.library`) and its own pair of partial indexes. A card's or camera's rows are
-  read for faces once imported into a library, which is where their overlay lives on.
+  `(size, mtime)` of the source the preview read was made from. A reading replaces every face
+  of its asset, and a still with no face has the stamp and no rows, so it is not read again
+  until a preview of other bytes arrives. An edit is not a new source and is not read again.
+- **Who owes faces:** a library's and an Immich account's stills (`LibraryRootKind.readsFaces`).
+  Faces are not an enrichment product, so no enrichment claim owes them. A card's or camera's
+  rows are read for faces once imported into a library, which is where their overlay lives on.
 - **People** are catalog rows: an optional name, an optional birthday, a hidden mark, a
   favourite mark, and a stable row ID. A person is not a media asset, so this is not an asset
   identity, which stays the path. A person is the set of their faces, each with its capture
@@ -170,23 +197,24 @@ grouping had put with the right child.
   labels.
 - **Settles on its own output:** assignment reads only the anchors, so run on what it wrote it
   writes nothing. A pass that wrote is followed by one that publishes.
+- **A new reading** of the same source keeps the user's word: each act moves to the new face
+  that overlaps it, and a face with the user's word that the reading does not find is kept as it
+  was read (`CatalogStorePersistence.writeFaces`). A reading of a changed file is read afresh.
 - **What the user's acts store** (overlay, ADR 0008; undoable): a face's person on their word;
   a held face and its rejection; `This Is Not a Face`, until the photo's file changes; a person's
   name, birthday, hidden and favourite marks and key photo. A person Otos found is
   deleted once no face is theirs and the user said nothing about them.
-- **Immich accounts:** their photos are read for faces from the stored Immich preview, never
-  the original (measured in the 2026-11-07 research note, section 7: no wrong match, about 7%
-  of small faces missed). Their originals are downloaded only for the user's own work
-  (ADR 0046).
 
 ### Work and placement
 
-- **Owner:** face analysis is an enrichment product, run by `EnrichmentCoordinator`'s workers.
-- **Downloads:** for a dataless original, the download goes through
-  `MaterializationCoordinator` at background priority, under the free-space floor (ADR 0027).
-- **Rendering and threads:** faces come from the same read of the original as the rendering
-  (`ImageRenderer.read(_:rendering:upright:)`), decoded a second time from those bytes, upright,
-  at full resolution and with no edit. The model never runs on the main actor.
+- **Owner:** `PreviewFaceReader`, one loop woken by the catalog's change notifications. It reads
+  the stills whose faces stamp does not name their preview's source, a page at a time, and
+  writes a reading only while the row still has the preview it read.
+- **Downloads:** none. A still waits for its preview, which enrichment renders from the
+  original when that is local or downloaded for the rendering (ADR 0035), or which an Immich
+  sync fetches (ADR 0046 §7).
+- **Threads:** the preview is decoded off the reader, and Vision and the model run on
+  `FaceAnalyzer`'s own queue, never on the main actor.
 - **Assignment:** `PeopleAssignment`'s loop, asked after every catalog change, reads every face
   in one transaction, assigns off its actor, and writes a guess only where the face is still
   Otos's to decide, so an act the user made meanwhile always wins.
@@ -217,10 +245,14 @@ grouping had put with the right child.
 - **fp16 on the Neural Engine:** the most faithful variant (no decision changed), but 131 MB is
   over the file limit. The Neural Engine also departs from ADR 0045's CPU-only rule, and 33 ms a
   face on the CPU is already small.
-- **Detecting on the stored preview:** detection on a 2048 px image lost no faces in run 1. But
-  the crop the model sees would come from about a quarter of the original's pixels, and the
-  owner approved downloading originals for this. Detection and embedding read the full
-  resolution.
+- **The original at full resolution (2026-11-10 to 11-12):** the 112 px crop the model sees
+  comes from more pixels, but no decision measured better for it, and it downloaded every
+  cloud original and decoded it for about 1.5 s, again at every analysis revision.
+- **The original downscaled to the preview's size:** the same pixels as the preview for an
+  unedited photo, but read only when the original is local, so a library whose originals are
+  in the cloud would download them for faces, or read the faces of only some.
+- **The preview at the original's 0.3 floor:** it loses 212 of 5,471 faces against 123 at 0.28,
+  52 of them faces the owner placed against 27, because Vision scores the preview lower.
 - **An average face per person:** a child's average across years matches neither the baby nor the
   school-age child. A person's faces, each with its date, keep each year's face.
 - **A vector database or an approximate index:** exact comparison over a family's faces is cheap,
@@ -252,9 +284,20 @@ grouping had put with the right child.
   assignment rules runs `script/face-accuracy.sh` on the labelled set and reports the cold
   start, the seeded run and the corrections against the last run.
 - **App size:** the app grows by 66 MB.
-- **Downloads and time:** analysing a library means downloading and decoding every original
-  photo once: about 1.5 s a photo, mostly decode, in the background. The person rule adds one
-  classification per detected face.
+- **No downloads for faces:** a library is read for faces from what Otos already stores, about
+  66 ms a still. A new analysis revision re-reads the whole library from its previews, not from
+  its originals. The person rule adds one classification per detected face.
+- **A still waits for its preview:** a still that has none yet is read once its rendering
+  lands; a still no decoder renders has no faces Otos can read.
+- **A re-read never drops the user's word:** a reading of the same source carries each act to
+  the new face that overlaps it, and keeps, as it was read, a face the user named, removed the
+  name of, rejected someone for or marked not a face that it does not find. So the 27 of the
+  owner's 1,819 placed faces that the preview does not find keep their names, and a crop or a
+  dark edit that hides a face does not take what the user said about it. Such a face keeps the
+  embedding it was read with; a new model must re-embed it from the preview at its stored
+  landmarks, or leave it out of assignment. Only a changed file is read afresh.
+- **A preview's size is part of the analysis:** a change to the stored preview's size or its
+  renderer is checked with `script/face-accuracy.sh` like any analysis change.
 - **Hidden faces are turned away too:** a face behind a mask or a net, or a face printed on a
   document, can read under the person rule and stay unread (3 of 5,477 measured).
 - **Model change:** a new model is a new revision that re-analyses every photo, and stored names

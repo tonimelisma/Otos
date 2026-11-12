@@ -31,37 +31,33 @@ struct EnrichmentClaimIndexContractTests {
            OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
               <> COALESCE(rendered_source_mtime, -1)
         """)
-        // v18's library indexes were created from this faces text (ADR 0047).
-        #expect(EnrichmentClaimGateway.facesStalenessSQLPredicate() == """
-        faces_source_size IS NULL
-           OR faces_source_mtime IS NULL
-           OR COALESCE(byte_size, -1) <> COALESCE(faces_source_size, -1)
-           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
-              <> COALESCE(faces_source_mtime, -1)
-        """)
     }
 
-    /// A fixed library's claim, faces included, walks its own pair of indexes (v18).
-    @Test func libraryIndexesImplyTheLibraryPredicate() async throws {
+    /// A fixed library and a card's second pass are claimed for the same products, and walk
+    /// the same pair of indexes; the pair v18 made for a library's faces is gone, because
+    /// faces are no longer an enrichment product (ADR 0047).
+    @Test func theProductsClaimWalksTheBroadIndexes() async throws {
         let dbQueue = try await Self.migratedDatabase()
         let rootQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [1],
             limit: 4,
-            claim: .library
+            claim: .products
         ))
         let globalQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
             rootIDs: [1, 2],
             limit: 4,
-            claim: .library
+            claim: .products
         ))
-        let plans = try await dbQueue.read { db in
+        let (plans, indexes) = try await dbQueue.read { db in
             try (
-                root: Self.explainPlan(db, query: rootQuery),
-                global: Self.explainPlan(db, query: globalQuery)
+                (root: Self.explainPlan(db, query: rootQuery), global: Self.explainPlan(db, query: globalQuery)),
+                Set(String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index'"))
             )
         }
-        #expect(plans.root.contains(EnrichmentClaimGateway.libraryRootIndexName))
-        #expect(plans.global.contains(EnrichmentClaimGateway.libraryGlobalIndexName))
+        #expect(plans.root.contains(EnrichmentClaimGateway.broadRootIndexName))
+        #expect(plans.global.contains(EnrichmentClaimGateway.broadGlobalIndexName))
+        #expect(!indexes.contains("idx_media_asset_needs_enrichment_global_library"))
+        #expect(!indexes.contains("idx_media_asset_needs_enrichment_root_library"))
     }
 
     private static func migratedDatabase() async throws -> DatabaseQueue {

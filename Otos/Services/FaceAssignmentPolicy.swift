@@ -34,6 +34,15 @@ nonisolated enum FaceAssignment: Hashable, Sendable {
         }
     }
 
+    /// The user said who the face is, or that it is no one they named: overlay that a new
+    /// reading of the same photo never drops (ADR 0047).
+    var isUserWord: Bool {
+        switch self {
+        case .user, .held: true
+        case .open, .model, .seed: false
+        }
+    }
+
     /// Otos decides the face's person.
     var isGuessable: Bool {
         switch self {
