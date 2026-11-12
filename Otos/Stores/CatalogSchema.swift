@@ -560,6 +560,32 @@ nonisolated enum CatalogSchema {
         ]
     }
 
+    /// Faces auto-tagged (ADR 0047): every face has a person Otos guessed or the user gave,
+    /// and named and unnamed people are one kind.
+    /// - `face.assignment`: whose word `person_id` is (`FaceAssignmentColumn`): none, Otos's
+    ///   guess, a seed (a face a person was first found from), the user's, or held (the user
+    ///   removed the name, so only the user gives it a person again). A confirmed face is the
+    ///   user's; a face of an ignored group is held.
+    /// - `face.likeness`: how like its person the face is, which the likeness sort orders by.
+    /// - `face.is_feature`: the person's feature photo, at most one face per person; it moves
+    ///   and goes with its face.
+    /// - `person.is_hidden`, `person.is_favorite`: shown only in the People gallery, and first.
+    static let autoTaggedPeopleMigrationIdentifier = "v26_people_auto_tagged"
+
+    static var autoTaggedPeopleStatements: [String] {
+        [
+            "ALTER TABLE face ADD COLUMN assignment INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE face ADD COLUMN likeness REAL",
+            "ALTER TABLE face ADD COLUMN is_feature INTEGER NOT NULL DEFAULT 0",
+            "UPDATE face SET assignment = \(FaceAssignmentColumn.user.rawValue) WHERE person_id IS NOT NULL",
+            "UPDATE face SET assignment = \(FaceAssignmentColumn.held.rawValue) WHERE person_id IS NULL AND is_ignored = 1",
+            "ALTER TABLE face DROP COLUMN is_ignored",
+            "CREATE UNIQUE INDEX idx_face_feature ON face(person_id) WHERE is_feature = 1",
+            "ALTER TABLE person ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE person ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0",
+        ]
+    }
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

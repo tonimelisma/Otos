@@ -3,10 +3,11 @@ import Foundation
 
 // People models (ADR 0047, `docs/design/people.md`)
 //
-// What the store reads for People in one transaction (`PeopleSnapshot`), what
-// `PeopleProjection` publishes from it (`CatalogPeopleState`), and the user's acts on faces
-// and people (`PeopleAct`) with the record that undoes one (`PeopleRestore`). Values only:
-// the store writes, the projection derives, and the views render these.
+// What the store reads for People in one transaction (`PeopleSnapshot`), what assignment
+// writes back (`FaceAssignmentPlan`), what `PeopleAssignment` publishes (`CatalogPeopleState`)
+// and answers about selected photos (`SelectionFaces`), and the user's acts on faces and
+// people (`PeopleAct`) with the record that undoes one (`PeopleRestore`). Values only: the
+// store writes, the owner derives, and the views render these.
 
 /// One face as a tile shows it: where it is in its photo and the stored preview it is cut
 /// from (ADR 0035).
@@ -32,6 +33,8 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
         let name: String?
         /// `YYYY` or `YYYY-MM-DD`, as the user gave it.
         let birthday: String?
+        var isHidden = false
+        var isFavorite = false
 
         var birthdaySeconds: Double? {
             birthday.flatMap(PersonBirthday.seconds)
@@ -40,6 +43,12 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
         var fact: PersonFact {
             PersonFact(id: id, birthdaySeconds: birthdaySeconds)
         }
+
+        /// Nothing the user said about the person: no name, birthday, favourite or hidden. A
+        /// person Otos found is forgotten once nothing of theirs is left.
+        var isBare: Bool {
+            name == nil && birthday == nil && !isHidden && !isFavorite
+        }
     }
 
     /// Every face of a photo still in the catalog and out of the Trash, in reading order.
@@ -47,6 +56,10 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     let tiles: [FaceID: FaceTile]
     /// In creation order.
     let people: [Person]
+    /// Each face's stored likeness.
+    var likeness: [FaceID: Float] = [:]
+    /// Each person's feature face, where the user chose one.
+    var features: [PersonID: FaceID] = [:]
     /// Stills in the available fixed libraries whose faces are not yet read for their current
     /// bytes (for an Immich account, its current preview).
     let uncheckedPhotoCount: Int
@@ -55,21 +68,80 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     let revision: UInt64
 }
 
-/// A person in the People list: their confirmed faces, newest first, the first being the
-/// cover (owner decision, 2026-11-09).
+/// What one assignment changes in the catalog: only what differs from the snapshot it was
+/// computed from. The store writes each guess only where the face is still Otos's to decide,
+/// so an act the user made meanwhile always wins.
+nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
+    nonisolated struct Guess: Sendable, Equatable {
+        let face: FaceID
+        /// Nil takes the face's guess away.
+        let person: FaceAssignmentResult.Person?
+    }
+
+    var guesses: [Guess] = []
+    /// New people, each with its seed faces.
+    var newPeople: [[FaceID]] = []
+    /// Faces whose stored likeness changes; nil clears it.
+    var likeness: [FaceID: Float?] = [:]
+    /// People Otos found who had a face and now have none; each is deleted if, when written,
+    /// it still has none and the user has said nothing about them.
+    var emptied: [PersonID] = []
+
+    var isEmpty: Bool {
+        guesses.isEmpty && newPeople.isEmpty && likeness.isEmpty && emptied.isEmpty
+    }
+
+    /// The changes that take the snapshot to `result`.
+    static func changes(from snapshot: PeopleSnapshot, to result: FaceAssignmentResult) -> FaceAssignmentPlan {
+        var plan = FaceAssignmentPlan()
+        plan.newPeople = result.newPeople
+        let seeded = Set(result.newPeople.joined())
+        var keeps: Set<PersonID> = []
+        for face in snapshot.faces where !face.isNotFace {
+            let computed = result.likeness[face.id]
+            if snapshot.likeness[face.id] != computed {
+                plan.likeness[face.id] = .some(computed)
+            }
+            guard !seeded.contains(face.id) else { continue }
+            let target = result.guesses[face.id]
+            let kept: FaceAssignmentResult.Person?
+            if face.assignment.isGuessable {
+                kept = target
+                if face.assignment.person.map(FaceAssignmentResult.Person.existing) != target {
+                    plan.guesses.append(Guess(face: face.id, person: target))
+                }
+            } else {
+                kept = face.assignment.person.map(FaceAssignmentResult.Person.existing)
+            }
+            if case let .existing(person) = kept {
+                keeps.insert(person)
+            }
+        }
+        let held = Set(snapshot.faces.filter { !$0.isNotFace }.compactMap(\.assignment.person))
+        plan.emptied = snapshot.people.filter { $0.isBare && held.contains($0.id) && !keeps.contains($0.id) }.map(\.id)
+        return plan
+    }
+}
+
+/// A person in the People gallery.
 nonisolated struct PersonSummary: Hashable, Sendable, Identifiable {
     let id: PersonID
     let name: String?
     let birthday: String?
-    /// Photos holding a confirmed face of this person.
+    let isHidden: Bool
+    let isFavorite: Bool
+    /// Photos holding a face of this person.
     let photoCount: Int
-    let faces: [FaceTile]
+    /// The feature face the user chose, else the newest face.
+    let cover: FaceTile?
+    /// The faces the user gave this person, newest first: the facts the hard rules hold
+    /// them to.
+    let userFaces: [FaceTile]
+    /// The photos of the faces that define this person (the user's and the seeds), which two
+    /// people merged may not share.
+    var anchorPhotos: Set<MediaAssetID> = []
 
-    var cover: FaceTile? {
-        faces.first
-    }
-
-    /// What the person is called on every surface; an unnamed person (a split) is `Unnamed`.
+    /// What the person is called on every surface; a person without a name is `Unnamed`.
     var displayName: String {
         Self.displayName(name)
     }
@@ -79,182 +151,186 @@ nonisolated struct PersonSummary: Hashable, Sendable, Identifiable {
     }
 }
 
-/// Faces that look alike and match no person, as the People list shows them under
-/// `Unnamed` (owner decision, 2026-11-11): one cell per group, across every year.
-nonisolated struct UnnamedGroupSummary: Hashable, Sendable, Identifiable {
-    /// The group's identity: its first face in path order, the face that names its review
-    /// rows (`PeopleReviewRow.Kind.unnamed`).
-    let id: FaceID
-    /// Newest first, the first being the cover, as a person's newest face is theirs.
-    let faces: [FaceTile]
-
-    var cover: FaceTile? {
-        faces.first
-    }
-
-    /// A group never holds two faces of one photo, so its faces are its photos.
-    var photoCount: Int {
-        faces.count
-    }
-}
-
-/// One cell of the People list: a person, or an unnamed group.
-nonisolated enum PeopleListItem: Hashable, Sendable {
-    case person(PersonID)
-    case unnamed(FaceID)
-}
-
-/// One row of the review: one person's suggestions in a year, one unnamed group's faces in a
-/// year, or the faces of a year that could be either of two people.
-nonisolated struct PeopleReviewRow: Hashable, Sendable, Identifiable {
-    nonisolated enum Kind: Hashable, Sendable {
-        /// Suggested as this person; `referenceYear` is the year of the confirmed face the
-        /// row's suggestions rest on.
-        case person(PersonID, referenceYear: Int?)
-        /// Faces that look alike and match no person. `group` is the group's first face,
-        /// which names it across years.
-        case unnamed(group: FaceID)
-        /// Faces whose best two people are too close to call.
-        case unsure(PersonID, PersonID)
-    }
-
-    nonisolated enum ID: Hashable, Sendable {
-        case person(PersonID)
-        case unnamed(FaceID)
-        case unsure(PersonID, PersonID)
-    }
-
-    let kind: Kind
-    /// The confirmed faces shown as evidence: one for a person row, one per candidate for an
-    /// unsure row, none for an unnamed group.
-    let references: [FaceTile]
-    /// Least sure first: a person row's least like the person first, an unnamed row's least
-    /// like the rest of its group first, an unsure row's newest first.
-    let faces: [FaceTile]
-
-    var id: ID {
-        switch kind {
-        case let .person(person, _): .person(person)
-        case let .unnamed(group): .unnamed(group)
-        case let .unsure(first, second): .unsure(first, second)
-        }
-    }
-}
-
-/// The review's rows of one year, newest year first; `year` is nil for photos with no date.
-nonisolated struct PeopleReviewYear: Hashable, Sendable, Identifiable {
-    let year: Int?
-    let rows: [PeopleReviewRow]
-
-    var id: Int {
-        year ?? Int.min
-    }
-
-    var faceCount: Int {
-        rows.reduce(0) { $0 + $1.faces.count }
-    }
-}
-
-/// What `PeopleProjection` publishes: the People list, the review's two lists, and the tally
-/// of photos not yet checked.
+/// What `PeopleAssignment` publishes: the People gallery and the tally of photos not yet
+/// checked.
 nonisolated struct CatalogPeopleState: Equatable, Sendable {
-    /// Most photos first, ties by name in the locale's order (owner decision, 2026-11-09).
+    /// The gallery's order: favourites first, then most photos, then the name in the locale's
+    /// order; the hidden people after everyone else, in the same order.
     let people: [PersonSummary]
-    /// Most photos first, ties by the newest face (owner decision, 2026-11-11).
-    var unnamed: [UnnamedGroupSummary] = []
-    /// One person clearly wins, or the faces form an unnamed group.
-    let suggestions: [PeopleReviewYear]
-    /// The best two people are too close to call.
-    let unsure: [PeopleReviewYear]
+    /// Each photo's faces of visible people and unidentified faces, in reading order: what
+    /// the photo menus and the Info pane show, at once.
+    var photoFaces: [MediaAssetID: [PhotoFace]] = [:]
     let uncheckedPhotoCount: Int
     /// Faces found that are still faces (not marked `Not a Face`).
     let faceCount: Int
-    /// The People revision the state was built from (`PeopleSnapshot.revision`): it shows
-    /// every act whose revision is at most this.
+    /// The People revision the state was built from (`PeopleSnapshot.revision`).
     var revision: UInt64 = 0
 
-    static let empty = CatalogPeopleState(people: [], suggestions: [], unsure: [], uncheckedPhotoCount: 0, faceCount: 0)
+    static let empty = CatalogPeopleState(people: [], uncheckedPhotoCount: 0, faceCount: 0)
 
-    var suggestionCount: Int {
-        suggestions.reduce(0) { $0 + $1.faceCount }
+    /// The faces of `photos`, in their order.
+    func selectionFaces(for photos: [MediaAssetID]) -> SelectionFaces {
+        SelectionFaces(photos: photos, faces: photos.flatMap { photoFaces[$0] ?? [] })
     }
 
-    var unsureCount: Int {
-        unsure.reduce(0) { $0 + $1.faceCount }
+    /// Everyone not hidden, in gallery order: the people every surface but the gallery offers.
+    var visiblePeople: [PersonSummary] {
+        people.filter { !$0.isHidden }
+    }
+
+    var hiddenPeople: [PersonSummary] {
+        people.filter(\.isHidden)
     }
 
     func person(_ id: PersonID) -> PersonSummary? {
         people.first { $0.id == id }
     }
 
-    func unnamedGroup(_ id: FaceID) -> UnnamedGroupSummary? {
-        unnamed.first { $0.id == id }
+    /// A visible person's name; nil for a hidden or unknown one, which no surface but the
+    /// gallery names.
+    func visibleName(_ id: PersonID) -> String? {
+        person(id).flatMap { $0.isHidden ? nil : $0.displayName }
+    }
+}
+
+/// One face of a photo, as the Info pane and the photo menus show it: a face of a visible
+/// person or of no person.
+nonisolated struct PhotoFace: Hashable, Sendable, Identifiable {
+    let tile: FaceTile
+    /// Its person; nil for an unidentified face.
+    let person: PersonID?
+
+    var id: FaceID {
+        tile.id
+    }
+}
+
+/// One person a face could be, with how like them it is.
+nonisolated struct FaceCandidate: Hashable, Sendable {
+    let person: PersonID
+    let similarity: Float
+}
+
+/// The faces of the selected photos (ADR 0047), with the people each could be once
+/// `PeopleAssignment` has ranked them: everyone visible the hard rules allow, most likely
+/// first, the face's own person left out.
+nonisolated struct SelectionFaces: Equatable, Sendable {
+    let photos: [MediaAssetID]
+    let faces: [PhotoFace]
+    /// Missing for a face not ranked yet (or beyond `PeopleAssignment.rankedFaceLimit`).
+    var candidates: [FaceID: [FaceCandidate]] = [:]
+
+    static let empty = SelectionFaces(photos: [], faces: [])
+
+    var unidentified: [PhotoFace] {
+        faces.filter { $0.person == nil }
     }
 
-    /// The People list's cells in order: the named people, then the unnamed groups.
-    var listItems: [PeopleListItem] {
-        people.map { .person($0.id) } + unnamed.map { .unnamed($0.id) }
+    /// The visible people with a face in the selection, in the order their faces come.
+    var people: [PersonID] {
+        var seen: Set<PersonID> = []
+        return faces.compactMap(\.person).filter { seen.insert($0).inserted }
+    }
+
+    /// The faces of `person` in the selection.
+    func faces(of person: PersonID?) -> [PhotoFace] {
+        faces.filter { $0.person == person }
+    }
+
+    /// The people most likely to be `faces`, most likely first: each person scored by their
+    /// mean best similarity over the photos holding one of the faces.
+    func likelyPeople(for faces: [PhotoFace]) -> [PersonID] {
+        let byPhoto = Dictionary(grouping: faces, by: \.id.asset)
+        var total: [PersonID: Float] = [:]
+        for photoFaces in byPhoto.values {
+            var best: [PersonID: Float] = [:]
+            for face in photoFaces {
+                for candidate in candidates[face.id] ?? [] {
+                    best[candidate.person] = max(best[candidate.person] ?? -2, candidate.similarity)
+                }
+            }
+            for (person, value) in best {
+                total[person, default: 0] += value
+            }
+        }
+        let count = Float(max(byPhoto.count, 1))
+        return total.map { (person: $0.key, score: $0.value / count) }
+            .sorted { ($0.score, $1.person) > ($1.score, $0.person) }
+            .map(\.person)
+    }
+
+    /// Per photo, the unidentified face most like `person`: the face `This Is ▸` gives them
+    /// in each photo that holds one. A photo whose unidentified faces are not ranked gives its
+    /// first one.
+    func unidentifiedFacesToName(as person: PersonID) -> [FaceID] {
+        Dictionary(grouping: unidentified, by: \.id.asset).values.compactMap { faces in
+            let ranked = faces.compactMap { face in
+                candidates[face.id]?.first { $0.person == person }.map { (face: face.id, similarity: $0.similarity) }
+            }
+            if let best = ranked.max(by: { ($0.similarity, $1.face.index) < ($1.similarity, $0.face.index) }) {
+                return best.face
+            }
+            return faces.first { candidates[$0.id] == nil }?.id
+        }.sorted(by: FaceAssignmentPolicy.pathOrder)
     }
 }
 
 /// One act of the user's on faces or people. Each is one store transaction, undone by the
 /// `PeopleRestore` the store returns for it.
 nonisolated enum PeopleAct: Equatable, Sendable {
-    /// The faces become this person's (Confirm, This Is ▸).
-    case confirm([FaceID], as: PersonID)
-    /// The faces are not this person, and never suggested as them again (Not Sam).
-    case reject([FaceID], person: PersonID)
-    /// The faces are none of these people (Not Sam or Ian, on an unsure row).
-    case rejectAll([FaceID], people: [PersonID])
+    /// The faces become this person's, on the user's word (This Is ▸).
+    case move([FaceID], to: PersonID)
+    /// The faces become one new person's, with this name (New Person…).
+    case moveToNewPerson([FaceID], name: String?)
+    /// The faces lose their person and are never given one by Otos again (Not Sam).
+    case removeName([FaceID])
     /// The detections are not faces (Not a Face).
     case notAFace([FaceID])
-    /// A stranger's group: never grouped or suggested again (Ignore).
-    case ignore([FaceID])
-    /// The faces become the person of that name, a new one if nobody has it (Name…).
-    case name([FaceID], String)
-    /// The faces become one new, unnamed person (This Is ▸ New Person).
-    case split([FaceID])
-    /// Rename… and Set Birthday….
+    /// Rename…, Add Name… and Set Birthday….
     case edit(PersonID, name: String?, birthday: String?)
     /// The first person's faces become the second's; the second keeps its name and birthday.
     case merge(PersonID, into: PersonID)
-    /// The person is gone; their faces are unnamed and their rejections forgotten.
-    case remove(PersonID)
+    case setHidden(PersonID, Bool)
+    case setFavorite(PersonID, Bool)
+    /// The face is its person's feature photo.
+    case setFeature(FaceID, of: PersonID)
 
     /// The name the undo stack shows, as `Undo <name>`.
     var undoName: String {
         switch self {
-        case .confirm: "Confirm"
-        case .reject, .rejectAll: "Not This Person"
+        case .move: "This Is"
+        case .moveToNewPerson: "New Person"
+        case .removeName: "Not This Person"
         case .notAFace: "Not a Face"
-        case .ignore: "Ignore"
-        case .name: "Name"
-        case .split: "Split"
         case .edit: "Edit Person"
         case .merge: "Merge"
-        case .remove: "Remove Person"
+        case let .setHidden(_, hidden): hidden ? "Hide" : "Unhide"
+        case let .setFavorite(_, favorite): favorite ? "Add to Favorites" : "Remove from Favorites"
+        case .setFeature: "Set Feature Photo"
         }
     }
 
     var faceCount: Int {
         switch self {
-        case let .confirm(faces, _), let .reject(faces, _), let .rejectAll(faces, _), let .notAFace(faces),
-             let .ignore(faces), let .name(faces, _), let .split(faces):
+        case let .move(faces, _), let .moveToNewPerson(faces, _), let .removeName(faces), let .notAFace(faces):
             faces.count
-        case .edit, .merge, .remove:
+        case .setFeature:
+            1
+        case .edit, .merge, .setHidden, .setFavorite:
             0
         }
     }
 }
 
 /// The state an act changed, as it was before: the people it touched and every face row and
-/// rejection it could have changed. Writing it back undoes the act exactly.
+/// rejection it could have changed. Writing it back undoes the act exactly; the guesses that
+/// follow from it are rebuilt by assignment.
 nonisolated struct PeopleRestore: Equatable, Sendable {
     nonisolated struct FaceRow: Equatable, Sendable {
         let face: FaceID
-        let person: PersonID?
+        let assignment: FaceAssignment
         let isNotFace: Bool
-        let isIgnored: Bool
+        let isFeature: Bool
     }
 
     nonisolated struct Rejection: Hashable, Sendable {
@@ -270,7 +346,7 @@ nonisolated struct PeopleRestore: Equatable, Sendable {
 }
 
 /// What `CatalogStore.perform(_:)` did: what undoes it, and the person the faces went to
-/// (for Name… and a split, possibly a person the act created).
+/// (for New Person, the person the act created).
 nonisolated struct PeopleActOutcome: Equatable, Sendable {
     let restore: PeopleRestore
     let person: PersonID?

@@ -117,9 +117,8 @@ nonisolated struct CatalogScopePredicate: Equatable {
         case identical(XXH3Digest128)
         /// The row is one of these: a same-photo group under Duplicates, by root row id and path.
         case members([MemberKey])
-        /// The row holds a face the user confirmed as this person, or as anyone with nil:
-        /// People (ADR 0047).
-        case confirmed(PersonID?)
+        /// The row holds a face with a person: People (ADR 0047).
+        case withPerson
     }
 
     struct MemberKey: Equatable {

@@ -3,23 +3,24 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// What People shows (ADR 0047, `docs/design/people.md`): the list, the review's
-/// Suggestions and Unsure lists grouped by year, the hard rules the review enforces, and
-/// the way the review is walked from the keyboard. On embeddings whose similarities are
-/// exact by construction (`FacePeoplePolicyTests.face`).
+/// What People shows (ADR 0047, `docs/design/people.md`): the gallery, the faces of a photo,
+/// what one assignment writes, the people a selection's faces most likely are, the hard rules
+/// the acts are held to, and the words the surfaces use. On embeddings whose similarities are
+/// exact by construction (`FaceAssignmentPolicyTests.face`).
 struct PeopleStateTests {
-    typealias Fixture = FacePeoplePolicyTests
+    typealias Fixture = FaceAssignmentPolicyTests
     static let sam = Fixture.sam
     static let ian = Fixture.ian
     static let year = Fixture.year
+    static let day = Fixture.day
 
-    static var utc: Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
-        return calendar
-    }
-
-    static func snapshot(_ faces: [FaceFact], people: [PeopleSnapshot.Person]? = nil, unchecked: Int = 0) -> PeopleSnapshot {
+    static func snapshot(
+        _ faces: [FaceFact],
+        people: [PeopleSnapshot.Person]? = nil,
+        features: [PersonID: FaceID] = [:],
+        likeness: [FaceID: Float] = [:],
+        unchecked: Int = 0
+    ) -> PeopleSnapshot {
         PeopleSnapshot(
             faces: faces,
             tiles: Dictionary(uniqueKeysWithValues: faces.map {
@@ -29,251 +30,201 @@ struct PeopleStateTests {
                 .init(id: sam, name: "Sam", birthday: nil),
                 .init(id: ian, name: "Ian", birthday: nil),
             ],
+            likeness: likeness,
+            features: features,
             uncheckedPhotoCount: unchecked,
             revision: 0
         )
     }
 
-    static func yearOf(_ face: FaceFact) -> Int? {
-        face.captureSeconds.map { utc.component(.year, from: Date(timeIntervalSince1970: $0)) }
-    }
-
-    /// The list is most photos first; a person's faces are newest first, the newest the
-    /// cover; a suggestion sits in its photo's year beside the face it rests on.
-    @Test func theListAndSuggestionsByYear() {
-        // The older face is less like the suggestion, so the newer one is what it rests on.
-        let samOld = Fixture.face("s1.jpg", toward: [0: 1, 3: 0.3], at: 0, person: Self.sam)
-        let samNew = Fixture.face("s2.jpg", toward: [0: 1], at: Self.year, person: Self.sam)
-        let ianFace = Fixture.face("i1.jpg", toward: [1: 1], at: 0, person: Self.ian)
-        let suggested = Fixture.face("new.jpg", toward: [0: 1, 9: 0.2], at: 1.2 * Self.year)
-
-        let state = PeopleStateBuilder.state(
-            from: Self.snapshot([samOld, samNew, ianFace, suggested], unchecked: 3),
-            calendar: Self.utc
-        )
-
-        #expect(state.people.map(\.id) == [Self.sam, Self.ian])
-        #expect(state.people.first?.photoCount == 2)
-        #expect(state.people.first?.cover?.id == samNew.id)
-        #expect(state.uncheckedPhotoCount == 3)
-        #expect(state.faceCount == 4)
-        let row = try? #require(state.suggestions.first?.rows.first)
-        #expect(state.suggestions.map(\.year) == [Self.yearOf(suggested)])
-        #expect(row?.kind == .person(Self.sam, referenceYear: Self.yearOf(samNew)))
-        #expect(row?.faces.map(\.id) == [suggested.id])
-        #expect(row?.references.map(\.id) == [samNew.id])
-        #expect(state.unsure.isEmpty)
-    }
-
-    /// A face as like Sam as Ian is in Unsure, never in Suggestions, with each
-    /// candidate's confirmed face beside it, the pair in the People list's order (one photo
-    /// each, so by name).
-    @Test func aFaceThatCouldBeEitherIsUnsure() {
-        let samFace = Fixture.face("s.jpg", toward: [0: 1], at: 0, person: Self.sam)
-        let ianFace = Fixture.face("i.jpg", toward: [1: 1], at: 0, person: Self.ian)
-        let either = Fixture.face("e.jpg", toward: [0: 1, 1: 1], at: Self.year / 4)
-
-        let state = PeopleStateBuilder.state(from: Self.snapshot([samFace, ianFace, either]), calendar: Self.utc)
-
-        #expect(state.suggestions.isEmpty)
-        #expect(state.unsureCount == 1)
-        let row = state.unsure.first?.rows.first
-        #expect(row?.kind == .unsure(Self.ian, Self.sam))
-        #expect(row?.references.map(\.id) == [ianFace.id, samFace.id])
-    }
-
-    /// Faces matching nobody that look alike on two days are one unnamed row per year;
-    /// years are newest first and undated photos last.
-    @Test func unnamedGroupsByYearNewestFirst() {
-        let a = Fixture.face("a.jpg", toward: [5: 1], at: 0)
-        let b = Fixture.face("b.jpg", toward: [5: 1], at: 2 * Self.year)
-        let c = Fixture.face("c.jpg", toward: [5: 1], at: 0, dated: false)
-
-        let state = PeopleStateBuilder.state(from: Self.snapshot([a, b, c], people: []), calendar: Self.utc)
-
-        #expect(state.suggestions.map(\.year) == [Self.yearOf(b), Self.yearOf(a), nil])
-        #expect(state.suggestions.allSatisfy { year in
-            year.rows.allSatisfy {
-                if case .unnamed = $0.kind {
-                    true
-                } else {
-                    false
-                }
-            }
-        })
-        #expect(state.suggestionCount == 3)
-    }
-
-    /// The People list holds every unnamed group, across years, as its newest face: most
-    /// photos first, named by its first face in path order, which also names its review rows.
-    @Test func theListHoldsUnnamedGroups() {
-        let small = [
-            Fixture.face("x1.jpg", toward: [6: 1], at: 0),
-            Fixture.face("x2.jpg", toward: [6: 1], at: 2 * Self.year),
+    /// The gallery: favourites first, then most photos, a named person before an unnamed one
+    /// of the same count; hidden people last. The cover is the feature face, else the newest.
+    @Test func theGalleryOrdersFavoritesThenPhotosAndHiddenLast() {
+        let tyler = PersonID(rawValue: 3)
+        let owen = PersonID(rawValue: 4)
+        let faces = [
+            Fixture.face("s1.jpg", toward: [0: 1], at: 0, assignment: .user(Self.sam)),
+            Fixture.face("s2.jpg", toward: [0: 1], at: Self.day, assignment: .model(Self.sam)),
+            Fixture.face("s3.jpg", toward: [0: 1], at: 2 * Self.day, assignment: .model(Self.sam)),
+            Fixture.face("i1.jpg", toward: [1: 1], at: 0, assignment: .seed(Self.ian)),
+            Fixture.face("t1.jpg", toward: [2: 1], at: 0, assignment: .seed(tyler)),
+            Fixture.face("u1.jpg", toward: [3: 1], at: 0, assignment: .seed(owen)),
         ]
-        let large = [
-            Fixture.face("y1.jpg", toward: [5: 1], at: 0),
-            Fixture.face("y2.jpg", toward: [5: 1], at: Self.year),
-            Fixture.face("y3.jpg", toward: [5: 1], at: 3 * Self.year),
+        let people: [PeopleSnapshot.Person] = [
+            .init(id: Self.sam, name: "Sam", birthday: nil),
+            .init(id: Self.ian, name: "Ian", birthday: nil, isHidden: true),
+            .init(id: tyler, name: nil, birthday: nil),
+            .init(id: owen, name: "Owen", birthday: nil, isFavorite: true),
         ]
 
-        let state = PeopleStateBuilder.state(from: Self.snapshot(small + large, people: []), calendar: Self.utc)
+        let state = PeopleStateBuilder.state(from: Self.snapshot(faces, people: people, features: [Self.sam: faces[0].id]))
 
-        #expect(state.people.isEmpty)
-        #expect(state.unnamed.map(\.id) == [large[0].id, small[0].id])
-        #expect(state.unnamed.first?.cover?.id == large[2].id)
-        #expect(state.unnamed.first?.photoCount == 3)
-        #expect(state.listItems == [.unnamed(large[0].id), .unnamed(small[0].id)])
-        let rowIDs = Set(state.suggestions.flatMap(\.rows).map(\.id))
-        #expect(rowIDs == [.unnamed(large[0].id), .unnamed(small[0].id)])
-        #expect(PeoplePresentation.emptyListSentence(state) == nil)
-        #expect(PeoplePresentation.unnamedCount(state.unnamed) == "5 faces")
+        #expect(state.people.map(\.id) == [owen, Self.sam, tyler, Self.ian])
+        #expect(state.visiblePeople.map(\.id) == [owen, Self.sam, tyler])
+        #expect(state.person(Self.sam)?.photoCount == 3)
+        #expect(state.person(Self.sam)?.cover?.id == faces[0].id)
+        #expect(state.person(tyler)?.cover?.id == faces[4].id)
+        #expect(state.person(Self.sam)?.userFaces.map(\.id) == [faces[0].id])
+        #expect(state.person(Self.ian)?.anchorPhotos == [faces[3].id.asset])
     }
 
-    /// A person row shows the face least like the person first.
-    @Test func aPersonRowShowsItsLeastSureFaceFirst() {
-        let samFace = Fixture.face("s.jpg", toward: [0: 1], at: 0, person: Self.sam)
-        let sure = Fixture.face("sure.jpg", toward: [0: 1, 9: 0.1], at: Self.year / 4)
-        let lessSure = Fixture.face("less.jpg", toward: [0: 1, 9: 0.8], at: Self.year / 4 + 86400)
+    /// A photo's faces as the menus and Info show them: a hidden person's face is left out;
+    /// an unidentified face and a "not a face" detection are not.
+    @Test func aPhotosFacesLeaveOutHiddenPeopleAndNonFaces() {
+        let faces = [
+            Fixture.face("g.jpg", index: 0, toward: [0: 1], at: 0, assignment: .model(Self.sam)),
+            Fixture.face("g.jpg", index: 1, toward: [1: 1], at: 0, assignment: .user(Self.ian)),
+            Fixture.face("g.jpg", index: 2, toward: [2: 1], at: 0),
+            Fixture.face("g.jpg", index: 3, toward: [3: 1], at: 0, notAFace: true),
+        ]
+        let people: [PeopleSnapshot.Person] = [
+            .init(id: Self.sam, name: "Sam", birthday: nil),
+            .init(id: Self.ian, name: "Ian", birthday: nil, isHidden: true),
+        ]
 
-        let state = PeopleStateBuilder.state(from: Self.snapshot([samFace, sure, lessSure]), calendar: Self.utc)
+        let state = PeopleStateBuilder.state(from: Self.snapshot(faces, people: people))
+        let selection = state.selectionFaces(for: [faces[0].id.asset])
 
-        #expect(state.suggestions.count == 1)
-        #expect(state.suggestions.first?.rows.first?.faces.map(\.id) == [lessSure.id, sure.id])
+        #expect(selection.faces.map(\.id) == [faces[0].id, faces[2].id])
+        #expect(selection.people == [Self.sam])
+        #expect(selection.unidentified.map(\.id) == [faces[2].id])
+        #expect(state.faceCount == 3)
     }
 
-    /// Not a Face takes a detection out of People altogether.
-    @Test func notAFaceIsNotCounted() {
-        let face = Fixture.face("x.jpg", toward: [0: 1], at: 0, notAFace: true)
-        let state = PeopleStateBuilder.state(from: Self.snapshot([face], people: []), calendar: Self.utc)
-        #expect(state.faceCount == 0)
-        #expect(state.suggestions.isEmpty)
+    /// What one assignment writes is only what changed: a new guess, a guess taken away, a
+    /// new person with seeds, a changed likeness, and a person Otos found whose last face is
+    /// gone. The user's faces are never written.
+    @Test func aPlanHoldsOnlyWhatChanged() {
+        let tyler = PersonID(rawValue: 3)
+        let faces = [
+            Fixture.face("a.jpg", toward: [0: 1], at: 0, assignment: .user(Self.sam)),
+            Fixture.face("b.jpg", toward: [0: 1], at: 0, assignment: .model(Self.sam)),
+            Fixture.face("c.jpg", toward: [0: 1], at: 0, assignment: .model(Self.ian)),
+            Fixture.face("d.jpg", toward: [0: 1], at: 0),
+            Fixture.face("e.jpg", toward: [5: 1], at: 0),
+            Fixture.face("f.jpg", toward: [5: 1], at: 0),
+            Fixture.face("g.jpg", toward: [6: 1], at: 0, assignment: .model(tyler)),
+        ]
+        let people: [PeopleSnapshot.Person] = [
+            .init(id: Self.sam, name: "Sam", birthday: nil),
+            .init(id: Self.ian, name: "Ian", birthday: nil),
+            .init(id: tyler, name: nil, birthday: nil),
+        ]
+        var result = FaceAssignmentResult()
+        result.guesses = [faces[1].id: .existing(Self.sam), faces[2].id: .existing(Self.sam)]
+        result.newPeople = [[faces[4].id, faces[5].id]]
+        result.likeness = [faces[0].id: 0.9]
+
+        let plan = FaceAssignmentPlan.changes(from: Self.snapshot(faces, people: people, likeness: [faces[1].id: 0.8]), to: result)
+
+        #expect(Set(plan.guesses.map(\.face)) == [faces[2].id, faces[6].id])
+        #expect(plan.guesses.first { $0.face == faces[6].id }?.person == nil)
+        #expect(plan.newPeople == [[faces[4].id, faces[5].id]])
+        let likeness: [FaceID: Float?] = [faces[0].id: 0.9, faces[1].id: nil]
+        #expect(plan.likeness == likeness)
+        #expect(plan.emptied == [tyler])
     }
 
-    // MARK: - The review's rules and keys
+    /// Across a selection, the people its unidentified faces most likely are; This Is gives
+    /// a person the face most like them in each photo.
+    @Test func theSelectionsLikelyPeopleAndTheFacesTheyAreGiven() {
+        let one = Fixture.face("one.jpg", index: 0, toward: [0: 1], at: 0)
+        let two = Fixture.face("two.jpg", index: 0, toward: [0: 1], at: 0)
+        let twoOther = Fixture.face("two.jpg", index: 1, toward: [1: 1], at: 0)
+        let state = PeopleStateBuilder.state(from: Self.snapshot([one, two, twoOther]))
+        var selection = state.selectionFaces(for: [one.id.asset, two.id.asset])
+        selection.candidates = [
+            one.id: [.init(person: Self.ian, similarity: 0.7), .init(person: Self.sam, similarity: 0.5)],
+            two.id: [.init(person: Self.ian, similarity: 0.6), .init(person: Self.sam, similarity: 0.4)],
+            twoOther.id: [.init(person: Self.sam, similarity: 0.9), .init(person: Self.ian, similarity: 0.2)],
+        ]
 
-    static func tile(_ path: String, at seconds: Double?) -> FaceTile {
-        FaceTile(
-            id: FaceID(asset: MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Lib"), relativePath: MediaRelativePath(rawValue: path)), index: 0),
-            box: .zero, previewName: nil, captureSeconds: seconds
-        )
+        #expect(selection.likelyPeople(for: selection.unidentified) == [Self.sam, Self.ian])
+        #expect(selection.unidentifiedFacesToName(as: Self.ian) == [one.id, two.id])
+        #expect(selection.unidentifiedFacesToName(as: Self.sam) == [one.id, twoOther.id])
     }
 
-    /// The hard rules disable the act, with the reason the tooltip shows (DES-038).
-    @Test func theHardRulesNameTheirReason() {
-        let shared = Self.tile("a.jpg", at: Fixture.epoch)
-        let sharedOther = FaceID(asset: shared.id.asset, index: 1)
-        let early = Self.tile("early.jpg", at: Fixture.epoch - Self.year)
-        let state = CatalogPeopleState(
-            people: [
-                PersonSummary(id: Self.sam, name: "Sam", birthday: "2020", photoCount: 1, faces: [shared]),
-                PersonSummary(id: Self.ian, name: "Ian", birthday: nil, photoCount: 0, faces: []),
-            ],
-            suggestions: [PeopleReviewYear(year: 2020, rows: [
-                PeopleReviewRow(kind: .person(Self.ian, referenceYear: nil), references: [], faces: [early]),
-            ])],
-            unsure: [], uncheckedPhotoCount: 0, faceCount: 3
-        )
-        let index = PeopleIndex(state)
+    /// The acts' hard rules disable them, with the reason the tooltip shows (DES-038).
+    @Test func theHardRulesNameTheirReason() throws {
+        let birthday = try #require(PersonBirthday.seconds("2021-01-01"))
+        let samsFace = Fixture.face("a.jpg", index: 0, toward: [0: 1], at: 0, assignment: .user(Self.sam))
+        let iansFace = Fixture.face("b.jpg", index: 0, toward: [1: 1], at: 0, assignment: .user(Self.ian))
+        let people: [PeopleSnapshot.Person] = [
+            .init(id: Self.sam, name: "Sam", birthday: nil),
+            .init(id: Self.ian, name: "Ian", birthday: "2021-01-01"),
+        ]
+        let index = PeopleIndex(PeopleStateBuilder.state(from: Self.snapshot([samsFace, iansFace], people: people)))
+        let other = PhotoFace(tile: Self.tile("a.jpg", index: 1, at: Fixture.epoch), person: nil)
+        let early = PhotoFace(tile: Self.tile("c.jpg", at: birthday - Self.day), person: nil)
+        let pair = [Self.tile("d.jpg", at: Fixture.epoch), Self.tile("d.jpg", index: 1, at: Fixture.epoch)].map {
+            PhotoFace(tile: $0, person: nil)
+        }
 
-        #expect(index.confirmRefusal([sharedOther], as: Self.sam) == "Sam is already in this photo")
-        #expect(index.confirmRefusal([sharedOther, shared.id], as: Self.ian) == "2 of these faces are in the same photo")
-        #expect(index.confirmRefusal([early.id], as: Self.sam) == "1 face is from before Sam's birthday")
-        #expect(index.confirmRefusal([early.id], as: Self.ian) == nil)
-        #expect(index.eligiblePeople(for: [early.id], excluding: []).map(\.id) == [Self.ian])
-        #expect(index.sheetRefusal(person: Self.ian, name: "Sam", birthday: nil) == "Another person is named Sam. Merge them instead.")
-        #expect(index.sheetRefusal(person: Self.ian, name: " ", birthday: nil) == "Enter a name")
-        #expect(index.sheetRefusal(person: Self.sam, name: "Sam", birthday: "2021") == "1 confirmed photo of Sam is from before this date")
-        #expect(index.sheetRefusal(person: Self.sam, name: "Sam", birthday: "20x") == "Enter a year, or a full date")
-        #expect(index.mergeRefusal(Self.ian, into: Self.sam) == nil)
+        #expect(index.moveRefusal([other], to: Self.sam) == "Sam is already in this photo")
+        #expect(index.moveRefusal([early], to: Self.ian) == "1 photo is from before Ian's birthday")
+        #expect(index.moveRefusal(pair, to: Self.sam) == "2 of these faces are in the same photo")
+        #expect(index.moveRefusal([early], to: Self.sam) == nil)
+        #expect(index.sheetRefusal(.person(Self.sam), name: "  ", birthday: nil) == "Enter a name")
+        #expect(index.sheetRefusal(.person(Self.sam), name: "Sam", birthday: "20") == "Enter a year, or a full date")
+        #expect(index.sheetRefusal(.person(Self.ian), name: "Ian", birthday: "2030") == "1 photo of Ian is from before this date")
+        // A name another person has is not a refusal: saving it asks to merge.
+        #expect(index.sheetRefusal(.person(Self.sam), name: "Ian", birthday: nil) == nil)
+        #expect(index.person(named: "Ian", excluding: Self.sam) == Self.ian)
     }
 
-    @Test func mergingIsRefusedWhenBothAreInAPhoto() {
-        let shared = Self.tile("a.jpg", at: Fixture.epoch)
-        let other = FaceTile(id: FaceID(asset: shared.id.asset, index: 1), box: .zero, previewName: nil, captureSeconds: Fixture.epoch)
-        let state = CatalogPeopleState(
-            people: [
-                PersonSummary(id: Self.sam, name: "Sam", birthday: nil, photoCount: 1, faces: [shared]),
-                PersonSummary(id: Self.ian, name: "Ian", birthday: nil, photoCount: 1, faces: [other]),
-            ],
-            suggestions: [], unsure: [], uncheckedPhotoCount: 0, faceCount: 2
-        )
-        #expect(PeopleIndex(state).mergeRefusal(Self.ian, into: Self.sam) == "Ian and Sam are both in 1 photo")
+    @Test func mergingIsRefusedWhenTheUserGaveBothAFaceOfOnePhoto() {
+        let faces = [
+            Fixture.face("g.jpg", index: 0, toward: [0: 1], at: 0, assignment: .user(Self.sam)),
+            Fixture.face("g.jpg", index: 1, toward: [1: 1], at: 0, assignment: .seed(Self.ian)),
+        ]
+        let index = PeopleIndex(PeopleStateBuilder.state(from: Self.snapshot(faces)))
+
+        #expect(index.mergeRefusal(Self.sam, into: Self.ian) == "Sam and Ian are both in 1 photo")
+        #expect(index.mergeRefusal(Self.sam, into: Self.sam) == "Choose another person")
     }
 
-    /// ← / → walk faces across rows; ↑ / ↓ keep the place in the row; after an act the
-    /// selection goes to the face after the last one acted on; leaving faces are not shown.
-    @Test func theReviewIsWalkedFromTheKeyboard() {
-        let first = (0 ..< 3).map { Self.tile("a\($0).jpg", at: Fixture.epoch - Double($0)) }
-        let second = (0 ..< 2).map { Self.tile("b\($0).jpg", at: Fixture.epoch - Double($0)) }
-        let years = [PeopleReviewYear(year: 2020, rows: [
-            PeopleReviewRow(kind: .person(Self.sam, referenceYear: 2020), references: [], faces: first),
-            PeopleReviewRow(kind: .person(Self.ian, referenceYear: 2020), references: [], faces: second),
-        ])]
-        let layout = PeopleReviewLayout(years: years, leaving: [], expanded: [])
-
-        #expect(layout.target(from: nil, .next) == first[0].id)
-        #expect(layout.target(from: first[2].id, .next) == second[0].id)
-        #expect(layout.target(from: second[0].id, .previous) == first[2].id)
-        #expect(layout.target(from: first[2].id, .down) == second[1].id)
-        #expect(layout.target(from: second[1].id, .up) == first[1].id)
-        #expect(layout.successor(of: [first[0].id, first[1].id]) == first[2].id)
-        #expect(layout.successor(of: Set((first + second).map(\.id))) == nil)
-
-        let without = PeopleReviewLayout(years: years, leaving: Set(first.map(\.id)), expanded: [])
-        #expect(without.rows.count == 1)
-        #expect(without.order == second.map(\.id))
-    }
-
-    /// A row shows its first 12 faces until it is expanded; the hidden ones still count, and
-    /// the keys walk only the shown ones.
-    @Test func aLongRowShowsTwelveFacesUntilExpanded() {
-        let many = (0 ..< 15).map { Self.tile("m\($0).jpg", at: Fixture.epoch - Double($0)) }
-        let next = [Self.tile("n.jpg", at: Fixture.epoch)]
-        let row = PeopleReviewRow(kind: .person(Self.sam, referenceYear: 2020), references: [], faces: many)
-        let years = [PeopleReviewYear(year: 2020, rows: [
-            row,
-            PeopleReviewRow(kind: .person(Self.ian, referenceYear: 2020), references: [], faces: next),
-        ])]
-
-        let collapsed = PeopleReviewLayout(years: years, leaving: [], expanded: [])
-        #expect(collapsed.faceCount == 16)
-        #expect(collapsed.order == many.prefix(12).map(\.id) + next.map(\.id))
-        #expect(collapsed.shownFaces(row, year: 2020).count == 12)
-        #expect(collapsed.target(from: many[11].id, .next) == next[0].id)
-        #expect(collapsed.target(from: next[0].id, .up) == many[0].id)
-        #expect(PeoplePresentation.showAllTitle(15) == "Show All 15 Faces")
-
-        let expanded = PeopleReviewLayout(years: years, leaving: [], expanded: [PeopleReviewRowKey(row: row.id, year: 2020)])
-        #expect(expanded.order.count == 16)
-        #expect(expanded.shownFaces(row, year: 2020).count == 15)
-        #expect(expanded != collapsed)
-    }
-
-    // MARK: - Words
-
-    @Test func countsReadAsTheSpecWritesThem() {
+    @Test func theWordsTheSurfacesUse() {
         #expect(PeoplePresentation.peopleLine(0) == "No people")
         #expect(PeoplePresentation.peopleLine(1) == "1 person")
         #expect(PeoplePresentation.peopleLine(14) == "14 people")
         #expect(PeoplePresentation.uncheckedLine(0) == "Every photo has been checked")
-        #expect(PeoplePresentation.uncheckedLine(1) == "1 photo not yet checked for faces")
-        #expect(PeoplePresentation.reviewLine(236, list: .suggestions) == "236 faces to review")
-        #expect(PeoplePresentation.reviewLine(0, list: .unsure) == "Nothing to decide")
-        #expect(PeoplePresentation.confirmTitle(12, enabled: true) == "Confirm 12 Faces")
-        #expect(PeoplePresentation.confirmTitle(0, enabled: false) == "Confirm Faces")
-        let row = PeopleReviewRow(kind: .person(Self.sam, referenceYear: 2024), references: [], faces: [Self.tile("a.jpg", at: nil)])
-        #expect(PeoplePresentation.rowDetail(row) { _ in "Sam" } == "1 face · like Sam in 2024")
-        let unsure = PeopleReviewRow(kind: .unsure(Self.sam, Self.ian), references: [], faces: [])
-        #expect(PeoplePresentation.rowTitle(unsure) { $0 == Self.sam ? "Sam" : "Ian" } == "Sam or Ian?")
+        #expect(PeoplePresentation.uncheckedLine(1820) == "1,820 photos not yet checked for faces")
+        #expect(PeopleText.names(["Sam"]) == "Sam")
+        #expect(PeopleText.names(["Sam", "Ian"]) == "Sam and Ian")
+        #expect(PeopleText.names(["Sam", "Ian", "Tyler", "Owen"]) == "Sam, Ian and 2 Others")
+        #expect(MediaSortOrder.likenessLeast.label(person: "Sam") == "Likeness — Least Like Sam First")
+        #expect(MediaSortOrder.likenessMost.label(person: "Sam") == "Likeness — Most Like Sam First")
+        #expect(MediaSortOrder.likenessLeast.label(person: nil) == "Likeness — Least Alike First")
+        #expect(MediaSortOrder.dateNewest.label(person: "Sam") == "Date — Newest First")
+    }
+
+    /// Likeness orders photos only with one person filtered; otherwise the reads use the
+    /// default order, and the user's choice is kept for when one person is filtered again.
+    @Test func likenessNeedsOnePersonFiltered() {
+        var descriptor = CatalogQueryDescriptor(scope: .allMedia, sort: .likenessLeast)
+        #expect(descriptor.effectiveSort == .defaultOrder)
+        descriptor.filter.people = [Self.sam]
+        #expect(descriptor.effectiveSort == .likenessLeast)
+        descriptor.filter.unassignedFaces = true
+        #expect(descriptor.effectiveSort == .defaultOrder)
+        #expect(descriptor.sort == .likenessLeast)
+    }
+
+    @Test func thePeopleFilterIsPartOfTheFilter() {
+        var filter = MediaFilter.all.settingPerson(Self.sam, included: true)
+        #expect(filter.isActive && filter.singlePerson == Self.sam)
+        filter = filter.settingPerson(Self.ian, included: true)
+        #expect(filter.singlePerson == nil && filter.filtersPeople)
+        filter.peopleMatch = .all
+        filter.choices = [.liked]
+        #expect(filter.withoutPeople == MediaFilter(choices: [.liked]))
     }
 
     @Test func aDraggedPersonRoundTrips() {
-        #expect(PeopleDrag.person(from: PeopleDrag.payload(Self.ian)) == Self.ian)
-        #expect(PeopleDrag.person(from: "something else") == nil)
+        #expect(PeopleDrag.person(from: PeopleDrag.payload(Self.sam)) == Self.sam)
+        #expect(PeopleDrag.person(from: "net.melisma.otos.other:1") == nil)
     }
 
-    /// The crop is the face box enlarged by 1.6, kept inside the image.
     @Test func aFaceTileIsTheEnlargedBoxInsideThePhoto() throws {
         let context = try #require(CGContext(
             data: nil, width: 400, height: 200, bitsPerComponent: 8, bytesPerRow: 0,
@@ -284,5 +235,32 @@ struct PeopleStateTests {
         #expect(centered.width == 64 && centered.height == 64)
         let corner = try #require(FaceCrop.crop(image, box: CGRect(x: 0, y: 0, width: 0.6, height: 0.9)))
         #expect(corner.width == 200 && corner.height == 200)
+    }
+
+    /// A face's outline on the edited photo: the box itself without an edit, mapped through
+    /// a quarter turn and a crop, and nothing when the crop leaves it out.
+    @Test func aFacesOutlineFollowsTheEdit() throws {
+        let box = CGRect(x: 0.1, y: 0.2, width: 0.2, height: 0.1)
+        let size = CGSize(width: 400, height: 200)
+        var turned = EditRecipe()
+        turned.quarterTurns = 1
+        let quarter = try #require(EditGeometry(recipe: turned, developedSize: size).editedRect(ofDevelopedFraction: box))
+        // A quarter turn clockwise: the left edge becomes the top.
+        #expect(abs(quarter.minX - 0.7) < 1e-9 && abs(quarter.minY - 0.1) < 1e-9)
+        #expect(abs(quarter.width - 0.1) < 1e-9 && abs(quarter.height - 0.2) < 1e-9)
+
+        var cropped = EditRecipe()
+        cropped.crop = EditCrop(left: 0.5, top: 0, width: 0.5, height: 1)
+        #expect(EditGeometry(recipe: cropped, developedSize: size).editedRect(ofDevelopedFraction: box) == nil)
+        cropped.crop = EditCrop(left: 0, top: 0, width: 0.5, height: 1)
+        let half = try #require(EditGeometry(recipe: cropped, developedSize: size).editedRect(ofDevelopedFraction: box))
+        #expect(abs(half.minX - 0.2) < 1e-9 && abs(half.width - 0.4) < 1e-9 && abs(half.minY - 0.2) < 1e-9)
+    }
+
+    static func tile(_ path: String, index: Int = 0, at seconds: Double?) -> FaceTile {
+        FaceTile(
+            id: FaceID(asset: MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Lib"), relativePath: MediaRelativePath(rawValue: path)), index: index),
+            box: .zero, previewName: nil, captureSeconds: seconds
+        )
     }
 }

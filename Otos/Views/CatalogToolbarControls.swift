@@ -7,6 +7,16 @@ import SwiftUI
 // command calls a ViewModel intent so toolbar and menu-bar actions share the same
 // implementation path.
 
+/// The People filter's rows and intents (ADR 0047): the visible people, favourites first,
+/// and `Unidentified Faces`; with two or more rows checked, whether a photo needs any of
+/// them or all of them.
+struct PeopleFilterControls {
+    let people: [PersonSummary]
+    let setPerson: (PersonID, Bool) -> Void
+    let setUnidentified: (Bool) -> Void
+    let setMatch: (PeopleMatch) -> Void
+}
+
 struct CatalogFilterControl: View {
     let descriptor: CatalogQueryDescriptor
     let options: CatalogFilterOptions
@@ -14,6 +24,7 @@ struct CatalogFilterControl: View {
     let setKind: (MediaKind, Bool) -> Void
     let setFileType: (MediaFormatToken, MediaKind, Bool) -> Void
     let setChoice: (MediaChoice, Bool) -> Void
+    let people: PeopleFilterControls
     let clearFilters: () -> Void
 
     var body: some View {
@@ -31,6 +42,7 @@ struct CatalogFilterControl: View {
                 setKind: setKind,
                 setFileType: setFileType,
                 setChoice: setChoice,
+                people: people,
                 clearFilters: clearFilters
             )
             .frame(width: 260)
@@ -46,7 +58,12 @@ struct CatalogFilterPopoverContent: View {
     let setKind: (MediaKind, Bool) -> Void
     let setFileType: (MediaFormatToken, MediaKind, Bool) -> Void
     let setChoice: (MediaChoice, Bool) -> Void
+    let people: PeopleFilterControls
     let clearFilters: () -> Void
+
+    /// A search field over the people once there are more than fit at a glance.
+    @State private var peopleQuery = ""
+    private static let peopleBeforeSearch = 8
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -84,11 +101,61 @@ struct CatalogFilterPopoverContent: View {
                 .toggleStyle(.checkbox)
             }
             Divider()
+            peopleSection
+            Divider()
             Button("Clear Filters", action: clearFilters)
                 .disabled(!descriptor.filter.isActive)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var peopleSection: some View {
+        let filter = descriptor.filter
+        let query = peopleQuery.trimmingCharacters(in: .whitespaces)
+        // A checked person always shows, so the filter never holds a row the user cannot see.
+        let shown = people.people.filter { person in
+            query.isEmpty || filter.people.contains(person.id)
+                || person.displayName.localizedStandardContains(query)
+        }
+        let checked = filter.people.count + (filter.unassignedFaces ? 1 : 0)
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("People")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            if people.people.count > Self.peopleBeforeSearch {
+                TextField("Search People", text: $peopleQuery)
+                    .textFieldStyle(.roundedBorder)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(shown) { person in
+                        Toggle(person.displayName, isOn: Binding(
+                            get: { filter.people.contains(person.id) },
+                            set: { people.setPerson(person.id, $0) }
+                        ))
+                    }
+                    Toggle("Unidentified Faces", isOn: Binding(
+                        get: { filter.unassignedFaces },
+                        set: { people.setUnidentified($0) }
+                    ))
+                }
+                .toggleStyle(.checkbox)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 200)
+            .fixedSize(horizontal: false, vertical: true)
+            // Disabled, never hidden, until two rows are checked (DES-053).
+            Picker("Show Photos With", selection: Binding(
+                get: { filter.peopleMatch },
+                set: { people.setMatch($0) }
+            )) {
+                Text("Any of Them").tag(PeopleMatch.any)
+                Text("All of Them").tag(PeopleMatch.all)
+            }
+            .pickerStyle(.menu)
+            .disabled(checked < 2)
+        }
     }
 
     /// A collection-backed Toggle gives macOS its native mixed state. Every
@@ -135,24 +202,29 @@ private struct MenuToggleSource {
 struct CatalogSortMenu: View {
     let sort: MediaSortOrder
     let search: CatalogSearch?
+    /// The one person the filter shows, whom the likeness orders name.
+    let person: String?
     let setOrder: (MediaSortOrder) -> Void
     let orderByRelevance: () -> Void
 
     var body: some View {
         Menu {
-            CatalogSortMenuContent(sort: sort, search: search, setOrder: setOrder, orderByRelevance: orderByRelevance)
+            CatalogSortMenuContent(sort: sort, search: search, person: person, setOrder: setOrder, orderByRelevance: orderByRelevance)
         } label: {
             Image(systemName: "arrow.up.arrow.down")
         }
-        .help("Sort: \(search?.order == .relevance ? "Relevance" : sort.label)")
+        .help("Sort: \(search?.order == .relevance ? "Relevance" : sort.label(person: person))")
     }
 }
 
 /// The sort choices. While a search is shown, `Relevance` — best match first, Lightroom's
-/// default for search results — sits above the scope's own orders (ADR 0048).
+/// default for search results — sits above the scope's own orders (ADR 0048). The likeness
+/// orders name the person the filter shows, and are disabled, never hidden, without one
+/// (DES-053).
 struct CatalogSortMenuContent: View {
     let sort: MediaSortOrder
     let search: CatalogSearch?
+    let person: String?
     let setOrder: (MediaSortOrder) -> Void
     let orderByRelevance: () -> Void
 
@@ -168,7 +240,9 @@ struct CatalogSortMenuContent: View {
                 Divider()
             }
             ForEach(MediaSortOrder.allCases, id: \.self) { order in
-                Text(order.label).tag(Choice.order(order))
+                Text(order.label(person: person))
+                    .tag(Choice.order(order))
+                    .selectionDisabled(order.field == .likeness && person == nil)
             }
         }
         .pickerStyle(.inline)

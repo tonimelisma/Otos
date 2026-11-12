@@ -2,15 +2,16 @@
 
 ## Status
 
-Accepted, 2026-11-10. The model, precision and face-admission rules are decided on measured
-evidence (`docs/research/2026-11-07-face-recognition-models.md`).
+Accepted, 2026-11-10; assignment rewritten 2026-11-12, when the owner redesigned People
+around auto-tagged faces. The model, precision and face-admission rules are decided on
+measured evidence (`docs/research/2026-11-07-face-recognition-models.md`); assignment on
+`docs/research/2026-11-12-face-auto-assignment.md`.
 
 Built: detection, the analyser and the model (#593), faces as a stored enrichment product
-(#601), the stored acts, the people and the grouping policy (#604), faces for Immich
-accounts from their stored previews (`PreviewFaceReader`, #605), and People itself: the
-list, a person's scope and the review (`docs/design/people.md`), published by
-`PeopleProjection`, with every act one `PeopleAct` that `CatalogStore.perform` applies in
-one transaction and returns the record that undoes it.
+(#601), faces for Immich accounts from their stored previews (`PreviewFaceReader`, #605),
+and People (`docs/design/people.md`): `PeopleAssignment` gives every face its person and
+publishes the gallery, and every act of the user's is one `PeopleAct` that
+`CatalogStore.perform` applies in one transaction, returning the record that undoes it.
 
 ## Context
 
@@ -93,7 +94,7 @@ grouping had put with the right child.
   - the embedding, as 512 little-endian Float32 values;
   - the analysis revision that read it.
 
-  The person a face is assigned or confirmed to comes with grouping.
+  Its person and whose word it is come with assignment.
 - **The faces stamp** is on the asset (`faces_source_size`, `faces_source_mtime`): the
   `(size, mtime)` the reading was made from, a product of its own in ADR 0009's sense. A reading
   replaces every face of its asset, and a still with no face has the stamp and no rows, so it is
@@ -101,57 +102,65 @@ grouping had put with the right child.
 - **The claim:** only a fixed library's rows owe faces, under their own claim
   (`EnrichmentClaim.library`) and its own pair of partial indexes. A card's or camera's rows are
   read for faces once imported into a library, which is where their overlay lives on.
-- **People** are catalog rows: a name, an optional birthday, and a stable row ID. A person is
-  not a media asset, so this is not an asset identity, which stays the path. A person is the set
-  of their confirmed faces, each with its capture date. No average face is stored.
+- **People** are catalog rows: an optional name, an optional birthday, a hidden mark, a
+  favourite mark, and a stable row ID. A person is not a media asset, so this is not an asset
+  identity, which stays the path. A person is the set of their faces, each with its capture
+  date. No average face is stored.
+- **Whose word a face's person is** (`face.assignment` beside `face.person_id`): none, Otos's
+  guess, a seed (one of the faces a person was first found from), the user's, or held (the
+  user removed the name). The user's faces and the seeds are the anchors; every guess is
+  rebuilt from them. Also on the face: its likeness to its person (the likeness sort) and
+  whether it is its person's feature photo, at most one per person.
 - **Media folders:** nothing is written to them. Names exist only in the catalog. Otos never
   reads or writes face regions in files' XMP, and export writes no names (owner decision,
   2026-11-10).
 
-### Grouping
+### Assignment
 
-- **Comparison:** every new face against the confirmed faces, by exact cosine with Accelerate.
-  For a person who was an adult (18 or older) on the face's date, all their confirmed faces
-  count; otherwise, and whenever the age is unknown, only those within two years. Measured: an
-  adult's face pairs ten or more years apart still reach the threshold 84% of the time, a
-  child's six or more years apart 5%, and dropping the window gave adults full coverage with no
-  wrong match, while for children it added two sibling first choices (owner question,
-  2026-11-10). No index and no vector database: a
-  family library holds tens of thousands of faces.
-- **Acceptance:** a suggestion is made only when the best person reaches the threshold and beats
-  the second-best person by a margin: threshold 0.434 (0.1% of different-person pairs
-  accepted), margin 0.08, faces compared within ± 2 years. Measured by simulating the review
-  on the owner's labels: every child face reached, 9 wrong suggestions out of 521 (research
-  note, section 8).
+`FaceAssignmentPolicy`, pure; `PeopleAssignment` runs it and writes what changed.
+
+- **Every face gets its most likely person.** There is no review: a face shows the person it
+  is assigned to wherever faces are shown (DES-111), and the user corrects what is wrong.
+- **Reach:** a face is compared with each person's faces: all of them for a person who was an
+  adult (18 or older) on the face's date, those within two years otherwise, and whenever the
+  age is unknown. Measured: an adult's face pairs ten or more years apart still reach the
+  threshold 84% of the time, a child's six or more years apart 5% (owner question, 2026-11-10).
+  No index and no vector database: a family library holds tens of thousands of faces.
+- **Chaining:** from the anchors, faces are given out strongest first, round by round. A face
+  whose best person reaches the threshold (0.434, 0.1% of different-person pairs accepted)
+  and beats the runner-up by the margin (0.16) joins that person and is evidence for the next
+  round, which follows a child from year to year.
+- **Close calls:** a face whose best person reaches the threshold but whose runner-up is within
+  the margin goes to the best person — siblings are guessed too (owner decision, 2026-11-12)
+  — but is evidence for nobody, so a guess between two siblings never carries one into the
+  next year. Measured with one year seeded per person: 5 of 2,196 labelled faces given the
+  wrong person, 1 of them a sibling; 224 of 225, 487 of 487 and 32 of 32 of the children's
+  faces reached (research note, margin sweep).
+- **New people:** faces left over are grouped among themselves: each keeps its ten strongest
+  links of 0.65 or more, joined strongest first, never two faces of one photo. A group of
+  faces from two or more days becomes a new, unnamed person seeded with them, and chaining
+  runs again from scratch with the seeds as anchors. A face like no one, or seen on one day
+  only, stays unidentified, so a stranger caught once never becomes a person.
 - **Hard rules:**
   - Two faces in one photo are never the same person.
   - A face from before a person's birthday is never theirs. A birthday may be only a year,
     which counts from 1 January (owner decision, 2026-11-10).
-- **Years:** a child across three or more years is reached by chaining through the years between
-  them. Chained matches are suggestions that the user confirms, never automatic assignments.
-- **Unsure faces:** a face whose best person reaches the threshold but whose runner-up is within
-  the margin is not a suggestion. It is an *unsure* face, offered in a list of its own
-  with both candidates and no answer (owner decision, 2026-11-10; `docs/design/people.md`).
-- **Unnamed groups:** faces that match no person are grouped among themselves, so a library with
-  nobody named yet gets something to name. Each face keeps its ten strongest links of 0.65 or
-  more, joined strongest first, never two faces of one photo; hierarchical linkage was as pure
-  but cannot hold a large library's pairs in memory, and ten links per face give the same
-  groups as all of them (measured: 102 groups, 1,983 faces, none wrong), at a cost that grows
-  with the faces rather than their pairs. A group is offered only when its faces come from at least two different days, so a
-  stranger caught once never enters the review (owner decision).
-- **What the user's acts store** (overlay, ADR 0008; undoable):
-  - a confirmed face's person;
-  - a rejection, `Not Sam`, as a (face, person) exclusion, so the same suggestion never
-    returns;
-  - `Not a Face`, which takes a detection out of People until the photo's file changes;
-  - an ignored unnamed group, whose faces are never grouped or suggested again.
-
-  Removing a person returns their faces to the review as unnamed and forgets their
-  rejections. A person's name is optional: a split creates an unnamed person, named later
-  (owner decision).
+  - A face the user said is not someone (`Not Sam`) is held: Otos never gives it a person
+    again, and never offers that person for it.
+- **Corrections propagate:** a correction is a new anchor, and every guess is rebuilt from the
+  anchors, so moving one face moves the guesses reached through it (owner decision,
+  2026-11-12). From a cold start, ten moves left nothing wrong on the owner's
+  labels.
+- **Settles on its own output:** assignment reads only the anchors, so run on what it wrote it
+  writes nothing. A pass that wrote is followed by one that publishes.
+- **What the user's acts store** (overlay, ADR 0008; undoable): a face's person on their word;
+  a held face and its rejection; `Not a Face`, until the photo's file changes; a person's
+  name, birthday, hidden and favourite marks and feature photo. A person Otos found is
+  deleted once no face is theirs and the user said nothing about them.
 - **Immich accounts:** their photos are read for faces from the stored Immich preview, never
-  the original (measured in the research note, section 7: no wrong match, about 7% of small
-  faces missed). Their originals are downloaded only for the user's own work (ADR 0046).
+  the original (measured in the 2026-11-07 research note, section 7: no wrong match, about 7%
+  of small faces missed). Their originals are downloaded only for the user's own work
+  (ADR 0046).
 
 ### Work and placement
 
@@ -161,8 +170,11 @@ grouping had put with the right child.
 - **Rendering and threads:** faces come from the same read of the original as the rendering
   (`ImageRenderer.read(_:rendering:upright:)`), decoded a second time from those bytes, upright,
   at full resolution and with no edit. The model never runs on the main actor.
-- **People UI:** a People sidebar entry, and a review of suggestions grouped by year with
-  accept, merge and split. Its design spec (`docs/design/people.md`) comes before any code.
+- **Assignment:** `PeopleAssignment`'s loop, asked after every catalog change, reads every face
+  in one transaction, assigns off its actor, and writes a guess only where the face is still
+  Otos's to decide, so an act the user made meanwhile always wins.
+- **People UI:** the People gallery, a person's photos as the People filter, the face acts in
+  the photo menus and the Info pane (`docs/design/people.md`).
 
 ### Licences and attribution
 
@@ -190,23 +202,30 @@ grouping had put with the right child.
   owner approved downloading originals for this. Detection and embedding read the full
   resolution.
 - **An average face per person:** a child's average across years matches neither the baby nor the
-  school-age child. Confirmed faces, each with its date, keep each year's face.
+  school-age child. A person's faces, each with its date, keep each year's face.
 - **A vector database or an approximate index:** exact comparison over a family's faces is cheap,
   and an index adds an owner and a staleness problem for no measured need.
+- **A review to confirm every suggestion (2026-11-10 to 11-12):** it made the user confirm
+  521 suggestions by hand to reach the children, and kept unnamed groups as a second kind of
+  entry beside people. The owner rejected it: guesses are made, and corrected where wrong.
+- **Chaining through every guess:** close calls carried as evidence put 7 to 10 siblings
+  wrong (margins 0 to 0.12) against 1 at 0.16.
+- **Keeping guesses once made (Immich's way):** a correction would then fix only the faces it
+  names; rebuilding from the anchors makes it move the guesses chained through it.
 - **Writing names into the user's files or sidecars:** forbidden by ADR 0008. Names are overlay.
 - **Reading face regions from files' XMP (MWG):** never (owner decision, 2026-11-10).
 
 ## Consequences
 
 - **Accuracy is checked on the owner's labels:** a change to the model, the analysis or the
-  grouping rules runs `script/face-accuracy.sh` on the labelled set (research note §9) and
-  reports its suggestions, wrong suggestions and unnamed groups against the last run.
+  assignment rules runs `script/face-accuracy.sh` on the labelled set and reports the cold
+  start, the seeded run and the corrections against the last run.
 - **App size:** the app grows by 66 MB.
 - **Downloads and time:** analysing a library means downloading and decoding every original
   photo once: about 1.5 s a photo, mostly decode, in the background.
 - **Model change:** a new model is a new revision that re-analyses every photo, and stored names
-  carry over through the confirmed faces.
-- **Precision of names:** names follow confirmations, so a wrong suggestion costs the user one
-  rejection, never a wrong name applied silently.
+  carry over through the user's faces and the seeds.
+- **Wrong guesses are shown:** a face can carry the wrong person until the user corrects it;
+  the likeness sort puts the faces least like a person first, where the wrong ones are.
 - **Licence check:** WebFace260M's terms are recorded as unread. They are checked when the site
   is reachable, and again if Otos is ever distributed beyond its owner.

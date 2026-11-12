@@ -3,12 +3,13 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// What the user decides about faces and people, as the catalog stores it (ADR 0047):
-/// confirmations, rejections, "not a face", ignored groups, people, and how each survives a
-/// new reading of the photo.
+/// Who each face is, as the catalog stores it (ADR 0047): the user's acts and the hard rules
+/// they are held to, what undoing each writes back, what a new reading of a photo keeps,
+/// how assignment's guesses are written without ever overwriting the user's word, and the
+/// People filter and likeness order the browser reads.
 @Suite(.testDirectory)
 struct PeopleStoreTests {
-    @Test func confirmingRejectingAndFlaggingAreReadBackAsFacts() async throws {
+    @Test func theUsersActsAreReadBackAsFacts() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
         try await library.store.applyEnrichmentBatch([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)]),
@@ -17,125 +18,124 @@ struct PeopleStoreTests {
         let a0 = FaceID(asset: library.id("a.jpg"), index: 0)
         let a1 = FaceID(asset: library.id("a.jpg"), index: 1)
         let b0 = FaceID(asset: library.id("b.jpg"), index: 0)
-        let sam = try #require(try await library.store.perform(.name([a0], "Sam")).person)
-        let ian = try #require(try await library.store.perform(.name([], "Ian")).person)
+        let sam = try #require(try await library.store.perform(.moveToNewPerson([a0], name: "Sam")).person)
+        let ian = try #require(try await library.store.perform(.moveToNewPerson([a1], name: "Ian")).person)
         _ = try await library.store.perform(.edit(ian, name: "Ian", birthday: "2022-11-03"))
-
-        _ = try await library.store.perform(.reject([a1], person: ian))
+        _ = try await library.store.perform(.removeName([a1]))
         _ = try await library.store.perform(.notAFace([b0]))
+        _ = try await library.store.perform(.setFavorite(sam, true))
+        _ = try await library.store.perform(.setHidden(ian, true))
 
         let facts = try await library.store.peopleSnapshot()
         let byID = Dictionary(uniqueKeysWithValues: facts.faces.map { ($0.id, $0) })
-        #expect(byID[a0]?.person == sam)
+        #expect(byID[a0]?.assignment == .user(sam))
+        #expect(byID[a1]?.assignment == .held)
         #expect(byID[a1]?.rejected == [ian])
         #expect(byID[b0]?.isNotFace == true)
         #expect(facts.people.map(\.id) == [sam, ian])
         #expect(facts.people.map(\.name) == ["Sam", "Ian"])
+        #expect(facts.people.map(\.isFavorite) == [true, false])
+        #expect(facts.people.map(\.isHidden) == [false, true])
         #expect(facts.people.last?.birthdaySeconds == PersonBirthday.seconds("2022-11-03"))
         #expect(facts.tiles[a1]?.box == Self.face(x: 0.6).box)
+        #expect(try await library.store.namedPeople().map(\.id) == [sam])
         await library.store.shutdown()
     }
 
-    /// The Info pane names the people confirmed in a photo in the order its faces were
-    /// found, and no one for a face not confirmed (APP-041, DES-111).
-    @Test func thePhotosOverlayNamesItsConfirmedPeopleInFaceOrder() async throws {
-        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
-        try await library.store.applyEnrichmentBatch([
-            library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.4), Self.face(x: 0.7)]),
-        ])
-        let id = library.id("a.jpg")
-        _ = try await library.store.perform(.name([FaceID(asset: id, index: 2)], "Sam"))
-        _ = try await library.store.perform(.name([FaceID(asset: id, index: 0)], "Ian"))
-
-        let overlay = try #require(try await library.store.photoInfoOverlay(for: id))
-        #expect(overlay.people == ["Ian", "Sam"])
-        #expect(overlay.companionFileNames.isEmpty)
-        #expect(overlay.importedAt == nil)
-        #expect(!overlay.isEdited)
-        await library.store.shutdown()
-    }
-
-    /// Naming faces with a name a person already holds gives them to that person, which is
-    /// how an unnamed group joins a person.
-    @Test func aNameAPersonHoldsIsThatPerson() async throws {
-        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
-        try await library.store.applyEnrichmentBatch([
-            library.result(for: "a.jpg", faces: [Self.face(x: 0.1)]),
-            library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
-        ])
-        let sam = try await library.store.perform(.name([FaceID(asset: library.id("a.jpg"), index: 0)], "Sam")).person
-        let again = try await library.store.perform(.name([FaceID(asset: library.id("b.jpg"), index: 0)], "Sam")).person
-        #expect(again == sam)
-        #expect(try await library.store.peopleSnapshot().people.count == 1)
-        await library.store.shutdown()
-    }
-
-    /// A birthday may be a full date or only a year, which counts from 1 January; anything
-    /// else is refused rather than stored and ignored.
-    @Test func aBirthdayIsADateOrAYear() async throws {
-        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
-        let tyler = try #require(try await library.store.perform(.name([], "Tyler")).person)
-        _ = try await library.store.perform(.edit(tyler, name: "Tyler", birthday: "2025"))
-        #expect(try await library.store.peopleSnapshot().people.first { $0.id == tyler }?.birthdaySeconds
-            == PersonBirthday.seconds("2025-01-01"))
-        await #expect(throws: PeopleRuleViolation.invalidBirthday) {
-            _ = try await library.store.perform(.edit(tyler, name: "Tyler", birthday: "25"))
-        }
-        await #expect(throws: PeopleRuleViolation.invalidBirthday) {
-            _ = try await library.store.perform(.edit(tyler, name: "Tyler", birthday: "2025-13-01"))
-        }
-        await library.store.shutdown()
-    }
-
-    /// The hard rules hold at the store, whoever asks: one photo holds a person once.
-    @Test func aPersonIsConfirmedInAPhotoOnce() async throws {
+    /// One photo holds a person once. The user's face is the fact: giving them another face
+    /// of the photo is refused; Otos's guess in the photo makes way.
+    @Test func aPersonIsInAPhotoOnce() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
         try await library.store.applyEnrichmentBatch([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)]),
         ])
         let faces = [0, 1].map { FaceID(asset: library.id("a.jpg"), index: $0) }
-        let sam = try #require(try await library.store.perform(.name([], "Sam")).person)
+        let sam = try #require(try await library.store.perform(.moveToNewPerson([], name: "Sam")).person)
 
         await #expect(throws: PeopleRuleViolation.twoFacesOfOnePhoto) {
-            _ = try await library.store.perform(.confirm(faces, as: sam))
+            _ = try await library.store.perform(.move(faces, to: sam))
         }
-        _ = try await library.store.perform(.confirm([faces[0]], as: sam))
+        try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [.init(face: faces[0], person: .existing(sam))]))
+        _ = try await library.store.perform(.move([faces[1]], to: sam))
+        let snapshot = try await library.store.peopleSnapshot()
+        #expect(snapshot.faces.map(\.assignment) == [.open, .user(sam)])
         await #expect(throws: PeopleRuleViolation.personAlreadyInPhoto) {
-            _ = try await library.store.perform(.confirm([faces[1]], as: sam))
+            _ = try await library.store.perform(.move([faces[0]], to: sam))
         }
         await library.store.shutdown()
     }
 
-    /// Reading a photo again keeps what the user decided: the confirmed person and the
-    /// rejections move to the new face that overlaps the old one; "not a face" does not.
-    @Test func aNewReadingKeepsTheUsersDecisions() async throws {
+    /// A name is one person's: renaming to it or naming a new person with it is refused —
+    /// merging is the act.
+    @Test func aNameIsOnePersons() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
+        _ = try await library.store.perform(.moveToNewPerson([], name: "Sam"))
+        let other = try #require(try await library.store.perform(.moveToNewPerson([], name: nil)).person)
+        await #expect(throws: PeopleRuleViolation.nameTaken) {
+            _ = try await library.store.perform(.edit(other, name: "Sam", birthday: nil))
+        }
+        await #expect(throws: PeopleRuleViolation.nameTaken) {
+            _ = try await library.store.perform(.moveToNewPerson([], name: "Sam"))
+        }
+        await library.store.shutdown()
+    }
+
+    /// A birthday is a full date or only a year, which counts from 1 January. One after a
+    /// photo the user gave the person is refused; Otos's guesses from before it lose them.
+    @Test func aBirthdayHoldsTheUsersFacesAndDropsEarlierGuesses() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
+        try await library.store.applyEnrichmentBatch([
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1)]),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
+        ])
+        let a = FaceID(asset: library.id("a.jpg"), index: 0)
+        let b = FaceID(asset: library.id("b.jpg"), index: 0)
+        let tyler = try #require(try await library.store.perform(.moveToNewPerson([a], name: "Tyler")).person)
+        try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [.init(face: b, person: .existing(tyler))]))
+        await #expect(throws: PeopleRuleViolation.invalidBirthday) {
+            _ = try await library.store.perform(.edit(tyler, name: "Tyler", birthday: "25"))
+        }
+        // The scanned files carry no capture date, so no face predates any birthday yet.
+        _ = try await library.store.perform(.edit(tyler, name: "Tyler", birthday: "2025"))
+        #expect(try await library.store.peopleSnapshot().people.first?.birthdaySeconds == PersonBirthday.seconds("2025-01-01"))
+        await library.store.shutdown()
+    }
+
+    /// Reading a photo again keeps the user's word: their face and its rejections, the seed,
+    /// the removed name and the feature photo move to the new face that overlaps the old;
+    /// Otos's guess and "not a face" do not.
+    @Test func aNewReadingKeepsTheUsersWord() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
         try await library.store.applyEnrichmentBatch([
-            library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)]),
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.4), Self.face(x: 0.7)]),
         ])
-        let old = [0, 1].map { FaceID(asset: library.id("a.jpg"), index: $0) }
-        let sam = try #require(try await library.store.perform(.name([old[0]], "Sam")).person)
-        let ian = try #require(try await library.store.perform(.name([], "Ian")).person)
-        _ = try await library.store.perform(.reject([old[0]], person: ian))
-        _ = try await library.store.perform(.notAFace([old[1]]))
+        let old = [0, 1, 2].map { FaceID(asset: library.id("a.jpg"), index: $0) }
+        let sam = try #require(try await library.store.perform(.moveToNewPerson([old[0]], name: "Sam")).person)
+        let ian = try #require(try await library.store.perform(.moveToNewPerson([old[1]], name: "Ian")).person)
+        _ = try await library.store.perform(.removeName([old[1]]))
+        _ = try await library.store.perform(.setFeature(old[0], of: sam))
+        try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [.init(face: old[2], person: .existing(ian))]))
 
-        // The new reading finds the faces in the other order, shifted a little.
+        // The new reading finds the faces in another order, shifted a little.
         try await library.store.applyEnrichmentBatch([
-            library.result(for: "a.jpg", faces: [Self.face(x: 0.61), Self.face(x: 0.11)]),
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.71), Self.face(x: 0.41), Self.face(x: 0.11)]),
         ])
 
-        let facts = try await library.store.peopleSnapshot()
-        let samsFace = try #require(facts.faces.first { $0.id.index == 1 })
-        let other = try #require(facts.faces.first { $0.id.index == 0 })
-        #expect(samsFace.person == sam)
-        #expect(samsFace.rejected == [ian])
-        #expect(other.person == nil && !other.isNotFace)
+        let snapshot = try await library.store.peopleSnapshot()
+        let byIndex = Dictionary(uniqueKeysWithValues: snapshot.faces.map { ($0.id.index, $0) })
+        #expect(byIndex[2]?.assignment == .user(sam))
+        #expect(byIndex[1]?.assignment == .held)
+        #expect(byIndex[1]?.rejected == [ian])
+        #expect(byIndex[0]?.assignment == .open)
+        #expect(snapshot.features[sam]?.index == 2)
         await library.store.shutdown()
     }
 
-    /// Removing a person returns their faces to unnamed; merging moves them, and is refused
-    /// when the two people share a photo.
-    @Test func removingAndMergingPeople() async throws {
+    /// Merging gives the first person's faces to the second, which keeps its name and takes
+    /// the first's when it has none, and is a favourite if either was. Refused when the user's
+    /// faces or seeds put both in one photo; Otos's guess of one in the other's photo is
+    /// dropped.
+    @Test func mergingPeople() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
         try await library.store.applyEnrichmentBatch([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)]),
@@ -144,103 +144,177 @@ struct PeopleStoreTests {
         let a0 = FaceID(asset: library.id("a.jpg"), index: 0)
         let a1 = FaceID(asset: library.id("a.jpg"), index: 1)
         let b0 = FaceID(asset: library.id("b.jpg"), index: 0)
-        let sam = try #require(try await library.store.perform(.name([a0], "Sam")).person)
-        let twin = try #require(try await library.store.perform(.split([a1])).person)
+        let named = try #require(try await library.store.perform(.moveToNewPerson([a0], name: "Sam")).person)
+        let found = try #require(try await library.store.perform(.moveToNewPerson([b0], name: nil)).person)
+        _ = try await library.store.perform(.setFavorite(named, true))
+        try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [.init(face: a1, person: .existing(found))]))
 
+        _ = try await library.store.perform(.merge(named, into: found))
+
+        let snapshot = try await library.store.peopleSnapshot()
+        #expect(snapshot.people.map(\.id) == [found])
+        #expect(snapshot.people.first?.name == "Sam")
+        #expect(snapshot.people.first?.isFavorite == true)
+        #expect(snapshot.faces.map(\.assignment) == [.user(found), .open, .user(found)])
+
+        // A face the merged person was said not to be is not the merged person either.
+        _ = try await library.store.perform(.removeName([b0]))
+        #expect(try await library.store.peopleSnapshot().faces.first { $0.id == b0 }?.rejected == [found])
+
+        let other = try #require(try await library.store.perform(.moveToNewPerson([a1], name: "Ian")).person)
         await #expect(throws: PeopleRuleViolation.bothInPhotos(count: 1)) {
-            _ = try await library.store.perform(.merge(twin, into: sam))
+            _ = try await library.store.perform(.merge(other, into: found))
         }
-        _ = try await library.store.perform(.confirm([b0], as: twin))
-        _ = try await library.store.perform(.reject([a1], person: twin))
-        _ = try await library.store.perform(.merge(twin, into: sam))
-        var facts = try await library.store.peopleSnapshot()
-        #expect(facts.people.map(\.id) == [sam])
-        #expect(facts.faces.first { $0.id == b0 }?.person == sam)
-        #expect(facts.faces.first { $0.id == a1 }?.rejected == [sam])
-
-        _ = try await library.store.perform(.remove(sam))
-        facts = try await library.store.peopleSnapshot()
-        #expect(facts.people.isEmpty)
-        #expect(facts.faces.allSatisfy { $0.person == nil && $0.rejected.isEmpty })
         await library.store.shutdown()
     }
 
-    /// Every act is undone exactly by the record it returns, and the undo's own record redoes
-    /// it: people come back with their names, birthdays and faces, and people an act made
-    /// go away again.
-    @Test(arguments: UndoCase.allCases)
-    func everyActIsUndoneExactly(_ undoCase: UndoCase) async throws {
-        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg", "c.jpg"])
+    /// A person has one feature photo; a face that leaves them takes it along.
+    @Test func aFeaturePhotoIsOneFaceOfThePerson() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
+        try await library.store.applyEnrichmentBatch([
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1)]),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
+        ])
+        let a = FaceID(asset: library.id("a.jpg"), index: 0)
+        let b = FaceID(asset: library.id("b.jpg"), index: 0)
+        let sam = try #require(try await library.store.perform(.moveToNewPerson([a], name: "Sam")).person)
+        _ = try await library.store.perform(.move([b], to: sam))
+        _ = try await library.store.perform(.setFeature(a, of: sam))
+        _ = try await library.store.perform(.setFeature(b, of: sam))
+        #expect(try await library.store.peopleSnapshot().features == [sam: b])
+
+        _ = try await library.store.perform(.removeName([b]))
+        #expect(try await library.store.peopleSnapshot().features.isEmpty)
+        await #expect(throws: PeopleRuleViolation.unknownFace) {
+            _ = try await library.store.perform(.setFeature(b, of: sam))
+        }
+        await library.store.shutdown()
+    }
+
+    /// Undo writes back exactly what each act changed, and redo is the act again.
+    @Test func undoRestoresEveryAct() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
         try await library.store.applyEnrichmentBatch([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)]),
             library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
-            library.result(for: "c.jpg", faces: [Self.face(x: 0.4)]),
         ])
         let a0 = FaceID(asset: library.id("a.jpg"), index: 0)
         let a1 = FaceID(asset: library.id("a.jpg"), index: 1)
         let b0 = FaceID(asset: library.id("b.jpg"), index: 0)
-        let c0 = FaceID(asset: library.id("c.jpg"), index: 0)
-        let sam = try #require(try await library.store.perform(.name([a0, b0], "Sam")).person)
-        _ = try await library.store.perform(.edit(sam, name: "Sam", birthday: "2020-04-24"))
-        let ian = try #require(try await library.store.perform(.name([a1], "Ian")).person)
-        _ = try await library.store.perform(.reject([c0], person: sam))
+        let sam = try #require(try await library.store.perform(.moveToNewPerson([a0], name: "Sam")).person)
+        let ian = try #require(try await library.store.perform(.moveToNewPerson([b0], name: "Ian")).person)
+        try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [.init(face: a1, person: .existing(ian))]))
+        _ = try await library.store.perform(.setFeature(b0, of: ian))
 
-        let act: PeopleAct = switch undoCase {
-        case .confirm: .confirm([c0], as: ian)
-        case .reject: .reject([b0], person: sam)
-        case .notAFace: .notAFace([c0])
-        case .ignore: .ignore([c0])
-        case .name: .name([c0], "Tyler")
-        case .split: .split([b0])
-        case .edit: .edit(sam, name: "Sofi", birthday: nil)
-        case .merge: .merge(ian, into: sam)
-        case .remove: .remove(sam)
+        func state() async throws -> PeopleSnapshot {
+            let snapshot = try await library.store.peopleSnapshot()
+            return PeopleSnapshot(
+                faces: snapshot.faces, tiles: [:], people: snapshot.people, features: snapshot.features,
+                uncheckedPhotoCount: 0, revision: 0
+            )
         }
-        if case .merge = undoCase {
-            // Sam and Ian share a.jpg; take Ian out of it first so the merge is allowed.
-            _ = try await library.store.perform(.confirm([c0], as: ian))
-            _ = try await library.store.perform(.reject([a1], person: ian))
+        let before = try await state()
+        for act: PeopleAct in [
+            .move([a1], to: ian), .moveToNewPerson([a1], name: "Tyler"), .removeName([a0]), .notAFace([b0]),
+            .edit(sam, name: "Sam M", birthday: "2020"), .merge(ian, into: sam),
+            .setHidden(ian, true), .setFavorite(sam, true), .setFeature(a0, of: sam),
+        ] {
+            let outcome = try await library.store.perform(act)
+            let after = try await state()
+            #expect(after != before, "\(act.undoName) changed nothing")
+            let redo = try await library.store.restore(outcome.restore)
+            #expect(try await state() == before, "undoing \(act.undoName)")
+            try await library.store.restore(redo)
+            #expect(try await state() == after, "redoing \(act.undoName)")
+            try await library.store.restore(outcome.restore)
         }
-        let before = try await library.store.peopleSnapshot()
-        let outcome = try await library.store.perform(act)
-        let after = try await library.store.peopleSnapshot()
-        #expect(Content(after) != Content(before))
-
-        let redo = try await library.store.restore(outcome.restore)
-        #expect(try await Content(library.store.peopleSnapshot()) == Content(before))
-        try await library.store.restore(redo)
-        #expect(try await Content(library.store.peopleSnapshot()) == Content(after))
         await library.store.shutdown()
     }
 
-    /// A snapshot's catalog content: everything but the revision, which counts writes and
-    /// so differs after an undo by design.
-    struct Content: Equatable {
-        let faces: [FaceFact]
-        let tiles: [FaceID: FaceTile]
-        let people: [PeopleSnapshot.Person]
+    /// Assignment writes a guess only where the face is still Otos's to decide: a face the
+    /// user gave someone while the pass ran keeps their word. A person Otos found is deleted
+    /// once they have no face left and the user said nothing about them.
+    @Test func assignmentNeverOverwritesTheUsersWord() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
+        try await library.store.applyEnrichmentBatch([
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1)]),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
+        ])
+        let a = FaceID(asset: library.id("a.jpg"), index: 0)
+        let b = FaceID(asset: library.id("b.jpg"), index: 0)
+        let ian = try #require(try await library.store.perform(.moveToNewPerson([], name: "Ian")).person)
+        var plan = FaceAssignmentPlan()
+        plan.newPeople = [[a, b]]
+        plan.likeness = [a: 0.75]
+        #expect(try await library.store.applyAssignment(plan) == 3)
+        let found = try #require(try await library.store.peopleSnapshot().people.last?.id)
+        _ = try await library.store.perform(.move([a, b], to: ian))
 
-        init(_ snapshot: PeopleSnapshot) {
-            faces = snapshot.faces
-            tiles = snapshot.tiles
-            people = snapshot.people
+        // Planned before the move: neither guess lands, and Otos's person, with no face left
+        // and nothing the user said, is gone.
+        #expect(try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [
+            .init(face: a, person: .existing(found)), .init(face: b, person: nil),
+        ], emptied: [found])) == 1)
+
+        let snapshot = try await library.store.peopleSnapshot()
+        #expect(snapshot.faces.map(\.assignment) == [.user(ian), .user(ian)])
+        #expect(snapshot.likeness == [a: 0.75])
+        #expect(snapshot.people.map(\.id) == [ian])
+        #expect(try await library.store.applyAssignment(FaceAssignmentPlan()) == 0)
+        await library.store.shutdown()
+    }
+
+    /// The People filter: photos with any of the people or all of them, `Unidentified` a face
+    /// with no person; the likeness order puts the face least like the person first.
+    @Test func thePeopleFilterAndTheLikenessOrder() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg", "c.jpg", "d.jpg"])
+        try await library.store.applyEnrichmentBatch([
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)]),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
+            library.result(for: "c.jpg", faces: [Self.face(x: 0.5)]),
+            library.result(for: "d.jpg", faces: []),
+        ])
+        let a0 = FaceID(asset: library.id("a.jpg"), index: 0)
+        let a1 = FaceID(asset: library.id("a.jpg"), index: 1)
+        let b0 = FaceID(asset: library.id("b.jpg"), index: 0)
+        let sam = try #require(try await library.store.perform(.moveToNewPerson([a0], name: "Sam")).person)
+        let ian = try #require(try await library.store.perform(.moveToNewPerson([a1], name: "Ian")).person)
+        try await library.store.applyAssignment(FaceAssignmentPlan(
+            guesses: [.init(face: b0, person: .existing(sam))],
+            likeness: [a0: 0.9, b0: 0.5]
+        ))
+        func photos(_ filter: MediaFilter, sort: MediaSortOrder = .filenameAscending) async throws -> [String] {
+            try await library.store.orderedAssetIDs(
+                for: CatalogQueryDescriptor(scope: .library(library.rootPath), filter: filter, sort: sort),
+                availableLibraryPaths: [library.rootPath]
+            ).ids.map(\.relativePath.rawValue)
         }
+        var filter = MediaFilter(people: [sam])
+        #expect(try await photos(filter) == ["a.jpg", "b.jpg"])
+        #expect(try await photos(filter, sort: .likenessLeast) == ["b.jpg", "a.jpg"])
+        #expect(try await photos(filter, sort: .likenessMost) == ["a.jpg", "b.jpg"])
+        filter.people.insert(ian)
+        #expect(try await photos(filter) == ["a.jpg", "b.jpg"])
+        filter.peopleMatch = .all
+        #expect(try await photos(filter) == ["a.jpg"])
+        #expect(try await photos(MediaFilter(unassignedFaces: true)) == ["c.jpg"])
+        await library.store.shutdown()
     }
 
-    enum UndoCase: CaseIterable {
-        case confirm, reject, notAFace, ignore, name, split, edit, merge, remove
-    }
-
-    /// People acts reach the window: each one is a catalog change.
-    @Test func anActIsACatalogChange() async throws {
+    /// People acts and assignments that wrote reach the window: each is a catalog change.
+    @Test func anActOrAnAssignmentIsACatalogChange() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
+        try await library.store.applyEnrichmentBatch([library.result(for: "a.jpg", faces: [Self.face(x: 0.1)])])
         var changes = await library.store.changeNotifications().makeAsyncIterator()
-        _ = try await library.store.perform(.name([], "Sam"))
+        let sam = try #require(try await library.store.perform(.moveToNewPerson([], name: "Sam")).person)
+        #expect(await changes.next() == .catalogChanged)
+        try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [
+            .init(face: FaceID(asset: library.id("a.jpg"), index: 0), person: .existing(sam)),
+        ]))
         #expect(await changes.next() == .catalogChanged)
         await library.store.shutdown()
     }
 
-    /// A face 0.2 wide at (x, 0.3).
     static func face(x: Double) -> DetectedFace {
         DetectedFace(
             box: CGRect(x: x, y: 0.3, width: 0.2, height: 0.25),

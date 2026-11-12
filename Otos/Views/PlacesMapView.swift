@@ -35,7 +35,7 @@ struct PlacesMapView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PlacesMapBar(locatedCount: map.located.count, unlocatedCount: map.unlocatedCount)
+            PlacesMapBar(locatedCount: map.located.count)
             if map.located.isEmpty {
                 CatalogMediaEmptyStateView(emptyState: emptyState, clearFilters: clearFilters)
                     .background(DesignPalette.content(for: colorScheme))
@@ -125,26 +125,19 @@ struct PlacesMapView: View {
     }
 }
 
-/// The surface's one fact (DES-010): how much of the collection is on the map, with the
-/// count it leaves off as L3. Fixed height in every state (DES-053); digits are
-/// monospaced because enrichment moves both numbers while the user watches (DES-005).
+/// The surface's one fact (DES-010): how much of the collection is on the map. Fixed
+/// height in every state (DES-053); digits are monospaced because enrichment moves the
+/// number while the user watches (DES-005).
 private struct PlacesMapBar: View {
     let locatedCount: Int
-    let unlocatedCount: Int
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(primary)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(DesignPalette.label(for: colorScheme))
-                    .monospacedDigit()
-                Text(supporting)
-                    .font(.subheadline)
-                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                    .monospacedDigit()
-            }
+            Text(primary)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(DesignPalette.label(for: colorScheme))
+                .monospacedDigit()
             Spacer(minLength: 8)
         }
         .padding(.horizontal, 12)
@@ -158,17 +151,6 @@ private struct PlacesMapBar: View {
     private var primary: String {
         let count = locatedCount.formatted()
         return locatedCount == 1 ? "1 item on the map" : "\(count) items on the map"
-    }
-
-    private var supporting: String {
-        switch unlocatedCount {
-        case 0:
-            "Every item has a location"
-        case 1:
-            "1 item has no location"
-        default:
-            "\(unlocatedCount.formatted()) items have no location"
-        }
     }
 }
 

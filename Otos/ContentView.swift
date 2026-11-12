@@ -31,7 +31,18 @@ struct ContentView: View {
         case nil:
             EmptyView()
         case .info:
-            InfoPaneView(info: viewModel.photoInfo)
+            InfoPaneView(
+                info: viewModel.photoInfo,
+                people: InfoPanePeople(
+                    faces: viewModel.targetFaces,
+                    names: { viewModel.peopleIndex.name($0) },
+                    choices: { faces, except in viewModel.choices(for: faces, in: viewModel.targetFaces, except: except) },
+                    images: viewModel.faceTileImages,
+                    derivedImageDirectory: viewModel.thumbnailDirectory,
+                    actions: viewModel.faceActions,
+                    hover: viewModel.setHoveredFace
+                )
+            )
         case .edit:
             EditPanelView(
                 photoName: viewModel.editTarget?.id.fileURL.lastPathComponent,
@@ -151,7 +162,7 @@ struct ContentView: View {
                         // ignores the filter, so it never claims to be filtered.
                         .navigationSubtitle(
                             viewModel.queryDescriptor.filter.isActive && !viewModel.showsDuplicatesList
-                                && !viewModel.showsPeopleList && !viewModel.showsPeopleReview ? "Filtered" : ""
+                                && !viewModel.showsPeopleList ? "Filtered" : ""
                         )
                 }
                 if let presentation = viewModel.selectedImportPresentation {
@@ -245,9 +256,9 @@ struct ContentView: View {
                     .help("Back to Map")
                 }
             }
-            // Back to People, while the browser shows one person's photos or the review; Back
-            // to Review, while it shows one review row's photos (ADR 0047).
-            if viewModel.showsPersonLeaf || viewModel.showsPeopleReview {
+            // Back to People, while the browser shows the people it was opened on from the
+            // gallery (ADR 0047).
+            if viewModel.showsBackToPeople {
                 ToolbarItem(placement: .navigation) {
                     Button {
                         viewModel.returnToPeople()
@@ -257,14 +268,11 @@ struct ContentView: View {
                     .help("Back to People")
                 }
             }
-            if viewModel.showsReviewPhotosLeaf {
+            // The person the filter shows, with their settings: the one place a person's
+            // photos are named and edited from (`docs/design/people.md`).
+            if let person = viewModel.shownPerson {
                 ToolbarItem(placement: .navigation) {
-                    Button {
-                        viewModel.returnToReview()
-                    } label: {
-                        Label("Back to Review", systemImage: "chevron.left")
-                    }
-                    .help("Back to Review")
+                    PersonToolbarMenu(person: person, viewModel: viewModel)
                 }
             }
             // Back to Duplicates, while the browser shows one duplicate group (ADR 0042).
@@ -308,11 +316,13 @@ struct ContentView: View {
                     setKind: viewModel.setMediaKind,
                     setFileType: viewModel.setMediaFileType,
                     setChoice: viewModel.setMediaChoice,
+                    people: viewModel.peopleFilterControls,
                     clearFilters: viewModel.clearMediaFilter
                 )
                 CatalogSortMenu(
-                    sort: viewModel.queryDescriptor.sort,
+                    sort: viewModel.queryDescriptor.effectiveSort,
                     search: viewModel.queryDescriptor.search,
+                    person: viewModel.shownPerson?.displayName,
                     setOrder: viewModel.setSortOrder,
                     orderByRelevance: viewModel.orderSearchByRelevance
                 )
@@ -396,8 +406,14 @@ struct ContentView: View {
                 Text(message)
             }
         }
-        // Rename… and Set Birthday…, and the new person a split makes (ADR 0047).
+        // Add Name…, Rename…, Set Birthday… and New Person…, and the merge any of them, a
+        // drop or Merge Into ▸ asks first (ADR 0047).
         .modifier(PersonSheetHost(viewModel: viewModel))
+        .modifier(PeopleMergeAlert(
+            question: viewModel.peopleSession.mergeQuestion,
+            name: { viewModel.peopleIndex.name($0) },
+            answer: { viewModel.answerMerge($0) }
+        ))
         .sheet(
             isPresented: Binding(
                 get: { viewModel.exportSheet != nil },
@@ -551,32 +567,13 @@ struct ContentView: View {
             if let people = viewModel.state.people {
                 PeopleView(
                     people: people,
-                    unnamed: viewModel.shownUnnamedGroups,
                     session: viewModel.peopleSession,
                     librariesState: viewModel.state.mediaEmptyState,
                     images: viewModel.faceTileImages,
                     derivedImageDirectory: viewModel.thumbnailDirectory,
-                    canReview: viewModel.canReviewSuggestions,
                     actions: viewModel.peopleActions
                 )
                 .navigationTitle("People")
-            } else {
-                Color.clear
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        } else if viewModel.showsPeopleReview {
-            if let people = viewModel.state.people {
-                PeopleReviewView(
-                    people: people,
-                    layout: viewModel.peopleReviewLayout,
-                    session: viewModel.peopleSession,
-                    bar: viewModel.peopleReviewBarState,
-                    names: { viewModel.peopleIndex.name($0) },
-                    images: viewModel.faceTileImages,
-                    derivedImageDirectory: viewModel.thumbnailDirectory,
-                    actions: viewModel.peopleReviewActions
-                )
-                .navigationTitle("Review Suggestions")
             } else {
                 Color.clear
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -725,6 +722,7 @@ struct ContentView: View {
                 onZoomDoubleClick: { viewModel.toggleLoupeZoom(at: $0) },
                 isPickingNeutral: viewModel.isPickingNeutral,
                 onPickNeutral: viewModel.pickNeutral(at:),
+                faceHighlight: viewModel.loupeFaceHighlight,
                 cropEditor: viewModel.isCropping
                     ? viewModel.editCropBase.map { base in
                         CropEditorInput(
@@ -835,7 +833,7 @@ private struct AllImportsListView: View {
     )
 }
 
-/// Presents the Person sheet for the person the view model names.
+/// Presents the Person sheet the view model asks for: one person's, or a new person's.
 private struct PersonSheetHost: ViewModifier {
     let viewModel: CatalogWindowViewModel
 
@@ -844,18 +842,47 @@ private struct PersonSheetHost: ViewModifier {
             get: { viewModel.peopleSession.sheet },
             set: {
                 if $0 == nil {
-                    viewModel.cancelEditingPerson()
+                    viewModel.cancelPersonSheet()
                 }
             }
         )) { request in
-            if let person = viewModel.peopleIndex.summaries[request.person] {
-                PersonSheetView(
-                    person: person,
-                    refusal: { name, birthday in viewModel.personSheetRefusal(request.person, name: name, birthday: birthday) },
-                    save: { name, birthday in viewModel.savePerson(request.person, name: name, birthday: birthday) },
-                    cancel: viewModel.cancelEditingPerson
-                )
-            }
+            PersonSheetView(
+                person: request.person.flatMap { viewModel.peopleIndex.summaries[$0] },
+                refusal: { name, birthday in viewModel.personSheetRefusal(request.subject, name: name, birthday: birthday) },
+                save: { name, birthday in viewModel.savePersonSheet(request.subject, name: name, birthday: birthday) },
+                cancel: viewModel.cancelPersonSheet
+            )
         }
+    }
+}
+
+/// The person the filter shows, as a toolbar menu titled with their name: their settings,
+/// as the gallery's context menu offers them.
+private struct PersonToolbarMenu: View {
+    let person: PersonSummary
+    let viewModel: CatalogWindowViewModel
+
+    var body: some View {
+        Menu {
+            Button(person.name == nil ? "Add Name…" : "Rename…") { viewModel.beginEditingPerson(person.id) }
+            Button("Set Birthday…") { viewModel.beginEditingPerson(person.id) }
+            Button(person.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
+                viewModel.setFavorite(person.id, !person.isFavorite)
+            }
+            let others = (viewModel.state.people?.visiblePeople ?? []).filter { $0.id != person.id }
+            Menu("Merge Into") {
+                ForEach(others) { target in
+                    Button(target.displayName) { viewModel.askMerge(person.id, into: target.id) }
+                        .disabled(viewModel.mergeRefusal(person.id, into: target.id) != nil)
+                        .help(viewModel.mergeRefusal(person.id, into: target.id) ?? "")
+                }
+            }
+            .disabled(others.isEmpty)
+            Divider()
+            Button("Hide") { viewModel.setHidden(person.id, true) }
+        } label: {
+            Label(person.displayName, systemImage: "person.crop.circle")
+        }
+        .help("\(person.displayName)'s settings")
     }
 }

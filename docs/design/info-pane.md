@@ -24,7 +24,7 @@ Which item the facts describe: its file name, `No Selection`, or `3 Items`.
 | --- | --- |
 | File name / `No Selection` / `3 Items` | L1 (`title2`, semibold, middle-truncated) |
 | When it was taken (`Saturday, November 7, 2026 at 3:42 PM UTC+02:00`) | L2 in secondary color (`body`) |
-| Section heading (`Camera`, `Exposure`, `Video`, `People`, `Location`, `File`) | `.title3`, regular, beside the section's symbol |
+| Section heading (`People`, `Location`, `File`, `Camera`, `Exposure`, `Video`) | `.title3`, regular, beside the section's symbol |
 | Row label (`Shutter Speed`) | L2 in secondary color (`body`) |
 | Row value (`1/250 s`, `Unknown`, `—`) | L2 (`body`, `.monospacedDigit()`) |
 
@@ -40,12 +40,15 @@ Labels share one leading edge; a long value wraps beside its label rather than u
 
 | Section | Rows |
 | --- | --- |
+| People | each face of the targeted photos, with the face acts (`docs/design/people.md`, DES-113) |
+| Location | a 140 pt still map with one pin (when located), Place, Coordinates, Altitude |
+| File | Kind, Dimensions, Size, Folder, Original, Created, Modified, Imported, Companions, Edits |
 | Camera | Camera, Lens, Serial Number |
 | Exposure (a still) | Shutter Speed, Aperture, ISO, Focal Length, Compensation, Program, Metering, Flash, White Balance |
 | Video (a movie) | Duration, Frame Rate, Codec |
-| People | People |
-| Location | a 140 pt still map with one pin (when located), Place, Coordinates, Altitude |
-| File | Kind, Dimensions, Size, Folder, Original, Created, Modified, Imported, Companions, Edits |
+
+The order puts first what the user acts on and looks for — who is in the photo, where and
+which file it is — and the capture's own facts after (owner decision, 2026-11-12).
 
 Which sections show depends only on the kind, so every still has the same rows and every
 movie the same rows (DES-053). With no single item the still layout shows with every
@@ -56,7 +59,8 @@ has a location to show, as a control whose subject does not exist is omitted (DE
 
 - **One item:** every value the catalog holds, `Unknown` for one it lacks. The place name
   reads `Unknown` until MapKit names the coordinate.
-- **No item / several items:** `No Selection` or the count, every value `—`.
+- **No item / several items:** `No Selection` or the count, every value `—` but People,
+  which lists the people in the selected photos and their unidentified faces.
 - **A read failed:** the pane keeps what it showed for the same item, or empties for
   another, and the next refresh reads again (APP-041).
 

@@ -127,9 +127,9 @@ struct FaceAnalyzerTests {
         let other = try #require(faces["obama-2013"]).embedding
 
         let same = Self.dot(earlier, later)
-        #expect(same >= FacePeoplePolicy.threshold, "same person \(same)")
-        #expect(Self.dot(earlier, other) < FacePeoplePolicy.threshold - FacePeoplePolicy.margin)
-        #expect(Self.dot(later, other) < FacePeoplePolicy.threshold - FacePeoplePolicy.margin)
+        #expect(same >= FaceAssignmentPolicy.threshold, "same person \(same)")
+        #expect(Self.dot(earlier, other) < FaceAssignmentPolicy.threshold)
+        #expect(Self.dot(later, other) < FaceAssignmentPolicy.threshold)
     }
 
     static func portrait(_ name: String) throws -> CGImage {

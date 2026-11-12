@@ -12,29 +12,45 @@ nonisolated enum MediaItemCommand: Equatable, Sendable {
     case revealInFinder
     case choice(MediaChoice)
     case moveToTrash
-    /// In a person's scope (ADR 0047): the selected photos' faces are not this person.
-    case notPerson
-    /// The selected photos' faces of this person are not faces.
-    case notAFace
-    /// The selected photos' faces of this person are someone else's.
-    case thisIs(PersonID)
-    /// They are one new person's.
-    case newPerson
+    /// The faces are this person's (This Is ▸ a person; ADR 0047).
+    case thisIs([FaceID], PersonID)
+    /// The faces are one new person's (This Is ▸ New Person…).
+    case newPerson([FaceID])
+    /// The faces are not their person (Not Sam).
+    case notPerson([FaceID])
+    /// The detections are not faces.
+    case notAFace([FaceID])
+    case setFeaturePhoto(FaceID, PersonID)
 }
 
-/// A person's scope's corrections on the selected photos, each acting on the one face of
-/// that person in each photo (`docs/design/people.md`).
-nonisolated struct PersonCorrectionsMenu: Equatable, Sendable {
-    struct Choice: Equatable, Sendable {
+/// The faces of the targeted photos, grouped by person, as the context menu offers them
+/// (`docs/design/people.md`). Each group's acts act on its faces.
+nonisolated struct FaceMenu: Equatable, Sendable {
+    nonisolated struct Choice: Equatable, Sendable {
         let person: PersonID
         let title: String
+        /// The faces This Is gives this person: the group's, or for unidentified faces the
+        /// one in each photo most like them.
+        let faces: [FaceID]
     }
 
-    /// The person whose scope it is.
-    let name: String
-    /// The people the faces may move to.
-    let choices: [Choice]
-    let enabled: Bool
+    nonisolated struct Group: Equatable, Sendable {
+        /// The person's name, or `Unidentified Face(s)`.
+        let title: String
+        /// Nil for unidentified faces.
+        let person: PersonID?
+        let faces: [FaceID]
+        /// Most likely first, then everyone else the hard rules allow.
+        let choices: [Choice]
+        /// The faces New Person… gives a new person: at most one per photo.
+        let newPersonFaces: [FaceID]
+        /// Set as Feature Photo, with one photo targeted.
+        let feature: FaceID?
+    }
+
+    let groups: [Group]
+    /// The filter shows one person: their group's acts sit at the menu's top level.
+    let flattensFirst: Bool
 }
 
 /// Media context menu model guide
@@ -51,8 +67,9 @@ nonisolated struct MediaItemMenuModel: Equatable, Sendable {
     enum Entry: Equatable, Sendable {
         case command(MediaItemCommand, title: String, enabled: Bool)
         case openWith(applications: [OpenWithApplication], enabled: Bool)
-        /// This Is ▸: the people, a separator, New Person.
-        case thisIs(choices: [PersonCorrectionsMenu.Choice], enabled: Bool)
+        /// One person's faces, or the unidentified ones: a submenu, or at the top level when
+        /// `flat`.
+        case faces(FaceMenu.Group, flat: Bool)
         case separator
     }
 
@@ -64,8 +81,8 @@ nonisolated struct MediaItemMenuModel: Equatable, Sendable {
     var canReveal: Bool
     var canChoose: Bool
     var canTrash: Bool
-    /// Present in a person's scope.
-    var personCorrections: PersonCorrectionsMenu?
+    /// The targets' faces; nil when they hold none People shows.
+    var faces: FaceMenu?
 
     static let empty = MediaItemMenuModel(
         openTitle: "Open",
@@ -121,13 +138,11 @@ nonisolated struct MediaItemMenuModel: Equatable, Sendable {
             .command(.revealInFinder, title: "Reveal in Finder", enabled: canReveal),
             .separator,
         ]
-        if let people = personCorrections {
-            entries += [
-                .command(.notPerson, title: "Not \(people.name)", enabled: people.enabled),
-                .thisIs(choices: people.choices, enabled: people.enabled),
-                .command(.notAFace, title: "Not a Face", enabled: people.enabled),
-                .separator,
-            ]
+        if let faces, !faces.groups.isEmpty {
+            for (index, group) in faces.groups.enumerated() {
+                entries.append(.faces(group, flat: faces.flattensFirst && index == 0))
+            }
+            entries.append(.separator)
         }
         entries += [
             .command(.choice(.liked), title: MediaChoice.liked.actionLabel, enabled: canChoose),

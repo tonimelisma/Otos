@@ -1125,11 +1125,9 @@ nonisolated struct CatalogMediaGridState: Equatable {
 /// in an earlier year, presented as its years and played as a story (ADR 0049). The day is
 /// today, which the ViewModel owns; when today changes, the ViewModel selects the new day.
 ///
-/// `.people` is the People list and `.peopleReview` the review (ADR 0047,
-/// `docs/design/people.md`); `.person` is the leaf under the list — the photos holding a
-/// confirmed face of one person, in the ordinary view modes — and `.reviewPhotos` the leaf
-/// under the review: one row's photos in Loupe. The sidebar keeps People highlighted for all
-/// four.
+/// `.people` is the People gallery (ADR 0047, `docs/design/people.md`). A person's photos
+/// are not a scope of their own: they are the People filter (`MediaFilter.people`) over the
+/// libraries.
 nonisolated enum SidebarSelection: Hashable {
     case allMedia
     case places
@@ -1138,9 +1136,6 @@ nonisolated enum SidebarSelection: Hashable {
     case duplicates
     case duplicateGroup(DuplicateGroupID)
     case people
-    case peopleReview
-    case person(PersonID)
-    case reviewPhotos([MediaAssetID])
     case library(LibraryRootPath)
     case importBatch(ImportBatchID)
     case allImports
@@ -1151,7 +1146,6 @@ nonisolated enum SidebarSelection: Hashable {
         switch self {
         case .mapArea: .places
         case .duplicateGroup: .duplicates
-        case .peopleReview, .person, .reviewPhotos: .people
         default: self
         }
     }
@@ -1182,12 +1176,6 @@ nonisolated enum SidebarSelection: Hashable {
             "duplicateGroup:\(group.kindName)"
         case .people:
             "people"
-        case .peopleReview:
-            "peopleReview"
-        case let .person(person):
-            "person:\(person.rawValue)"
-        case let .reviewPhotos(ids):
-            "reviewPhotos:\(ids.count)"
         case let .library(path):
             "library:\(path.rawValue)"
         case let .importBatch(batchID):

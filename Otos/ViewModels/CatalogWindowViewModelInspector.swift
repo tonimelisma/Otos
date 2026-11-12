@@ -57,6 +57,7 @@ extension CatalogWindowViewModel {
     /// the main actor and applied when it still describes the target. Called when the pane is
     /// shown and by every writer of the target.
     func refreshPhotoInfo() {
+        refreshFaceCandidates()
         photoInfoTask?.cancel()
         placeNameTask?.cancel()
         placeNameTask = nil
@@ -124,6 +125,7 @@ extension CatalogWindowViewModel {
         async let overlay = store.photoInfoOverlay(for: id)
         async let detail = reader.detail(for: id)
         async let locality = materialization.locality(of: id)
+        async let recipe = store.editRecipe(for: id)
         let resolvedDetail = try await detail
         return try await PhotoInfo.make(PhotoInfo.Source(
             id: id,
@@ -133,7 +135,8 @@ extension CatalogWindowViewModel {
             kind: resolvedDetail?.bestKind,
             nativePixelSize: resolvedDetail?.nativePixelSize,
             libraryName: libraryName,
-            locality: locality
+            locality: locality,
+            editRecipe: recipe?.recipe
         ))
     }
 

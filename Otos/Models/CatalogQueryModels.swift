@@ -92,15 +92,57 @@ nonisolated struct FilterFileType: Hashable {
     let format: MediaFormatToken
 }
 
+/// How the People filter combines the people it holds: photos with any of them, or with
+/// all of them together.
+nonisolated enum PeopleMatch: String, Hashable, Sendable {
+    case any
+    case all
+}
+
 nonisolated struct MediaFilter: Hashable {
     var kinds: Set<MediaKind> = []
     var fileTypes: Set<FilterFileType> = []
     var choices: Set<MediaChoice> = []
+    /// The People filter (ADR 0047): photos holding a face of these people.
+    var people: Set<PersonID> = []
+    /// The People filter's `Unassigned` row: photos holding a face with no person.
+    var unassignedFaces = false
+    var peopleMatch: PeopleMatch = .any
 
     static let all = MediaFilter()
 
     var isActive: Bool {
-        !kinds.isEmpty || !fileTypes.isEmpty || !choices.isEmpty
+        !kinds.isEmpty || !fileTypes.isEmpty || !choices.isEmpty || filtersPeople
+    }
+
+    var filtersPeople: Bool {
+        !people.isEmpty || unassignedFaces
+    }
+
+    /// The one person the filter shows, when it shows exactly one and nothing else of
+    /// People: a person's photos, which the likeness sort and the person's menu act on.
+    var singlePerson: PersonID? {
+        guard people.count == 1, !unassignedFaces else { return nil }
+        return people.first
+    }
+
+    func settingPerson(_ person: PersonID, included: Bool) -> MediaFilter {
+        var updated = self
+        if included {
+            updated.people.insert(person)
+        } else {
+            updated.people.remove(person)
+        }
+        return updated
+    }
+
+    /// The filter without its People part.
+    var withoutPeople: MediaFilter {
+        var updated = self
+        updated.people = []
+        updated.unassignedFaces = false
+        updated.peopleMatch = .any
+        return updated
     }
 
     func includes(kind: MediaKind?, format: MediaFormatToken?, choice: MediaChoice) -> Bool {
@@ -181,6 +223,9 @@ nonisolated enum MediaSortField: String, Hashable {
     case bestDate
     case name
     case size
+    /// How like the filtered person each photo's face of theirs is (ADR 0047): only with a
+    /// People filter of one person.
+    case likeness
 }
 
 nonisolated enum MediaSortDirection: String, Hashable {
@@ -198,6 +243,8 @@ nonisolated struct MediaSortOrder: Hashable, CaseIterable {
     static let filenameDescending = MediaSortOrder(field: .name, direction: .descending)
     static let sizeLargest = MediaSortOrder(field: .size, direction: .descending)
     static let sizeSmallest = MediaSortOrder(field: .size, direction: .ascending)
+    static let likenessLeast = MediaSortOrder(field: .likeness, direction: .ascending)
+    static let likenessMost = MediaSortOrder(field: .likeness, direction: .descending)
 
     static let allCases: [MediaSortOrder] = [
         .dateNewest,
@@ -206,6 +253,8 @@ nonisolated struct MediaSortOrder: Hashable, CaseIterable {
         .filenameDescending,
         .sizeLargest,
         .sizeSmallest,
+        .likenessLeast,
+        .likenessMost,
     ]
 
     static let defaultOrder = dateNewest
@@ -224,6 +273,23 @@ nonisolated struct MediaSortOrder: Hashable, CaseIterable {
             "Size — Largest First"
         case (.size, .ascending):
             "Size — Smallest First"
+        case (.likeness, .ascending):
+            "Likeness — Least Alike First"
+        case (.likeness, .descending):
+            "Likeness — Most Alike First"
+        }
+    }
+
+    /// The menu's title for this order when the filter shows `person`'s photos: the
+    /// likeness orders name the person (`Likeness — Least Like Sam First`).
+    func label(person name: String?) -> String {
+        switch (field, direction, name) {
+        case let (.likeness, .ascending, name?):
+            "Likeness — Least Like \(name) First"
+        case let (.likeness, .descending, name?):
+            "Likeness — Most Like \(name) First"
+        default:
+            label
         }
     }
 }
@@ -293,9 +359,16 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
     }
 
     /// The order the scope's reads use: the scope's own when it fixes one, else the user's
-    /// `sort`, which is kept as chosen so leaving such a scope restores it.
+    /// `sort`, which is kept as chosen so leaving such a scope restores it. Likeness needs a
+    /// People filter of one person; without one the reads use the default order.
     var effectiveSort: MediaSortOrder {
-        scope.fixedSort ?? sort
+        if let fixed = scope.fixedSort {
+            return fixed
+        }
+        if sort.field == .likeness, filter.singlePerson == nil {
+            return .defaultOrder
+        }
+        return sort
     }
 
     var diagnosticDescription: String {
@@ -308,6 +381,7 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
         kinds=\(kindList.isEmpty ? "all" : kindList) \
         formats=\(formatList.isEmpty ? "all" : formatList) \
         choices=\(choiceList.isEmpty ? "all" : choiceList) \
+        people=\(filter.people.count)\(filter.unassignedFaces ? "+unassigned" : ""):\(filter.peopleMatch.rawValue) \
         search=\(search.map { "\($0.text.count)chars:\($0.order)" } ?? "none")
         """
     }

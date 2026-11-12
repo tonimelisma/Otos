@@ -30,7 +30,6 @@
         static let duplicatesValue = "duplicates"
         /// The People list and its review (ADR 0047).
         static let peopleValue = "people"
-        static let peopleReviewValue = "people-review"
         /// With `onThisDay`: once its years publish, play the story from the newest year
         /// through the ordinary intent, so a capture shows the player (ADR 0049).
         static let playStoryVariable = "OTOS_SMOKE_PLAY_STORY"
@@ -42,7 +41,6 @@
             case onThisDay
             case duplicates
             case people
-            case peopleReview
 
             var diagnosticDescription: String {
                 switch self {
@@ -51,7 +49,6 @@
                 case .onThisDay: SmokeLibrarySelection.onThisDayValue
                 case .duplicates: SmokeLibrarySelection.duplicatesValue
                 case .people: SmokeLibrarySelection.peopleValue
-                case .peopleReview: SmokeLibrarySelection.peopleReviewValue
                 }
             }
         }
@@ -91,9 +88,6 @@
             if rawValue == peopleValue {
                 return .people
             }
-            if rawValue == peopleReviewValue {
-                return .peopleReview
-            }
             if rawValue == onThisDayValue {
                 return .onThisDay
             }
@@ -130,14 +124,14 @@
                 return .noFixedLibrary(registered: registered)
             case .duplicates:
                 return activeDuplicateGroups > 0 ? .select(.duplicates) : .noDuplicatesYet
-            case .people, .peopleReview:
+            case .people:
                 guard SidebarSelectionPolicy.showsPlaces(libraries: sources) else {
                     return .noFixedLibrary(registered: registered)
                 }
                 guard peopleAreBuilt else {
                     return .noPeopleYet
                 }
-                return .select(requested == .people ? .people : .peopleReview)
+                return .select(.people)
             }
         }
 

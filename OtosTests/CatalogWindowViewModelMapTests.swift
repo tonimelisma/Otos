@@ -38,7 +38,7 @@ struct CatalogWindowViewModelMapTests {
             model,
             scope: .places,
             ids: [id("a.jpg")],
-            map: CatalogMapState(located: [LocatedAsset(id: id("a.jpg"), coordinate: Self.helsinki)], unlocatedCount: 1)
+            map: CatalogMapState(located: [LocatedAsset(id: id("a.jpg"), coordinate: Self.helsinki)])
         )
         model.applyState(placesState)
 
@@ -68,7 +68,7 @@ struct CatalogWindowViewModelMapTests {
             model,
             scope: .places,
             ids: located.map(\.id),
-            map: CatalogMapState(located: located, unlocatedCount: 0)
+            map: CatalogMapState(located: located)
         ))
 
         model.mapViewportChanged(cityViewport())
@@ -99,7 +99,7 @@ struct CatalogWindowViewModelMapTests {
         model.startMapClustering()
         model.selectSidebar(.places)
         let located = [LocatedAsset(id: id("a.jpg"), coordinate: Self.helsinki)]
-        model.applyState(windowState(model, scope: .places, ids: [id("a.jpg")], map: CatalogMapState(located: located, unlocatedCount: 0)))
+        model.applyState(windowState(model, scope: .places, ids: [id("a.jpg")], map: CatalogMapState(located: located)))
         model.mapViewportChanged(cityViewport())
         let clusters = try await waitForValue { model.mapClusters.isEmpty ? nil : model.mapClusters }
 
@@ -120,7 +120,7 @@ struct CatalogWindowViewModelMapTests {
         let revisionBeforeReturn = model.mapCameraRequest?.revision ?? 0
         model.returnToPlaces()
         #expect(model.queryDescriptor.scope == .places)
-        model.applyState(windowState(model, scope: .places, ids: [id("a.jpg")], map: CatalogMapState(located: located, unlocatedCount: 0)))
+        model.applyState(windowState(model, scope: .places, ids: [id("a.jpg")], map: CatalogMapState(located: located)))
 
         // Back lands on the viewport the user left, not on a re-fit.
         let request = try #require(model.mapCameraRequest)
@@ -137,7 +137,7 @@ struct CatalogWindowViewModelMapTests {
             LocatedAsset(id: id("a.jpg"), coordinate: PlaceCoordinate(latitude: 60.170, longitude: 24.94)),
             LocatedAsset(id: id("b.jpg"), coordinate: PlaceCoordinate(latitude: 60.180, longitude: 24.94)),
         ]
-        model.applyState(windowState(model, scope: .places, ids: located.map(\.id), map: CatalogMapState(located: located, unlocatedCount: 0)))
+        model.applyState(windowState(model, scope: .places, ids: located.map(\.id), map: CatalogMapState(located: located)))
         model.mapViewportChanged(viewport(latitudinalMeters: 400_000))
         let clusters = try await waitForValue { model.mapClusters.isEmpty ? nil : model.mapClusters }
         #expect(clusters.count == 1)
@@ -166,7 +166,7 @@ struct CatalogWindowViewModelMapTests {
             LocatedAsset(id: id("helsinki.jpg"), coordinate: Self.helsinki),
             LocatedAsset(id: id("la.jpg"), coordinate: PlaceCoordinate(latitude: 34.05, longitude: -118.24)),
         ]
-        model.applyState(windowState(model, scope: .places, ids: located.map(\.id), map: CatalogMapState(located: located, unlocatedCount: 0)))
+        model.applyState(windowState(model, scope: .places, ids: located.map(\.id), map: CatalogMapState(located: located)))
         let fit = try #require(model.mapCameraRequest)
         let fitRegion = MapClusterPolicy.region(of: fit.bounds)
         #expect(fitRegion.longitudeDelta > 143 * 1.3)
@@ -212,7 +212,7 @@ struct CatalogWindowViewModelMapTests {
             model,
             scope: .places,
             ids: located.map(\.id),
-            map: CatalogMapState(located: located, unlocatedCount: 0)
+            map: CatalogMapState(located: located)
         ))
         #expect(!model.canChangeViewMode)
         model.mapViewportChanged(cityViewport())
@@ -235,7 +235,7 @@ struct CatalogWindowViewModelMapTests {
             model,
             scope: .places,
             ids: located.map(\.id),
-            map: CatalogMapState(located: located, unlocatedCount: 0),
+            map: CatalogMapState(located: located),
             generation: model.queryGeneration - 1
         ))
         #expect(model.viewMode == .loupe)
@@ -261,7 +261,7 @@ struct CatalogWindowViewModelMapTests {
             model,
             scope: .places,
             ids: [id("a.jpg")],
-            map: CatalogMapState(located: located, unlocatedCount: 0)
+            map: CatalogMapState(located: located)
         )
         model.applyState(placesState)
         model.mapViewportChanged(cityViewport())
@@ -280,7 +280,7 @@ struct CatalogWindowViewModelMapTests {
             model,
             scope: .places,
             ids: [id("a.jpg")],
-            map: CatalogMapState(located: located, unlocatedCount: 0)
+            map: CatalogMapState(located: located)
         ))
         #expect(model.showsPlacesMap)
         #expect(model.viewMode == .grid)

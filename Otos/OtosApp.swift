@@ -407,8 +407,9 @@ public struct OtosApp: App {
                 Divider()
                 Menu("Sort") {
                     CatalogSortMenuContent(
-                        sort: catalogViewModel.queryDescriptor.sort,
+                        sort: catalogViewModel.queryDescriptor.effectiveSort,
                         search: catalogViewModel.queryDescriptor.search,
+                        person: catalogViewModel.shownPerson?.displayName,
                         setOrder: catalogViewModel.setSortOrder,
                         orderByRelevance: catalogViewModel.orderSearchByRelevance
                     )

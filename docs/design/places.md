@@ -52,7 +52,7 @@ While an area is open, a `Back to Map` item (`chevron.left`) sits at the leading
 of the toolbar and returns to the map as it was left; the browser there is the
 ordinary one.
 
-## The bar — L1 and L3
+## The bar — L1
 
 The surface's single fact (DES-010), in the day bar's position above the map, 52 pt in
 every state (DES-053):
@@ -60,9 +60,9 @@ every state (DES-053):
 | Level | Text | Rule |
 | --- | --- | --- |
 | L1 | `1,204 items on the map` / `1 item on the map` | `.title3` semibold, tabular digits (DES-005) |
-| L3 | `7,696 items have no location` / `1 item has no location` / `Every item has a location` | `.subheadline`, L3 color |
 
-Both counts move while enrichment finds locations; nothing else on the bar does.
+The bar carries no count of the items left off the map (owner decision, 2026-11-12). The
+count moves while enrichment finds locations; nothing else on the bar does.
 
 ## Map
 

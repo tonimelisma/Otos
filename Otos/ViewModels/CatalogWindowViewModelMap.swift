@@ -44,7 +44,7 @@ extension CatalogWindowViewModel {
     /// On This Day's years and its story are that scope's one presentation (ADR 0049).
     var canChangeViewMode: Bool {
         switch sidebarSelection {
-        case .duplicates, .onThisDay, .people, .peopleReview: false
+        case .duplicates, .onThisDay, .people: false
         case .places: showsPlacesMap && mapViewport != nil
         default: true
         }

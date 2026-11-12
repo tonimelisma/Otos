@@ -11,6 +11,7 @@ import SwiftUI
 /// person's, remembered across launches like the Edit pane's.
 struct InfoPaneView: View {
     let info: PhotoInfo?
+    let people: InfoPanePeople?
 
     /// Section IDs the person folded, comma-separated.
     @AppStorage("infoPane.foldedSections") private var foldedSections = ""
@@ -96,7 +97,11 @@ struct InfoPaneView: View {
                     if section.id == .location, let coordinate = shown.coordinate {
                         map(coordinate)
                     }
-                    rows(section.rows)
+                    if section.id == .people {
+                        InfoPanePeopleSection(people: people, facesRead: shown.facesRead)
+                    } else {
+                        rows(section.rows)
+                    }
                 }
                 // Indented under the heading, as the Edit pane's controls are, so the
                 // headings form one edge the eye runs down.
@@ -140,5 +145,156 @@ struct InfoPaneView: View {
         .frame(height: 140)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .accessibilityLabel("Map of \(shown.placeName ?? "where it was taken")")
+    }
+}
+
+/// What the Info pane's People section shows and does (ADR 0047): the faces of the targeted
+/// photos, the people each could be, and the face acts.
+struct InfoPanePeople {
+    let faces: SelectionFaces
+    let names: (PersonID) -> String
+    /// The people some faces may be given, most likely first; the person in the second
+    /// argument is left out.
+    let choices: ([PhotoFace], PersonID?) -> [PersonSummary]
+    let images: FaceTileImages?
+    let derivedImageDirectory: URL?
+    let actions: FaceActions
+    /// The pointer over a face, or off every face.
+    let hover: (FaceID?) -> Void
+}
+
+/// The People section: for one photo, each face as its crop with its person's name or
+/// `Unidentified`; for several, each person with how many of the photos hold them, and the
+/// unidentified faces. An unidentified face offers the three people it most likely is as
+/// buttons, and every row's menu holds This Is ▸, Not <name>, Not a Face and Set as Feature
+/// Photo — the photo menus' acts (`docs/design/people.md`).
+private struct InfoPanePeopleSection: View {
+    let people: InfoPanePeople?
+    let facesRead: Bool?
+
+    /// The likely people an unidentified face shows as buttons.
+    private static let suggestions = 3
+
+    var body: some View {
+        if let people, !people.faces.photos.isEmpty {
+            if people.faces.faces.isEmpty {
+                Text(people.faces.photos.count == 1 && facesRead == false ? "Not Checked Yet" : "No Faces")
+                    .foregroundStyle(.secondary)
+            } else if people.faces.photos.count == 1 {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(people.faces.faces) { face in
+                        row(people, faces: [face], tile: face.tile, title: face.person.map(people.names), person: face.person)
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(people.faces.people, id: \.self) { person in
+                        let faces = people.faces.faces(of: person)
+                        row(people, faces: faces, tile: faces.first?.tile, title: people.names(person), person: person,
+                            detail: PeopleText.count(Set(faces.map(\.id.asset)).count, "photo"))
+                    }
+                    let unidentified = people.faces.unidentified
+                    if !unidentified.isEmpty {
+                        row(people, faces: unidentified, tile: nil, title: nil, person: nil,
+                            detail: PeopleText.count(unidentified.count, "face"))
+                    }
+                }
+            }
+        } else {
+            Text(PhotoInfo.notApplicable)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func row(
+        _ people: InfoPanePeople,
+        faces: [PhotoFace],
+        tile: FaceTile?,
+        title: String?,
+        person: PersonID?,
+        detail: String? = nil
+    ) -> some View {
+        let ids = faces.map(\.id)
+        var seen: Set<MediaAssetID> = []
+        let onePerPhoto = faces.filter { seen.insert($0.id.asset).inserted }
+        let choices = people.choices(person == nil ? onePerPhoto : faces, person)
+        return HStack(alignment: .top, spacing: 8) {
+            if let tile {
+                FaceTileView(tile: tile, edge: 40, isSelected: false, images: people.images, derivedImageDirectory: people.derivedImageDirectory)
+            } else {
+                Image(systemName: "person.crop.square")
+                    .font(.title2)
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 40, height: 40)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(title ?? (faces.count == 1 ? "Unidentified" : "Unidentified Faces"))
+                        .foregroundStyle(title == nil ? .secondary : .primary)
+                        .lineLimit(1)
+                    if let detail {
+                        Text(detail)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                if person == nil, !choices.isEmpty {
+                    // The people it most likely is, one click each.
+                    HStack(spacing: 4) {
+                        ForEach(choices.prefix(Self.suggestions)) { choice in
+                            Button(choice.displayName) {
+                                if faces.count == 1 {
+                                    people.actions.name(ids, choice.id)
+                                } else {
+                                    people.actions.nameUnidentified(choice.id)
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .lineLimit(1)
+                            .help("This is \(choice.displayName)")
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+            Menu {
+                Menu("This Is") {
+                    ForEach(choices) { choice in
+                        Button(choice.displayName) {
+                            if person == nil, faces.count > 1 {
+                                people.actions.nameUnidentified(choice.id)
+                            } else {
+                                people.actions.name(ids, choice.id)
+                            }
+                        }
+                    }
+                    if !choices.isEmpty {
+                        Divider()
+                    }
+                    Button("New Person…") { people.actions.newPerson(onePerPhoto.map(\.id)) }
+                }
+                if let person, let title {
+                    Button("Not \(title)") { people.actions.removeNames(ids) }
+                }
+                Button("Not a Face") { people.actions.notFaces(ids) }
+                if let person, faces.count == 1, let face = faces.first {
+                    Divider()
+                    Button("Set as Feature Photo") { people.actions.setFeature(face.id, person) }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Face Actions")
+            .accessibilityLabel("Actions for \(title ?? "unidentified face")")
+        }
+        .contentShape(Rectangle())
+        .onHover { inside in
+            people.hover(inside && faces.count == 1 ? faces.first?.id : nil)
+        }
+        .accessibilityElement(children: .contain)
     }
 }

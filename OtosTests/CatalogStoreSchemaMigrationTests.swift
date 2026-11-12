@@ -184,6 +184,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.captureLocalTimeMigrationIdentifier,
             CatalogSchema.rawFacesMigrationIdentifier,
             CatalogSchema.decodeVerdictMigrationIdentifier,
+            CatalogSchema.autoTaggedPeopleMigrationIdentifier,
         ])
         #expect(tables == [
             "grdb_migrations", "library_root", "media_asset", "asset_metadata", "media_companion",
@@ -282,6 +283,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.captureLocalTimeMigrationIdentifier,
             CatalogSchema.rawFacesMigrationIdentifier,
             CatalogSchema.decodeVerdictMigrationIdentifier,
+            CatalogSchema.autoTaggedPeopleMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -369,6 +371,45 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(columns.contains("capture_instant_unix"))
         #expect(columns.isDisjoint(with: ["ts_original_unix", "ts_quicktime_creation_unix", "ts_digitized_unix", "ts_gps_unix"]))
         #expect(indexes.count == 4)
+    }
+
+    /// ADR 0047: v26 auto-tags faces. A face the user confirmed is the user's; a face of a
+    /// group they ignored is held, never given a person by Otos; every other face is open
+    /// for assignment. The ignored flag is gone, and a person may be hidden or a favourite.
+    @Test func theAutoTaggedPeopleMigrationKeepsTheUsersWord() async throws {
+        let queue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.decodeVerdictMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (path, kind) VALUES ('/Pictures', 'library')")
+            try db.execute(sql: """
+            INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key)
+            VALUES (1, 'a.jpg', 'a.jpg', 'a.jpg', 'a.jpg')
+            """)
+            try db.execute(sql: "INSERT INTO person (id, name) VALUES (1, 'Sam')")
+            for (index, person, ignored) in [(0, Int64?(1), 0), (1, nil, 1), (2, nil, 0)] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO face (
+                        library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
+                        landmarks, quality, analysis_revision, embedding, person_id, is_ignored
+                    ) VALUES (1, 'a.jpg', ?, 0, 0, 0.1, 0.1, x'', 0.5, 1, x'', ?, ?)
+                    """,
+                    arguments: [index, person, ignored]
+                )
+            }
+        }
+        try CatalogStore.migrator.migrate(queue)
+        let (assignments, faceColumns, personColumns) = try await queue.read { db in
+            try (
+                Int.fetchAll(db, sql: "SELECT assignment FROM face ORDER BY face_index"),
+                Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_xinfo('face')")),
+                Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_xinfo('person')"))
+            )
+        }
+        #expect(assignments == [FaceAssignmentColumn.user, .held, .open].map(\.rawValue))
+        #expect(!faceColumns.contains("is_ignored"))
+        #expect(faceColumns.isSuperset(of: ["assignment", "likeness", "is_feature"]))
+        #expect(personColumns.isSuperset(of: ["is_hidden", "is_favorite"]))
     }
 
     /// ADR 0039: v23 puts the timeline on local capture time. A row with a wall clock —

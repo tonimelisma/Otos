@@ -38,8 +38,51 @@ extension CatalogWindowViewModel {
             canReveal: !targets.isEmpty,
             canTrash: canMoveTargetedMediaToTrash
         )
-        model.personCorrections = personCorrectionsMenu()
+        model.faces = faceMenu()
         return model
+    }
+
+    /// The targets' faces as the context menu groups them: each visible person's in the
+    /// order their faces come, then the unidentified ones. With the filter on one person,
+    /// their group comes first and sits at the top level.
+    func faceMenu() -> FaceMenu? {
+        let selection = targetFaces
+        guard !selection.faces.isEmpty else { return nil }
+        let single = shownPerson?.id
+        var people = selection.people
+        if let single, let index = people.firstIndex(of: single) {
+            people.remove(at: index)
+            people.insert(single, at: 0)
+        }
+        let feature = selection.photos.count == 1
+        var groups = people.map { person -> FaceMenu.Group in
+            let faces = selection.faces(of: person)
+            let ids = faces.map(\.id)
+            return FaceMenu.Group(
+                title: peopleIndex.name(person),
+                person: person,
+                faces: ids,
+                choices: choices(for: faces, in: selection, except: person).map { .init(person: $0.id, title: $0.displayName, faces: ids) },
+                newPersonFaces: ids,
+                feature: feature ? ids.first : nil
+            )
+        }
+        let unidentified = selection.unidentified
+        if !unidentified.isEmpty {
+            var seen: Set<MediaAssetID> = []
+            let onePerPhoto = unidentified.filter { seen.insert($0.id.asset).inserted }
+            groups.append(FaceMenu.Group(
+                title: unidentified.count == 1 ? "Unidentified Face" : "Unidentified Faces",
+                person: nil,
+                faces: unidentified.map(\.id),
+                choices: choices(for: onePerPhoto, in: selection, except: nil).map { person in
+                    .init(person: person.id, title: person.displayName, faces: selection.unidentifiedFacesToName(as: person.id))
+                },
+                newPersonFaces: onePerPhoto.map(\.id),
+                feature: nil
+            ))
+        }
+        return FaceMenu(groups: groups, flattensFirst: single != nil && people.first == single)
     }
 
     /// The `NSMenu` for the current targets; grid, filmstrip, loupe and compare all
@@ -72,14 +115,16 @@ extension CatalogWindowViewModel {
             submitMediaChoice(choice, origin: .contextMenu)
         case .moveToTrash:
             moveTargetedMediaToTrash()
-        case .notPerson:
-            rejectShownPersonFaces()
-        case .notAFace:
-            markNotFaces(shownPersonSelectedFaces)
-        case let .thisIs(person):
-            moveFaces(shownPersonSelectedFaces, to: person)
-        case .newPerson:
-            splitFaces(shownPersonSelectedFaces)
+        case let .thisIs(faces, person):
+            nameFaces(faces, as: person)
+        case let .newPerson(faces):
+            beginNewPerson(faces)
+        case let .notPerson(faces):
+            removeNames(faces)
+        case let .notAFace(faces):
+            markNotFaces(faces)
+        case let .setFeaturePhoto(face, person):
+            setFeaturePhoto(face, of: person)
         }
     }
 }

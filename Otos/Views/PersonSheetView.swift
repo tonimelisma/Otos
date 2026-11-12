@@ -1,13 +1,15 @@
 import SwiftUI
 
-// The Person sheet (`docs/design/people.md`): Rename… and Set Birthday… open one sheet for
-// one person — the name, and the birthday as a year, or a full date with `Exact date`. A
-// year alone counts from 1 January (owner decision, 2026-11-10). Save is disabled, with the
-// reason as its tooltip, while the name is empty or taken, or the birthday comes after a
-// confirmed photo of the person. Passive: the reason and the save are the view model's.
+// The Person sheet (`docs/design/people.md`): Add Name…, Rename…, Set Birthday… and
+// New Person… open one sheet — the name, and the birthday as a year, or a full date with
+// `Exact date`. A year alone counts from 1 January (owner decision, 2026-11-10). Save is
+// disabled, with the reason as its tooltip, while the name is empty or the birthday comes
+// after a photo the user gave the person. A name another person has is saved as a merge,
+// asked first. Passive: the reason and the save are the view model's.
 
 struct PersonSheetView: View {
-    let person: PersonSummary
+    /// The person's name and birthday as they are; nil for New Person….
+    let person: PersonSummary?
     let refusal: (String, String?) -> String?
     let save: (String, String?) -> Void
     let cancel: () -> Void
@@ -19,7 +21,7 @@ struct PersonSheetView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     init(
-        person: PersonSummary,
+        person: PersonSummary?,
         refusal: @escaping (String, String?) -> String?,
         save: @escaping (String, String?) -> Void,
         cancel: @escaping () -> Void
@@ -28,8 +30,8 @@ struct PersonSheetView: View {
         self.refusal = refusal
         self.save = save
         self.cancel = cancel
-        let birthday = person.birthday
-        _name = State(initialValue: person.name ?? "")
+        let birthday = person?.birthday
+        _name = State(initialValue: person?.name ?? "")
         _year = State(initialValue: birthday.map { String($0.prefix(4)) } ?? "")
         _exact = State(initialValue: (birthday?.count ?? 0) > 4)
         _date = State(initialValue: birthday.flatMap(PersonBirthday.seconds).map { Date(timeIntervalSince1970: $0) } ?? .now)
@@ -52,7 +54,7 @@ struct PersonSheetView: View {
     var body: some View {
         let reason = refusal(name, birthday)
         VStack(alignment: .leading, spacing: 16) {
-            Text(person.name ?? "New Person")
+            Text(person?.name ?? (person == nil ? "New Person" : "Unnamed"))
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(DesignPalette.label(for: colorScheme))
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 8, verticalSpacing: 10) {
@@ -83,7 +85,7 @@ struct PersonSheetView: View {
                     }
                 }
             }
-            Text("Faces from before this date are never suggested as \(name.isEmpty ? "this person" : name).")
+            Text("Faces from before this date are never given to \(name.isEmpty ? "this person" : name).")
                 .font(.subheadline)
                 .foregroundStyle(DesignPalette.l3(for: colorScheme))
             HStack {

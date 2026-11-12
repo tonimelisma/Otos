@@ -17,8 +17,6 @@ extension CatalogMediaEmptyState {
             "No Media"
         case .noLocatedMedia:
             "No Located Media"
-        case let .noPersonPhotos(name):
-            "No Photos of \(name ?? "This Person")"
         case .nothingOnThisDay:
             "Nothing on This Day"
         case .noFilterMatches:
@@ -50,8 +48,6 @@ extension CatalogMediaEmptyState {
             "Add a library with media files to begin."
         case .noLocatedMedia:
             "Photos and videos with location information appear here as they are cataloged."
-        case let .noPersonPhotos(name):
-            "Confirm faces of \(name ?? "this person") in Review Suggestions."
         case let .nothingOnThisDay(day):
             OnThisDayPresentation.emptyMessage(day)
         case .noFilterMatches:
@@ -88,8 +84,6 @@ extension CatalogMediaEmptyState {
             "photo.on.rectangle"
         case .noLocatedMedia:
             "map"
-        case .noPersonPhotos:
-            "person.crop.square"
         case .nothingOnThisDay:
             "calendar"
         case .noFilterMatches:

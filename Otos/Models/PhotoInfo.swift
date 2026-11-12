@@ -5,8 +5,10 @@ import MediaMetadata
 /// Photo info guide
 ///
 /// What the inspector's Info pane shows for the current target (APP-041, DES-088): a
-/// header (the file name and when it was taken) and sections of label and value rows —
-/// Camera, Exposure or Video, People, Location, File — in the Edit pane's layout (DES-092).
+/// header (the file name and when it was taken) and sections — People, Location, File,
+/// Camera, Exposure or Video — in the Edit pane's layout (DES-092). People is the faces of
+/// the selected photos, which the pane edits (`SelectionFaces`); the rest are label and
+/// value rows.
 ///
 /// Every value is something Otos already holds: the asset row, the metadata record the
 /// library reported (ADR 0039), the overlay Otos keeps for the item, and where its original
@@ -62,7 +64,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
                     "Program", "Metering", "Flash", "White Balance",
                 ]
             case .video: ["Duration", "Frame Rate", "Codec"]
-            case .people: ["People"]
+            case .people: []
             case .location: ["Coordinates", "Altitude"]
             case .file: [
                     "Kind", "Dimensions", "Size", "Folder", "Original",
@@ -97,6 +99,13 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
     let coordinate: PlaceCoordinate?
     /// The place name looked up from `coordinate`, once it arrives.
     var placeName: String?
+    /// Whether the item's faces have been read, so a photo with no face reads `No Faces`
+    /// and one not read yet `Not Checked Yet`; nil with no single item.
+    var facesRead: Bool?
+    /// The item's saved edit and its upright size, which place a face's outline on the
+    /// edited photo in the loupe.
+    var editRecipe: EditRecipe?
+    var uprightSize: CGSize?
     private let sectionRows: [SectionID: [Row]]
     private let sectionOrder: [SectionID]
 
@@ -115,7 +124,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
 
     /// `No Selection`, or a count of the items selected, every value `—`.
     static func none(itemCount: Int) -> PhotoInfo {
-        let order: [SectionID] = [.camera, .exposure, .people, .location, .file]
+        let order = sectionOrder(kind: nil)
         var rows: [SectionID: [Row]] = [:]
         for section in order {
             rows[section] = section.labels.map { Row(label: $0, value: notApplicable) }
@@ -129,6 +138,12 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
             sectionRows: rows,
             sectionOrder: order
         )
+    }
+
+    /// People, Location and File first, the facts the user acts on and looks for, then the
+    /// capture's own: Camera, then Exposure for a still or Video for a movie.
+    static func sectionOrder(kind: MediaKind?) -> [SectionID] {
+        [.people, .location, .file, .camera, kind == .video ? .video : .exposure]
     }
 
     // MARK: - One item
@@ -146,21 +161,20 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         /// The name the sidebar shows for the item's library.
         var libraryName: String?
         var locality: OriginalLocality?
+        var editRecipe: EditRecipe?
     }
 
     /// Everything Otos holds for one item, as the pane shows it.
     static func make(_ source: Source, calendar: Calendar = .current) -> PhotoInfo {
         let id = source.id, asset = source.asset, metadata = source.metadata
         let resolvedKind = source.kind ?? asset?.bestKind
-        let order: [SectionID] = resolvedKind == .video
-            ? [.camera, .video, .people, .location, .file]
-            : [.camera, .exposure, .people, .location, .file]
+        let order = sectionOrder(kind: resolvedKind)
         let location = metadata?.locations.first
         var rows: [SectionID: [Row]] = [:]
         rows[.camera] = cameraRows(metadata)
         rows[.exposure] = exposureRows(metadata?.exposure?.exposure)
         rows[.video] = videoRows(metadata, asset: asset)
-        rows[.people] = [Row(label: "People", value: peopleValue(overlay: source.overlay, asset: asset))]
+        rows[.people] = []
         rows[.location] = locationRows(location)
         rows[.file] = fileRows(source, kind: resolvedKind, calendar: calendar)
         return PhotoInfo(
@@ -169,6 +183,9 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
             captured: capturedValue(asset: asset, metadata: metadata, calendar: calendar),
             coordinate: location.map { PlaceCoordinate(latitude: $0.latitude, longitude: $0.longitude) },
             placeName: nil,
+            facesRead: asset?.facesSourceSize != nil,
+            editRecipe: source.editRecipe,
+            uprightSize: source.nativePixelSize,
             sectionRows: rows,
             sectionOrder: order
         )
@@ -332,18 +349,6 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         }
     }
 
-    /// Confirmed names only (DES-111). An item not yet read for faces is `Unknown`; one read
-    /// with no one confirmed is `None`.
-    private static func peopleValue(overlay: PhotoInfoOverlay?, asset: MediaAsset?) -> String {
-        guard let overlay else {
-            return unknown
-        }
-        if !overlay.people.isEmpty {
-            return overlay.people.formatted(.list(type: .and))
-        }
-        return asset?.facesSourceSize == nil ? unknown : "None"
-    }
-
     private static func locationRows(_ location: GeoRecord?) -> [Row] {
         [
             Row(label: "Coordinates", value: location.map(coordinates) ?? unknown),
@@ -434,10 +439,9 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
     }
 }
 
-/// The overlay Otos holds for one asset that the Info pane shows: confirmed people (DES-111),
-/// companion files, the import it arrived in, and whether it is edited.
+/// The overlay Otos holds for one asset that the Info pane shows: companion files, the
+/// import it arrived in, and whether it is edited.
 nonisolated struct PhotoInfoOverlay: Equatable, Sendable {
-    var people: [String]
     var companionFileNames: [String]
     var importedAt: Date?
     var isEdited: Bool

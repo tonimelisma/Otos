@@ -191,6 +191,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.autoTaggedPeopleMigrationIdentifier) { db in
+            for statement in CatalogSchema.autoTaggedPeopleStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -688,15 +693,16 @@ extension CatalogStore {
 
     /// A still's faces (ADR 0047): the reading replaces every face the asset held, and its
     /// stamp names the bytes it read, so a still with no face in it is not read again until
-    /// it changes. The user's acts on the faces it replaces — a confirmed person, an ignored
-    /// group, rejections — move to the new face each overlaps (`FaceCarryOver`); "not a face"
-    /// does not, because a changed file is read afresh.
+    /// it changes. What the user said about the faces it replaces — a person they gave, a
+    /// seed, a removed name, a feature photo, rejections — moves to the new face each
+    /// overlaps (`FaceCarryOver`); Otos's guesses do not, since assignment remakes them, and
+    /// neither does "not a face", because a changed file is read afresh.
     static func writeFaces(_ faces: EnrichedFaces, stamp: ProductStamp, row: ProductRow, db: Database) throws {
         let key: StatementArguments = [row.rootID, row.relativePath.rawValue]
         let previous = try Row.fetchAll(
             db,
             sql: """
-            SELECT face_index, box_x, box_y, box_width, box_height, person_id, is_ignored
+            SELECT face_index, box_x, box_y, box_width, box_height, person_id, assignment, is_feature
             FROM face WHERE library_root_id = ? AND relative_path = ? ORDER BY face_index
             """,
             arguments: key
@@ -718,19 +724,24 @@ extension CatalogStore {
         for (index, face) in faces.faces.enumerated() {
             let prior = carried[index].map { previous[$0] }
             let priorIndex: Int? = prior?["face_index"]
+            let carriedAssignment = prior.map {
+                FaceAssignmentColumn.assignment(column: $0["assignment"], person: $0["person_id"])
+            } ?? .open
+            let kept: FaceAssignment = carriedAssignment.isGuessable ? .open : carriedAssignment
             try db.execute(
                 sql: """
                 INSERT INTO face (
                     library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
-                    landmarks, quality, analysis_revision, embedding, person_id, is_ignored
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    landmarks, quality, analysis_revision, embedding, person_id, assignment, is_feature
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 arguments: [
                     row.rootID, row.relativePath.rawValue, index,
                     Double(face.box.minX), Double(face.box.minY), Double(face.box.width), Double(face.box.height),
                     FaceStorage.landmarksData(face.landmarks), Double(face.quality), faces.analysisRevision,
                     FaceStorage.embeddingData(face.embedding),
-                    prior?["person_id"] as Int64?, (prior?["is_ignored"] as Int?) ?? 0,
+                    kept.person?.rawValue, FaceAssignmentColumn(kept).rawValue,
+                    kept.person == nil ? 0 : (prior?["is_feature"] as Int?) ?? 0,
                 ]
             )
             for person in priorIndex.flatMap({ rejections[$0] }) ?? [] {

@@ -95,7 +95,7 @@
                         clusterCount: $0.mapClusters.count,
                         showsDuplicates: $0.showsDuplicatesList,
                         duplicateGroupCount: $0.state.duplicates?.groups.count ?? 0,
-                        showsPeople: $0.showsPeopleList || $0.showsPeopleReview,
+                        showsPeople: $0.showsPeopleList,
                         peopleAreBuilt: $0.state.people != nil,
                         showsOnThisDay: $0.showsOnThisDay,
                         onThisDaySettled: onThisDaySettled($0, awaitsStory: awaitsStory),

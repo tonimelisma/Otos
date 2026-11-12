@@ -86,10 +86,15 @@ nonisolated enum CatalogQueryGateway {
         guard let scopeClause = try scopeClause(scope, db: db) else {
             return nil
         }
-        let order = orderPlan(for: descriptor.effectiveSort, rootLocal: scope.rootIDs.count == 1)
+        let order = orderPlan(
+            for: descriptor.effectiveSort,
+            person: descriptor.filter.singlePerson,
+            rootLocal: scope.rootIDs.count == 1
+        )
         var arguments = scopeClause.arguments
         let filter = filterPredicate(for: descriptor.filter)
         arguments.append(contentsOf: filter.arguments)
+        arguments.append(contentsOf: order.arguments)
         let filterSQL = filter.sql.map { "\n  AND \($0)" } ?? ""
         let locationColumns = scope.requiresLocation
             ? ", asset_metadata.primary_latitude, asset_metadata.primary_longitude"
@@ -434,40 +439,59 @@ nonisolated enum LivePhotoSQL {
     }
 }
 
+/// The index the read goes through and its `ORDER BY`, with the order's own arguments. The
+/// likeness order reads the person's face of each photo (`person`, which
+/// `CatalogQueryDescriptor.effectiveSort` guarantees under it); a face alone in its person
+/// has no likeness and goes last; ties go newest first.
 private nonisolated func orderPlan(
     for sort: MediaSortOrder,
+    person: PersonID?,
     rootLocal: Bool
-) -> (indexName: String, orderBy: String) {
+) -> (indexName: String, orderBy: String, arguments: [any DatabaseValueConvertible]) {
     let direction = sort.direction.sqlKeyword
     let suffix = direction.lowercased()
-    switch (sort.field, rootLocal) {
-    case (.bestDate, true):
+    if sort.field == .likeness, let person {
+        let likeness = """
+        (SELECT face.likeness FROM face WHERE face.library_root_id = media_asset.library_root_id
+            AND face.relative_path = media_asset.relative_path AND face.person_id = ?)
+        """
         return (
+            "idx_media_asset_best_capture_\(rootLocal ? "root" : "global")_desc",
+            """
+            (\(likeness) IS NULL), \(likeness) \(direction), media_asset.best_capture_local DESC, \
+            media_asset.library_root_id, media_asset.relative_path
+            """,
+            [person.rawValue, person.rawValue]
+        )
+    }
+    let plan: (indexName: String, orderBy: String) = switch (sort.field, rootLocal) {
+    case (.bestDate, true), (.likeness, true):
+        (
             "idx_media_asset_best_capture_root_\(suffix)",
             "media_asset.best_capture_local \(direction), media_asset.relative_path"
         )
-    case (.bestDate, false):
-        return (
+    case (.bestDate, false), (.likeness, false):
+        (
             "idx_media_asset_best_capture_global_\(suffix)",
             "media_asset.best_capture_local \(direction), media_asset.library_root_id, media_asset.relative_path"
         )
     case (.name, true):
-        return (
+        (
             "idx_media_asset_name_root_\(suffix)",
             "media_asset.name_sort_key \(direction), media_asset.relative_path"
         )
     case (.name, false):
-        return (
+        (
             "idx_media_asset_name_global_\(suffix)",
             "media_asset.name_sort_key \(direction), media_asset.library_root_id, media_asset.relative_path"
         )
     case (.size, true):
-        return (
+        (
             "idx_media_asset_size_root_\(suffix)",
             "(media_asset.byte_size IS NULL), media_asset.byte_size \(direction), media_asset.relative_path"
         )
     case (.size, false):
-        return (
+        (
             "idx_media_asset_size_global_\(suffix)",
             """
             (media_asset.byte_size IS NULL), media_asset.byte_size \(direction), \
@@ -475,6 +499,7 @@ private nonisolated func orderPlan(
             """
         )
     }
+    return (plan.indexName, plan.orderBy, [])
 }
 
 /// Builds the `FROM` join and `WHERE` fragment for a resolved scope, or `nil` when the
@@ -578,7 +603,7 @@ private nonisolated func scopeClause(
             arguments.append(key.rootID)
             arguments.append(key.relativePath)
         }
-    case let .confirmed(person):
+    case .withPerson:
         predicate += """
 
           AND EXISTS (
@@ -586,12 +611,9 @@ private nonisolated func scopeClause(
               WHERE face.library_root_id = media_asset.library_root_id
                 AND face.relative_path = media_asset.relative_path
                 AND face.is_not_face = 0
-                AND \(person == nil ? "face.person_id IS NOT NULL" : "face.person_id = ?")
+                AND face.person_id IS NOT NULL
           )
         """
-        if let person {
-            arguments.append(person.rawValue)
-        }
     }
     if let captureRanges {
         let clauses = Array(
@@ -674,6 +696,24 @@ private nonisolated func filterPredicate(
     if !choices.isEmpty {
         clauses.append("media_choice IN (\(sqlPlaceholders(count: choices.count)))")
         arguments.append(contentsOf: choices.map(\.rawValue))
+    }
+    // The People filter (ADR 0047): a photo holding a face of each person (All Of) or of
+    // any of them (Any Of); `Unassigned` is a face with no person.
+    var peopleClauses: [String] = []
+    let face = """
+    EXISTS (SELECT 1 FROM face WHERE face.library_root_id = media_asset.library_root_id
+        AND face.relative_path = media_asset.relative_path AND face.is_not_face = 0 AND
+    """
+    for person in filter.people.sorted() {
+        peopleClauses.append("\(face) face.person_id = ?)")
+        arguments.append(person.rawValue)
+    }
+    if filter.unassignedFaces {
+        peopleClauses.append("\(face) face.person_id IS NULL)")
+    }
+    if !peopleClauses.isEmpty {
+        let joiner = filter.peopleMatch == .all ? " AND " : " OR "
+        clauses.append("(\(peopleClauses.joined(separator: joiner)))")
     }
     return (clauses.isEmpty ? nil : clauses.joined(separator: " AND "), arguments)
 }

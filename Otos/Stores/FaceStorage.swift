@@ -132,18 +132,54 @@ nonisolated enum PersonBirthday {
     }
 }
 
+/// `face.assignment` as the catalog stores it, beside `person_id` (ADR 0047).
+nonisolated enum FaceAssignmentColumn: Int {
+    case open = 0
+    case model = 1
+    case seed = 2
+    case user = 3
+    case held = 4
+
+    init(_ assignment: FaceAssignment) {
+        switch assignment {
+        case .open: self = .open
+        case .model: self = .model
+        case .seed: self = .seed
+        case .user: self = .user
+        case .held: self = .held
+        }
+    }
+
+    /// The assignment a stored row holds. A row with no person is open or held, whatever
+    /// else its column says: deleting a person clears `person_id` under its faces.
+    static func assignment(column: Int, person: Int64?) -> FaceAssignment {
+        let kind = FaceAssignmentColumn(rawValue: column) ?? .open
+        guard let person = person.map(PersonID.init(rawValue:)) else {
+            return kind == .held ? .held : .open
+        }
+        return switch kind {
+        case .open, .held: .open
+        case .model: .model(person)
+        case .seed: .seed(person)
+        case .user: .user(person)
+        }
+    }
+}
+
 /// An act on faces or people that ADR 0047's hard rules refuse.
 nonisolated enum PeopleRuleViolation: Error, Equatable {
     /// Two of the faces are in one photo, and one person is in a photo once.
     case twoFacesOfOnePhoto
-    /// The person is already confirmed in the photo.
+    /// The user already gave another face of the photo to the person.
     case personAlreadyInPhoto
     /// The photo was taken before the person's birthday.
     case beforeBirthday
-    /// `count` confirmed photos of the person predate the birthday.
+    /// `count` photos the user gave the person predate the birthday.
     case confirmedBeforeBirthday(count: Int)
-    /// The two people are both confirmed in `count` photos.
+    /// The user gave both people a face in `count` photos.
     case bothInPhotos(count: Int)
+    /// Another person already has the name; merging them is the act.
+    case nameTaken
     /// The face's library is not cataloged.
     case unknownFace
     /// A birthday that is neither `YYYY-MM-DD` nor `YYYY`.

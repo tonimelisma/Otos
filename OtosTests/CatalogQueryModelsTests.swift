@@ -32,7 +32,7 @@ struct CatalogQueryModelsTests {
         ) == "Odd")
     }
 
-    @Test func sortOrdersExposeSixCompleteUserFacingChoices() {
+    @Test func sortOrdersExposeEightCompleteUserFacingChoices() {
         #expect(MediaSortOrder.allCases.map(\.label) == [
             "Date — Newest First",
             "Date — Oldest First",
@@ -40,6 +40,8 @@ struct CatalogQueryModelsTests {
             "Filename — Z to A",
             "Size — Largest First",
             "Size — Smallest First",
+            "Likeness — Least Alike First",
+            "Likeness — Most Alike First",
         ])
         #expect(MediaSortOrder.defaultOrder == .dateNewest)
     }

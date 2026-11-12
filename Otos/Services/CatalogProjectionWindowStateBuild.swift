@@ -76,13 +76,11 @@ extension CatalogProjection {
         async let unfilteredVisibleAssetCount = unfilteredVisibleAssetCount(facts, store: store)
         async let allAssetCount = catalogedAssetCount(facts, store: store)
         async let filterOptions = store.filterOptions(availableLibraryPaths: facts.availableLibraryPaths)
-        async let filteredFixedAssetCount = filteredFixedAssetCount(facts, store: store)
         var (state, metrics) = try await windowState(
             from: facts,
             allAssetCount: allAssetCount,
             unfilteredVisibleAssetCount: unfilteredVisibleAssetCount,
-            filterOptions: filterOptions,
-            filteredFixedAssetCount: filteredFixedAssetCount
+            filterOptions: filterOptions
         )
         state.pendingIdentityRemaps = pendingIdentityRemaps
         return (state, metrics)
@@ -164,8 +162,7 @@ extension CatalogProjection {
         from facts: CatalogProjectionBuildFacts,
         allAssetCount: Int,
         unfilteredVisibleAssetCount: Int,
-        filterOptions: CatalogFilterOptions,
-        filteredFixedAssetCount: Int
+        filterOptions: CatalogFilterOptions
     ) -> (CatalogWindowState, CatalogProjectionBuildMetrics) {
         let signpost = OtosSignpost.performance.beginInterval("CatalogWindowStateBuild")
         defer {
@@ -195,8 +192,7 @@ extension CatalogProjection {
                 map: CatalogWindowPolicy.mapState(
                     for: facts.resolvedDescriptor,
                     scopedAssetIDs: facts.scopedAssetIDs,
-                    scopedCoordinates: facts.scopedCoordinates,
-                    filteredFixedAssetCount: filteredFixedAssetCount
+                    scopedCoordinates: facts.scopedCoordinates
                 ),
                 onThisDay: CatalogWindowPolicy.onThisDayState(
                     for: facts.resolvedDescriptor,
@@ -232,23 +228,6 @@ extension CatalogProjection {
             return facts.orderedAssetIDs.count
         }
         return try await store.catalogedAssetCount(for: facts.resolvedDescriptor.scope)
-    }
-
-    /// Items the fixed libraries hold under the current filter, located or not — what
-    /// the Places map measures its own count against to say how many it leaves off
-    /// (ADR 0040). Only the Places scope asks.
-    private func filteredFixedAssetCount(
-        _ facts: CatalogProjectionBuildFacts,
-        store: CatalogStore
-    ) async throws -> Int {
-        guard facts.resolvedDescriptor.scope == .places else {
-            return 0
-        }
-        return try await store.visibleAssetCount(
-            for: .allMedia,
-            filter: facts.resolvedDescriptor.filter,
-            availableLibraryPaths: facts.availableLibraryPaths
-        )
     }
 }
 

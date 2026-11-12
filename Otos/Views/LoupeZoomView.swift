@@ -29,6 +29,8 @@ struct LoupeZoomView: NSViewRepresentable {
     /// fraction of the image from its top-left corner, and the cursor is a crosshair.
     var isPicking = false
     var onPick: (CGPoint) -> Void = { _ in }
+    /// A face's outline, as fractions of the image from its top-left corner (ADR 0047).
+    var faceHighlight: CGRect?
 
     func makeNSView(context _: Context) -> LoupeZoomScrollView {
         LoupeZoomScrollView(frame: .zero)
@@ -38,6 +40,7 @@ struct LoupeZoomView: NSViewRepresentable {
         view.onReport = onReport
         view.onDoubleClick = onDoubleClick
         view.setPicking(isPicking, onPick: onPick)
+        view.setFaceHighlight(faceHighlight)
         view.setContent(image: image, nativeLongEdge: nativeLongEdge, assetID: assetID)
         view.apply(command)
     }
@@ -98,6 +101,10 @@ final class LoupeZoomScrollView: NSScrollView {
 
     var fitMagnification: CGFloat {
         LoupeZoomPolicy.fitMagnification(documentSize: document.frame.size, paneSize: bounds.size)
+    }
+
+    func setFaceHighlight(_ rect: CGRect?) {
+        document.faceHighlight = rect
     }
 
     func setPicking(_ picking: Bool, onPick: @escaping (CGPoint) -> Void) {
@@ -203,9 +210,46 @@ final class LoupeZoomDocumentView: NSView {
         }
     }
 
+    /// A face's outline in fractions of the image, drawn as a sublayer so it zooms and pans
+    /// with the photo: the accent selection border (DES-061).
+    var faceHighlight: CGRect? {
+        didSet {
+            if faceHighlight != oldValue {
+                needsLayout = true
+            }
+        }
+    }
+
+    private let highlightLayer: CAShapeLayer = {
+        let layer = CAShapeLayer()
+        layer.fillColor = nil
+        layer.lineWidth = 3
+        return layer
+    }()
+
+    override func layout() {
+        super.layout()
+        guard let rect = faceHighlight, bounds.width > 0 else {
+            highlightLayer.isHidden = true
+            return
+        }
+        // Flipped, so the fraction is measured from the top-left corner already.
+        let box = CGRect(
+            x: rect.minX * bounds.width, y: rect.minY * bounds.height,
+            width: rect.width * bounds.width, height: rect.height * bounds.height
+        )
+        highlightLayer.strokeColor = NSColor.controlAccentColor.cgColor
+        // The stroke keeps 3 pt on screen at any zoom.
+        highlightLayer.lineWidth = 3 / max(enclosingScrollView?.magnification ?? 1, 0.01)
+        highlightLayer.path = CGPath(roundedRect: box, cornerWidth: 4, cornerHeight: 4, transform: nil)
+        highlightLayer.isHidden = false
+    }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        layer?.addSublayer(highlightLayer)
+        highlightLayer.isHidden = true
         layer?.contentsGravity = .resize
         layer?.magnificationFilter = .linear
         layer?.minificationFilter = .trilinear

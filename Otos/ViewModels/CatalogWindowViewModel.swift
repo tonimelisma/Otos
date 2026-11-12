@@ -130,10 +130,15 @@ final class CatalogWindowViewModel {
     /// The user's marks and the on-screen groups while working through Duplicates
     /// (ADR 0042). Window state, not catalog state: marks are a decision in progress.
     var duplicatesSession = DuplicatesSession()
-    /// What the user is doing in People (ADR 0047): the people and faces selected, the
-    /// review list shown, the faces on their way out, the last act's receipt and the open
-    /// sheet or question. Window state, not catalog state.
+    /// What the user is doing in People (ADR 0047): the people selected in the gallery, the
+    /// open sheet or question, and whether the browser was opened on a person from the
+    /// gallery. Window state, not catalog state.
     var peopleSession = PeopleSession()
+    /// The people each face of the targets could be, as `PeopleAssignment` last ranked them
+    /// for those photos (`refreshFaceCandidates`).
+    var faceCandidates = FaceCandidates.none
+    /// The face the pointer is over in the Info pane, which the loupe outlines.
+    var hoveredFace: FaceID?
     /// Lookups over the last People state, rebuilt when it changes (`applyPeopleState`).
     @ObservationIgnored var peopleIndex = PeopleIndex(.empty)
     /// Face crops decoded this process, shared by every face tile (DES-110).
@@ -314,6 +319,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var handledEditCommandCount = 0
     var photoInfo: PhotoInfo?
     @ObservationIgnored var photoInfoTask: Task<Void, Never>?
+    @ObservationIgnored var faceCandidatesTask: Task<Void, Never>?
     /// The Info pane's place-name lookup for its located item; a new target cancels it.
     @ObservationIgnored var placeNameTask: Task<Void, Never>?
     @ObservationIgnored var placeNameLookup: PlaceNameLookup = .mapKit
@@ -364,7 +370,7 @@ final class CatalogWindowViewModel {
     }
 
     @ObservationIgnored let catalogStore: CatalogStore
-    @ObservationIgnored private let catalogProjection: CatalogProjection
+    @ObservationIgnored let catalogProjection: CatalogProjection
     @ObservationIgnored let enrichmentCoordinator: EnrichmentCoordinator?
     /// Re-reads metadata an older MediaMetadata revision produced, from local bytes only
     /// (ADR 0039); runs once per launch with enrichment.
@@ -841,6 +847,7 @@ final class CatalogWindowViewModel {
         peopleIntentTask?.cancel()
         openWithMenuTask?.cancel()
         photoInfoTask?.cancel()
+        faceCandidatesTask?.cancel()
         placeNameTask?.cancel()
         focusedKindTask?.cancel()
         currentTargetChoiceTask?.cancel()
@@ -1530,13 +1537,9 @@ extension CatalogWindowViewModel {
             // The group is gone — resolved, or its copies moved — so its leaf is too. Groups
             // not built yet say nothing about it.
             nextState.duplicates.map { !$0.groups.contains { $0.id == group } } ?? false
-        case .duplicates, .people, .peopleReview, .reviewPhotos:
+        case .duplicates, .people:
             // Stays while selected, empty or not (ADR 0042, ADR 0047), while libraries exist.
             !SidebarSelectionPolicy.showsPlaces(libraries: nextState.libraries)
-        case let .person(person):
-            // A removed or merged person's leaf goes; People not built yet says nothing.
-            !SidebarSelectionPolicy.showsPlaces(libraries: nextState.libraries)
-                || nextState.people.map { $0.person(person) == nil } ?? false
         case .allMedia, .allImports:
             false
         }

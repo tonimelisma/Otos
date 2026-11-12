@@ -44,25 +44,57 @@ enum MediaItemContextMenu {
                 item.submenu = submenu
                 item.isEnabled = enabled
                 menu.addItem(item)
-            case let .thisIs(choices, enabled):
-                let item = NSMenuItem(title: "This Is", action: nil, keyEquivalent: "")
-                let submenu = NSMenu(title: "This Is")
-                submenu.autoenablesItems = false
-                for choice in choices {
-                    submenu.addItem(ClosureMenuItem(title: choice.title) { perform(.thisIs(choice.person)) })
-                }
-                if !choices.isEmpty {
+            case let .faces(group, flat):
+                if flat {
+                    let thisIs = NSMenuItem(title: "This Is", action: nil, keyEquivalent: "")
+                    let submenu = NSMenu(title: "This Is")
+                    submenu.autoenablesItems = false
+                    addChoices(group, to: submenu, perform: perform)
+                    thisIs.submenu = submenu
+                    menu.addItem(thisIs)
+                    addCorrections(group, to: menu, perform: perform)
+                } else {
+                    // One level of submenu (HIG): the group's This Is choices sit under a
+                    // section header inside it rather than in a submenu of their own.
+                    let item = NSMenuItem(title: group.title, action: nil, keyEquivalent: "")
+                    let submenu = NSMenu(title: group.title)
+                    submenu.autoenablesItems = false
+                    submenu.addItem(NSMenuItem.sectionHeader(title: "This Is"))
+                    addChoices(group, to: submenu, perform: perform)
                     submenu.addItem(.separator())
+                    addCorrections(group, to: submenu, perform: perform)
+                    item.submenu = submenu
+                    menu.addItem(item)
                 }
-                submenu.addItem(ClosureMenuItem(title: "New Person") { perform(.newPerson) })
-                item.submenu = submenu
-                item.isEnabled = enabled
-                menu.addItem(item)
             case .separator:
                 menu.addItem(.separator())
             }
         }
         return menu
+    }
+
+    /// The people the group's faces may be, most likely first, then New Person….
+    private static func addChoices(_ group: FaceMenu.Group, to menu: NSMenu, perform: @escaping @MainActor (MediaItemCommand) -> Void) {
+        for choice in group.choices {
+            menu.addItem(ClosureMenuItem(title: choice.title) { perform(.thisIs(choice.faces, choice.person)) })
+        }
+        if !group.choices.isEmpty {
+            menu.addItem(.separator())
+        }
+        let faces = group.newPersonFaces
+        menu.addItem(ClosureMenuItem(title: "New Person…") { perform(.newPerson(faces)) })
+    }
+
+    /// Not Sam, Not a Face, and Set as Feature Photo with one photo targeted.
+    private static func addCorrections(_ group: FaceMenu.Group, to menu: NSMenu, perform: @escaping @MainActor (MediaItemCommand) -> Void) {
+        let faces = group.faces
+        if group.person != nil {
+            menu.addItem(ClosureMenuItem(title: "Not \(group.title)") { perform(.notPerson(faces)) })
+        }
+        menu.addItem(ClosureMenuItem(title: "Not a Face") { perform(.notAFace(faces)) })
+        if let face = group.feature, let person = group.person {
+            menu.addItem(ClosureMenuItem(title: "Set as Feature Photo") { perform(.setFeaturePhoto(face, person)) })
+        }
     }
 
     private static func menuSized(_ image: NSImage) -> NSImage {

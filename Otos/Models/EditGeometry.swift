@@ -16,8 +16,10 @@ nonisolated struct EditGeometry: Equatable {
     let frameSize: CGSize
     /// The kept part of the frame, in frame coordinates.
     let cropRect: CGRect
+    let developedSize: CGSize
 
     init(recipe: EditRecipe, developedSize: CGSize) {
+        self.developedSize = developedSize
         var transform = CGAffineTransform.identity
         var size = developedSize
         for _ in 0 ..< recipe.quarterTurns {
@@ -53,6 +55,28 @@ nonisolated struct EditGeometry: Equatable {
             y: cropRect.maxY - point.y * cropRect.height
         )
         return framePoint.applying(transform.inverted())
+    }
+
+    /// Where `rect` of the developed image shows on the edited photo, both as fractions from
+    /// the top-left corner: the bounds of its corners after the geometry, clipped to the
+    /// photo. Nil when none of it is inside the crop. A face's outline on the loupe.
+    func editedRect(ofDevelopedFraction rect: CGRect) -> CGRect? {
+        guard cropRect.width > 0, cropRect.height > 0 else { return nil }
+        let corners = [
+            CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
+            CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY),
+        ].map { fraction in
+            let frame = CGPoint(x: fraction.x * developedSize.width, y: (1 - fraction.y) * developedSize.height)
+                .applying(transform)
+            return CGPoint(
+                x: (frame.x - cropRect.minX) / cropRect.width,
+                y: (cropRect.maxY - frame.y) / cropRect.height
+            )
+        }
+        let xs = corners.map(\.x), ys = corners.map(\.y)
+        let bounds = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+        let clipped = bounds.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        return clipped.isNull || clipped.isEmpty ? nil : clipped
     }
 
     /// The scale at which a frame of `size` rotated by `angle` still covers itself.

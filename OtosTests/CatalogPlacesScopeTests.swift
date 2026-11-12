@@ -134,18 +134,15 @@ struct CatalogPlacesScopeTests {
         let map = CatalogWindowPolicy.mapState(
             for: descriptor,
             scopedAssetIDs: ids,
-            scopedCoordinates: [Self.helsinki, Self.sydney],
-            filteredFixedAssetCount: 5
+            scopedCoordinates: [Self.helsinki, Self.sydney]
         )
         let notPlaces = CatalogWindowPolicy.mapState(
             for: CatalogQueryDescriptor(scope: .allMedia),
             scopedAssetIDs: ids,
-            scopedCoordinates: [],
-            filteredFixedAssetCount: 5
+            scopedCoordinates: []
         )
 
         #expect(map?.located == [LocatedAsset(id: ids[0], coordinate: Self.helsinki), LocatedAsset(id: ids[1], coordinate: Self.sydney)])
-        #expect(map?.unlocatedCount == 3)
         #expect(notPlaces == nil)
     }
 

@@ -769,10 +769,8 @@ extension CatalogStore {
         }
     }
 
-    /// The overlay the Info pane shows for `id` (APP-041): the people its faces are
-    /// confirmed as, each once, in the order the faces were found and named as every surface
-    /// names them (`Unnamed` for a person without a name); its companion files; the import
-    /// it arrived in; and whether it carries an edit. Nil when the asset is not cataloged.
+    /// The overlay the Info pane shows for `id` (APP-041): its companion files, the import it
+    /// arrived in, and whether it carries an edit. Nil when the asset is not cataloged.
     func photoInfoOverlay(for id: MediaAssetID) async throws -> PhotoInfoOverlay? {
         guard let rootRowID = roots[id.libraryRootPath]?.rowID else {
             return nil
@@ -790,20 +788,6 @@ extension CatalogStore {
             ) else {
                 return nil
             }
-            let people = try Row.fetchAll(
-                db,
-                sql: """
-                SELECT p.id, p.name FROM face f JOIN person p ON p.id = f.person_id
-                WHERE f.library_root_id = ? AND f.relative_path = ? AND f.is_not_face = 0
-                ORDER BY f.face_index
-                """,
-                arguments: arguments
-            )
-            var seen: Set<Int64> = []
-            let names = people.compactMap { row -> String? in
-                let person: Int64 = row["id"]
-                return seen.insert(person).inserted ? PersonSummary.displayName(row["name"]) : nil
-            }
             let companions = try Row.fetchAll(
                 db,
                 sql: """
@@ -815,7 +799,6 @@ extension CatalogStore {
             ).map { MediaRelativePath(rawValue: $0["relative_path"]).fileName }
             let batch: Int64? = asset["import_batch_unix_ms"]
             return PhotoInfoOverlay(
-                people: names,
                 companionFileNames: companions,
                 importedAt: batch.map { Date(timeIntervalSince1970: Double($0) / 1000) },
                 isEdited: asset["edited"]
@@ -867,9 +850,9 @@ extension CatalogStore {
     // MARK: - People (ADR 0047)
 
     /// Everything People reads, in one transaction: each face with its photo's capture
-    /// instant, its tile and the user's acts on it, the people, and the stills in
-    /// `availableLibraryPaths` whose faces are not yet read. Faces of libraries no longer
-    /// cataloged are left out.
+    /// instant, its tile, whose word its person is and the user's acts on it, the people, and
+    /// the stills in `availableLibraryPaths` whose faces are not yet read. Faces of libraries
+    /// no longer cataloged are left out.
     func peopleSnapshot(availableLibraryPaths: Set<LibraryRootPath> = []) async throws -> PeopleSnapshot {
         let pathsByRowID = roots.pathsByRowID
         var folderRootIDs: [Int64] = []
@@ -895,11 +878,14 @@ extension CatalogStore {
             }
             var faces: [FaceFact] = []
             var tiles: [FaceID: FaceTile] = [:]
+            var likeness: [FaceID: Float] = [:]
+            var features: [PersonID: FaceID] = [:]
             for row in try Row.fetchAll(
                 db,
                 sql: """
                 SELECT f.library_root_id, f.relative_path, f.face_index, f.embedding, f.person_id,
-                       f.is_not_face, f.is_ignored, f.box_x, f.box_y, f.box_width, f.box_height,
+                       f.assignment, f.likeness, f.is_feature, f.is_not_face,
+                       f.box_x, f.box_y, f.box_width, f.box_height,
                        m.best_capture_local, m.preview_path
                 FROM face f
                 JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
@@ -916,15 +902,21 @@ extension CatalogStore {
                 }
                 let id = FaceID(asset: asset, index: key.index)
                 let capture: Double? = row["best_capture_local"]
+                let person: Int64? = row["person_id"]
                 faces.append(FaceFact(
                     id: id,
                     captureSeconds: capture,
                     embedding: embedding,
-                    person: (row["person_id"] as Int64?).map(PersonID.init(rawValue:)),
+                    assignment: FaceAssignmentColumn.assignment(column: row["assignment"], person: person),
                     isNotFace: (row["is_not_face"] as Int) != 0,
-                    isIgnored: (row["is_ignored"] as Int) != 0,
                     rejected: rejections[key] ?? []
                 ))
+                if let stored = row["likeness"] as Double? {
+                    likeness[id] = Float(stored)
+                }
+                if let person, (row["is_feature"] as Int) != 0 {
+                    features[PersonID(rawValue: person)] = id
+                }
                 tiles[id] = FaceTile(
                     id: id,
                     box: CGRect(x: row["box_x"] as Double, y: row["box_y"] as Double,
@@ -933,17 +925,30 @@ extension CatalogStore {
                     captureSeconds: capture
                 )
             }
-            let people = try Row.fetchAll(db, sql: "SELECT id, name, birthday FROM person ORDER BY id").map { row in
-                PeopleSnapshot.Person(id: PersonID(rawValue: row["id"]), name: row["name"], birthday: row["birthday"])
-            }
+            let people = try Row.fetchAll(
+                db,
+                sql: "SELECT id, name, birthday, is_hidden, is_favorite FROM person ORDER BY id"
+            ).map(Self.person)
             return try PeopleSnapshot(
                 faces: faces,
                 tiles: tiles,
                 people: people,
+                likeness: likeness,
+                features: features,
                 uncheckedPhotoCount: Self.uncheckedFacePhotoCount(folderRootIDs: folders, accountRootIDs: accounts, db: db),
                 revision: revision
             )
         }
+    }
+
+    private static func person(_ row: Row) -> PeopleSnapshot.Person {
+        PeopleSnapshot.Person(
+            id: PersonID(rawValue: row["id"]),
+            name: row["name"],
+            birthday: row["birthday"],
+            isHidden: (row["is_hidden"] as Int) != 0,
+            isFavorite: (row["is_favorite"] as Int) != 0
+        )
     }
 
     /// Stills not yet read for faces: in a folder library, the faces stamp does not name the
@@ -1059,6 +1064,85 @@ extension CatalogStore {
         }
     }
 
+    /// Writes what one assignment changed (ADR 0047), in one transaction. A guess or a seed
+    /// is written only where the face is still Otos's to decide (none or a guess), so an act
+    /// the user made since the snapshot always wins; the next assignment sees it. Returns
+    /// the rows written; zero means the catalog already held the plan.
+    @discardableResult
+    func applyAssignment(_ plan: FaceAssignmentPlan) async throws -> Int {
+        guard !plan.isEmpty else { return 0 }
+        let rowIDs = roots.rowIDSnapshot()
+        let written = try await database().write { db -> Int in
+            var written = 0
+            var created: [Int: PersonID] = [:]
+            let guessable = "assignment IN (\(FaceAssignmentColumn.open.rawValue), \(FaceAssignmentColumn.model.rawValue))"
+            for (index, seeds) in plan.newPeople.enumerated() {
+                let person = try Self.insertPerson(name: nil, birthday: nil, db: db)
+                created[index] = person
+                for face in seeds {
+                    guard let key = try? FaceRowKey(face, rowIDs: rowIDs) else { continue }
+                    try db.execute(
+                        sql: """
+                        UPDATE face SET person_id = ?, assignment = ?, is_feature = 0
+                        WHERE library_root_id = ? AND relative_path = ? AND face_index = ? AND is_not_face = 0 AND \(guessable)
+                        """,
+                        arguments: [person.rawValue, FaceAssignmentColumn.seed.rawValue, key.rootID, key.path.rawValue, key.index]
+                    )
+                    written += db.changesCount
+                }
+            }
+            for guess in plan.guesses {
+                guard let key = try? FaceRowKey(guess.face, rowIDs: rowIDs) else { continue }
+                let person: PersonID? = switch guess.person {
+                case let .existing(id): id
+                case let .new(index): created[index]
+                case nil: nil
+                }
+                try db.execute(
+                    sql: """
+                    UPDATE face SET person_id = ?, assignment = ?,
+                        is_feature = CASE WHEN person_id IS ? THEN is_feature ELSE 0 END
+                    WHERE library_root_id = ? AND relative_path = ? AND face_index = ? AND is_not_face = 0 AND \(guessable)
+                      AND (? IS NULL OR EXISTS (SELECT 1 FROM person WHERE id = ?))
+                    """,
+                    arguments: [
+                        person?.rawValue, (person == nil ? FaceAssignmentColumn.open : .model).rawValue, person?.rawValue,
+                        key.rootID, key.path.rawValue, key.index, person?.rawValue, person?.rawValue,
+                    ]
+                )
+                written += db.changesCount
+            }
+            for (face, likeness) in plan.likeness {
+                guard let key = try? FaceRowKey(face, rowIDs: rowIDs) else { continue }
+                try db.execute(
+                    sql: "UPDATE face SET likeness = ? WHERE library_root_id = ? AND relative_path = ? AND face_index = ?",
+                    arguments: [likeness.map { Double($0) }, key.rootID, key.path.rawValue, key.index]
+                )
+                written += db.changesCount
+            }
+            for person in plan.emptied {
+                try db.execute(
+                    sql: """
+                    DELETE FROM person WHERE id = ? AND name IS NULL AND birthday IS NULL
+                      AND is_hidden = 0 AND is_favorite = 0
+                      AND NOT EXISTS (SELECT 1 FROM face WHERE person_id = ?)
+                    """,
+                    arguments: [person.rawValue, person.rawValue]
+                )
+                written += db.changesCount
+            }
+            return written
+        }
+        if written > 0 {
+            notifyCatalogChanged()
+        }
+        OtosLog.catalog.debugOperation("people.assignment", phase: "applied", fields: [
+            "guesses": "\(plan.guesses.count)", "newPeople": "\(plan.newPeople.count)",
+            "likeness": "\(plan.likeness.count)", "emptied": "\(plan.emptied.count)", "rows": "\(written)",
+        ])
+        return written
+    }
+
     /// The one write path for what the user decides about faces and people (ADR 0047):
     /// performs one act in one transaction and returns what undoes it, with the person the
     /// act gave the faces to. A refused act (a hard rule, `PeopleRuleViolation`) changes
@@ -1067,45 +1151,64 @@ extension CatalogStore {
         let rowIDs = roots.rowIDSnapshot()
         let pathsByRowID = roots.pathsByRowID
         let applied = try await database().write { db -> (restore: PeopleRestore, person: PersonID?) in
+            let key = { (face: FaceID) throws -> FaceRowKey in try FaceRowKey(face, rowIDs: rowIDs) }
             let touched = try Self.touched(by: act, rowIDs: rowIDs, db: db)
             let before = try Self.restoreRecord(faces: touched.faces, people: touched.people, pathsByRowID: pathsByRowID, db: db)
-            let key = { (face: FaceID) throws -> FaceRowKey in try FaceRowKey(face, rowIDs: rowIDs) }
             var created: [PersonID] = []
             var given: PersonID?
             switch act {
-            case let .confirm(faces, person):
+            case let .move(faces, person):
                 given = person
-                try Self.setPerson(person, for: faces.map(key), db: db)
-            case let .reject(faces, person):
-                try Self.setRejected(true, person: person, for: faces.map(key), db: db)
-            case let .rejectAll(faces, people):
-                for person in people {
-                    try Self.setRejected(true, person: person, for: faces.map(key), db: db)
+                try Self.give(faces.map(key), to: person, db: db)
+            case let .moveToNewPerson(faces, name):
+                let keys = try faces.map(key)
+                guard Set(keys.map(\.photo)).count == keys.count else { throw PeopleRuleViolation.twoFacesOfOnePhoto }
+                if let name, try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM person WHERE name = ?", arguments: [name]) ?? 0 > 0 {
+                    throw PeopleRuleViolation.nameTaken
                 }
-            case let .notAFace(faces):
-                try Self.setFaceFlag("is_not_face", true, for: faces.map(key), db: db)
-            case let .ignore(faces):
-                try Self.setFaceFlag("is_ignored", true, for: faces.map(key), db: db)
-            case let .name(faces, name):
-                let existing = try Int64.fetchOne(db, sql: "SELECT id FROM person WHERE name = ? ORDER BY id LIMIT 1", arguments: [name])
-                    .map(PersonID.init(rawValue:))
-                let person = try existing ?? Self.insertPerson(name: name, birthday: nil, db: db)
-                if existing == nil {
-                    created.append(person)
-                }
-                given = person
-                try Self.setPerson(person, for: faces.map(key), db: db)
-            case let .split(faces):
-                let person = try Self.insertPerson(name: nil, birthday: nil, db: db)
+                let person = try Self.insertPerson(name: name, birthday: nil, db: db)
                 created.append(person)
                 given = person
-                try Self.setPerson(person, for: faces.map(key), db: db)
+                try Self.give(keys, to: person, db: db)
+            case let .removeName(faces):
+                for face in try faces.map(key) {
+                    try db.execute(
+                        sql: """
+                        INSERT OR IGNORE INTO face_rejection (library_root_id, relative_path, face_index, person_id)
+                        SELECT library_root_id, relative_path, face_index, person_id FROM face
+                        WHERE library_root_id = ? AND relative_path = ? AND face_index = ? AND person_id IS NOT NULL
+                        """,
+                        arguments: [face.rootID, face.path.rawValue, face.index]
+                    )
+                    try Self.setFace(face, person: nil, assignment: .held, db: db)
+                }
+            case let .notAFace(faces):
+                for face in try faces.map(key) {
+                    try Self.setFace(face, person: nil, assignment: .open, db: db)
+                    try db.execute(
+                        sql: "UPDATE face SET is_not_face = 1 WHERE library_root_id = ? AND relative_path = ? AND face_index = ?",
+                        arguments: [face.rootID, face.path.rawValue, face.index]
+                    )
+                }
             case let .edit(person, name, birthday):
                 try Self.updatePerson(person, name: name, birthday: birthday, db: db)
             case let .merge(from, into):
                 try Self.mergePerson(from, into: into, db: db)
-            case let .remove(person):
-                try db.execute(sql: "DELETE FROM person WHERE id = ?", arguments: [person.rawValue])
+            case let .setHidden(person, hidden):
+                try db.execute(sql: "UPDATE person SET is_hidden = ? WHERE id = ?", arguments: [hidden ? 1 : 0, person.rawValue])
+            case let .setFavorite(person, favorite):
+                try db.execute(sql: "UPDATE person SET is_favorite = ? WHERE id = ?", arguments: [favorite ? 1 : 0, person.rawValue])
+            case let .setFeature(face, person):
+                let face = try key(face)
+                try db.execute(sql: "UPDATE face SET is_feature = 0 WHERE person_id = ?", arguments: [person.rawValue])
+                try db.execute(
+                    sql: """
+                    UPDATE face SET is_feature = 1
+                    WHERE library_root_id = ? AND relative_path = ? AND face_index = ? AND person_id = ?
+                    """,
+                    arguments: [face.rootID, face.path.rawValue, face.index, person.rawValue]
+                )
+                guard db.changesCount == 1 else { throw PeopleRuleViolation.unknownFace }
             }
             var people = before.people
             for person in created {
@@ -1137,22 +1240,30 @@ extension CatalogStore {
                 if let person {
                     try db.execute(
                         sql: """
-                        INSERT INTO person (id, name, birthday) VALUES (?, ?, ?)
-                        ON CONFLICT(id) DO UPDATE SET name = excluded.name, birthday = excluded.birthday
+                        INSERT INTO person (id, name, birthday, is_hidden, is_favorite) VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET name = excluded.name, birthday = excluded.birthday,
+                            is_hidden = excluded.is_hidden, is_favorite = excluded.is_favorite
                         """,
-                        arguments: [id.rawValue, person.name, person.birthday]
+                        arguments: [id.rawValue, person.name, person.birthday, person.isHidden ? 1 : 0, person.isFavorite ? 1 : 0]
                     )
+                }
+            }
+            // A person holds one feature face: clear theirs before writing back the one the
+            // record holds.
+            for row in restore.faces where row.isFeature {
+                if let person = row.assignment.person {
+                    try db.execute(sql: "UPDATE face SET is_feature = 0 WHERE person_id = ?", arguments: [person.rawValue])
                 }
             }
             for row in restore.faces {
                 guard let key = try? FaceRowKey(row.face, rowIDs: rowIDs) else { continue }
                 try db.execute(
                     sql: """
-                    UPDATE face SET person_id = ?, is_not_face = ?, is_ignored = ?
+                    UPDATE face SET person_id = ?, assignment = ?, is_not_face = ?, is_feature = ?
                     WHERE library_root_id = ? AND relative_path = ? AND face_index = ?
                     """,
-                    arguments: [row.person?.rawValue, row.isNotFace ? 1 : 0, row.isIgnored ? 1 : 0,
-                                key.rootID, key.path.rawValue, key.index]
+                    arguments: [row.assignment.person?.rawValue, FaceAssignmentColumn(row.assignment).rawValue,
+                                row.isNotFace ? 1 : 0, row.isFeature ? 1 : 0, key.rootID, key.path.rawValue, key.index]
                 )
             }
             try Self.deleteRejections(faces: faceKeys, people: people, db: db)
@@ -1191,19 +1302,40 @@ extension CatalogStore {
         return PersonID(rawValue: db.lastInsertedRowID)
     }
 
+    /// Rename, Add Name and Set Birthday. A name another person holds is refused: the two
+    /// are merged instead. A birthday after a photo the user gave the person is refused;
+    /// Otos's own guesses and seeds from before it lose the person, and assignment gives
+    /// those faces to someone else.
     private static func updatePerson(_ person: PersonID, name: String?, birthday: String?, db: Database) throws {
         try PersonBirthday.validate(birthday)
+        if let name, try Int.fetchOne(
+            db,
+            sql: "SELECT COUNT(*) FROM person WHERE name = ? AND id <> ?",
+            arguments: [name, person.rawValue]
+        ) ?? 0 > 0 {
+            throw PeopleRuleViolation.nameTaken
+        }
         if let birthdaySeconds = birthday.flatMap(PersonBirthday.seconds) {
+            let before = """
+            FROM face f
+            JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
+            WHERE f.person_id = ? AND m.best_capture_local < ?
+            """
             let earlier = try Int.fetchOne(
                 db,
-                sql: """
-                SELECT COUNT(*) FROM face f
-                JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
-                WHERE f.person_id = ? AND m.best_capture_local < ?
-                """,
+                sql: "SELECT COUNT(*) \(before) AND f.assignment = \(FaceAssignmentColumn.user.rawValue)",
                 arguments: [person.rawValue, birthdaySeconds]
             ) ?? 0
             guard earlier == 0 else { throw PeopleRuleViolation.confirmedBeforeBirthday(count: earlier) }
+            try db.execute(
+                sql: """
+                UPDATE face SET person_id = NULL, assignment = \(FaceAssignmentColumn.open.rawValue), is_feature = 0
+                WHERE (library_root_id, relative_path, face_index) IN (
+                    SELECT f.library_root_id, f.relative_path, f.face_index \(before)
+                )
+                """,
+                arguments: [person.rawValue, birthdaySeconds]
+            )
         }
         try db.execute(
             sql: "UPDATE person SET name = ?, birthday = ? WHERE id = ?",
@@ -1211,110 +1343,117 @@ extension CatalogStore {
         )
     }
 
-    private static func setPerson(_ person: PersonID?, for keys: [FaceRowKey], db: Database) throws {
-        if let person {
-            guard Set(keys.map(\.photo)).count == keys.count else { throw PeopleRuleViolation.twoFacesOfOnePhoto }
-            let birthday = try String.fetchOne(db, sql: "SELECT birthday FROM person WHERE id = ?", arguments: [person.rawValue])
-                .flatMap(PersonBirthday.seconds)
-            for key in keys {
-                let elsewhere = try Int.fetchOne(
-                    db,
-                    sql: """
-                    SELECT COUNT(*) FROM face WHERE library_root_id = ? AND relative_path = ?
-                      AND person_id = ? AND face_index <> ?
-                    """,
-                    arguments: [key.rootID, key.path.rawValue, person.rawValue, key.index]
-                ) ?? 0
-                guard elsewhere == 0 else { throw PeopleRuleViolation.personAlreadyInPhoto }
-                if let birthday, let capture = try Double.fetchOne(
-                    db,
-                    sql: "SELECT best_capture_local FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
-                    arguments: [key.rootID, key.path.rawValue]
-                ), capture < birthday {
-                    throw PeopleRuleViolation.beforeBirthday
-                }
+    /// Gives faces to a person on the user's word. Refused for two faces of one photo, a
+    /// photo where the user already gave another face to the person, or a photo from before
+    /// their birthday. Another face of the photo Otos had given the person loses them.
+    private static func give(_ keys: [FaceRowKey], to person: PersonID, db: Database) throws {
+        guard Set(keys.map(\.photo)).count == keys.count else { throw PeopleRuleViolation.twoFacesOfOnePhoto }
+        guard let row = try Row.fetchOne(db, sql: "SELECT birthday FROM person WHERE id = ?", arguments: [person.rawValue]) else {
+            throw PeopleRuleViolation.unknownFace
+        }
+        let birthday = (row["birthday"] as String?).flatMap(PersonBirthday.seconds)
+        for key in keys {
+            let others = try Int.fetchAll(
+                db,
+                sql: """
+                SELECT assignment FROM face WHERE library_root_id = ? AND relative_path = ?
+                  AND person_id = ? AND face_index <> ?
+                """,
+                arguments: [key.rootID, key.path.rawValue, person.rawValue, key.index]
+            )
+            guard !others.contains(FaceAssignmentColumn.user.rawValue) else { throw PeopleRuleViolation.personAlreadyInPhoto }
+            if let birthday, let capture = try Double.fetchOne(
+                db,
+                sql: "SELECT best_capture_local FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                arguments: [key.rootID, key.path.rawValue]
+            ), capture < birthday {
+                throw PeopleRuleViolation.beforeBirthday
             }
         }
         for key in keys {
             try db.execute(
-                sql: "UPDATE face SET person_id = ? WHERE library_root_id = ? AND relative_path = ? AND face_index = ?",
-                arguments: [person?.rawValue, key.rootID, key.path.rawValue, key.index]
+                sql: """
+                UPDATE face SET person_id = NULL, assignment = \(FaceAssignmentColumn.open.rawValue), is_feature = 0
+                WHERE library_root_id = ? AND relative_path = ? AND person_id = ? AND face_index <> ?
+                """,
+                arguments: [key.rootID, key.path.rawValue, person.rawValue, key.index]
             )
-            if let person {
-                try db.execute(
-                    sql: """
-                    DELETE FROM face_rejection WHERE library_root_id = ? AND relative_path = ?
-                      AND face_index = ? AND person_id = ?
-                    """,
-                    arguments: [key.rootID, key.path.rawValue, key.index, person.rawValue]
-                )
-            }
-        }
-    }
-
-    private static func setRejected(_ rejected: Bool, person: PersonID, for keys: [FaceRowKey], db: Database) throws {
-        for key in keys {
-            let arguments: StatementArguments = [key.rootID, key.path.rawValue, key.index, person.rawValue]
-            if rejected {
-                try db.execute(
-                    sql: """
-                    INSERT OR IGNORE INTO face_rejection (library_root_id, relative_path, face_index, person_id)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    arguments: arguments
-                )
-                try db.execute(
-                    sql: """
-                    UPDATE face SET person_id = NULL WHERE library_root_id = ? AND relative_path = ?
-                      AND face_index = ? AND person_id = ?
-                    """,
-                    arguments: arguments
-                )
-            } else {
-                try db.execute(
-                    sql: """
-                    DELETE FROM face_rejection WHERE library_root_id = ? AND relative_path = ?
-                      AND face_index = ? AND person_id = ?
-                    """,
-                    arguments: arguments
-                )
-            }
-        }
-    }
-
-    private static func setFaceFlag(_ column: String, _ value: Bool, for keys: [FaceRowKey], db: Database) throws {
-        for key in keys {
+            try setFace(key, person: person, assignment: .user, db: db)
             try db.execute(
-                sql: "UPDATE face SET \(column) = ? WHERE library_root_id = ? AND relative_path = ? AND face_index = ?",
-                arguments: [value ? 1 : 0, key.rootID, key.path.rawValue, key.index]
+                sql: """
+                DELETE FROM face_rejection WHERE library_root_id = ? AND relative_path = ?
+                  AND face_index = ? AND person_id = ?
+                """,
+                arguments: [key.rootID, key.path.rawValue, key.index, person.rawValue]
             )
         }
     }
 
+    /// Sets a face's person and whose word it is; a face that changes person stops being its
+    /// old person's feature photo.
+    private static func setFace(_ key: FaceRowKey, person: PersonID?, assignment: FaceAssignmentColumn, db: Database) throws {
+        try db.execute(
+            sql: """
+            UPDATE face SET is_feature = CASE WHEN person_id IS ? THEN is_feature ELSE 0 END,
+                person_id = ?, assignment = ?
+            WHERE library_root_id = ? AND relative_path = ? AND face_index = ?
+            """,
+            arguments: [person?.rawValue, person?.rawValue, assignment.rawValue, key.rootID, key.path.rawValue, key.index]
+        )
+    }
+
+    /// The first person's faces become the second's. Refused when the user gave both a face
+    /// of one photo, or gave the first a photo from before the second's birthday. Where Otos
+    /// had guessed both into one photo, the guesses there are dropped for assignment to redo.
+    /// The second keeps its name, birthday and feature photo, taking the first's where it
+    /// has none, and is a favourite if either was.
     private static func mergePerson(_ from: PersonID, into: PersonID, db: Database) throws {
+        let anchors = "(\(FaceAssignmentColumn.user.rawValue), \(FaceAssignmentColumn.seed.rawValue))"
         let shared = try Int.fetchOne(
             db,
             sql: """
             SELECT COUNT(*) FROM face a JOIN face b
               ON a.library_root_id = b.library_root_id AND a.relative_path = b.relative_path
-            WHERE a.person_id = ? AND b.person_id = ?
+            WHERE a.person_id = ? AND b.person_id = ? AND a.assignment IN \(anchors) AND b.assignment IN \(anchors)
             """,
             arguments: [from.rawValue, into.rawValue]
         ) ?? 0
         guard shared == 0 else { throw PeopleRuleViolation.bothInPhotos(count: shared) }
-        if let birthday = try String.fetchOne(db, sql: "SELECT birthday FROM person WHERE id = ?", arguments: [into.rawValue])
-            .flatMap(PersonBirthday.seconds)
-        {
+        guard let target = try Row.fetchOne(db, sql: "SELECT * FROM person WHERE id = ?", arguments: [into.rawValue]).map(person),
+              let source = try Row.fetchOne(db, sql: "SELECT * FROM person WHERE id = ?", arguments: [from.rawValue]).map(person)
+        else {
+            throw PeopleRuleViolation.unknownFace
+        }
+        let birthday = target.birthday ?? source.birthday
+        if let birthdaySeconds = birthday.flatMap(PersonBirthday.seconds) {
             let earlier = try Int.fetchOne(
                 db,
                 sql: """
                 SELECT COUNT(*) FROM face f
                 JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
-                WHERE f.person_id = ? AND m.best_capture_local < ?
+                WHERE f.person_id IN (?, ?) AND f.assignment = \(FaceAssignmentColumn.user.rawValue) AND m.best_capture_local < ?
                 """,
-                arguments: [from.rawValue, birthday]
+                arguments: [from.rawValue, into.rawValue, birthdaySeconds]
             ) ?? 0
             guard earlier == 0 else { throw PeopleRuleViolation.confirmedBeforeBirthday(count: earlier) }
+        }
+        // Guesses of either in a photo the other is in.
+        try db.execute(
+            sql: """
+            UPDATE face SET person_id = NULL, assignment = \(FaceAssignmentColumn.open.rawValue), is_feature = 0
+            WHERE assignment = \(FaceAssignmentColumn.model.rawValue) AND person_id IN (?, ?) AND EXISTS (
+                SELECT 1 FROM face other WHERE other.library_root_id = face.library_root_id
+                  AND other.relative_path = face.relative_path AND other.face_index <> face.face_index
+                  AND other.person_id IN (?, ?) AND other.person_id <> face.person_id
+            )
+            """,
+            arguments: [from.rawValue, into.rawValue, from.rawValue, into.rawValue]
+        )
+        let targetHasFeature = try Int.fetchOne(
+            db, sql: "SELECT COUNT(*) FROM face WHERE person_id = ? AND is_feature = 1", arguments: [into.rawValue]
+        ) ?? 0 > 0
+        if targetHasFeature {
+            try db.execute(sql: "UPDATE face SET is_feature = 0 WHERE person_id = ?", arguments: [from.rawValue])
         }
         try db.execute(sql: "UPDATE face SET person_id = ? WHERE person_id = ?", arguments: [into.rawValue, from.rawValue])
         try db.execute(
@@ -1325,10 +1464,14 @@ extension CatalogStore {
             arguments: [into.rawValue, from.rawValue]
         )
         try db.execute(sql: "DELETE FROM person WHERE id = ?", arguments: [from.rawValue])
+        try db.execute(
+            sql: "UPDATE person SET name = ?, birthday = ?, is_favorite = ? WHERE id = ?",
+            arguments: [target.name ?? source.name, birthday, target.isFavorite || source.isFavorite ? 1 : 0, into.rawValue]
+        )
     }
 
-    /// The faces and people an act can change: the faces it names, and every face of a
-    /// person it merges, removes or edits.
+    /// The faces and people an act can change: every face of the photos it names, and every
+    /// face of a person it merges or edits.
     private static func touched(
         by act: PeopleAct,
         rowIDs: [LibraryRootPath: Int64],
@@ -1343,10 +1486,19 @@ extension CatalogStore {
                 ).map(FaceRowKey.init)
             }
         }
-        func keys(_ faces: [FaceID]) throws -> [FaceRowKey] {
-            try faces.map { try FaceRowKey($0, rowIDs: rowIDs) }
+        func photos(_ faces: [FaceID]) throws -> [FaceRowKey] {
+            try photosOf(faces.map { try FaceRowKey($0, rowIDs: rowIDs) })
         }
-        func previousPeople(_ keys: [FaceRowKey]) throws -> [PersonID] {
+        func photosOf(_ keys: [FaceRowKey]) throws -> [FaceRowKey] {
+            try Set(keys.map(\.photo)).flatMap { photo in
+                try Row.fetchAll(
+                    db,
+                    sql: "SELECT library_root_id, relative_path, face_index FROM face WHERE library_root_id = ? AND relative_path = ?",
+                    arguments: [photo.rootID, photo.path.rawValue]
+                ).map(FaceRowKey.init)
+            }
+        }
+        func people(of keys: [FaceRowKey]) throws -> [PersonID] {
             try keys.compactMap { key in
                 try Int64.fetchOne(
                     db,
@@ -1355,23 +1507,32 @@ extension CatalogStore {
                 ).map(PersonID.init(rawValue:))
             }
         }
+        func features(of people: [PersonID]) throws -> [FaceRowKey] {
+            try people.flatMap { person in
+                try Row.fetchAll(
+                    db,
+                    sql: "SELECT library_root_id, relative_path, face_index FROM face WHERE person_id = ? AND is_feature = 1",
+                    arguments: [person.rawValue]
+                ).map(FaceRowKey.init)
+            }
+        }
         switch act {
-        case let .confirm(named, person):
-            let keys = try keys(named)
-            return try (keys, [person] + previousPeople(keys))
-        case let .reject(named, person):
-            return try (keys(named), [person])
-        case let .rejectAll(named, people):
-            return try (keys(named), people)
-        case let .notAFace(named), let .ignore(named), let .name(named, _), let .split(named):
-            let keys = try keys(named)
-            return try (keys, previousPeople(keys))
+        case let .move(named, person):
+            let keys = try photos(named)
+            let involved = try [person] + people(of: keys)
+            return try (keys + features(of: involved), involved)
+        case let .moveToNewPerson(named, _), let .removeName(named), let .notAFace(named):
+            let keys = try photos(named)
+            let involved = try people(of: keys)
+            return try (keys + features(of: involved), involved)
         case let .edit(person, _, _):
-            return ([], [person])
-        case let .merge(from, into):
-            return try (faces(of: [from, into]), [from, into])
-        case let .remove(person):
             return try (faces(of: [person]), [person])
+        case let .merge(from, into):
+            return try (photosOf(faces(of: [from, into])), [from, into])
+        case let .setHidden(person, _), let .setFavorite(person, _):
+            return ([], [person])
+        case let .setFeature(face, person):
+            return try ([FaceRowKey(face, rowIDs: rowIDs)] + features(of: [person]), [person])
         }
     }
 
@@ -1391,16 +1552,16 @@ extension CatalogStore {
             guard let id = faceID(key), let row = try Row.fetchOne(
                 db,
                 sql: """
-                SELECT person_id, is_not_face, is_ignored FROM face
+                SELECT person_id, assignment, is_not_face, is_feature FROM face
                 WHERE library_root_id = ? AND relative_path = ? AND face_index = ?
                 """,
                 arguments: [key.rootID, key.path.rawValue, key.index]
             ) else { continue }
             rows.append(PeopleRestore.FaceRow(
                 face: id,
-                person: (row["person_id"] as Int64?).map(PersonID.init(rawValue:)),
+                assignment: FaceAssignmentColumn.assignment(column: row["assignment"], person: row["person_id"]),
                 isNotFace: (row["is_not_face"] as Int) != 0,
-                isIgnored: (row["is_ignored"] as Int) != 0
+                isFeature: (row["is_feature"] as Int) != 0
             ))
             for person in try Int64.fetchAll(
                 db,
@@ -1412,10 +1573,10 @@ extension CatalogStore {
         }
         var record: [PersonID: PeopleSnapshot.Person?] = [:]
         for person in Set(people) {
-            let row = try Row.fetchOne(db, sql: "SELECT name, birthday FROM person WHERE id = ?", arguments: [person.rawValue])
+            let row = try Row.fetchOne(db, sql: "SELECT * FROM person WHERE id = ?", arguments: [person.rawValue])
             // `.some(nil)` keeps a missing person in the record: a plain nil would drop the key,
             // and the restore would forget to remove them.
-            record[person] = .some(row.map { PeopleSnapshot.Person(id: person, name: $0["name"], birthday: $0["birthday"]) })
+            record[person] = .some(row.map(Self.person))
             for row in try Row.fetchAll(
                 db,
                 sql: "SELECT library_root_id, relative_path, face_index FROM face_rejection WHERE person_id = ?",
@@ -7431,10 +7592,14 @@ extension CatalogStore {
         }
     }
 
-    /// The people the user has named, for search to match in a query (ADR 0048).
+    /// The people the user has named and not hidden, for search to match in a query
+    /// (ADR 0048): a hidden person is found only in the People gallery.
     func namedPeople() async throws -> [SearchPerson] {
         try await database().read { db in
-            try Row.fetchAll(db, sql: "SELECT id, name FROM person WHERE name IS NOT NULL AND name <> ''").map { row in
+            try Row.fetchAll(
+                db,
+                sql: "SELECT id, name FROM person WHERE name IS NOT NULL AND name <> '' AND is_hidden = 0"
+            ).map { row in
                 SearchPerson(id: PersonID(rawValue: row["id"]), name: row["name"])
             }
         }

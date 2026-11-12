@@ -18,7 +18,7 @@ import OSLog
 /// every `cadence` while the projection is behind.
 ///
 /// The duplicate groups and People have their own owners, `DuplicatesProjection` and
-/// `PeopleProjection`, each with its own loop. A pass publishes the window with what they
+/// `PeopleAssignment`, each with its own loop. A pass publishes the window with what they
 /// last built and, when it took up a catalog change (`derivedRequested`), asks both owners
 /// for a build; it never waits for one. Builds come back on `duplicatesTask` and
 /// `peopleTask` and go out by republishing the last state with them. So detection and
@@ -57,7 +57,7 @@ actor CatalogProjection {
     /// Tests replace the duplicates build to hold it at its suspension; production builds them.
     let duplicatesBuilder: DuplicatesProjection.Builder?
     /// Tests replace the People build to hold it at its suspension; production builds it.
-    let peopleBuilder: PeopleProjection.Builder?
+    let peopleBuilder: PeopleAssignment.Builder?
 
     private var queryRequest: CatalogQueryRequest = .initial
     /// Distinguishes one projection's diagnostics from another's in a shared log.
@@ -82,7 +82,7 @@ actor CatalogProjection {
     private var duplicatesProjection: DuplicatesProjection?
     /// What the last successful People build produced; nil until one has.
     private var people: CatalogPeopleState?
-    private var peopleProjection: PeopleProjection?
+    private var peopleAssignment: PeopleAssignment?
     private var peopleTask: Task<Void, Never>?
     /// Answers a descriptor's search (ADR 0048); nil where nothing indexes (tests that do
     /// not search), and a search then publishes nothing.
@@ -93,7 +93,7 @@ actor CatalogProjection {
     /// People may differ.
     private var derivedRequested: UInt64 = 0
     /// The `derivedRequested` value last passed on to `duplicatesProjection` and
-    /// `peopleProjection`.
+    /// `peopleAssignment`.
     private var derivedForwarded: UInt64 = 0
     /// The last publication was the pre-load `.loadingCatalog` state. The next store
     /// change is the load itself (or something after it), so it publishes immediately
@@ -125,7 +125,7 @@ actor CatalogProjection {
     /// Whether the People owner has built every request it was given.
     var peopleAreQuiescent: Bool {
         get async {
-            await peopleProjection?.isQuiescent ?? true
+            await peopleAssignment?.isQuiescent ?? true
         }
     }
 
@@ -138,7 +138,7 @@ actor CatalogProjection {
         cadence: Duration = .seconds(1),
         stateBuilder: WindowStateBuilder? = nil,
         duplicatesBuilder: DuplicatesProjection.Builder? = nil,
-        peopleBuilder: PeopleProjection.Builder? = nil
+        peopleBuilder: PeopleAssignment.Builder? = nil
     ) {
         self.cadence = cadence
         self.stateBuilder = stateBuilder
@@ -247,9 +247,19 @@ actor CatalogProjection {
             from: facts,
             allAssetCount: orderedAssetIDs.count,
             unfilteredVisibleAssetCount: facts.scopedAssetIDs.count,
-            filterOptions: .empty,
-            filteredFixedAssetCount: 0
+            filterOptions: .empty
         ).0
+    }
+}
+
+extension CatalogProjection {
+    /// The people each face of `photos` could be, from the last People published
+    /// (ADR 0047); none before People is first published.
+    func faceCandidates(for photos: [MediaAssetID]) async -> [FaceID: [FaceCandidate]] {
+        guard let peopleAssignment else {
+            return [:]
+        }
+        return await peopleAssignment.candidates(for: photos)
     }
 }
 
@@ -297,8 +307,8 @@ private extension CatalogProjection {
         // them.
         let duplicatesProjection = DuplicatesProjection(store: store, builder: duplicatesBuilder)
         self.duplicatesProjection = duplicatesProjection
-        let peopleProjection = PeopleProjection(store: store, builder: peopleBuilder)
-        self.peopleProjection = peopleProjection
+        let peopleAssignment = PeopleAssignment(store: store, builder: peopleBuilder)
+        self.peopleAssignment = peopleAssignment
         derivedRequested &+= 1
         duplicatesTask = Task { [weak self, duplicatesProjection] in
             await duplicatesProjection.start()
@@ -309,9 +319,9 @@ private extension CatalogProjection {
                 await publishDuplicates(built)
             }
         }
-        peopleTask = Task { [weak self, peopleProjection] in
-            await peopleProjection.start()
-            for await built in peopleProjection.builds {
+        peopleTask = Task { [weak self, peopleAssignment] in
+            await peopleAssignment.start()
+            for await built in peopleAssignment.builds {
                 guard let self else {
                     return
                 }
@@ -323,11 +333,11 @@ private extension CatalogProjection {
         // doorbell and the derived owners on every exit: `loopTask`, `duplicatesTask` and
         // `peopleTask` wait indefinitely, and a wait nothing can end keeps `store` alive
         // through its closure.
-        cadenceTask = Task { [weak self, continuation, duplicatesProjection, peopleProjection] in
+        cadenceTask = Task { [weak self, continuation, duplicatesProjection, peopleAssignment] in
             defer {
                 continuation.finish()
                 duplicatesProjection.stop()
-                peopleProjection.stop()
+                peopleAssignment.stop()
             }
             while !Task.isCancelled {
                 do {
@@ -505,13 +515,13 @@ private extension CatalogProjection {
         // An injected test builder derives nothing. Otherwise a pass that took up a catalog
         // change asks both owners for a build, and waits for neither.
         guard stateBuilder == nil, derivedStartedFrom != derivedForwarded,
-              let duplicatesProjection, let peopleProjection
+              let duplicatesProjection, let peopleAssignment
         else {
             return
         }
         derivedForwarded = derivedStartedFrom
         await duplicatesProjection.request()
-        await peopleProjection.request()
+        await peopleAssignment.request()
     }
 
     /// Takes in a fresh People build and republishes the last state with it when it differs
@@ -615,8 +625,8 @@ private extension CatalogProjection {
         duplicatesProjection = nil
         duplicatesTask?.cancel()
         duplicatesTask = nil
-        peopleProjection?.stop()
-        peopleProjection = nil
+        peopleAssignment?.stop()
+        peopleAssignment = nil
         peopleTask?.cancel()
         peopleTask = nil
         derivedRequested = 0

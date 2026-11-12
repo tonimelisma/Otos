@@ -19,7 +19,7 @@ import Foundation
 /// position, never their launch.
 nonisolated struct BrowserPlace: Equatable {
     static let defaultsKey = "browserPlace"
-    static let currentVersion = 2
+    static let currentVersion = 3
 
     var descriptor: CatalogQueryDescriptor
     var viewMode: BrowserViewMode
@@ -54,13 +54,13 @@ nonisolated struct BrowserPlace: Equatable {
 // MARK: - Wire format
 
 private nonisolated extension BrowserPlace {
-    /// Version 2 of the stored shape: a filter's file types carry their kind. Plain
-    /// strings, so the domain types stay free of persistence conformances and this file
-    /// is the whole schema.
+    /// Version 3 of the stored shape: a filter's file types carry their kind, and the filter
+    /// holds People. Plain values, so the domain types stay free of persistence conformances
+    /// and this file is the whole schema.
     nonisolated struct Record: Codable {
         nonisolated struct Scope: Codable {
             /// `allMedia`, `places`, `mapArea`, `onThisDay`, `duplicates`, `people`,
-            /// `peopleReview`, `person`, `library`, `importBatch`, or `allImports`.
+            /// `library`, `importBatch`, or `allImports`.
             var kind: String
             var path: String?
             var batchUnixMilliseconds: Int64?
@@ -69,8 +69,6 @@ private nonisolated extension BrowserPlace {
             var north: Double?
             var west: Double?
             var east: Double?
-            /// A `person`'s row id.
-            var person: Int64?
         }
 
         nonisolated struct Asset: Codable {
@@ -88,6 +86,11 @@ private nonisolated extension BrowserPlace {
         var kinds: [String]
         var fileTypes: [FileType]
         var choices: [String]
+        /// The People filter's people, by row id; a person no longer in the catalog shows
+        /// nothing and is dropped when People is next published.
+        var people: [Int64]
+        var unassignedFaces: Bool
+        var peopleMatch: String
         var sortField: String
         var sortDirection: String
         var viewMode: String
@@ -100,7 +103,8 @@ private nonisolated extension BrowserPlace {
               let scope = Self.scope(record.scope, today: today),
               let field = MediaSortField(rawValue: record.sortField),
               let direction = MediaSortDirection(rawValue: record.sortDirection),
-              let viewMode = BrowserViewMode(rawValue: record.viewMode)
+              let viewMode = BrowserViewMode(rawValue: record.viewMode),
+              let peopleMatch = PeopleMatch(rawValue: record.peopleMatch)
         else {
             return nil
         }
@@ -119,7 +123,14 @@ private nonisolated extension BrowserPlace {
         else {
             return nil
         }
-        let filter = MediaFilter(kinds: Set(kinds), fileTypes: Set(fileTypes), choices: Set(choices))
+        let filter = MediaFilter(
+            kinds: Set(kinds),
+            fileTypes: Set(fileTypes),
+            choices: Set(choices),
+            people: Set(record.people.map(PersonID.init(rawValue:))),
+            unassignedFaces: record.unassignedFaces,
+            peopleMatch: peopleMatch
+        )
         self.init(
             descriptor: CatalogQueryDescriptor(
                 scope: scope,
@@ -144,10 +155,6 @@ private nonisolated extension BrowserPlace {
             .duplicates
         case "people":
             .people
-        case "peopleReview":
-            .peopleReview
-        case "person":
-            scope.person.map { .person(PersonID(rawValue: $0)) }
         case "mapArea":
             if let south = scope.south, let north = scope.north, let west = scope.west, let east = scope.east {
                 .mapArea(MapArea(south: south, north: north, west: west, east: east))
@@ -184,6 +191,9 @@ private nonisolated extension BrowserPlace.Record {
                 .map { FileType(kind: $0.kind.rawValue, format: $0.format.rawValue) }
                 .sorted { ($0.kind, $0.format) < ($1.kind, $1.format) },
             choices: descriptor.filter.choices.map(\.rawValue).sorted(),
+            people: descriptor.filter.people.map(\.rawValue).sorted(),
+            unassignedFaces: descriptor.filter.unassignedFaces,
+            peopleMatch: descriptor.filter.peopleMatch.rawValue,
             sortField: descriptor.sort.field.rawValue,
             sortDirection: descriptor.sort.direction.rawValue,
             viewMode: place.viewMode.rawValue,
@@ -210,12 +220,6 @@ private nonisolated extension BrowserPlace.Record {
             Scope(kind: "duplicates")
         case .people:
             Scope(kind: "people")
-        case .peopleReview, .reviewPhotos:
-            // One row's photos are named by what the review showed then; the window reopens
-            // on the review.
-            Scope(kind: "peopleReview")
-        case let .person(person):
-            Scope(kind: "person", person: person.rawValue)
         case .allImports:
             Scope(kind: "allImports")
         case let .library(path):

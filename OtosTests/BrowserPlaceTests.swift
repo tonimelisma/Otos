@@ -21,9 +21,12 @@ struct BrowserPlaceTests {
                 filter: MediaFilter(
                     kinds: [.image],
                     fileTypes: [FilterFileType(kind: .raw, format: MediaFormatToken(rawValue: "ARW"))],
-                    choices: [.liked]
+                    choices: [.liked],
+                    people: [PersonID(rawValue: 3), PersonID(rawValue: 9)],
+                    unassignedFaces: true,
+                    peopleMatch: .all
                 ),
-                sort: MediaSortOrder(field: .name, direction: .ascending)
+                sort: MediaSortOrder(field: .likeness, direction: .ascending)
             ),
             viewMode: .loupe,
             focus: ids[1],
@@ -91,8 +94,9 @@ struct BrowserPlaceTests {
         BrowserPlace(descriptor: .default, viewMode: .grid, focus: nil, selection: []).save(to: preferences)
         let stored = try #require(preferences.string(forKey: BrowserPlace.defaultsKey))
         for (valid, invalid) in [
-            // A place stored before file types carried their kind.
-            ("\"version\":2", "\"version\":1"),
+            // A place stored before the filter held People.
+            ("\"version\":3", "\"version\":2"),
+            ("\"peopleMatch\":\"any\"", "\"peopleMatch\":\"some\""),
             ("\"sortField\":\"bestDate\"", "\"sortField\":\"rating\""),
             ("\"viewMode\":\"grid\"", "\"viewMode\":\"survey\""),
             ("\"kind\":\"allMedia\"", "\"kind\":\"smartAlbum\""),

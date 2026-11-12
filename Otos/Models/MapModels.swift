@@ -65,13 +65,11 @@ nonisolated struct LocatedAsset: Hashable, Sendable {
     let coordinate: PlaceCoordinate
 }
 
-/// What the `.places` scope shows: the located items in display order, and the count
-/// of items in the same libraries and filter that carry no location (DES-103's L3).
+/// What the `.places` scope shows: the located items in display order.
 nonisolated struct CatalogMapState: Equatable, Sendable {
     var located: [LocatedAsset]
-    var unlocatedCount: Int
 
-    static let empty = CatalogMapState(located: [], unlocatedCount: 0)
+    static let empty = CatalogMapState(located: [])
 }
 
 /// The map the user is looking at: the visible map rect in Web Mercator map points

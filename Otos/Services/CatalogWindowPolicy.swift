@@ -56,7 +56,7 @@ nonisolated enum CatalogWindowPolicy {
                     removableSources: removableSources
                 )
             }
-        case .places, .mapArea, .onThisDay, .duplicates, .duplicateGroup, .people, .peopleReview, .person, .reviewPhotos:
+        case .places, .mapArea, .onThisDay, .duplicates, .duplicateGroup, .people:
             // Places, On This Day, Duplicates and People exist with the fixed libraries they
             // span; a leaf under any of them goes with it. Each resolves to the default once the last fixed
             // library is removed.
@@ -168,7 +168,7 @@ nonisolated enum CatalogWindowPolicy {
             }
             switch sidebarSelection {
             case .allMedia, .places, .mapArea, .onThisDay, .importBatch, .allImports, .duplicates, .duplicateGroup,
-                 .people, .peopleReview, .person, .reviewPhotos:
+                 .people:
                 // These scopes span the fixed libraries. Batch and location *membership*
                 // are applied by Store.orderedAssetIDs; this pass only re-applies the
                 // root-kind rule, which also holds for IDs carried over from a reused
@@ -203,20 +203,17 @@ nonisolated enum CatalogWindowPolicy {
     }
 
     /// The Places map's content for a resolved `.places` scope: the scoped IDs paired
-    /// with their coordinates, and how many items the same libraries and filter hold
-    /// without a location. Nil for every other scope.
+    /// with their coordinates. Nil for every other scope.
     static func mapState(
         for descriptor: CatalogQueryDescriptor,
         scopedAssetIDs: [MediaAssetID],
-        scopedCoordinates: [PlaceCoordinate],
-        filteredFixedAssetCount: Int
+        scopedCoordinates: [PlaceCoordinate]
     ) -> CatalogMapState? {
         guard descriptor.scope == .places, scopedCoordinates.count == scopedAssetIDs.count else {
             return nil
         }
         return CatalogMapState(
-            located: zip(scopedAssetIDs, scopedCoordinates).map { LocatedAsset(id: $0, coordinate: $1) },
-            unlocatedCount: max(0, filteredFixedAssetCount - scopedAssetIDs.count)
+            located: zip(scopedAssetIDs, scopedCoordinates).map { LocatedAsset(id: $0, coordinate: $1) }
         )
     }
 
@@ -249,9 +246,7 @@ nonisolated enum CatalogWindowPolicy {
             "Places"
         case .duplicates, .duplicateGroup:
             "Duplicates"
-        case .people, .peopleReview, .person, .reviewPhotos:
-            // A person's scope is titled with their name, which People knows
-            // (`CatalogWindowViewModel.windowTitle`).
+        case .people:
             "People"
         case let .library(path):
             libraries.first { $0.path == path }?.displayName ?? "Library"
@@ -279,15 +274,7 @@ nonisolated enum CatalogWindowPolicy {
         }
         let sidebarSelection = descriptor.scope
         switch sidebarSelection {
-        case .person:
-            // A person whose every confirmed face was taken away (`docs/design/people.md`);
-            // a person is never removed implicitly.
-            let fixedLibraries = libraries.filter(\.kind.isMemberOfAllMedia)
-            if fixedLibraries.contains(where: { $0.availability == .unknown }) {
-                return .checkingLibraries
-            }
-            return .noPersonPhotos(nil)
-        case .allMedia, .importBatch, .allImports, .duplicates, .duplicateGroup, .people, .peopleReview, .reviewPhotos:
+        case .allMedia, .importBatch, .allImports, .duplicates, .duplicateGroup, .people:
             // These span the fixed libraries, so they answer emptiness the same way: a
             // batch whose rows exist but whose libraries are offline is unreachable,
             // not absent.

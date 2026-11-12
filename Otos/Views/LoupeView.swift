@@ -37,6 +37,8 @@ struct LoupeView: View {
     var onZoomDoubleClick: (CGPoint) -> Void = { _ in }
     var isPickingNeutral = false
     var onPickNeutral: (CGPoint) -> Void = { _ in }
+    /// The face the Info pane points at, outlined on the photo (ADR 0047).
+    var faceHighlight: CGRect?
     /// While the crop tool is on: the whole frame it draws over, and the crop.
     var cropEditor: CropEditorInput?
     var videoTrimCommand: VideoTrimCommand?
@@ -115,7 +117,8 @@ struct LoupeView: View {
                             onReport: onZoomReport,
                             onDoubleClick: onZoomDoubleClick,
                             isPicking: isPickingNeutral,
-                            onPick: onPickNeutral
+                            onPick: onPickNeutral,
+                            faceHighlight: faceHighlight
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .accessibilityElement()

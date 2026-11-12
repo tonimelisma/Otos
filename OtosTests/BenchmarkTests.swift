@@ -44,17 +44,22 @@ struct BenchmarkTests {
             #expect(!SamePhotoPolicy.candidatePairs(candidates, excluding: []).isEmpty)
         }
 
-        // People at a family archive's scale (ADR 0047): 10,000 faces, 1,000 of them named
-        // across 20 people. `PeopleProjection` runs the whole build after every catalog change
-        // while enrichment reads faces; the snapshot is its catalog read alone.
+        // People at a family archive's scale (ADR 0047): 10,000 faces, 1,000 of them the
+        // user's across 20 people. `PeopleAssignment` runs a whole pass after every catalog
+        // change while enrichment reads faces; the snapshot is its catalog read alone, and a
+        // settled pass reads, assigns, finds nothing to write and builds the gallery.
         try await Self.addFaces(to: store, faces: 10000, people: 20, confirmedEach: 50)
         try await Benchmark.measure("people.snapshot.10k", iterations: 3) {
             let snapshot = try await store.peopleSnapshot(availableLibraryPaths: paths)
             #expect(snapshot.faces.count == 10000)
         }
-        try await Benchmark.measure("people.build.10k", iterations: 3) {
-            let built = try await PeopleProjection.build(store: store, libraries: libraries)
-            #expect(built.people.count == 20)
+        _ = try await PeopleAssignment.settle(store: store, libraries: libraries)
+        try await Benchmark.measure("people.pass.10k", iterations: 3) {
+            guard case let .publish(built, _, _) = try await PeopleAssignment.run(store: store, libraries: libraries) else {
+                Issue.record("a settled pass wrote")
+                return
+            }
+            #expect(built.people.count >= 20)
         }
         await store.shutdown()
     }
@@ -84,7 +89,7 @@ struct BenchmarkTests {
                 contentHash: nil,
                 faces: EnrichedFaces(faces: [face], analysisRevision: FaceAnalyzer.revision)
             ))
-            if let person = fact.person {
+            if let person = fact.assignment.person {
                 named[person, default: []].append(FaceID(asset: asset.id, index: 0))
             }
         }
@@ -92,7 +97,10 @@ struct BenchmarkTests {
             _ = await store.applyEnrichmentBatch(Array(results[start ..< min(start + 500, results.count)]))
         }
         for (person, faces) in named.sorted(by: { $0.key < $1.key }) {
-            _ = try await store.perform(.name(faces, "Person \(person.rawValue)"))
+            let created = try #require(try await store.perform(.moveToNewPerson([], name: "Person \(person.rawValue)")).person)
+            for start in stride(from: 0, to: faces.count, by: 50) {
+                _ = try await store.perform(.move(Array(faces[start ..< min(start + 50, faces.count)]), to: created))
+            }
         }
     }
 
@@ -173,24 +181,32 @@ struct BenchmarkTests {
             #expect(crops == 16)
         }
 
-        // Grouping over a library the size of the bake-off's: 3,000 faces, 300 of them
-        // confirmed across 10 people, the rest open (ADR 0047).
+        // Assignment over a library the size of the bake-off's: 3,000 faces, 300 of them the
+        // user's across 10 people, the rest open (ADR 0047).
         let (faces, people) = Self.groupingLibrary(faces: 3000, people: 10, confirmedEach: 30)
-        try await Benchmark.measure("people.suggestions") {
-            let result = FacePeoplePolicy.suggestions(faces: faces, people: people)
-            #expect(!result.suggestions.isEmpty)
+        try await Benchmark.measure("people.assign") {
+            let result = FaceAssignmentPolicy.assign(faces: faces, people: people)
+            #expect(!result.guesses.isEmpty)
         }
 
-        // A family archive's scale: 10,000 faces, 1,000 confirmed across 20 people.
+        // A family archive's scale: 10,000 faces, 1,000 the user's across 20 people.
         let (large, largePeople) = Self.groupingLibrary(faces: 10000, people: 20, confirmedEach: 50)
-        try await Benchmark.measure("people.suggestions.10k", iterations: 3) {
-            let result = FacePeoplePolicy.suggestions(faces: large, people: largePeople)
-            #expect(!result.suggestions.isEmpty)
+        try await Benchmark.measure("people.assign.10k", iterations: 3) {
+            let result = FaceAssignmentPolicy.assign(faces: large, people: largePeople)
+            #expect(!result.guesses.isEmpty)
         }
-        // Its unnamed grouping alone, on the faces nobody is confirmed near.
-        let unconfirmed = large.filter { $0.person == nil }
+        // A cold start: nobody named, every person found among the faces.
+        let cold = large.map { face in
+            FaceFact(id: face.id, captureSeconds: face.captureSeconds, embedding: face.embedding,
+                     assignment: .open, isNotFace: false, rejected: [])
+        }
+        try await Benchmark.measure("people.assign.cold.10k", iterations: 3) {
+            #expect(!FaceAssignmentPolicy.assign(faces: cold, people: []).newPeople.isEmpty)
+        }
+        // Grouping alone, on the faces nobody is the user's.
+        let unconfirmed = large.filter { $0.assignment == .open }
         try await Benchmark.measure("people.unnamedGroups.9k", iterations: 3) {
-            #expect(!FacePeoplePolicy.unnamedGroups(unconfirmed).isEmpty)
+            #expect(!FaceAssignmentPolicy.unnamedGroups(unconfirmed).isEmpty)
         }
 
         let model = try FaceEmbeddingModel(bundle: Bundle(for: CatalogWindowViewModel.self))
@@ -259,7 +275,7 @@ struct BenchmarkTests {
     }
 
     /// Faces of `people` people, each a direction in embedding space with small per-face
-    /// variation, spread over ten years; the first `confirmedEach` of each person confirmed.
+    /// variation, spread over ten years; the first `confirmedEach` of each person the user's.
     static func groupingLibrary(faces count: Int, people: Int, confirmedEach: Int) -> ([FaceFact], [PersonFact]) {
         var generator = SplitMix64(seed: 7)
         let root = LibraryRootPath(rawValue: "/Bench")
@@ -276,9 +292,8 @@ struct BenchmarkTests {
                 id: FaceID(asset: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "\(index).jpg")), index: 0),
                 captureSeconds: 1_300_000_000 + Double(index) * 105_000,
                 embedding: vector.map { $0 / length },
-                person: index / people < confirmedEach ? PersonID(rawValue: Int64(person + 1)) : nil,
+                assignment: index / people < confirmedEach ? .user(PersonID(rawValue: Int64(person + 1))) : .open,
                 isNotFace: false,
-                isIgnored: false,
                 rejected: []
             ))
         }

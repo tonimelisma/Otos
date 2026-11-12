@@ -20,7 +20,7 @@ struct PhotoInfoTests {
         #expect(info.value("Kind") == "ARW")
         #expect(info.value("Camera") == PhotoInfo.unknown)
         #expect(info.value("Shutter Speed") == PhotoInfo.unknown)
-        #expect(info.value("People") == PhotoInfo.unknown)
+        #expect(info.facesRead == false)
         #expect(info.value("Place") == PhotoInfo.unknown)
         #expect(info.value("Size") == PhotoInfo.unknown)
         #expect(info.value("Folder") == "Pictures ▸ Trip ▸ Day 1")
@@ -66,10 +66,7 @@ struct PhotoInfoTests {
                 whiteBalance: .auto
             ))
         )
-        let overlay = PhotoInfoOverlay(
-            people: ["Ada", "Grace"], companionFileNames: ["IMG_0001.xmp"],
-            importedAt: nil, isEdited: true
-        )
+        let overlay = PhotoInfoOverlay(companionFileNames: ["IMG_0001.xmp"], importedAt: nil, isEdited: true)
 
         var info = PhotoInfo.make(
             PhotoInfo.Source(
@@ -79,7 +76,7 @@ struct PhotoInfoTests {
             calendar: Calendar(identifier: .gregorian)
         )
 
-        #expect(info.sections.map(\.id) == [.camera, .exposure, .people, .location, .file])
+        #expect(info.sections.map(\.id) == [.people, .location, .file, .camera, .exposure])
         #expect(info.captured.hasSuffix(" UTC+02:00"))
         #expect(info.value("Camera") == "SONY ILCE-7M4")
         #expect(info.value("Lens") == "FE 24-70mm F2.8 GM II")
@@ -93,7 +90,6 @@ struct PhotoInfoTests {
         #expect(info.value("Metering") == "Evaluative")
         #expect(info.value("Flash") == "Did Not Fire, Off")
         #expect(info.value("White Balance") == "Auto")
-        #expect(info.value("People") == "Ada and Grace")
         #expect(info.value("Coordinates") == "60.16990° N, 24.93840° W")
         #expect(info.value("Altitude") == "12 m")
         #expect(info.value("Kind") == "RAW image · ARW")
@@ -120,7 +116,7 @@ struct PhotoInfoTests {
             id: id, metadata: metadata, kind: .video, nativePixelSize: CGSize(width: 3840, height: 2160), locality: .local
         ))
 
-        #expect(info.sections.map(\.id) == [.camera, .video, .people, .location, .file])
+        #expect(info.sections.map(\.id) == [.people, .location, .file, .camera, .video])
         #expect(info.value("Duration") == "1:15")
         #expect(info.value("Frame Rate") == "29.97 fps")
         #expect(info.value("Codec") == "HEVC")
@@ -128,19 +124,16 @@ struct PhotoInfoTests {
         #expect(info.value("Original") == "On This Mac")
     }
 
-    /// A photo read for faces with no one confirmed has no one in it; one not read is unknown.
-    @Test func peopleSayNoneOnlyOnceFacesWereRead() {
+    /// A photo read for faces says `No Faces` when it has none; one not read yet says so.
+    @Test func facesAreKnownOnlyOnceRead() {
         let read = MediaAsset(
             libraryRootPath: still.libraryRootPath, relativePath: still.relativePath, name: nil,
             contentTypeIdentifier: nil, byteSize: nil, createdAt: nil, contentModifiedAt: nil,
             facesSourceSize: 10
         )
-        let empty = PhotoInfoOverlay(people: [], companionFileNames: [], importedAt: nil, isEdited: false)
-        func people(_ asset: MediaAsset?) -> String? {
-            PhotoInfo.make(PhotoInfo.Source(id: still, asset: asset, overlay: empty, kind: .raw)).value("People")
-        }
-        #expect(people(read) == "None")
-        #expect(people(nil) == PhotoInfo.unknown)
+        #expect(PhotoInfo.make(PhotoInfo.Source(id: still, asset: read, kind: .raw)).facesRead == true)
+        #expect(PhotoInfo.make(PhotoInfo.Source(id: still, asset: nil, kind: .raw)).facesRead == false)
+        #expect(PhotoInfo.none(itemCount: 2).facesRead == nil)
     }
 
     @Test func noSingleItemReadsDashesInTheStillLayout() {
@@ -148,7 +141,7 @@ struct PhotoInfoTests {
         let several = PhotoInfo.none(itemCount: 3)
         #expect(none.title == "No Selection")
         #expect(several.title == "3 Items")
-        #expect(none.sections.map(\.id) == [.camera, .exposure, .people, .location, .file])
+        #expect(none.sections.map(\.id) == [.people, .location, .file, .camera, .exposure])
         #expect(none.sections.flatMap(\.rows).allSatisfy { $0.value == PhotoInfo.notApplicable })
         #expect(none.captured == PhotoInfo.notApplicable)
     }
