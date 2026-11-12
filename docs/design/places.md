@@ -68,12 +68,14 @@ count moves while enrichment finds locations; nothing else on the bar does.
 
 Standard style, following light and dark; points of interest excluded **[deviation
 DES-104]**; pan and zoom only; `MapZoomStepper` and `MapScaleView` as the only chrome.
-No user-location control and no permission prompt. The map stops at its top and bottom
-edges at every zoom: the camera's center is bounded to the world's height less half the
-visible height, so no pan or zoom shows past the poles; east–west it wraps. Zoom-out
-stops where MapKit's flat map does; only its satellite globe shows the whole world, and
-the owner chose the standard map (2026-11-13,
-`docs/research/2026-11-13-mapkit-zoom-out-and-poles.md`).
+No user-location control and no permission prompt. The map pans north and south only
+to 75°, or to the farthest located item plus 2° when one lies beyond, never past the
+map's own edge: Web Mercator stretches the polar regions many times over, so they stay
+off screen, and no item is ever out of reach (owner decision, 2026-11-13). The camera's
+center is bounded to that band less half the visible height, at every zoom; east–west it
+wraps. Zoom-out stops where MapKit's flat map does; only its satellite globe shows the
+whole world undistorted, and the owner chose the standard map
+(`docs/research/2026-11-13-mapkit-zoom-out-and-poles.md`).
 
 Camera: on entering Places, center on the located items' average location (the circular
 mean of longitude, so items either side of the antimeridian average to it) and reach the

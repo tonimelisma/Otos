@@ -212,15 +212,43 @@ nonisolated enum MapClusterPolicy {
         MapBounds(originX: viewport.originX, originY: viewport.originY, width: viewport.width, height: viewport.height)
     }
 
-    /// Where the camera's center may go so the map never shows past its top or bottom
-    /// edge: the world's height inset by half the visible height. MapKit bounds only the
-    /// center, so the bound narrows as the view shows more of the map. East–west is free:
-    /// the map wraps at the antimeridian, so the bound spans three worlds, and a center
-    /// past either edge of one is the same place on the next.
-    static func cameraCenterBounds(visibleHeight: Double) -> MapBounds {
+    /// How far north and south the map pans when no item lies beyond: past about 75°
+    /// the Web Mercator map stretches land many times over (Greenland drawn the size of
+    /// Africa), so the polar regions stay off screen (owner decision, 2026-11-13).
+    static let panLatitudeLimit: Double = 75
+    /// Room past the farthest item, so a stack on it is drawn whole, not on the edge.
+    static let panItemMarginDegrees: Double = 2
+    /// The north–south limit of Web Mercator, where the map itself ends.
+    static let mercatorLatitudeLimit: Double = 85.051_128_78
+
+    /// The latitudes the map may pan over: `panLatitudeLimit` each way, widened to reach
+    /// the farthest item north and south with `panItemMarginDegrees`, so no located item
+    /// is ever out of reach, and never past the map's own edge.
+    static func panBand(for coordinates: [PlaceCoordinate]) -> MapLatitudeBand {
+        var south = -panLatitudeLimit
+        var north = panLatitudeLimit
+        for coordinate in coordinates {
+            south = min(south, coordinate.latitude - panItemMarginDegrees)
+            north = max(north, coordinate.latitude + panItemMarginDegrees)
+        }
+        return MapLatitudeBand(
+            south: max(south, -mercatorLatitudeLimit),
+            north: min(north, mercatorLatitudeLimit)
+        )
+    }
+
+    /// Where the camera's center may go so the view never shows past `band`: the band's
+    /// height in map points inset by half the visible height. MapKit bounds only the
+    /// center, so the bound narrows as the view shows more of the map; a view taller than
+    /// the band sits at its middle. East–west is free: the map wraps at the antimeridian,
+    /// so the bound spans three worlds, and a center past either edge of one is the same
+    /// place on the next.
+    static func cameraCenterBounds(visibleHeight: Double, band: MapLatitudeBand) -> MapBounds {
         let world = worldMapPoints
-        let inset = min(max(visibleHeight, 0), world) / 2
-        return MapBounds(originX: -world, originY: inset, width: 3 * world, height: world - 2 * inset)
+        let top = mapPoint(PlaceCoordinate(latitude: band.north, longitude: 0)).y
+        let bottom = mapPoint(PlaceCoordinate(latitude: band.south, longitude: 0)).y
+        let inset = min(max(visibleHeight, 0), bottom - top) / 2
+        return MapBounds(originX: -world, originY: top + inset, width: 3 * world, height: bottom - top - 2 * inset)
     }
 
     /// The box of the earth the viewport shows: what Grid, Loupe and Compare open on the

@@ -30,9 +30,9 @@ struct PlacesMapView: View {
     @State private var appliedCameraRevision: UInt64 = 0
     @State private var viewSize: CGSize = .zero
     @State private var settledRect: MKMapRect?
-    /// Where the camera's center may go: follows the visible height while the camera
-    /// moves, so the map stops at the poles at every zoom (`cameraCenterBounds`).
-    @State private var centerBounds = MapClusterPolicy.cameraCenterBounds(visibleHeight: 0)
+    /// The camera's visible height in map points, followed while the camera moves: with
+    /// the map's pan band it sets where the center may go (`cameraCenterBounds`).
+    @State private var visibleMapHeight: Double = 0
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -93,7 +93,7 @@ struct PlacesMapView: View {
         // on how tall the view is in map points, so the bound follows every frame of a
         // zoom; a pan leaves the height, and so the bound, unchanged.
         .onMapCameraChange(frequency: .continuous) { context in
-            centerBounds = MapClusterPolicy.cameraCenterBounds(visibleHeight: context.rect.size.height)
+            visibleMapHeight = context.rect.size.height
         }
         .onMapCameraChange(frequency: .onEnd) { context in
             settledRect = context.rect
@@ -106,7 +106,8 @@ struct PlacesMapView: View {
     }
 
     private var cameraBounds: MapCameraBounds {
-        MapCameraBounds(centerCoordinateBounds: MKMapRect(
+        let centerBounds = MapClusterPolicy.cameraCenterBounds(visibleHeight: visibleMapHeight, band: map.panBand)
+        return MapCameraBounds(centerCoordinateBounds: MKMapRect(
             x: centerBounds.originX,
             y: centerBounds.originY,
             width: centerBounds.width,

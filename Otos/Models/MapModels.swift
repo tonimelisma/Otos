@@ -66,11 +66,25 @@ nonisolated struct LocatedAsset: Hashable, Sendable {
     let coordinate: PlaceCoordinate
 }
 
-/// What the `.places` scope shows: the located items in display order.
+/// What the `.places` scope shows: the located items in display order, and the band of
+/// latitudes the map may pan over (`MapClusterPolicy.panBand`), which reaches every one
+/// of them.
 nonisolated struct CatalogMapState: Equatable, Sendable {
-    var located: [LocatedAsset]
+    let located: [LocatedAsset]
+    let panBand: MapLatitudeBand
+
+    init(located: [LocatedAsset]) {
+        self.located = located
+        panBand = MapClusterPolicy.panBand(for: located.map(\.coordinate))
+    }
 
     static let empty = CatalogMapState(located: [])
+}
+
+/// Latitudes in degrees, south to north.
+nonisolated struct MapLatitudeBand: Equatable, Sendable {
+    var south: Double
+    var north: Double
 }
 
 /// The map the user is looking at: the visible map rect in Web Mercator map points

@@ -257,27 +257,54 @@ struct MapClusterPolicyTests {
         #expect(abs(zoomedOut.centerY - (city.originY + city.height / 2)) < 1)
     }
 
-    /// The map stops at its top and bottom edges: a center inside the bound keeps the
-    /// visible rect inside the world at every zoom, and a pan east or west is never held.
-    @Test func cameraCenterBoundsKeepTheViewInsideTheWorld() {
-        let world = MapClusterPolicy.worldMapPoints
-        for visibleHeight in [world / 1000, world / 4, world * 0.9] {
-            let bounds = MapClusterPolicy.cameraCenterBounds(visibleHeight: visibleHeight)
+    private func mapY(_ latitude: Double) -> Double {
+        MKMapPoint(CLLocationCoordinate2D(latitude: latitude, longitude: 0)).y
+    }
 
-            #expect(abs(bounds.originY - visibleHeight / 2) < 1)
-            #expect(abs((bounds.originY + bounds.height + visibleHeight / 2) - world) < 1)
+    /// The map pans to 75° north and south and no farther, so the stretched polar regions
+    /// stay off screen: a center inside the bound keeps the visible rect inside the band
+    /// at every zoom, and a pan east or west is never held.
+    @Test func cameraCenterBoundsKeepTheViewInsideThePanBand() {
+        let world = MapClusterPolicy.worldMapPoints
+        let band = MapClusterPolicy.panBand(for: [])
+        let top = mapY(75)
+        let bottom = mapY(-75)
+        for visibleHeight in [world / 1000, world / 4, (bottom - top) * 0.9] {
+            let bounds = MapClusterPolicy.cameraCenterBounds(visibleHeight: visibleHeight, band: band)
+
+            #expect(abs(bounds.originY - visibleHeight / 2 - top) < 1)
+            #expect(abs(bounds.originY + bounds.height + visibleHeight / 2 - bottom) < 1)
             #expect(bounds.originX <= -world)
             #expect(bounds.originX + bounds.width >= 2 * world)
         }
     }
 
-    /// A view taller than the world can only sit at its middle.
-    @Test func cameraCenterBoundsForAViewTallerThanTheWorldIsItsMiddle() {
-        let world = MapClusterPolicy.worldMapPoints
-        let bounds = MapClusterPolicy.cameraCenterBounds(visibleHeight: world * 2)
+    /// A view taller than the band can only sit at its middle.
+    @Test func cameraCenterBoundsForAViewTallerThanTheBandIsItsMiddle() {
+        let band = MapClusterPolicy.panBand(for: [])
+        let bounds = MapClusterPolicy.cameraCenterBounds(
+            visibleHeight: MapClusterPolicy.worldMapPoints,
+            band: band
+        )
 
         #expect(bounds.height == 0)
-        #expect(abs(bounds.originY - world / 2) < 1)
+        #expect(abs(bounds.originY - (mapY(75) + mapY(-75)) / 2) < 1)
+    }
+
+    /// No located item is out of reach: the band widens past 75° to the farthest item
+    /// with a margin, each way on its own, and never past the map's own edge.
+    @Test func panBandReachesTheFarthestItem() {
+        let svalbard = PlaceCoordinate(latitude: 78.22, longitude: 15.65)
+        let helsinki = PlaceCoordinate(latitude: 60.17, longitude: 24.94)
+        let southPole = PlaceCoordinate(latitude: -89.9, longitude: 0)
+
+        #expect(MapClusterPolicy.panBand(for: [helsinki]) == MapLatitudeBand(south: -75, north: 75))
+        let north = MapClusterPolicy.panBand(for: [helsinki, svalbard])
+        #expect(abs(north.north - 80.22) < 0.001)
+        #expect(north.south == -75)
+        let south = MapClusterPolicy.panBand(for: [southPole])
+        #expect(south.south == -MapClusterPolicy.mercatorLatitudeLimit)
+        #expect(south.north == 75)
     }
 
     @Test func accessibilityLabelLeadsWithTheCountThenThePlace() {

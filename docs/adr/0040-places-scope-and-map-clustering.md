@@ -102,9 +102,11 @@ Map view mode.
   and on a filter change, the last viewport on return from an area, a quarter-span zoom
   on a stack that can still split, a step on View ▸ Zoom In / Out. The map also
   holds one camera limit of its own: MapKit bounds only the camera's center, so the
-  view bounds the center to the world's height less half the visible height,
-  recomputed on every camera frame, and the flat map never shows past the poles
-  (`MapClusterPolicy.cameraCenterBounds`; the satellite globe, the one MapKit view
+  view bounds the center to a latitude band less half the visible height,
+  recomputed on every camera frame. The band is 75° north and south, widened to the
+  farthest located item, so Web Mercator's stretched polar regions stay off screen and
+  no item is out of reach; it is a fact of the map's content, so `CatalogMapState`
+  carries it (`MapClusterPolicy.panBand`, `cameraCenterBounds`; the satellite globe, the one MapKit view
   that zooms out to the whole Earth, was rejected by the owner on 2026-11-13,
   `docs/research/2026-11-13-mapkit-zoom-out-and-poles.md`).
 - **The map is not a view mode; the modes open its area.** While the map shows, the

@@ -38,5 +38,9 @@ one standalone `MKMapView` probe.
 
 ## Decision taken
 
-The owner chose the flat standard map with panning stopped at the poles over the
-satellite globe (2026-11-13), knowing the zoom-out stays at MapKit's limit.
+The owner chose the flat standard map over the satellite globe (2026-11-13), knowing
+the zoom-out stays at MapKit's limit. Panning to the map's own edge (85°) still showed
+Web Mercator's polar stretch, so the owner then chose to stop panning at 75° north and
+south, widened for any located item farther out. Measured with the dev build: a drag
+north stopped with the view's top at 75.00°N (center 53.64°, span 63.65°), a drag
+south at 75°S (center −53.64°).
