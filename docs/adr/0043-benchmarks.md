@@ -1,7 +1,7 @@
-# ADR 0043: Benchmarks are opt-in, count instructions, are recorded per commit, and are compared before merge
+# ADR 0043: Benchmarks are opt-in, count instructions, are recorded per commit, and run nightly on main
 
 - Status: Accepted
-- Last updated: 2026-11-11
+- Last updated: 2026-11-12
 
 ## Context
 
@@ -73,10 +73,32 @@ The tooling found:
 - **History is read with `script/bench.sh history [case]`.** It lists the records, newest
   first, with each case's change in instructions from the previous record on the same
   machine.
-- **An app-changing PR is compared with its base before it merges.**
-  `script/bench.sh compare` sets the PR's processes against its merge base's with
-  `origin/main`. When base has no record from the current harness, `compare` measures it
-  first, with the current harness, in a detached checkout.
+- **Benchmarks run nightly on `main`, never per PR (2026-11-12).** A per-PR comparison
+  cost two runs a change, the PR head and then `main` after the merge, each a build plus
+  three ~70-second test processes: 9–10 minutes of every commit, more than the test suite.
+  The owner asked to move it off the commit path.
+  - **The night.** A per-user launchd agent (`script/bench.sh schedule`, 03:00, and on
+    wake when the Mac slept through it) runs `script/bench.sh nightly`. It measures
+    `origin/main`'s newest commit in a detached checkout and sets it against the
+    **baseline**, the last commit that measured clean (`refs/bench/baseline`). It reads
+    `origin/main` as the clone last fetched it, because every merge fetches it, and a
+    network that hangs must not hang the night.
+  - **A clean night moves the baseline; a flagged one does not.** The verdict sits in
+    the clone's git directory, shared by every worktree. A regression therefore stays
+    flagged across later nights until a night measures clean against the same baseline
+    (it was fixed) or the owner accepts it (`script/bench.sh accept`). A baseline that
+    followed every night would forget a regression the next night.
+  - **`script/check.sh` prints the verdict** as one `op=bench.status` line and never fails
+    on it, because the fix for a flagged case must pass the same check. It also reports
+    `verdict=stale` once `main` is 20 or more commits past the baseline (the Mac was off,
+    or the agent is not installed), and the agent then runs the night by hand.
+  - **Attribution is by hand.** A flagged night names a range of commits;
+    `script/bench.sh compare <base>` on a commit in that range bisects it.
+  - **Rejected: GitHub Actions nightly.** No hosted runner carries the Xcode 27 beta this
+    repo builds with, and the account's Actions minutes are not dependable.
+  - **Rejected: per-PR comparison on a shorter suite.** Fewer processes or iterations
+    would cut the noise evidence below what a two-mode case needs (below), and the run
+    would still sit on every commit.
   - **Records carry their harness.** Each record carries `harness` (now 2), and `compare`
     sets only records of one harness against each other. Records of another harness stay
     as history. A change to what a run counts raises the number in `bench.sh`.
@@ -86,9 +108,9 @@ The tooling found:
   - **When a case is flagged.** Its median over head's processes must have risen by more
     than 2% and by more than the case's noise. The rise must also be beyond every process's
     range: head's lowest sample in any process, median × (1 − spread), still exceeds base's
-    highest, median × (1 + spread). The owner then decides whether the PR merges.
+    highest, median × (1 + spread). The owner then decides whether to accept it.
   - **A rise that is not flagged.** A rise above 2% that fails either test is reported as
-    `within noise` and does not stop the merge. A smaller change is only reported.
+    `within noise` and does not flag the night. A smaller change is only reported.
   - **Why 2%.** It is four times the run-to-run variation of a steady case (about ±0.5%),
     so it catches a real regression there.
   - **Why the noise is read from history (2026-11-11):** two processes a side were not
@@ -146,12 +168,13 @@ The tooling found:
 ## Consequences
 
 - A regression of more than 2%, and more than the case's own noise, beyond every process's
-  range, stops an app-changing PR before merge, until the owner says whether it ships.
-  Noise alone never blocks a merge. Smaller drifts show in `bench.sh history`, against the commit
-  that caused each one.
-- Each app-changing PR costs one benchmark run before merge and one on `main` after it,
-  each of three test processes (about four minutes together). A base without a record
-  from the current harness costs one more run, in a fresh checkout.
+  range, flags the night. It stays flagged, and `check.sh` says so on every run, until it
+  is fixed or the owner accepts it. Noise alone never flags. Smaller drifts show in
+  `bench.sh history`, against the commit measured.
+- A PR costs no benchmark run. A night costs one: a build in a fresh checkout and three
+  test processes (about five minutes), skipped when `main` has not moved.
+- A regression is found the morning after, as a range of commits, not on the PR that
+  caused it. Bisecting the range is by hand.
 - Numbers compare only on one machine and configuration. The record carries both, and
   `history` compares within a machine.
 - Notes stay in the local clone unless pushed (`git push origin refs/notes/benchmarks`).

@@ -85,6 +85,13 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
    `bench.sh run` reads the commit before building and records nothing if the tree
    changed, so a pull mid-run cannot record results on the commit it moved to.
    `install.sh` refuses to install a build whose tree changed under it.
+9. **A new worktree starts from the primary checkout's packages.** Each worktree resolves
+   the Swift packages into its own `build/DerivedData/SourcePackages`. GRDB's SQLite
+   submodule clones over HTTPS, and on 2026-11-12 that clone hung a fresh worktree's
+   build for minutes at 0% CPU. `otos_build_settings` seeds a worktree with no packages
+   from the primary checkout's copy (`ditto`), and xcodebuild then resolves the pins
+   against it without the network. The folder is copied, never shared: two builds
+   resolving into one package folder at once is not a case SwiftPM guards.
 
 ## Alternatives Considered
 

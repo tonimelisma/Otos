@@ -133,11 +133,32 @@ if ! "$ROOT_DIR/script/time-guard.sh"; then
   echo "op=check.stage phase=fail stage=fast-gates reason=untaggedTime" >&2
   fast_failed=1
 fi
+# Every CI job's checks run here too, so a passing check is a passing CI. The text checks
+# read a commit, so they read one of the tree as it stands: written from a scratch index
+# with untracked files added, which moves nothing in the checkout.
+snapshot_dir="$(mktemp -d)"
+GIT_INDEX_FILE="$snapshot_dir/index" git -C "$ROOT_DIR" read-tree HEAD
+GIT_INDEX_FILE="$snapshot_dir/index" git -C "$ROOT_DIR" add -A
+snapshot_tree="$(GIT_INDEX_FILE="$snapshot_dir/index" git -C "$ROOT_DIR" write-tree)"
+rm -rf "$snapshot_dir"
+snapshot="$(git -C "$ROOT_DIR" commit-tree "$snapshot_tree" -p HEAD -m "check snapshot")"
+if ! (cd "$ROOT_DIR" && EVENT_NAME=pull_request BASE_SHA="$(git rev-parse origin/main)" HEAD_SHA="$snapshot" \
+  script/ci-text-hygiene.sh check); then
+  echo "op=check.stage phase=fail stage=fast-gates reason=textHygiene" >&2
+  fast_failed=1
+fi
+if ! "$ROOT_DIR/script/ci-repo-shape.sh"; then
+  echo "op=check.stage phase=fail stage=fast-gates reason=repoShape" >&2
+  fast_failed=1
+fi
 if [[ "$fast_failed" != "0" ]]; then
   echo "check: FAILED at fast-gates (cost you seconds, not a build)" >&2
   exit 1
 fi
 echo "op=check.stage phase=pass stage=fast-gates"
+# Benchmarks run nightly, not here (ADR 0043). One line says whether main is clean, flagged,
+# or far enough past its last measured commit to need a run by hand.
+"$ROOT_DIR/script/bench.sh" status || true
 
 # ── Stage 2: the real check, with a heartbeat so a stall is self-evident ─────
 # One run per build folder: a bench or a second check in this checkout waits here, before

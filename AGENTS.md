@@ -329,14 +329,20 @@ with `script/logs.sh stream [Category]` (live) or
 `script/profile.sh "<Template>" 10s` and `script/profile-export.sh <trace>`.
 See `docs/adr/0015-observability.md`.
 
-Benchmarks are `script/bench.sh run`: it runs the opt-in cases in
-`OtosTests/BenchmarkTests.swift` on a generated catalog, in three fresh test processes,
-and on a clean tree records the results on HEAD as git notes. `script/bench.sh history
-[case]` reads them back, newest first, with each change in instructions. Compare
-instructions, not milliseconds: under the parallel load that moves wall time several-fold,
-a steady case's instructions hold within about 1%. Some cases also differ from one process
-to the next, and `compare` holds each case to the noise it has shown. Run it in the
-background like `check.sh`. A hot path that performance work touches gets a case (ADR 0043).
+Benchmarks run nightly, never per PR (ADR 0043). A launchd agent (`script/bench.sh
+schedule`) runs `script/bench.sh nightly` at 03:00: it measures `origin/main`'s newest
+commit on a generated catalog, in three fresh test processes, and sets it against the
+baseline, the last commit that measured clean. `script/check.sh` prints one
+`op=bench.status` line:
+- `verdict=flagged`: a case regressed. Fixing it is the next work, unless the owner
+  accepts it in chat (`script/bench.sh accept`, permission quoted in the DoD report).
+- `verdict=stale`: `main` is 20 or more commits past the baseline. Run
+  `script/bench.sh nightly` in the background.
+`script/bench.sh history [case]` reads the records back, and `script/bench.sh compare
+<base>` bisects a flagged range by hand. Compare instructions, not milliseconds: under
+the parallel load that moves wall time several-fold, a steady case's instructions hold
+within about 1%. A hot path that performance work touches gets a case, measured with
+`script/bench.sh run` and `compare` while that work is under way.
 
 Dev builds (scripts, Xcode ▸ Run) are `net.melisma.Otos.dev` with their own
 Application Support data; `/Applications/Otos.app` is the installed
@@ -466,14 +472,15 @@ for confirmation before relying on them.
   inventory, macOS lint); it does not run Xcode 27 build/test until a runner exists.
   Xcode 27 build/test proof is local `script/check.sh` evidence. A CI job that
   ran and failed always blocks: never waive failures, syntax errors, missing
-  tools, or flakiness.
+  tools, or flakiness. Every CI job's checks also run in `script/check.sh`'s fast
+  gates, so a green check is a green CI.
 - **A stuck GitHub never blocks a merge.** A job GitHub cannot run is not a
   failure. Such a job is either queued with no runner while githubstatus.com
-  reports Actions not `operational`, or blocked by a billing/quota limit. For
-  it, run that job's exact commands from `.github/workflows/ci.yml` locally on
-  the PR head. Post on the PR the outage evidence and each command's result, and
-  merge. When Actions recovers, the push run on `main` verifies the merge; a red
-  result there is fixed first (red-`main` rule above).
+  reports Actions not `operational`, or blocked by a billing/quota limit. The
+  green `script/check.sh` run on the final tree already ran its checks: merge on
+  it, and never replay the jobs by hand. When Actions recovers, the push run on
+  `main` verifies the merge; a red result there is fixed first (red-`main` rule
+  above).
 - **Opening a PR is not a stopping point.** The agent reads CI status itself
   (`gh pr checks`) and continues straight through merge, cleanup, install, and
   the DoD report in the same turn. A CI watcher exits on every terminal fact:
@@ -503,19 +510,7 @@ primary checkout on `main` and include its `op=install` line in the DoD report.
 It quits a running installed Otos only when no import or reorganization is in
 flight, and relaunches it; a `phase=pending` result is reported, not retried
 around (ADR 0030).
-Such an increment also compares benchmarks before it merges (ADR 0043). This happens on
-the final PR commit, with `main` merged in and the tree clean, after `script/check.sh`
-passes:
-
-1. Run `script/bench.sh run`, then `script/bench.sh compare`, both in the background.
-2. If `compare` exits 3, a case retired more instructions than its base by more than 2%
-   and more than its own process-to-process noise, beyond every process's range (a run
-   measures three test processes; a rise within the noise is reported as `within noise`).
-   Stop before merging and show the user the comparison table. Merge only with the
-   user's explicit permission in chat, and quote that permission in the DoD report.
-3. Either way, include the comparison table in the DoD report.
-4. After the merge and install, run `script/bench.sh run` from the primary checkout on
-   `main`, so the next increment's base has a record.
+The DoD report carries the `op=bench.status` line from the final `script/check.sh` run.
 
 Verification is **agent-owned**: never require the user to launch the app, operate
 the UI, or inspect visuals as a condition of DoD. Run every check available to the

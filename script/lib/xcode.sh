@@ -74,4 +74,22 @@ otos_build_settings() {
     ENABLE_CODE_COVERAGE=NO
     COMPILER_INDEX_STORE_ENABLE=NO
   )
+  otos_seed_source_packages "$root"
+}
+
+# A new worktree's first build resolves the Swift packages into its own DerivedData, and
+# GRDB's SQLite submodule clones over HTTPS, which has hung for minutes (2026-11-12). The
+# primary checkout already holds a resolved copy; a worktree that has none starts from it,
+# and xcodebuild then resolves the pins against that copy without the network. Each
+# worktree keeps its own copy, so no two builds share one package folder.
+otos_seed_source_packages() {
+  local root="$1" primary packages source
+  packages="$root/build/DerivedData/SourcePackages"
+  [[ -d "$packages/checkouts" ]] && return
+  primary="$(dirname "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)")"
+  source="$primary/build/DerivedData/SourcePackages"
+  [[ "$primary" != "$root" && -d "$source/checkouts" ]] || return 0
+  mkdir -p "$root/build/DerivedData"
+  /usr/bin/ditto "$source" "$packages"
+  echo "op=build.packages phase=seeded from=$source"
 }
