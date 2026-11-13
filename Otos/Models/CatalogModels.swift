@@ -1263,6 +1263,9 @@ nonisolated struct SourceListedItem: Hashable, Sendable {
     let sourceItemID: String
     /// The source holds the item but hides it: an Immich asset in Immich's trash.
     let isHiddenBySource: Bool
+    /// The source holds its own thumbnail and preview of the item (ADR 0046 §7); false
+    /// for one it has none of, which is not asked for them.
+    let sourceHasProducts: Bool
 }
 
 /// Where an item its source names by ID already lives, and whether the source hides it.

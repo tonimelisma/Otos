@@ -133,7 +133,8 @@ nonisolated struct ImmichClient: Sendable {
             type: type,
             fileCreatedAt: Self.date(body.fileCreatedAt),
             fileModifiedAt: Self.date(body.fileModifiedAt),
-            fileSize: body.exifInfo?.fileSizeInByte
+            fileSize: body.exifInfo?.fileSizeInByte,
+            hasPreview: body.thumbhash != nil
         )
     }
 
@@ -157,6 +158,7 @@ nonisolated struct ImmichClient: Sendable {
         let fileCreatedAt: String
         let fileModifiedAt: String
         let exifInfo: Exif?
+        let thumbhash: String?
     }
 
     /// Downloads an asset's original to a temporary file the caller moves into place
@@ -379,6 +381,9 @@ nonisolated struct ImmichAsset: Equatable, Sendable {
     let deletedAt: Date?
     let fileCreatedAt: Date?
     let fileModifiedAt: Date?
+    /// The server has made the asset's previews: its thumbhash is set, which Immich writes
+    /// only once it has generated them, and never for a hidden motion part.
+    let hasPreview: Bool
     /// A Live Photo still's motion part, an asset of its own (`visibility: hidden`).
     var livePhotoVideoID: String?
 }
@@ -392,6 +397,8 @@ nonisolated struct ImmichAssetDetail: Equatable, Sendable {
     let fileModifiedAt: Date
     /// Nil until the server has read the file's size.
     let fileSize: Int64?
+    /// The server has made the asset's previews (`ImmichAsset.hasPreview`).
+    let hasPreview: Bool
 }
 
 /// One line of the sync stream. Every line carries the `ack` that moves the cursor past it.
@@ -440,6 +447,7 @@ nonisolated enum ImmichSyncEvent: Equatable, Sendable {
                 deletedAt: data.deletedAt.map(Self.date),
                 fileCreatedAt: data.fileCreatedAt.map(Self.date),
                 fileModifiedAt: data.fileModifiedAt.map(Self.date),
+                hasPreview: data.thumbhash != nil,
                 livePhotoVideoID: data.livePhotoVideoId
             ), ack: ack)
         case "AssetDeleteV1":
@@ -474,6 +482,7 @@ nonisolated enum ImmichSyncEvent: Equatable, Sendable {
         let deletedAt: String?
         let fileCreatedAt: String?
         let fileModifiedAt: String?
+        let thumbhash: String?
         let livePhotoVideoId: String?
     }
 

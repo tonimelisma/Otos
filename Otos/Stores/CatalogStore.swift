@@ -4824,6 +4824,15 @@ extension CatalogStore {
                 """,
                 arguments: [item.sourceItemID, rootRowID, file.relativePath.rawValue, item.sourceItemID]
             )
+            // Whether the source has its own images of the row: what the product pass
+            // asks for, not shown, so not a change the window hears either.
+            try db.execute(
+                sql: """
+                UPDATE media_asset SET source_products_absent = ?
+                WHERE library_root_id = ? AND relative_path = ? AND source_products_absent IS NOT ?
+                """,
+                arguments: [!item.sourceHasProducts, rootRowID, file.relativePath.rawValue, !item.sourceHasProducts]
+            )
         }
         for (item, size) in changes.sizesBySourceItem {
             try db.execute(
@@ -4886,6 +4895,25 @@ extension CatalogStore {
                 sql: "UPDATE library_root SET last_synced_at = ? WHERE id = ?",
                 arguments: [date.timeIntervalSince1970, rootID]
             )
+        }
+    }
+
+    /// Records that the source answered it holds no images of these rows (ADR 0046 §7), so
+    /// no product pass asks for them again until a later listing says it has them.
+    func recordSourceProductsAbsent(_ paths: [MediaRelativePath], rootPath: LibraryRootPath) async throws {
+        guard !paths.isEmpty, let rootID = roots.rowIDSnapshot()[rootPath] else {
+            return
+        }
+        try await database().write { db in
+            for path in paths {
+                try db.execute(
+                    sql: """
+                    UPDATE media_asset SET source_products_absent = 1
+                    WHERE library_root_id = ? AND relative_path = ?
+                    """,
+                    arguments: [rootID, path.rawValue]
+                )
+            }
         }
     }
 
@@ -4959,6 +4987,7 @@ extension CatalogStore {
                   AND hidden_by_source = 0
                   AND byte_size IS NOT NULL
                   AND \(Self.showsSourceProductsSQL)
+                  AND source_products_absent = 0
                   AND (
                       source_products_size IS NOT byte_size
                       OR source_products_mtime IS NOT CAST(content_modified_at_unix AS INTEGER)

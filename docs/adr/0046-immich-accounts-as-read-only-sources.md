@@ -244,6 +244,15 @@ pixel size and colour profile from the file it receives and never assumes Immich
 defaults, because they are admin configuration. The fetch keeps the free-space floor
 (ADR 0027) and stops when the server stops answering; what it did not fetch stays owed.
 
+Only the server knows whether it has an asset's previews, and it says so twice. Immich
+writes an asset's `thumbhash` only after it has generated the previews, and that write
+changes the asset, so the stream lists it again; it never generates them for a hidden asset
+(a Live Photo's motion part). And a preview request it cannot serve is answered with a
+refusal (a 404). Otos keeps the newer of the two answers (`source_products_absent`,
+migration v39): an asset listed without a thumbhash, or refused, is not asked for its
+images again until a later listing carries a thumbhash. Asking again every pass would
+spend one request per such asset per pass for an answer the server has already given.
+
 Enrichment never downloads an account's original only to render it. Otos renders its own
 products (ADR 0035) from an original that is local for another reason:
 

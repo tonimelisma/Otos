@@ -110,12 +110,14 @@ struct ImmichClientTests {
     }
 
     /// `GET /api/assets/{id}` decodes as Immich 3.3.6 writes an asset: a Live Photo's
-    /// motion part, read on its own (ADR 0046 §2).
+    /// motion part, read on its own (ADR 0046 §2), which has no thumbhash: Immich makes no
+    /// previews of a hidden asset.
     @Test func anAssetsOwnFactsDecode() async throws {
         let body: [String: Any] = [
             "id": "m1", "originalFileName": "IMG_1.MOV", "type": "VIDEO", "visibility": "hidden",
             "fileCreatedAt": "2025-06-13T00:48:36.603Z", "fileModifiedAt": "2026-01-01T00:00:00.000Z",
             "isTrashed": false, "livePhotoVideoId": NSNull(), "exifInfo": ["fileSizeInByte": 2_414_759, "make": NSNull()],
+            "thumbhash": NSNull(),
         ]
         let reply = try JSONSerialization.data(withJSONObject: body)
         let session = ImmichStubProtocol.session(host: "asset.test") { request, _ in
@@ -130,6 +132,7 @@ struct ImmichClientTests {
         #expect(detail.type == .video)
         #expect(detail.fileSize == 2_414_759)
         #expect(detail.fileModifiedAt == Date(timeIntervalSince1970: 1_767_225_600))
+        #expect(!detail.hasPreview)
     }
 
     @Test func theSyncStreamIsReadAsLines() async throws {
@@ -179,6 +182,7 @@ struct ImmichClientTests {
         #expect(abs(created - 1_749_775_716.603) < 0.001)
         #expect(asset.fileModifiedAt == Date(timeIntervalSince1970: 1_767_225_600))
         #expect(asset.livePhotoVideoID == nil)
+        #expect(asset.hasPreview)
         #expect(Array(events.dropFirst()) == [
             .exif(assetID: "24d2", fileSize: 5_099_275, ack: "AssetExifV1|02"),
             .assetDeleted(assetID: "gone", ack: "AssetDeleteV1|03"),

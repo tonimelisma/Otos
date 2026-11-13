@@ -878,6 +878,18 @@ nonisolated enum CatalogSchema {
         ]
     }
 
+    /// `media_asset.source_products_absent`: the source has said it holds no thumbnail or
+    /// preview of the row (ADR 0046 §7): an Immich asset listed without a thumbhash, which
+    /// Immich writes only once it has made the asset's previews (and never for a hidden
+    /// Live Photo motion part), or one whose preview request it answered with a refusal.
+    /// Such a row is not asked for its source's images until a later listing says the
+    /// source has them.
+    static let sourceProductsAbsentMigrationIdentifier = "v39_source_products_absent"
+
+    static let sourceProductsAbsentStatements: [String] = [
+        "ALTER TABLE media_asset ADD COLUMN source_products_absent INTEGER NOT NULL DEFAULT 0",
+    ]
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

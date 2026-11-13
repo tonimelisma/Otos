@@ -336,7 +336,8 @@ actor ImmichCatalogSync {
             }
             return ImmichAssetDetail(
                 id: id, originalFileName: line.originalFileName, type: line.type,
-                fileCreatedAt: created, fileModifiedAt: modified, fileSize: size
+                fileCreatedAt: created, fileModifiedAt: modified, fileSize: size,
+                hasPreview: line.hasPreview
             )
         }
     }
@@ -519,9 +520,10 @@ actor ImmichCatalogSync {
         tally: inout ProductTally
     ) async -> ProductPassOutcome? {
         var results: [EnrichmentResult] = []
+        var absent: [MediaRelativePath] = []
         for candidate in page {
             guard await Self.admitsProducts(onVolumeOf: directory, volumeCapacity) else {
-                await apply(results)
+                await apply(results, absent: absent)
                 OtosLog.thumbnails.noticeOperation("immich.products", phase: "floorHeld", fields: [
                     "rootPath": rootPath.rawValue, "made": "\(tally.made)",
                 ])
@@ -531,16 +533,17 @@ actor ImmichCatalogSync {
             do {
                 data = try await source.preview(assetID: candidate.sourceItemID)
             } catch let ImmichClientError.refused(status) {
-                // The server answered that it has no preview of this asset (one it has not
-                // made yet, say): that asset stays owed and is asked for again next pass, and
-                // the rest are still fetched.
+                // The server answered that it has no preview of this asset: recorded, so no
+                // pass asks again until a listing says the server has made one, and the
+                // rest are still fetched.
+                absent.append(candidate.id.relativePath)
                 tally.refused += 1
                 OtosLog.thumbnails.noticeOperation("immich.products", phase: "refused", fields: [
                     "relativePath": candidate.id.relativePath.rawValue, "status": "\(status)",
                 ])
                 continue
             } catch {
-                await apply(results)
+                await apply(results, absent: absent)
                 OtosLog.thumbnails.noticeOperation("immich.products", phase: "serverFailed", fields: [
                     "rootPath": rootPath.rawValue, "made": "\(tally.made)", "error": String(describing: error),
                 ])
@@ -553,15 +556,23 @@ actor ImmichCatalogSync {
                 tally.unreadable += 1
             }
         }
-        await apply(results)
+        await apply(results, absent: absent)
         return nil
     }
 
-    private func apply(_ results: [EnrichmentResult]) async {
-        guard !results.isEmpty else {
-            return
+    /// Applies a page's products, and records the assets the server answered it has no
+    /// preview of. A failed record is logged and leaves them owed, asked for next pass.
+    private func apply(_ results: [EnrichmentResult], absent: [MediaRelativePath]) async {
+        if !results.isEmpty {
+            _ = await store.applyEnrichmentBatch(results)
         }
-        _ = await store.applyEnrichmentBatch(results)
+        do {
+            try await store.recordSourceProductsAbsent(absent, rootPath: rootPath)
+        } catch {
+            OtosLog.thumbnails.errorOperation("immich.products", phase: "absentWriteFailed", fields: [
+                "rootPath": rootPath.rawValue, "count": "\(absent.count)", "error": String(describing: error),
+            ])
+        }
     }
 
     /// The free-space floor every background download keeps (ADR 0027), with a megabyte
@@ -630,7 +641,8 @@ actor ImmichCatalogSync {
                 contentModifiedAt: asset.fileModifiedAt
             ),
             sourceItemID: asset.id,
-            isHiddenBySource: asset.deletedAt != nil
+            isHiddenBySource: asset.deletedAt != nil,
+            sourceHasProducts: asset.hasPreview
         )
     }
 
@@ -649,7 +661,8 @@ actor ImmichCatalogSync {
                 contentModifiedAt: motion.fileModifiedAt
             ),
             sourceItemID: motion.id,
-            isHiddenBySource: still.deletedAt != nil
+            isHiddenBySource: still.deletedAt != nil,
+            sourceHasProducts: motion.hasPreview
         )
     }
 
@@ -668,7 +681,8 @@ actor ImmichCatalogSync {
                 contentModifiedAt: asset.fileModifiedAt
             ),
             sourceItemID: asset.id,
-            isHiddenBySource: row.isHiddenBySource
+            isHiddenBySource: row.isHiddenBySource,
+            sourceHasProducts: asset.hasPreview
         )
     }
 

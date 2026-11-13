@@ -14,6 +14,19 @@ struct ImmichCatalogSyncTests {
 
     /// A server whose passes are scripted. `failAfter` throws a transport error after that
     /// many lines of a pass, as a dropped connection would.
+    /// A fact a test turns on while the code under test reads it.
+    private final class Flag: Sendable {
+        private let value = Mutex(false)
+
+        var isSet: Bool {
+            value.withLock { $0 }
+        }
+
+        func set() {
+            value.withLock { $0 = true }
+        }
+    }
+
     private final class ScriptedServer: ImmichSyncSource, Sendable {
         private let passes: Mutex<[[ImmichSyncEvent]]>
         private let failures: Mutex<[Int?]>
@@ -119,6 +132,7 @@ struct ImmichCatalogSyncTests {
         visibility: ImmichAsset.Visibility = .timeline,
         trashed: Bool = false,
         modified: TimeInterval = 1_700_000_000,
+        hasPreview: Bool = true,
         motion: String? = nil
     ) -> ImmichSyncEvent {
         .asset(ImmichAsset(
@@ -129,6 +143,7 @@ struct ImmichCatalogSyncTests {
             deletedAt: trashed ? Date(timeIntervalSince1970: 1_700_000_500) : nil,
             fileCreatedAt: Date(timeIntervalSince1970: 1_700_000_000),
             fileModifiedAt: Date(timeIntervalSince1970: modified),
+            hasPreview: hasPreview,
             livePhotoVideoID: motion
         ), ack: "AssetV2|\(id)")
     }
@@ -461,17 +476,22 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
-    /// A preview the server answers it does not have (a 404 for one asset) is skipped and
-    /// asked for again next pass, and every asset after it is still fetched; a refused
-    /// session still ends the pass.
-    @Test func aPreviewTheServerDoesNotHaveIsSkippedNotAnEndToThePass() async throws {
+    /// A preview the server answers it does not have is skipped, not an end to the pass,
+    /// and is not asked for again: not by the next pass, only once a later listing of the
+    /// asset says the server has made its previews. Any other refusal still ends the pass.
+    @Test func aPreviewTheServerDoesNotHaveIsNotAskedForAgain() async throws {
         let fixture = try await FileFixture.make()
         let preview = try Self.jpeg(width: 300, height: 200)
+        let previewMade = Flag()
         let server = ScriptedServer(
-            [[Self.asset("a"), Self.asset("b"), Self.asset("c"), Self.exif("a", size: 1), Self.exif("b", size: 1),
-              Self.exif("c", size: 1), Self.complete]],
+            [
+                [Self.asset("a"), Self.asset("b"), Self.asset("c"), Self.exif("a", size: 1), Self.exif("b", size: 1),
+                 Self.exif("c", size: 1), Self.complete],
+                [Self.complete],
+                [Self.asset("a"), Self.complete],
+            ],
             previews: { id in
-                guard id != "a" else {
+                guard id != "a" || previewMade.isSet else {
                     throw ImmichClientError.refused(status: 404)
                 }
                 return preview
@@ -482,14 +502,59 @@ struct ImmichCatalogSyncTests {
         )
         _ = await sync.pass()
         #expect(server.requestedPreviews.sorted() == ["a", "b", "c"])
-        let owed = try await fixture.store.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
-        #expect(owed.map(\.sourceItemID) == ["a"])
+        #expect(try await fixture.store.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
+            .isEmpty)
 
-        let signedOut = ScriptedServer([], previews: { _ in throw ImmichClientError.unauthorized })
-        let refusedSession = ImmichCatalogSync(
-            rootPath: fixture.rootPath, source: signedOut, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        _ = await sync.pass()
+        #expect(server.requestedPreviews.sorted() == ["a", "b", "c"])
+
+        previewMade.set()
+        _ = await sync.pass()
+        #expect(server.requestedPreviews.sorted() == ["a", "a", "b", "c"])
+        #expect(try await fixture.store.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
+            .isEmpty)
+
+        await fixture.store.shutdown()
+
+        let signedOutFixture = try await FileFixture.make()
+        let signedOut = ScriptedServer(
+            [[Self.asset("d"), Self.exif("d", size: 1), Self.complete]],
+            previews: { _ in throw ImmichClientError.unauthorized }
         )
+        let refusedSession = ImmichCatalogSync(
+            rootPath: signedOutFixture.rootPath, source: signedOut, store: signedOutFixture.store,
+            volumeCapacity: ampleVolumeCapacity
+        )
+        _ = await refusedSession.pass()
         #expect(await refusedSession.fetchProducts() == .serverFailed(made: 0))
+        #expect(try await signedOutFixture.store.sourceProductCandidates(
+            rootPath: signedOutFixture.rootPath, after: nil, limit: 10
+        ).map(\.sourceItemID) == ["d"])
+        await signedOutFixture.store.shutdown()
+    }
+
+    /// An asset the server lists without a thumbhash has no previews yet, and a Live
+    /// Photo's motion part never has any (Immich makes none for a hidden asset): neither is
+    /// asked for its images, so a pass asks for only the still's.
+    @Test func anAssetListedWithoutPreviewsIsNotAskedForThem() async throws {
+        let fixture = try await FileFixture.make()
+        let preview = try Self.jpeg(width: 300, height: 200)
+        let server = ScriptedServer(
+            [[
+                Self.motion("m"), Self.exif("m", size: 2000),
+                Self.asset("s", motion: "m"), Self.exif("s", size: 1000),
+                Self.asset("n", hasPreview: false), Self.exif("n", size: 1),
+                Self.complete,
+            ]],
+            previews: { _ in preview }
+        )
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        _ = await sync.pass()
+        #expect(server.requestedPreviews == ["s"])
+        #expect(try await fixture.store.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
+            .isEmpty)
         await fixture.store.shutdown()
     }
 
@@ -536,7 +601,8 @@ struct ImmichCatalogSyncTests {
                     contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
                 ),
                 sourceItemID: path,
-                isHiddenBySource: false
+                isHiddenBySource: false,
+                sourceHasProducts: true
             )
         }
         let paths = ["a-b/IMG.JPG", "a.jpg", "a/IMG.JPG", "a/IMG.MOV", "a/sub/IMG.JPG", "a2/IMG.JPG"]
@@ -570,7 +636,8 @@ struct ImmichCatalogSyncTests {
                     contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
                 ),
                 sourceItemID: id,
-                isHiddenBySource: hidden
+                isHiddenBySource: hidden,
+                sourceHasProducts: true
             )
         }
         let changes = AsyncValueRecorder<CatalogStoreChange>()
@@ -627,7 +694,8 @@ struct ImmichCatalogSyncTests {
                         contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
                     ),
                     sourceItemID: "asset-\(index)",
-                    isHiddenBySource: false
+                    isHiddenBySource: false,
+                    sourceHasProducts: true
                 )
             }
             try await store.applySourceListingChanges(SourceListingChanges(listed: items), scan: scan)
@@ -644,7 +712,7 @@ struct ImmichCatalogSyncTests {
     // MARK: - Live Photos (ADR 0046 §2)
 
     private static func motion(_ id: String, name: String = "IMG_1.MOV") -> ImmichSyncEvent {
-        asset(id, name: name, type: .video, visibility: .hidden)
+        asset(id, name: name, type: .video, visibility: .hidden, hasPreview: false)
     }
 
     private static func detail(_ id: String, name: String = "IMG_1.MOV", size: Int64) -> ImmichAssetDetail {
@@ -652,7 +720,8 @@ struct ImmichCatalogSyncTests {
             id: id, originalFileName: name, type: .video,
             fileCreatedAt: Date(timeIntervalSince1970: 1_700_000_000),
             fileModifiedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            fileSize: size
+            fileSize: size,
+            hasPreview: false
         )
     }
 

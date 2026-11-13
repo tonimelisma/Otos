@@ -384,7 +384,8 @@ struct ImmichAccountsTests {
                 byteSize: 1, createdAt: nil, contentModifiedAt: nil
             ),
             sourceItemID: "silent",
-            isHiddenBySource: false
+            isHiddenBySource: false,
+            sourceHasProducts: true
         )]), scan: scan)
         await store.endSourceListing(scan: scan)
         let unanswered = await accounts.downloadOriginal(
