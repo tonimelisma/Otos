@@ -78,9 +78,12 @@ The tooling found:
   after the merge, each a build plus three ~70-second test processes: 9–10 minutes of
   every commit, more than the test suite. The owner asked to move it off the commit path.
   - **Due.** `script/check.sh` prints `script/bench.sh status`. It reads `verdict=due`
-    when no run has finished today and `origin/main` has moved past the **baseline**,
-    the last commit that measured clean (`refs/bench/baseline`). The session that sees
-    it starts `script/bench.sh daily` in the background and keeps working.
+    when no run has finished today and `origin/main` has moved past the commit the last
+    run judged: the **baseline**, the last commit that measured clean
+    (`refs/bench/baseline`), or, while a case stays flagged, the flagged head. A flagged
+    verdict that is due says so and names its cases (`flagged=`), because only the next
+    run can find that a fix landed. The session that sees it starts
+    `script/bench.sh daily` in the background and keeps working.
   - **One run, from the primary checkout.** The run takes a lock directory in the clone's
     git directory, holding its pid, so every other session sees `verdict=running`, and a
     second start reports `phase=skipped`. A lock whose pid no longer runs (its session

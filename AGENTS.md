@@ -331,11 +331,13 @@ See `docs/adr/0015-observability.md`.
 
 Benchmarks run once a day, never per PR (ADR 0043), and a session runs them.
 `script/check.sh` prints one `op=bench.status` line:
-- `verdict=due`: no run has finished today and `main` has moved. Start
-  `script/bench.sh daily` in the background, watch it like any long run, and keep
-  working. It measures `origin/main`'s newest commit on a generated catalog, in three
-  fresh test processes, against the baseline, the last commit that measured clean. Only
-  one session runs it; another gets `phase=skipped`.
+- `verdict=due`: no run has finished today and `main` has moved past the commit the
+  last run judged. Start `script/bench.sh daily` in the background, watch it like any
+  long run, and keep working. It measures `origin/main`'s newest commit on a generated
+  catalog, in three fresh test processes, against the baseline, the last commit that
+  measured clean. Only one session runs it; another gets `phase=skipped`. A due line
+  that carries `flagged=` still starts the run: it is the only way a fix that landed
+  clears the flag.
 - `verdict=flagged`: a case regressed. Fixing it is the next work, unless the owner
   accepts it in chat (`script/bench.sh accept`, permission quoted in the DoD report).
 `script/bench.sh history [case]` reads the records back, and `script/bench.sh compare

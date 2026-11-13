@@ -463,24 +463,29 @@ daily() {
   echo "$today $head" > "$LAST_RUN_FILE"
 }
 
-# Due when no run finished today and origin/main has moved past the baseline. A flagged
-# verdict is reported every time, whatever the day.
+# Due when no run finished today and origin/main has moved past the commit the last run
+# judged: the baseline, or the flagged head while a case stays flagged. A flagged verdict is
+# reported every time, whatever the day; a due one carries the flagged cases, because only
+# the next daily run can find that a fix landed and clear them.
 status() {
-  local baseline verdict last_day today
+  local baseline verdict last_day today judged flagged_cases=""
   baseline="$(git -C "$ROOT_DIR" rev-parse -q --verify "$BASELINE_REF" || true)"
   verdict="$(cat "$VERDICT_FILE" 2>/dev/null || true)"
   last_day="$(cut -d' ' -f1 "$LAST_RUN_FILE" 2>/dev/null || true)"
   today="$(/bin/date +%Y-%m-%d)"
+  judged="$baseline"
   case "$verdict" in
     flagged*)
-      echo "op=bench.status verdict=$verdict action=\"fix the flagged cases first, or the owner accepts them (script/bench.sh accept)\""
-      return
+      judged="$(printf '%s\n' "$verdict" | sed -n 's/^flagged .*head=\([0-9a-f]*\).*/\1/p')"
+      flagged_cases="$(printf '%s\n' "$verdict" | sed -n 's/^flagged .*cases=\([^ ]*\).*/\1/p')"
       ;;
   esac
   if [[ -d "$LOCK_DIR" ]]; then
-    echo "op=bench.status verdict=running holder=$(cat "$LOCK_DIR/pid" 2>/dev/null)"
-  elif [[ "$last_day" != "$today" && "$(git -C "$ROOT_DIR" rev-parse origin/main)" != "$baseline" ]]; then
-    echo "op=bench.status verdict=due lastRun=${last_day:-never} action=\"start script/bench.sh daily in the background and keep working\""
+    echo "op=bench.status verdict=running holder=$(cat "$LOCK_DIR/pid" 2>/dev/null)${flagged_cases:+ flagged=$flagged_cases}"
+  elif [[ "$last_day" != "$today" && "$(git -C "$ROOT_DIR" rev-parse origin/main)" != "$judged" ]]; then
+    echo "op=bench.status verdict=due lastRun=${last_day:-never}${flagged_cases:+ flagged=$flagged_cases} action=\"start script/bench.sh daily in the background and keep working\""
+  elif [[ -n "$flagged_cases" ]]; then
+    echo "op=bench.status verdict=$verdict action=\"fix the flagged cases first, or the owner accepts them (script/bench.sh accept)\""
   else
     echo "op=bench.status verdict=clean baseline=${baseline:-none} lastRun=${last_day:-never}"
   fi
