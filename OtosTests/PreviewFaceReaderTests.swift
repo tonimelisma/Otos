@@ -167,7 +167,7 @@ struct PreviewFaceReaderTests {
                 leftMouth: CGPoint(x: 0.5, y: 0.5), rightMouth: CGPoint(x: 0.75, y: 0.5)
             ),
             quality: 0.5,
-            embedding: [1]
+            embedding: FaceEnrichmentTests.face(seed: 1).embedding
         )
         let cropped = PreviewFaceReader.upright(face, readFrom: CGSize(width: 500, height: 1000), recipe: Self.leftHalf)
         Self.expect(cropped.box, CGRect(x: 0.25, y: 0.25, width: 0.125, height: 0.25))

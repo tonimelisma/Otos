@@ -138,7 +138,9 @@ grouping had put with the right child.
 
 - **Model:** AdaFace IR-101 trained on WebFace12M (CVLFace weights), converted to Core ML.
 - **Input and output:** a 112 × 112 RGB image, with normalisation folded into the input, and a
-  unit-length 512-d embedding.
+  unit-length 512-d embedding. Otos holds it as `FaceEmbedding`, which is unit length by
+  construction (scaled on read from the model, checked on read from the catalog), because
+  every rule below is a cosine and assignment computes cosines as plain dot products.
 - **Weights:** linear symmetric per-channel 8-bit weights, 66 MB, shipped as an `.mlpackage` in
   `Otos/Resources` like the models of ADR 0045.
   - **Why int8:** against fp32 it changed one decision of 2,196 (an adult's face left

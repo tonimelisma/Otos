@@ -59,8 +59,7 @@ nonisolated struct FaceFact: Sendable, Equatable {
     /// The photo's local capture time (`CaptureLocalTime.seconds`); nil when the photo has
     /// no date. A birthday is midnight UTC of its day, so the two compare day for day.
     let captureSeconds: Double?
-    /// Unit length, `FaceEmbeddingModel.dimensions` values.
-    let embedding: [Float]
+    let embedding: FaceEmbedding
     let assignment: FaceAssignment
     let isNotFace: Bool
     /// People the user said this face is not (Remove Name).
@@ -71,7 +70,7 @@ nonisolated struct FaceFact: Sendable, Equatable {
     let isRecognisable: Bool
 
     init(
-        id: FaceID, captureSeconds: Double?, embedding: [Float], assignment: FaceAssignment, isNotFace: Bool,
+        id: FaceID, captureSeconds: Double?, embedding: FaceEmbedding, assignment: FaceAssignment, isNotFace: Bool,
         rejected: Set<PersonID>
     ) {
         self.id = id
@@ -666,9 +665,9 @@ nonisolated struct BlockedSimilarity {
     init(rows: [FaceFact], columns: [FaceFact]) {
         rowCount = rows.count
         columnCount = columns.count
-        rowMatrix = rows.flatMap(\.embedding)
+        rowMatrix = rows.flatMap(\.embedding.values)
         var transposed = [Float](repeating: 0, count: columns.count * Self.dimensions)
-        let flat = columns.flatMap(\.embedding)
+        let flat = columns.flatMap(\.embedding.values)
         if !columns.isEmpty {
             vDSP_mtrans(flat, 1, &transposed, 1, vDSP_Length(Self.dimensions), vDSP_Length(columns.count))
         }

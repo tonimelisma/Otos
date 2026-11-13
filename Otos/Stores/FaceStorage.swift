@@ -6,13 +6,13 @@ import GRDB
 /// `Float32Storage`'s form. An embedding is `FaceEmbeddingModel.dimensions` values; the
 /// landmarks are five (x, y) pairs.
 nonisolated enum FaceStorage {
-    static func embeddingData(_ embedding: [Float]) -> Data {
-        Float32Storage.data(embedding)
+    static func embeddingData(_ embedding: FaceEmbedding) -> Data {
+        Float32Storage.data(embedding.values)
     }
 
-    /// Nil unless `data` holds exactly one embedding.
-    static func embedding(from data: Data) -> [Float]? {
-        Float32Storage.floats(from: data, count: FaceEmbeddingModel.dimensions)
+    /// Nil unless `data` holds exactly one embedding, still unit length.
+    static func embedding(from data: Data) -> FaceEmbedding? {
+        Float32Storage.floats(from: data, count: FaceEmbeddingModel.dimensions).flatMap(FaceEmbedding.init(stored:))
     }
 
     static func landmarksData(_ landmarks: FaceAlignment.Landmarks) -> Data {

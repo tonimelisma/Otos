@@ -181,7 +181,7 @@ struct VideoFaceTests {
             box: CGRect(x: 0.1 * Double(person), y: 0.2, width: 0.1, height: 0.2),
             landmarks: FaceEnrichmentTests.face(seed: person).landmarks,
             quality: quality,
-            embedding: embedding
+            embedding: FaceEmbedding(normalizing: embedding)!
         )
     }
 

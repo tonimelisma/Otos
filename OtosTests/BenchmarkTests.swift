@@ -297,7 +297,7 @@ struct BenchmarkTests {
         let crop = try FaceAnalyzerTests.patternImage(seed: 5)
         try await Benchmark.measure("face.embed") {
             let embedding = try model.embedding(of: crop)
-            #expect(embedding.count == FaceEmbeddingModel.dimensions)
+            #expect(embedding.values.count == FaceEmbeddingModel.dimensions)
         }
     }
 
@@ -371,11 +371,10 @@ struct BenchmarkTests {
             for _ in 0 ..< 8 {
                 vector[people + Int(generator.next() % UInt64(FaceEmbeddingModel.dimensions - people))] += 0.15
             }
-            let length = vector.map { $0 * $0 }.reduce(0, +).squareRoot()
             faces.append(FaceFact(
                 id: FaceID(asset: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "\(index).jpg")), index: 0),
                 captureSeconds: 1_300_000_000 + Double(index) * 105_000,
-                embedding: vector.map { $0 / length },
+                embedding: FaceEmbedding(normalizing: vector)!,
                 assignment: index / people < confirmedEach ? .user(PersonID(rawValue: Int64(person + 1))) : .open,
                 isNotFace: false,
                 rejected: []

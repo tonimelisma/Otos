@@ -212,7 +212,9 @@ struct FaceAssignmentPolicyTests {
 
     /// The direction unrecognisable faces share, as fixture weights: a face along it is one
     /// the model cannot tell anyone by.
-    static let unrecognisable = Dictionary(uniqueKeysWithValues: FaceRecognisability.direction.enumerated().map { ($0.offset, $0.element) })
+    static let unrecognisable = Dictionary(
+        uniqueKeysWithValues: FaceRecognisability.direction.values.enumerated().map { ($0.offset, $0.element) }
+    )
 
     /// A face the model cannot tell anyone by is never guessed and never grouped, however
     /// alike it is to a person or to other such faces.
@@ -369,9 +371,6 @@ struct FaceAssignmentPolicyTests {
         anchors: [FaceID: PersonID],
         birthdays: [PersonID: Double?]
     ) -> [FaceID: PersonID] {
-        func dot(_ a: [Float], _ b: [Float]) -> Float {
-            zip(a, b).reduce(0) { $0 + $1.0 * $1.1 }
-        }
         let byID = Dictionary(uniqueKeysWithValues: faces.map { ($0.id, $0) })
         var assigned = anchors
         var evidence: [PersonID: [FaceFact]] = [:]
@@ -388,7 +387,7 @@ struct FaceAssignmentPolicyTests {
                 else { return nil }
                 let best = (evidence[person] ?? [])
                     .filter { FaceAssignmentPolicy.reaches(face.captureSeconds, $0.captureSeconds, birthday: birthdays[person] ?? nil) }
-                    .map { dot(face.embedding, $0.embedding) }
+                    .map { face.embedding.cosine(with: $0.embedding) }
                     .max()
                 return best.map { (person, $0) }
             }.sorted { ($0.1, $1.0) > ($1.1, $0.0) }
@@ -441,14 +440,13 @@ struct FaceAssignmentPolicyTests {
         for (axis, weight) in weights {
             vector[axis] = weight
         }
-        let length = vector.map { $0 * $0 }.reduce(0, +).squareRoot()
         return FaceFact(
             id: FaceID(
                 asset: MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Lib"), relativePath: MediaRelativePath(rawValue: path)),
                 index: index
             ),
             captureSeconds: dated ? epoch + seconds : nil,
-            embedding: vector.map { $0 / length },
+            embedding: FaceEmbedding(normalizing: vector)!,
             assignment: assignment,
             isNotFace: notAFace,
             rejected: rejected

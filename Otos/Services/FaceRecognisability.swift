@@ -18,27 +18,17 @@ nonisolated enum FaceRecognisability {
     static let limit: Float = 0.2
 
     /// Whether the model can tell who an embedding is: its cosine with `direction` is under
-    /// `limit`. An embedding of the wrong length or of no length cannot be told apart.
-    /// Assignment runs this once for every face it reads, so it is two vectorised sums: an
-    /// element-by-element loop cost about a million instructions a face in the Debug build the
-    /// app ships as (`people.snapshot.10k`).
-    static func isRecognisable(_ embedding: [Float]) -> Bool {
-        let count = vDSP_Length(direction.count)
-        guard embedding.count == direction.count else { return false }
-        var dot: Float = 0
-        var squares: Float = 0
-        embedding.withUnsafeBufferPointer { values in
-            direction.withUnsafeBufferPointer { axis in
-                vDSP_dotpr(values.baseAddress!, 1, axis.baseAddress!, 1, &dot, count)
-            }
-            vDSP_svesq(values.baseAddress!, 1, &squares, count)
-        }
-        guard squares > 0 else { return false }
-        return dot / squares.squareRoot() < limit
+    /// `limit`. Assignment runs this once for every face it reads, so it is one vectorised dot
+    /// product: an element-by-element loop cost about a million instructions a face in the
+    /// Debug build the app ships as (`people.snapshot.10k`).
+    static func isRecognisable(_ embedding: FaceEmbedding) -> Bool {
+        embedding.cosine(with: direction) < limit
     }
 
-    /// Unit length, `FaceEmbeddingModel.dimensions` values.
-    static let direction: [Float] = [
+    static let direction = FaceEmbedding(normalizing: directionValues)!
+
+    /// `FaceEmbeddingModel.dimensions` values, unit length as written.
+    private static let directionValues: [Float] = [
         -0.04790125, 0.08182454, 0.04264134, 0.02453041, -0.004318207, -0.04859776, 0.007311326, -0.01980111,
         0.05424806, -0.0157647, 0.09181803, -0.06566368, 0.05166014, -0.007700615, 0.05283215, 0.05428168,
         0.01661243, 0.01317681, -0.1217295, -0.03835151, 0.01618799, 0.01007129, 0.0276069, 0.08013689,

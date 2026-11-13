@@ -12,8 +12,7 @@ nonisolated struct DetectedFace: Sendable, Equatable {
     let landmarks: FaceAlignment.Landmarks
     /// Vision's face capture quality, 0 to 1.
     let quality: Float
-    /// The unit-length embedding (`FaceEmbeddingModel.dimensions` values).
-    let embedding: [Float]
+    let embedding: FaceEmbedding
 }
 
 /// Every face Vision found in one photo, split into those the model read and the reasons the

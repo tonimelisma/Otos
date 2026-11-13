@@ -20,6 +20,21 @@ struct Float32StorageTests {
         #expect(FaceStorage.embedding(from: Float32Storage.data([1])) == nil)
     }
 
+    /// A face embedding reads back bit for bit only while it is unit length: a stored vector
+    /// of any other length is no embedding, and so are values with no length to scale.
+    @Test func aFaceEmbeddingIsUnitLength() throws {
+        let values = (0 ..< FaceEmbeddingModel.dimensions).map { Float($0 % 5) - 2 }
+        let embedding = try #require(FaceEmbedding(normalizing: values))
+        #expect(abs(embedding.cosine(with: embedding) - 1) < 1e-5)
+        #expect(FaceStorage.embedding(from: FaceStorage.embeddingData(embedding)) == embedding)
+        let doubled = embedding.values.map { $0 * 2 }
+        #expect(FaceStorage.embedding(from: Float32Storage.data(doubled)) == nil)
+        let rescaled = try #require(FaceEmbedding(normalizing: doubled))
+        #expect(abs(rescaled.cosine(with: embedding) - 1) < 1e-5)
+        #expect(FaceEmbedding(normalizing: [Float](repeating: 0, count: FaceEmbeddingModel.dimensions)) == nil)
+        #expect(FaceEmbedding(normalizing: [1]) == nil)
+    }
+
     /// Five landmarks round-trip through their stored form.
     @Test func landmarksRoundTrip() throws {
         let landmarks = try #require(FaceAlignment.Landmarks(points: (0 ..< 5).map { CGPoint(x: Double($0) / 8, y: 0.25) }))

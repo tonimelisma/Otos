@@ -257,7 +257,7 @@ struct FaceEnrichmentTests {
         )
     }
 
-    /// A face whose values survive Float32 storage exactly.
+    /// A face with its own fixed position and embedding for each seed.
     static func face(seed: Int) -> DetectedFace {
         let quarter = Double(seed) / 16
         return DetectedFace(
@@ -268,7 +268,7 @@ struct FaceEnrichmentTests {
                 rightMouth: CGPoint(x: quarter + 4 / 64, y: 0.375)
             ),
             quality: 0.5,
-            embedding: (0 ..< FaceEmbeddingModel.dimensions).map { Float(($0 + seed) % 7) / 8 }
+            embedding: FaceEmbedding(normalizing: (0 ..< FaceEmbeddingModel.dimensions).map { Float(($0 + seed) % 7) })!
         )
     }
 }

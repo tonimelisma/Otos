@@ -103,14 +103,13 @@ struct FaceAnalyzerTests {
 
     /// The model cannot tell anyone by a face blurred to nothing: a portrait's aligned crop,
     /// shrunk to 8 px and enlarged back, reads along `FaceRecognisability.direction`, while
-    /// the crop itself does not. The direction is unit length.
+    /// the crop itself does not.
     @Test func aFaceBlurredToNothingIsUnrecognisable() throws {
         let model = try FaceEmbeddingModel(bundle: Bundle(for: CatalogWindowViewModel.self))
         let crop = try Self.alignedPortraitCrop("williams-2018")
 
         #expect(try FaceRecognisability.isRecognisable(model.embedding(of: crop)))
         #expect(try !FaceRecognisability.isRecognisable(model.embedding(of: Self.resampled(crop, through: 8))))
-        #expect(abs(Self.dot(FaceRecognisability.direction, FaceRecognisability.direction) - 1) < 1e-4)
     }
 
     /// The aligned 112 px crop the analyzer hands the model for a fixture portrait's one face.
@@ -160,7 +159,6 @@ struct FaceAnalyzerTests {
             #expect(face.landmarks.leftEye.x < face.landmarks.rightEye.x, "\(name)")
             #expect(face.landmarks.leftEye.y < face.landmarks.leftMouth.y, "\(name)")
             #expect(face.landmarks.rightEye.y < face.landmarks.rightMouth.y, "\(name)")
-            #expect(abs(Self.dot(face.embedding, face.embedding) - 1) < 1e-3, "\(name)")
             #expect(FaceRecognisability.isRecognisable(face.embedding), "\(name)")
             faces[name] = face
         }
@@ -168,10 +166,10 @@ struct FaceAnalyzerTests {
         let later = try #require(faces["williams-2018"]).embedding
         let other = try #require(faces["obama-2013"]).embedding
 
-        let same = Self.dot(earlier, later)
+        let same = earlier.cosine(with: later)
         #expect(same >= FaceAssignmentPolicy.threshold, "same person \(same)")
-        #expect(Self.dot(earlier, other) < FaceAssignmentPolicy.threshold)
-        #expect(Self.dot(later, other) < FaceAssignmentPolicy.threshold)
+        #expect(earlier.cosine(with: other) < FaceAssignmentPolicy.threshold)
+        #expect(later.cosine(with: other) < FaceAssignmentPolicy.threshold)
     }
 
     static func portrait(_ name: String) throws -> CGImage {
@@ -230,9 +228,5 @@ struct FaceAnalyzerTests {
             context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         }
         return pixels
-    }
-
-    static func dot(_ a: [Float], _ b: [Float]) -> Float {
-        zip(a, b).map(*).reduce(0, +)
     }
 }

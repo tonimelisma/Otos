@@ -1,4 +1,3 @@
-import Accelerate
 import AVFoundation
 import CoreGraphics
 import Foundation
@@ -97,7 +96,7 @@ nonisolated enum VideoFaceReader {
         struct Reading {
             let frame: Int
             let face: Int
-            let embedding: [Float]
+            let embedding: FaceEmbedding
             let recognisable: Bool
         }
         let readings = frames.enumerated().flatMap { frame, faces in
@@ -117,7 +116,7 @@ nonisolated enum VideoFaceReader {
                 for (index, person) in people.enumerated()
                     where person[0].recognisable && !person.contains(where: { $0.frame == reading.frame })
                 {
-                    let likeness = person.map { likenessOf(reading.embedding, $0.embedding) }.max()!
+                    let likeness = person.map { reading.embedding.cosine(with: $0.embedding) }.max()!
                     if likeness >= FaceAssignmentPolicy.threshold, likeness > best?.likeness ?? -.infinity {
                         best = (index, likeness)
                     }
@@ -130,17 +129,5 @@ nonisolated enum VideoFaceReader {
             }
         }
         return people.map { ($0[0].frame, $0[0].face) }.sorted { ($0.frame, $0.face) < ($1.frame, $1.face) }
-    }
-
-    /// The cosine of two unit embeddings.
-    private static func likenessOf(_ a: [Float], _ b: [Float]) -> Float {
-        guard a.count == b.count, !a.isEmpty else { return -1 }
-        var dot: Float = 0
-        a.withUnsafeBufferPointer { a in
-            b.withUnsafeBufferPointer { b in
-                vDSP_dotpr(a.baseAddress!, 1, b.baseAddress!, 1, &dot, vDSP_Length(a.count))
-            }
-        }
-        return dot
     }
 }
