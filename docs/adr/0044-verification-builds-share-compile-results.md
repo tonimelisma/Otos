@@ -107,7 +107,8 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
       the map from a source file to the tests it can break would be a guess.
 
 11. **Every checkout loads one path per model version.** Core ML compiles a model on first
-    load into the process's Caches and keys the copy by the path it was given, and all test
+    load into the process's Caches and keys the copy by the path it was given and the file's
+    identity, and all test
     processes share the test runner's one Caches folder
     (`docs/research/2026-11-12-core-ml-compile-cache-in-test-runs.md`). With a path per
     checkout the folder gained about 1.3 GB per checkout, reached 37 GB, and was pruned.
@@ -119,8 +120,10 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     published by rename, and leaves a symlink. `BundledModel.url(named:in:)` resolves it, so
     Core ML is given the shared path. Before each build `otos_unshare_built_models` removes
     the links: the models are Xcode's outputs, and an incremental build compiled into a link,
-    which the read-only copy refused. Compiling the five again costs about 6 s a build. The app bundle's copy is left as built, and the
-    installed app's models are at one path already. The hash is of the source package's
+    which the read-only copy refused. Compiling the five again costs about 6 s a build. The app bundle's copy is left as built. A shared
+    copy is published once and never replaced, so its identity holds. The installed app's models
+    are copied anew by each install and compile once more each time, which is left to macOS's
+    pruning of its Caches. The hash is of the source package's
     files and the Xcode build, not of the compiled model: coremlc writes a different
     `coremldata.bin` each time it compiles the same package, so a compiled-content name
     made a new path every build.

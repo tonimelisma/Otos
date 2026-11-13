@@ -16,11 +16,19 @@ runner's cache folder hold 37 GB?
 1. **Core ML compiles a model on first load into the process's Caches**
    (`~/Library/Caches/<process>/com.apple.e5rt.e5bundlecache/<OS build>/…`). Every test
    process shares the test runner's folder, `com.apple.dt.xctest.tool`.
-2. **The compiled copy is keyed by the model's path exactly as given.**
+2. **The compiled copy is keyed by the model's path exactly as given and by the file's
+   identity.**
    - FocalNet loaded from one path: 222 ms and one entry, then 8 ms with no new entry.
    - The same bytes copied to a second path: 253 ms and a second entry.
    - A symlink to the first path: 152 ms and a third entry.
    - Touching the files made no new entry.
+   - At one path, the same bytes deleted and copied back made a new entry (193 ms). Bytes
+     changed in place made none (8 ms).
+
+   So a model that stays put compiles once, and one that is copied anew compiles again
+   even at the same path. The installed app is copied anew by every `script/install.sh`, and
+   its own Caches gained a 248 MB or 352 MB SigLIP 2 copy on most installs: 91 entries, about
+   3.7 GB, by 2026-11-12.
 3. **A hit does not touch the entry.** A warm read left every entry's modification time as
    it was.
 4. **The folder is pruned:**
@@ -53,6 +61,10 @@ The failures follow from the folder's churn:
 4. Each parallel check then compiles Vision's models at once, under load, for minutes, and
    some compiles fail.
 
-Giving every checkout one path per model version stops the per-checkout copies. Whether
+Giving every checkout one path per model version stops the per-checkout copies, as long as
+that copy is never replaced: it is published once and read-only. The installed app is left
+to the platform. Each update compiles each model once more, and macOS prunes the folder.
+Avoiding that would mean the app copying its models out of its bundle at run time, which no
+measured user cost asks for; most of the 3.7 GB comes from development installs. Whether
 pruning ever reaches Vision's entries again is not measured; with the copies gone, the
 folder holds one compiled copy per model version.
