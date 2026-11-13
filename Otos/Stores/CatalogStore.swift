@@ -3034,11 +3034,12 @@ extension CatalogStore {
         let timedStoredAssets = try await timedWrite(dbWriter) { db in
             var storedAssets: [(asset: StoredAsset, claim: EnrichmentClaim)] = []
             // The fallback spans roots of mixed kinds (ADR 0018): a fixed library's rows are
-            // claimed for every product they owe at once (`EnrichmentClaim.library`), the
-            // others (`.removableVolume`, `.deviceMTP`, `.immichAccount`) for metadata first.
+            // claimed for every product they owe at once (`EnrichmentClaim.library`), an Immich
+            // account's for metadata and a video's faces (`.account`), and a card's and a
+            // camera's for metadata first.
             // `INDEXED BY` forbids one statement across claims, so partition by claim within
             // each priority tier: removable roots first (ENR-011), then a card's
-            // rendering-and-digest pass, then fixed libraries.
+            // rendering-and-digest pass, then the fixed sources, sharing what is left.
             let removableRoots = Set(prioritizedRootIDs.removable)
             let fixedRoots = Set(prioritizedRootIDs.fixed)
             // A card's renderings and digests come in a pass of their own, offered only once
@@ -3049,24 +3050,43 @@ extension CatalogStore {
             let cardsReadyForProducts = try cardRootIDs.filter { rootID in
                 try !EnrichmentClaimGateway.hasRowsNeedingMetadata(rootID: rootID, db: db)
             }
-            let claimGroups: [(rootIDs: [Int64], claim: EnrichmentClaim)] = [
+            let priorityGroups: [(rootIDs: [Int64], claim: EnrichmentClaim)] = [
                 (removableRoots.intersection(libraryRootIDs).sorted(), .library),
                 (removableRoots.intersection(metadataFirstRootIDs).sorted(), .metadata),
                 (removableRoots.intersection(accountRootIDs).sorted(), .account),
                 (cardsReadyForProducts, .products),
-                (fixedRoots.intersection(libraryRootIDs).sorted(), .library),
-                (fixedRoots.intersection(metadataFirstRootIDs).sorted(), .metadata),
-                (fixedRoots.intersection(accountRootIDs).sorted(), .account),
             ]
-            for group in claimGroups where storedAssets.count < limit && !group.rootIDs.isEmpty {
-                let remaining = limit - storedAssets.count
+            for group in priorityGroups where storedAssets.count < limit && !group.rootIDs.isEmpty {
                 let claimed = try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
                     rootIDs: group.rootIDs,
-                    limit: remaining,
+                    limit: limit - storedAssets.count,
                     claim: group.claim,
                     db: db
                 )
                 storedAssets.append(contentsOf: claimed.map { (asset: $0, claim: group.claim) })
+            }
+            // Each fixed source gets its share of what is left, then any room a source did
+            // not fill goes to the others in turn. A source whose rows wait on downloads (a
+            // cloud library's videos, paced by the materialization budget) is claimed again
+            // every pass; claimed first, it would fill every window and hold back a source
+            // whose rows are readable now (an Immich account's, read in ranges).
+            let fixedSources: [(rootID: Int64, claim: EnrichmentClaim)] =
+                fixedRoots.intersection(libraryRootIDs).sorted().map { ($0, .library) }
+                    + fixedRoots.intersection(metadataFirstRootIDs).sorted().map { ($0, .metadata) }
+                    + fixedRoots.intersection(accountRootIDs).sorted().map { ($0, .account) }
+            if storedAssets.count < limit, !fixedSources.isEmpty {
+                let share = max(1, (limit - storedAssets.count) / fixedSources.count)
+                for pass in [share, limit] {
+                    for source in fixedSources where storedAssets.count < limit {
+                        let claimed = try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
+                            rootIDs: [source.rootID],
+                            limit: min(pass, limit - storedAssets.count),
+                            claim: source.claim,
+                            db: db
+                        )
+                        storedAssets.append(contentsOf: claimed.map { (asset: $0, claim: source.claim) })
+                    }
+                }
             }
             return storedAssets
         }

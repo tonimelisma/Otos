@@ -277,7 +277,13 @@ Adjacent decisions requiring separate ADRs or specs:
    visible row wait behind every one of them, because a freed slot drains the queue
    before it claims. The priority list's own length is the bound. Among background
    rows, available connected/removable roots precede fixed roots, then capture date and
-   stable path break ties. MTP staging submits device-priority work, with stills
+   stable path break ties. The fixed roots share what the removable ones leave of a
+   window: a share each, then the room a root did not fill to the others in turn. A
+   claimed row whose download the materialization budget holds back is released and
+   claimed again on the next pass, so a root claimed whole before another (a cloud
+   library owing 627 GB of video) would fill every window with rows that cannot move,
+   and a root whose rows are readable now (an Immich account's, read in ranges) would
+   never be reached. MTP staging submits device-priority work, with stills
    before videos, then capture date and path. No durable materialization queue or
    status column exists.
 

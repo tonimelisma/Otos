@@ -130,6 +130,47 @@ struct CatalogStoreEnrichmentClaimTests {
 
         #expect(claims.map(\.asset.relativePath.rawValue) == ["card-old.jpg", "fixed-new.jpg"])
     }
+
+    /// Fixed sources share a claim window: with two libraries owing work, a window of two
+    /// takes one row from each, whatever their dates, so a source whose rows wait on
+    /// downloads never holds back another. Room a source does not fill goes to the others.
+    @Test func fixedSourcesShareTheClaimWindow() async throws {
+        let temp = try makeTestDirectory()
+        let older = temp.appending(path: "Older", directoryHint: .isDirectory)
+        let newer = temp.appending(path: "Newer", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: older, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: newer, withIntermediateDirectories: true)
+        let olderRawPath = try CatalogPath.normalizedDirectoryPath(for: older).rawValue
+        let scanner = CatalogScanner { rootPath, _, batchHandler in
+            let isOlder = rootPath.rawValue == olderRawPath
+            let files = (0 ..< 3).map { index in
+                let modifiedAt: TimeInterval = (isOlder ? 1000 : 5000) + TimeInterval(index)
+                let name = "\(isOlder ? "older" : "newer")-\(index).jpg"
+                return ScannedMediaFile(
+                    relativePath: MediaRelativePath(rawValue: name),
+                    name: name,
+                    contentTypeIdentifier: "public.jpeg",
+                    byteSize: 100,
+                    createdAt: Date(timeIntervalSince1970: modifiedAt),
+                    contentModifiedAt: Date(timeIntervalSince1970: modifiedAt)
+                )
+            }
+            try await batchHandler(files)
+            return .mediaOnly(Set(files.map(\.relativePath)))
+        }
+        let store = CatalogStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: older)
+        try await store.addLibrary(url: newer)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 6 }
+
+        let window = try await store.enrichmentCandidates(limit: 2)
+        #expect(Set(window.map { $0.asset.relativePath.rawValue.prefix(5) }) == ["older", "newer"])
+
+        // The newer library has two rows left and the older two: a window of five takes all.
+        let rest = try await store.enrichmentCandidates(limit: 5)
+        #expect(rest.count == 4)
+    }
 }
 
 private struct EnrichmentClaimScanFixture {
