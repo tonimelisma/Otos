@@ -67,6 +67,27 @@ fewer misreadings, and finds about 180 more real matches.
 **Decision:** read at the accurate level on the CPU; keep every line from 0.3 with its
 confidence; search matches them all, the Info pane shows the lines at 1.0.
 
+### What the accurate level costs in instructions
+
+Measured 2026-11-12 with `script/bench.sh` (harness 2, MacBookPro18,3, process-wide
+instructions retired) on the `search.readText` case: one 1,200 × 800 sign reading "OTOS SEARCH
+2026". `script/bench.sh compare ab779923` on a249ac68 (#669, the commit that moved search to the
+accurate level) flagged it at 76.1M → 335.8M (+341%), three processes each; no other case moved.
+Temporary per-phase cases, run once on main (0eafc04c) and never merged, split the reading:
+
+| Phase | Instructions |
+| --- | --- |
+| `perform`, fast level, default device | 75.3M |
+| `perform`, fast level, CPU | 76.5M |
+| `perform`, accurate level, default device | 331.7M |
+| `perform`, accurate level, CPU | 336.3M |
+| mapping results to `RecognizedTextLine` | 0.0M |
+
+The whole rise is Vision's accurate recognition itself. Pinning to the CPU adds about 1%: on this
+image the accurate level runs on the CPU on the default device too. The lines' JSON storage is
+outside the case and costs nothing in it. It is the price of the decision above, about 4.4 × the
+fast level's instructions for a reading.
+
 ### Reading the original instead of the preview
 
 Of 3,000 random library photos, 2,993 originals are dataless cloud placeholders and 7 are local,
