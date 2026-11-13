@@ -369,11 +369,13 @@ nonisolated enum PhotoStackCollapse {
         guard !stacks.stacks.isEmpty else {
             return Result(ids: ids, dayBuckets: dayBuckets, coordinates: coordinates, grid: .empty)
         }
+        // Each pass touches every ID once; a pass with no stacks of its kind is skipped, and
+        // the tiles are built from the stacked IDs alone, a few percent of a library.
         let pairs = level(
             ids, positions: Array(ids.indices), membership: stacks.pairOfMember, stacks: stacks, expanded: expanded
         )
         let bursts = level(
-            pairs.kept.map { ids[$0] },
+            pairs.kept.count == ids.count ? ids : pairs.kept.map { ids[$0] },
             positions: pairs.kept,
             membership: stacks.burstOfMember,
             stacks: stacks,
@@ -381,16 +383,12 @@ nonisolated enum PhotoStackCollapse {
         )
 
         var tiles: [MediaAssetID: TileStacks] = [:]
-        for position in bursts.kept {
-            let id = ids[position]
-            let pair = pairs.stackOf[id], burst = bursts.stackOf[id]
-            guard pair != nil || burst != nil else { continue }
-            tiles[id] = TileStacks(
-                pair: pair?.stack,
-                pairExpanded: pair?.expanded ?? false,
-                burst: burst?.stack,
-                burstExpanded: burst?.expanded ?? false
-            )
+        for (id, pair) in pairs.stackOf where bursts.shownFor[id] == nil {
+            tiles[id] = TileStacks(pair: pair.stack, pairExpanded: pair.expanded)
+        }
+        for (id, burst) in bursts.stackOf {
+            tiles[id, default: TileStacks()].burst = burst.stack
+            tiles[id, default: TileStacks()].burstExpanded = burst.expanded
         }
         // A file a pair hides goes to its pair's shown file, and on to the burst's shown
         // frame when the burst hides that one too.
@@ -399,10 +397,12 @@ nonisolated enum PhotoStackCollapse {
             shownFor[hidden] = bursts.shownFor[shown] ?? shown
         }
 
+        let kept = bursts.kept
+        let keepsAll = kept.count == ids.count
         return Result(
-            ids: bursts.kept.map { ids[$0] },
-            dayBuckets: dayBuckets.count == ids.count ? bursts.kept.map { dayBuckets[$0] } : [],
-            coordinates: coordinates.count == ids.count ? bursts.kept.map { coordinates[$0] } : [],
+            ids: keepsAll ? ids : kept.map { ids[$0] },
+            dayBuckets: dayBuckets.count != ids.count ? [] : keepsAll ? dayBuckets : kept.map { dayBuckets[$0] },
+            coordinates: coordinates.count != ids.count ? [] : keepsAll ? coordinates : kept.map { coordinates[$0] },
             grid: CatalogGridStacks(tiles: tiles, shownForHiddenMember: shownFor)
         )
     }
@@ -415,6 +415,11 @@ nonisolated enum PhotoStackCollapse {
         stacks: CatalogStacks,
         expanded: Set<PhotoStackID>
     ) -> Level {
+        guard !membership.isEmpty else {
+            var level = Level()
+            level.kept = positions
+            return level
+        }
         var present: [PhotoStackID: [MediaAssetID]] = [:]
         for id in ids {
             if let stackID = membership[id] {
