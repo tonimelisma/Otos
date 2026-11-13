@@ -106,6 +106,7 @@ extension CatalogProjection {
         case .allMedia, .library, .places, .mapArea, .mapStack, .onThisDay, .importBatch, .allImports, .people, .person:
             break
         }
+        let start = ContinuousClock.now
         let collapsed = PhotoStackCollapse.collapse(
             ids: facts.scopedAssetIDs,
             dayBuckets: facts.scopedDayBuckets,
@@ -113,6 +114,14 @@ extension CatalogProjection {
             stacks: stacks,
             expanded: expanded
         )
+        // The pass's cost on the user's own order, which no benchmark fixture has the shape of.
+        OtosLog.catalog.noticeOperation("projection.stacks", phase: "collapsed", fields: [
+            "ids": "\(facts.scopedAssetIDs.count)",
+            "shown": "\(collapsed.ids.count)",
+            "stacks": "\(stacks.stacks.count)",
+            "expanded": "\(expanded.count)",
+            "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
         facts.scopedAssetIDs = collapsed.ids
         facts.scopedDayBuckets = collapsed.dayBuckets
         facts.scopedCoordinates = collapsed.coordinates
