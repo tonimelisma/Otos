@@ -311,7 +311,7 @@ struct FaceAssignmentPolicyTests {
             return PersonFact(id: PersonID(rawValue: Int64(index)), birthdaySeconds: birthday, isBare: false)
         }
         let faces = Self.randomFaces(count: 400, people: 5, generator: &generator)
-        let birthdays = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.birthdaySeconds) })
+        let birthdays = PersonFact.birthdays(of: people)
         let anchors = Dictionary(uniqueKeysWithValues: faces.filter(\.assignment.isAnchor).map {
             ($0.id, $0.assignment.person!)
         })
@@ -367,7 +367,7 @@ struct FaceAssignmentPolicyTests {
     static func bruteForceFill(
         faces: [FaceFact],
         anchors: [FaceID: PersonID],
-        birthdays: [PersonID: Double?]
+        birthdays: [PersonID: Double]
     ) -> [FaceID: PersonID] {
         let byID = Dictionary(uniqueKeysWithValues: faces.map { ($0.id, $0) })
         var assigned = anchors
@@ -381,10 +381,10 @@ struct FaceAssignmentPolicyTests {
             let inPhoto = Set(assigned.filter { $0.key.asset == face.id.asset }.map(\.value))
             return people.compactMap { person -> (PersonID, Float)? in
                 guard !face.rejected.contains(person), !(excludingPhoto && inPhoto.contains(person)),
-                      FaceAssignmentPolicy.notBeforeBirthday(face.captureSeconds, birthdays[person] ?? nil)
+                      FaceAssignmentPolicy.notBeforeBirthday(face.captureSeconds, birthdays[person])
                 else { return nil }
                 let best = (evidence[person] ?? [])
-                    .filter { FaceAssignmentPolicy.reaches(face.captureSeconds, $0.captureSeconds, birthday: birthdays[person] ?? nil) }
+                    .filter { FaceAssignmentPolicy.reaches(face.captureSeconds, $0.captureSeconds, birthday: birthdays[person]) }
                     .map { face.embedding.cosine(with: $0.embedding) }
                     .max()
                 return best.map { (person, $0) }

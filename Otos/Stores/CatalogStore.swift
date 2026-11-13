@@ -1033,14 +1033,22 @@ extension CatalogStore {
         }
     }
 
-    private static func person(_ row: Row) -> PeopleSnapshot.Person {
-        PeopleSnapshot.Person(
-            id: PersonID(rawValue: row["id"]),
+    private static func person(_ row: Row) throws -> PeopleSnapshot.Person {
+        let id = PersonID(rawValue: row["id"])
+        return try PeopleSnapshot.Person(
+            id: id,
             name: row["name"],
-            birthday: row["birthday"],
+            birthday: birthday(row["birthday"], of: id),
             isHidden: (row["is_hidden"] as Int) != 0,
             isFavorite: (row["is_favorite"] as Int) != 0
         )
+    }
+
+    /// A stored birthday; nil when the person has none. Every write stores a valid one.
+    private static func birthday(_ text: String?, of person: PersonID) throws -> PersonBirthday? {
+        guard let text else { return nil }
+        guard let birthday = PersonBirthday(text) else { throw CatalogStoreError.malformedPersonRow(person) }
+        return birthday
     }
 
     /// What is not yet read for faces (ADR 0047): stills whose stored preview is still to
@@ -1391,7 +1399,7 @@ extension CatalogStore {
                         ON CONFLICT(id) DO UPDATE SET name = excluded.name, birthday = excluded.birthday,
                             is_hidden = excluded.is_hidden, is_favorite = excluded.is_favorite
                         """,
-                        arguments: [id.rawValue, person.name, person.birthday, person.isHidden ? 1 : 0, person.isFavorite ? 1 : 0]
+                        arguments: [id.rawValue, person.name, person.birthday?.text, person.isHidden ? 1 : 0, person.isFavorite ? 1 : 0]
                     )
                 }
             }
@@ -1443,9 +1451,8 @@ extension CatalogStore {
 
     // MARK: People writes inside one transaction
 
-    private static func insertPerson(name: String?, birthday: String?, db: Database) throws -> PersonID {
-        try PersonBirthday.validate(birthday)
-        try db.execute(sql: "INSERT INTO person (name, birthday) VALUES (?, ?)", arguments: [name, birthday])
+    private static func insertPerson(name: String?, birthday: PersonBirthday?, db: Database) throws -> PersonID {
+        try db.execute(sql: "INSERT INTO person (name, birthday) VALUES (?, ?)", arguments: [name, birthday?.text])
         return PersonID(rawValue: db.lastInsertedRowID)
     }
 
@@ -1453,8 +1460,7 @@ extension CatalogStore {
     /// are merged instead. A birthday after a photo the user gave the person is refused;
     /// Otos's own guesses and seeds from before it lose the person, and assignment gives
     /// those faces to someone else.
-    private static func updatePerson(_ person: PersonID, name: String?, birthday: String?, db: Database) throws {
-        try PersonBirthday.validate(birthday)
+    private static func updatePerson(_ person: PersonID, name: String?, birthday: PersonBirthday?, db: Database) throws {
         if let name, try Int.fetchOne(
             db,
             sql: "SELECT COUNT(*) FROM person WHERE name = ? AND id <> ?",
@@ -1462,7 +1468,7 @@ extension CatalogStore {
         ) ?? 0 > 0 {
             throw PeopleRuleViolation.nameTaken
         }
-        if let birthdaySeconds = birthday.flatMap(PersonBirthday.seconds) {
+        if let birthdaySeconds = birthday?.seconds {
             let before = """
             FROM face f
             JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
@@ -1486,7 +1492,7 @@ extension CatalogStore {
         }
         try db.execute(
             sql: "UPDATE person SET name = ?, birthday = ? WHERE id = ?",
-            arguments: [name, birthday, person.rawValue]
+            arguments: [name, birthday?.text, person.rawValue]
         )
     }
 
@@ -1498,7 +1504,7 @@ extension CatalogStore {
         guard let row = try Row.fetchOne(db, sql: "SELECT birthday FROM person WHERE id = ?", arguments: [person.rawValue]) else {
             throw PeopleRuleViolation.unknownFace
         }
-        let birthday = (row["birthday"] as String?).flatMap(PersonBirthday.seconds)
+        let birthday = try Self.birthday(row["birthday"], of: person)?.seconds
         for key in keys {
             let others = try Int.fetchAll(
                 db,
@@ -1572,7 +1578,7 @@ extension CatalogStore {
             throw PeopleRuleViolation.unknownFace
         }
         let birthday = target.birthday ?? source.birthday
-        if let birthdaySeconds = birthday.flatMap(PersonBirthday.seconds) {
+        if let birthdaySeconds = birthday?.seconds {
             let earlier = try Int.fetchOne(
                 db,
                 sql: """
@@ -1613,7 +1619,7 @@ extension CatalogStore {
         try db.execute(sql: "DELETE FROM person WHERE id = ?", arguments: [from.rawValue])
         try db.execute(
             sql: "UPDATE person SET name = ?, birthday = ?, is_favorite = ? WHERE id = ?",
-            arguments: [target.name ?? source.name, birthday, target.isFavorite || source.isFavorite ? 1 : 0, into.rawValue]
+            arguments: [target.name ?? source.name, birthday?.text, target.isFavorite || source.isFavorite ? 1 : 0, into.rawValue]
         )
     }
 
@@ -1723,7 +1729,7 @@ extension CatalogStore {
             let row = try Row.fetchOne(db, sql: "SELECT * FROM person WHERE id = ?", arguments: [person.rawValue])
             // `.some(nil)` keeps a missing person in the record: a plain nil would drop the key,
             // and the restore would forget to remove them.
-            record[person] = .some(row.map(Self.person))
+            record[person] = try .some(row.map(Self.person))
             for row in try Row.fetchAll(
                 db,
                 sql: "SELECT library_root_id, relative_path, face_index FROM face_rejection WHERE person_id = ?",

@@ -1342,6 +1342,9 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
     case invalidRemoteServer
     /// A stored face whose landmarks or embedding are not the size the catalog writes.
     case malformedFaceRow(MediaAssetID)
+    /// A stored person whose birthday is neither `YYYY` nor `YYYY-MM-DD`, which no write
+    /// produces.
+    case malformedPersonRow(PersonID)
 
     var errorDescription: String? {
         switch self {
@@ -1368,6 +1371,8 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
             "Enter the server’s web address, starting with http:// or https://."
         case .malformedFaceRow:
             "A face stored in the catalog could not be read."
+        case .malformedPersonRow:
+            "A person stored in the catalog could not be read."
         }
     }
 }

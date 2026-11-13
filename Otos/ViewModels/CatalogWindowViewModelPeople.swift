@@ -115,7 +115,7 @@ nonisolated struct PeopleIndex {
         if faces.contains(where: { anchored.contains($0.id.asset) && $0.person != person }) {
             return "\(target.displayName) is already in this photo"
         }
-        if let birthday = target.birthday.flatMap(PersonBirthday.seconds) {
+        if let birthday = target.birthday?.seconds {
             let before = faces.count { ($0.tile.captureSeconds ?? .infinity) < birthday }
             if before > 0 {
                 return "\(PeopleText.count(before, "photo")) \(before == 1 ? "is" : "are") from before \(target.displayName)'s birthday"
@@ -133,7 +133,7 @@ nonisolated struct PeopleIndex {
         if shared > 0 {
             return "\(source.displayName) and \(target.displayName) are both in \(PeopleText.count(shared, "photo"))"
         }
-        if let birthday = (target.birthday ?? source.birthday).flatMap(PersonBirthday.seconds) {
+        if let birthday = (target.birthday ?? source.birthday)?.seconds {
             let before = Set((source.userFaces + target.userFaces).filter { ($0.captureSeconds ?? .infinity) < birthday }.map(\.id.asset)).count
             if before > 0 {
                 return "\(PeopleText.count(before, "photo")) \(before == 1 ? "is" : "are") from before the birthday"
@@ -143,14 +143,15 @@ nonisolated struct PeopleIndex {
     }
 
     /// Why the Person sheet cannot save, or nil when it can. A name another person has is
-    /// not a refusal: saving it asks to merge them.
+    /// not a refusal: saving it asks to merge them. `birthday` is the sheet's text, which
+    /// must be a year or a full date.
     func sheetRefusal(_ subject: PersonSheetRequest.Subject, name text: String, birthday: String?) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             return "Enter a name"
         }
         guard let birthday else { return nil }
-        guard let seconds = PersonBirthday.seconds(birthday) else {
+        guard let seconds = PersonBirthday(birthday)?.seconds else {
             return "Enter a year, or a full date"
         }
         if case let .person(person) = subject {
@@ -380,8 +381,10 @@ extension CatalogWindowViewModel {
                 askMerge(person, into: holder)
                 return
             }
-            guard trimmed != summary.name || birthday != summary.birthday else { return }
-            submitPeopleAct(.edit(person, name: trimmed, birthday: birthday))
+            // The refusal above has read the text as a birthday.
+            let parsed = birthday.flatMap(PersonBirthday.init)
+            guard trimmed != summary.name || parsed != summary.birthday else { return }
+            submitPeopleAct(.edit(person, name: trimmed, birthday: parsed))
         case let .faces(faces):
             if let holder = peopleIndex.person(named: trimmed) {
                 submitPeopleAct(.move(faces, to: holder))

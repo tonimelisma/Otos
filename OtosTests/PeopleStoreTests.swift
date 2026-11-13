@@ -20,7 +20,7 @@ struct PeopleStoreTests {
         let b0 = FaceID(asset: library.id("b.jpg"), index: 0)
         let sam = try #require(try await library.store.perform(.moveToNewPerson([a0], name: "Sam")).person)
         let ian = try #require(try await library.store.perform(.moveToNewPerson([a1], name: "Ian")).person)
-        _ = try await library.store.perform(.edit(ian, name: "Ian", birthday: "2022-11-03"))
+        _ = try await library.store.perform(.edit(ian, name: "Ian", birthday: PersonBirthday("2022-11-03")))
         _ = try await library.store.perform(.removeName([a1]))
         _ = try await library.store.perform(.notAFace([b0]))
         _ = try await library.store.perform(.setFavorite(sam, true))
@@ -37,7 +37,7 @@ struct PeopleStoreTests {
         #expect(facts.people.map(\.name) == ["Sam", "Ian"])
         #expect(facts.people.map(\.isFavorite) == [true, false])
         #expect(facts.people.map(\.isHidden) == [false, true])
-        #expect(facts.people.last?.birthdaySeconds == PersonBirthday.seconds("2022-11-03"))
+        #expect(facts.people.last?.birthday?.seconds == PersonBirthday("2022-11-03")?.seconds)
         #expect(facts.tiles[a1]?.box == Self.face(x: 0.6).box)
         #expect(try await library.store.namedPeople().map(\.id) == [sam])
         await library.store.shutdown()
@@ -93,12 +93,9 @@ struct PeopleStoreTests {
         let b = FaceID(asset: library.id("b.jpg"), index: 0)
         let tyler = try #require(try await library.store.perform(.moveToNewPerson([a], name: "Tyler")).person)
         try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [.init(face: b, person: .existing(tyler))]))
-        await #expect(throws: PeopleRuleViolation.invalidBirthday) {
-            _ = try await library.store.perform(.edit(tyler, name: "Tyler", birthday: "25"))
-        }
         // The scanned files carry no capture date, so no face predates any birthday yet.
-        _ = try await library.store.perform(.edit(tyler, name: "Tyler", birthday: "2025"))
-        #expect(try await library.store.peopleSnapshot().people.first?.birthdaySeconds == PersonBirthday.seconds("2025-01-01"))
+        _ = try await library.store.perform(.edit(tyler, name: "Tyler", birthday: PersonBirthday("2025")))
+        #expect(try await library.store.peopleSnapshot().people.first?.birthday?.seconds == PersonBirthday("2025-01-01")?.seconds)
         await library.store.shutdown()
     }
 
@@ -217,7 +214,7 @@ struct PeopleStoreTests {
         let before = try await state()
         for act: PeopleAct in [
             .move([a1], to: ian), .moveToNewPerson([a1], name: "Tyler"), .removeName([a0]), .notAFace([b0]),
-            .edit(sam, name: "Sam M", birthday: "2020"), .merge(ian, into: sam),
+            .edit(sam, name: "Sam M", birthday: PersonBirthday("2020")), .merge(ian, into: sam),
             .setHidden(ian, true), .setFavorite(sam, true), .makeKeyPhoto(a0, of: sam),
         ] {
             let outcome = try await library.store.perform(act)

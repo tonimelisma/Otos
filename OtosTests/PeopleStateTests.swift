@@ -183,14 +183,28 @@ struct PeopleStateTests {
         #expect(selection.unidentifiedFacesToName(as: Self.sam) == [one.id, twoOther.id])
     }
 
+    /// A birthday is a whole date or only a year, which counts from 1 January, at midnight
+    /// UTC; it reads back from its stored text exactly, and anything else is no birthday.
+    @Test func aBirthdayIsAYearOrAWholeDate() throws {
+        let year = try #require(PersonBirthday("2025"))
+        #expect(year.seconds == 1_735_689_600 && !year.isExact && year.text == "2025")
+        let day = try #require(PersonBirthday("2022-11-03"))
+        #expect(day.seconds == 1_667_433_600 && day.isExact && day.text == "2022-11-03")
+        #expect(PersonBirthday("0950")?.text == "0950")
+        #expect(PersonBirthday(utcDay: Date(timeIntervalSince1970: 1_667_433_600 + 3600)) == day)
+        for text in ["", "25", "abcd", "+020", "2020-1-5", "2020-13-01", "2021-02-30", "2020-01", "２０２０"] {
+            #expect(PersonBirthday(text) == nil, "\(text)")
+        }
+    }
+
     /// The acts' hard rules disable them, with the reason the tooltip shows (DES-038).
     @Test func theHardRulesNameTheirReason() throws {
-        let birthday = try #require(PersonBirthday.seconds("2021-01-01"))
+        let birthday = try #require(PersonBirthday("2021-01-01")?.seconds)
         let samsFace = Fixture.face("a.jpg", index: 0, toward: [0: 1], at: 0, assignment: .user(Self.sam))
         let iansFace = Fixture.face("b.jpg", index: 0, toward: [1: 1], at: 0, assignment: .user(Self.ian))
         let people: [PeopleSnapshot.Person] = [
             .init(id: Self.sam, name: "Sam", birthday: nil),
-            .init(id: Self.ian, name: "Ian", birthday: "2021-01-01"),
+            .init(id: Self.ian, name: "Ian", birthday: PersonBirthday("2021-01-01")),
         ]
         let index = PeopleIndex(PeopleStateBuilder.state(from: Self.snapshot([samsFace, iansFace], people: people)))
         let other = PhotoFace(tile: Self.tile("a.jpg", index: 1, at: Fixture.epoch), person: nil)

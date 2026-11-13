@@ -268,7 +268,7 @@ nonisolated enum PeopleStateBuilder {
         }
         let people = snapshot.people.compactMap { person -> PersonSummary? in
             let own = (faces[person.id] ?? []).sorted(by: newestFirst)
-            guard !own.isEmpty || !person.isBare else { return nil }
+            guard !own.isEmpty || !snapshot.isBare(person) else { return nil }
             let keyPhoto = snapshot.keyPhotos[person.id].flatMap { id in own.first { $0.id == id } }
             return PersonSummary(
                 id: person.id,

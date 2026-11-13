@@ -40,20 +40,16 @@ struct PersonSheetView: View {
         self.cancel = cancel
         let birthday = person?.birthday
         _name = State(initialValue: person?.name ?? "")
-        _year = State(initialValue: birthday.map { String($0.prefix(4)) } ?? "")
-        _exact = State(initialValue: (birthday?.count ?? 0) > 4)
-        _date = State(initialValue: birthday.flatMap(PersonBirthday.seconds).map { Date(timeIntervalSince1970: $0) } ?? .now)
+        _year = State(initialValue: birthday.map { String(format: "%04d", $0.year) } ?? "")
+        _exact = State(initialValue: birthday?.isExact ?? false)
+        _date = State(initialValue: birthday.map { Date(timeIntervalSince1970: $0.seconds) } ?? .now)
     }
 
-    /// The birthday as the catalog stores it: `YYYY-MM-DD` with Exact date, `YYYY` with a
-    /// year alone, nil with neither.
+    /// The birthday as typed: the picked day's `YYYY-MM-DD` with Exact date, the year field
+    /// with a year alone, nil with neither. The view model reads it as a `PersonBirthday`.
     private var birthday: String? {
         if exact {
-            var calendar = Calendar(identifier: .gregorian)
-            calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
-            let parts = calendar.dateComponents([.year, .month, .day], from: date)
-            guard let y = parts.year, let m = parts.month, let d = parts.day else { return nil }
-            return String(format: "%04d-%02d-%02d", y, m, d)
+            return PersonBirthday(utcDay: date)?.text
         }
         let trimmed = year.trimmingCharacters(in: .whitespaces)
         return trimmed.isEmpty ? nil : trimmed
@@ -139,12 +135,10 @@ struct PersonSheetView: View {
         .frame(width: 440)
         .onChange(of: exact) { _, isExact in
             // Turning Exact date on starts from the year typed; off keeps the date's year.
-            if isExact, let y = Int(year), let start = PersonBirthday.seconds(String(format: "%04d", y)) {
-                date = Date(timeIntervalSince1970: start)
-            } else if !isExact {
-                var calendar = Calendar(identifier: .gregorian)
-                calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
-                year = String(calendar.component(.year, from: date))
+            if isExact, let y = Int(year), let start = PersonBirthday(String(format: "%04d", y)) {
+                date = Date(timeIntervalSince1970: start.seconds)
+            } else if !isExact, let picked = PersonBirthday(utcDay: date) {
+                year = String(format: "%04d", picked.year)
             }
         }
     }

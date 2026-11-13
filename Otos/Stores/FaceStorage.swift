@@ -106,36 +106,73 @@ nonisolated struct FaceRowKey: Hashable {
     }
 }
 
-/// A person's birthday as the catalog stores it: `YYYY-MM-DD`, or `YYYY` when only the year
-/// is known.
-nonisolated enum PersonBirthday {
-    /// Midnight UTC of the day, or of 1 January when only the year is known, seconds since
-    /// 1970; nil unless the text is one of the two forms and a valid date. A year alone counts
-    /// from its first day, so no face from that year is ever excluded by it.
-    static func seconds(_ text: String) -> Double? {
-        let parts = text.split(separator: "-", omittingEmptySubsequences: false).map { Int($0) }
-        guard parts.allSatisfy({ $0 != nil }), parts.count == 1 || parts.count == 3,
-              text.split(separator: "-").first?.count == 4
+/// A person's birthday (ADR 0047): a whole date, or only a year, which counts from 1 January
+/// so no face from that year is ever excluded by it. The catalog stores it as `text`
+/// (`YYYY-MM-DD`, or `YYYY`); it is parsed once, where text enters Otos, so every reader
+/// holds a valid birthday.
+nonisolated struct PersonBirthday: Hashable, Sendable {
+    let year: Int
+    /// The month and day; nil when only the year is known.
+    let monthDay: MonthDay?
+    /// Midnight UTC of the day, or of 1 January, in seconds since 1970: a birthday is a
+    /// calendar date, so it compares with a photo's local capture time day for day.
+    let seconds: Double
+
+    nonisolated struct MonthDay: Hashable, Sendable {
+        let month: Int
+        let day: Int
+    }
+
+    var isExact: Bool {
+        monthDay != nil
+    }
+
+    /// The stored form.
+    var text: String {
+        guard let monthDay else { return String(format: "%04d", year) }
+        return String(format: "%04d-%02d-%02d", year, monthDay.month, monthDay.day)
+    }
+
+    /// Nil unless `text` is `YYYY` or `YYYY-MM-DD` and a real date.
+    init?(_ text: String) {
+        let parts = text.split(separator: "-", omittingEmptySubsequences: false)
+        guard parts.count == 1 || parts.count == 3,
+              zip(parts, [4, 2, 2]).allSatisfy({ $0.count == $1 && $0.allSatisfy(\.isASCII) && $0.allSatisfy(\.isNumber) }),
+              let year = Int(parts[0])
         else {
             return nil
         }
-        var components = DateComponents()
-        components.year = parts[0]
-        components.month = parts.count == 3 ? parts[1] : 1
-        components.day = parts.count == 3 ? parts[2] : 1
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .gmt
-        guard components.isValidDate(in: calendar), let date = calendar.date(from: components) else { return nil }
-        return date.timeIntervalSince1970
+        let monthDay = parts.count == 3 ? Int(parts[1]).flatMap { month in Int(parts[2]).map { MonthDay(month: month, day: $0) } } : nil
+        self.init(year: year, monthDay: monthDay)
     }
 
-    /// Refuses a birthday that is neither form, so a mistyped one is never stored and
-    /// silently ignored.
-    static func validate(_ text: String?) throws {
-        if let text, seconds(text) == nil {
-            throw PeopleRuleViolation.invalidBirthday
-        }
+    /// The UTC calendar day of `date`, as a date picker in UTC gives it.
+    init?(utcDay date: Date) {
+        let parts = Self.calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = parts.year, let month = parts.month, let day = parts.day else { return nil }
+        self.init(year: year, monthDay: MonthDay(month: month, day: day))
     }
+
+    private init?(year: Int, monthDay: MonthDay?) {
+        var components = DateComponents()
+        components.year = year
+        components.month = monthDay?.month ?? 1
+        components.day = monthDay?.day ?? 1
+        guard (1 ... 9999).contains(year), components.isValidDate(in: Self.calendar),
+              let date = Self.calendar.date(from: components)
+        else {
+            return nil
+        }
+        self.year = year
+        self.monthDay = monthDay
+        seconds = date.timeIntervalSince1970
+    }
+
+    private static let calendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .gmt
+        return calendar
+    }()
 }
 
 /// `face.assignment` as the catalog stores it, beside `person_id` (ADR 0047). The rules
@@ -213,8 +250,6 @@ nonisolated enum PeopleRuleViolation: Error, Equatable {
     case nameTaken
     /// The face's library is not cataloged.
     case unknownFace
-    /// A birthday that is neither `YYYY-MM-DD` nor `YYYY`.
-    case invalidBirthday
 }
 
 /// A still whose faces are owed from its stored preview (ADR 0047): the preview's file under

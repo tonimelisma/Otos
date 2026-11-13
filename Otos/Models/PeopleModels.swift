@@ -55,20 +55,9 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     nonisolated struct Person: Sendable, Equatable {
         let id: PersonID
         let name: String?
-        /// `YYYY` or `YYYY-MM-DD`, as the user gave it.
-        let birthday: String?
+        let birthday: PersonBirthday?
         var isHidden = false
         var isFavorite = false
-
-        var birthdaySeconds: Double? {
-            birthday.flatMap(PersonBirthday.seconds)
-        }
-
-        /// Nothing the user said about the person: no name, birthday, favourite or hidden. A
-        /// person Otos found is forgotten once nothing of theirs is left.
-        var isBare: Bool {
-            name == nil && birthday == nil && !isHidden && !isFavorite
-        }
     }
 
     /// Every face of a photo still in the catalog and out of the Trash, in reading order;
@@ -92,12 +81,17 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     /// `PeopleActOutcome.revision` is at most this.
     let revision: UInt64
 
-    /// The people as assignment reads them. A key photo is the user's word about a person,
-    /// so a person with one is not bare.
+    /// Whether the user has said nothing about `person`: no name, birthday, favourite,
+    /// hidden mark or key photo. A person Otos found and the user never touched is forgotten
+    /// with their last face, and their seeds lapse when their group no longer stands.
+    func isBare(_ person: Person) -> Bool {
+        person.name == nil && person.birthday == nil && !person.isHidden && !person.isFavorite
+            && keyPhotos[person.id] == nil
+    }
+
+    /// The people as assignment reads them.
     var personFacts: [PersonFact] {
-        people.map {
-            PersonFact(id: $0.id, birthdaySeconds: $0.birthdaySeconds, isBare: $0.isBare && keyPhotos[$0.id] == nil)
-        }
+        people.map { PersonFact(id: $0.id, birthdaySeconds: $0.birthday?.seconds, isBare: isBare($0)) }
     }
 }
 
@@ -164,7 +158,7 @@ nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
             }
         }
         let held = Set(snapshot.faces.compactMap(\.assignment.person))
-        plan.emptied = snapshot.people.filter { $0.isBare && held.contains($0.id) && !keeps.contains($0.id) }.map(\.id)
+        plan.emptied = snapshot.people.filter { snapshot.isBare($0) && held.contains($0.id) && !keeps.contains($0.id) }.map(\.id)
         return plan
     }
 }
@@ -173,7 +167,7 @@ nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
 nonisolated struct PersonSummary: Hashable, Sendable, Identifiable {
     let id: PersonID
     let name: String?
-    let birthday: String?
+    let birthday: PersonBirthday?
     let isHidden: Bool
     let isFavorite: Bool
     /// The photos and videos holding a face of this person; a stack counts once.
@@ -408,7 +402,7 @@ nonisolated enum PeopleAct: Equatable, Sendable {
     /// The detections are not faces (This Is Not a Face).
     case notAFace([FaceID])
     /// Rename…, Add Name… and Set Birthday….
-    case edit(PersonID, name: String?, birthday: String?)
+    case edit(PersonID, name: String?, birthday: PersonBirthday?)
     /// The first person's faces become the second's; the second keeps its name and birthday.
     case merge(PersonID, into: PersonID)
     case setHidden(PersonID, Bool)

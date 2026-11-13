@@ -112,6 +112,11 @@ nonisolated struct PersonFact: Sendable, Equatable {
     /// and no key photo. Such a person is Otos's own finding, and keeps its seeds only while
     /// they would still make a new person.
     let isBare: Bool
+
+    /// The birthday of each of `people` that has one.
+    static func birthdays(of people: [PersonFact]) -> [PersonID: Double] {
+        Dictionary(uniqueKeysWithValues: people.compactMap { person in person.birthdaySeconds.map { (person.id, $0) } })
+    }
 }
 
 /// What assignment decided (ADR 0047): the person each guessable face goes to, the people
@@ -192,10 +197,11 @@ nonisolated enum FaceAssignmentPolicy {
     static func assign(faces: [FaceFact], people: [PersonFact]) -> FaceAssignmentResult {
         let lapsed = lapsedSeeds(faces, people: people)
         let usable = faces.map { lapsed.contains($0.id) ? $0.opened : $0 }
-        let birthdays = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.birthdaySeconds) })
+        let known = Set(people.map(\.id))
+        let birthdays = PersonFact.birthdays(of: people)
         var anchors: [Int: FaceAssignmentResult.Person] = [:]
         for (index, face) in usable.enumerated() where face.assignment.isAnchor {
-            guard let person = face.assignment.person, birthdays.keys.contains(person) else { continue }
+            guard let person = face.assignment.person, known.contains(person) else { continue }
             anchors[index] = .existing(person)
         }
         var result = FaceAssignmentResult()
@@ -315,7 +321,7 @@ nonisolated enum FaceAssignmentPolicy {
     private static func likeness(
         faces: [FaceFact],
         assigned: [Int: FaceAssignmentResult.Person],
-        birthdays: [PersonID: Double?]
+        birthdays: [PersonID: Double]
     ) -> [FaceID: Float] {
         var byPerson: [FaceAssignmentResult.Person: [Int]] = [:]
         for (index, person) in assigned where faces[index].isRecognisable {
@@ -324,7 +330,7 @@ nonisolated enum FaceAssignmentPolicy {
         var likeness: [FaceID: Float] = [:]
         for (person, members) in byPerson where members.count > 1 {
             let birthday: Double? = if case let .existing(id) = person {
-                birthdays[id] ?? nil
+                birthdays[id]
             } else {
                 nil
             }
@@ -389,13 +395,13 @@ nonisolated struct Fill {
     static func run(
         faces: [FaceFact],
         anchors: [Int: FaceAssignmentResult.Person],
-        birthdays: [PersonID: Double?]
+        birthdays: [PersonID: Double]
     ) -> Fill {
         let people = Array(Set(anchors.values)).sorted { order($0) < order($1) }
         let slotOf = Dictionary(uniqueKeysWithValues: people.enumerated().map { ($1, $0) })
         let birthdayOf = people.map { person -> Double? in
             if case let .existing(id) = person {
-                birthdays[id] ?? nil
+                birthdays[id]
             } else {
                 nil
             }
@@ -594,13 +600,13 @@ private extension Array {
 nonisolated struct FaceRanker: Sendable {
     private let columns: [FaceFact]
     private let runs: [(person: PersonID, run: PersonRun)]
-    private let birthdays: [PersonID: Double?]
+    private let birthdays: [PersonID: Double]
 
     static let empty = FaceRanker(faces: [], people: [], offered: [])
 
     /// `offered` are the people the ranking may name; faces of anyone else are left out.
     init(faces: [FaceFact], people: [PersonFact], offered: Set<PersonID>) {
-        let birthdays = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.birthdaySeconds) })
+        let birthdays = PersonFact.birthdays(of: people)
         var byPerson: [PersonID: [FaceFact]] = [:]
         for face in faces where face.isRecognisable {
             if let person = face.assignment.person, offered.contains(person) {
@@ -610,7 +616,7 @@ nonisolated struct FaceRanker: Sendable {
         var columns: [FaceFact] = []
         var runs: [(person: PersonID, run: PersonRun)] = []
         for person in byPerson.keys.sorted() {
-            let run = PersonRun(faces: byPerson[person]!, birthday: birthdays[person] ?? nil, start: columns.count)
+            let run = PersonRun(faces: byPerson[person]!, birthday: birthdays[person], start: columns.count)
             runs.append((person, run))
             columns += run.faces
         }
@@ -636,7 +642,7 @@ nonisolated struct FaceRanker: Sendable {
                     let start = (row - range.lowerBound) * columns.count
                     var ranked: [FaceCandidate] = []
                     for (person, run) in runs where !excluded.contains(person)
-                        && FaceAssignmentPolicy.notBeforeBirthday(face.captureSeconds, birthdays[person] ?? nil)
+                        && FaceAssignmentPolicy.notBeforeBirthday(face.captureSeconds, birthdays[person])
                     {
                         // A face is only in its own person's run, which `excluded` already
                         // leaves out: the ranker and the faces come from one snapshot.
