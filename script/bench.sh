@@ -463,6 +463,11 @@ daily() {
   echo "$today $head" > "$LAST_RUN_FILE"
 }
 
+# One field of a flagged verdict (`flagged baseline=… head=… cases=…`); empty for any other.
+verdict_field() {
+  printf '%s\n' "$1" | sed -n "s/^flagged .*$2=\([^ ]*\).*/\1/p"
+}
+
 # Due when no run finished today and origin/main has moved past the commit the last run
 # judged: the baseline, or the flagged head while a case stays flagged. A flagged verdict is
 # reported every time, whatever the day; a due one carries the flagged cases, because only
@@ -476,8 +481,8 @@ status() {
   judged="$baseline"
   case "$verdict" in
     flagged*)
-      judged="$(printf '%s\n' "$verdict" | sed -n 's/^flagged .*head=\([0-9a-f]*\).*/\1/p')"
-      flagged_cases="$(printf '%s\n' "$verdict" | sed -n 's/^flagged .*cases=\([^ ]*\).*/\1/p')"
+      judged="$(verdict_field "$verdict" head)"
+      flagged_cases="$(verdict_field "$verdict" cases)"
       ;;
   esac
   if [[ -d "$LOCK_DIR" ]]; then
@@ -494,7 +499,7 @@ status() {
 accept() {
   local verdict head
   verdict="$(cat "$VERDICT_FILE" 2>/dev/null || true)"
-  head="$(printf '%s\n' "$verdict" | sed -n 's/^flagged .*head=\([0-9a-f]*\).*/\1/p')"
+  head="$(verdict_field "$verdict" head)"
   if [[ -z "$head" ]]; then
     echo "op=bench.accept phase=refused reason=nothingFlagged verdict=\"${verdict:-none}\"" >&2
     exit 1

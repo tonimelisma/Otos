@@ -1,10 +1,10 @@
 import Foundation
 @testable import OtosKit
 
-/// Controlled plan builder. It records each request, can
-/// suspend a selected source build on a continuation, resumes it with a real
-/// planner result, and records cancellation without assuming cancellation ends
-/// the continuation.
+/// A plan builder a test steers. It records every request, holds a build the test marked
+/// with `suspendNextBuild(for:)` until the test releases it with a live planner result,
+/// and resolves a held build its caller cancels with an empty plan, recording the
+/// cancellation.
 ///
 /// A release waits for the build it releases. The coordinator's build reaches the
 /// builder only after its own Store reads, so a test that releases right after some
@@ -12,11 +12,8 @@ import Foundation
 /// release that found nothing held and returned would be lost, and the build would
 /// then hold forever.
 ///
-/// The `build` method is actor-isolated, so concurrent coordinator builds for
-/// different sources suspend independently. Cancellation is observed via
-/// `withTaskCancellationHandler` and recorded, but the continuation remains
-/// suspended until the test explicitly resumes it — reproducing the
-/// cancellation-insensitive filesystem boundary needed for Stage 4.
+/// Builds for different sources are held independently; each held build carries its own
+/// identity, so a release or a cancellation resolves exactly one build.
 actor ControlledImportPlanBuilder {
     struct RecordedRequest: Sendable {
         let snapshot: ImportPlanningSnapshot
@@ -39,11 +36,10 @@ actor ControlledImportPlanBuilder {
     private var suspendNext: [LibraryRootPath: Int] = [:]
     /// Releases waiting for a build of their source to be held, woken when one is.
     private var arrivalWaiters: [LibraryRootPath: [CheckedContinuation<Void, Never>]] = [:]
-    private(set) var cancelled: Set<LibraryRootPath> = []
+    private var cancelled: Set<LibraryRootPath> = []
 
-    /// Mark the next build for `source` as suspended. The next `build` call
-    /// whose snapshot's sourceRoot matches this path will await a continuation
-    /// until `resume(for:)` is called.
+    /// Holds the next build for `source` until `resumePendingBuild(for:)` releases it or
+    /// its caller cancels it. Each call holds one more build.
     func suspendNextBuild(for source: LibraryRootPath) {
         suspendNext[source, default: 0] += 1
     }
@@ -76,20 +72,12 @@ actor ControlledImportPlanBuilder {
         recorded
     }
 
-    func pendingSources() -> [LibraryRootPath] {
-        Array(pending.keys)
-    }
-
     func pendingCount(for source: LibraryRootPath) -> Int {
         pending[source]?.count ?? 0
     }
 
     func recordedCancelled() -> Set<LibraryRootPath> {
         cancelled
-    }
-
-    private func recordCancel(for source: LibraryRootPath) {
-        cancelled.insert(source)
     }
 
     /// Removes and returns the oldest held build for `source` that `matches` accepts.
@@ -102,11 +90,12 @@ actor ControlledImportPlanBuilder {
         return entry
     }
 
-    /// Resolves the cancelled build `id` with an empty plan, so a cancelled
-    /// `withTaskCancellationHandler` does not hold its task forever. The coordinator
-    /// discards it as stale by its post-build identity checks (attachment/generation/
-    /// session). A build a release already resumed is gone and is left alone.
-    private func resolveCancelledBuild(_ id: UInt64, source: LibraryRootPath) {
+    /// Records the cancellation and resolves the held build `id` with an empty plan, so a
+    /// cancelled build does not hold its task forever. The coordinator discards it as stale
+    /// by its post-build identity checks (attachment/generation/session). A build a release
+    /// already took is gone and is left alone.
+    private func cancelHeldBuild(_ id: UInt64, source: LibraryRootPath) {
+        cancelled.insert(source)
         guard let entry = takeHeld(source: source, where: { $0.id == id }) else { return }
         let dummyPlan = MediaOperationPlan(
             generation: entry.snapshot.generation,
@@ -133,13 +122,13 @@ actor ControlledImportPlanBuilder {
     }
 }
 
-// MARK: - ImportPlanBuilding conformance via nonisolated wrapper
+// MARK: - Waiting for held builds
 
 func waitForPendingBuilder(
     _ builder: ControlledImportPlanBuilder,
     source: LibraryRootPath
 ) async throws {
-    try await waitUntil(every: .milliseconds(10)) { await builder.pendingSources().contains(source) }
+    try await waitForPendingBuilderCount(builder, source: source, count: 1)
 }
 
 func waitForPendingBuilderCount(
@@ -150,15 +139,10 @@ func waitForPendingBuilderCount(
     try await waitUntil(every: .milliseconds(10)) { await builder.pendingCount(for: source) >= count }
 }
 
-extension ControlledImportPlanBuilder: ImportPlanBuilding {
-    nonisolated func build(
-        snapshot: ImportPlanningSnapshot,
-        additionalReserved: Set<MediaRelativePath>
-    ) async -> ImportPlanBuildResult {
-        await _build(snapshot: snapshot, additionalReserved: additionalReserved)
-    }
+// MARK: - ImportPlanBuilding
 
-    private func _build(
+extension ControlledImportPlanBuilder: ImportPlanBuilding {
+    func build(
         snapshot: ImportPlanningSnapshot,
         additionalReserved: Set<MediaRelativePath>
     ) async -> ImportPlanBuildResult {
@@ -187,10 +171,8 @@ extension ControlledImportPlanBuilder: ImportPlanBuilding {
                     }
                 },
                 onCancel: {
-                    Task {
-                        await self.recordCancel(for: source)
-                        await self.resolveCancelledBuild(id, source: source)
-                    }
+                    // The handler runs synchronously off the actor; the hop is the only way in.
+                    Task { await self.cancelHeldBuild(id, source: source) }
                 }
             )
         } else {
