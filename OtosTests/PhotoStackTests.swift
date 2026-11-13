@@ -10,12 +10,38 @@ struct PhotoStackTests {
         MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path))
     }
 
+    /// A candidate as the Store reads it from a case-insensitive volume's row.
     private func candidate(_ path: String, _ kind: MediaKind, chosenAt: Int64? = nil) -> PhotoStackCandidate {
-        PhotoStackCandidate(relativePath: MediaRelativePath(rawValue: path), kind: kind, keyChosenAtUnixMs: chosenAt)
+        let relativePath = MediaRelativePath(rawValue: path)
+        return PhotoStackCandidate(
+            relativePath: relativePath,
+            kind: kind,
+            nameKey: FilesystemNamespaceSemantics.nameKey(relativePath: relativePath, capabilities: .caseInsensitive),
+            sortKey: MediaSortKey.make(libraryRootPath: root, relativePath: relativePath),
+            keyChosenAtUnixMs: chosenAt
+        )
     }
 
     private func stacks(_ candidates: [PhotoStackCandidate]) -> [PhotoStack] {
-        PhotoStackRule.stacks(candidates: candidates, libraryRootPath: root, capabilities: .caseInsensitive)
+        PhotoStackRule.stacks(candidates: candidates, libraryRootPath: root)
+    }
+
+    /// Cutting a stored name key gives the key of the cut path, so the rule reads stems from
+    /// the keys the catalog stores: accents in either Unicode form, case on either kind of
+    /// volume, a leading dot and a folder with a dot in it.
+    @Test(arguments: [
+        "a/Ca\u{301}fe\u{301}.JPG", "a/Café.ARW", "ΣΑΣ.JPG", "b.c/IMG_1", ".hidden", "x/.hidden", "IMG_1.tar.gz", "IMG_1.\u{301}JPG",
+    ])
+    func aStoredKeysStemIsTheStemsKey(path: String) {
+        for capabilities in [VolumeNamespaceCapabilities.caseInsensitive, .caseSensitive] {
+            let relativePath = MediaRelativePath(rawValue: path)
+            let folder = relativePath.folder
+            let stemPath = MediaRelativePath(rawValue: folder.isEmpty ? relativePath.stem : folder + "/" + relativePath.stem)
+            let cut = FilesystemNamespaceSemantics.stemKey(
+                of: FilesystemNamespaceSemantics.nameKey(relativePath: relativePath, capabilities: capabilities)
+            )
+            #expect(cut == FilesystemNamespaceSemantics.nameKey(relativePath: stemPath, capabilities: capabilities))
+        }
     }
 
     @Test func aRawAndItsJPEGArePairedAndTheJPEGIsTheKey() throws {

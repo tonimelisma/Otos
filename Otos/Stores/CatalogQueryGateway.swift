@@ -451,7 +451,7 @@ nonisolated enum PhotoStackSQL {
 
     /// The columns `candidateQuery` selects, in order: each row is read by position.
     private enum Column: Int {
-        case libraryRootID, relativePath, bestKind, keyChosenAt
+        case libraryRootID, relativePath, bestKind, nameKey, sortKey, keyChosenAt
     }
 
     static func fetchCandidates(rootIDs: [Int64], db: Database) throws -> Candidates {
@@ -471,6 +471,8 @@ nonisolated enum PhotoStackSQL {
             byRoot[row[Column.libraryRootID.rawValue], default: []].append(PhotoStackCandidate(
                 relativePath: MediaRelativePath(rawValue: row[Column.relativePath.rawValue]),
                 kind: kind,
+                nameKey: FilesystemNameKey(rawValue: row[Column.nameKey.rawValue]),
+                sortKey: row[Column.sortKey.rawValue],
                 keyChosenAtUnixMs: row[Column.keyChosenAt.rawValue]
             ))
         }
@@ -491,7 +493,8 @@ nonisolated enum PhotoStackSQL {
                 WHERE library_root_id IN (\(placeholders)) AND best_kind = 'raw'
                   AND \(CatalogVisibilitySQL.isPresent("media_asset"))
             )
-            SELECT still.library_root_id, still.relative_path, still.best_kind, still.stack_key_chosen_at_unix_ms
+            SELECT still.library_root_id, still.relative_path, still.best_kind, still.relative_path_key,
+                   still.sort_key, still.stack_key_chosen_at_unix_ms
             FROM raw_folder
             JOIN media_asset AS still
               ON still.library_root_id = raw_folder.library_root_id

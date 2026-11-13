@@ -881,7 +881,6 @@ extension CatalogStore {
     /// no longer cataloged are left out.
     func peopleSnapshot(availableLibraryPaths: Set<LibraryRootPath> = []) async throws -> PeopleSnapshot {
         let pathsByRowID = roots.pathsByRowID
-        let capabilitiesByRowID = pathsByRowID.compactMapValues { roots[$0]?.capabilities }
         let faceRootIDs = availableLibraryPaths.compactMap { path in
             roots[path].flatMap { $0.root.kind.readsFaces ? $0.rowID : nil }
         }.sorted()
@@ -964,11 +963,7 @@ extension CatalogStore {
             var photoOfStackMember: [MediaAssetID: MediaAssetID] = [:]
             for (rowID, candidates) in try PhotoStackSQL.fetchCandidates(rootIDs: faceRootIDs, db: db).byRoot {
                 guard let rootPath = pathsByRowID[rowID] else { continue }
-                for stack in PhotoStackRule.stacks(
-                    candidates: candidates,
-                    libraryRootPath: rootPath,
-                    capabilities: capabilitiesByRowID[rowID] ?? .unknown
-                ) {
+                for stack in PhotoStackRule.stacks(candidates: candidates, libraryRootPath: rootPath) {
                     for member in stack.members {
                         photoOfStackMember[member] = stack.key
                     }
@@ -1819,11 +1814,7 @@ extension CatalogStore {
             guard let rootPath = validRootPathsByRowID[rowID] else {
                 continue
             }
-            stacks += PhotoStackRule.stacks(
-                candidates: candidates,
-                libraryRootPath: rootPath,
-                capabilities: roots[rootPath]?.capabilities ?? .unknown
-            )
+            stacks += PhotoStackRule.stacks(candidates: candidates, libraryRootPath: rootPath)
         }
         let catalogStacks = CatalogStacks(stacks)
         let stackRuleDuration = ContinuousClock.now - ruleStart

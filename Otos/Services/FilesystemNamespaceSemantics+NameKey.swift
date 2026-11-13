@@ -18,9 +18,15 @@ nonisolated struct FilesystemNameKey: Hashable, Sendable {
         lhs.rawValue.utf8.elementsEqual(rhs.rawValue.utf8)
     }
 
+    /// The same bytes `==` compares, fed to the hasher in one call. A string whose UTF-8 is
+    /// not stored contiguously (one bridged from Foundation) is copied first, so equal keys
+    /// always hash the same buffer.
     func hash(into hasher: inout Hasher) {
-        for byte in rawValue.utf8 {
-            hasher.combine(byte)
+        let hashed: Void? = rawValue.utf8.withContiguousStorageIfAvailable { bytes in
+            hasher.combine(bytes: UnsafeRawBufferPointer(bytes))
+        }
+        if hashed == nil {
+            Array(rawValue.utf8).withUnsafeBytes { hasher.combine(bytes: $0) }
         }
     }
 }
@@ -104,9 +110,23 @@ extension FilesystemNamespaceSemantics {
         relativePath: MediaRelativePath,
         capabilities: VolumeNamespaceCapabilities
     ) -> FilesystemNameKey {
-        let folder = relativePath.folder
-        let stemPath = folder.isEmpty ? relativePath.stem : folder + "/" + relativePath.stem
-        return nameKey(relativePath: MediaRelativePath(rawValue: stemPath), capabilities: capabilities)
+        stemKey(of: nameKey(relativePath: relativePath, capabilities: capabilities))
+    }
+
+    /// The stem key of a path whose name key is `key`: the key without its file name's last
+    /// extension. Decomposition and case folding never move or make a `/` or `.` and keep
+    /// character boundaries, so cutting the key gives the key of the cut path; a reader that holds a stored key cuts it instead of
+    /// normalizing the path again. A name whose only dot leads it (`.hidden`) has no
+    /// extension, as `MediaRelativePath.stem` reads it.
+    nonisolated static func stemKey(of key: FilesystemNameKey) -> FilesystemNameKey {
+        // By character, as `MediaRelativePath.stem` finds the dot: a dot a combining mark
+        // follows is another character, not an extension's dot.
+        let text = key.rawValue
+        let nameStart = text.lastIndex(of: "/").map(text.index(after:)) ?? text.startIndex
+        guard let dot = text[nameStart...].lastIndex(of: "."), dot != nameStart else {
+            return key
+        }
+        return FilesystemNameKey(rawValue: String(text[..<dot]))
     }
 
     /// Probes case-sensitivity for a root URL, or reports `.unknown`.

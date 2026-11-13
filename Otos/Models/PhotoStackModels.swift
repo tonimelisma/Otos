@@ -20,11 +20,14 @@ nonisolated struct PhotoStackID: Hashable, Sendable {
     let key: FilesystemNameKey
 }
 
-/// One still that may belong to a stack, as the Store reads it: its path, its kind, and
-/// when the user made it its stack's key (nil when never).
+/// One still that may belong to a stack, as the Store reads it: its path, its kind, its
+/// stored name key and natural-order sort key (ARC-056, which every path write keeps
+/// current), and when the user made it its stack's key (nil when never).
 nonisolated struct PhotoStackCandidate: Equatable, Sendable {
     let relativePath: MediaRelativePath
     let kind: MediaKind
+    let nameKey: FilesystemNameKey
+    let sortKey: String
     var keyChosenAtUnixMs: Int64?
 }
 
@@ -81,45 +84,28 @@ nonisolated enum PhotoStackRule {
     /// (owner, 2026-11-13).
     static func stacks(
         candidates: [PhotoStackCandidate],
-        libraryRootPath: LibraryRootPath,
-        capabilities: VolumeNamespaceCapabilities
+        libraryRootPath: LibraryRootPath
     ) -> [PhotoStack] {
-        // The member the user chose most recently, per stem key; a choice on a file that is
-        // no longer in a stack chooses nothing.
-        var chosenByStem: [FilesystemNameKey: (path: MediaRelativePath, at: Int64)] = [:]
-        for candidate in candidates {
-            guard let at = candidate.keyChosenAtUnixMs else { continue }
-            let stem = FilesystemNamespaceSemantics.stemKey(
-                relativePath: candidate.relativePath,
-                capabilities: capabilities
-            )
-            if chosenByStem[stem].map({ at > $0.at }) ?? true {
-                chosenByStem[stem] = (candidate.relativePath, at)
-            }
-        }
+        // The stem key is cut from the stored name key, never normalized again here.
         let byStem = Dictionary(grouping: candidates.filter { $0.kind != .video }) {
-            FilesystemNamespaceSemantics.stemKey(relativePath: $0.relativePath, capabilities: capabilities)
+            FilesystemNamespaceSemantics.stemKey(of: $0.nameKey)
         }
         return byStem.compactMap { key, group -> PhotoStack? in
-            let chosenKey = chosenByStem[key]?.path
             guard group.count == 2,
                   let raw = group.first(where: { $0.kind == .raw }),
                   let processed = group.first(where: { $0.kind == .image })
             else {
                 return nil
             }
-            let members = [raw, processed]
-                .sorted {
-                    MediaSortKey.naturalKey($0.relativePath.rawValue) < MediaSortKey.naturalKey($1.relativePath.rawValue)
-                }
-                .map { MediaAssetID(libraryRootPath: libraryRootPath, relativePath: $0.relativePath) }
             let rawID = MediaAssetID(libraryRootPath: libraryRootPath, relativePath: raw.relativePath)
             let processedID = MediaAssetID(libraryRootPath: libraryRootPath, relativePath: processed.relativePath)
+            // The member the user chose most recently, else the processed file.
+            let chosen = group.filter { $0.keyChosenAtUnixMs != nil }
+                .max { ($0.keyChosenAtUnixMs ?? 0) < ($1.keyChosenAtUnixMs ?? 0) }
             return PhotoStack(
                 id: PhotoStackID(kind: .pair, libraryRootPath: libraryRootPath, key: key),
-                members: members,
-                key: chosenKey.flatMap { chosen in members.first { $0.relativePath == chosen } }
-                    ?? processedID,
+                members: raw.sortKey < processed.sortKey ? [rawID, processedID] : [processedID, rawID],
+                key: chosen.map { $0.relativePath == raw.relativePath ? rawID : processedID } ?? processedID,
                 rawMembers: [rawID]
             )
         }
