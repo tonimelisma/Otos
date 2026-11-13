@@ -67,7 +67,10 @@ primary location and Places (ADR 0040); confirmed faces (ADR 0047); how search r
   still owed reads `Not Checked Yet` and a new thumbnail or preview hides the old one. While
   the pane shows an item, each announcement of new readings from search's index re-reads
   this section alone for it (`startRecognizedRefresh`), so a photo read while it is shown
-  fills in without reselecting it and the place lookup is not restarted.
+  fills in without reselecting it and the place lookup is not restarted. Each Info read rings
+  the same newest-wins doorbell as it lands: an announcement made while that read was in
+  flight re-read the item shown before it, and the read lands with what it saw before the
+  reading, so one more re-read is what covers it (ADR 0032 rule 2).
 - **Label names ship with Otos.** Vision names its labels in English only. Otos ships
   `SceneLabelNames.tsv`: each label in each language Apple Translation offers, translated as a
   photo's caption ("Photo: pool") and kept only when it reads back into English as the same

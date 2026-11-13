@@ -330,6 +330,9 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let sceneLabelNames = SceneLabelNames(bundle: Bundle(for: CatalogWindowViewModel.self))
     /// Re-reads In This Photo as search's index reads (`startRecognizedRefresh`).
     @ObservationIgnored var recognizedRefreshTask: Task<Void, Never>?
+    /// Rings `recognizedRefreshTask`: search's index rings it as it reads, and every Info read
+    /// rings it as it lands.
+    @ObservationIgnored var recognizedDoorbell: AsyncStream<Void>.Continuation?
     /// The window's undo stack: likes (APP-039), Move to Trash (ADR 0022) and edits (ADR
     /// 0036). One window, one manager, owned here so Edit ▸ Undo renders `undoMenuState`
     /// rather than searching a responder chain that ends in an AppKit collection view.
@@ -857,6 +860,7 @@ final class CatalogWindowViewModel {
         openWithMenuTask?.cancel()
         photoInfoTask?.cancel()
         recognizedRefreshTask?.cancel()
+        recognizedDoorbell?.finish()
         faceCandidatesTask?.cancel()
         placeNameTask?.cancel()
         focusedKindTask?.cancel()
