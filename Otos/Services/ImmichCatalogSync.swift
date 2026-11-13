@@ -39,6 +39,16 @@ nonisolated struct ImmichSessionSyncSource: ImmichSyncSource {
 }
 
 /// What one sync pass did.
+/// What a pass reports to its account's owner as it goes, in this order: its server
+/// answered (once, as soon as its first batch is applied and acknowledged), its listing was
+/// applied to the stream's end (before the server's images are fetched, which on a first
+/// sync takes far longer), and its outcome.
+nonisolated enum ImmichSyncReport: Equatable, Sendable {
+    case answered
+    case listed
+    case ended(ImmichSyncPassOutcome)
+}
+
 nonisolated enum ImmichSyncPassOutcome: Equatable, Sendable {
     /// The stream was applied to its end. `full` is a resync after the server reset the
     /// cursor, whose completion proved every unlisted row deleted.
@@ -111,30 +121,28 @@ actor ImmichCatalogSync {
         ring.finish()
     }
 
-    /// The loop: one pass per doorbell ring, until `finish()` or cancellation. `onAnswered`
-    /// hears that a pass's server answered, once per pass, as soon as its first batch is
-    /// applied and acknowledged; `onPass` hears each pass's outcome before the next ring is
-    /// read. A first sync of a large library takes minutes, and its server has answered
-    /// long before it ends.
-    func run(
-        onAnswered: @escaping @Sendable () async -> Void = {},
-        onPass: @Sendable (ImmichSyncPassOutcome) async -> Void = { _ in }
-    ) async {
+    /// The loop: one pass per doorbell ring, until `finish()` or cancellation. `onReport`
+    /// hears each pass's reports (`ImmichSyncReport`), its outcome last, before the next ring
+    /// is read. A first sync of a large library takes minutes to list and hours to fetch its
+    /// images, and its server has answered long before it ends.
+    func run(onReport: @escaping @Sendable (ImmichSyncReport) async -> Void = { _ in }) async {
         for await _ in doorbell {
             guard !Task.isCancelled else {
                 return
             }
-            await onPass(pass(onAnswered: onAnswered))
+            await onReport(.ended(pass(onReport: onReport)))
         }
     }
 
     /// One pass: the stream applied to its end, then the server's own images fetched for
     /// every row still owed them (ADR 0046 §7). The pass's outcome is the stream's; a
     /// product that could not be fetched stays owed and is asked for again next pass.
-    func pass(onAnswered: @escaping @Sendable () async -> Void = {}) async -> ImmichSyncPassOutcome {
-        var answered = Answered(report: onAnswered)
+    /// `onReport` hears `answered` and `listed`; the caller reports the outcome.
+    func pass(onReport: @escaping @Sendable (ImmichSyncReport) async -> Void = { _ in }) async -> ImmichSyncPassOutcome {
+        var answered = Answered(report: { await onReport(.answered) })
         let outcome = await syncListing(answered: &answered)
         if case .synced = outcome {
+            await onReport(.listed)
             _ = await fetchProducts()
         }
         return outcome

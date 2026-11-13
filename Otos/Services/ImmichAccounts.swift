@@ -21,7 +21,8 @@ nonisolated struct ImmichAccountStatus: Equatable, Sendable {
     }
 
     var reach: Reach
-    /// A pass whose server answered is applying its stream.
+    /// A pass whose server answered is running: applying its stream, then fetching the
+    /// server's images for the rows still owed them.
     var isSyncing = false
     /// When a pass last applied the stream to its end, kept across launches; nil when none
     /// has, or when the catalog could not say.
@@ -383,14 +384,9 @@ actor ImmichAccounts {
         let path = root.path
         // The loop holds the sync, never this owner: a weak reference per pass report.
         let loop = Task { [sync] in
-            await sync.run(
-                onAnswered: { [weak self] in
-                    await self?.serverAnswered(for: path)
-                },
-                onPass: { [weak self] outcome in
-                    await self?.passEnded(outcome, for: path)
-                }
-            )
+            await sync.run { [weak self] report in
+                await self?.received(report, for: path)
+            }
         }
         accounts[path] = Account(root: root, client: client, token: token, sync: sync, loop: loop)
         update(ImmichAccountStatus(reach: .connecting, lastSynced: lastSynced), for: path)
@@ -404,6 +400,17 @@ actor ImmichAccounts {
         account.timer?.cancel()
         account.sync.finish()
         account.loop.cancel()
+    }
+
+    private func received(_ report: ImmichSyncReport, for path: LibraryRootPath) {
+        switch report {
+        case .answered:
+            serverAnswered(for: path)
+        case .listed:
+            listed(at: Date(), for: path)
+        case let .ended(outcome):
+            passEnded(outcome, for: path)
+        }
     }
 
     /// A running pass's server answered, so the account is online and syncing before its
@@ -427,7 +434,7 @@ actor ImmichAccounts {
         switch outcome {
         case .synced:
             account.failures = 0
-            synced(at: Date(), for: path)
+            setReach(.online, for: path)
             next = schedule.poll
         case .serverFailed(.unauthorized):
             setReach(.signedOut, for: path)
@@ -464,14 +471,14 @@ actor ImmichAccounts {
         schedule.backoff[min(failures, schedule.backoff.count - 1)]
     }
 
-    /// A pass applied the stream to its end at `date`: the account is online, no longer
-    /// syncing, and its last sync is kept in the catalog for the next launch.
-    private func synced(at date: Date, for path: LibraryRootPath) {
+    /// A pass applied the stream to its end at `date`: the catalog is current with the
+    /// server, so that is its last sync, kept in the catalog for the next launch. It is still
+    /// syncing while it fetches the server's images.
+    private func listed(at date: Date, for path: LibraryRootPath) {
         guard var current = status[path] else {
             return
         }
         current.reach = .online
-        current.isSyncing = false
         current.lastSynced = date
         update(current, for: path)
         let store = store

@@ -513,7 +513,7 @@ struct ImmichAccountControls {
 /// What Settings and the sidebar say about an account (APP-064): when it last synced,
 /// rather than a connection state, while it has synced before.
 nonisolated extension ImmichAccountStatus {
-    /// Settings' Status cell: `Syncing…` while a pass applies the stream, `Synced 3m
+    /// Settings' Status cell: `Syncing…` while a pass applies the stream or fetches the server's images, `Synced 3m
     /// ago` after one finished (also while the server does not answer, which the glyph
     /// beside it says), `Signed Out`, and, before any pass this account ever finished,
     /// `Connecting…` or `Can’t reach server`.

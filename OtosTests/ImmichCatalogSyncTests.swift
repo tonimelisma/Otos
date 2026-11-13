@@ -244,17 +244,47 @@ struct ImmichCatalogSyncTests {
             rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
         )
         let acksWhenAnswered = Mutex<[Int]>([])
+        let record: @Sendable (ImmichSyncReport) async -> Void = { report in
+            if report == .answered {
+                acksWhenAnswered.withLock { $0.append(server.acknowledgements.count) }
+            }
+        }
 
-        let outcome = await sync.pass(onAnswered: {
-            acksWhenAnswered.withLock { $0.append(server.acknowledgements.count) }
-        })
+        let outcome = await sync.pass(onReport: record)
         #expect(outcome == .serverFailed(.unreachable(.networkConnectionLost)))
         #expect(acksWhenAnswered.withLock { $0 } == [1])
 
-        _ = await sync.pass(onAnswered: {
-            acksWhenAnswered.withLock { $0.append(server.acknowledgements.count) }
-        })
+        _ = await sync.pass(onReport: record)
         #expect(acksWhenAnswered.withLock { $0 } == [1])
+        await fixture.store.shutdown()
+    }
+
+    /// A pass reports its listing applied once the stream reaches its end and before any of
+    /// the server's images is fetched, which on a first sync takes far longer; a pass whose
+    /// stream fails reports no listing.
+    @Test func aPassReportsItsListingBeforeItFetchesImages() async throws {
+        let fixture = try await FileFixture.make()
+        let preview = try Self.jpeg(width: 300, height: 200)
+        let server = ScriptedServer(
+            [[Self.asset("a"), Self.exif("a", size: 1), Self.complete], [Self.asset("b"), Self.complete]],
+            failAfter: [nil, 1],
+            previews: { _ in preview }
+        )
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        let previewsWhenListed = Mutex<[Int]>([])
+        let record: @Sendable (ImmichSyncReport) async -> Void = { report in
+            if report == .listed {
+                previewsWhenListed.withLock { $0.append(server.requestedPreviews.count) }
+            }
+        }
+
+        #expect(await sync.pass(onReport: record) == .synced(listed: 1, deleted: 0, full: false))
+        #expect(previewsWhenListed.withLock { $0 } == [0])
+        #expect(server.requestedPreviews == ["a"])
+        _ = await sync.pass(onReport: record)
+        #expect(previewsWhenListed.withLock { $0 } == [0])
         await fixture.store.shutdown()
     }
 
