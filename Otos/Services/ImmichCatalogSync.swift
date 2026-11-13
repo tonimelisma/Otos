@@ -490,6 +490,7 @@ actor ImmichCatalogSync {
         }
         OtosLog.thumbnails.noticeOperation("immich.products", phase: "finished", fields: [
             "rootPath": rootPath.rawValue, "made": "\(tally.made)", "unreadable": "\(tally.unreadable)",
+            "refused": "\(tally.refused)",
         ])
         return .finished(made: tally.made, unreadable: tally.unreadable)
     }
@@ -497,6 +498,8 @@ actor ImmichCatalogSync {
     private struct ProductTally {
         var made = 0
         var unreadable = 0
+        /// Assets whose preview the server answered it does not have.
+        var refused = 0
     }
 
     /// One page of owed rows: each preview fetched and staged, then the page applied in
@@ -519,6 +522,15 @@ actor ImmichCatalogSync {
             let data: Data
             do {
                 data = try await source.preview(assetID: candidate.sourceItemID)
+            } catch let ImmichClientError.refused(status) {
+                // The server answered that it has no preview of this asset (one it has not
+                // made yet, say): that asset stays owed and is asked for again next pass, and
+                // the rest are still fetched.
+                tally.refused += 1
+                OtosLog.thumbnails.noticeOperation("immich.products", phase: "refused", fields: [
+                    "relativePath": candidate.id.relativePath.rawValue, "status": "\(status)",
+                ])
+                continue
             } catch {
                 await apply(results)
                 OtosLog.thumbnails.noticeOperation("immich.products", phase: "serverFailed", fields: [

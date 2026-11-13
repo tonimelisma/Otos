@@ -431,6 +431,38 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    /// A preview the server answers it does not have (a 404 for one asset) is skipped and
+    /// asked for again next pass, and every asset after it is still fetched; a refused
+    /// session still ends the pass.
+    @Test func aPreviewTheServerDoesNotHaveIsSkippedNotAnEndToThePass() async throws {
+        let fixture = try await FileFixture.make()
+        let preview = try Self.jpeg(width: 300, height: 200)
+        let server = ScriptedServer(
+            [[Self.asset("a"), Self.asset("b"), Self.asset("c"), Self.exif("a", size: 1), Self.exif("b", size: 1),
+              Self.exif("c", size: 1), Self.complete]],
+            previews: { id in
+                guard id != "a" else {
+                    throw ImmichClientError.refused(status: 404)
+                }
+                return preview
+            }
+        )
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        _ = await sync.pass()
+        #expect(server.requestedPreviews.sorted() == ["a", "b", "c"])
+        let owed = try await fixture.store.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
+        #expect(owed.map(\.sourceItemID) == ["a"])
+
+        let signedOut = ScriptedServer([], previews: { _ in throw ImmichClientError.unauthorized })
+        let refusedSession = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: signedOut, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        #expect(await refusedSession.fetchProducts() == .serverFailed(made: 0))
+        await fixture.store.shutdown()
+    }
+
     /// A preview that is no image is skipped and asked for again next pass; a server that
     /// stops answering ends the product pass, and the rest stay owed.
     @Test func productsTheServerCannotGiveStayOwed() async throws {
