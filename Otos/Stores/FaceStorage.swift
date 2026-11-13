@@ -227,6 +227,7 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
     case rootID, path, faceIndex, embedding, personID, assignment, likeness, isKeyPhoto, isNotFace
     case boxX, boxY, boxWidth, boxHeight
     case captureLocal, previewPath, renderedRevision, editRecipeJSON, previewEditIsKnown
+    case faceFramesPath, frameIndex, isVideo
 
     /// The expression each column is read from, over `face f` joined to `media_asset m`.
     var sql: String {
@@ -249,6 +250,9 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
         case .renderedRevision: "m.rendered_revision"
         case .editRecipeJSON: "m.edit_recipe_json"
         case .previewEditIsKnown: PreviewFaceSQL.previewEditIsKnown
+        case .faceFramesPath: "m.face_frames_path"
+        case .frameIndex: "f.frame_index"
+        case .isVideo: "m.best_kind = 'video'"
         }
     }
 

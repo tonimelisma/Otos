@@ -13,8 +13,10 @@ import UniformTypeIdentifiers
 /// `ImageRenderer` development that becomes the stored 2560 px preview and the 256 px
 /// thumbnail drawn from it (ADR 0035); for a video, or a still the renderer cannot read,
 /// QuickLook's thumbnail and no preview. A card's metadata pass makes a provisional QuickLook
-/// thumbnail instead of a rendering. Faces are not an enrichment product: they are read from
-/// the stored preview this rendering makes (`PreviewFaceReader`, ADR 0047). It is a small `Sendable` value with one
+/// thumbnail instead of a rendering. A still's faces are not an enrichment product: they are
+/// read from the stored preview this rendering makes (`PreviewFaceReader`, ADR 0047). A
+/// library video, which has no preview, is read for its faces here, from its frames, in the
+/// same read as its other products (`VideoFaceReader`). It is a small `Sendable` value with one
 /// injectable closure, mirroring `CatalogScanner`, so the coordinator, the import and tests
 /// can substitute a fake.
 ///
@@ -46,13 +48,15 @@ nonisolated struct MediaEnricher {
     /// signature stays small; the coordinator supplies the catalog's thumbnail
     /// directory. `contentHasher` is injectable so tests can prove a
     /// `.removableVolume` source performs no full-file read — the digest read is the
-    /// only byte source that reads a whole file.
+    /// only byte source that reads a whole file. `analyzeFaces` reads a video's frames for
+    /// faces; the app shares its one analyzer, and a test stands in for the model.
     static func live(
         thumbnailDirectory: URL,
         readinessChecker: any EnrichmentReadinessChecking = LiveEnrichmentReadinessChecker(),
         contentHasher: @escaping @Sendable (URL) -> ContentHasher.Outcome = { url in
             ContentHasher().hashMaterializedFile(at: url)
-        }
+        },
+        analyzeFaces: @escaping FaceAnalysisReader = FaceAnalyzer.bundledAnalysis()
     ) -> MediaEnricher {
         MediaEnricher { id, access, sourceSize, sourceMTimeSeconds, scope, recipe in
             // A camera row has no local file, so the readiness checker — which asks the
@@ -144,7 +148,8 @@ nonisolated struct MediaEnricher {
                 ),
                 contentHash: contentHash,
                 thumbnailDirectory: thumbnailDirectory,
-                readinessChecker: readinessChecker
+                readinessChecker: readinessChecker,
+                analyzeFaces: analyzeFaces
             )
         }
     }
@@ -348,13 +353,14 @@ nonisolated struct MediaEnricher {
     }
 
     /// Makes the scope's products other than the digest from a local file whose bytes are
-    /// already read for it: metadata, then a rendering or a provisional thumbnail. Each is
-    /// present in the result only when the scope covered it (ADR 0009).
+    /// already read for it: metadata, then a rendering or a provisional thumbnail, and a
+    /// video's faces. Each is present in the result only when the scope covered it (ADR 0009).
     private static func produce(
         _ read: LocalRead,
         contentHash: XXH3Digest128?,
         thumbnailDirectory: URL,
-        readinessChecker: any EnrichmentReadinessChecking
+        readinessChecker: any EnrichmentReadinessChecking,
+        analyzeFaces: @escaping FaceAnalysisReader
     ) async -> EnrichmentOutcome {
         let (id, url, scope, recipe) = (read.id, read.url, read.scope, read.recipe)
         var metadata: EnrichedMetadata?
@@ -376,10 +382,29 @@ nonisolated struct MediaEnricher {
             return .notMaterialized
         }
         let productsStart = ContinuousClock.now
+        var products: [String] = []
+        var videoFaces: EnrichedVideoFaces?
+        // Read before anything is staged, so a failed read leaves nothing to discard.
+        if scope.contains(.videoFaces) {
+            do {
+                let faces = try await VideoFaceReader.read(
+                    url, analyzeFaces: analyzeFaces,
+                    framesRelativeName: ThumbnailStore.faceFramesRelativeName(for: id), in: thumbnailDirectory
+                )
+                videoFaces = faces
+                products.append("videoFaces=\(faces.faces.count)")
+            } catch {
+                OtosLog.metadata.errorOperation("videoFaces.read", phase: "failed", fields: [
+                    "rootPath": id.libraryRootPath.rawValue,
+                    "relativePath": id.relativePath.rawValue,
+                    "error": String(describing: error),
+                ])
+                return .transient
+            }
+        }
         var rendering: EnrichedRendering?
         var provisionalThumbnail: StagedDerivedImage?
         var verdict: DecodeVerdict?
-        var products: [String] = []
         if scope.contains(.rendering) {
             guard let still = await Self.renderStill(
                 id: id, url: url, recipe: recipe?.recipe ?? .neutral, directory: thumbnailDirectory
@@ -425,7 +450,8 @@ nonisolated struct MediaEnricher {
                 sourceMTimeSeconds: read.sourceMTimeSeconds ?? -1,
                 contentHash: contentHash,
                 editRevision: recipe?.revision ?? 0,
-                decodeVerdict: verdict
+                decodeVerdict: verdict,
+                videoFaces: videoFaces
             )
         )
     }

@@ -14,19 +14,22 @@ import GRDB
 /// expiry stands in for "the claimant is still alive".
 nonisolated enum EnrichmentClaimGateway {
     /// Partial-index names for the claim queries' `INDEXED BY`, one pair per
-    /// `EnrichmentClaim` (ADR 0009, ADR 0018): metadata only, for a card's first pass, a
-    /// camera and an Immich account, which leave it as soon as their metadata is current;
-    /// and the products (metadata, rendering, digest), for a fixed library and a card's
-    /// second pass.
+    /// `EnrichmentClaim` (ADR 0009, ADR 0018, ADR 0047): metadata only, for a card's first
+    /// pass, a camera and an Immich account, which leave it as soon as their metadata is
+    /// current; the products (metadata, rendering, digest), for a card's second pass; and a
+    /// fixed library's every product, a video's faces included.
     static let broadGlobalIndexName = "idx_media_asset_needs_enrichment_global"
     static let broadRootIndexName = "idx_media_asset_needs_enrichment_root"
     static let metadataOnlyGlobalIndexName = "idx_media_asset_needs_enrichment_global_metadata_only"
     static let metadataOnlyRootIndexName = "idx_media_asset_needs_enrichment_root_metadata_only"
+    static let libraryGlobalIndexName = "idx_media_asset_needs_enrichment_global_library"
+    static let libraryRootIndexName = "idx_media_asset_needs_enrichment_root_library"
 
     static func globalIndexName(_ claim: EnrichmentClaim) -> String {
         switch claim {
         case .metadata: metadataOnlyGlobalIndexName
         case .products: broadGlobalIndexName
+        case .library: libraryGlobalIndexName
         }
     }
 
@@ -34,6 +37,7 @@ nonisolated enum EnrichmentClaimGateway {
         switch claim {
         case .metadata: metadataOnlyRootIndexName
         case .products: broadRootIndexName
+        case .library: libraryRootIndexName
         }
     }
 
@@ -99,6 +103,13 @@ nonisolated enum EnrichmentClaimGateway {
         stampStalenessSQL(stamp: "rendered_source")
     }
 
+    /// A video whose faces (its frames' reading, ADR 0047) were read from bytes other than
+    /// the current `(size, mtime)`, or never. A still's faces are read from its preview, never
+    /// by enrichment, so no still is owed them here.
+    static func videoFacesStalenessSQLPredicate() -> String {
+        "best_kind = 'video' AND (\(stampStalenessSQL(stamp: "faces_source")))"
+    }
+
     static func hashStalenessSQLPredicate() -> String {
         """
         content_hash_xxh3_128 IS NULL
@@ -130,6 +141,13 @@ nonisolated enum EnrichmentClaimGateway {
             \(metadataStalenessSQLPredicate())
                OR \(renderingStalenessSQLPredicate())
                OR \(hashStalenessSQLPredicate())
+            """
+        case .library:
+            """
+            \(metadataStalenessSQLPredicate())
+               OR \(renderingStalenessSQLPredicate())
+               OR \(hashStalenessSQLPredicate())
+               OR (\(videoFacesStalenessSQLPredicate()))
             """
         }
     }

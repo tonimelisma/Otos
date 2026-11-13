@@ -96,7 +96,8 @@ struct PreviewFaceReaderTests {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "clip.mov"])
         let still = library.id("a.jpg")
         #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.isEmpty)
-        #expect(try await library.store.peopleSnapshot(availableLibraryPaths: [library.rootPath]).uncheckedPhotoCount == 1)
+        // The video is not the preview reader's; enrichment owes its faces (ENR-031).
+        #expect(try await library.store.peopleSnapshot(availableLibraryPaths: [library.rootPath]).unchecked == MediaCount(photos: 1, videos: 1))
 
         try await Self.render(still, in: library, editRevision: 0)
         let first = try await library.store.previewFaceCandidates(limit: 10).candidates
@@ -104,7 +105,7 @@ struct PreviewFaceReaderTests {
         #expect(first.first?.recipe == .neutral)
         #expect(try await library.store.applyPreviewFaces(first.map { PreviewFaceResult(candidate: $0, faces: .noneFound) }) == 1)
         #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.isEmpty)
-        #expect(try await library.store.peopleSnapshot(availableLibraryPaths: [library.rootPath]).uncheckedPhotoCount == 0)
+        #expect(try await library.store.peopleSnapshot(availableLibraryPaths: [library.rootPath]).unchecked == MediaCount(videos: 1))
 
         let saved = try #require(try await library.store.setEditRecipe(Self.leftHalf, for: still).saved)
         try await Self.render(still, in: library, editRevision: saved.revision)

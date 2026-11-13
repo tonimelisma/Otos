@@ -47,7 +47,7 @@ People finds no faces in videos and whether the first frame would do (owner, 202
   (1,939 videos, mean 324 MB). Reading any frame of a cloud-only file downloads the whole
   file, since OneDrive hydrates whole files.
 
-## What this leaves open
+## What this left open (answered below and in ADR 0047)
 
 - **Recognition:** whether a frame's face is matched to the right person was not measured. A
   video frame is compressed and may be motion-blurred; the quality score catches some of it.
@@ -60,3 +60,26 @@ People finds no faces in videos and whether the first frame would do (owner, 202
 - **OneDrive's reliability:** on 2026-11-12 OneDrive downloaded nothing for over 15 minutes
   (connection resets, "OneDrive Hydration -40"), and one download on 2026-11-13 timed out
   mid-file. A video reader has to treat a failed download as a retry, not as "no faces".
+
+## Recognition (2026-11-13, second pass)
+
+The six frames of the 12 videos with a face were decoded again, read with `FaceAnalyzer`
+(revision 3) and compared with the faces the owner's catalog gives each named person (the
+user's, the seeds and Otos's guesses), by best cosine, against assignment's threshold
+(0.434) and margin (0.16). Every video was left as found: downloaded only when dataless, and
+evicted after.
+
+- **60 faces read in 72 frames; 32 reach a named person, 31 past the margin.** The one close
+  call is between two of the children. The other 28 match no one: strangers in four videos.
+- **One person per video across frames:** in every video the same person is best in every
+  frame where they are found, for example one child in all six frames of one video.
+- **Same person across frames of one video:** cosine 0.54–0.98, median 0.78. **Different
+  people in one video:** at most 0.17. Merging a video's faces at the threshold joins each
+  person's frames and no two people.
+- **Unrecognisable faces:** none of the 60 reaches `FaceRecognisability.limit` (the highest
+  reads 0.124).
+- A contact sheet of one face per person per video, with the name Otos would give, was shown
+  to the owner and not committed (family photos).
+
+**Conclusion:** a video's faces are read from these six frames, one face per person per
+video, with the frame it was sharpest in (ADR 0047, ENR-031).

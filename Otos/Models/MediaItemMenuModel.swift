@@ -56,9 +56,9 @@ nonisolated struct FaceMenu: Equatable, Sendable {
         let faces: [FaceID]
         /// The first face's tile, which the Info pane's row shows.
         let tile: FaceTile?
-        /// The photos the group's acts change, where that is worth saying: every photo of an
-        /// unnamed person, and the targeted photos holding the faces when there are several.
-        let photoCount: Int?
+        /// The photos and videos the group's acts change, where that is worth saying: every one
+        /// of an unnamed person, and the targeted ones holding the faces when there are several.
+        let media: MediaCount?
         /// `Change to`, `Assign to` or `Name This Person`: the words the list completes.
         let listTitle: String
         /// The five people the faces most likely are, then `Someone Else…` or `New Name…`.
@@ -67,7 +67,7 @@ nonisolated struct FaceMenu: Equatable, Sendable {
         /// Photo for Sam`.
         let corrections: [Action]
 
-        /// The group's entry: `Sam`, `Sam · 3 Photos`, `Unnamed Person · 14 Photos`,
+        /// The group's entry: `Sam`, `Sam · 3 Photos`, `Unnamed Person · 14 Photos & Videos`,
         /// `Unidentified Face`, `Unidentified Faces · 3 Photos`.
         var title: String {
             let base = switch kind {
@@ -75,7 +75,7 @@ nonisolated struct FaceMenu: Equatable, Sendable {
             case .unnamed: PersonSummary.displayName(nil)
             case .unidentified: faces.count == 1 ? "Unidentified Face" : "Unidentified Faces"
             }
-            return photoCount.map { "\(base) · \(PeopleText.count($0, "Photo"))" } ?? base
+            return media.map { "\(base) · \($0.title)" } ?? base
         }
     }
 

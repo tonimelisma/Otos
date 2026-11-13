@@ -47,7 +47,7 @@ nonisolated struct PersonSheetContext: Equatable, Sendable {
 
     let person: PersonSummary?
     let title: String
-    let photoCount: Int
+    let media: MediaCount
     let faces: [FaceTile]
     let names: [String]
 }
@@ -244,7 +244,7 @@ extension CatalogWindowViewModel {
             "people": "\(people.people.count)",
             "hidden": "\(people.hiddenPeople.count)",
             "faces": "\(people.faceCount)",
-            "unchecked": "\(people.uncheckedPhotoCount)",
+            "unchecked": "\(people.unchecked.total)",
         ])
     }
 
@@ -343,18 +343,16 @@ extension CatalogWindowViewModel {
             return PersonSheetContext(
                 person: summary,
                 title: summary?.name ?? FaceActTitle.nameThisPerson,
-                photoCount: summary?.photoCount ?? Set(faces.map(\.id.asset)).count,
+                media: summary?.media ?? MediaCount(tiles: faces),
                 faces: Array(faces.prefix(PersonSheetContext.faceCount)),
                 names: names.filter { $0 != summary?.name }
             )
         case let .faces(ids):
-            let tiles = ids.compactMap { id in
-                state.people?.photoFaces[id.asset]?.first { $0.id == id }?.tile
-            }
+            let tiles = ids.compactMap(tile(of:))
             return PersonSheetContext(
                 person: nil,
                 title: ids.count == 1 ? "Name This Face" : "Name These Faces",
-                photoCount: Set(ids.map(\.asset)).count,
+                media: MediaCount(tiles: tiles),
                 faces: Array(tiles.prefix(PersonSheetContext.faceCount)),
                 names: names
             )
@@ -540,7 +538,7 @@ extension CatalogWindowViewModel {
     func undoTitle(for act: PeopleAct) -> String {
         switch act {
         case let .move(faces, _), let .moveToNewPerson(faces, _):
-            return FaceActTitle.name(photos: Set(faces.map(\.asset)).count)
+            return FaceActTitle.name(MediaCount(tiles: faces.compactMap(tile(of:))))
         case let .removeName(faces):
             let person = faces.first.flatMap { face in
                 state.people?.photoFaces[face.asset]?.first { $0.id == face }?.person
@@ -550,7 +548,7 @@ extension CatalogWindowViewModel {
             return FaceActTitle.notAFace
         case let .edit(person, name, _):
             if let summary = peopleIndex.summaries[person], summary.name == nil, name != nil {
-                return FaceActTitle.name(photos: summary.photoCount)
+                return FaceActTitle.name(summary.media)
             }
             return "Edit Person"
         case .merge:
@@ -648,16 +646,22 @@ extension CatalogWindowViewModel {
 
     /// The outlined faces' boxes, by photo, as fractions of the upright photo from its
     /// top-left corner. Each surface places them on the picture it shows: a grid tile on
-    /// its edited thumbnail, the loupe and compare panes through their decode's edit.
+    /// its edited thumbnail, the loupe and compare panes through their decode's edit. A
+    /// video's faces are never outlined.
     var outlinedFaceBoxes: [MediaAssetID: [CGRect]] {
-        guard !outlinedFaces.isEmpty, let photoFaces = state.people?.photoFaces else { return [:] }
         var boxes: [MediaAssetID: [CGRect]] = [:]
         for face in outlinedFaces {
-            if let tile = photoFaces[face.asset]?.first(where: { $0.id == face })?.tile {
+            // A video's face box belongs to the frame it was read in, not to what is shown.
+            if let tile = tile(of: face), !tile.isInVideo {
                 boxes[face.asset, default: []].append(tile.box)
             }
         }
         return boxes
+    }
+
+    /// A face's tile, while its photo's faces are published.
+    func tile(of face: FaceID) -> FaceTile? {
+        state.people?.photoFaces[face.asset]?.first { $0.id == face }?.tile
     }
 
     // MARK: - The People filter

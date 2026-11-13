@@ -146,7 +146,7 @@ extension MediaItemContextMenuTests {
         let sam = PersonID(rawValue: 1)
         let ian = PersonID(rawValue: 2)
         let group = FaceMenu.Group(
-            kind: .named("Sam"), person: sam, faces: [face], tile: nil, photoCount: nil,
+            kind: .named("Sam"), person: sam, faces: [face], tile: nil, media: nil,
             listTitle: FaceActTitle.changeTo,
             list: [
                 .init(title: "Ian", command: .giveTo([face], ian), faces: [face]),
@@ -181,7 +181,7 @@ extension MediaItemContextMenuTests {
 
     static func unnamedGroup(_ person: PersonID, face: FaceID, photos: Int) -> FaceMenu.Group {
         FaceMenu.Group(
-            kind: .unnamed, person: person, faces: [face], tile: nil, photoCount: photos,
+            kind: .unnamed, person: person, faces: [face], tile: nil, media: MediaCount(photos: photos),
             listTitle: FaceActTitle.nameThisPerson,
             list: [
                 .init(title: "Sam", command: .nameAs(person, PersonID(rawValue: 2)), faces: [face]),

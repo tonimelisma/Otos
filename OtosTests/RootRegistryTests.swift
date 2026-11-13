@@ -118,7 +118,7 @@ struct RootRegistryTests {
         registry.upsert(libraryState(path: otherPath, rowID: 3, availability: .unavailable))
 
         let partitioned = registry.enrichableRootIDsByFirstClaim()
-        #expect(partitioned.products == [1])
+        #expect(partitioned.library == [1])
         #expect(partitioned.metadataFirst == [2])
     }
 

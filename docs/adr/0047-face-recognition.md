@@ -7,13 +7,15 @@ around auto-tagged faces; the person-admission rule and lapsed seeds added 2026-
 objects Vision took for faces became a person of their own; the image read rewritten
 2026-11-12, when faces moved from the original at full resolution to the stored preview;
 unrecognisable faces kept out of assignment 2026-11-13, after faces of different people the
-model cannot tell apart became a person of their own. The
+model cannot tell apart became a person of their own; a library's videos read for faces
+2026-11-13, when the owner asked for faces in videos. The
 model, precision and face-admission rules are decided on measured evidence
 (`docs/research/2026-11-07-face-recognition-models.md`,
 `docs/research/2026-11-12-face-person-admission.md`); the image read on
 `docs/research/2026-11-12-faces-from-the-preview.md`; assignment on
 `docs/research/2026-11-12-face-auto-assignment.md` and
-`docs/research/2026-11-13-unrecognisable-faces.md`.
+`docs/research/2026-11-13-unrecognisable-faces.md`; videos on
+`docs/research/2026-11-13-faces-in-video-frames.md`.
 
 Built: detection, the analyser and the model (#593), stored faces (#601), faces read from
 stored previews (`PreviewFaceReader`, for Immich accounts in #605 and for every still since),
@@ -80,6 +82,33 @@ grouping had put with the right child.
   A preview of an edit the photo no longer holds is not read until its new rendering lands; an
   unedited preview is read as the unedited photo until the rendering of a first edit replaces it.
   A tone edit is not undone.
+
+### Videos
+
+- **Which:** a library's videos (owner decision, 2026-11-13). A card's and a camera's are read
+  once imported, as their stills are; an Immich account's are not read. A Live Photo's movie
+  is left out of People: its still holds its faces (ADR 0041).
+- **The read:** a video has no stored preview, so its faces are an enrichment product, made in
+  the same read of its local bytes as its other products under the library claim
+  (`EnrichmentClaim.library`). Enrichment downloads the video once for all of them, in the
+  background and above the free-space floor (ADR 0027); a library's 1,939 videos are
+  627 GB (owner decision, 2026-11-13). `VideoFaceReader` decodes the frames at 0, 10, 25,
+  50, 75 and 90% upright at full resolution with no time tolerance, so a re-read finds the
+  same frames, and reads each with `FaceAnalyzer`. Measured on 24 of the owner's videos: these
+  six frames find a face in each of the 12 that hold one, and of 60 faces read, 31 matched a
+  named person past the margin, the same person in every frame of a video.
+- **One face per person:** faces taken sharpest first join the person they are most like at
+  the assignment threshold (0.434) who has no face in that frame. Measured: one person's
+  frames score 0.54–0.98 against each other within a video, and different people at most
+  0.17. Two faces of one frame stay two people, and an unrecognisable face is never joined.
+- **Frames:** the frames the kept faces were read in are stored as the images of one HEIC of
+  the preview's size (`media_asset.face_frames_path`), a derived image like the preview,
+  deleted and renamed with it; each face names its image (`face.frame_index`), and its tile
+  is cut from it. A face's box is a fraction of its frame.
+- **What a video's face cannot do:** it is never outlined, since its box is one frame's and the
+  video shows others, and it is no key photo (owner decisions, 2026-11-13).
+- **Counts:** a count says what it holds (`MediaCount`): `photos`, `videos`, or `photos and
+  videos` once both are (owner decision, 2026-11-13).
 
 ### Detection and admission
 
@@ -281,6 +310,13 @@ grouping had put with the right child.
   vector to track how recognisable a face is, and the shipped package can expose it without
   changing a weight. On the owner's catalog it does not separate objects from faces: a cartoon
   reads 21.9 and a mascot 17.8, while a clear frontal face reads 9.99.
+- **The first frame, or QuickLook's thumbnail, of a video:** QuickLook made a thumbnail for 15
+  of 24 measured videos and its frame held a face in 3; any one fixed frame found faces in at
+  most 9 of the 12 videos that hold one.
+- **A video's six frames as six faces:** each person would be up to six faces of one video,
+  six times the work and counts for one appearance.
+- **Every sampled frame stored for a video's faces:** about 2.4 MB a video against the frames
+  kept, and only the kept faces' frames are shown.
 - **A higher capture-quality floor:** 15% of the catalog's faces are under 0.4 and a named
   adult's median is 0.43, so a floor high enough for the objects would drop real faces.
 - **Classifying the aligned crop:** the 112 px crop shows the classifier only skin and features.
@@ -316,6 +352,10 @@ grouping had put with the right child.
   renderer is checked with `script/face-accuracy.sh` like any analysis change.
 - **Hidden faces are turned away too:** a face behind a mask or a net, or a face printed on a
   document, can read under the person rule and stay unread (3 of 5,477 measured).
+- **Videos download for a new revision:** a video's faces are read from its original, so a new
+  analysis revision that changes them downloads every library video again. A face the user
+  said something about that a re-read does not find keeps its word and loses its frame: the
+  re-read replaced the frames file, and its tile shows the placeholder.
 - **Model change:** a new model is a new revision that re-analyses every photo, and stored names
   carry over through the user's faces and the seeds. `FaceRecognisability.direction`
   is rebuilt for it the same way.

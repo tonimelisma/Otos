@@ -277,7 +277,9 @@ nonisolated enum PeopleStateBuilder {
                 birthday: person.birthday,
                 isHidden: person.isHidden,
                 isFavorite: person.isFavorite,
-                photoCount: Set(own.map { snapshot.photoOfStackMember[$0.id.asset] ?? $0.id.asset }).count,
+                media: MediaCount(items: own.map { face in
+                    (snapshot.photoOfStackMember[face.id.asset] ?? face.id.asset, snapshot.tiles[face.id]?.isInVideo ?? false)
+                }),
                 cover: keyPhoto ?? own.first,
                 userFaces: (userFaces[person.id] ?? []).sorted(by: newestFirst),
                 anchorPhotos: anchorPhotos[person.id] ?? []
@@ -286,7 +288,7 @@ nonisolated enum PeopleStateBuilder {
         return CatalogPeopleState(
             people: people,
             photoFaces: photoFaces,
-            uncheckedPhotoCount: snapshot.uncheckedPhotoCount,
+            unchecked: snapshot.unchecked,
             faceCount: usable.count,
             revision: snapshot.revision
         )
@@ -299,8 +301,8 @@ nonisolated enum PeopleStateBuilder {
         if lhs.isFavorite != rhs.isFavorite {
             return lhs.isFavorite
         }
-        if lhs.photoCount != rhs.photoCount {
-            return lhs.photoCount > rhs.photoCount
+        if lhs.media.total != rhs.media.total {
+            return lhs.media.total > rhs.media.total
         }
         // A named person before an unnamed one of the same count, then by name.
         if (lhs.name == nil) != (rhs.name == nil) {

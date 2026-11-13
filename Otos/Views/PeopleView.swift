@@ -16,8 +16,8 @@ nonisolated enum PeoplePresentation {
     }
 
     /// The tally the bar carries as L3.
-    static func uncheckedLine(_ count: Int) -> String {
-        count == 0 ? "Every photo has been checked" : "\(PeopleText.count(count, "photo")) not yet checked for faces"
+    static func uncheckedLine(_ unchecked: MediaCount) -> String {
+        unchecked.total == 0 ? "Every photo has been checked" : "\(unchecked.text) not yet checked for faces"
     }
 
     /// The gallery's sentence when it holds nobody; nil when it holds someone.
@@ -26,7 +26,7 @@ nonisolated enum PeoplePresentation {
         if state.faceCount > 0 {
             return "People appear here once Otos finds the same face on different days."
         }
-        if state.uncheckedPhotoCount > 0 {
+        if state.unchecked.total > 0 {
             return "People appear here as Otos finds faces in your photos."
         }
         return "Otos found no faces in your photos."
@@ -34,7 +34,7 @@ nonisolated enum PeoplePresentation {
 
     /// A person cell as VoiceOver reads it.
     static func accessibilityLabel(_ person: PersonSummary) -> String {
-        var parts = [person.displayName, PeopleText.count(person.photoCount, "photo")]
+        var parts = [person.displayName, person.media.text]
         if person.isFavorite {
             parts.append("favorite")
         }
@@ -211,7 +211,7 @@ private struct PeopleBar: View {
                     .monospacedDigit()
                     .lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
-                Text(PeoplePresentation.uncheckedLine(people.uncheckedPhotoCount))
+                Text(PeoplePresentation.uncheckedLine(people.unchecked))
                     .font(.subheadline)
                     .foregroundStyle(DesignPalette.l3(for: colorScheme))
                     .monospacedDigit()
@@ -246,7 +246,7 @@ private struct PersonCell: View {
         VStack(alignment: .leading, spacing: 4) {
             face
             nameLine
-            Text(PeopleText.count(person.photoCount, "photo"))
+            Text(person.media.text)
                 .font(.subheadline)
                 .foregroundStyle(DesignPalette.l3(for: colorScheme))
                 .monospacedDigit()

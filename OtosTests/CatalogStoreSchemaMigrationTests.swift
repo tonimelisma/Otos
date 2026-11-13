@@ -197,6 +197,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.stackKeyMigrationIdentifier,
             CatalogSchema.stackCandidateIndexMigrationIdentifier,
             CatalogSchema.lastSyncedMigrationIdentifier,
+            CatalogSchema.videoFacesMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -676,6 +677,44 @@ struct CatalogStoreSchemaMigrationTests {
     /// migration drops the library claim's index pair, which owed faces, and clears every
     /// faces stamp, with faces or without, so every still is read again from its preview; the
     /// faces themselves stay until each re-reading replaces them.
+    /// v35 (ADR 0047): a catalog from before it gains a video's face frames and each face's
+    /// frame, and the library claim's index pair, made from the text the claim queries with.
+    @Test func theVideoFacesMigrationAddsFramesAndTheLibraryClaimsIndexes() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let fresh = CatalogStore(location: .databaseFile(databaseURL))
+        try await fresh.start(scansSavedLibraries: false)
+        await fresh.shutdown()
+        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+            try db.execute(sql: "DROP INDEX \(EnrichmentClaimGateway.libraryGlobalIndexName)")
+            try db.execute(sql: "DROP INDEX \(EnrichmentClaimGateway.libraryRootIndexName)")
+            try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN face_frames_path")
+            try db.execute(sql: "ALTER TABLE face DROP COLUMN frame_index")
+            try db.execute(
+                sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
+                arguments: [CatalogSchema.videoFacesMigrationIdentifier]
+            )
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
+
+        let (assetColumns, faceColumns, indexes) = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try (
+                Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('media_asset')")),
+                Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('face')")),
+                Set(String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index'"))
+            )
+        }
+        #expect(assetColumns.contains("face_frames_path"))
+        #expect(faceColumns.contains("frame_index"))
+        #expect(indexes.isSuperset(of: [EnrichmentClaimGateway.libraryGlobalIndexName, EnrichmentClaimGateway.libraryRootIndexName]))
+    }
+
     @Test func theFacesFromPreviewMigrationReReadsEveryStill() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -704,7 +743,9 @@ struct CatalogStoreSchemaMigrationTests {
                 landmarks, quality, analysis_revision, embedding)
             VALUES (1, 'withFace.jpg', 0, 0, 0, 0.5, 0.5, x'00', 0.9, 2, x'00')
             """)
+            // The v18 pair, which v35 made again under the same names for the library claim.
             for name in libraryIndexes {
+                try db.execute(sql: "DROP INDEX IF EXISTS \(name)")
                 try db.execute(sql: "CREATE INDEX \(name) ON media_asset(relative_path)")
             }
             try db.execute(

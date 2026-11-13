@@ -728,13 +728,17 @@ final class CatalogWindowViewModel {
             files: trashFiles,
             volumeCapacity: volumeCapacity
         )
+        // One analyzer reads every face, a still's preview and a video's frames, so the
+        // model loads once.
+        let faceAnalysis = FaceAnalyzer.bundledAnalysis()
         self.enrichmentCoordinator = enrichmentCoordinator ?? (
             startsEnrichment
                 ? EnrichmentCoordinator(
                     store: catalogStore,
                     enricher: .live(
                         thumbnailDirectory: catalogStore.thumbnailDirectory
-                            ?? FileManager.default.temporaryDirectory
+                            ?? FileManager.default.temporaryDirectory,
+                        analyzeFaces: faceAnalysis
                     ),
                     materializationRequester: materializationCoordinator,
                     cameraRangeAccess: deviceStagingRegistry.makeCameraRangeAccess(),
@@ -752,7 +756,9 @@ final class CatalogWindowViewModel {
             ? RenderSignatureRefresher(store: catalogStore, thumbnailDirectory: catalogStore.thumbnailDirectory)
             : nil
         previewFaceReader = startsEnrichment && enrichmentCoordinator == nil
-            ? PreviewFaceReader(store: catalogStore, thumbnailDirectory: catalogStore.thumbnailDirectory)
+            ? PreviewFaceReader(
+                store: catalogStore, thumbnailDirectory: catalogStore.thumbnailDirectory, analyzeFaces: faceAnalysis
+            )
             : nil
         placeNameReader = startsEnrichment && enrichmentCoordinator == nil ? PlaceNameReader(store: catalogStore) : nil
         photoSearchIndex = startsEnrichment && enrichmentCoordinator == nil

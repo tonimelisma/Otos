@@ -74,7 +74,7 @@ struct PersonSheetView: View {
                 Text(context.title)
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(DesignPalette.label(for: colorScheme))
-                Text(PeopleText.count(context.photoCount, "photo"))
+                Text(context.media.text)
                     .font(.subheadline)
                     .monospacedDigit()
                     .foregroundStyle(DesignPalette.l3(for: colorScheme))

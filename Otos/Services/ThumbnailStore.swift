@@ -7,10 +7,12 @@ import UniformTypeIdentifiers
 
 /// Derived image file store guide
 ///
-/// Two derived images per asset are durable overlay kept as files on disk under
+/// The derived images of an asset are durable overlay kept as files on disk under
 /// Application Support, never as bytes in the catalog: the 256 px grid thumbnail (8-bit
-/// sRGB JPEG) and, for stills, the 2560 px loupe preview (8-bit Display P3 HEIC, ADR
-/// 0035). Both live in one directory and share every file mechanic here — staging,
+/// sRGB JPEG), for stills the 2560 px loupe preview (8-bit Display P3 HEIC, ADR 0035), and
+/// for a video with faces its face frames (the sampled frames its faces were kept from, as
+/// the images of one HEIC of the preview's size, ADR 0047). All live in one directory and
+/// share every file mechanic here — staging,
 /// promotion, move, delete, startup cleanup — because those work on names; only the
 /// encoding and the name's extension differ. The catalog row stores each relative path;
 /// this type owns the directory layout, the filenames, the formats, and the
@@ -49,6 +51,11 @@ nonisolated enum ThumbnailStore {
     /// The deterministic relative filename for an asset's loupe preview.
     static func previewRelativeName(for id: MediaAssetID) -> String {
         storageKey(for: id) + ".heic"
+    }
+
+    /// The deterministic relative filename for a video's face frames.
+    static func faceFramesRelativeName(for id: MediaAssetID) -> String {
+        storageKey(for: id) + ".faces.heic"
     }
 
     private static func storageKey(for id: MediaAssetID) -> String {
@@ -97,7 +104,7 @@ nonisolated enum ThumbnailStore {
         finalRelativeName: String,
         in directory: URL
     ) throws -> StagedDerivedImage {
-        try stageEncoded(image, as: .jpeg, colorSpaceName: CGColorSpace.sRGB, finalRelativeName: finalRelativeName, in: directory)
+        try stageEncoded([image], as: .jpeg, colorSpaceName: CGColorSpace.sRGB, finalRelativeName: finalRelativeName, in: directory)
     }
 
     /// Writes `image` as a staged 8-bit Display P3 HEIC preview. Eight bits on purpose:
@@ -108,7 +115,20 @@ nonisolated enum ThumbnailStore {
         finalRelativeName: String,
         in directory: URL
     ) throws -> StagedDerivedImage {
-        try stageEncoded(image, as: .heic, colorSpaceName: CGColorSpace.displayP3, finalRelativeName: finalRelativeName, in: directory)
+        try stageEncoded([image], as: .heic, colorSpaceName: CGColorSpace.displayP3, finalRelativeName: finalRelativeName, in: directory)
+    }
+
+    /// Writes `frames` as the images of one staged 8-bit Display P3 HEIC, in order, each
+    /// scaled to the preview's long edge: a video's face frames (ADR 0047).
+    static func stageFaceFrames(
+        _ frames: [CGImage],
+        finalRelativeName: String,
+        in directory: URL
+    ) throws -> StagedDerivedImage {
+        try stageEncoded(
+            frames.map { try scaled($0, toLongEdge: previewMaxPixelSize) },
+            as: .heic, colorSpaceName: CGColorSpace.displayP3, finalRelativeName: finalRelativeName, in: directory
+        )
     }
 
     /// `image` scaled so its long edge is at most `longEdge`, for the thumbnail drawn
@@ -124,7 +144,7 @@ nonisolated enum ThumbnailStore {
     }
 
     private static func stageEncoded(
-        _ image: CGImage,
+        _ images: [CGImage],
         as type: UTType,
         colorSpaceName: CFString,
         finalRelativeName: String,
@@ -136,16 +156,16 @@ nonisolated enum ThumbnailStore {
             OtosSignpost.thumbnails.endInterval("ThumbnailWrite", signpost)
         }
 
-        let normalized = try normalizedImage(
-            from: image, colorSpaceName: colorSpaceName, width: image.width, height: image.height
-        )
+        let normalized = try images.map { image in
+            try normalizedImage(from: image, colorSpaceName: colorSpaceName, width: image.width, height: image.height)
+        }
         let stagedRelativeName = try newStagedRelativeName(for: finalRelativeName, in: directory)
         let stagedURL = url(for: stagedRelativeName, in: directory)
 
         guard let destination = CGImageDestinationCreateWithURL(
             stagedURL as CFURL,
             type.identifier as CFString,
-            1,
+            normalized.count,
             nil
         ) else {
             throw ThumbnailStoreError.encoderUnavailable
@@ -153,7 +173,9 @@ nonisolated enum ThumbnailStore {
         let properties = [
             kCGImageDestinationLossyCompressionQuality: 0.85,
         ] as CFDictionary
-        CGImageDestinationAddImage(destination, normalized, properties)
+        for image in normalized {
+            CGImageDestinationAddImage(destination, image, properties)
+        }
         guard CGImageDestinationFinalize(destination) else {
             do {
                 try FileManager.default.removeItem(at: stagedURL)
@@ -173,8 +195,9 @@ nonisolated enum ThumbnailStore {
             """
             Thumbnail stage finished name=\(finalRelativeName, privacy: .public) \
             format=\(type.preferredFilenameExtension ?? type.identifier, privacy: .public) \
-            width=\(normalized.width, privacy: .public) \
-            height=\(normalized.height, privacy: .public) \
+            images=\(normalized.count, privacy: .public) \
+            width=\(normalized.first?.width ?? 0, privacy: .public) \
+            height=\(normalized.first?.height ?? 0, privacy: .public) \
             writeMs=\(writeMs, privacy: .public)
             """
         )

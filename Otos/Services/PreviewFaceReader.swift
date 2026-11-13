@@ -27,9 +27,6 @@ import ImageIO
 /// this actor, by `FaceAnalyzer` on its own queue. The forwarder and the loop hold this actor
 /// weakly and end with it.
 actor PreviewFaceReader {
-    /// Reads one upright image's faces: `FaceAnalyzer.analyze` in production, a stub in tests.
-    typealias FaceAnalysisReader = @Sendable (CGImage) async throws -> FaceAnalysis
-
     private let store: CatalogStore
     private let thumbnailDirectory: URL?
     private let analyzeFaces: FaceAnalysisReader
@@ -40,20 +37,13 @@ actor PreviewFaceReader {
     init(
         store: CatalogStore,
         thumbnailDirectory: URL?,
-        analyzeFaces: @escaping FaceAnalysisReader = PreviewFaceReader.bundledAnalysis(),
+        analyzeFaces: @escaping FaceAnalysisReader,
         pageSize: Int = 32
     ) {
         self.store = store
         self.thumbnailDirectory = thumbnailDirectory
         self.analyzeFaces = analyzeFaces
         self.pageSize = pageSize
-    }
-
-    /// Face analysis by the bundled model: one `FaceAnalyzer`, which loads the model the first
-    /// time a preview is read.
-    static func bundledAnalysis() -> FaceAnalysisReader {
-        let analyzer = FaceAnalyzer(bundle: Bundle(for: CatalogWindowViewModel.self))
-        return { image in try await analyzer.analyze(image) }
     }
 
     func start() async {

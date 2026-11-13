@@ -528,11 +528,11 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
         }
     }
 
-    /// The claim a row of this kind is first enriched under (ADR 0018): a fixed library's
-    /// every product, or metadata first. A card's renderings and digests come later, under
-    /// the same `EnrichmentClaim.products`.
+    /// The claim a row of this kind is first enriched under (ADR 0018, ADR 0047): a fixed
+    /// library's every product, a video's faces included, or metadata first. A card's
+    /// renderings and digests come later, under `EnrichmentClaim.products`.
     var firstClaim: EnrichmentClaim {
-        claimsEveryProductTogether ? .products : .metadata
+        claimsEveryProductTogether ? .library : .metadata
     }
 
     /// The kinds that have `capability`, as a SQL list of quoted `library_root.kind`
@@ -912,6 +912,14 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
             || !stampIsCurrent(size: contentHashSourceSize, mtimeSeconds: contentHashSourceMTimeSeconds)
     }
 
+    /// True when a video's faces stamp (its frames' reading, ADR 0047) is not valid for the
+    /// current filesystem signature. A still's faces are read from its stored preview, never
+    /// by enrichment, so a still never owes them here. Owed only by a row claimed under
+    /// `EnrichmentClaim.library`; callers gate it behind the claim.
+    var videoFacesStale: Bool {
+        bestKind == .video && !stampIsCurrent(size: facesSourceSize, mtimeSeconds: facesSourceMTimeSeconds)
+    }
+
     /// Whether a product's stamp names the file's current `(size, mtime-seconds)`: the one
     /// staleness rule every product shares (ADR 0009).
     private func stampIsCurrent(size: Int64?, mtimeSeconds: Int?) -> Bool {
@@ -926,6 +934,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         switch claim {
         case .metadata: metadataStale
         case .products: metadataStale || renderingStale || hashStale
+        case .library: metadataStale || renderingStale || hashStale || videoFacesStale
         }
     }
 }

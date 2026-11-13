@@ -36,7 +36,7 @@ struct PeopleStateTests {
             ],
             likeness: likeness,
             keyPhotos: keyPhotos,
-            uncheckedPhotoCount: unchecked,
+            unchecked: MediaCount(photos: unchecked),
             revision: 0
         )
     }
@@ -65,7 +65,7 @@ struct PeopleStateTests {
 
         #expect(state.people.map(\.id) == [owen, Self.sam, tyler, Self.ian])
         #expect(state.visiblePeople.map(\.id) == [owen, Self.sam, tyler])
-        #expect(state.person(Self.sam)?.photoCount == 3)
+        #expect(state.person(Self.sam)?.media == MediaCount(photos: 3))
         #expect(state.person(Self.sam)?.cover?.id == faces[0].id)
         #expect(state.person(tyler)?.cover?.id == faces[4].id)
         #expect(state.person(Self.sam)?.userFaces.map(\.id) == [faces[0].id])

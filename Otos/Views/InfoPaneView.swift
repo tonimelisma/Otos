@@ -323,8 +323,8 @@ private struct InfoPanePeopleSection: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
-                    if let count = group.photoCount {
-                        Text(PeopleText.count(count, "photo"))
+                    if let media = group.media {
+                        Text(media.text)
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     }

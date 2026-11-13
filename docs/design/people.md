@@ -172,7 +172,7 @@ a list of people sits under the words its items complete (HIG Menus: `Sort by �
 | `This Is Not Sam` | A named person's faces | The faces lose their person and Otos never gives them one again; the people they most likely are stay offered, Sam left out. |
 | `Not the Same Person` | An unnamed person's faces, only in that person's own photos | The same act: there the user sees the photos the face was grouped with. Elsewhere an unnamed person is corrected by naming them first, then `This Is Not <name>`. |
 | `This Is Not a Face` | Every face | The detection leaves People until the photo's file changes: a face the finder saw in a print, a doll or a pattern. |
-| `Make Key Photo for Sam` | A named person, one photo targeted | That face is Sam's cover in the gallery (Photos' name for it). |
+| `Make Key Photo for Sam` | A named person, one photo targeted, not a video | That face is Sam's cover in the gallery (Photos' name for it). A video's face is one frame of many, so it is never offered there. |
 
 **The lists** are short enough to read at a glance and need no typing in the usual case:
 the five people the faces most likely are, most likely first, filled in gallery order when
@@ -182,7 +182,10 @@ out anyone the faces cannot be (DES-038): a photo the user already gave them ano
 of, two faces of one photo, a photo from before their birthday. Under `Name This Person`,
 the rules of a merge apply instead (see Merging).
 
-**Counts** say how many photos an act changes:
+**Counts** say how many photos an act changes, and name what they hold: `photos`, `videos`
+when all are videos, `photos and videos` once both are, `Photos & Videos` in a menu
+(owner decision, 2026-11-13). A library video's faces are People's too, one face per
+person per video, its tile cut from the frame it was read in (ADR 0047):
 - **An unnamed person:** always every photo of them, since naming acts on all of them:
   `Unnamed Person · 14 Photos ▸`, and `14 photos` under the Info pane's `Add Name…`.
 - **A named person with several photos targeted:** how many of those photos hold them:
@@ -219,7 +222,9 @@ without a name both read `Unnamed Person`; the outline is how they are told apar
 faces are outlined wherever their photos show — the loupe, both compare panes, grid and
 filmstrip tiles — whether or not the Info pane is open, in DES-061's 3 pt accent border,
 carried through the edit the picture shows (its crop and straighten); a tile still showing
-a placeholder draws none. Closing the menu clears them.
+a placeholder draws none. A video's face is never outlined: its box belongs to the frame
+it was read in, not to what the video shows (owner decision, 2026-11-13). Closing the menu
+clears them.
 
 ### Info pane
 
@@ -283,6 +288,9 @@ assignment (ADR 0047). Entries live for the session.
   in their own photos (`Not the Same Person`), and gets no key photo; several photos offer
   unidentified faces only when each holds at most one; faces are outlined on the loupe and
   compare whether or not Info is open.
+- 2026-11-13 (videos): a library's videos are read for faces from six frames, one face per
+  person per video, downloading each video once; counts say `photos and videos` once both are;
+  a video's face is never outlined and offers no `Make Key Photo`.
 - 2026-11-12 (one face): a photo menu with one face entry, wherever it opens, puts its acts at
   the top level under a heading naming whose they are; the person whose photos are shown is
   not moved first or flattened beside other faces (two faces flattened together read as one

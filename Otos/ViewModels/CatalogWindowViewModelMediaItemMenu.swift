@@ -57,9 +57,9 @@ extension CatalogWindowViewModel {
         }
         let unidentified = selection.unidentified
         if !severalPhotos {
-            groups += unidentified.map { unidentifiedGroup([$0], in: selection, photoCount: nil) }
+            groups += unidentified.map { unidentifiedGroup([$0], in: selection, media: nil) }
         } else if !unidentified.isEmpty, Set(unidentified.map(\.id.asset)).count == unidentified.count {
-            groups.append(unidentifiedGroup(unidentified, in: selection, photoCount: unidentified.count))
+            groups.append(unidentifiedGroup(unidentified, in: selection, media: MediaCount(faces: unidentified)))
         }
         return FaceMenu(groups: groups)
     }
@@ -84,7 +84,7 @@ extension CatalogWindowViewModel {
             }
             return FaceMenu.Group(
                 kind: .unnamed, person: person, faces: ids, tile: faces.first?.tile,
-                photoCount: peopleIndex.summaries[person]?.photoCount ?? Set(ids.map(\.asset)).count,
+                media: peopleIndex.summaries[person]?.media ?? MediaCount(faces: faces),
                 listTitle: FaceActTitle.nameThisPerson,
                 list: list + [FaceMenu.Action(title: FaceActTitle.newName, command: .addName(person), faces: ids)],
                 corrections: corrections
@@ -96,12 +96,13 @@ extension CatalogWindowViewModel {
             FaceMenu.Action(title: FaceActTitle.notPerson(name), command: .notPerson(ids), faces: ids),
             notAFace,
         ]
-        if !severalPhotos, let face = ids.first {
-            corrections.append(FaceMenu.Action(title: FaceActTitle.makeKeyPhoto(name), command: .makeKeyPhoto(face, person), faces: [face]))
+        // A video's face is no key photo: its tile is one frame of many (ADR 0047).
+        if !severalPhotos, let face = faces.first, !face.tile.isInVideo {
+            corrections.append(FaceMenu.Action(title: FaceActTitle.makeKeyPhoto(name), command: .makeKeyPhoto(face.id, person), faces: [face.id]))
         }
         return FaceMenu.Group(
             kind: .named(name), person: person, faces: ids, tile: faces.first?.tile,
-            photoCount: severalPhotos ? Set(ids.map(\.asset)).count : nil,
+            media: severalPhotos ? MediaCount(faces: faces) : nil,
             listTitle: FaceActTitle.changeTo,
             list: list + [FaceMenu.Action(title: FaceActTitle.someoneElse, command: .someoneElse(ids), faces: ids)],
             corrections: corrections
@@ -110,7 +111,7 @@ extension CatalogWindowViewModel {
 
     /// Unidentified faces, at most one per photo: `Assign to` gives each person, in each
     /// photo, the face most like them.
-    private func unidentifiedGroup(_ faces: [PhotoFace], in selection: SelectionFaces, photoCount: Int?) -> FaceMenu.Group {
+    private func unidentifiedGroup(_ faces: [PhotoFace], in selection: SelectionFaces, media: MediaCount?) -> FaceMenu.Group {
         let ids = faces.map(\.id)
         let list = likelyPeople(for: faces, in: selection) { peopleIndex.moveRefusal(faces, to: $0) == nil }
             .map { person in
@@ -119,7 +120,7 @@ extension CatalogWindowViewModel {
             }
         return FaceMenu.Group(
             kind: .unidentified, person: nil, faces: ids, tile: faces.first?.tile,
-            photoCount: photoCount,
+            media: media,
             listTitle: FaceActTitle.assignTo,
             list: list + [FaceMenu.Action(title: FaceActTitle.someoneElse, command: .someoneElse(ids), faces: ids)],
             corrections: [FaceMenu.Action(title: FaceActTitle.notAFace, command: .notAFace(ids), faces: ids)]

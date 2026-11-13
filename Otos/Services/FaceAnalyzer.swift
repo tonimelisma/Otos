@@ -32,6 +32,10 @@ nonisolated struct FaceAnalysis: Sendable, Equatable {
     let rejectedForLandmarks: Int
 }
 
+/// Reads one upright image's faces: a `FaceAnalyzer`'s `analyze` in production, a stub in
+/// tests. One is shared by every face reader, so the model loads once.
+typealias FaceAnalysisReader = @Sendable (CGImage) async throws -> FaceAnalysis
+
 /// Face analyzer guide
 ///
 /// Finds the faces in one upright photo and reads each with the embedding model (ADR 0047):
@@ -42,7 +46,8 @@ nonisolated struct FaceAnalysis: Sendable, Equatable {
 /// Every step is blocking CPU work and the model is 66 MB, so the actor runs on its own serial
 /// queue rather than the shared pool (ADR 0032 rule 6), loads the model on first use, and the
 /// model never leaves it. The caller hands it a still's stored preview, decoded upright
-/// (`PreviewFaceReader`); faces are never read from an original.
+/// (`PreviewFaceReader`), or a video's sampled frame (`VideoFaceReader`); a still's faces are
+/// never read from its original.
 ///
 /// The settings are the ones the bake-off measured
 /// (`docs/research/2026-11-07-face-recognition-models.md`,
@@ -87,6 +92,13 @@ actor FaceAnalyzer {
 
     init(bundle: Bundle) {
         self.bundle = bundle
+    }
+
+    /// Face analysis by the bundled model: one `FaceAnalyzer`, which loads the model the first
+    /// time an image is read.
+    static func bundledAnalysis() -> FaceAnalysisReader {
+        let analyzer = FaceAnalyzer(bundle: Bundle(for: CatalogWindowViewModel.self))
+        return { image in try await analyzer.analyze(image) }
     }
 
     /// The faces in `image`, a still's upright stored preview.

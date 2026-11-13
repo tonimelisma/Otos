@@ -223,21 +223,24 @@ nonisolated struct StagedDerivedImage: Equatable {
 /// work; the store stamps those so a file changed mid-enrichment is detected as stale.
 /// A generated thumbnail or preview may be staged, in which case `thumbnailPath` /
 /// `previewPath` is the final path to stamp only after Store promotes the staged file.
-/// Which of a row's products one claim covers (ADR 0009, ADR 0018): the claim's staleness
-/// predicate, and the pair of partial indexes the claim queries walk.
+/// Which of a row's products one claim covers (ADR 0009, ADR 0018, ADR 0047): the claim's
+/// staleness predicate, and the pair of partial indexes the claim queries walk.
 ///
-/// A row is owed the products its root's kind makes, and each claim names one of two sets,
+/// A row is owed the products its root's kind makes, and each claim names one of three sets,
 /// so a product a root never makes can never hold its rows in a claim index:
 /// - `metadata`: a card's or camera's first pass, and an Immich account.
-/// - `products`: metadata, the rendering and the digest. A fixed library's every product,
-///   read for all of them at once (`LibraryRootKind.claimsEveryProductTogether`), and a
-///   card's second pass, once its metadata is current (`LibraryRootKind.producesAfterMetadata`).
+/// - `products`: metadata, the rendering and the digest; a card's second pass, once its
+///   metadata is current (`LibraryRootKind.producesAfterMetadata`).
+/// - `library`: every product a fixed library's row owes, read for all of them at once
+///   (`LibraryRootKind.claimsEveryProductTogether`): the products, and a video's faces.
 ///
-/// Faces are not an enrichment product: they are read from the stored preview the rendering
-/// makes (`PreviewFaceReader`, ADR 0047), so no claim downloads an original for them.
+/// A still's faces are not an enrichment product: they are read from the stored preview the
+/// rendering makes (`PreviewFaceReader`). A video has no preview, so its faces are read from
+/// its frames in the same read as its other products (`VideoFaceReader`).
 nonisolated enum EnrichmentClaim: Hashable, Sendable, CaseIterable {
     case metadata
     case products
+    case library
 }
 
 /// The products one enrichment of a claimed row makes (ADR 0009, ADR 0018): the set of
@@ -256,12 +259,14 @@ nonisolated struct EnrichmentScope: OptionSet, Hashable, Sendable {
     /// A thumbnail that is not a rendering and is not stamped: QuickLook's in a card's
     /// metadata pass, or a camera's embedded preview, shown until the rendering lands.
     static let provisionalThumbnail = EnrichmentScope(rawValue: 1 << 3)
+    /// A library video's faces, read from its frames (`VideoFaceReader`, ADR 0047).
+    static let videoFaces = EnrichmentScope(rawValue: 1 << 4)
 
     /// Whether the claim needs only what ranged reads can give: metadata, and a
-    /// provisional thumbnail a remote source already supplies. A rendering or a digest
-    /// needs the whole original, local (ADR 0046 §5, §7).
+    /// provisional thumbnail a remote source already supplies. A rendering, a digest or a
+    /// video's faces need the whole original, local (ADR 0046 §5, §7; ADR 0047).
     var isReadableInRanges: Bool {
-        isDisjoint(with: [.rendering, .hash])
+        isDisjoint(with: [.rendering, .hash, .videoFaces])
     }
 
     /// The scope for `asset` claimed under `claim`. Every stale product of a row claimed for
@@ -283,6 +288,9 @@ nonisolated struct EnrichmentScope: OptionSet, Hashable, Sendable {
         if asset.hashStale {
             scope.insert(.hash)
         }
+        if claim == .library, asset.videoFacesStale {
+            scope.insert(.videoFaces)
+        }
         self = scope
     }
 
@@ -296,7 +304,7 @@ nonisolated extension EnrichmentScope: CustomStringConvertible {
     var description: String {
         let names: [(EnrichmentScope, String)] = [
             (.metadata, "metadata"), (.rendering, "rendering"), (.hash, "hash"),
-            (.provisionalThumbnail, "provisionalThumbnail"),
+            (.provisionalThumbnail, "provisionalThumbnail"), (.videoFaces, "videoFaces"),
         ]
         let present = names.filter { contains($0.0) }.map(\.1)
         return present.isEmpty ? "none" : present.joined(separator: "+")
@@ -367,6 +375,26 @@ nonisolated struct EnrichedFaces: Equatable, Sendable {
     static let noneFound = EnrichedFaces(faces: [], analysisRevision: FaceAnalyzer.revision)
 }
 
+/// The faces one reading of a video's frames found (ADR 0047, `VideoFaceReader`): one face
+/// per person in the video, each read in the sampled frame where it was sharpest, its box a
+/// fraction of that frame. `frames` holds those frames, staged as the images of one file, for
+/// the face tiles to be cut from; the store promotes it with the faces. nil when no face was
+/// kept.
+nonisolated struct EnrichedVideoFaces: Equatable, Sendable {
+    nonisolated struct Face: Equatable, Sendable {
+        let face: DetectedFace
+        /// The image of `frames` the face was read in.
+        let frameIndex: Int
+    }
+
+    let faces: [Face]
+    let analysisRevision: Int
+    let frames: StagedDerivedImage?
+
+    /// A reading that found no face, by the current analysis.
+    static let noneFound = EnrichedVideoFaces(faces: [], analysisRevision: FaceAnalyzer.revision, frames: nil)
+}
+
 /// What a still's decoder said about it (ENR-029). "Cannot decode" is a fact about that
 /// decoder, never about the photo, so it names the decoder: a still whose rendering fell
 /// back to QuickLook's thumbnail because no decoder could read it is tried again once the
@@ -406,6 +434,9 @@ nonisolated struct EnrichmentResult: Equatable {
     /// Whether the renderer could decode the still, when the result covers its rendering;
     /// nil leaves the stored verdict as it is.
     let decodeVerdict: DecodeVerdict?
+    /// Absent when the scope did not cover a video's faces. Present, it replaces every face
+    /// the video held, and stamps them, even when it holds none (ADR 0047).
+    let videoFaces: EnrichedVideoFaces?
 
     init(
         id: MediaAssetID,
@@ -416,7 +447,8 @@ nonisolated struct EnrichmentResult: Equatable {
         sourceMTimeSeconds: Int?,
         contentHash: XXH3Digest128?,
         editRevision: Int64 = 0,
-        decodeVerdict: DecodeVerdict? = nil
+        decodeVerdict: DecodeVerdict? = nil,
+        videoFaces: EnrichedVideoFaces? = nil
     ) {
         self.id = id
         self.metadata = metadata
@@ -427,6 +459,7 @@ nonisolated struct EnrichmentResult: Equatable {
         self.sourceMTimeSeconds = sourceMTimeSeconds
         self.contentHash = contentHash
         self.decodeVerdict = decodeVerdict
+        self.videoFaces = videoFaces
     }
 
     /// A result carrying metadata and a rendering together, as a fixed library's
@@ -443,7 +476,8 @@ nonisolated struct EnrichmentResult: Equatable {
         generatedThumbnail: StagedDerivedImage? = nil,
         previewPath: String? = nil,
         generatedPreview: StagedDerivedImage? = nil,
-        editRevision: Int64 = 0
+        editRevision: Int64 = 0,
+        videoFaces: EnrichedVideoFaces? = nil
     ) {
         self.init(
             id: id,
@@ -457,7 +491,8 @@ nonisolated struct EnrichmentResult: Equatable {
             sourceSize: sourceSize,
             sourceMTimeSeconds: sourceMTimeSeconds,
             contentHash: contentHash,
-            editRevision: editRevision
+            editRevision: editRevision,
+            videoFaces: videoFaces
         )
     }
 
@@ -471,7 +506,8 @@ nonisolated struct EnrichmentResult: Equatable {
 nonisolated extension EnrichmentResult {
     /// Every staged file this result carries, for promotion or discard as one set.
     var stagedImages: [StagedDerivedImage] {
-        [rendering?.generatedThumbnail, rendering?.generatedPreview, provisionalThumbnail].compactMap(\.self)
+        [rendering?.generatedThumbnail, rendering?.generatedPreview, provisionalThumbnail, videoFaces?.frames]
+            .compactMap(\.self)
     }
 }
 

@@ -29,12 +29,22 @@ struct PeopleViewModelTests {
             library.store
         }
 
-        static func make(in directory: URL) async throws -> Fixture {
-            let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: ["a.jpg", "b.jpg"])
+        /// The face `withVideo` adds: in clip.mov, like hers.
+        var inVideo: FaceID {
+            FaceID(asset: library.id("clip.mov"), index: 0)
+        }
+
+        static func make(in directory: URL, withVideo: Bool = false) async throws -> Fixture {
+            let library = try await FaceEnrichmentTests.ScannedLibrary.make(
+                in: directory, files: ["a.jpg", "b.jpg"] + (withVideo ? ["clip.mov"] : [])
+            )
             try await library.readFaces([
                 library.result(for: "a.jpg", faces: [PeopleStoreTests.face(x: 0.1)]),
                 library.result(for: "b.jpg", faces: [PeopleStoreTests.face(x: 0.1), PeopleStoreTests.face(x: 0.65)]),
             ])
+            if withVideo {
+                try await library.readVideoFaces("clip.mov", faces: [PeopleStoreTests.face(x: 0.1)])
+            }
             let hers = FaceID(asset: library.id("a.jpg"), index: 0)
             let sam = try #require(try await library.store.perform(.moveToNewPerson([hers], name: "Sam")).person)
             let model = CatalogWindowViewModel(
@@ -274,13 +284,13 @@ struct PeopleViewModelTests {
 
         let person = fixture.model.personSheetContext(PersonSheetRequest(subject: .person(unnamed)))
         #expect(person.title == "Name This Person")
-        #expect(person.photoCount == 1)
+        #expect(person.media == MediaCount(photos: 1))
         #expect(person.faces.map(\.id) == [fixture.stranger])
         #expect(person.names == ["Sam"])
 
         let faces = fixture.model.personSheetContext(PersonSheetRequest(subject: .faces([fixture.like])))
         #expect(faces.title == "Name This Face")
-        #expect(faces.photoCount == 1)
+        #expect(faces.media == MediaCount(photos: 1))
         #expect(faces.faces.map(\.id) == [fixture.like])
 
         let sam = fixture.model.personSheetContext(PersonSheetRequest(subject: .person(fixture.sam)))
@@ -358,6 +368,30 @@ struct PeopleViewModelTests {
         try await Self.waitForUndo(fixture.model, title: "Undo This Is Not Sam")
         _ = try await fixture.people()
         #expect(try await fixture.assignment(of: fixture.like) == .held)
+        await fixture.store.shutdown()
+    }
+
+    /// A video's face is counted as a video's (APP-072): her person holds two photos and a
+    /// video, a menu over a photo and the video says `Photos & Videos`, the video's face offers
+    /// no Make Key Photo, and it is never outlined, its box being one frame's.
+    @Test func aVideosFaceCountsAsAVideoAndIsNoKeyPhoto() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory(), withVideo: true)
+        let people = try await fixture.people()
+        #expect(try await fixture.assignment(of: fixture.inVideo) == .model(fixture.sam))
+        #expect(people.person(fixture.sam)?.media == MediaCount(photos: 2, videos: 1))
+        let video = fixture.inVideo.asset
+        fixture.show(people, scope: .allMedia, grid: [fixture.hers.asset, video])
+
+        fixture.model.selectAssets([video])
+        let menu = try #require(fixture.model.faceMenu())
+        #expect(menu.groups.map(\.title) == ["Sam"])
+        #expect(menu.groups[0].corrections.map(\.title) == ["This Is Not Sam", "This Is Not a Face"])
+
+        fixture.model.selectAssets([fixture.hers.asset, video])
+        #expect(fixture.model.faceMenu()?.groups.first?.title == "Sam · 2 Photos & Videos")
+
+        fixture.model.outlineFaces([fixture.hers, fixture.inVideo])
+        #expect(fixture.model.outlinedFaceBoxes.keys.sorted { $0.relativePath.rawValue < $1.relativePath.rawValue } == [fixture.hers.asset])
         await fixture.store.shutdown()
     }
 

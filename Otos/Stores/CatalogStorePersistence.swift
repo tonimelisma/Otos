@@ -236,6 +236,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.videoFacesMigrationIdentifier) { db in
+            for statement in CatalogSchema.videoFacesStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -425,43 +430,43 @@ extension CatalogStore {
         )
         let rows = try Row.fetchAll(
             db,
-            sql: "SELECT relative_path, thumbnail_path, preview_path FROM media_asset WHERE library_root_id = ?",
+            sql: """
+            SELECT relative_path, thumbnail_path, preview_path, face_frames_path
+            FROM media_asset WHERE library_root_id = ?
+            """,
             arguments: [rootRowID]
         )
         var thumbnailMigrations: [ThumbnailPathMigration] = []
         for row in rows {
             let relativePath: String = row["relative_path"]
-            let thumbnailPath: String? = row["thumbnail_path"]
-            let previewPath: String? = row["preview_path"]
             let relativePathValue = MediaRelativePath(rawValue: relativePath)
             let newID = MediaAssetID(libraryRootPath: path, relativePath: relativePathValue)
-            let newThumbnailPath = thumbnailPath.map { _ in ThumbnailStore.relativeName(for: newID) }
-            let newPreviewPath = previewPath.map { _ in ThumbnailStore.previewRelativeName(for: newID) }
+            // Each derived image the row has takes the new identity's name.
+            let images: [(old: String?, new: String)] = [
+                (row["thumbnail_path"], ThumbnailStore.relativeName(for: newID)),
+                (row["preview_path"], ThumbnailStore.previewRelativeName(for: newID)),
+                (row["face_frames_path"], ThumbnailStore.faceFramesRelativeName(for: newID)),
+            ]
+            let renamed = images.map { image in image.old.map { _ in image.new } }
             try db.execute(
                 sql: """
                 UPDATE media_asset
-                SET sort_key = ?, thumbnail_path = ?, preview_path = ?
+                SET sort_key = ?, thumbnail_path = ?, preview_path = ?, face_frames_path = ?
                 WHERE library_root_id = ? AND relative_path = ?
                 """,
                 arguments: [
                     MediaSortKey.make(libraryRootPath: path, relativePath: relativePathValue),
-                    newThumbnailPath,
-                    newPreviewPath,
+                    renamed[0],
+                    renamed[1],
+                    renamed[2],
                     rootRowID,
                     relativePath,
                 ]
             )
-            if let previewPath, let newPreviewPath, previewPath != newPreviewPath {
-                thumbnailMigrations.append(ThumbnailPathMigration(
-                    oldRelativeName: previewPath,
-                    newRelativeName: newPreviewPath
-                ))
-            }
-            if let thumbnailPath, let newThumbnailPath, thumbnailPath != newThumbnailPath {
-                thumbnailMigrations.append(ThumbnailPathMigration(
-                    oldRelativeName: thumbnailPath,
-                    newRelativeName: newThumbnailPath
-                ))
+            for image in images {
+                if let old = image.old, old != image.new {
+                    thumbnailMigrations.append(ThumbnailPathMigration(oldRelativeName: old, newRelativeName: image.new))
+                }
             }
         }
         return thumbnailMigrations
@@ -574,10 +579,16 @@ extension CatalogStore {
     }
 
     struct CatalogedFileDeletionTarget {
-        /// The thumbnail and preview files to delete with the row.
+        /// The thumbnail, preview and face frames files to delete with the row.
         let derivedImagePaths: [String]
         /// Where the system Trash holds the row's file, when the queue moved it there.
         let trashPath: String?
+    }
+
+    /// The derived images a row names (`thumbnail_path`, `preview_path`, `face_frames_path`),
+    /// the files deleted with it.
+    static func derivedImagePaths(of row: Row) -> [String] {
+        [row["thumbnail_path"], row["preview_path"], row["face_frames_path"]].compactMap { (path: String?) in path }
     }
 
     /// Whether a row whose path is missing must be kept because its file is in the system
@@ -603,7 +614,7 @@ extension CatalogStore {
         guard let row = try Row.fetchOne(
             db,
             sql: """
-            SELECT thumbnail_path, preview_path, trash_path
+            SELECT thumbnail_path, preview_path, face_frames_path, trash_path
             FROM media_asset
             WHERE library_root_id = ? AND relative_path = ?
             """,
@@ -611,10 +622,8 @@ extension CatalogStore {
         ) else {
             return nil
         }
-        let thumbnailPath: String? = row["thumbnail_path"]
-        let previewPath: String? = row["preview_path"]
         return CatalogedFileDeletionTarget(
-            derivedImagePaths: [thumbnailPath, previewPath].compactMap(\.self),
+            derivedImagePaths: derivedImagePaths(of: row),
             trashPath: row["trash_path"]
         )
     }
@@ -723,6 +732,19 @@ extension CatalogStore {
                 arguments: [verdict.undecodableBy, row.rootID, row.relativePath.rawValue]
             )
         }
+        if let videoFaces = result.videoFaces {
+            try writeFaces(
+                videoFaces.faces.map { ReadFace(face: $0.face, frameIndex: $0.frameIndex) },
+                analysisRevision: videoFaces.analysisRevision,
+                stamp: (result.sourceSize, result.sourceMTimeSeconds),
+                row: row,
+                db: db
+            )
+            try db.execute(
+                sql: "UPDATE media_asset SET face_frames_path = ? WHERE library_root_id = ? AND relative_path = ?",
+                arguments: [videoFaces.frames?.finalRelativePath, row.rootID, row.relativePath.rawValue]
+            )
+        }
     }
 
     /// Hands every still that a decoder other than `decoder` could not decode back to
@@ -755,7 +777,25 @@ extension CatalogStore {
     /// bytes than the faces were read from is a changed file, read afresh: its faces replace
     /// every face, and only a person given, a removed name, a key photo and rejections carry,
     /// by overlap.
+    ///
+    /// A video's face carries the image of its stored face frames it was read in. A face kept
+    /// as it was read has none: the reading replaced those frames.
     static func writeFaces(_ faces: EnrichedFaces, stamp: ProductStamp, row: ProductRow, db: Database) throws {
+        try writeFaces(
+            faces.faces.map { ReadFace(face: $0, frameIndex: nil) },
+            analysisRevision: faces.analysisRevision, stamp: stamp, row: row, db: db
+        )
+    }
+
+    /// One face of a reading, and the image of a video's face frames it was read in.
+    struct ReadFace {
+        let face: DetectedFace
+        let frameIndex: Int?
+    }
+
+    private static func writeFaces(
+        _ faces: [ReadFace], analysisRevision: Int, stamp: ProductStamp, row: ProductRow, db: Database
+    ) throws {
         let key: StatementArguments = [row.rootID, row.relativePath.rawValue]
         let readStamp = try Row.fetchOne(
             db,
@@ -787,7 +827,7 @@ extension CatalogStore {
             CGRect(x: face["box_x"] as Double, y: face["box_y"] as Double,
                    width: face["box_width"] as Double, height: face["box_height"] as Double)
         }
-        let carried = FaceCarryOver.matches(previous: previousBoxes, new: faces.faces.map(\.box))
+        let carried = FaceCarryOver.matches(previous: previousBoxes, new: faces.map(\.face.box))
         let unmatched = Set(previous.indices).subtracting(carried.values)
         let keptAsRead = sameSource ? unmatched.sorted().filter { index in
             let face = previous[index]
@@ -795,7 +835,8 @@ extension CatalogStore {
             return said.isUserWord || (face["is_not_face"] as Int) != 0 || rejections[face["face_index"]] != nil
         } : []
         try db.execute(sql: "DELETE FROM face WHERE library_root_id = ? AND relative_path = ?", arguments: key)
-        for (index, face) in faces.faces.enumerated() {
+        for (index, read) in faces.enumerated() {
+            let face = read.face
             let prior = carried[index].map { previous[$0] }
             let carriedAssignment = prior.map {
                 FaceAssignmentColumn.assignment(column: $0["assignment"], person: $0["person_id"])
@@ -806,8 +847,9 @@ extension CatalogStore {
                 box: face.box,
                 landmarks: FaceStorage.landmarksData(face.landmarks),
                 quality: Double(face.quality),
-                analysisRevision: faces.analysisRevision,
+                analysisRevision: analysisRevision,
                 embedding: FaceStorage.embeddingData(face.embedding),
+                frameIndex: read.frameIndex,
                 assignment: kept,
                 isKeyPhoto: kept.person == nil ? false : ((prior?["is_key_photo"] as Int?) ?? 0) != 0,
                 isNotFace: sameSource && ((prior?["is_not_face"] as Int?) ?? 0) != 0,
@@ -818,12 +860,13 @@ extension CatalogStore {
             let prior = previous[priorIndex]
             let said = FaceAssignmentColumn.assignment(column: prior["assignment"], person: prior["person_id"])
             try insertFace(FaceRowValues(
-                index: faces.faces.count + offset,
+                index: faces.count + offset,
                 box: previousBoxes[priorIndex],
                 landmarks: prior["landmarks"],
                 quality: prior["quality"],
                 analysisRevision: prior["analysis_revision"],
                 embedding: prior["embedding"],
+                frameIndex: nil,
                 assignment: said.isGuessable ? .open : said,
                 isKeyPhoto: (prior["is_key_photo"] as Int) != 0,
                 isNotFace: (prior["is_not_face"] as Int) != 0,
@@ -847,6 +890,8 @@ extension CatalogStore {
         let quality: Double
         let analysisRevision: Int
         let embedding: Data
+        /// The image of a video's face frames the face was read in; nil for a still.
+        let frameIndex: Int?
         let assignment: FaceAssignment
         let isKeyPhoto: Bool
         let isNotFace: Bool
@@ -858,13 +903,14 @@ extension CatalogStore {
             sql: """
             INSERT INTO face (
                 library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
-                landmarks, quality, analysis_revision, embedding, person_id, assignment, is_key_photo, is_not_face
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                landmarks, quality, analysis_revision, embedding, frame_index, person_id, assignment, is_key_photo,
+                is_not_face
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             arguments: [
                 row.rootID, row.relativePath.rawValue, face.index,
                 Double(face.box.minX), Double(face.box.minY), Double(face.box.width), Double(face.box.height),
-                face.landmarks, face.quality, face.analysisRevision, face.embedding,
+                face.landmarks, face.quality, face.analysisRevision, face.embedding, face.frameIndex,
                 face.assignment.person?.rawValue, FaceAssignmentColumn(face.assignment).rawValue,
                 face.isKeyPhoto ? 1 : 0, face.isNotFace ? 1 : 0,
             ]
@@ -1114,7 +1160,7 @@ extension CatalogStore {
     /// A cataloged media row as a scan's deletion pass sees it.
     struct ExistingAssetRow {
         let relativePath: MediaRelativePath
-        /// The thumbnail and preview files to delete with the row.
+        /// The thumbnail, preview and face frames files to delete with the row.
         let derivedImagePaths: [String]
         let hadEnrichment: Bool
         /// Where the system Trash holds the row's file, when the queue moved it there.
@@ -1131,8 +1177,8 @@ extension CatalogStore {
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT relative_path, thumbnail_path, preview_path, metadata_source_size, metadata_source_mtime,
-                    trash_path
+                SELECT relative_path, thumbnail_path, preview_path, face_frames_path, metadata_source_size,
+                    metadata_source_mtime, trash_path
                 FROM media_asset
                 WHERE library_root_id = ?
                   AND \(Self.subtreeSQL)
@@ -1143,8 +1189,8 @@ extension CatalogStore {
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT relative_path, thumbnail_path, preview_path, metadata_source_size, metadata_source_mtime,
-                    trash_path
+                SELECT relative_path, thumbnail_path, preview_path, face_frames_path, metadata_source_size,
+                    metadata_source_mtime, trash_path
                 FROM media_asset
                 WHERE library_root_id = ?
                 """,
@@ -1152,11 +1198,9 @@ extension CatalogStore {
             )
         }
         return rows.map { row in
-            let thumbnailPath: String? = row["thumbnail_path"]
-            let previewPath: String? = row["preview_path"]
-            return ExistingAssetRow(
+            ExistingAssetRow(
                 relativePath: MediaRelativePath(rawValue: row["relative_path"]),
-                derivedImagePaths: [thumbnailPath, previewPath].compactMap(\.self),
+                derivedImagePaths: derivedImagePaths(of: row),
                 hadEnrichment: (row["metadata_source_size"] as Int64?) != nil
                     || (row["metadata_source_mtime"] as Int64?) != nil,
                 trashPath: row["trash_path"]

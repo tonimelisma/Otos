@@ -180,11 +180,12 @@ actor CatalogStore {
         let captureWallCompact: Int64?
         let thumbnailPath: String?
         let previewPath: String?
+        let faceFramesPath: String?
         let contentIdentifier: String?
 
         static let columnsSQL = """
         SELECT best_capture_local, best_kind, best_format, capture_wall_compact, thumbnail_path, preview_path,
-            content_identifier
+            face_frames_path, content_identifier
         FROM media_asset
         WHERE library_root_id = ? AND relative_path = ?
         """
@@ -196,6 +197,7 @@ actor CatalogStore {
             captureWallCompact = row["capture_wall_compact"]
             thumbnailPath = row["thumbnail_path"]
             previewPath = row["preview_path"]
+            faceFramesPath = row["face_frames_path"]
             contentIdentifier = row["content_identifier"]
         }
 
@@ -896,6 +898,7 @@ extension CatalogStore {
             var tiles: [FaceID: FaceTile] = [:]
             var likeness: [FaceID: Float] = [:]
             var keyPhotos: [PersonID: FaceID] = [:]
+            // A Live Photo's movie is one item with its still (ADR 0041), whose faces are its.
             // Read by position (`PeopleFaceColumn`): a name lookup scans the row's columns,
             // and at 18 columns over every face it was most of the read (bench
             // people.snapshot.10k, 2026-11-13).
@@ -906,6 +909,7 @@ extension CatalogStore {
                 FROM face f
                 JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
                 WHERE m.trash_path IS NULL
+                  AND NOT \(LivePhotoSQL.isPairedMotion("m"))
                 ORDER BY f.library_root_id, f.relative_path, f.face_index
                 """
             ) {
@@ -949,7 +953,8 @@ extension CatalogStore {
                         height: row[PeopleFaceColumn.boxHeight.rawValue] as Double
                     ),
                     preview: Self.facePreview(row, asset: asset),
-                    captureSeconds: capture
+                    captureSeconds: capture,
+                    isInVideo: (row[PeopleFaceColumn.isVideo.rawValue] as Int) != 0
                 )
             }
             let people = try Row.fetchAll(
@@ -976,16 +981,23 @@ extension CatalogStore {
                 likeness: likeness,
                 keyPhotos: keyPhotos,
                 photoOfStackMember: photoOfStackMember,
-                uncheckedPhotoCount: Self.uncheckedFacePhotoCount(rootIDs: faceRootIDs, db: db),
+                unchecked: Self.uncheckedForFaces(rootIDs: faceRootIDs, db: db),
                 revision: revision
             )
         }
     }
 
-    /// The stored preview a face tile is cut from, with the edit it shows: none before one is
-    /// made, while a rendering of a newer edit is owed, or when the edit cannot be read
-    /// (logged); the tile then shows its placeholder.
+    /// The stored image a face tile is cut from. A video's face: the image of its stored face
+    /// frames it was read in, none for a face kept from an earlier reading. A still's: its
+    /// stored preview, with the edit it shows, none before one is made, while a rendering of a
+    /// newer edit is owed, or when the edit cannot be read (logged). The tile then shows its
+    /// placeholder.
     private static func facePreview(_ row: Row, asset: MediaAssetID) -> FacePreview? {
+        if let frameIndex = row[PeopleFaceColumn.frameIndex.rawValue] as Int? {
+            return (row[PeopleFaceColumn.faceFramesPath.rawValue] as String?).map {
+                FacePreview(name: $0, recipe: .neutral, image: frameIndex)
+            }
+        }
         guard let name: String = row[PeopleFaceColumn.previewPath.rawValue],
               (row[PeopleFaceColumn.previewEditIsKnown.rawValue] as Int) != 0
         else {
@@ -1015,24 +1027,34 @@ extension CatalogStore {
         )
     }
 
-    /// Stills not yet read for faces (ADR 0047): their stored preview is still to come, or
-    /// their faces were not read from the one they have. Videos are never read for faces.
-    private static func uncheckedFacePhotoCount(rootIDs: [Int64], db: Database) throws -> Int {
-        guard !rootIDs.isEmpty else { return 0 }
-        return try Int.fetchOne(
+    /// What is not yet read for faces (ADR 0047): stills whose stored preview is still to
+    /// come, or whose faces were not read from the one they have, and a library's videos whose
+    /// frames are not yet read. A Live Photo's movie is not counted: its still holds its faces.
+    private static func uncheckedForFaces(rootIDs: [Int64], db: Database) throws -> MediaCount {
+        guard !rootIDs.isEmpty else { return MediaCount() }
+        let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
+        let row = try Row.fetchOne(
             db,
             sql: """
-            SELECT COUNT(*) FROM media_asset
-            WHERE library_root_id IN (\(Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")))
-              AND kind IN ('image', 'raw')
+            SELECT
+                SUM(kind IN ('image', 'raw') AND ((\(PreviewFaceSQL.owesFaces)) OR (\(PreviewFaceSQL.awaitsPreview)))),
+                SUM(best_kind = 'video'
+                    AND library_root_id IN (
+                        SELECT id FROM library_root
+                        WHERE kind IN (\(LibraryRootKind.sqlLiteralList(\.claimsEveryProductTogether)))
+                    )
+                    AND (\(EnrichmentClaimGateway.videoFacesStalenessSQLPredicate()))
+                    AND NOT \(LivePhotoSQL.isPairedMotion("media_asset")))
+            FROM media_asset
+            WHERE library_root_id IN (\(placeholders))
               AND trash_path IS NULL
               AND pending_trash_batch_unix_ms IS NULL
               AND hidden_by_source = 0
               AND awaiting_presence = 0
-              AND ((\(PreviewFaceSQL.owesFaces)) OR (\(PreviewFaceSQL.awaitsPreview)))
             """,
             arguments: StatementArguments(rootIDs)
-        ) ?? 0
+        )
+        return MediaCount(photos: row?[0] ?? 0, videos: row?[1] ?? 0)
     }
 
     /// Stills whose faces are owed from their stored preview (ADR 0047), in every library and
@@ -2907,8 +2929,8 @@ extension CatalogStore {
 
     /// `bytesAreLocal` marks rows whose bytes just became local: a root first claimed for
     /// metadata alone (a card, a camera, an Immich account) is claimed for its rendering and
-    /// digest too (`EnrichmentClaim.products`), which a fixed library is claimed under from
-    /// the start.
+    /// digest too (`EnrichmentClaim.products`); a fixed library is claimed for its every
+    /// product from the start (`EnrichmentClaim.library`).
     private func priorityEnrichmentCandidates(
         ids: [MediaAssetID],
         limit: Int,
@@ -2977,13 +2999,13 @@ extension CatalogStore {
         -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]>
     {
         let prioritizedRootIDs = roots.enrichableRootIDsByRemovablePriority()
-        let (productsFirstRootIDs, metadataFirstRootIDs) = roots.enrichableRootIDsByFirstClaim()
+        let (libraryRootIDs, metadataFirstRootIDs) = roots.enrichableRootIDsByFirstClaim()
         let cardRootIDs = roots.enrichableCardRootIDs()
         let dbWriter = try database()
         let timedStoredAssets = try await timedWrite(dbWriter) { db in
             var storedAssets: [(asset: StoredAsset, claim: EnrichmentClaim)] = []
             // The fallback spans roots of mixed kinds (ADR 0018): a fixed library's rows are
-            // claimed for every product they owe at once (`EnrichmentClaim.products`), the
+            // claimed for every product they owe at once (`EnrichmentClaim.library`), the
             // others (`.removableVolume`, `.deviceMTP`, `.immichAccount`) for metadata first.
             // `INDEXED BY` forbids one statement across claims, so partition by claim within
             // each priority tier: removable roots first (ENR-011), then a card's
@@ -2999,10 +3021,10 @@ extension CatalogStore {
                 try !EnrichmentClaimGateway.hasRowsNeedingMetadata(rootID: rootID, db: db)
             }
             let claimGroups: [(rootIDs: [Int64], claim: EnrichmentClaim)] = [
-                (removableRoots.intersection(productsFirstRootIDs).sorted(), .products),
+                (removableRoots.intersection(libraryRootIDs).sorted(), .library),
                 (removableRoots.intersection(metadataFirstRootIDs).sorted(), .metadata),
                 (cardsReadyForProducts, .products),
-                (fixedRoots.intersection(productsFirstRootIDs).sorted(), .products),
+                (fixedRoots.intersection(libraryRootIDs).sorted(), .library),
                 (fixedRoots.intersection(metadataFirstRootIDs).sorted(), .metadata),
             ]
             for group in claimGroups where storedAssets.count < limit && !group.rootIDs.isEmpty {
@@ -3467,6 +3489,9 @@ extension CatalogStore {
         }
         if let rendering = result.rendering {
             outcome.replaceImage(oldPath: oldRow?.previewPath, newPath: rendering.previewPath)
+        }
+        if let videoFaces = result.videoFaces {
+            outcome.replaceImage(oldPath: oldRow?.faceFramesPath, newPath: videoFaces.frames?.finalRelativePath)
         }
         outcome.appliedCount += 1
     }

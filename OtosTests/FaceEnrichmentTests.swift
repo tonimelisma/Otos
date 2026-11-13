@@ -4,21 +4,23 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// Faces in the catalog (ADR 0047): enrichment never reads them, and the catalog stores,
+/// Faces in the catalog (ADR 0047): enrichment never reads a still's, and the catalog stores,
 /// replaces, moves and purges a still's faces read from its stored preview.
 @Suite(.testDirectory)
 struct FaceEnrichmentTests {
     // MARK: - Enrichment
 
-    /// Faces are not an enrichment product: a library row whose metadata, rendering and
-    /// digest are current is not claimed, whether or not its faces were read, so no original
-    /// is downloaded for them.
-    @Test func enrichmentNeverClaimsARowForItsFaces() {
+    /// A still's faces are not an enrichment product: a library still whose metadata,
+    /// rendering and digest are current is not claimed, whether or not its faces were read,
+    /// so no original is downloaded for them.
+    @Test func enrichmentNeverClaimsAStillForItsFaces() {
         for read in [false, true] {
             let asset = Self.asset(facesStamped: read)
-            #expect(!asset.needsEnrichment(.products))
-            #expect(!asset.needsEnrichment(.metadata))
+            for claim in EnrichmentClaim.allCases {
+                #expect(!asset.needsEnrichment(claim))
+            }
             #expect(EnrichmentScope(claim: .products, asset: asset).isEmpty)
+            #expect(EnrichmentScope(claim: .library, asset: asset).isEmpty)
         }
     }
 
@@ -174,6 +176,26 @@ struct FaceEnrichmentTests {
 
         func result(for name: String, faces: [DetectedFace], sizeOffset: Int64 = 0) -> FaceReading {
             FaceReading(name: name, faces: faces, sizeOffset: sizeOffset)
+        }
+
+        /// Writes a video's faces as enrichment reads them, with every other product current
+        /// for the file as scanned; each face read in its own frame, with no frames file.
+        @discardableResult
+        func readVideoFaces(_ name: String, faces: [DetectedFace]) async throws -> EnrichmentApplyOutcome {
+            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
+            return await store.applyEnrichmentBatch([EnrichmentResult(
+                id: id(name),
+                metadata: AssetMetadata(),
+                thumbnailPath: "thumb-\(name).jpg",
+                sourceSize: asset.byteSize,
+                sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
+                contentHash: .empty,
+                videoFaces: EnrichedVideoFaces(
+                    faces: faces.enumerated().map { EnrichedVideoFaces.Face(face: $1, frameIndex: $0) },
+                    analysisRevision: FaceAnalyzer.revision,
+                    frames: nil
+                )
+            )])
         }
 
         /// Gives each still a stored preview with every product current for the file as

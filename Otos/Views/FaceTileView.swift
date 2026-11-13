@@ -4,7 +4,7 @@ import OSLog
 import SwiftUI
 
 // Face tiles (`docs/design/people.md`, DES-110): a square cut from the photo's stored
-// preview (ADR 0035) around the face, the box enlarged by 1.6 and kept inside the photo.
+// preview (ADR 0035), or the stored frame of a video the face was read in (ADR 0047), around the face, the box enlarged by 1.6 and kept inside the photo.
 // The preview shows the saved edit, so the box, a fraction of the upright photo, is first
 // carried through that edit's quarter turns, flips, straighten and crop (`EditGeometry`).
 // Before the first decode the tile shows the `person.crop.square` glyph, and its slash
@@ -137,7 +137,8 @@ nonisolated enum FaceCrop {
         defer { OtosSignpost.thumbnails.endInterval("FaceTileDecode", signpost) }
         let url = ThumbnailStore.url(for: preview.name, in: directory)
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              preview.image < CGImageSourceGetCount(source),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, preview.image, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int
         else {
@@ -160,7 +161,7 @@ nonisolated enum FaceCrop {
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceThumbnailMaxPixelSize: Int((longEdge * scale).rounded(.up)),
         ] as CFDictionary
-        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else {
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, preview.image, options) else {
             return nil
         }
         return crop(image, box: onPreview)

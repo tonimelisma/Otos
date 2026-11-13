@@ -33,31 +33,28 @@ struct EnrichmentClaimIndexContractTests {
         """)
     }
 
-    /// A fixed library and a card's second pass are claimed for the same products, and walk
-    /// the same pair of indexes; the pair v18 made for a library's faces is gone, because
-    /// faces are no longer an enrichment product (ADR 0047).
-    @Test func theProductsClaimWalksTheBroadIndexes() async throws {
+    /// A card's second pass is claimed for the products, and a fixed library for its every
+    /// product, a video's faces included (ADR 0047); each walks its own pair of indexes.
+    @Test func eachClaimWalksItsOwnIndexes() async throws {
         let dbQueue = try await Self.migratedDatabase()
-        let rootQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
-            rootIDs: [1],
-            limit: 4,
-            claim: .products
-        ))
-        let globalQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
-            rootIDs: [1, 2],
-            limit: 4,
-            claim: .products
-        ))
-        let (plans, indexes) = try await dbQueue.read { db in
-            try (
-                (root: Self.explainPlan(db, query: rootQuery), global: Self.explainPlan(db, query: globalQuery)),
-                Set(String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index'"))
-            )
+        for (claim, root, global) in [
+            (EnrichmentClaim.products, EnrichmentClaimGateway.broadRootIndexName, EnrichmentClaimGateway.broadGlobalIndexName),
+            (.library, EnrichmentClaimGateway.libraryRootIndexName, EnrichmentClaimGateway.libraryGlobalIndexName),
+        ] {
+            let rootQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(rootIDs: [1], limit: 4, claim: claim))
+            let globalQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(rootIDs: [1, 2], limit: 4, claim: claim))
+            let plans = try await dbQueue.read { db in
+                try (root: Self.explainPlan(db, query: rootQuery), global: Self.explainPlan(db, query: globalQuery))
+            }
+            #expect(plans.root.contains(root))
+            #expect(plans.global.contains(global))
         }
-        #expect(plans.root.contains(EnrichmentClaimGateway.broadRootIndexName))
-        #expect(plans.global.contains(EnrichmentClaimGateway.broadGlobalIndexName))
-        #expect(!indexes.contains("idx_media_asset_needs_enrichment_global_library"))
-        #expect(!indexes.contains("idx_media_asset_needs_enrichment_root_library"))
+    }
+
+    /// `INDEXED BY` matches a partial index by its text, so the library claim's predicate is
+    /// the text v35 made its indexes from.
+    @Test func theLibraryClaimKeepsTheTextItsIndexesWereCreatedWith() {
+        #expect(EnrichmentClaimGateway.stalenessSQLPredicate(.library) == CatalogSchema.videoFacesClaimPredicate)
     }
 
     private static func migratedDatabase() async throws -> DatabaseQueue {

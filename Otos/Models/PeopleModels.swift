@@ -9,31 +9,45 @@ import Foundation
 // people (`PeopleAct`) with the record that undoes one (`PeopleRestore`). Values only: the
 // store writes, the owner derives, and the views render these.
 
-/// One face as a tile shows it: where it is in its photo and the stored preview it is cut
-/// from (ADR 0035).
+/// One face as a tile shows it: where it is in its photo and the stored image it is cut from:
+/// a still's preview (ADR 0035), or the frame of a video it was read in (ADR 0047).
 nonisolated struct FaceTile: Hashable, Sendable, Identifiable {
     let id: FaceID
-    /// Fractions of the upright photo, top-left origin.
+    /// Fractions of the upright photo, or of a video's frame, top-left origin.
     let box: CGRect
     /// Nil before a preview is made, and while the one stored shows an edit no longer saved:
     /// its rendering of the new edit is owed, and the tile waits for it rather than cut
-    /// through an edit it cannot know.
+    /// through an edit it cannot know. Nil for a video's face kept from an earlier reading,
+    /// whose frame the new reading replaced.
     let preview: FacePreview?
     /// The photo's local capture time (`CaptureLocalTime.seconds`); nil when the photo has
     /// no date. Its UTC day is the day the photo was taken, the same day a birthday names.
     let captureSeconds: Double?
+    /// The face was read in one frame of a video: its box belongs to that frame, so it is
+    /// never outlined on the video, and a video's face is no person's key photo (ADR 0047).
+    var isInVideo = false
 
     var captureLocalTime: CaptureLocalTime? {
         captureSeconds.map(CaptureLocalTime.init(seconds:))
     }
 }
 
-/// A stored preview and the edit it shows (`.neutral` for the unedited photo): the face box,
-/// a fraction of the upright photo, is carried through that edit onto the preview.
+/// A stored image a face is cut from and the edit it shows (`.neutral` for the unedited
+/// photo and for a video's frame): the face box, a fraction of the upright photo, is carried
+/// through that edit onto the image.
 nonisolated struct FacePreview: Hashable, Sendable {
-    /// The preview's name in the derived-image directory.
+    /// The file's name in the derived-image directory: a still's preview, or a video's face
+    /// frames.
     let name: String
     let recipe: EditRecipe
+    /// Which image of the file: 0 for a preview, the frame for a video's face frames.
+    let image: Int
+
+    init(name: String, recipe: EditRecipe, image: Int = 0) {
+        self.name = name
+        self.recipe = recipe
+        self.image = image
+    }
 }
 
 /// Everything People reads from the catalog, in one transaction.
@@ -69,9 +83,10 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     /// Each file of a stack mapped to its stack's key (ADR 0052): a RAW and its JPEG are one
     /// photo, so a person's photo count counts them once.
     var photoOfStackMember: [MediaAssetID: MediaAssetID] = [:]
-    /// Stills in the available libraries and Immich accounts whose faces are not yet read from
-    /// their current stored preview, or whose preview is still to come.
-    let uncheckedPhotoCount: Int
+    /// What in the available libraries and Immich accounts is not yet read for faces: stills
+    /// whose faces are not read from their current stored preview, or whose preview is still
+    /// to come, and a library's videos whose frames are not yet read.
+    let unchecked: MediaCount
     /// The store's People revision the snapshot was read under: it includes every act whose
     /// `PeopleActOutcome.revision` is at most this.
     let revision: UInt64
@@ -160,8 +175,8 @@ nonisolated struct PersonSummary: Hashable, Sendable, Identifiable {
     let birthday: String?
     let isHidden: Bool
     let isFavorite: Bool
-    /// Photos holding a face of this person.
-    let photoCount: Int
+    /// The photos and videos holding a face of this person; a stack counts once.
+    let media: MediaCount
     /// The key photo the user chose, else the newest face.
     let cover: FaceTile?
     /// The faces the user gave this person, newest first: the facts the hard rules hold
@@ -236,14 +251,15 @@ nonisolated enum FaceActTitle {
         "Make Key Photo for \(name)"
     }
 
-    /// The undo stack's name for giving faces a person, or naming one: `Name 3 Photos`.
-    static func name(photos: Int) -> String {
-        "Name \(PeopleText.count(photos, "Photo"))"
+    /// The undo stack's name for giving faces a person, or naming one: `Name 3 Photos`,
+    /// `Name 4 Photos & Videos`.
+    static func name(_ media: MediaCount) -> String {
+        "Name \(media.title)"
     }
 }
 
-/// What `PeopleAssignment` publishes: the People gallery and the tally of photos not yet
-/// checked.
+/// What `PeopleAssignment` publishes: the People gallery and the tally of photos and videos
+/// not yet checked.
 nonisolated struct CatalogPeopleState: Equatable, Sendable {
     /// The gallery's order: favourites first, then most photos, then the name in the locale's
     /// order; the hidden people after everyone else, in the same order.
@@ -251,13 +267,13 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
     /// Each photo's faces of visible people and unidentified faces, in reading order: what
     /// the photo menus and the Info pane show, at once.
     var photoFaces: [MediaAssetID: [PhotoFace]] = [:]
-    let uncheckedPhotoCount: Int
+    let unchecked: MediaCount
     /// Faces found that are still faces (not marked `This Is Not a Face`).
     let faceCount: Int
     /// The People revision the state was built from (`PeopleSnapshot.revision`).
     var revision: UInt64 = 0
 
-    static let empty = CatalogPeopleState(people: [], uncheckedPhotoCount: 0, faceCount: 0)
+    static let empty = CatalogPeopleState(people: [], unchecked: MediaCount(), faceCount: 0)
 
     /// The faces of `photos`, in their order.
     func selectionFaces(for photos: [MediaAssetID]) -> SelectionFaces {
@@ -286,6 +302,18 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
 
 /// One face of a photo, as the Info pane and the photo menus show it: a face of a visible
 /// person or of no person.
+extension MediaCount {
+    /// The photos and videos `faces` are in, each counted once.
+    init(faces: some Sequence<PhotoFace>) {
+        self.init(tiles: faces.map(\.tile))
+    }
+
+    /// The photos and videos `tiles` are in, each counted once.
+    init(tiles: some Sequence<FaceTile>) {
+        self.init(items: tiles.map { ($0.id.asset, $0.isInVideo) })
+    }
+}
+
 nonisolated struct PhotoFace: Hashable, Sendable, Identifiable {
     let tile: FaceTile
     /// Its person; nil for an unidentified face.

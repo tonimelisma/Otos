@@ -735,6 +735,62 @@ nonisolated enum CatalogSchema {
         "ALTER TABLE library_root ADD COLUMN last_synced_at DOUBLE",
     ]
 
+    /// A library's videos are read for faces from six of their frames (ADR 0047,
+    /// `VideoFaceReader`), by enrichment, in the same read as their other products:
+    /// - `media_asset.face_frames_path`: a video's stored face frames, the sampled frames its
+    ///   faces were kept from, as the images of one HEIC in the derived-image directory
+    ///   (`ThumbnailStore.faceFramesRelativeName`); a derived image like the preview, deleted
+    ///   and moved with it. NULL for a still and for a video with no face.
+    /// - `face.frame_index`: which image of that file a video's face was read in, and so the
+    ///   one its tile is cut from; NULL for a still's face, read from its preview.
+    /// - The library claim's index pair, over every product a library's row owes, a video's
+    ///   faces included. Its text is frozen here, since `INDEXED BY` matches by text; a
+    ///   contract test holds `EnrichmentClaimGateway.stalenessSQLPredicate(.library)` to it.
+    ///
+    /// Every video's faces stamp is NULL (the preview reader never reads a video), so every
+    /// library video owes its faces once.
+    static let videoFacesMigrationIdentifier = "v35_video_faces"
+
+    static let videoFacesClaimPredicate = """
+    metadata_source_size IS NULL
+       OR metadata_source_mtime IS NULL
+       OR COALESCE(byte_size, -1) <> COALESCE(metadata_source_size, -1)
+       OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+          <> COALESCE(metadata_source_mtime, -1)
+       OR rendered_source_size IS NULL
+       OR rendered_source_mtime IS NULL
+       OR COALESCE(byte_size, -1) <> COALESCE(rendered_source_size, -1)
+       OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+          <> COALESCE(rendered_source_mtime, -1)
+       OR content_hash_xxh3_128 IS NULL
+       OR length(content_hash_xxh3_128) <> 16
+       OR content_hash_source_size IS NULL
+       OR content_hash_source_mtime IS NULL
+       OR COALESCE(byte_size, -1) <> COALESCE(content_hash_source_size, -1)
+       OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+          <> COALESCE(content_hash_source_mtime, -1)
+       OR (best_kind = 'video' AND (faces_source_size IS NULL
+       OR faces_source_mtime IS NULL
+       OR COALESCE(byte_size, -1) <> COALESCE(faces_source_size, -1)
+       OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+          <> COALESCE(faces_source_mtime, -1)))
+    """
+
+    static var videoFacesStatements: [String] {
+        [
+            "ALTER TABLE media_asset ADD COLUMN face_frames_path TEXT",
+            "ALTER TABLE face ADD COLUMN frame_index INTEGER",
+            claimIndex(
+                EnrichmentClaimGateway.libraryGlobalIndexName, global: true,
+                predicate: videoFacesClaimPredicate, orderColumn: "best_capture_local"
+            ),
+            claimIndex(
+                EnrichmentClaimGateway.libraryRootIndexName, global: false,
+                predicate: videoFacesClaimPredicate, orderColumn: "best_capture_local"
+            ),
+        ]
+    }
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 
