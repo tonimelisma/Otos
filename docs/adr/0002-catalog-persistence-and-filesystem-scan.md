@@ -162,6 +162,26 @@ real queueing problem (see
 layer or query-paging architecture until measurements or implemented
 requirements prove the current Store-owned query model insufficient.
 
+Store keeps the WAL bounded. SQLite resets its write-ahead log only at an instant no
+reader is using it, so readers that overlap one another back to back — the window,
+enrichment and the derived owners while a library or account is listed — starve its
+automatic checkpoint and the log grows without end: 257 MB in the installed app during
+a 147k-asset Immich first sync, 357 MB in a 100k-row listing probe whose log stayed at
+25 MB with no reader (`docs/research/2026-11-12-listing-batch-cost.md`). After every
+bulk write (a scan batch, a device- or source-listing batch, an enrichment batch) Store
+reads the WAL file's size: a log SQLite keeps resetting is reused from its start, so
+its file stays near one write's pages, and only a starved one keeps growing. Past
+`CatalogStore.defaultWALByteBudget` (64 MiB, about two and a half times the unstarved
+high-water mark) Store truncates the log behind GRDB's barrier, which waits for the
+reads in flight and holds new ones until the log is empty. The barrier is GRDB's callback form, so the wait blocks GRDB's queue rather than
+a cooperative thread. A failed checkpoint is logged and the next bulk write retries.
+Rejected: a passive checkpoint after every bulk write to read the log's frame count
+(it backfills pages SQLite otherwise batches, every batch); a periodic
+checkpoint (time standing in for the log's own size, ADR 0033);
+raising `wal_autocheckpoint` (a passive checkpoint still cannot reset a log readers
+hold); `journal_size_limit` alone (it applies only at a reset, which starvation
+prevents).
+
 ### macOS Scan Input
 
 The filesystem scanner uses `FileManager` URL enumeration with this requested

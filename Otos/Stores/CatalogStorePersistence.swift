@@ -1594,25 +1594,37 @@ extension CatalogStore {
         return stat(path, &info) == 0 ? info.st_dev : nil
     }
 
+    /// Writes one observed file's filesystem facts to its row, and says what that did to
+    /// the catalog: an `.inserted` row is new and carries nothing Otos derives (no
+    /// metadata, digest, rendering, faces or embedding), so only what lists rows has new
+    /// input; an `.updated` row existed and may carry any of it.
     static func upsertScannedFile(
         _ file: ScannedMediaFile,
         libraryRootPath: LibraryRootPath,
         libraryRootID: Int64,
         capabilities: VolumeNamespaceCapabilities = .unknown,
         db: Database
-    ) throws -> Bool {
+    ) throws -> ScannedFileUpsert {
         let pathKey = FilesystemNamespaceSemantics.nameKey(
             relativePath: file.relativePath,
             capabilities: capabilities
         ).rawValue
-        if let existingPath: String = try String.fetchOne(
-            db,
-            sql: """
-            SELECT relative_path FROM media_asset
-            WHERE library_root_id = ? AND relative_path_key = ? AND relative_path <> ? LIMIT 1
-            """,
-            arguments: [libraryRootID, pathKey, file.relativePath.rawValue]
-        ) {
+        // One read answers both questions this write asks before it upserts: which other
+        // path spells this one (a respell), and whether a row already sits at this path.
+        // Two index seeks in one cached statement: preparing a statement costs more than
+        // both seeks, and this one runs for every file a scan or listing writes.
+        let spellings = try Row.fetchAll(
+            db.cachedStatement(sql: """
+            SELECT relative_path, 0 AS at_path FROM media_asset
+            WHERE library_root_id = ? AND relative_path_key = ? AND relative_path <> ?
+            UNION ALL
+            SELECT relative_path, 1 AS at_path FROM media_asset
+            WHERE library_root_id = ? AND relative_path = ?
+            """),
+            arguments: [libraryRootID, pathKey, file.relativePath.rawValue, libraryRootID, file.relativePath.rawValue]
+        )
+        var existed = spellings.contains { row in row["at_path"] as Bool }
+        if let existingPath: String = spellings.first(where: { row in !(row["at_path"] as Bool) })?["relative_path"] {
             try db.execute(
                 sql: """
                 UPDATE media_asset SET relative_path = ?, relative_path_key = ?, awaiting_presence = 0
@@ -1625,9 +1637,10 @@ extension CatalogStore {
                 + "from=\(existingPath) "
                 + "to=\(file.relativePath.rawValue)"
             OtosLog.catalog.notice("\(message, privacy: .public)")
-            return true
+            return .updated
         }
         if let moved = try movedRowWitnessed(for: file, libraryRootPath: libraryRootPath, libraryRootID: libraryRootID, db: db) {
+            existed = true
             // The row keeps everything Otos holds for the file and takes the new path;
             // the upsert below then refreshes its filesystem facts. `asset_metadata` and
             // every other child row follow through `ON UPDATE CASCADE`.
@@ -1730,7 +1743,10 @@ extension CatalogStore {
                 pathKey: pathKey
             )
         )
-        return db.changesCount > 0 || putBack
+        guard db.changesCount > 0 || putBack else {
+            return .unchanged
+        }
+        return existed ? .updated : .inserted
     }
 
     private static func upsertAssetMetadata(

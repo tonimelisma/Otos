@@ -116,7 +116,9 @@ actor PhotoSearchIndex {
         self.ring = ring
         ring.yield()
         forwarder = Task { [weak self] in
-            for await _ in changes {
+            // Rows that were only added have no thumbnail to embed and no embedding to
+            // hold; the index hears them when enrichment renders them.
+            for await change in changes where change != .assetsAdded {
                 guard self != nil else { break }
                 ring.yield()
             }

@@ -61,6 +61,26 @@ ID through Store queries.
 This keeps UI cadence out of Store mutation paths. SQLite and Store-owned root
 runtime state remain catalog truth.
 
+A change says whose input moved. `.assetsDetailChanged` is an enrichment write that
+changed no ordering or scope column. `.assetsAdded` is a scan, device-listing or
+source-listing batch that only inserted rows: the type that says so is
+`ScannedFileUpsert.inserted`, tallied per write in `CatalogRowChanges`. A new row
+carries nothing Otos derives — no metadata, so no Live Photo pairing key, and no
+digest, rendering, faces, place or embedding — so only what lists rows has new
+input: the window publishes it and enrichment claims it, while Duplicates, People,
+search, place names, preview faces and render signatures wait for the enrichment
+write that gives them something to read. Every other change, including a batch that
+changes, hides or deletes a held row, is `.catalogChanged`, which every owner takes
+up. Without the split, a 147k-asset Immich first sync ran a whole-catalog pass in
+each derived owner for every 500-line batch, all competing with the listing's own
+writes for the page cache and the disk
+(`docs/research/2026-11-12-listing-batch-cost.md`).
+
+Rejected: holding back every derived owner while any listing lease is open. A lease
+says a source is being read, not that a write left derived facts alone; a resync's
+batch can hide or purge rows that carry faces and digests, and enrichment of other
+roots keeps changing derived facts during an hour-long sync.
+
 ### Projection-Owned Publication
 
 `CatalogProjection` owns one publication loop and two counters. Every Store change

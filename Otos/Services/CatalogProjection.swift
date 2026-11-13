@@ -385,7 +385,10 @@ private extension CatalogProjection {
             }
         }
         detailRefreshGeneration &+= 1
-        derivedRequested &+= 1
+        // Rows that were only added carry nothing the groups or People are built from.
+        if change != .assetsAdded {
+            derivedRequested &+= 1
+        }
         if case .assetsDetailChanged = change {
             requestPublication(.detailOnly, ringNow: false)
         } else {

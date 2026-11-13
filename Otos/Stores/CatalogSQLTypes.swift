@@ -9,6 +9,57 @@ import GRDB
 // SQLite row IDs stay confined to these stored records. Product identity remains
 // `LibraryRootPath` / `MediaAssetID`; a row ID is only the compact foreign key.
 
+/// What writing one observed file did to its row (`CatalogStore.upsertScannedFile`).
+nonisolated enum ScannedFileUpsert: Equatable, Sendable {
+    case unchanged
+    /// A row that did not exist: it carries nothing Otos derives yet — no metadata (so
+    /// no Live Photo pairing key), digest, rendering, faces, place or embedding.
+    case inserted
+    /// A row that existed, whose filesystem facts, presence or path changed.
+    case updated
+}
+
+/// The rows one write changed, split by whether they existed before it. A write that
+/// only inserted rows changed nothing any derived owner reads, so it is announced as
+/// `.assetsAdded` and only what lists rows (the window, enrichment) takes it up; any
+/// change to an existing row is a `.catalogChanged`.
+nonisolated struct CatalogRowChanges: Equatable, Sendable {
+    private(set) var inserted = 0
+    private(set) var updated = 0
+
+    mutating func record(_ upsert: ScannedFileUpsert) {
+        switch upsert {
+        case .unchanged:
+            break
+        case .inserted:
+            inserted += 1
+        case .updated:
+            updated += 1
+        }
+    }
+
+    /// Existing rows changed in a way `ScannedFileUpsert` does not describe: a source's
+    /// hide, a reported size, a purge.
+    mutating func recordUpdated(_ count: Int) {
+        updated += count
+    }
+
+    var isEmpty: Bool {
+        inserted == 0 && updated == 0
+    }
+
+    /// The change to announce, nil when the write changed nothing.
+    var notification: CatalogStoreChange? {
+        if isEmpty {
+            nil
+        } else if updated == 0 {
+            .assetsAdded
+        } else {
+            .catalogChanged
+        }
+    }
+}
+
 nonisolated struct StoredAsset {
     let libraryRootID: Int64
     let relativePath: MediaRelativePath

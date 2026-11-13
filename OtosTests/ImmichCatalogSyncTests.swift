@@ -553,6 +553,94 @@ struct ImmichCatalogSyncTests {
         await store.shutdown()
     }
 
+    /// A batch that only adds rows is announced as added, which the owners of derived facts
+    /// do not read; a batch that changes, hides or deletes a row the catalog holds is a
+    /// catalog change everyone hears.
+    @Test func aBatchOfNewRowsIsAnnouncedAsAddedAndAChangeToAHeldRowIsNot() async throws {
+        let fixture = try await FileFixture.make()
+        let store = fixture.store
+        func item(_ id: String, size: Int64 = 10, hidden: Bool = false) -> SourceListedItem {
+            SourceListedItem(
+                file: ScannedMediaFile(
+                    relativePath: MediaRelativePath(rawValue: "\(id)/IMG.JPG"),
+                    name: "IMG.JPG",
+                    contentTypeIdentifier: "public.jpeg",
+                    byteSize: size,
+                    createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                    contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
+                ),
+                sourceItemID: id,
+                isHiddenBySource: hidden
+            )
+        }
+        let changes = AsyncValueRecorder<CatalogStoreChange>()
+        let stream = await store.changeNotifications()
+        let recording = Task {
+            for await change in stream {
+                await changes.append(change)
+            }
+        }
+        defer { recording.cancel() }
+        let scan = try await store.beginSourceListing(rootPath: fixture.rootPath)
+        // The lease announces itself; each batch after it is one change of its own.
+        #expect(await changes.waitForValues { $0.count == 1 } == [.catalogChanged])
+        func apply(_ batch: SourceListingChanges) async throws -> CatalogStoreChange? {
+            let before = await changes.count()
+            try await store.applySourceListingChanges(batch, scan: scan)
+            return await changes.waitForValues { $0.count > before }.last
+        }
+
+        #expect(try await apply(SourceListingChanges(listed: [item("a"), item("b", hidden: true)])) == .assetsAdded)
+        #expect(try await apply(SourceListingChanges(listed: [item("a", size: 20), item("c")])) == .catalogChanged)
+        #expect(try await apply(SourceListingChanges(listed: [item("c", hidden: true)])) == .catalogChanged)
+        #expect(try await apply(SourceListingChanges(sizesBySourceItem: ["b": 30])) == .catalogChanged)
+        #expect(try await apply(SourceListingChanges(deletedSourceItems: ["a"])) == .catalogChanged)
+        await store.endSourceListing(scan: scan)
+        await store.shutdown()
+    }
+
+    /// A bulk write leaves the WAL file no larger than the Store's budget: past it, the
+    /// Store checkpoints the log empty before the write returns.
+    @Test func aListingBatchLeavesTheWALWithinItsBudget() async throws {
+        for budget in [CatalogStore.defaultWALByteBudget, 0] {
+            let temp = try makeTestDirectory()
+            let file = temp.appending(path: "Catalog.sqlite")
+            let wal = file.path(percentEncoded: false) + "-wal"
+            func walBytes() throws -> Int {
+                try #require(FileManager.default.attributesOfItem(atPath: wal)[.size] as? Int)
+            }
+            let store = CatalogStore(location: .databaseFile(file), walByteBudget: budget)
+            try await store.start(scansSavedLibraries: false)
+            let rootPath = try await store.addImmichAccount(
+                server: Self.server, userID: "user-1", displayName: "Family",
+                stagingContainer: temp.appending(path: "RemoteStaging")
+            )
+            let scan = try await store.beginSourceListing(rootPath: rootPath)
+            let items = (0 ..< 200).map { index in
+                SourceListedItem(
+                    file: ScannedMediaFile(
+                        relativePath: MediaRelativePath(rawValue: "asset-\(index)/IMG.JPG"),
+                        name: "IMG.JPG",
+                        contentTypeIdentifier: "public.jpeg",
+                        byteSize: 10,
+                        createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                        contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
+                    ),
+                    sourceItemID: "asset-\(index)",
+                    isHiddenBySource: false
+                )
+            }
+            try await store.applySourceListingChanges(SourceListingChanges(listed: items), scan: scan)
+            if budget == 0 {
+                #expect(try walBytes() == 0)
+            } else {
+                #expect(try walBytes() > 0)
+            }
+            await store.endSourceListing(scan: scan)
+            await store.shutdown()
+        }
+    }
+
     // MARK: - Live Photos (ADR 0046 §2)
 
     private static func motion(_ id: String, name: String = "IMG_1.MOV") -> ImmichSyncEvent {

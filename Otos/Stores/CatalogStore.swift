@@ -11,6 +11,11 @@ import Synchronization
 /// observe that the selected library instance disappeared.
 nonisolated enum CatalogStoreChange: Equatable {
     case catalogChanged
+    /// Rows were inserted and nothing else changed (`CatalogRowChanges`). They carry
+    /// nothing derived yet, so only the window and enrichment have new input; an owner
+    /// of derived facts (duplicates, people, search, places, faces, render signatures)
+    /// hears them when enrichment writes what it derives from them.
+    case assetsAdded
     case assetsDetailChanged
     case libraryRemoved(LibraryRootPath)
 }
@@ -241,6 +246,17 @@ actor CatalogStore {
     }
 
     private let location: Location
+    /// Bytes the WAL file may reach before a bulk write empties it (64 MiB). A
+    /// write-ahead log is reset only at an instant no reader is using it, so while readers
+    /// overlap one another back to back — the window, enrichment and the derived owners
+    /// during a listing — SQLite's own checkpoint can never reset it and the file grows
+    /// without end (257 MB in the installed app, 250–357 MB in the listing probe,
+    /// `docs/research/2026-11-12-listing-batch-cost.md`). A log SQLite resets stays near
+    /// one batch's pages: 26 MB at its largest in the same probe with no reader.
+    static let defaultWALByteBudget: Int64 = 64 * 1024 * 1024
+
+    /// The WAL file size past which a bulk write empties the log (`boundWAL`).
+    private let walByteBudget: Int64
     private let scanner: CatalogScanner
     private let filesystemWatcher: CatalogFilesystemWatcher
     /// How often a running scan flushes what it has found: at most once a second. A rate
@@ -375,8 +391,10 @@ actor CatalogStore {
         scanCadence: Duration = .seconds(1),
         wallClock: @escaping @Sendable () -> Date = { Date() },
         initialLoadDidRead: (@Sendable () async -> Void)? = nil,
-        importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)? = nil
+        importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)? = nil,
+        walByteBudget: Int64 = CatalogStore.defaultWALByteBudget
     ) {
+        self.walByteBudget = walByteBudget
         self.location = location
         self.scanner = scanner
         self.filesystemWatcher = filesystemWatcher
@@ -3352,7 +3370,7 @@ extension CatalogStore {
         deleteSupersededImages(writeOutcome.supersededImagePaths)
 
         await recordEnrichmentBatchWrite(resultsCount: results.count, writeOutcome: writeOutcome)
-        await recordWALDiagnostics(reason: "enrichmentBatch")
+        await boundWAL(reason: "enrichmentBatch")
         if writeOutcome.appliedCount > 0 {
             for rootPath in writeOutcome.namingChangedRoots {
                 bumpNamingRevision(for: rootPath)
@@ -4620,36 +4638,34 @@ extension CatalogStore {
         }
         let dbQueue = try database()
         let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .unknown
-        let timedChangedCount = try await timedWrite(dbQueue) { db in
-            var count = 0
+        let timed = try await timedWrite(dbQueue) { db in
+            var rows = CatalogRowChanges()
             for file in batch {
-                let changed = try Self.upsertScannedFile(
+                try rows.record(Self.upsertScannedFile(
                     file,
                     libraryRootPath: scan.rootPath,
                     libraryRootID: scan.rootRowID,
                     capabilities: scanCapabilities,
                     db: db
-                )
-                if changed {
-                    count += 1
-                }
+                ))
             }
-            return count
+            return rows
         }
         guard owns(scan) else {
             throw CancellationError()
         }
-        if timedChangedCount.value > 0 {
+        if let change = timed.value.notification {
             // A device batch that actually changed rows is a real import-occupancy
             // change — same rule as the fixed/removable scan path (D2, D1: a plan
             // built from persisted rows before this fires is stale, and never
             // reprocessed without this bump).
             bumpNamespaceRevision(for: scan.rootPath)
-            notifyCatalogChanged()
+            notifyCatalogChanged(change)
         }
         OtosLog.catalog.notice(
-            "op=catalog.source.listing.batch phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) count=\(batch.count, privacy: .public) changedCount=\(timedChangedCount.value, privacy: .public) waitMs=\(timedChangedCount.waitMs, privacy: .public) execMs=\(timedChangedCount.execMs, privacy: .public)"
+            "op=catalog.source.listing.batch phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) count=\(batch.count, privacy: .public) inserted=\(timed.value.inserted, privacy: .public) updated=\(timed.value.updated, privacy: .public) waitMs=\(timed.waitMs, privacy: .public) execMs=\(timed.execMs, privacy: .public)"
         )
+        await boundWAL(reason: "deviceListingBatch")
     }
 
     func completeSourceListing(
@@ -4741,9 +4757,9 @@ extension CatalogStore {
                 ThumbnailStore.delete(name, in: thumbnailDirectory)
             }
         }
-        if timed.value.changed > 0 {
+        if let change = timed.value.rows.notification {
             bumpNamespaceRevision(for: scan.rootPath)
-            notifyCatalogChanged()
+            notifyCatalogChanged(change)
         }
         OtosLog.catalog.noticeOperation("catalog.source.changes", phase: "finish", fields: [
             "rootPath": scan.rootPath.rawValue,
@@ -4751,10 +4767,12 @@ extension CatalogStore {
             "completeFolders": "\(changes.completeFolders.count)",
             "sizes": "\(changes.sizesBySourceItem.count)",
             "deleted": "\(changes.deletedSourceItems.count)",
-            "changed": "\(timed.value.changed)",
+            "inserted": "\(timed.value.rows.inserted)",
+            "updated": "\(timed.value.rows.updated)",
             "waitMs": "\(timed.waitMs)",
             "execMs": "\(timed.execMs)",
         ])
+        await boundWAL(reason: "sourceListingBatch")
     }
 
     /// The transaction of `applySourceListingChanges`: rows changed, and the derived
@@ -4765,15 +4783,14 @@ extension CatalogStore {
         rootPath: LibraryRootPath,
         capabilities: VolumeNamespaceCapabilities,
         db: Database
-    ) throws -> (changed: Int, purgedImages: [String]) {
-        var changed = 0
+    ) throws -> (rows: CatalogRowChanges, purgedImages: [String]) {
+        var rows = CatalogRowChanges()
         for item in changes.listed {
             let file = try keepingStoredSize(item.file, libraryRootID: rootRowID, db: db)
-            if try upsertScannedFile(
+            let upsert = try upsertScannedFile(
                 file, libraryRootPath: rootPath, libraryRootID: rootRowID, capabilities: capabilities, db: db
-            ) {
-                changed += 1
-            }
+            )
+            rows.record(upsert)
             try db.execute(
                 sql: """
                 UPDATE media_asset SET hidden_by_source = ?
@@ -4781,7 +4798,10 @@ extension CatalogStore {
                 """,
                 arguments: [item.isHiddenBySource, rootRowID, file.relativePath.rawValue, item.isHiddenBySource]
             )
-            changed += db.changesCount
+            // A new row's hide is part of the new row; an existing one's is a change to it.
+            if upsert != .inserted {
+                rows.recordUpdated(db.changesCount)
+            }
             // The source's name for the row: not shown, so not a change the window hears.
             try db.execute(
                 sql: """
@@ -4799,7 +4819,7 @@ extension CatalogStore {
                 """,
                 arguments: [size, rootRowID, item, size]
             )
-            changed += db.changesCount
+            rows.recordUpdated(db.changesCount)
         }
         var purged: [ExistingAssetRow] = []
         let listedPaths = Set(changes.listed.map(\.file.relativePath))
@@ -4824,9 +4844,9 @@ extension CatalogStore {
         var purgedPaths: Set<MediaRelativePath> = []
         for row in purged where purgedPaths.insert(row.relativePath).inserted {
             purgedImages += row.derivedImagePaths
-            changed += try deleteAssetRow(rootRowID: rootRowID, relativePath: row.relativePath, db: db) ? 1 : 0
+            try rows.recordUpdated(deleteAssetRow(rootRowID: rootRowID, relativePath: row.relativePath, db: db) ? 1 : 0)
         }
-        return (changed, purgedImages)
+        return (rows, purgedImages)
     }
 
     /// When the source at `rootPath` last listed in full (an Immich account's last complete
@@ -5562,24 +5582,21 @@ private extension CatalogStore {
         let dbQueue = try database()
         let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .unknown
         let state = OtosSignpost.persistence.beginInterval("CatalogScanBatchWrite")
-        let timedChangedCount = try await timedWrite(dbQueue) { db in
-            var count = 0
+        let timedRows = try await timedWrite(dbQueue) { db in
+            var rows = CatalogRowChanges()
             for file in batch {
-                let changed = try Self.upsertScannedFile(
+                try rows.record(Self.upsertScannedFile(
                     file,
                     libraryRootPath: scan.rootPath,
                     libraryRootID: scan.rootRowID,
                     capabilities: scanCapabilities,
                     db: db
-                )
-                if changed {
-                    count += 1
-                }
+                ))
             }
-            return count
+            return rows
         }
         OtosSignpost.persistence.endInterval("CatalogScanBatchWrite", state)
-        let changedCount = timedChangedCount.value
+        let rows = timedRows.value
 
         // The store actor can process remove/cancel messages while SQLite is
         // writing. Recheck ownership before notifying from this batch.
@@ -5588,33 +5605,28 @@ private extension CatalogStore {
             throw CancellationError()
         }
 
-        let visibleChange = changedCount > 0
         // SQLite reported whether this batch inserted a new row or changed existing
         // filesystem facts. Identical rescans publish nothing; changed dates still
         // count because Date sort and enrichment priority fall back to them. A
         // changed batch is a real import-occupancy change (added row or resized
         // file), so it advances the occupancy revision; identical rescans do not,
         // which is what lets import planning settle against a churning cloud root.
-        if visibleChange {
+        if let change = rows.notification {
             bumpNamespaceRevision(for: scan.rootPath)
-            notifyCatalogChanged()
+            notifyCatalogChanged(change)
         }
-        await recordScanBatchWrite(
-            scan: scan,
-            scannedCount: batch.count,
-            changedCount: changedCount,
-            timing: timedChangedCount
-        )
-        await recordWALDiagnostics(reason: "scanBatch")
+        recordScanBatchWrite(scan: scan, scannedCount: batch.count, timed: timedRows)
+        await boundWAL(reason: "scanBatch")
     }
 
     private func recordScanBatchWrite(
         scan: ActiveScan,
         scannedCount: Int,
-        changedCount: Int,
-        timing: DatabaseTimedValue<Int>
-    ) async {
-        let visibleChange = changedCount > 0
+        timed timing: DatabaseTimedValue<CatalogRowChanges>
+    ) {
+        let rows = timing.value
+        let visibleChange = !rows.isEmpty
+        let changedCount = rows.inserted + rows.updated
         OtosLog.catalog.debug(
             """
             Catalog scan batch path=\(scan.rootPath.rawValue, privacy: .public) \
@@ -5625,7 +5637,7 @@ private extension CatalogStore {
             """
         )
         OtosLog.catalog.notice(
-            "op=catalog.scan.batch phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) count=\(scannedCount, privacy: .public) changed=\(visibleChange, privacy: .public) changedCount=\(changedCount, privacy: .public) waitMs=\(timing.waitMs, privacy: .public) execMs=\(timing.execMs, privacy: .public) writeMs=\(timing.totalMs, privacy: .public)"
+            "op=catalog.scan.batch phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) count=\(scannedCount, privacy: .public) changed=\(visibleChange, privacy: .public) changedCount=\(changedCount, privacy: .public) inserted=\(rows.inserted, privacy: .public) updated=\(rows.updated, privacy: .public) waitMs=\(timing.waitMs, privacy: .public) execMs=\(timing.execMs, privacy: .public) writeMs=\(timing.totalMs, privacy: .public)"
         )
     }
 
@@ -6182,14 +6194,47 @@ private extension CatalogStore {
         )
     }
 
-    private func recordWALDiagnostics(reason: String) async {
-        guard databaseFileURL != nil else {
+    /// Keeps the WAL bounded after a bulk write. A log SQLite keeps resetting is reused
+    /// from its start and its file stays near one write's pages; a starved one only
+    /// grows, so the file's size is the fact that says so, and reading it costs a `stat`.
+    /// Past `walByteBudget`, a truncating checkpoint behind GRDB's barrier empties the
+    /// log: the barrier waits for the reads in flight and holds new ones until it is
+    /// done, and its callback form runs on GRDB's own queue, so the wait never blocks a
+    /// cooperative thread. A failed checkpoint is logged and leaves the log as it was;
+    /// the next bulk write tries again.
+    private func boundWAL(reason: String) async {
+        guard databaseFileURL != nil, let walBytes = walFileSizeBytes() else {
             return
         }
-        let walBytes = walFileSizeBytes() ?? -1
-        OtosLog.catalog.notice(
-            "op=catalog.database.wal phase=sample reason=\(reason, privacy: .public) walBytes=\(walBytes, privacy: .public)"
-        )
+        guard walBytes > walByteBudget else {
+            OtosLog.catalog.noticeOperation("catalog.database.wal", phase: "sample", fields: [
+                "reason": reason,
+                "walBytes": "\(walBytes)",
+            ])
+            return
+        }
+        do {
+            let dbWriter = try database()
+            let start = ContinuousClock.now
+            let checkpoint: (walFrameCount: Int, checkpointedFrameCount: Int) = try await withCheckedThrowingContinuation { continuation in
+                dbWriter.asyncBarrierWriteWithoutTransaction { database in
+                    continuation.resume(with: Result { try database.get().checkpoint(.truncate) })
+                }
+            }
+            OtosLog.catalog.noticeOperation("catalog.database.wal", phase: "truncated", fields: [
+                "reason": reason,
+                "walBytesBefore": "\(walBytes)",
+                "walBytes": "\(walFileSizeBytes() ?? -1)",
+                "walFrames": "\(checkpoint.walFrameCount)",
+                "barrierMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+            ])
+        } catch {
+            OtosLog.catalog.errorOperation("catalog.database.wal", phase: "checkpointFailed", fields: [
+                "reason": reason,
+                "walBytes": "\(walBytes)",
+                "error": String(describing: error),
+            ])
+        }
     }
 
     private func walFileSizeBytes() -> Int64? {
@@ -6704,7 +6749,7 @@ private extension CatalogStore {
                         capabilities: rootCapabilities,
                         db: db
                     )
-                    return mediaChanged || pairingChanged
+                    return mediaChanged != .unchanged || pairingChanged
                 case let .companion(companion):
                     // A path that was media and became a companion must leave media.
                     let mediaDeleted = try Self.deleteAssetRow(
