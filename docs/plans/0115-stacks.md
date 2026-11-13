@@ -71,7 +71,7 @@ Each increment lands on `main` with its own DoD.
    - Leave out screenshots and documents, using the platform's utility classification once its
      availability on macOS 27 is verified and measured on the owner's library (a research note).
    - Choose the cap with the owner from that measurement.
-6. **Camera bursts: measurement first.**
+6. **Camera bursts: measurement first.** *(measured: `docs/research/2026-11-13-camera-burst-detection.md` — timing cannot tell bursts apart; the camera's maker-note drive mode can; awaiting the owner's decision)*
    - A research note on detecting bursts from capture facts (body serial, sub-seconds, maker
      sequence numbers MediaMetadata can read) on the owner's library, before any rule ships.
    - A rule ships only after the owner decides from that note, with Remove from Burst for a
