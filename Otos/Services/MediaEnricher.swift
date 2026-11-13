@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreGraphics
 import Foundation
 import MediaMetadata
@@ -65,8 +66,12 @@ nonisolated struct MediaEnricher {
             // it back to be downloaded, which is the cost this path exists to avoid.
             if case let .remoteRanges(reader, relativePath) = access {
                 return await Self.enrichFromRemoteRanges(
-                    id: id, reader: reader, relativePath: relativePath,
-                    sourceSize: sourceSize, sourceMTimeSeconds: sourceMTimeSeconds
+                    RemoteRead(
+                        id: id, reader: reader, relativePath: relativePath,
+                        sourceSize: sourceSize, sourceMTimeSeconds: sourceMTimeSeconds, scope: scope
+                    ),
+                    analyzeFaces: analyzeFaces,
+                    thumbnailDirectory: thumbnailDirectory
                 )
             }
             guard case let .localFile(url) = access else {
@@ -154,6 +159,103 @@ nonisolated struct MediaEnricher {
         }
     }
 
+    /// One account row's ranged enrichment: which row, its reader, and the products the
+    /// claim covers.
+    private struct RemoteRead {
+        let id: MediaAssetID
+        let reader: RemoteRangeReader
+        let relativePath: MediaRelativePath
+        let sourceSize: Int64?
+        let sourceMTimeSeconds: Int?
+        let scope: EnrichmentScope
+    }
+
+    /// Enriches an Immich account's row in byte ranges of its original while its server
+    /// answers (ADR 0046 §5): its metadata, and a video's faces, whose frames AVFoundation
+    /// reads range by range (`RemoteVideoAsset`, ADR 0047). Nothing is downloaded whole. A
+    /// read the server does not answer is `.unanswered`, so the row is paced and read again,
+    /// never stamped with what the server failed to send.
+    private static func enrichFromRemoteRanges(
+        _ read: RemoteRead,
+        analyzeFaces: @escaping FaceAnalysisReader,
+        thumbnailDirectory: URL
+    ) async -> EnrichmentOutcome {
+        let (id, reader, relativePath) = (read.id, read.reader, read.relativePath)
+        var metadata: EnrichedMetadata?
+        if read.scope.contains(.metadata) {
+            let started = ContinuousClock.now
+            let result = await RemoteMetadataReader.read(reader, filenameHint: relativePath.rawValue)
+            guard !result.outcome.shouldRetry else {
+                OtosLog.metadata.noticeOperation("remote.rangedRead", phase: "unanswered", fields: [
+                    "rootPath": id.libraryRootPath.rawValue, "relativePath": relativePath.rawValue,
+                ])
+                return .unanswered
+            }
+            OtosLog.metadata.noticeOperation("remote.rangedRead", phase: "finish", fields: [
+                "rootPath": id.libraryRootPath.rawValue,
+                "relativePath": relativePath.rawValue,
+                "transportReads": "\(result.readCost.transportReadCount)",
+                "uniqueBytes": "\(result.readCost.uniqueBytesRead)",
+                "fileBytes": "\(reader.size)",
+                "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: started))",
+            ])
+            metadata = EnrichedMetadata(
+                metadata: Self.map(result),
+                kind: Self.normalizedKind(result.format),
+                format: MediaFormatToken.normalize(result.format)
+            )
+        }
+        var videoFaces: EnrichedVideoFaces?
+        if read.scope.contains(.videoFaces) {
+            let started = ContinuousClock.now
+            let remote = RemoteVideoAsset(reader: reader, filename: relativePath.rawValue)
+            let faces: EnrichedVideoFaces
+            do {
+                faces = try await VideoFaceReader.read(
+                    remote.asset, analyzeFaces: analyzeFaces,
+                    framesRelativeName: ThumbnailStore.faceFramesRelativeName(for: id), in: thumbnailDirectory
+                )
+            } catch {
+                OtosLog.metadata.errorOperation("videoFaces.read", phase: "failed", fields: [
+                    "rootPath": id.libraryRootPath.rawValue, "relativePath": relativePath.rawValue,
+                    "error": String(describing: error),
+                ])
+                return .transient
+            }
+            let cost = remote.cost
+            guard !remote.failed else {
+                // A frame the server did not send is not a frame without a face.
+                if let frames = faces.frames {
+                    ThumbnailStore.discard(frames, in: thumbnailDirectory)
+                }
+                OtosLog.metadata.noticeOperation("videoFaces.remote", phase: "unanswered", fields: [
+                    "rootPath": id.libraryRootPath.rawValue, "relativePath": relativePath.rawValue,
+                    "bytes": "\(cost.bytes)",
+                ])
+                return .unanswered
+            }
+            OtosLog.metadata.noticeOperation("videoFaces.remote", phase: "finish", fields: [
+                "rootPath": id.libraryRootPath.rawValue,
+                "relativePath": relativePath.rawValue,
+                "faces": "\(faces.faces.count)",
+                "reads": "\(cost.reads)",
+                "bytes": "\(cost.bytes)",
+                "fileBytes": "\(reader.size)",
+                "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: started))",
+            ])
+            videoFaces = faces
+        }
+        return .complete(EnrichmentResult(
+            id: id,
+            metadata: metadata,
+            rendering: nil,
+            sourceSize: read.sourceSize ?? -1,
+            sourceMTimeSeconds: read.sourceMTimeSeconds ?? -1,
+            contentHash: nil,
+            videoFaces: videoFaces
+        ))
+    }
+
     /// Enriches a row whose bytes are ranges on an attached camera.
     ///
     /// Deliberately narrower than the local path, and each omission is a decision rather
@@ -175,47 +277,6 @@ nonisolated struct MediaEnricher {
     /// outcome here would stamp "this file has no capture date", and ARC-057 would then name
     /// it from its filesystem mtime — a name that is also the dedupe key, so a detached
     /// camera would produce duplicate imports rather than a retry.
-    /// Reads an account row's metadata from its server in ranges (ADR 0046 §5). Metadata
-    /// only: the row's thumbnail and preview are the server's own (§7), and its digest and
-    /// rendering wait for the original. A read the server did not answer is `.unanswered`,
-    /// never a definitive "no capture date".
-    private static func enrichFromRemoteRanges(
-        id: MediaAssetID,
-        reader: RemoteRangeReader,
-        relativePath: MediaRelativePath,
-        sourceSize: Int64?,
-        sourceMTimeSeconds: Int?
-    ) async -> EnrichmentOutcome {
-        let started = ContinuousClock.now
-        let result = await RemoteMetadataReader.read(reader, filenameHint: relativePath.rawValue)
-        guard !result.outcome.shouldRetry else {
-            OtosLog.metadata.noticeOperation("remote.rangedRead", phase: "unanswered", fields: [
-                "rootPath": id.libraryRootPath.rawValue, "relativePath": relativePath.rawValue,
-            ])
-            return .unanswered
-        }
-        OtosLog.metadata.noticeOperation("remote.rangedRead", phase: "finish", fields: [
-            "rootPath": id.libraryRootPath.rawValue,
-            "relativePath": relativePath.rawValue,
-            "transportReads": "\(result.readCost.transportReadCount)",
-            "uniqueBytes": "\(result.readCost.uniqueBytesRead)",
-            "fileBytes": "\(reader.size)",
-            "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: started))",
-        ])
-        return .complete(EnrichmentResult(
-            id: id,
-            metadata: EnrichedMetadata(
-                metadata: Self.map(result),
-                kind: Self.normalizedKind(result.format),
-                format: MediaFormatToken.normalize(result.format)
-            ),
-            rendering: nil,
-            sourceSize: sourceSize ?? -1,
-            sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
-            contentHash: nil
-        ))
-    }
-
     private static func enrichFromRanges(
         id: MediaAssetID,
         access: EnrichmentByteAccess,
@@ -388,7 +449,7 @@ nonisolated struct MediaEnricher {
         if scope.contains(.videoFaces) {
             do {
                 let faces = try await VideoFaceReader.read(
-                    url, analyzeFaces: analyzeFaces,
+                    AVURLAsset(url: url), analyzeFaces: analyzeFaces,
                     framesRelativeName: ThumbnailStore.faceFramesRelativeName(for: id), in: thumbnailDirectory
                 )
                 videoFaces = faces

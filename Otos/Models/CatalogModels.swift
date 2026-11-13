@@ -423,6 +423,16 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
 
     /// Its stills are read for faces, from their stored previews (ADR 0047). A card's or a
     /// camera's are read once imported into a library, where their overlay lives on.
+    /// Its videos are read for faces from their frames (ADR 0047): a library's from local
+    /// bytes, an Immich account's in byte ranges from its server. A card's or a camera's are
+    /// read once imported into a library.
+    var readsVideoFaces: Bool {
+        switch self {
+        case .library, .immichAccount: true
+        case .removableVolume, .deviceMTP: false
+        }
+    }
+
     var readsFaces: Bool {
         switch self {
         case .library, .immichAccount: true
@@ -529,10 +539,14 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     }
 
     /// The claim a row of this kind is first enriched under (ADR 0018, ADR 0047): a fixed
-    /// library's every product, a video's faces included, or metadata first. A card's
-    /// renderings and digests come later, under `EnrichmentClaim.products`.
+    /// library's every product, a video's faces included; an Immich account's metadata and
+    /// a video's faces, read in ranges; or metadata first. A card's renderings and digests
+    /// come later, under `EnrichmentClaim.products`.
     var firstClaim: EnrichmentClaim {
-        claimsEveryProductTogether ? .library : .metadata
+        if claimsEveryProductTogether {
+            return .library
+        }
+        return readsVideoFaces ? .account : .metadata
     }
 
     /// The kinds that have `capability`, as a SQL list of quoted `library_root.kind`
@@ -935,6 +949,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         case .metadata: metadataStale
         case .products: metadataStale || renderingStale || hashStale
         case .library: metadataStale || renderingStale || hashStale || videoFacesStale
+        case .account: metadataStale || videoFacesStale
         }
     }
 }

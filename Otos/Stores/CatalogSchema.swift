@@ -889,6 +889,38 @@ nonisolated enum CatalogSchema {
     static let sourceProductsAbsentStatements: [String] = [
         "ALTER TABLE media_asset ADD COLUMN source_products_absent INTEGER NOT NULL DEFAULT 0",
     ]
+    /// An Immich account's videos are read for faces too (ADR 0047), in byte ranges from its
+    /// server (`RemoteVideoAsset`), under the account claim: metadata, and a video's faces.
+    /// Its index pair's text is frozen here, as v35's is; a contract test holds
+    /// `EnrichmentClaimGateway.stalenessSQLPredicate(.account)` to it. Every account video's
+    /// faces stamp is NULL, so each owes its faces once.
+    static let accountVideoFacesMigrationIdentifier = "v40_account_video_faces"
+
+    static let accountClaimPredicate = """
+    metadata_source_size IS NULL
+       OR metadata_source_mtime IS NULL
+       OR COALESCE(byte_size, -1) <> COALESCE(metadata_source_size, -1)
+       OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+          <> COALESCE(metadata_source_mtime, -1)
+       OR (best_kind = 'video' AND (faces_source_size IS NULL
+       OR faces_source_mtime IS NULL
+       OR COALESCE(byte_size, -1) <> COALESCE(faces_source_size, -1)
+       OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+          <> COALESCE(faces_source_mtime, -1)))
+    """
+
+    static var accountVideoFacesStatements: [String] {
+        [
+            claimIndex(
+                EnrichmentClaimGateway.accountGlobalIndexName, global: true,
+                predicate: accountClaimPredicate, orderColumn: "best_capture_local"
+            ),
+            claimIndex(
+                EnrichmentClaimGateway.accountRootIndexName, global: false,
+                predicate: accountClaimPredicate, orderColumn: "best_capture_local"
+            ),
+        ]
+    }
 
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"

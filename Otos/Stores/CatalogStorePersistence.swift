@@ -259,6 +259,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.accountVideoFacesMigrationIdentifier) { db in
+            for statement in CatalogSchema.accountVideoFacesStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

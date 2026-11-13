@@ -184,7 +184,7 @@ the rules of a merge apply instead (see Merging).
 
 **Counts** say how many photos an act changes, and name what they hold: `photos`, `videos`
 when all are videos, `photos and videos` once both are, `Photos & Videos` in a menu
-(owner decision, 2026-11-13). A library video's faces are People's too, one face per
+(owner decision, 2026-11-13). A library's and an Immich account's video faces are People's too, one face per
 person per video, its tile cut from the frame it was read in (ADR 0047):
 - **An unnamed person:** always every photo of them, since naming acts on all of them:
   `Unnamed Person · 14 Photos ▸`, and `14 photos` under the Info pane's `Add Name…`.
@@ -291,6 +291,8 @@ assignment (ADR 0047). Entries live for the session.
 - 2026-11-13 (videos): a library's videos are read for faces from six frames, one face per
   person per video, downloading each video once; counts say `photos and videos` once both are;
   a video's face is never outlined and offers no `Make Key Photo`.
+- 2026-11-13 (Immich videos): an Immich account's videos are read for faces too, in byte
+  ranges from the server, never downloaded.
 - 2026-11-12 (one face): a photo menu with one face entry, wherever it opens, puts its acts at
   the top level under a heading naming whose they are; the person whose photos are shown is
   not moved first or flattened beside other faces (two faces flattened together read as one

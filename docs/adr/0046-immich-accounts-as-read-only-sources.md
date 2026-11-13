@@ -253,7 +253,8 @@ migration v39): an asset listed without a thumbhash, or refused, is not asked fo
 images again until a later listing carries a thumbhash. Asking again every pass would
 spend one request per such asset per pass for an answer the server has already given.
 
-Enrichment never downloads an account's original only to render it. Otos renders its own
+Enrichment never downloads an account's original only to render it. A video's faces are read
+in byte ranges of its original, never a download (ADR 0047). Otos renders its own
 products (ADR 0035) from an original that is local for another reason:
 
 - full-resolution zoom;

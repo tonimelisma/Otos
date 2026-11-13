@@ -202,6 +202,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.burstMigrationIdentifier,
             CatalogSchema.leftOutIndexMigrationIdentifier,
             CatalogSchema.sourceProductsAbsentMigrationIdentifier,
+            CatalogSchema.accountVideoFacesMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)

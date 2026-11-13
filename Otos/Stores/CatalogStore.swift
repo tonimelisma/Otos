@@ -1042,8 +1042,8 @@ extension CatalogStore {
     }
 
     /// What is not yet read for faces (ADR 0047): stills whose stored preview is still to
-    /// come, or whose faces were not read from the one they have, and a library's videos whose
-    /// frames are not yet read. A Live Photo's movie is not counted: its still holds its faces.
+    /// come, or whose faces were not read from the one they have, and videos of a library or
+    /// an Immich account whose frames are not yet read. A Live Photo's movie is not counted: its still holds its faces.
     private static func uncheckedForFaces(rootIDs: [Int64], db: Database) throws -> MediaCount {
         guard !rootIDs.isEmpty else { return MediaCount() }
         let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
@@ -1055,7 +1055,7 @@ extension CatalogStore {
                 SUM(best_kind = 'video'
                     AND library_root_id IN (
                         SELECT id FROM library_root
-                        WHERE kind IN (\(LibraryRootKind.sqlLiteralList(\.claimsEveryProductTogether)))
+                        WHERE kind IN (\(LibraryRootKind.sqlLiteralList(\.readsVideoFaces)))
                     )
                     AND (\(EnrichmentClaimGateway.videoFacesStalenessSQLPredicate()))
                     AND NOT \(LivePhotoSQL.isPairedMotion("media_asset")))
@@ -2975,7 +2975,7 @@ extension CatalogStore {
             isRootEnrichable: { [roots] path in roots[path]?.isEnrichable == true },
             firstClaim: { [roots] path in
                 let first = roots[path]?.root.firstClaim ?? .metadata
-                return bytesAreLocal && first == .metadata ? .products : first
+                return bytesAreLocal && (first == .metadata || first == .account) ? .products : first
             }
         )
         guard !eligibleClaims.isEmpty else {
@@ -3028,7 +3028,7 @@ extension CatalogStore {
         -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]>
     {
         let prioritizedRootIDs = roots.enrichableRootIDsByRemovablePriority()
-        let (libraryRootIDs, metadataFirstRootIDs) = roots.enrichableRootIDsByFirstClaim()
+        let (libraryRootIDs, accountRootIDs, metadataFirstRootIDs) = roots.enrichableRootIDsByFirstClaim()
         let cardRootIDs = roots.enrichableCardRootIDs()
         let dbWriter = try database()
         let timedStoredAssets = try await timedWrite(dbWriter) { db in
@@ -3052,9 +3052,11 @@ extension CatalogStore {
             let claimGroups: [(rootIDs: [Int64], claim: EnrichmentClaim)] = [
                 (removableRoots.intersection(libraryRootIDs).sorted(), .library),
                 (removableRoots.intersection(metadataFirstRootIDs).sorted(), .metadata),
+                (removableRoots.intersection(accountRootIDs).sorted(), .account),
                 (cardsReadyForProducts, .products),
                 (fixedRoots.intersection(libraryRootIDs).sorted(), .library),
                 (fixedRoots.intersection(metadataFirstRootIDs).sorted(), .metadata),
+                (fixedRoots.intersection(accountRootIDs).sorted(), .account),
             ]
             for group in claimGroups where storedAssets.count < limit && !group.rootIDs.isEmpty {
                 let remaining = limit - storedAssets.count

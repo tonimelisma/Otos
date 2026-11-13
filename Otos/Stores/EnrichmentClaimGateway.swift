@@ -17,19 +17,23 @@ nonisolated enum EnrichmentClaimGateway {
     /// `EnrichmentClaim` (ADR 0009, ADR 0018, ADR 0047): metadata only, for a card's first
     /// pass, a camera and an Immich account, which leave it as soon as their metadata is
     /// current; the products (metadata, rendering, digest), for a card's second pass; and a
-    /// fixed library's every product, a video's faces included.
+    /// fixed library's every product, a video's faces included; and an Immich account's
+    /// metadata and a video's faces.
     static let broadGlobalIndexName = "idx_media_asset_needs_enrichment_global"
     static let broadRootIndexName = "idx_media_asset_needs_enrichment_root"
     static let metadataOnlyGlobalIndexName = "idx_media_asset_needs_enrichment_global_metadata_only"
     static let metadataOnlyRootIndexName = "idx_media_asset_needs_enrichment_root_metadata_only"
     static let libraryGlobalIndexName = "idx_media_asset_needs_enrichment_global_library"
     static let libraryRootIndexName = "idx_media_asset_needs_enrichment_root_library"
+    static let accountGlobalIndexName = "idx_media_asset_needs_enrichment_global_account"
+    static let accountRootIndexName = "idx_media_asset_needs_enrichment_root_account"
 
     static func globalIndexName(_ claim: EnrichmentClaim) -> String {
         switch claim {
         case .metadata: metadataOnlyGlobalIndexName
         case .products: broadGlobalIndexName
         case .library: libraryGlobalIndexName
+        case .account: accountGlobalIndexName
         }
     }
 
@@ -38,6 +42,7 @@ nonisolated enum EnrichmentClaimGateway {
         case .metadata: metadataOnlyRootIndexName
         case .products: broadRootIndexName
         case .library: libraryRootIndexName
+        case .account: accountRootIndexName
         }
     }
 
@@ -147,6 +152,11 @@ nonisolated enum EnrichmentClaimGateway {
             \(metadataStalenessSQLPredicate())
                OR \(renderingStalenessSQLPredicate())
                OR \(hashStalenessSQLPredicate())
+               OR (\(videoFacesStalenessSQLPredicate()))
+            """
+        case .account:
+            """
+            \(metadataStalenessSQLPredicate())
                OR (\(videoFacesStalenessSQLPredicate()))
             """
         }

@@ -40,6 +40,7 @@ struct EnrichmentClaimIndexContractTests {
         for (claim, root, global) in [
             (EnrichmentClaim.products, EnrichmentClaimGateway.broadRootIndexName, EnrichmentClaimGateway.broadGlobalIndexName),
             (.library, EnrichmentClaimGateway.libraryRootIndexName, EnrichmentClaimGateway.libraryGlobalIndexName),
+            (.account, EnrichmentClaimGateway.accountRootIndexName, EnrichmentClaimGateway.accountGlobalIndexName),
         ] {
             let rootQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(rootIDs: [1], limit: 4, claim: claim))
             let globalQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(rootIDs: [1, 2], limit: 4, claim: claim))
@@ -52,9 +53,10 @@ struct EnrichmentClaimIndexContractTests {
     }
 
     /// `INDEXED BY` matches a partial index by its text, so the library claim's predicate is
-    /// the text v35 made its indexes from.
+    /// the text v35 made its indexes from, and the account claim's the text v40 did.
     @Test func theLibraryClaimKeepsTheTextItsIndexesWereCreatedWith() {
         #expect(EnrichmentClaimGateway.stalenessSQLPredicate(.library) == CatalogSchema.videoFacesClaimPredicate)
+        #expect(EnrichmentClaimGateway.stalenessSQLPredicate(.account) == CatalogSchema.accountClaimPredicate)
     }
 
     private static func migratedDatabase() async throws -> DatabaseQueue {

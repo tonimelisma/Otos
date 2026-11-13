@@ -85,8 +85,8 @@ grouping had put with the right child.
 
 ### Videos
 
-- **Which:** a library's videos (owner decision, 2026-11-13). A card's and a camera's are read
-  once imported, as their stills are; an Immich account's are not read. A Live Photo's movie
+- **Which:** a library's videos and an Immich account's (owner decisions, 2026-11-13). A
+  card's and a camera's are read once imported, as their stills are. A Live Photo's movie
   is left out of People: its still holds its faces (ADR 0041).
 - **The read:** a video has no stored preview, so its faces are an enrichment product, made in
   the same read of its local bytes as its other products under the library claim
@@ -94,7 +94,14 @@ grouping had put with the right child.
   background and above the free-space floor (ADR 0027); a library's 1,939 videos are
   627 GB (owner decision, 2026-11-13). `VideoFaceReader` decodes the frames at 0, 10, 25,
   50, 75 and 90% upright at full resolution with no time tolerance, so a re-read finds the
-  same frames, and reads each with `FaceAnalyzer`. Measured on 24 of the owner's videos: these
+  same frames, and reads each with `FaceAnalyzer`.
+- **An Immich account's videos are read in byte ranges,** never downloaded: AVFoundation asks
+  a resource loader for each range it needs (`RemoteVideoAsset`), and each is read with the
+  account's `RemoteRangeReader`, the access its metadata takes (ADR 0046 §5), under the
+  account claim (`EnrichmentClaim.account`: metadata and a video's faces). The account's
+  18,201 videos are 3.0 TB on a Mac with 21 GB free, so a staged download of each, kept
+  until quit (ADR 0046 §7), cannot be the read. A range the server does not answer makes
+  the read `unanswered`, paced and tried again, never a video with no faces. Measured on 24 of the owner's videos: these
   six frames find a face in each of the 12 that hold one, and of 60 faces read, 31 matched a
   named person past the margin, the same person in every frame of a video.
 - **One face per person:** faces taken sharpest first join the person they are most like at
@@ -315,6 +322,9 @@ grouping had put with the right child.
 - **The first frame, or QuickLook's thumbnail, of a video:** QuickLook made a thumbnail for 15
   of 24 measured videos and its frame held a face in 3; any one fixed frame found faces in at
   most 9 of the 12 videos that hold one.
+- **Downloading an account's videos to read them:** 3.0 TB through a staging folder kept
+  until quit would fill the disk long before the account was read, and the frames need only
+  the ranges around six points of each file.
 - **A video's six frames as six faces:** each person would be up to six faces of one video,
   six times the work and counts for one appearance.
 - **Every sampled frame stored for a video's faces:** about 2.4 MB a video against the frames

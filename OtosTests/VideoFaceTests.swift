@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -49,7 +50,7 @@ struct VideoFaceTests {
         let directory = try makeTestDirectory().appending(path: "Thumbnails", directoryHint: .isDirectory)
         let calls = Mutex(0)
         let read = try await VideoFaceReader.read(
-            SourceTree.mediaFixtures.appending(path: "mov-no-embedded-capture-date.mov"),
+            AVURLAsset(url: SourceTree.mediaFixtures.appending(path: "mov-no-embedded-capture-date.mov")),
             analyzeFaces: { _ in
                 let call = calls.withLock { count in
                     count += 1
@@ -79,7 +80,7 @@ struct VideoFaceTests {
     @Test func aVideoWithNoFaceStagesNoFrames() async throws {
         let directory = try makeTestDirectory()
         let read = try await VideoFaceReader.read(
-            SourceTree.mediaFixtures.appending(path: "mov-no-embedded-capture-date.mov"),
+            AVURLAsset(url: SourceTree.mediaFixtures.appending(path: "mov-no-embedded-capture-date.mov")),
             analyzeFaces: { _ in
                 FaceAnalysis(faces: [], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
             },
@@ -87,6 +88,100 @@ struct VideoFaceTests {
             in: directory
         )
         #expect(read == .noneFound)
+    }
+
+    // MARK: - An Immich account's videos
+
+    /// An account's video is read in byte ranges from its server, never downloaded whole:
+    /// its six frames are each read through the ranges the server answers.
+    @Test func anAccountVideosFramesAreReadInRanges() async throws {
+        let directory = try makeTestDirectory()
+        let file = try Data(contentsOf: Self.fixture)
+        let remote = RemoteVideoAsset(reader: Self.reader(serving: file), filename: "abc/clip.mov")
+        let calls = Mutex(0)
+        let read = try await VideoFaceReader.read(
+            remote.asset,
+            analyzeFaces: { _ in
+                calls.withLock { $0 += 1 }
+                return Self.analysis([Self.face(person: 1, quality: 0.5)])
+            },
+            framesRelativeName: "clip.faces.heic",
+            in: directory
+        )
+        #expect(!remote.failed)
+        #expect(calls.withLock { $0 } == VideoFaceReader.samples.count)
+        #expect(read.faces.count == 1)
+        #expect(remote.cost.bytes > 0)
+    }
+
+    /// A server that stops answering mid-read leaves the video owed: the read is unanswered,
+    /// never a video with no faces. One that answers gives the faces, and reads nothing it
+    /// was not asked for.
+    @Test func anAccountVideoTheServerStopsSendingIsUnansweredNotFaceless() async throws {
+        let directory = try makeTestDirectory()
+        let file = try Data(contentsOf: Self.fixture)
+        let enricher = MediaEnricher.live(
+            thumbnailDirectory: directory,
+            analyzeFaces: { _ in Self.analysis([Self.face(person: 1, quality: 0.5)]) }
+        )
+        let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Account"), relativePath: MediaRelativePath(rawValue: "abc/clip.mov"))
+        let size = Int64(file.count)
+
+        let stopped = await enricher.enrich(
+            id, .remoteRanges(Self.reader(serving: file, answering: 1), relativePath: id.relativePath), size, 1000, [.videoFaces], nil
+        )
+        guard case .unanswered = stopped else {
+            Issue.record("expected .unanswered, got \(stopped)")
+            return
+        }
+
+        let answered = await enricher.enrich(
+            id, .remoteRanges(Self.reader(serving: file), relativePath: id.relativePath), size, 1000, [.videoFaces], nil
+        )
+        guard case let .complete(result) = answered else {
+            Issue.record("expected .complete, got \(answered)")
+            return
+        }
+        #expect(result.videoFaces?.faces.count == 1)
+        #expect(result.metadata == nil)
+    }
+
+    /// An Immich account's video owes its faces under the account claim, beside its metadata;
+    /// a camera's videos are never read for faces.
+    @Test func anAccountVideoOwesItsFacesUnderTheAccountClaim() {
+        #expect(LibraryRootKind.immichAccount.firstClaim == .account)
+        #expect(LibraryRootKind.deviceMTP.firstClaim == .metadata)
+        #expect(LibraryRootKind.removableVolume.firstClaim == .metadata)
+        let video = Self.asset(name: "abc/clip.mov", kind: .video, facesStamped: false)
+        #expect(video.needsEnrichment(.account))
+        #expect(EnrichmentScope(claim: .account, asset: video) == .videoFaces)
+        #expect(EnrichmentScope(claim: .account, asset: video).isReadableInRanges)
+        #expect(!Self.asset(name: "abc/clip.mov", kind: .video, facesStamped: true).needsEnrichment(.account))
+        #expect(!Self.asset(name: "abc/a.jpg", kind: .image, facesStamped: false).needsEnrichment(.account))
+    }
+
+    static let fixture = SourceTree.mediaFixtures.appending(path: "mov-no-embedded-capture-date.mov")
+
+    static func analysis(_ faces: [DetectedFace]) -> FaceAnalysis {
+        FaceAnalysis(faces: faces, rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
+    }
+
+    /// A server holding `file` that answers its first `answering` reads, every read when nil,
+    /// and fails the rest as a lost connection.
+    static func reader(serving file: Data, answering: Int? = nil) -> RemoteRangeReader {
+        let calls = Mutex(0)
+        return RemoteRangeReader(size: UInt64(file.count)) { offset, length, completion in
+            let call = calls.withLock { count in
+                count += 1
+                return count
+            }
+            if let answering, call > answering {
+                completion(.failure(URLError(.networkConnectionLost)))
+                return
+            }
+            let start = Int(offset)
+            completion(.success(file.subdata(in: start ..< min(file.count, start + length))))
+        }
     }
 
     // MARK: - The claim

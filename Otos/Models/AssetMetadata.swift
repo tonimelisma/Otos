@@ -233,6 +233,8 @@ nonisolated struct StagedDerivedImage: Equatable {
 ///   metadata is current (`LibraryRootKind.producesAfterMetadata`).
 /// - `library`: every product a fixed library's row owes, read for all of them at once
 ///   (`LibraryRootKind.claimsEveryProductTogether`): the products, and a video's faces.
+/// - `account`: an Immich account's row, read in byte ranges from its server: metadata, and a
+///   video's faces (`LibraryRootKind.readsVideoFaces`).
 ///
 /// A still's faces are not an enrichment product: they are read from the stored preview the
 /// rendering makes (`PreviewFaceReader`). A video has no preview, so its faces are read from
@@ -241,6 +243,7 @@ nonisolated enum EnrichmentClaim: Hashable, Sendable, CaseIterable {
     case metadata
     case products
     case library
+    case account
 }
 
 /// The products one enrichment of a claimed row makes (ADR 0009, ADR 0018): the set of
@@ -262,11 +265,12 @@ nonisolated struct EnrichmentScope: OptionSet, Hashable, Sendable {
     /// A library video's faces, read from its frames (`VideoFaceReader`, ADR 0047).
     static let videoFaces = EnrichmentScope(rawValue: 1 << 4)
 
-    /// Whether the claim needs only what ranged reads can give: metadata, and a
-    /// provisional thumbnail a remote source already supplies. A rendering, a digest or a
-    /// video's faces need the whole original, local (ADR 0046 §5, §7; ADR 0047).
+    /// Whether the claim needs only what ranged reads can give: metadata, a provisional
+    /// thumbnail a remote source already supplies, and a video's faces, whose frames
+    /// AVFoundation reads range by range (`RemoteVideoAsset`). A rendering or a digest needs
+    /// the whole original, local (ADR 0046 §5, §7; ADR 0047).
     var isReadableInRanges: Bool {
-        isDisjoint(with: [.rendering, .hash, .videoFaces])
+        isDisjoint(with: [.rendering, .hash])
     }
 
     /// The scope for `asset` claimed under `claim`. Every stale product of a row claimed for
@@ -274,9 +278,21 @@ nonisolated struct EnrichmentScope: OptionSet, Hashable, Sendable {
     /// them. A row claimed for metadata alone whose rendering is owed also gets a provisional
     /// thumbnail.
     init(claim: EnrichmentClaim, asset: MediaAsset) {
-        guard claim != .metadata else {
-            self = asset.renderingStale ? [.metadata, .provisionalThumbnail] : [.metadata]
+        let metadataPass: EnrichmentScope = asset.renderingStale ? [.metadata, .provisionalThumbnail] : [.metadata]
+        switch claim {
+        case .metadata:
+            self = metadataPass
             return
+        case .account:
+            // A row claimed for its video's faces alone reads only them.
+            var scope: EnrichmentScope = asset.metadataStale ? metadataPass : []
+            if asset.videoFacesStale {
+                scope.insert(.videoFaces)
+            }
+            self = scope
+            return
+        case .products, .library:
+            break
         }
         var scope: EnrichmentScope = []
         if asset.metadataStale {
