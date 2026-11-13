@@ -49,7 +49,7 @@ struct LoupeView: View {
     /// The focused photo is a Live Photo whose motion can play now (DES-106).
     var canPlayLivePhoto = false
     var onPlayLivePhoto: () -> Void = {}
-    /// The RAW+JPEG pair the loupe shows, for its `JPEG | RAW` switch (DES-117); nil hides it.
+    /// The RAW+JPEG pair the loupe shows, for its `JPG`/`RAW` switch (DES-117); nil hides it.
     var shownPair: PhotoStack?
     var onShowPairMember: (MediaAssetID) -> Void = { _ in }
     @Environment(\.colorScheme) private var colorScheme

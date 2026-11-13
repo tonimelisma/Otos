@@ -264,3 +264,59 @@ struct SplitMix64: RandomNumberGenerator {
         return value ^ (value >> 31)
     }
 }
+
+/// A generated library of RAW+JPEG pairs (ADR 0052), shaped like the owner's catalog on
+/// 2026-11-13: a few files in each of thousands of folders, a RAW in every folder. Each of
+/// 3,000 folders holds two pairs and one JPEG alone, so the window shows 9,000 tiles for
+/// 15,000 files.
+struct BenchmarkPairLibrary {
+    let store: CatalogStore
+    let libraries: [CatalogLibraryState]
+
+    static let folderCount = 3000
+    static let fileCount = folderCount * 5
+    static let tileCount = folderCount * 3
+
+    static func make(in directory: URL) async throws -> BenchmarkPairLibrary {
+        let rootURL = directory.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let store = CatalogStore(
+            location: .databaseFile(directory.appending(path: "db/catalog.sqlite")),
+            scanner: scanner()
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: rootURL)
+        _ = try await waitForCatalogStoreState(store) {
+            !$0.isScanning && $0.testAssets.count == fileCount
+        }
+        let libraries = try #require(await store.loadedLibraries())
+        return BenchmarkPairLibrary(store: store, libraries: libraries)
+    }
+
+    /// Files with distinct paths and dates; their bytes are never read.
+    private static func scanner() -> CatalogScanner {
+        CatalogScanner { _, _, batchHandler in
+            let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
+            var files: [ScannedMediaFile] = []
+            files.reserveCapacity(fileCount)
+            for folder in 0 ..< folderCount {
+                let names = ["DSC0.ARW", "DSC0.JPG", "DSC1.ARW", "DSC1.JPG", "DSC2.JPG"]
+                for (offset, name) in names.enumerated() {
+                    let isRaw = name.hasSuffix(".ARW")
+                    let date = baseDate.addingTimeInterval(Double(folder * 10 + offset / 2))
+                    files.append(ScannedMediaFile(
+                        relativePath: MediaRelativePath(rawValue: String(format: "%04d/", folder) + name),
+                        name: name,
+                        contentTypeIdentifier: isRaw ? "com.sony.arw-raw-image" : "public.jpeg",
+                        byteSize: 4,
+                        createdAt: date,
+                        contentModifiedAt: date,
+                        kind: isRaw ? .raw : .image
+                    ))
+                }
+            }
+            try await batchHandler(files)
+            return .mediaOnly(Set(files.map(\.relativePath)))
+        }
+    }
+}

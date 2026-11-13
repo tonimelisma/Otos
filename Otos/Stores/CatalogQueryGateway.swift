@@ -441,27 +441,40 @@ nonisolated enum CatalogVisibilitySQL {
 /// a filter that hides one file of a pair never unpairs the other. `PhotoStackRule`
 /// decides the stacks from these.
 nonisolated enum PhotoStackSQL {
-    static func fetchCandidates(
-        rootIDs: [Int64],
-        db: Database
-    ) throws -> [Int64: [PhotoStackCandidate]] {
+    /// One read of every root's candidates, and how long the read took, which the order
+    /// query reports apart from its own work (`stackReadMs`).
+    struct Candidates: Sendable {
+        let byRoot: [Int64: [PhotoStackCandidate]]
+        let count: Int
+        let readDuration: Duration
+    }
+
+    /// The columns `candidateQuery` selects, in order: each row is read by position.
+    private enum Column: Int {
+        case libraryRootID, relativePath, bestKind, keyChosenAt
+    }
+
+    static func fetchCandidates(rootIDs: [Int64], db: Database) throws -> Candidates {
+        let start = ContinuousClock.now
         guard let query = candidateQuery(rootIDs: rootIDs) else {
-            return [:]
+            return Candidates(byRoot: [:], count: 0, readDuration: .zero)
         }
         let rows = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments)
         var byRoot: [Int64: [PhotoStackCandidate]] = [:]
+        var count = 0
         for row in rows {
-            let kindValue: String = row["best_kind"]
+            let kindValue: String = row[Column.bestKind.rawValue]
             guard let kind = MediaKind(rawValue: kindValue) else {
                 continue
             }
-            byRoot[row["library_root_id"], default: []].append(PhotoStackCandidate(
-                relativePath: MediaRelativePath(rawValue: row["relative_path"]),
+            count += 1
+            byRoot[row[Column.libraryRootID.rawValue], default: []].append(PhotoStackCandidate(
+                relativePath: MediaRelativePath(rawValue: row[Column.relativePath.rawValue]),
                 kind: kind,
-                keyChosenAtUnixMs: row["stack_key_chosen_at_unix_ms"]
+                keyChosenAtUnixMs: row[Column.keyChosenAt.rawValue]
             ))
         }
-        return byRoot
+        return Candidates(byRoot: byRoot, count: count, readDuration: ContinuousClock.now - start)
     }
 
     /// The candidates' read: the folders holding a present RAW, then each folder's present

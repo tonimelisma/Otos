@@ -34,7 +34,7 @@ struct EditPanelView: View {
     let setLensCorrection: @MainActor (Bool) -> Void
     let resetControl: @MainActor (EditControl) -> Void
     let originalActions: EditPanelOriginalActions
-    /// The RAW+JPEG pair being edited, for the `JPEG | RAW` switch under the name (DES-117);
+    /// The RAW+JPEG pair being edited, for the `JPG`/`RAW` switch under the name (DES-117);
     /// nil for any other photo.
     var pair: (stack: PhotoStack, shown: MediaAssetID)?
     var showPairMember: @MainActor (MediaAssetID) -> Void = { _ in }

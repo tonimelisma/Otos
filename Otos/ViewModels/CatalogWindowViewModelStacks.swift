@@ -2,7 +2,7 @@ import Foundation
 import OSLog
 
 /// Stack intents (ADR 0052): expanding and collapsing a stack, Make Key Photo, and the
-/// `JPEG | RAW` switch. Every surface — Photo menu, S and ⇧S, the tile badge, the loupe
+/// `JPG`/`RAW` switch. Every surface — Photo menu, S and ⇧S, the tile badge, the loupe
 /// capsule and the edit panel's switch — calls one of these. Expansion is window state
 /// sent to the projection with the query request; the key choice is the one stack fact the
 /// user authors, written through its own serial lane (`stackKeyStream`) and undoable.
@@ -64,7 +64,7 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// The one photo Make Key Photo and the `JPEG | RAW` switch act on, and its stack.
+    /// The one photo Make Key Photo and the `JPG`/`RAW` switch act on, and its stack.
     private var keyTarget: (id: MediaAssetID, stack: PhotoStack)? {
         let ids = targetIDs(.current)
         guard ids.count == 1, let id = ids.first, let stack = state.mediaGrid.stacks.stack(shownBy: id) else {
@@ -85,14 +85,14 @@ extension CatalogWindowViewModel {
         submitStackKey(target.id, in: target.stack)
     }
 
-    /// The pair the loupe or the edit panel shows, for its `JPEG | RAW` switch: the one
+    /// The pair the loupe or the edit panel shows, for its `JPG`/`RAW` switch: the one
     /// target's stack when it is a pair, else nil and the switch is absent.
     var shownPair: PhotoStack? {
         guard let target = keyTarget, target.stack.id.kind == .pair else { return nil }
         return target.stack
     }
 
-    /// The `JPEG | RAW` switch: shows `member` in its pair's place. The focus and the
+    /// The `JPG`/`RAW` switch: shows `member` in its pair's place. The focus and the
     /// selection follow it when the new state arrives (`carrySelectionIntoStacks`).
     func showPairMember(_ member: MediaAssetID) {
         guard let target = keyTarget, target.stack.members.contains(member), member != target.id else { return }

@@ -28,17 +28,18 @@ nonisolated struct PhotoStackCandidate: Equatable, Sendable {
     var keyChosenAtUnixMs: Int64?
 }
 
-/// One stack: its members in natural name order, and its key — the member it shows when
-/// collapsed: the member the user chose (Make Key Photo), else the rule's default.
+/// One stack: its members in natural name order, its key — the member it shows when
+/// collapsed: the member the user chose (Make Key Photo), else the rule's default — and
+/// which members are RAW files. How a surface names a member follows from that fact.
 nonisolated struct PhotoStack: Equatable, Sendable {
     let id: PhotoStackID
     let members: [MediaAssetID]
     let key: MediaAssetID
-    /// The collapsed tile's badge: `RAW+JPG` for a pair (DES-116).
-    let badgeLabel: String
-    /// Each member's badge while the stack is expanded: `RAW`, or the processed file's
-    /// own extension (`JPG`, `HEIC`), so the user can tell the files apart.
-    let memberLabels: [MediaAssetID: String]
+    let rawMembers: Set<MediaAssetID>
+
+    func isRaw(_ member: MediaAssetID) -> Bool {
+        rawMembers.contains(member)
+    }
 }
 
 /// Every stack the browser's order can hold, and which stack each member is in.
@@ -112,7 +113,6 @@ nonisolated enum PhotoStackRule {
                     MediaSortKey.naturalKey($0.relativePath.rawValue) < MediaSortKey.naturalKey($1.relativePath.rawValue)
                 }
                 .map { MediaAssetID(libraryRootPath: libraryRootPath, relativePath: $0.relativePath) }
-            let processedLabel = processed.relativePath.fileExtension.uppercased()
             let rawID = MediaAssetID(libraryRootPath: libraryRootPath, relativePath: raw.relativePath)
             let processedID = MediaAssetID(libraryRootPath: libraryRootPath, relativePath: processed.relativePath)
             return PhotoStack(
@@ -120,8 +120,7 @@ nonisolated enum PhotoStackRule {
                 members: members,
                 key: chosenKey.flatMap { chosen in members.first { $0.relativePath == chosen } }
                     ?? processedID,
-                badgeLabel: "RAW+\(processedLabel)",
-                memberLabels: [rawID: "RAW", processedID: processedLabel]
+                rawMembers: [rawID]
             )
         }
     }

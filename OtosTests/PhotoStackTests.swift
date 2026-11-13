@@ -23,8 +23,9 @@ struct PhotoStackTests {
         #expect(pair.id.kind == .pair)
         #expect(Set(pair.members) == [id("a/DSC1.ARW"), id("a/dsc1.jpg")])
         #expect(pair.key == id("a/dsc1.jpg"))
-        #expect(pair.badgeLabel == "RAW+JPG")
-        #expect(pair.memberLabels[id("a/DSC1.ARW")] == "RAW")
+        #expect(pair.rawMembers == [id("a/DSC1.ARW")])
+        #expect(pair.label == "RAW+JPG")
+        #expect(pair.label(of: id("a/dsc1.jpg")) == "JPG")
     }
 
     @Test func anyOtherCountPairsNothing() {

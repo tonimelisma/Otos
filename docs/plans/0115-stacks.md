@@ -8,7 +8,7 @@ Opened 2026-11-13. Decisions: ADR 0052. Survey:
 - RAW+JPEG pairs are one photo everywhere, not only in On This Day.
 - Bursts are one photo everywhere too ("stack everywhere bursts too").
 - A pair shows the camera JPEG by default, as Apple Photos does.
-- Switching between RAW and JPEG is prominent, "not buried in a menu": a `JPEG | RAW` control in
+- Switching between RAW and JPEG is prominent, "not buried in a menu": a `JPG`/`RAW` control in
   the edit panel header and on the loupe, and the grid's badge.
 - A pair expands like a burst when its badge is clicked.
 - A burst expands in place in the grid (Lightroom Classic), not in a separate view.
@@ -54,7 +54,7 @@ Each increment lands on `main` with its own DoD.
      band and the outlined key.
    - **The badge** acts as the expand control (hit-tested by the collection view before
      selection), with S, ⇧S and Photo ▸ Expand Stack / Collapse Stack / Make Key Photo.
-   - **`JPEG | RAW`:** the segmented control in the edit panel header and the loupe capsule at
+   - **`JPG`/`RAW`:** the segmented control in the edit panel header and the loupe capsule at
      the top trailing edge (DES-106's place).
    - **Trash** on an expanded member trashes that one file.
    - **Design rules:** DES-116 and DES-117 in `docs/design/design-system.md`, with design review C

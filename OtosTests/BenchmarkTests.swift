@@ -88,6 +88,24 @@ struct BenchmarkTests {
         await store.shutdown()
     }
 
+    /// The window's publication of a library of RAW+JPEG pairs (ADR 0052): the order read
+    /// with its stack candidates, the stack rule and the collapse pass.
+    @Test func stackCases() async throws {
+        let library = try await BenchmarkPairLibrary.make(in: makeTestDirectory())
+        let projection = CatalogProjection()
+        let request = CatalogQueryRequest(descriptor: .default, generation: 0)
+        try await Benchmark.measure("projection.windowState.pairs") {
+            let (state, _) = try await projection.buildWindowState(
+                store: library.store,
+                libraries: library.libraries,
+                request: request,
+                reuse: .none
+            )
+            #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkPairLibrary.tileCount)
+        }
+        await library.store.shutdown()
+    }
+
     /// An Immich account's sync applying one batch of 500 assets (ADR 0046 §5) to an account
     /// that already holds 20,000: each asset's folder is listed in full, so the batch looks up
     /// 500 folders' rows. The cost must not grow with the account, or a large library's

@@ -962,7 +962,7 @@ extension CatalogStore {
                 sql: "SELECT id, name, birthday, is_hidden, is_favorite FROM person ORDER BY id"
             ).map(Self.person)
             var photoOfStackMember: [MediaAssetID: MediaAssetID] = [:]
-            for (rowID, candidates) in try PhotoStackSQL.fetchCandidates(rootIDs: faceRootIDs, db: db) {
+            for (rowID, candidates) in try PhotoStackSQL.fetchCandidates(rootIDs: faceRootIDs, db: db).byRoot {
                 guard let rootPath = pathsByRowID[rowID] else { continue }
                 for stack in PhotoStackRule.stacks(
                     candidates: candidates,
@@ -1810,6 +1810,23 @@ extension CatalogStore {
             }
         }
         let queryMs = timedRows.totalMs
+        // The stack rule runs here, after the read, so the log reports the read, the rule
+        // and the order's own work apart (ADR 0052).
+        let stackCandidates = timedRows.value.stackCandidates
+        let ruleStart = ContinuousClock.now
+        var stacks: [PhotoStack] = []
+        for (rowID, candidates) in stackCandidates.byRoot {
+            guard let rootPath = validRootPathsByRowID[rowID] else {
+                continue
+            }
+            stacks += PhotoStackRule.stacks(
+                candidates: candidates,
+                libraryRootPath: rootPath,
+                capabilities: roots[rootPath]?.capabilities ?? .unknown
+            )
+        }
+        let catalogStacks = CatalogStacks(stacks)
+        let stackRuleDuration = ContinuousClock.now - ruleStart
         OtosLog.catalog.debug(
             """
             Catalog ordered asset IDs queried descriptor=\(descriptor.diagnosticDescription, privacy: .public) \
@@ -1826,25 +1843,14 @@ extension CatalogStore {
             ])
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) stackCandidates=\(timedRows.value.stackCandidates.values.reduce(0) { $0 + $1.count }, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
+            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) stackCandidates=\(stackCandidates.count, privacy: .public) stackReadMs=\(DiagnosticsTiming.milliseconds(stackCandidates.readDuration), privacy: .public) stackRuleMs=\(DiagnosticsTiming.milliseconds(stackRuleDuration), privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )
-        var stacks: [PhotoStack] = []
-        for (rowID, candidates) in timedRows.value.stackCandidates {
-            guard let rootPath = validRootPathsByRowID[rowID] else {
-                continue
-            }
-            stacks += PhotoStackRule.stacks(
-                candidates: candidates,
-                libraryRootPath: rootPath,
-                capabilities: roots[rootPath]?.capabilities ?? .unknown
-            )
-        }
         return CatalogOrderedAssets(
             ids: ids,
             dayBuckets: dayBuckets,
             coordinates: coordinates,
             pendingIdentityRemaps: timedRows.value.pending,
-            stacks: CatalogStacks(stacks)
+            stacks: catalogStacks
         )
     }
 

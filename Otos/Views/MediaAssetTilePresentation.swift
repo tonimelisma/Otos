@@ -47,12 +47,29 @@ nonisolated enum TileStackPresentation: Equatable {
     /// The stack presentation `stacks` gives the tile showing `id`.
     static func of(_ id: MediaAssetID, in stacks: CatalogGridStacks) -> TileStackPresentation {
         if let stack = stacks.collapsed[id] {
-            return .collapsed(label: stack.badgeLabel)
+            return .collapsed(label: stack.label)
         }
         if let stack = stacks.expanded[id] {
-            return .expanded(label: stack.memberLabels[id] ?? "", isKey: stack.key == id)
+            return .expanded(label: stack.label(of: id), isKey: stack.key == id)
         }
         return .none
+    }
+}
+
+extension PhotoStack {
+    /// A member's own badge, and its segment in the `JPG`/`RAW` switch (DES-116, DES-117):
+    /// `RAW` for a RAW file, else the file's own extension (`JPG`, `HEIC`), so the user can
+    /// tell the files apart.
+    nonisolated func label(of member: MediaAssetID) -> String {
+        isRaw(member) ? "RAW" : member.relativePath.fileExtension.uppercased()
+    }
+
+    /// The collapsed tile's badge: `RAW+JPG` for a pair (DES-116).
+    nonisolated var label: String {
+        switch id.kind {
+        case .pair:
+            (members.filter(isRaw) + members.filter { !isRaw($0) }).map(label(of:)).joined(separator: "+")
+        }
     }
 }
 
