@@ -75,6 +75,7 @@ extension CatalogProjection {
             try await applySearch(search, to: &unsearched, store: store)
         }
         Self.collapseStacks(stacks, expanded: request.expandedStacks, in: &unsearched)
+        Self.capAnniversaries(in: &unsearched)
         let facts = unsearched
         // The supplementary reads are independent; an error in any fails the build.
         async let unfilteredVisibleAssetCount = unfilteredVisibleAssetCount(facts, store: store)
@@ -126,6 +127,23 @@ extension CatalogProjection {
         facts.scopedDayBuckets = collapsed.dayBuckets
         facts.scopedCoordinates = collapsed.coordinates
         facts.gridStacks = collapsed.grid
+    }
+
+    /// On This Day shows at most `OnThisDayPicks.anniversaryCap` photos an anniversary,
+    /// counted after stacks collapse, so the cards, the counts and the story agree.
+    static func capAnniversaries(in facts: inout CatalogProjectionBuildFacts) {
+        guard case .onThisDay = facts.resolvedDescriptor.scope,
+              facts.scopedDayBuckets.count == facts.scopedAssetIDs.count,
+              let kept = OnThisDayPicks.keptPositions(dayBuckets: facts.scopedDayBuckets)
+        else {
+            return
+        }
+        let ids = facts.scopedAssetIDs, buckets = facts.scopedDayBuckets, coordinates = facts.scopedCoordinates
+        facts.scopedAssetIDs = kept.map { ids[$0] }
+        facts.scopedDayBuckets = kept.map { buckets[$0] }
+        if coordinates.count == ids.count {
+            facts.scopedCoordinates = kept.map { coordinates[$0] }
+        }
     }
 
     /// Narrows the scope to what `search` matches (ADR 0048). With no index there is no

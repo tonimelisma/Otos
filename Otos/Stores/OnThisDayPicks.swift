@@ -33,6 +33,26 @@ nonisolated enum OnThisDayPicks {
         """
     }
 
+    /// The most photos one anniversary shows (owner, 2026-11-12, from the day sizes in
+    /// `docs/research/2026-11-13-on-this-day-picks.md`: 73 % of the owner's days hold no more).
+    static let anniversaryCap = 25
+
+    /// The positions of `dayBuckets` On This Day keeps: the first `anniversaryCap` of each
+    /// day's run, so its Liked photos and then its newest. It runs on the collapsed order,
+    /// so a RAW+JPEG pair or a burst counts once.
+    static func keptPositions(dayBuckets: [Date?]) -> [Int]? {
+        var kept: [Int] = []
+        var inRun = 0
+        for position in dayBuckets.indices {
+            let startsRun = position == 0 || dayBuckets[position] != dayBuckets[position - 1]
+            inRun = startsRun ? 1 : inRun + 1
+            if inRun <= anniversaryCap {
+                kept.append(position)
+            }
+        }
+        return kept.count == dayBuckets.count ? nil : kept
+    }
+
     /// `rows` in the scope's order, newest first, with each day's Liked photos moved to its
     /// front, each group keeping its order. A day is the day bucket the grid and the
     /// anniversaries use (`CaptureLocalTime.dayNumber`).

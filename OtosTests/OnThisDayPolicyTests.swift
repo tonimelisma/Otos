@@ -363,4 +363,15 @@ struct OnThisDayPolicyTests {
         #expect(narrowed.ids == ids)
         #expect(narrowed.dayBuckets == buckets)
     }
+
+    /// An anniversary shows at most 25 photos (owner, 2026-11-12): the first of its run in
+    /// play order, Liked first, then newest; a day within the cap is untouched.
+    @Test func anAnniversaryShowsAtMostTwentyFivePhotos() throws {
+        let big = Date(timeIntervalSince1970: 1_600_000_000)
+        let small = Date(timeIntervalSince1970: 1_500_000_000)
+        let buckets: [Date?] = Array(repeating: big, count: 30) + Array(repeating: small, count: 3)
+        let kept = try #require(OnThisDayPicks.keptPositions(dayBuckets: buckets))
+        #expect(kept == Array(0 ..< 25) + [30, 31, 32])
+        #expect(OnThisDayPicks.keptPositions(dayBuckets: Array(repeating: small, count: 25)) == nil)
+    }
 }

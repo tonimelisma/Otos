@@ -45,4 +45,4 @@ RAW and its JPEG):
 Share of days a cap would leave untouched: 56.3 % at 12, 72.9 % at 25, 84.5 % at 50.
 
 On 13 November the anniversaries hold 3 (2016) to 42 (2017) items. A cap is a product choice
-the owner makes from these numbers; plan 0115 asks the owner before one ships.
+the owner makes from these numbers. The owner chose 25 (2026-11-12).
