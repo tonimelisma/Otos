@@ -50,3 +50,36 @@ file was missing at load time; that the purge removed it is likely, not proven.
   distinct, and the same input shapes recur across them (`h320w416` in 115 entries). Otos's
   model paths do not explain the keys. Finding what varies in them, without deleting the shared
   cache that #700 relies on, is the open question.
+
+## Follow-up: a purged entry recovers; a purge during a load does not
+
+Measured 2026-11-12 21:20–21:40 PST with a standalone binary doing `SearchTextReading`'s exact
+request (accurate level, automatic languages, language correction, main stage on the CPU) on the
+benchmark's 1,200 × 800 sign, run with `CFFIXED_USER_HOME` set to a scratch home.
+
+| Run | Cache state before it | Result | Time |
+| --- | --- | --- | --- |
+| 1 | empty | read "OTOS SEARCH 2026" | 155 s (compile, under load) |
+| 2 | warm | read | 0.34 s |
+| 3 | `main_ane/model.anehash` deleted from `0DF0EC…/A357A9….bundle`, the file the failing xctest log named | read, recompiling that bundle | 4.2 s |
+| 4 | warm again | read | 0.29 s |
+
+- **The keys do not vary by process or path.** The scratch run wrote the same three top-level
+  keys the xctest cache holds for this reading (`0DF0EC…`, `2F7922…`, `DFD288…`): the key is a
+  function of the model, the input shape and the OS build (`26A434`), not of the caller.
+- **A file missing before a load is repaired.** The runtime recompiles the incomplete bundle and
+  the reading succeeds, so a purge between two processes costs one recompile, never an error.
+  Error 13 needs a file to disappear while a process is loading that bundle. A purge, or another
+  process replacing the bundle (the `.tmp.<pid>_….bundle` siblings), can do that during a load.
+- **The cache was purged twice the same evening.** At 21:03 the xctest cache held 1.1 GB in 14
+  keys instead of the 26 GB found at 19:19. Six keys from 18:10–18:19 were bundle folders with
+  their files gone, which is a purge's signature. By 21:45 it held 1 MB. The data volume had 20
+  GB free at 21:03 and 11 GB at 21:45 (98% used).
+- **The app recovers on its own.** A failed reading publishes nothing, and the still is read
+  again after the index's backoff (ADR 0048), when the runtime rebuilds the bundle as in run 3.
+
+**Conclusion:** no Otos-side defect explains error 13. It is a load racing a cache purge that
+disk pressure drives. This reading's keys are stable, so the growth seen at 19:19 is not it
+recompiling under new keys; which callers wrote the other entries stays unmeasured. Freeing disk space is what
+removes the failure, and that is the owner's to do: the space is held by data outside the
+repository.
