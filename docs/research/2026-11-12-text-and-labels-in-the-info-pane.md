@@ -149,8 +149,8 @@ kasvi, ruoka, vaatteet, asiakirja, kuvakaappaus.
 
 Translation's speed varies with what else asks the system's on-device inference: 0.68 s a name
 one direction early on, 3.6 s a call while a backlog from cancelled sessions drained, 0.5 s a
-call after. The other languages are made one at a time, the same way (about 1,000 s each once the backlog
-cleared), and their columns join the table as each is checked:
+call after. The other languages were made one at a time, the same way (1,000–2,000 s each once
+the backlog cleared, longer under load), and every language Translation offers ships a column:
 
 | Language | Names kept of 1,303 |
 | --- | --- |
@@ -163,6 +163,27 @@ cleared), and their columns join the table as each is checked:
 | Dutch | 1,064 |
 | Danish | 1,021 |
 | Norwegian | 1,035 |
+| Polish | 893 |
+| Portuguese | 1,013 |
+| Japanese | 994 |
+| Korean | 907 |
+| Chinese, Simplified | 914 |
+| Chinese, Traditional | 898 |
+| Russian | 842 |
+| Ukrainian | 824 |
+| Turkish | 940 |
+| Arabic | 701 |
+| Hebrew | 702 |
+| Hindi | 1,032 |
+| Thai | 759 |
+| Vietnamese | 795 |
+| Indonesian | 981 |
+| Malay | 982 |
 
 Swedish, German, French, Spanish, Italian and Dutch all name pear rightly ("päron", "Birne",
 "poire", "pera", "peer"), where Finnish read it as apple and was left to English.
+Hindi keeps the most of the later languages, and not by echoing English: its names are Hindi
+words (कुत्ता dog, आकाश sky), checked by hand on a sample. Arabic and Hebrew keep the fewest
+(about 700). A sample of Arabic's rejections mixes wrong translations (hang glider read as an
+ant, kangaroo as a desert rabbit) with right names whose reading back is a paraphrase the test
+does not accept (bench back as "a seat"); either way the label reads in English.
