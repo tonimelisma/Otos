@@ -187,6 +187,51 @@ struct VideoFaceTests {
     // MARK: - The claim
 
     /// A library's video owes its faces until its frames are read; a still never does, since
+    /// A remote video whose server stops answering partway is an error whose asset says the
+    /// server failed, so enrichment paces the row (`.unanswered`) instead of stamping the
+    /// frames it got, or calling the video unreadable.
+    @Test func aRemoteVideoTheServerStopsSendingIsAFailedReadNotAFacelessOne() async throws {
+        let data = try Data(contentsOf: SourceTree.mediaFixtures.appending(path: "mov-no-embedded-capture-date.mov"))
+        struct Unanswered: Error {}
+        let reader = RemoteRangeReader(size: UInt64(data.count)) { offset, length, completion in
+            guard offset < UInt64(data.count / 3) else {
+                completion(.failure(Unanswered()))
+                return
+            }
+            let start = Int(offset)
+            completion(.success(data.subdata(in: start ..< min(data.count, start + length))))
+        }
+        let remote = RemoteVideoAsset(reader: reader, filename: "clip.mov")
+        await #expect(throws: (any Error).self) {
+            try await VideoFaceReader.read(
+                remote.asset,
+                analyzeFaces: { _ in
+                    FaceAnalysis(faces: [], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
+                },
+                framesRelativeName: "frames.heic", in: makeTestDirectory()
+            )
+        }
+        #expect(remote.failed)
+    }
+
+    /// A video whose frames cannot be read is an error, not a video without faces: nothing is
+    /// stamped and it is read again, and the analyser never sees a frame.
+    @Test func aVideoThatDoesNotDecodeIsNotStampedAsFaceless() async throws {
+        let directory = try makeTestDirectory()
+        let video = directory.appending(path: "broken.mov")
+        try Data("not a movie".utf8).write(to: video)
+        await #expect(throws: (any Error).self) {
+            try await VideoFaceReader.read(
+                AVURLAsset(url: video),
+                analyzeFaces: { _ in
+                    Issue.record("a frame reached the analyser")
+                    return FaceAnalysis(faces: [], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
+                },
+                framesRelativeName: "frames.heic", in: directory
+            )
+        }
+    }
+
     /// its faces come from its preview, and no claim but a library's reads them.
     @Test func aLibraryVideoOwesItsFacesAndAStillNever() {
         let video = Self.asset(name: "clip.mov", kind: .video, facesStamped: false)

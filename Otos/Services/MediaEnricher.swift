@@ -216,6 +216,14 @@ nonisolated struct MediaEnricher {
                     framesRelativeName: ThumbnailStore.faceFramesRelativeName(for: id), in: thumbnailDirectory
                 )
             } catch {
+                // A frame the server did not send is not an unreadable video.
+                guard !remote.failed else {
+                    OtosLog.metadata.noticeOperation("videoFaces.remote", phase: "unanswered", fields: [
+                        "rootPath": id.libraryRootPath.rawValue, "relativePath": relativePath.rawValue,
+                        "bytes": "\(remote.cost.bytes)",
+                    ])
+                    return .unanswered
+                }
                 OtosLog.metadata.errorOperation("videoFaces.read", phase: "failed", fields: [
                     "rootPath": id.libraryRootPath.rawValue, "relativePath": relativePath.rawValue,
                     "error": String(describing: error),

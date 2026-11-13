@@ -18,10 +18,11 @@ import Foundation
 nonisolated struct FaceEmbeddingModel {
     /// The length of an embedding.
     static let dimensions = 512
+    /// The compiled model's name in the app bundle.
+    static let resourceName = "AdaFaceIR101"
 
     /// CPU only, as ADR 0045 runs every Otos model: concurrent GPU predictions deadlocked
-    /// inside MPSGraph, and the CPU reads a face in about 33 ms, small next to decoding the
-    /// original it came from.
+    /// inside MPSGraph, and the CPU reads a face in about 33 ms.
     static let computeUnits = MLComputeUnits.cpuOnly
 
     private let model: MLModel
@@ -34,7 +35,7 @@ nonisolated struct FaceEmbeddingModel {
     }
 
     init(bundle: Bundle) throws {
-        guard let url = BundledModel.url(named: "AdaFaceIR101", in: bundle) else {
+        guard let url = BundledModel.url(named: Self.resourceName, in: bundle) else {
             throw ModelError.missingResource
         }
         let configuration = MLModelConfiguration()

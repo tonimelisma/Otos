@@ -31,7 +31,8 @@ struct PeopleStoreTests {
         #expect(byID[a0]?.assignment == .user(sam))
         #expect(byID[a1]?.assignment == .held)
         #expect(byID[a1]?.rejected == [ian])
-        #expect(byID[b0]?.isNotFace == true)
+        // A face the user marked as not a face is no face to assignment or People.
+        #expect(byID[b0] == nil)
         #expect(facts.people.map(\.id) == [sam, ian])
         #expect(facts.people.map(\.name) == ["Sam", "Ian"])
         #expect(facts.people.map(\.isFavorite) == [true, false])
@@ -246,7 +247,8 @@ struct PeopleStoreTests {
         var plan = FaceAssignmentPlan()
         plan.newPeople = [[a, b]]
         plan.likeness = [a: 0.75]
-        #expect(try await library.store.applyAssignment(plan) == 3)
+        // The new person, its two seeds and the likeness.
+        #expect(try await library.store.applyAssignment(plan) == 4)
         let found = try #require(try await library.store.peopleSnapshot().people.last?.id)
         _ = try await library.store.perform(.move([a, b], to: ian))
 
@@ -291,6 +293,49 @@ struct PeopleStoreTests {
         #expect(snapshot.faces.map(\.assignment) == [.open, .user(ian)])
         #expect(snapshot.people.map(\.id) == [ian])
         await library.store.shutdown()
+    }
+
+    /// A person Otos found is not created when none of its seeds can still be written (the
+    /// user named them since the snapshot), and a guess of that person waits for the next
+    /// assignment instead of writing anything.
+    @Test func aNewPersonWithNoSeedLeftIsNotCreated() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg", "c.jpg"])
+        try await library.readFaces([
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1)]),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
+            library.result(for: "c.jpg", faces: [Self.face(x: 0.5)]),
+        ])
+        let a = FaceID(asset: library.id("a.jpg"), index: 0)
+        let b = FaceID(asset: library.id("b.jpg"), index: 0)
+        let c = FaceID(asset: library.id("c.jpg"), index: 0)
+        let sam = try #require(try await library.store.perform(.moveToNewPerson([a, b], name: "Sam")).person)
+        var plan = FaceAssignmentPlan()
+        plan.newPeople = [[a, b]]
+        plan.guesses = [FaceAssignmentPlan.Guess(face: c, person: .new(0))]
+
+        #expect(try await library.store.applyAssignment(plan) == 0)
+
+        let snapshot = try await library.store.peopleSnapshot()
+        #expect(snapshot.people.map(\.id) == [sam])
+        #expect(snapshot.faces.map(\.assignment) == [.user(sam), .user(sam), .open])
+        await library.store.shutdown()
+    }
+
+    /// The assignment rules SQL reads come from `FaceAssignment`, and a stored row no
+    /// assignment can hold is an error, never an open face.
+    @Test func aStoredAssignmentIsReadByTheAssignmentRules() throws {
+        #expect(FaceAssignmentColumn.sqlList { $0.isGuessable } == "(0, 1)")
+        #expect(FaceAssignmentColumn.sqlList { $0.isAnchor } == "(2, 3)")
+        let person = PersonID(rawValue: 7)
+        #expect(try FaceAssignmentColumn.assignment(column: FaceAssignmentColumn.seed.rawValue, person: 7) == .seed(person))
+        #expect(try FaceAssignmentColumn.assignment(column: FaceAssignmentColumn.user.rawValue, person: nil) == .open)
+        #expect(try FaceAssignmentColumn.assignment(column: FaceAssignmentColumn.held.rawValue, person: nil) == .held)
+        #expect(throws: FaceAssignmentColumn.Malformed(column: 9, person: nil)) {
+            try FaceAssignmentColumn.assignment(column: 9, person: nil)
+        }
+        #expect(throws: FaceAssignmentColumn.Malformed(column: FaceAssignmentColumn.open.rawValue, person: 7)) {
+            try FaceAssignmentColumn.assignment(column: FaceAssignmentColumn.open.rawValue, person: 7)
+        }
     }
 
     /// A person's photos and the People filter: several people are photos of them together,

@@ -929,7 +929,7 @@ extension CatalogStore {
                 SELECT \(PeopleFaceColumn.selectList)
                 FROM face f
                 JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
-                WHERE m.trash_path IS NULL
+                WHERE m.trash_path IS NULL AND f.is_not_face = 0
                   AND NOT \(LivePhotoSQL.isPairedMotion("m"))
                 ORDER BY f.library_root_id, f.relative_path, f.face_index
                 """
@@ -948,15 +948,17 @@ extension CatalogStore {
                 let id = FaceID(asset: asset, index: key.index)
                 let capture: Double? = row[PeopleFaceColumn.captureLocal.rawValue]
                 let person: Int64? = row[PeopleFaceColumn.personID.rawValue]
+                let assignment: FaceAssignment
+                do {
+                    assignment = try FaceAssignmentColumn.assignment(column: row[PeopleFaceColumn.assignment.rawValue], person: person)
+                } catch {
+                    throw CatalogStoreError.malformedFaceRow(asset)
+                }
                 faces.append(FaceFact(
                     id: id,
                     captureSeconds: capture,
                     embedding: embedding,
-                    assignment: FaceAssignmentColumn.assignment(
-                        column: row[PeopleFaceColumn.assignment.rawValue],
-                        person: person
-                    ),
-                    isNotFace: (row[PeopleFaceColumn.isNotFace.rawValue] as Int) != 0,
+                    assignment: assignment,
                     rejected: rejections[key] ?? []
                 ))
                 if let stored = row[PeopleFaceColumn.likeness.rawValue] as Double? {
@@ -1176,18 +1178,28 @@ extension CatalogStore {
     /// Writes what one assignment changed (ADR 0047), in one transaction. A lapsed seed is
     /// released only while it is still that person's seed, and a guess or a seed is written
     /// only where the face is still Otos's to decide (none or a guess), so an act the user
-    /// made since the snapshot always wins; the next assignment sees it. Returns
-    /// the rows written; zero means the catalog already held the plan.
+    /// made since the snapshot always wins; the next assignment sees it. A new person none of
+    /// whose seeds could still be written is not created, and its guesses wait for the next
+    /// assignment. A face whose library is no longer cataloged is skipped and counted.
+    /// Returns the rows written; zero means the catalog already held the plan.
     @discardableResult
     func applyAssignment(_ plan: FaceAssignmentPlan) async throws -> Int {
         guard !plan.isEmpty else { return 0 }
         let rowIDs = roots.rowIDSnapshot()
-        let written = try await database().write { db -> Int in
+        let (written, skipped) = try await database().write { db -> (Int, Int) in
             var written = 0
+            var skipped = 0
             var created: [Int: PersonID] = [:]
-            let guessable = "assignment IN (\(FaceAssignmentColumn.open.rawValue), \(FaceAssignmentColumn.model.rawValue))"
+            let guessable = "assignment IN \(FaceAssignmentColumn.sqlList { $0.isGuessable })"
+            let key = { (face: FaceID) -> FaceRowKey? in
+                guard let key = try? FaceRowKey(face, rowIDs: rowIDs) else {
+                    skipped += 1
+                    return nil
+                }
+                return key
+            }
             for (face, person) in plan.lapsedSeeds {
-                guard let key = try? FaceRowKey(face, rowIDs: rowIDs) else { continue }
+                guard let key = key(face) else { continue }
                 try db.execute(
                     sql: """
                     UPDATE face SET person_id = NULL, assignment = ?, is_key_photo = 0
@@ -1203,9 +1215,9 @@ extension CatalogStore {
             }
             for (index, seeds) in plan.newPeople.enumerated() {
                 let person = try Self.insertPerson(name: nil, birthday: nil, db: db)
-                created[index] = person
+                var seeded = 0
                 for face in seeds {
-                    guard let key = try? FaceRowKey(face, rowIDs: rowIDs) else { continue }
+                    guard let key = key(face) else { continue }
                     try db.execute(
                         sql: """
                         UPDATE face SET person_id = ?, assignment = ?, is_key_photo = 0
@@ -1213,16 +1225,25 @@ extension CatalogStore {
                         """,
                         arguments: [person.rawValue, FaceAssignmentColumn.seed.rawValue, key.rootID, key.path.rawValue, key.index]
                     )
-                    written += db.changesCount
+                    seeded += db.changesCount
+                }
+                if seeded > 0 {
+                    created[index] = person
+                    written += 1 + seeded
+                } else {
+                    try db.execute(sql: "DELETE FROM person WHERE id = ?", arguments: [person.rawValue])
                 }
             }
             for guess in plan.guesses {
-                guard let key = try? FaceRowKey(guess.face, rowIDs: rowIDs) else { continue }
-                let person: PersonID? = switch guess.person {
-                case let .existing(id): id
-                case let .new(index): created[index]
-                case nil: nil
+                let person: PersonID?
+                switch guess.person {
+                case let .existing(id): person = id
+                case let .new(index):
+                    guard let id = created[index] else { continue }
+                    person = id
+                case nil: person = nil
                 }
+                guard let key = key(guess.face) else { continue }
                 try db.execute(
                     sql: """
                     UPDATE face SET person_id = ?, assignment = ?,
@@ -1238,7 +1259,7 @@ extension CatalogStore {
                 written += db.changesCount
             }
             for (face, likeness) in plan.likeness {
-                guard let key = try? FaceRowKey(face, rowIDs: rowIDs) else { continue }
+                guard let key = key(face) else { continue }
                 try db.execute(
                     sql: "UPDATE face SET likeness = ? WHERE library_root_id = ? AND relative_path = ? AND face_index = ?",
                     arguments: [likeness.map { Double($0) }, key.rootID, key.path.rawValue, key.index]
@@ -1256,15 +1277,15 @@ extension CatalogStore {
                 )
                 written += db.changesCount
             }
-            return written
+            return (written, skipped)
         }
         if written > 0 {
             notifyCatalogChanged()
         }
-        OtosLog.catalog.debugOperation("people.assignment", phase: "applied", fields: [
+        OtosLog.catalog.debugOperation("people.applyAssignment", phase: "applied", fields: [
             "guesses": "\(plan.guesses.count)", "newPeople": "\(plan.newPeople.count)",
             "likeness": "\(plan.likeness.count)", "emptied": "\(plan.emptied.count)",
-            "lapsedSeeds": "\(plan.lapsedSeeds.count)", "rows": "\(written)",
+            "lapsedSeeds": "\(plan.lapsedSeeds.count)", "rows": "\(written)", "skippedFaces": "\(skipped)",
         ])
         return written
     }
@@ -1534,7 +1555,7 @@ extension CatalogStore {
     /// The second keeps its name, birthday and key photo, taking the first's where it
     /// has none, and is a favourite if either was.
     private static func mergePerson(_ from: PersonID, into: PersonID, db: Database) throws {
-        let anchors = "(\(FaceAssignmentColumn.user.rawValue), \(FaceAssignmentColumn.seed.rawValue))"
+        let anchors = FaceAssignmentColumn.sqlList { $0.isAnchor }
         let shared = try Int.fetchOne(
             db,
             sql: """
@@ -1683,7 +1704,7 @@ extension CatalogStore {
                 """,
                 arguments: [key.rootID, key.path.rawValue, key.index]
             ) else { continue }
-            rows.append(PeopleRestore.FaceRow(
+            try rows.append(PeopleRestore.FaceRow(
                 face: id,
                 assignment: FaceAssignmentColumn.assignment(column: row["assignment"], person: row["person_id"]),
                 isNotFace: (row["is_not_face"] as Int) != 0,

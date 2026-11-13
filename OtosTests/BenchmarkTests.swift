@@ -301,7 +301,7 @@ struct BenchmarkTests {
         // A cold start: nobody named, every person found among the faces.
         let cold = large.map { face in
             FaceFact(id: face.id, captureSeconds: face.captureSeconds, embedding: face.embedding,
-                     assignment: .open, isNotFace: false, rejected: [])
+                     assignment: .open, rejected: [])
         }
         try await Benchmark.measure("people.assign.cold.10k", iterations: 3) {
             #expect(!FaceAssignmentPolicy.assign(faces: cold, people: []).newPeople.isEmpty)
@@ -399,7 +399,6 @@ struct BenchmarkTests {
                 captureSeconds: 1_300_000_000 + Double(index) * 105_000,
                 embedding: FaceEmbedding(normalizing: vector)!,
                 assignment: index / people < confirmedEach ? .user(PersonID(rawValue: Int64(person + 1))) : .open,
-                isNotFace: false,
                 rejected: []
             ))
         }

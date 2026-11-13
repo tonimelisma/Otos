@@ -71,7 +71,8 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
         }
     }
 
-    /// Every face of a photo still in the catalog and out of the Trash, in reading order.
+    /// Every face of a photo still in the catalog and out of the Trash, in reading order;
+    /// none the user marked as not a face.
     let faces: [FaceFact]
     let tiles: [FaceID: FaceTile]
     /// In creation order.
@@ -133,7 +134,7 @@ nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
         plan.newPeople = result.newPeople
         let seeded = Set(result.newPeople.joined())
         var keeps: Set<PersonID> = []
-        for face in snapshot.faces where !face.isNotFace {
+        for face in snapshot.faces {
             let computed = result.likeness[face.id]
             if snapshot.likeness[face.id] != computed {
                 plan.likeness[face.id] = .some(computed)
@@ -162,7 +163,7 @@ nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
                 keeps.insert(person)
             }
         }
-        let held = Set(snapshot.faces.filter { !$0.isNotFace }.compactMap(\.assignment.person))
+        let held = Set(snapshot.faces.compactMap(\.assignment.person))
         plan.emptied = snapshot.people.filter { $0.isBare && held.contains($0.id) && !keeps.contains($0.id) }.map(\.id)
         return plan
     }
@@ -300,8 +301,6 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
     }
 }
 
-/// One face of a photo, as the Info pane and the photo menus show it: a face of a visible
-/// person or of no person.
 extension MediaCount {
     /// The photos and videos `faces` are in, each counted once.
     init(faces: some Sequence<PhotoFace>) {
@@ -314,6 +313,8 @@ extension MediaCount {
     }
 }
 
+/// One face of a photo, as the Info pane and the photo menus show it: a face of a visible
+/// person or of no person.
 nonisolated struct PhotoFace: Hashable, Sendable, Identifiable {
     let tile: FaceTile
     /// Its person; nil for an unidentified face.

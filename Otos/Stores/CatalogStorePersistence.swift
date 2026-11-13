@@ -857,17 +857,17 @@ extension CatalogStore {
         }
         let carried = FaceCarryOver.matches(previous: previousBoxes, new: faces.map(\.face.box))
         let unmatched = Set(previous.indices).subtracting(carried.values)
-        let keptAsRead = sameSource ? unmatched.sorted().filter { index in
+        let keptAsRead = try sameSource ? unmatched.sorted().filter { index in
             let face = previous[index]
-            let said = FaceAssignmentColumn.assignment(column: face["assignment"], person: face["person_id"])
+            let said = try FaceAssignmentColumn.assignment(column: face["assignment"], person: face["person_id"])
             return said.isUserWord || (face["is_not_face"] as Int) != 0 || rejections[face["face_index"]] != nil
         } : []
         try db.execute(sql: "DELETE FROM face WHERE library_root_id = ? AND relative_path = ?", arguments: key)
         for (index, read) in faces.enumerated() {
             let face = read.face
             let prior = carried[index].map { previous[$0] }
-            let carriedAssignment = prior.map {
-                FaceAssignmentColumn.assignment(column: $0["assignment"], person: $0["person_id"])
+            let carriedAssignment = try prior.map {
+                try FaceAssignmentColumn.assignment(column: $0["assignment"], person: $0["person_id"])
             } ?? .open
             let kept: FaceAssignment = carriedAssignment.isGuessable ? .open : carriedAssignment
             try insertFace(FaceRowValues(
@@ -886,7 +886,7 @@ extension CatalogStore {
         }
         for (offset, priorIndex) in keptAsRead.enumerated() {
             let prior = previous[priorIndex]
-            let said = FaceAssignmentColumn.assignment(column: prior["assignment"], person: prior["person_id"])
+            let said = try FaceAssignmentColumn.assignment(column: prior["assignment"], person: prior["person_id"])
             try insertFace(FaceRowValues(
                 index: faces.count + offset,
                 box: previousBoxes[priorIndex],

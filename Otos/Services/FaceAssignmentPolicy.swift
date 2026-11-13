@@ -53,7 +53,8 @@ nonisolated enum FaceAssignment: Hashable, Sendable {
 }
 
 /// One face, as assignment reads it: where it is, when it was taken, its embedding, and
-/// what the user has decided about it (ADR 0047).
+/// what the user has decided about it (ADR 0047). A detection the user marked as not a face
+/// is never one: the catalog leaves it out of the People snapshot.
 nonisolated struct FaceFact: Sendable, Equatable {
     let id: FaceID
     /// The photo's local capture time (`CaptureLocalTime.seconds`); nil when the photo has
@@ -61,7 +62,6 @@ nonisolated struct FaceFact: Sendable, Equatable {
     let captureSeconds: Double?
     let embedding: FaceEmbedding
     let assignment: FaceAssignment
-    let isNotFace: Bool
     /// People the user said this face is not (Remove Name).
     let rejected: Set<PersonID>
     /// The model can tell who this face is (`FaceRecognisability`). A face it cannot is still
@@ -70,14 +70,12 @@ nonisolated struct FaceFact: Sendable, Equatable {
     let isRecognisable: Bool
 
     init(
-        id: FaceID, captureSeconds: Double?, embedding: FaceEmbedding, assignment: FaceAssignment, isNotFace: Bool,
-        rejected: Set<PersonID>
+        id: FaceID, captureSeconds: Double?, embedding: FaceEmbedding, assignment: FaceAssignment, rejected: Set<PersonID>
     ) {
         self.id = id
         self.captureSeconds = captureSeconds
         self.embedding = embedding
         self.assignment = assignment
-        self.isNotFace = isNotFace
         self.rejected = rejected
         isRecognisable = FaceRecognisability.isRecognisable(embedding)
     }
@@ -85,7 +83,7 @@ nonisolated struct FaceFact: Sendable, Equatable {
     /// The same face with no person: a seed whose group no longer stands is Otos's to decide
     /// again.
     var opened: FaceFact {
-        FaceFact(id: id, captureSeconds: captureSeconds, embedding: embedding, assignment: .open, isNotFace: isNotFace, rejected: rejected)
+        FaceFact(id: id, captureSeconds: captureSeconds, embedding: embedding, assignment: .open, rejected: rejected)
     }
 }
 
@@ -192,8 +190,8 @@ nonisolated enum FaceAssignmentPolicy {
     static let maximumGroupings = 8
 
     static func assign(faces: [FaceFact], people: [PersonFact]) -> FaceAssignmentResult {
-        let lapsed = lapsedSeeds(faces.filter { !$0.isNotFace }, people: people)
-        let usable = faces.filter { !$0.isNotFace }.map { lapsed.contains($0.id) ? $0.opened : $0 }
+        let lapsed = lapsedSeeds(faces, people: people)
+        let usable = faces.map { lapsed.contains($0.id) ? $0.opened : $0 }
         let birthdays = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.birthdaySeconds) })
         var anchors: [Int: FaceAssignmentResult.Person] = [:]
         for (index, face) in usable.enumerated() where face.assignment.isAnchor {
@@ -604,7 +602,7 @@ nonisolated struct FaceRanker: Sendable {
     init(faces: [FaceFact], people: [PersonFact], offered: Set<PersonID>) {
         let birthdays = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.birthdaySeconds) })
         var byPerson: [PersonID: [FaceFact]] = [:]
-        for face in faces where !face.isNotFace && face.isRecognisable {
+        for face in faces where face.isRecognisable {
             if let person = face.assignment.person, offered.contains(person) {
                 byPerson[person, default: []].append(face)
             }
@@ -640,8 +638,9 @@ nonisolated struct FaceRanker: Sendable {
                     for (person, run) in runs where !excluded.contains(person)
                         && FaceAssignmentPolicy.notBeforeBirthday(face.captureSeconds, birthdays[person] ?? nil)
                     {
-                        let skipping = run.faces.firstIndex { $0.id == face.id }
-                        if let best = run.best(for: face, row: buffer, rowStart: start, skipping: skipping) {
+                        // A face is only in its own person's run, which `excluded` already
+                        // leaves out: the ranker and the faces come from one snapshot.
+                        if let best = run.best(for: face, row: buffer, rowStart: start) {
                             ranked.append(FaceCandidate(person: person, similarity: best))
                         }
                     }

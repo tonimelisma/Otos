@@ -26,15 +26,15 @@ nonisolated enum VideoFaceReader {
     static let samples: [Double] = [0, 0.1, 0.25, 0.5, 0.75, 0.9]
 
     /// A video's faces, one per person, with their frames staged under `finalRelativeName`.
-    /// No faces when the video has no frame to read. Throws when the analysis failed, so
-    /// nothing is stamped and the video is read again.
+    /// No faces when the video has no video track. Throws when a frame could not be read or
+    /// analysed, so nothing is stamped and the video is read again.
     static func read(
         _ asset: AVURLAsset,
         analyzeFaces: FaceAnalysisReader,
         framesRelativeName: String,
         in directory: URL
     ) async throws -> EnrichedVideoFaces {
-        let frames = await Self.frames(of: asset)
+        let frames = try await Self.frames(of: asset)
         var faces: [[DetectedFace]] = []
         for frame in frames {
             try await faces.append(analyzeFaces(frame).faces)
@@ -56,36 +56,29 @@ nonisolated enum VideoFaceReader {
         )
     }
 
-    /// The frames at `samples` that decode, in order. A video with no video track, or whose
-    /// frames do not decode, has none; each failure is logged.
+    /// The frames at `samples`, in order; none for a video with no video track. Throws, and
+    /// logs, when the duration or any frame cannot be read: an unread frame is not a frame
+    /// without faces (ADR 0032), so a partial read is never stamped.
     @concurrent
-    static func frames(of asset: AVURLAsset) async -> [CGImage] {
-        let name = asset.url.lastPathComponent
-        let duration: CMTime
+    static func frames(of asset: AVURLAsset) async throws -> [CGImage] {
         do {
-            duration = try await asset.load(.duration)
-        } catch {
-            OtosLog.mediaIO.errorOperation("videoFaces.frames", phase: "durationUnreadable", fields: [
-                "path": name, "error": String(describing: error),
-            ])
-            return []
-        }
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.requestedTimeToleranceBefore = .zero
-        generator.requestedTimeToleranceAfter = .zero
-        var frames: [CGImage] = []
-        for fraction in samples {
-            let time = CMTimeMultiplyByFloat64(duration, multiplier: fraction)
-            do {
-                try await frames.append(generator.image(at: time).image)
-            } catch {
-                OtosLog.mediaIO.errorOperation("videoFaces.frames", phase: "frameUnreadable", fields: [
-                    "path": name, "fraction": "\(fraction)", "error": String(describing: error),
-                ])
+            guard try await !asset.loadTracks(withMediaType: .video).isEmpty else { return [] }
+            let duration = try await asset.load(.duration)
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            var frames: [CGImage] = []
+            for fraction in samples {
+                try await frames.append(generator.image(at: CMTimeMultiplyByFloat64(duration, multiplier: fraction)).image)
             }
+            return frames
+        } catch {
+            OtosLog.mediaIO.errorOperation("videoFaces.frames", phase: "unreadable", fields: [
+                "path": asset.url.lastPathComponent, "error": String(describing: error),
+            ])
+            throw error
         }
-        return frames
     }
 
     /// One face per person across `frames`, each frame's faces in reading order: the face and

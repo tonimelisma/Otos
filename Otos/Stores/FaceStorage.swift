@@ -124,7 +124,7 @@ nonisolated enum PersonBirthday {
         components.month = parts.count == 3 ? parts[1] : 1
         components.day = parts.count == 3 ? parts[2] : 1
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
+        calendar.timeZone = .gmt
         guard components.isValidDate(in: calendar), let date = calendar.date(from: components) else { return nil }
         return date.timeIntervalSince1970
     }
@@ -138,8 +138,10 @@ nonisolated enum PersonBirthday {
     }
 }
 
-/// `face.assignment` as the catalog stores it, beside `person_id` (ADR 0047).
-nonisolated enum FaceAssignmentColumn: Int {
+/// `face.assignment` as the catalog stores it, beside `person_id` (ADR 0047). The rules
+/// about whose word an assignment is belong to `FaceAssignment`; SQL reads them through
+/// `sqlList(where:)`, never as its own copy of the values.
+nonisolated enum FaceAssignmentColumn: Int, CaseIterable {
     case open = 0
     case model = 1
     case seed = 2
@@ -156,19 +158,42 @@ nonisolated enum FaceAssignmentColumn: Int {
         }
     }
 
+    /// A stored row that no assignment can hold: a value no case has, or a person under an
+    /// open or held face, which no write produces.
+    struct Malformed: Error, Equatable {
+        let column: Int
+        let person: Int64?
+    }
+
     /// The assignment a stored row holds. A row with no person is open or held, whatever
     /// else its column says: deleting a person clears `person_id` under its faces.
-    static func assignment(column: Int, person: Int64?) -> FaceAssignment {
-        let kind = FaceAssignmentColumn(rawValue: column) ?? .open
+    static func assignment(column: Int, person: Int64?) throws -> FaceAssignment {
+        guard let kind = FaceAssignmentColumn(rawValue: column) else { throw Malformed(column: column, person: person) }
         guard let person = person.map(PersonID.init(rawValue:)) else {
             return kind == .held ? .held : .open
         }
-        return switch kind {
-        case .open, .held: .open
-        case .model: .model(person)
-        case .seed: .seed(person)
-        case .user: .user(person)
+        switch kind {
+        case .open, .held: throw Malformed(column: column, person: person.rawValue)
+        case .model: return .model(person)
+        case .seed: return .seed(person)
+        case .user: return .user(person)
         }
+    }
+
+    /// The stored values whose assignments `rule` holds for, as an SQL list for `IN`.
+    static func sqlList(where rule: (FaceAssignment) -> Bool) -> String {
+        let anyone = PersonID(rawValue: 0)
+        let values = allCases.filter { kind in
+            let assignment: FaceAssignment = switch kind {
+            case .open: .open
+            case .held: .held
+            case .model: .model(anyone)
+            case .seed: .seed(anyone)
+            case .user: .user(anyone)
+            }
+            return rule(assignment)
+        }
+        return "(" + values.map { "\($0.rawValue)" }.joined(separator: ", ") + ")"
     }
 }
 
@@ -218,13 +243,10 @@ nonisolated struct PreviewFacePage: Equatable, Sendable {
     let next: PreviewFaceCursor?
 }
 
-/// Which stored preview a still has and what its faces are owed, as SQL over `media_asset`
-/// (ADR 0047). The stored preview is Otos's rendering when it has one (ADR 0035), else the
-/// source's own preview (an Immich preview, ADR 0046 §7).
 /// The People snapshot's face columns, in `SELECT` order (`selectList`), so the snapshot
 /// reads each by position and the list and the reads cannot disagree.
 nonisolated enum PeopleFaceColumn: Int, CaseIterable {
-    case rootID, path, faceIndex, embedding, personID, assignment, likeness, isKeyPhoto, isNotFace
+    case rootID, path, faceIndex, embedding, personID, assignment, likeness, isKeyPhoto
     case boxX, boxY, boxWidth, boxHeight
     case captureLocal, previewPath, renderedRevision, editRecipeJSON, previewEditIsKnown
     case faceFramesPath, frameIndex, isVideo
@@ -240,7 +262,6 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
         case .assignment: "f.assignment"
         case .likeness: "f.likeness"
         case .isKeyPhoto: "f.is_key_photo"
-        case .isNotFace: "f.is_not_face"
         case .boxX: "f.box_x"
         case .boxY: "f.box_y"
         case .boxWidth: "f.box_width"
@@ -259,6 +280,9 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
     static let selectList = allCases.map(\.sql).joined(separator: ", ")
 }
 
+/// Which stored preview a still has and what its faces are owed, as SQL over `media_asset`
+/// (ADR 0047). The stored preview is Otos's rendering when it has one (ADR 0035), else the
+/// source's own preview (an Immich preview, ADR 0046 §7).
 nonisolated enum PreviewFaceSQL {
     /// The stamp of the source the stored preview was made from: the rendering's, else the
     /// source preview's. NULL when neither is known.

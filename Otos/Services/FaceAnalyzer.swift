@@ -53,8 +53,8 @@ typealias FaceAnalysisReader = @Sendable (CGImage) async throws -> FaceAnalysis
 /// `docs/research/2026-11-12-face-person-admission.md`,
 /// `docs/research/2026-11-12-faces-from-the-preview.md`), and `revision` names them: the
 /// stored preview as the image read, Vision's landmark and quality revision 3, its classifier
-/// revision 2, the admission thresholds, the alignment and the model. A change to any of them is a new revision, with a migration that
-/// makes the faces it changes stale.
+/// revision 2, the admission thresholds, the alignment and the model. A change to any of them
+/// is a new revision, with a migration that makes the faces it changes stale.
 actor FaceAnalyzer {
     /// The analysis these settings produce; stored with every face.
     static let revision = 3
@@ -83,7 +83,9 @@ actor FaceAnalyzer {
     /// Made on first use, on the analysis queue: an analyzer is built on the main actor at
     /// launch, and a Core Image context costs several milliseconds to make.
     private lazy var context = CIContext()
-    private var model: FaceEmbeddingModel?
+    /// The model, or why it could not be loaded: a model missing from the bundle stays missing
+    /// for the process, so its error is kept and every analysis fails with it, logged once.
+    private var model: Result<FaceEmbeddingModel, any Error>?
 
     nonisolated var unownedExecutor: UnownedSerialExecutor {
         queue.asUnownedSerialExecutor()
@@ -100,7 +102,7 @@ actor FaceAnalyzer {
         return { image in try await analyzer.analyze(image) }
     }
 
-    /// The faces in `image`, a still's upright stored preview.
+    /// The faces in `image`: a still's upright stored preview or a video's frame.
     func analyze(_ image: CGImage) throws -> FaceAnalysis {
         let start = ContinuousClock.now
         let size = CGSize(width: image.width, height: image.height)
@@ -195,12 +197,12 @@ actor FaceAnalyzer {
         let square = CGRect(x: centre.x - side / 2, y: centre.y - side / 2, width: side, height: side)
             .integral
             .intersection(CGRect(x: 0, y: 0, width: width, height: height))
-        guard let context = image.cropping(to: square) else {
+        guard let surround = image.cropping(to: square) else {
             throw AnalysisError.cropFailed
         }
         let request = VNClassifyImageRequest()
         request.revision = VNClassifyImageRequestRevision2
-        try VNImageRequestHandler(cgImage: context).perform([request])
+        try VNImageRequestHandler(cgImage: surround).perform([request])
         return (request.results ?? []).filter { personLabels.contains($0.identifier) }.map(\.confidence).max() ?? 0
     }
 
@@ -210,15 +212,23 @@ actor FaceAnalyzer {
 
     private func embeddingModel() throws -> FaceEmbeddingModel {
         if let model {
-            return model
+            return try model.get()
         }
         let start = ContinuousClock.now
-        let loaded = try FaceEmbeddingModel(bundle: bundle)
-        model = loaded
-        OtosLog.metadata.noticeOperation("face.model", phase: "loaded", fields: [
-            "model": "AdaFaceIR101", "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
-        ])
-        return loaded
+        do {
+            let loaded = try FaceEmbeddingModel(bundle: bundle)
+            model = .success(loaded)
+            OtosLog.metadata.noticeOperation("face.model", phase: "loaded", fields: [
+                "model": FaceEmbeddingModel.resourceName, "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+            ])
+            return loaded
+        } catch {
+            model = .failure(error)
+            OtosLog.metadata.errorOperation("face.model", phase: "loadFailed", fields: [
+                "model": FaceEmbeddingModel.resourceName, "error": String(describing: error),
+            ])
+            throw error
+        }
     }
 
     /// The five alignment points in the photo's pixels, bottom-left origin: the two eye centres

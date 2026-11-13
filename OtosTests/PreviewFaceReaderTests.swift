@@ -220,6 +220,38 @@ struct PreviewFaceReaderTests {
         await library.store.shutdown()
     }
 
+    /// A preview whose file cannot be read leaves its still owed: the stamp follows the
+    /// original, so it would outlive the preview's return. A preview whose bytes are not an
+    /// image is stamped with no faces. Neither reaches the analyser.
+    @Test func aMissingPreviewStaysOwedAndAnUndecodableOneHasNoFaces() async throws {
+        let directory = try makeTestDirectory()
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: ["a.jpg", "b.jpg"])
+        let previews = directory.appending(path: "Previews", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: previews, withIntermediateDirectories: true)
+        try Data("not an image".utf8).write(to: previews.appending(path: "preview-b.jpg"))
+        for name in ["a.jpg", "b.jpg"] {
+            try await Self.render(library.id(name), in: library, editRevision: 0, preview: "preview-\(name)")
+        }
+        let analysed = Calls()
+        let reader = PreviewFaceReader(
+            store: library.store,
+            thumbnailDirectory: previews,
+            analyzeFaces: { _ in
+                analysed.record()
+                return FaceAnalysis(faces: [], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
+            }
+        )
+
+        await reader.start()
+        try await waitUntil {
+            try await library.store.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg")]
+        }
+        await reader.shutdown()
+        #expect(try await library.store.faces(of: library.id("b.jpg")).isEmpty)
+        #expect(analysed.value == 0)
+        await library.store.shutdown()
+    }
+
     private static let leftHalf = EditRecipe(crop: EditCrop(left: 0, top: 0, width: 0.5, height: 1))
 
     private static func expect(_ rect: CGRect, _ expected: CGRect, sourceLocation: SourceLocation = #_sourceLocation) {

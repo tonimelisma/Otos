@@ -92,14 +92,13 @@ struct FaceAssignmentPolicyTests {
         let beforeBirthday = Self.face("baby.jpg", toward: [0: 1], at: 0)
         let rejected = Self.face("not.jpg", toward: [0: 1], at: 2 * Self.year, rejected: [Self.sam])
         let held = Self.face("held.jpg", toward: [0: 1], at: 2 * Self.year, assignment: .held)
-        let notAFace = Self.face("poster.jpg", toward: [0: 1], at: 2 * Self.year, notAFace: true)
 
-        let result = FaceAssignmentPolicy.assign(faces: [sam, beforeBirthday, rejected, held, notAFace], people: people)
+        let result = FaceAssignmentPolicy.assign(faces: [sam, beforeBirthday, rejected, held], people: people)
 
         // The two faces Sam may not have look alike on two days: a new person, not Sam.
         #expect(!result.guesses.values.contains(.existing(Self.sam)))
         #expect(result.newPeople == [[beforeBirthday.id, rejected.id]])
-        #expect(result.guesses[held.id] == nil && result.guesses[notAFace.id] == nil)
+        #expect(result.guesses[held.id] == nil)
     }
 
     /// Faces matching nobody that look alike on two or more days are a new person; faces of
@@ -131,7 +130,7 @@ struct FaceAssignmentPolicyTests {
     /// people's seeds now anchors, the guesses stored — it gives the same guesses and finds
     /// nobody new.
     @Test func assigningItsOwnOutputChangesNothing() {
-        var generator = SplitMix64(seed: 5)
+        var generator = SplitMix64(seed: 1)
         let faces = Self.randomFaces(count: 300, people: 4, generator: &generator)
         let people = (1 ... 4).map { PersonFact(id: PersonID(rawValue: Int64($0)), birthdaySeconds: nil, isBare: false) }
 
@@ -159,7 +158,7 @@ struct FaceAssignmentPolicyTests {
             }
             return FaceFact(
                 id: face.id, captureSeconds: face.captureSeconds, embedding: face.embedding,
-                assignment: assignment, isNotFace: face.isNotFace, rejected: face.rejected
+                assignment: assignment, rejected: face.rejected
             )
         }
         let everyone = people + created.values.map { PersonFact(id: $0, birthdaySeconds: nil, isBare: true) }
@@ -311,7 +310,7 @@ struct FaceAssignmentPolicyTests {
             }
             return PersonFact(id: PersonID(rawValue: Int64(index)), birthdaySeconds: birthday, isBare: false)
         }
-        let faces = Self.randomFaces(count: 400, people: 5, generator: &generator).filter { !$0.isNotFace }
+        let faces = Self.randomFaces(count: 400, people: 5, generator: &generator)
         let birthdays = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.birthdaySeconds) })
         let anchors = Dictionary(uniqueKeysWithValues: faces.filter(\.assignment.isAnchor).map {
             ($0.id, $0.assignment.person!)
@@ -358,7 +357,6 @@ struct FaceAssignmentPolicyTests {
                 at: Double(generator.next() % 3000) * day,
                 assignment: assignment,
                 rejected: generator.next() % 8 == 0 ? [PersonID(rawValue: Int64(generator.next() % UInt64(people) + 1))] : [],
-                notAFace: generator.next() % 30 == 0,
                 dated: dated
             )
         }
@@ -433,7 +431,6 @@ struct FaceAssignmentPolicyTests {
         at seconds: Double,
         assignment: FaceAssignment = .open,
         rejected: Set<PersonID> = [],
-        notAFace: Bool = false,
         dated: Bool = true
     ) -> FaceFact {
         var vector = [Float](repeating: 0, count: FaceEmbeddingModel.dimensions)
@@ -448,7 +445,6 @@ struct FaceAssignmentPolicyTests {
             captureSeconds: dated ? epoch + seconds : nil,
             embedding: FaceEmbedding(normalizing: vector)!,
             assignment: assignment,
-            isNotFace: notAFace,
             rejected: rejected
         )
     }

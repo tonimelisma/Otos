@@ -114,11 +114,23 @@ actor PreviewFaceReader {
         }
     }
 
-    /// The faces of one candidate's preview, placed on the upright photo; no faces when it
-    /// does not decode; nil when the analysis failed, so nothing is stamped.
+    /// The faces of one candidate's preview, placed on the upright photo; no faces when the
+    /// preview's bytes are not an image. Nil, so nothing is stamped and the still stays owed,
+    /// when the preview file cannot be read (the stamp follows the original, so a stamp would
+    /// outlive the preview's return) or the analysis failed.
     private func read(_ candidate: PreviewFaceCandidate) async -> EnrichedFaces? {
         guard let thumbnailDirectory else { return nil }
-        guard let image = await Self.decode(candidate, thumbnailDirectory: thumbnailDirectory) else {
+        let url = thumbnailDirectory.appending(path: candidate.previewPath)
+        guard FileManager.default.isReadableFile(atPath: url.path) else {
+            OtosLog.metadata.errorOperation("face.preview", phase: "previewUnreadable", fields: [
+                "relativePath": candidate.id.relativePath.rawValue, "preview": candidate.previewPath,
+            ])
+            return nil
+        }
+        guard let image = await Self.decode(url) else {
+            OtosLog.metadata.errorOperation("face.preview", phase: "previewUndecodable", fields: [
+                "relativePath": candidate.id.relativePath.rawValue, "preview": candidate.previewPath,
+            ])
             return .noneFound
         }
         do {
@@ -166,8 +178,7 @@ actor PreviewFaceReader {
 
     /// The stored preview, decoded whole and turned upright by any orientation it carries.
     @concurrent
-    private static func decode(_ candidate: PreviewFaceCandidate, thumbnailDirectory: URL) async -> CGImage? {
-        let url = thumbnailDirectory.appending(path: candidate.previewPath)
+    private static func decode(_ url: URL) async -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,

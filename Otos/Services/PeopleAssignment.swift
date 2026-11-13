@@ -219,10 +219,10 @@ extension PeopleAssignment {
         let wanted = Set(photos)
         let hidden = Set(state.hiddenPeople.map(\.id))
         let faces = snapshot.faces.filter { face in
-            wanted.contains(face.id.asset) && !face.isNotFace && !(face.assignment.person.map(hidden.contains) ?? false)
+            wanted.contains(face.id.asset) && !(face.assignment.person.map(hidden.contains) ?? false)
         }
         var photoPeople: [MediaAssetID: Set<PersonID>] = [:]
-        for face in snapshot.faces where wanted.contains(face.id.asset) && !face.isNotFace {
+        for face in snapshot.faces where wanted.contains(face.id.asset) {
             if let person = face.assignment.person {
                 photoPeople[face.id.asset, default: []].insert(person)
             }
@@ -244,11 +244,10 @@ extension PeopleAssignment {
 ///   hidden): a person Otos found and the user never touched is gone with their last face.
 nonisolated enum PeopleStateBuilder {
     static func state(from snapshot: PeopleSnapshot) -> CatalogPeopleState {
-        let usable = snapshot.faces.filter { !$0.isNotFace }
         var faces: [PersonID: [FaceTile]] = [:]
         var userFaces: [PersonID: [FaceTile]] = [:]
         var anchorPhotos: [PersonID: Set<MediaAssetID>] = [:]
-        for face in usable {
+        for face in snapshot.faces {
             guard let person = face.assignment.person, let tile = snapshot.tiles[face.id] else { continue }
             faces[person, default: []].append(tile)
             if case .user = face.assignment {
@@ -260,7 +259,7 @@ nonisolated enum PeopleStateBuilder {
         }
         let hidden = Set(snapshot.people.filter(\.isHidden).map(\.id))
         var photoFaces: [MediaAssetID: [PhotoFace]] = [:]
-        for face in usable {
+        for face in snapshot.faces {
             guard let tile = snapshot.tiles[face.id] else { continue }
             if let person = face.assignment.person, hidden.contains(person) {
                 continue
@@ -289,7 +288,7 @@ nonisolated enum PeopleStateBuilder {
             people: people,
             photoFaces: photoFaces,
             unchecked: snapshot.unchecked,
-            faceCount: usable.count,
+            faceCount: snapshot.faces.count,
             revision: snapshot.revision
         )
     }

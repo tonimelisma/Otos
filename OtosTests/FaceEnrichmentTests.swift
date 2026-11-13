@@ -59,8 +59,9 @@ struct FaceEnrichmentTests {
 
     /// What the user said about a face outlives a new reading of the same source that does not
     /// find it (an analysis revision, an edit hiding part of the photo): a named face and a
-    /// face marked not a face stay as they were read, and a found face keeps its mark. A
-    /// changed file is read afresh: only what overlaps a new face carries.
+    /// face marked not a face stay as they were read, and a found face keeps its mark, so it
+    /// stays out of the People snapshot. A changed file is read afresh: only what overlaps a
+    /// new face carries.
     @Test func aReReadingKeepsWhatTheUserSaidAboutFacesItDoesNotFind() async throws {
         let library = try await ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
         let named = Self.face(seed: 1), marked = Self.face(seed: 5)
@@ -72,13 +73,12 @@ struct FaceEnrichmentTests {
         try await library.readFaces([library.result(for: "a.jpg", faces: [marked])])
         var facts = try await library.store.peopleSnapshot().faces
         #expect(try await library.store.faces(of: library.id("a.jpg")) == [marked, named])
-        #expect(facts.map(\.isNotFace) == [true, false])
-        #expect(facts.map(\.assignment) == [.open, .user(sam)])
+        #expect(facts.map(\.assignment) == [.user(sam)])
 
         try await library.readFaces([library.result(for: "a.jpg", faces: [])])
         facts = try await library.store.peopleSnapshot().faces
         #expect(try await library.store.faces(of: library.id("a.jpg")) == [marked, named])
-        #expect(facts.map(\.assignment) == [.open, .user(sam)])
+        #expect(facts.map(\.assignment) == [.user(sam)])
 
         let file = library.root.appending(path: "a.jpg")
         try Data("a changed photo, longer than before".utf8).write(to: file)
@@ -92,7 +92,6 @@ struct FaceEnrichmentTests {
         try await library.readFaces([library.result(for: "a.jpg", faces: [named])])
         facts = try await library.store.peopleSnapshot().faces
         #expect(try await library.store.faces(of: library.id("a.jpg")) == [named])
-        #expect(facts.map(\.isNotFace) == [false])
         #expect(facts.map(\.assignment) == [.user(sam)])
         await library.store.shutdown()
     }

@@ -72,14 +72,14 @@ struct PeopleStateTests {
         #expect(state.person(Self.ian)?.anchorPhotos == [faces[3].id.asset])
     }
 
-    /// A photo's faces as the menus and Info show them: a hidden person's face is left out;
-    /// an unidentified face and a "not a face" detection are not.
-    @Test func aPhotosFacesLeaveOutHiddenPeopleAndNonFaces() {
+    /// A photo's faces as the menus and Info show them: a hidden person's face is left out,
+    /// an unidentified face is not. (A detection marked not a face never reaches the
+    /// snapshot: `PeopleStoreTests`.)
+    @Test func aPhotosFacesLeaveOutHiddenPeople() {
         let faces = [
             Fixture.face("g.jpg", index: 0, toward: [0: 1], at: 0, assignment: .model(Self.sam)),
             Fixture.face("g.jpg", index: 1, toward: [1: 1], at: 0, assignment: .user(Self.ian)),
             Fixture.face("g.jpg", index: 2, toward: [2: 1], at: 0),
-            Fixture.face("g.jpg", index: 3, toward: [3: 1], at: 0, notAFace: true),
         ]
         let people: [PeopleSnapshot.Person] = [
             .init(id: Self.sam, name: "Sam", birthday: nil),
