@@ -276,6 +276,10 @@ actor MediaTrashCoordinator {
         }
     }
 
+    /// Ends the queue. The flag is set before the first await, and the two places that spawn
+    /// work — `startDownload` from a pass, `scheduleWake` — refuse once it is set, so the
+    /// downloads snapshotted here are every download there will ever be: a pass suspended
+    /// in a read when this lands resumes into a stopped queue, not into a fresh download.
     func shutdown() async {
         isShuttingDown = true
         wakeContinuation.finish()
@@ -438,6 +442,10 @@ actor MediaTrashCoordinator {
         for pending in items {
             let item = pending.item
             await willHandleItem?(item.id)
+            // Shutdown can land at any suspension of this pass (the reads above, the hook,
+            // the previous item's move). It cancelled only the downloads it saw, so a pass
+            // that finds it begun stops here and starts nothing it would never cancel.
+            guard !isShuttingDown else { return }
             if awaitingDecision.contains(item.id) || downloads[item.id] != nil || revoked.contains(item.id) {
                 continue
             }
@@ -573,7 +581,9 @@ actor MediaTrashCoordinator {
         }
     }
 
+    /// Called only from a pass, synchronously after its shutdown check.
     private func startDownload(_ item: MediaTrashItem, members: [MediaTrashMember], bytes: Int64, volume: URL) {
+        precondition(!isShuttingDown, "a download started after shutdown would outlive it")
         downloadCommits[item.id] = (volume, bytes)
         guard let materializationRequester else {
             settleCommitment(of: item.id, landed: false)
@@ -657,6 +667,9 @@ actor MediaTrashCoordinator {
     }
 
     private func scheduleWake(at instant: ContinuousClock.Instant) {
+        // Shutdown cancelled the timer it saw; a pass or answer finishing after it must not
+        // arm another that nobody cancels.
+        guard !isShuttingDown else { return }
         timerTask?.cancel()
         let clock = clock
         timerTask = Task { [weak self] in

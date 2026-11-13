@@ -134,6 +134,74 @@ struct MediaTrashCoordinatorOwnershipTests {
         await coordinator.shutdown()
     }
 
+    /// Shutdown lands while a pass is suspended in its pending-item read, after shutdown has
+    /// already cancelled the download in flight and that download has cleared its slot. The
+    /// pass then resumes holding a snapshot in which the item looks un-downloaded; it must not
+    /// start a download that shutdown will never cancel or await.
+    @Test func aPassSuspendedWhenShutdownLandsStartsNoDownloadThatOutlivesIt() async throws {
+        let fixture = try await Fixture.make(names: ["a.jpg"])
+        let store = fixture.store
+        let box = Mutex<MediaTrashCoordinator?>(nil)
+        let started = Mutex(0)
+        let returned = Mutex(0)
+        let startedAfterShutdown = Mutex(0)
+        let shutdownBegun = Mutex(false)
+        let armed = Mutex(false)
+        let shutdownTask = Mutex<Task<Void, Never>?>(nil)
+        let firstDownloadEnded = ReleaseSignal()
+        let reads = MediaTrashCoordinator.StoreReads(
+            pendingItems: {
+                let deliver = armed.withLock { isArmed in
+                    defer { isArmed = false }
+                    return isArmed
+                }
+                let items = try await store.pendingTrashItems()
+                if deliver, let coordinator = box.withLock({ $0 }) {
+                    shutdownBegun.withLock { $0 = true }
+                    shutdownTask.withLock { $0 = Task { await coordinator.shutdown() } }
+                    // Shutdown has cancelled the download and it has ended: the snapshot
+                    // this read returns is now stale about it.
+                    await firstDownloadEnded.wait()
+                }
+                return items
+            },
+            trashItems: { try await store.mediaTrashItems(for: $0) }
+        )
+        let coordinator = MediaTrashCoordinator(
+            store: store,
+            materializationRequester: ClosureMaterializationRequester { _ in
+                started.withLock { $0 += 1 }
+                if shutdownBegun.withLock({ $0 }) {
+                    startedAfterShutdown.withLock { $0 += 1 }
+                }
+                await suspendUntilCancelled()
+                returned.withLock { $0 += 1 }
+                await firstDownloadEnded.release()
+                return MaterializationResult(outcome: .cancelled, rerequestCount: 0, elapsedMs: 0)
+            },
+            files: .refusing,
+            status: { _ in .dataless },
+            volumeCapacity: ampleVolumeCapacity,
+            retryPolicy: Self.retry,
+            reads: reads
+        )
+        box.withLock { $0 = coordinator }
+        let stateLog = StateLog(coordinator)
+        _ = try await store.markPendingTrash([fixture.ids[0]], batch: MediaTrashBatchID())
+        await coordinator.start()
+        // The first pass started the download and published its state, so the next read
+        // belongs to the pass the kick below starts.
+        try await waitUntil { started.withLock { $0 } == 1 && stateLog.states.last?.pendingCount == 1 }
+
+        armed.withLock { $0 = true }
+        coordinator.kick()
+        try await waitUntil { shutdownTask.withLock { $0 } != nil }
+        await shutdownTask.withLock { $0 }?.value
+
+        #expect(startedAfterShutdown.withLock { $0 } == 0)
+        #expect(started.withLock { $0 } == returned.withLock { $0 })
+    }
+
     /// The user takes an item back while a pass is partway through its snapshot: the pass
     /// must skip it. The hook delivers `restore` at exactly the suspension a real answer
     /// could land in.
