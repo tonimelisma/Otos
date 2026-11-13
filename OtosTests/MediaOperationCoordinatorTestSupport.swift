@@ -23,12 +23,19 @@ actor ControlledImportPlanBuilder {
         let additionalReserved: Set<MediaRelativePath>
     }
 
+    /// One build held on its continuation. `id` names it, so a cancellation resolves
+    /// the build it belongs to, never another build held for the same source.
+    private struct HeldBuild {
+        let id: UInt64
+        let snapshot: ImportPlanningSnapshot
+        let reserved: Set<MediaRelativePath>
+        let continuation: CheckedContinuation<ImportPlanBuildResult, Never>
+    }
+
     private var recorded: [RecordedRequest] = []
-    private var pending: [LibraryRootPath: [(
-        snapshot: ImportPlanningSnapshot,
-        reserved: Set<MediaRelativePath>,
-        continuation: CheckedContinuation<ImportPlanBuildResult, Never>
-    )]] = [:]
+    /// Held builds per source, oldest first.
+    private var pending: [LibraryRootPath: [HeldBuild]] = [:]
+    private var nextHeldID: UInt64 = 0
     private var suspendNext: [LibraryRootPath: Int] = [:]
     /// Releases waiting for a build of their source to be held, woken when one is.
     private var arrivalWaiters: [LibraryRootPath: [CheckedContinuation<Void, Never>]] = [:]
@@ -46,20 +53,19 @@ actor ControlledImportPlanBuilder {
     /// `LiveImportPlanBuilder` from the stored snapshot and reserved set, preserving
     /// the live planner's semantics.
     func resumePendingBuild(for source: LibraryRootPath) async {
-        // Re-read after every wake: the actor is reentrant, and a cancellation dummy
-        // may take the held build before this release runs.
-        while pending[source]?.isEmpty ?? true {
+        // Take again after every wake: the actor is reentrant, and a cancellation may
+        // resolve the held build before this release runs.
+        while true {
+            if let entry = takeHeld(source: source, where: { _ in true }) {
+                let result = await LiveImportPlanBuilder().build(
+                    snapshot: entry.snapshot,
+                    additionalReserved: entry.reserved
+                )
+                entry.continuation.resume(returning: result)
+                return
+            }
             await withCheckedContinuation { arrivalWaiters[source, default: []].append($0) }
         }
-        guard var queue = pending[source] else { return }
-        let entry = queue.removeFirst()
-        if queue.isEmpty {
-            pending.removeValue(forKey: source)
-        } else {
-            pending[source] = queue
-        }
-        let result = await LiveImportPlanBuilder().build(snapshot: entry.snapshot, additionalReserved: entry.reserved)
-        entry.continuation.resume(returning: result)
     }
 
     func waitingReleaseCount(for source: LibraryRootPath) -> Int {
@@ -86,18 +92,22 @@ actor ControlledImportPlanBuilder {
         cancelled.insert(source)
     }
 
-    /// Resume the oldest pending build for `source` with a dummy empty result so that
-    /// a cancelled `withTaskCancellationHandler` does not leave the task hanging
-    /// forever. The dummy will be discarded as stale by the coordinator's
-    /// post-build identity checks (attachment/generation/session), so it is safe.
-    private func resumeOnePendingWithCancellationDummy(for source: LibraryRootPath) {
-        guard var queue = pending[source], !queue.isEmpty else { return }
-        let entry = queue.removeFirst()
-        if queue.isEmpty {
-            pending.removeValue(forKey: source)
-        } else {
-            pending[source] = queue
+    /// Removes and returns the oldest held build for `source` that `matches` accepts.
+    private func takeHeld(source: LibraryRootPath, where matches: (HeldBuild) -> Bool) -> HeldBuild? {
+        guard var queue = pending[source], let index = queue.firstIndex(where: matches) else {
+            return nil
         }
+        let entry = queue.remove(at: index)
+        pending[source] = queue.isEmpty ? nil : queue
+        return entry
+    }
+
+    /// Resolves the cancelled build `id` with an empty plan, so a cancelled
+    /// `withTaskCancellationHandler` does not hold its task forever. The coordinator
+    /// discards it as stale by its post-build identity checks (attachment/generation/
+    /// session). A build a release already resumed is gone and is left alone.
+    private func resolveCancelledBuild(_ id: UInt64, source: LibraryRootPath) {
+        guard let entry = takeHeld(source: source, where: { $0.id == id }) else { return }
         let dummyPlan = MediaOperationPlan(
             generation: entry.snapshot.generation,
             mode: .import(
@@ -160,12 +170,17 @@ extension ControlledImportPlanBuilder: ImportPlanBuilding {
             } else {
                 suspendNext[source] = count - 1
             }
+            let id = nextHeldID
+            nextHeldID &+= 1
             return await withTaskCancellationHandler(
                 operation: {
                     await withCheckedContinuation { (continuation: CheckedContinuation<ImportPlanBuildResult, Never>) in
-                        var queue = pending[source] ?? []
-                        queue.append((snapshot, additionalReserved, continuation))
-                        pending[source] = queue
+                        pending[source, default: []].append(HeldBuild(
+                            id: id,
+                            snapshot: snapshot,
+                            reserved: additionalReserved,
+                            continuation: continuation
+                        ))
                         for waiter in arrivalWaiters.removeValue(forKey: source) ?? [] {
                             waiter.resume()
                         }
@@ -174,7 +189,7 @@ extension ControlledImportPlanBuilder: ImportPlanBuilding {
                 onCancel: {
                     Task {
                         await self.recordCancel(for: source)
-                        await self.resumeOnePendingWithCancellationDummy(for: source)
+                        await self.resolveCancelledBuild(id, source: source)
                     }
                 }
             )

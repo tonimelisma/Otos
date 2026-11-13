@@ -2521,6 +2521,57 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(plan.totals.copyCount == 1)
         await coordinator.shutdown()
     }
+
+    @Test func cancellingOneOfTwoHeldBuildsResolvesThatBuildAndKeepsTheOther() async throws {
+        let temp = try makeTestDirectory()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        try Data(repeating: 5, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: .volume(uuid: "two-held"),
+            displayName: "Card",
+            isEjectable: true
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        let destPath = try CatalogPath.normalizedDirectoryPath(for: destURL)
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        let snapshot = try #require(await store.importPlanningSnapshot(
+            source: cardPath,
+            destination: destPath,
+            policy: ImportPolicy.from(prefs),
+            generation: 1
+        ))
+
+        let builder = ControlledImportPlanBuilder()
+        await builder.suspendNextBuild(for: cardPath)
+        await builder.suspendNextBuild(for: cardPath)
+        let older = Task { await builder.build(snapshot: snapshot, additionalReserved: []) }
+        try await waitForPendingBuilderCount(builder, source: cardPath, count: 1)
+        let newer = Task { await builder.build(snapshot: snapshot, additionalReserved: []) }
+        try await waitForPendingBuilderCount(builder, source: cardPath, count: 2)
+
+        // Cancelling the newer build resolves it with the empty plan; the older one stays
+        // held until it is released.
+        newer.cancel()
+        let cancelled = await newer.value
+        #expect(cancelled.plan.entries.isEmpty)
+        #expect(await builder.pendingCount(for: cardPath) == 1)
+        await builder.resumePendingBuild(for: cardPath)
+        let released = await older.value
+        #expect(released.plan.totals.copyCount == 1)
+    }
 }
 
 /// A builder whose next `unreadableBuilds` results carry a destination folder
