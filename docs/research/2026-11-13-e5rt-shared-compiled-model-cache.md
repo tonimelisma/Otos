@@ -83,3 +83,27 @@ disk pressure drives. This reading's keys are stable, so the growth seen at 19:1
 recompiling under new keys; which callers wrote the other entries stays unmeasured. Freeing disk space is what
 removes the failure, and that is the owner's to do: the space is held by data outside the
 repository.
+
+## Follow-up: error 10 is Vision's own deadline, not the cache
+
+Measured 2026-11-13 14:05–14:07 PST. A full `script/check.sh` on main 076a18d7, run beside other
+sessions' checks with 15 GB free (97% used), failed `SearchReadingTests.textInAPictureIsRead` after
+109 s with `.e5rtError("e5rt_stream_completion_handler call failed", 10)` (the `op=test.failure`
+line `test.sh` now prints). The failing process's own `com.apple.e5rt` log, xctest pid 5526:
+
+- 14:05:38–14:06:27: `Unable to find a valid E5 in provided path …/TextRecognition.framework/Resources/cr_*_e5.mlmodelc.bundle/`
+  for the orientation, detection and Latin–Cyrillic recognition models. The system ships no
+  precompiled bundle for this machine, so each process compiles them on its first reading.
+- 14:06:58: `Submit Async failed for [12:1]: Async task: main__Op2_Cast has timed out. @ CancelTimedOutAsyncTask`.
+
+No `Missing E5 bundle resource` line and no purge appear, so this is a different failure
+from error 13. The runtime cancels an operation that overruns a deadline of its own. On a
+loaded machine, the cold reading that compiles the models is the one that overruns it.
+
+**Conclusion:** neither Otos nor the test can change that deadline. The product already
+absorbs it: a failed reading stays owed and is read again (ADR 0048), and the second reading
+is warm. A test that calls `SearchTextReading.read` once asserts more than the product
+promises. The tests now read as the index does: they retry a bounded, counted number of
+times, and throw the last error if every attempt fails
+(`SearchReadingTests.readAsTheIndexDoes`). The benchmark takes its cold reading that way
+before `search.readText` measures warm ones.

@@ -363,6 +363,10 @@ struct BenchmarkTests {
         }
 
         let sign = try #require(SearchReadingTests.picture(saying: "OTOS SEARCH 2026"))
+        // The cold reading compiles Vision's text models, which a loaded machine can make
+        // Vision give up on; it happens here, read as the index does, so the case measures
+        // warm readings only.
+        _ = try SearchReadingTests.readAsTheIndexDoes(sign)
         try await Benchmark.measure("search.readText") {
             let read = try SearchTextReading.read(sign)
             #expect(!read.isEmpty)

@@ -40,11 +40,11 @@ struct SearchReadingTests {
     /// Text drawn into a picture is read back, certain enough for the Info pane to show it.
     @Test func textInAPictureIsRead() throws {
         let image = try #require(Self.picture(saying: "OTOS SEARCH 2026"))
-        let read = try SearchTextReading.read(image)
+        let read = try Self.readAsTheIndexDoes(image)
         #expect(SearchTextReading.matches(query: "otos search", in: SearchTextReading.searchable(read)))
         #expect(SearchTextReading.certain(read) == ["OTOS SEARCH 2026"])
         let blank = SearchModelTests.solid(red: 0.4, green: 0.5, blue: 0.6, width: 1200, height: 800)
-        #expect(try SearchTextReading.read(blank).isEmpty)
+        #expect(try Self.readAsTheIndexDoes(blank).isEmpty)
     }
 
     /// Search matches every kept line; the Info pane shows only the certain ones.
@@ -127,6 +127,24 @@ struct SearchReadingTests {
         await enrich(thumbnail: "pool-thumb-2.jpg")
         #expect(try await store.photoInfoOverlay(for: asset.id)?.sceneLabels == nil)
         await store.shutdown()
+    }
+
+    /// Reads `image` as the product does: a reading that fails is read again (ADR 0048, the
+    /// index retries an owed still). Under a loaded machine Vision's runtime can give up on a
+    /// cold reading on its own: it cancels an operation that overran its internal deadline
+    /// (`e5rt` "has timed out", error 10) while it compiles the text models, which takes
+    /// minutes under parallel checks. The attempts are counted, not timed, and a reading that
+    /// fails every attempt throws the last error, so a Vision that cannot read still fails.
+    static func readAsTheIndexDoes(_ image: CGImage) throws -> [RecognizedTextLine] {
+        let attempts = 3
+        for attempt in 1 ... attempts {
+            do {
+                return try SearchTextReading.read(image)
+            } catch where attempt < attempts {
+                print("op=test.searchReading phase=retry attempt=\(attempt) error=\(error)")
+            }
+        }
+        preconditionFailure("the last attempt returns or throws")
     }
 
     static func picture(saying text: String) -> CGImage? {
