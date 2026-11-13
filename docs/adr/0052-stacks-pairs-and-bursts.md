@@ -72,7 +72,15 @@ The choice is overlay on the member it names: `media_asset.stack_key_chosen_at_u
 move carries it and a deletion purges it with its row (ADR 0008), with no stack table that
 could outlive its files. The latest stamp among a stack's members wins; Make Key Photo stamps
 the chosen member and clears the others, and undo writes the previous stamps back. When the
-chosen member is gone, the default applies again.
+chosen member is gone, the default applies again. A burst's choice is its own column,
+`media_asset.burst_key_chosen_at_unix_ms`: a frame can be a pair, and one stamp for both would
+make switching a frame's `JPG`/`RAW` choose the burst's key, and choosing a key frame clear the
+other frames' pair choices.
+
+**Two levels.** A pair is one frame of a burst, so the projection collapses pairs first and then
+bursts over what remains, and each tile carries its pair and its burst with whether each is
+expanded. A collapsed burst's tile stands for the burst; on an expanded burst's band a pair frame
+is still a collapsed pair with its own badge.
 
 **Collapsing and expanding.** The Store reads the full order with each row's stack key. A pure
 projection pass after search collapses each stack to its key member, keeping the full order
@@ -114,6 +122,7 @@ when any member matches, and shows its key member. The duplicates scope never co
 - The grid shows 5 338 fewer tiles on the owner's library, and On This Day stops doubling.
 - Every count reads stacks, so a consumer that counts asset IDs directly (People's photo count)
   changes to count stack keys.
-- Migration v32 adds the key-choice stamp; the burst increment adds `burst_identifier`.
+- Migration v32 adds the key-choice stamp; v37 adds `burst_identifier`, filled from the
+  stored metadata, and the burst's key-choice stamp.
 - The stem key change can pair a companion or naming bundle that differs only in Unicode
   normalization on a case-insensitive volume, where Finder already treats the names as equal.

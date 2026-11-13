@@ -24,35 +24,54 @@ nonisolated enum TileBadgeContent: Equatable {
     case filmIcon
     case rawLabel
     /// A stack's badge (DES-116): `RAW+JPG` on a collapsed pair, a member's own file type
-    /// on an expanded one. It is the stack's expand-and-collapse control.
+    /// on an expanded one, the number of photos on a burst. It is the stack's expand-and-collapse control.
     case stackLabel(String)
 }
 
-/// How a tile shows the stack it is in (ADR 0052, DES-116).
-nonisolated enum TileStackPresentation: Equatable {
-    case none
-    /// The one tile of a collapsed stack, badged with the stack's label.
-    case collapsed(label: String)
-    /// One member of an expanded stack: on the stack's band, badged with its own file
-    /// type, the key member outlined.
-    case expanded(label: String, isKey: Bool)
+/// How a tile shows the stacks it is in (ADR 0052, DES-116): the badge that is its stacks'
+/// expand-and-collapse control, whether it sits on an expanded stack's band, and whether it
+/// is that stack's key, outlined.
+nonisolated struct TileStackPresentation: Equatable {
+    var badgeLabel: String?
+    var onBand = false
+    var isKey = false
+    /// What VoiceOver says for the badge: the label, except a burst's count, which the
+    /// suffix says in words.
+    var spokenBadge: String?
+    /// What VoiceOver adds after the tile's own description.
+    var accessibilitySuffix = ""
 
-    var badgeLabel: String? {
-        switch self {
-        case .none: nil
-        case let .collapsed(label), let .expanded(label, _): label
-        }
-    }
+    static let none = TileStackPresentation()
 
-    /// The stack presentation `stacks` gives the tile showing `id`.
+    /// The stack presentation `stacks` gives the tile showing `id`. A collapsed burst wins
+    /// over the pair its shown frame is, since the tile stands for the whole burst; on an
+    /// expanded burst's band, a frame that is a pair shows the pair's own badge.
     static func of(_ id: MediaAssetID, in stacks: CatalogGridStacks) -> TileStackPresentation {
-        if let stack = stacks.collapsed[id] {
-            return .collapsed(label: stack.label)
+        guard let tile = stacks.tiles[id] else { return .none }
+        var presentation = TileStackPresentation()
+        presentation.onBand = tile.expanded != nil
+        if let collapsed = tile.collapsed {
+            presentation.badgeLabel = collapsed.label
+            switch collapsed.id.kind {
+            case .pair:
+                presentation.spokenBadge = collapsed.label
+                presentation.accessibilitySuffix = ", stack"
+            case .burst:
+                presentation.accessibilitySuffix = ", burst of \(collapsed.photos.count) photos"
+            }
+        } else if let pair = tile.pair, tile.pairExpanded {
+            presentation.badgeLabel = pair.label(of: id)
+            presentation.spokenBadge = presentation.badgeLabel
+        } else if let burst = tile.burst, tile.burstExpanded, burst.key == id {
+            // An expanded burst's key frame keeps the count: the badge that collapses it.
+            presentation.badgeLabel = burst.label
         }
-        if let stack = stacks.expanded[id] {
-            return .expanded(label: stack.label(of: id), isKey: stack.key == id)
+        if let expanded = tile.expanded {
+            presentation.isKey = expanded.key == id
+            presentation.accessibilitySuffix += presentation.isKey
+                ? ", in an expanded stack, key photo" : ", in an expanded stack"
         }
-        return .none
+        return presentation
     }
 }
 
@@ -64,11 +83,14 @@ extension PhotoStack {
         isRaw(member) ? "RAW" : member.relativePath.fileExtension.uppercased()
     }
 
-    /// The collapsed tile's badge: `RAW+JPG` for a pair (DES-116).
+    /// The collapsed tile's badge (DES-116): `RAW+JPG` for a pair, the number of photos for a
+    /// burst.
     nonisolated var label: String {
         switch id.kind {
         case .pair:
             (members.filter(isRaw) + members.filter { !isRaw($0) }).map(label(of:)).joined(separator: "+")
+        case .burst:
+            "\(photos.count)"
         }
     }
 }
@@ -225,7 +247,7 @@ nonisolated enum MediaAssetTilePresentation {
             case let .durationText(text): "\(name), video, \(text)"
             case .filmIcon: "\(name), video"
             case .rawLabel: "\(name), RAW image"
-            case let .stackLabel(label): "\(name), \(label)"
+            case .stackLabel: stack.spokenBadge.map { "\(name), \($0)" } ?? name
             case .none:
                 switch detail.bestKind {
                 case .video: "\(name), video"
@@ -235,11 +257,7 @@ nonisolated enum MediaAssetTilePresentation {
                 }
             }
         }
-        let stackSuffix = switch stack {
-        case .none: ""
-        case .collapsed: ", stack"
-        case let .expanded(_, isKey): isKey ? ", in an expanded stack, key photo" : ", in an expanded stack"
-        }
+        let stackSuffix = stack.accessibilitySuffix
         let editedSuffix = isEdited(detail) ? ", edited" : ""
         let emptySuffix = detail.byteSize == 0 ? ", empty file" : ""
         return "\(base)\(stackSuffix)\(editedSuffix)\(emptySuffix), \(detail.mediaChoice.accessibilityValue)"

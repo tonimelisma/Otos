@@ -433,8 +433,9 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         ]
     }
 
-    /// The same facts, with the File section's `Stack` row naming every file of the stack
-    /// this photo is in (ADR 0052): `DSC01234.ARW, DSC01234.JPG`. The stack is the
+    /// The same facts, with the File section's `Stack` row naming the stack this photo is in
+    /// (ADR 0052): a pair's files, `DSC01234.ARW, DSC01234.JPG`, or a burst's size,
+    /// `Burst · 8 photos`. The stack is the
     /// projection's fact, not the file's, so the window adds it to what the Store read.
     func withStack(_ stack: PhotoStack?) -> PhotoInfo {
         guard let stack, var rows = sectionRows[.file],
@@ -442,7 +443,11 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         else {
             return self
         }
-        rows[index] = Row(label: "Stack", value: stack.members.map(\.relativePath.fileName).joined(separator: ", "))
+        let value = switch stack.id.kind {
+        case .pair: stack.members.map(\.relativePath.fileName).joined(separator: ", ")
+        case .burst: "Burst · \(stack.photos.count) photos"
+        }
+        rows[index] = Row(label: "Stack", value: value)
         var info = self
         info.sectionRows[.file] = rows
         return info

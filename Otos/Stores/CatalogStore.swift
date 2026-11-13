@@ -187,10 +187,11 @@ actor CatalogStore {
         let previewPath: String?
         let faceFramesPath: String?
         let contentIdentifier: String?
+        let burstIdentifier: String?
 
         static let columnsSQL = """
         SELECT best_capture_local, best_kind, best_format, capture_wall_compact, thumbnail_path, preview_path,
-            face_frames_path, content_identifier
+            face_frames_path, content_identifier, burst_identifier
         FROM media_asset
         WHERE library_root_id = ? AND relative_path = ?
         """
@@ -204,16 +205,19 @@ actor CatalogStore {
             previewPath = row["preview_path"]
             faceFramesPath = row["face_frames_path"]
             contentIdentifier = row["content_identifier"]
+            burstIdentifier = row["burst_identifier"]
         }
 
         /// Whether the write changed what a scoped query returns or its order: the sort
         /// date, the kind and format filters, or — through the content identifier and the
-        /// kind — which movies a Live Photo hides (ADR 0041). Anything else is detail-only.
+        /// kind — which movies a Live Photo hides (ADR 0041), or through the burst
+        /// identifier which frames a burst collapses (ADR 0052). Anything else is detail-only.
         func changesStructure(to new: EnrichmentOverlayBeforeWrite) -> Bool {
             bestCaptureLocal != new.bestCaptureLocal
                 || bestKind != new.bestKind
                 || bestFormat != new.bestFormat
                 || contentIdentifier != new.contentIdentifier
+                || burstIdentifier != new.burstIdentifier
         }
     }
 
@@ -978,15 +982,12 @@ extension CatalogStore {
                 db,
                 sql: "SELECT id, name, birthday, is_hidden, is_favorite FROM person ORDER BY id"
             ).map(Self.person)
-            var photoOfStackMember: [MediaAssetID: MediaAssetID] = [:]
+            var stacks: [PhotoStack] = []
             for (rowID, candidates) in try PhotoStackSQL.fetchCandidates(rootIDs: faceRootIDs, db: db).byRoot {
                 guard let rootPath = pathsByRowID[rowID] else { continue }
-                for stack in PhotoStackRule.stacks(candidates: candidates, libraryRootPath: rootPath) {
-                    for member in stack.members {
-                        photoOfStackMember[member] = stack.key
-                    }
-                }
+                stacks += PhotoStackRule.stacks(candidates: candidates, libraryRootPath: rootPath)
             }
+            let photoOfStackMember = CatalogStacks(stacks).keyOfMember
             return try PeopleSnapshot(
                 faces: faces,
                 tiles: tiles,
@@ -2408,8 +2409,17 @@ extension CatalogStore {
     /// member now and clears the stack's other members; undo writes back what it returns.
     /// Returns every member's previous stamp, for members that still exist; an empty result
     /// changed nothing.
-    func setStackKeyChoices(_ stamps: [MediaAssetID: Int64?]) async throws -> [MediaAssetID: Int64?] {
+    func setStackKeyChoices(
+        _ stamps: [MediaAssetID: Int64?],
+        kind: PhotoStackKind
+    ) async throws -> [MediaAssetID: Int64?] {
         guard !stamps.isEmpty else { return [:] }
+        // A pair's file and a burst's frame are chosen apart, so choosing one never clears
+        // the other.
+        let column = switch kind {
+        case .pair: "stack_key_chosen_at_unix_ms"
+        case .burst: "burst_key_chosen_at_unix_ms"
+        }
         let rootIDs = roots.rowIDSnapshot()
         let dbWriter = try database()
         let (previous, changed) = try await dbWriter.write { db -> ([MediaAssetID: Int64?], Int) in
@@ -2419,17 +2429,17 @@ extension CatalogStore {
                 guard let rootID = rootIDs[id.libraryRootPath],
                       let row = try Row.fetchOne(
                           db,
-                          sql: "SELECT stack_key_chosen_at_unix_ms FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                          sql: "SELECT \(column) FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
                           arguments: [rootID, id.relativePath.rawValue]
                       )
                 else {
                     continue
                 }
-                previous[id] = row["stack_key_chosen_at_unix_ms"] as Int64?
+                previous[id] = row[0] as Int64?
                 try db.execute(
                     sql: """
-                    UPDATE media_asset SET stack_key_chosen_at_unix_ms = ?
-                    WHERE library_root_id = ? AND relative_path = ? AND stack_key_chosen_at_unix_ms IS NOT ?
+                    UPDATE media_asset SET \(column) = ?
+                    WHERE library_root_id = ? AND relative_path = ? AND \(column) IS NOT ?
                     """,
                     arguments: [stamp, rootID, id.relativePath.rawValue, stamp]
                 )
@@ -2438,7 +2448,7 @@ extension CatalogStore {
             return (previous, changed)
         }
         OtosLog.catalog.noticeOperation("stack.key", phase: "written", fields: [
-            "requested": "\(stamps.count)", "existing": "\(previous.count)", "changed": "\(changed)",
+            "kind": kind.rawValue, "requested": "\(stamps.count)", "existing": "\(previous.count)", "changed": "\(changed)",
         ])
         if changed > 0 {
             notifyCatalogChanged()

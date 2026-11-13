@@ -452,6 +452,7 @@ nonisolated enum PhotoStackSQL {
     /// The columns `candidateQuery` selects, in order: each row is read by position.
     private enum Column: Int {
         case libraryRootID, relativePath, bestKind, nameKey, sortKey, keyChosenAt
+        case burstIdentifier, captureLocal, isLiked, burstKeyChosenAt
     }
 
     static func fetchCandidates(rootIDs: [Int64], db: Database) throws -> Candidates {
@@ -473,19 +474,30 @@ nonisolated enum PhotoStackSQL {
                 kind: kind,
                 nameKey: FilesystemNameKey(rawValue: row[Column.nameKey.rawValue]),
                 sortKey: row[Column.sortKey.rawValue],
-                keyChosenAtUnixMs: row[Column.keyChosenAt.rawValue]
+                burstIdentifier: row[Column.burstIdentifier.rawValue],
+                captureLocal: row[Column.captureLocal.rawValue],
+                isLiked: row[Column.isLiked.rawValue],
+                keyChosenAtUnixMs: row[Column.keyChosenAt.rawValue],
+                burstKeyChosenAtUnixMs: row[Column.burstKeyChosenAt.rawValue]
             ))
         }
         return Candidates(byRoot: byRoot, count: count, readDuration: ContinuousClock.now - start)
     }
 
     /// The candidates' read: the folders holding a present RAW, then each folder's present
-    /// stills, both through `idx_media_asset_stack_candidate` (root, kind, folder).
+    /// stills, both through `idx_media_asset_stack_candidate` (root, kind, folder); and every
+    /// present still carrying a burst identifier, through `idx_media_asset_burst` by name: the
+    /// planner otherwise picks the primary key and walks every row of a root.
     static func candidateQuery(rootIDs: [Int64]) -> SQLQuery? {
         guard !rootIDs.isEmpty else {
             return nil
         }
         let placeholders = sqlPlaceholders(count: rootIDs.count)
+        let columns = """
+        still.library_root_id, still.relative_path, still.best_kind, still.relative_path_key,
+                   still.sort_key, still.stack_key_chosen_at_unix_ms, still.burst_identifier,
+                   still.best_capture_local, still.media_choice = 'liked', still.burst_key_chosen_at_unix_ms
+        """
         return SQLQuery(
             sql: """
             WITH raw_folder AS (
@@ -493,16 +505,21 @@ nonisolated enum PhotoStackSQL {
                 WHERE library_root_id IN (\(placeholders)) AND best_kind = 'raw'
                   AND \(CatalogVisibilitySQL.isPresent("media_asset"))
             )
-            SELECT still.library_root_id, still.relative_path, still.best_kind, still.relative_path_key,
-                   still.sort_key, still.stack_key_chosen_at_unix_ms
+            SELECT \(columns)
             FROM raw_folder
             JOIN media_asset AS still
               ON still.library_root_id = raw_folder.library_root_id
               AND still.parent_path = raw_folder.parent_path
             WHERE still.best_kind IN ('raw', 'image')
               AND \(CatalogVisibilitySQL.isPresent("still"))
+            UNION
+            SELECT \(columns)
+            FROM media_asset AS still INDEXED BY idx_media_asset_burst
+            WHERE still.library_root_id IN (\(placeholders)) AND still.burst_identifier IS NOT NULL
+              AND still.best_kind IN ('raw', 'image')
+              AND \(CatalogVisibilitySQL.isPresent("still"))
             """,
-            arguments: StatementArguments(rootIDs)
+            arguments: StatementArguments(rootIDs + rootIDs)
         )
     }
 }

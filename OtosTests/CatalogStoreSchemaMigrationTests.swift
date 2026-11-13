@@ -199,6 +199,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.lastSyncedMigrationIdentifier,
             CatalogSchema.videoFacesMigrationIdentifier,
             CatalogSchema.pathKeysMigrationIdentifier,
+            CatalogSchema.burstMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -775,6 +776,58 @@ struct CatalogStoreSchemaMigrationTests {
             "C.JPG=C.JPG",
             "b.jpg=b.jpg",
         ])
+    }
+
+    /// v37 (ADR 0052): each row's burst identifier is filled from the metadata record Otos
+    /// already stored for it, so a burst stacks without its file being read again.
+    @Test func theBurstMigrationFillsEachIdentifierFromItsStoredMetadata() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.pathKeysMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            for (path, extra) in [
+                ("IMG_1.HEIC", #"{"burstIdentifier":"B1","family":"heif"}"#),
+                ("IMG_2.HEIC", #"{"family":"heif"}"#),
+                ("IMG_3.HEIC", nil),
+            ] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
+                        name_sort_key, kind)
+                    VALUES (1, ?, ?, ?, ?, 'image')
+                    """,
+                    arguments: [path, path, path, path]
+                )
+                if let extra {
+                    try db.execute(
+                        sql: """
+                        INSERT INTO asset_metadata (library_root_id, relative_path, family, metadata_extra_json)
+                        VALUES (1, ?, 'heif', ?)
+                        """,
+                        arguments: [path, extra]
+                    )
+                }
+            }
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
+
+        let identifiers = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try Row.fetchAll(db, sql: "SELECT relative_path, burst_identifier FROM media_asset ORDER BY relative_path")
+                .map { row -> String in
+                    let path: String = row[0]
+                    let identifier: String? = row[1]
+                    return "\(path)=\(identifier ?? "nil")"
+                }
+        }
+        #expect(identifiers == ["IMG_1.HEIC=B1", "IMG_2.HEIC=nil", "IMG_3.HEIC=nil"])
     }
 
     @Test func theFacesFromPreviewMigrationReReadsEveryStill() async throws {

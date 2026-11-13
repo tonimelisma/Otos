@@ -447,12 +447,11 @@ extension MediaAssetTileView {
     private func applyStackBand() {
         wantsLayer = true
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            switch stackPresentation {
-            case let .expanded(_, isKey):
+            if stackPresentation.onBand {
                 layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.14).cgColor
                 layer?.borderColor = NSColor.secondaryLabelColor.cgColor
-                layer?.borderWidth = isKey ? 1 : 0
-            case .none, .collapsed:
+                layer?.borderWidth = stackPresentation.isKey ? 1 : 0
+            } else {
                 layer?.backgroundColor = nil
                 layer?.borderWidth = 0
             }
@@ -462,7 +461,7 @@ extension MediaAssetTileView {
     /// Whether a click at `pointInWindow` lands on the stack badge, the stack's expand and
     /// collapse control.
     func hitTestsStackBadge(at pointInWindow: CGPoint) -> Bool {
-        guard stackPresentation != .none, !kindBadge.isHidden else { return false }
+        guard stackPresentation.badgeLabel != nil, !kindBadge.isHidden else { return false }
         return kindBadge.bounds.contains(kindBadge.convert(pointInWindow, from: nil))
     }
 

@@ -826,6 +826,44 @@ nonisolated enum CatalogSchema {
         }
     }
 
+    /// iPhone bursts (ADR 0052):
+    /// - `media_asset.burst_identifier`: Apple's burst identifier as MediaMetadata reads it,
+    ///   written with each metadata record like `content_identifier`, and filled here from
+    ///   the records already stored.
+    /// - `media_asset.burst_key_chosen_at_unix_ms`: when the user made this file its burst's
+    ///   key frame (Make Key Photo), apart from a pair's choice so neither clears the other.
+    /// - `idx_media_asset_burst`: the candidates' read of every root's burst stills.
+    static let burstMigrationIdentifier = "v37_bursts"
+
+    /// A stored record's burst identifier; a record that is not valid JSON has none, so one
+    /// damaged record never fails the migration.
+    private static func burstIdentifierSQL(_ table: String) -> String {
+        """
+        CASE WHEN json_valid(\(table).metadata_extra_json)
+            THEN json_extract(\(table).metadata_extra_json, '$.burstIdentifier') END
+        """
+    }
+
+    static let burstStatements: [String] = [
+        "ALTER TABLE media_asset ADD COLUMN burst_identifier TEXT",
+        "ALTER TABLE media_asset ADD COLUMN burst_key_chosen_at_unix_ms INTEGER",
+        """
+        UPDATE media_asset SET burst_identifier = (
+            SELECT \(burstIdentifierSQL("metadata")) FROM asset_metadata AS metadata
+            WHERE metadata.library_root_id = media_asset.library_root_id
+              AND metadata.relative_path = media_asset.relative_path
+        )
+        WHERE (library_root_id, relative_path) IN (
+            SELECT library_root_id, relative_path FROM asset_metadata AS metadata
+            WHERE \(burstIdentifierSQL("metadata")) IS NOT NULL
+        )
+        """,
+        """
+        CREATE INDEX idx_media_asset_burst
+        ON media_asset(library_root_id, burst_identifier) WHERE burst_identifier IS NOT NULL
+        """,
+    ]
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

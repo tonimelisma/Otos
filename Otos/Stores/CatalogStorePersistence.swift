@@ -244,6 +244,11 @@ extension CatalogStore {
         migrator.registerMigration(CatalogSchema.pathKeysMigrationIdentifier) { db in
             try CatalogSchema.recomputePathKeys(db: db)
         }
+        migrator.registerMigration(CatalogSchema.burstMigrationIdentifier) { db in
+            for statement in CatalogSchema.burstStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -1078,7 +1083,8 @@ extension CatalogStore {
                 duration_seconds = ?,
                 capture_wall_compact = ?,
                 capture_wall_precision = ?,
-                content_identifier = ?
+                content_identifier = ?,
+                burst_identifier = ?
             WHERE library_root_id = ?
                 AND relative_path = ?
             """,
@@ -1091,6 +1097,7 @@ extension CatalogStore {
                 captureWall?.compact,
                 captureWall?.precision,
                 metadata.contentIdentifier,
+                metadata.burstIdentifier,
                 libraryRootID,
                 relativePath.rawValue,
             ]

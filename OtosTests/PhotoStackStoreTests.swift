@@ -31,12 +31,43 @@ struct PhotoStackStoreTests {
     @Test func makeKeyPhotoIsKeptOnTheChosenMemberAndUndoes() async throws {
         try await withLibrary(["DSC1.ARW", "DSC1.JPG"]) { library in
             let raw = library.id("DSC1.ARW"), jpeg = library.id("DSC1.JPG")
-            let previous = try await library.store.setStackKeyChoices([raw: 1000, jpeg: nil])
+            let previous = try await library.store.setStackKeyChoices([raw: 1000, jpeg: nil], kind: .pair)
             #expect(previous == [raw: Int64?.none, jpeg: Int64?.none])
             #expect(try await library.ordered().stacks.stack(containing: jpeg)?.key == raw)
 
-            _ = try await library.store.setStackKeyChoices(previous)
+            _ = try await library.store.setStackKeyChoices(previous, kind: .pair)
             #expect(try await library.ordered().stacks.stack(containing: jpeg)?.key == jpeg)
+        }
+    }
+
+    /// Stills whose metadata carries one burst identifier are read as one burst with the
+    /// order, and a burst's key choice is kept apart from a pair's (ADR 0052).
+    @Test func stillsSharingABurstIdentifierAreReadAsOneBurst() async throws {
+        try await withLibrary(["IMG_1.HEIC", "IMG_2.HEIC", "IMG_3.HEIC"]) { library in
+            let assets = try await library.store.mediaAssets(for: ["IMG_1.HEIC", "IMG_2.HEIC", "IMG_3.HEIC"].map(library.id))
+            let results = assets.values.map { asset in
+                EnrichmentResult(
+                    id: asset.id,
+                    metadata: AssetMetadata(
+                        timestamps: [],
+                        burstIdentifier: asset.id.relativePath.rawValue == "IMG_3.HEIC" ? nil : "B1"
+                    ),
+                    enrichedKind: .image,
+                    thumbnailPath: nil,
+                    sourceSize: asset.byteSize,
+                    sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
+                    contentHash: nil
+                )
+            }
+            _ = await library.store.applyEnrichmentBatch(results)
+            let first = library.id("IMG_1.HEIC"), second = library.id("IMG_2.HEIC")
+            let burst = try #require(try await library.ordered().stacks.stack(containing: first))
+            #expect(burst.id.kind == .burst)
+            #expect(Set(burst.members) == [first, second])
+            #expect(try await library.ordered().stacks.stack(containing: library.id("IMG_3.HEIC")) == nil)
+
+            _ = try await library.store.setStackKeyChoices([second: 1000, first: nil], kind: .burst)
+            #expect(try await library.ordered().stacks.stack(containing: first)?.key == second)
         }
     }
 

@@ -59,11 +59,12 @@ Each increment lands on `main` with its own DoD.
    - **Trash** on an expanded member trashes that one file.
    - **Design rules:** DES-116 and DES-117 in `docs/design/design-system.md`, with design review C
      run on light and dark screenshots, grayscale, keyboard and Reduce Motion.
-4. **iPhone bursts.**
+4. **iPhone bursts.** *(done)*
    - **Migration:** `media_asset.burst_identifier`, written with metadata and backfilled from
      `metadata_extra_json`. It joins `EnrichmentOverlayBeforeWrite.changesStructure`.
    - **The burst rule:** a pair is one frame of a burst; the default key is the first Liked
-     frame, else the first in capture order.
+     frame, else the first in capture order. A burst's key choice has its own column
+     (`burst_key_chosen_at_unix_ms`), so choosing a frame never clears a pair's choice.
    - **Trash** on a collapsed burst trashes every frame.
    - **Info** reads `Burst · N photos`.
 5. **On This Day picks.**

@@ -7,6 +7,8 @@ import OSLog
 /// sent to the projection with the query request; the key choice is the one stack fact the
 /// user authors, written through its own serial lane (`stackKeyStream`) and undoable.
 struct StackKeyCommand {
+    /// Whose key the stamps choose: a pair's file or a burst's frame, each its own column.
+    let kind: PhotoStackKind
     /// Each member's new stamp: now for the chosen member, nil for the others.
     let stamps: [MediaAssetID: Int64?]
     let actionName: String
@@ -22,9 +24,11 @@ extension CatalogWindowViewModel {
         var collapsed: [PhotoStack] = []
         var expanded: [PhotoStack] = []
         for id in targetIDs(.current) {
-            if let stack = stacks.collapsed[id], seen.insert(stack.id).inserted {
-                collapsed.append(stack)
-            } else if let stack = stacks.expanded[id], seen.insert(stack.id).inserted {
+            if let stack = stacks.collapsed(shownBy: id) {
+                if seen.insert(stack.id).inserted {
+                    collapsed.append(stack)
+                }
+            } else if let stack = stacks.expanded(shownBy: id), seen.insert(stack.id).inserted {
                 expanded.append(stack)
             }
         }
@@ -54,49 +58,52 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// A click on a tile's stack badge: expands or collapses that tile's stack alone.
+    /// A click on a tile's stack badge: expands the stack the tile stands for, or collapses
+    /// the expanded stack it is in.
     func toggleStack(shownBy id: MediaAssetID) {
-        guard let stack = state.mediaGrid.stacks.stack(shownBy: id) else { return }
-        if expandedStacks.contains(stack.id) {
-            setExpandedStacks(expandedStacks.subtracting([stack.id]))
-        } else {
+        let stacks = state.mediaGrid.stacks
+        if let stack = stacks.collapsed(shownBy: id) {
             setExpandedStacks(expandedStacks.union([stack.id]))
+        } else if let stack = stacks.expanded(shownBy: id) {
+            setExpandedStacks(expandedStacks.subtracting([stack.id]))
         }
     }
 
-    /// The one photo Make Key Photo and the `JPG`/`RAW` switch act on, and its stack.
-    private var keyTarget: (id: MediaAssetID, stack: PhotoStack)? {
+    /// The one photo Make Key Photo and the `JPG`/`RAW` switch act on.
+    private var singleTarget: MediaAssetID? {
         let ids = targetIDs(.current)
-        guard ids.count == 1, let id = ids.first, let stack = state.mediaGrid.stacks.stack(shownBy: id) else {
-            return nil
-        }
-        return (id, stack)
+        return ids.count == 1 ? ids.first : nil
     }
 
     /// Photo ▸ Make Key Photo (⇧S): enabled on one member of an expanded stack that is not
     /// its key already.
     var canMakeKeyPhoto: Bool {
-        guard let target = keyTarget else { return false }
-        return state.mediaGrid.stacks.expanded[target.id] != nil && target.stack.key != target.id
+        guard let id = singleTarget, let stack = state.mediaGrid.stacks.expanded(shownBy: id) else { return false }
+        return stack.key != id
     }
 
     func makeKeyPhoto() {
-        guard canMakeKeyPhoto, let target = keyTarget else { return }
-        submitStackKey(target.id, in: target.stack)
+        guard canMakeKeyPhoto, let id = singleTarget, let stack = state.mediaGrid.stacks.expanded(shownBy: id) else {
+            return
+        }
+        submitStackKey(id, in: stack)
     }
 
-    /// The pair the loupe or the edit panel shows, for its `JPG`/`RAW` switch: the one
-    /// target's stack when it is a pair, else nil and the switch is absent.
+    /// The pair the loupe or the edit panel shows, for its `JPG`/`RAW` switch: the pair the
+    /// one target is a file of, else nil and the switch is absent.
     var shownPair: PhotoStack? {
-        guard let target = keyTarget, target.stack.id.kind == .pair else { return nil }
-        return target.stack
+        singleTarget.flatMap(state.mediaGrid.stacks.pair(shownBy:))
     }
 
     /// The `JPG`/`RAW` switch: shows `member` in its pair's place. The focus and the
     /// selection follow it when the new state arrives (`carrySelectionIntoStacks`).
     func showPairMember(_ member: MediaAssetID) {
-        guard let target = keyTarget, target.stack.members.contains(member), member != target.id else { return }
-        if state.mediaGrid.stacks.expanded[target.id] != nil {
+        guard let id = singleTarget, let pair = state.mediaGrid.stacks.pair(shownBy: id),
+              pair.members.contains(member), member != id
+        else {
+            return
+        }
+        if state.mediaGrid.stacks.tiles[id]?.pairExpanded == true {
             // An expanded pair shows both files; the switch moves to the other one.
             if viewMode == .loupe {
                 setFocus(member)
@@ -105,7 +112,7 @@ extension CatalogWindowViewModel {
             }
             return
         }
-        submitStackKey(member, in: target.stack)
+        submitStackKey(member, in: pair)
     }
 
     private func submitStackKey(_ member: MediaAssetID, in stack: PhotoStack) {
@@ -117,7 +124,9 @@ extension CatalogWindowViewModel {
         OtosLog.ui.noticeOperation("stack.key", phase: "submitted", fields: [
             "kind": stack.id.kind.rawValue, "members": "\(stack.members.count)",
         ])
-        stackKeyContinuation.yield(StackKeyCommand(stamps: stamps, actionName: "Make Key Photo", registersUndo: true))
+        stackKeyContinuation.yield(StackKeyCommand(
+            kind: stack.id.kind, stamps: stamps, actionName: "Make Key Photo", registersUndo: true
+        ))
     }
 
     func startStackKeyForwarding(store: CatalogStore) {
@@ -125,10 +134,12 @@ extension CatalogWindowViewModel {
             for await command in stackKeyStream {
                 guard !Task.isCancelled else { break }
                 do {
-                    let previous = try await store.setStackKeyChoices(command.stamps)
+                    let previous = try await store.setStackKeyChoices(command.stamps, kind: command.kind)
                     guard let self else { break }
                     if command.registersUndo, !previous.isEmpty {
-                        registerStackKeyUndo(restoring: previous, redo: command.stamps, actionName: command.actionName)
+                        registerStackKeyUndo(
+                            kind: command.kind, restoring: previous, redo: command.stamps, actionName: command.actionName
+                        )
                     }
                 } catch {
                     OtosLog.persistence.errorOperation("stack.key", phase: "failed", fields: [
@@ -140,13 +151,14 @@ extension CatalogWindowViewModel {
     }
 
     private func registerStackKeyUndo(
+        kind: PhotoStackKind,
         restoring previous: [MediaAssetID: Int64?],
         redo: [MediaAssetID: Int64?],
         actionName: String
     ) {
         windowUndoManager.beginUndoGrouping()
         windowUndoManager.registerUndo(withTarget: self) { model in
-            model.restoreStackKeys(previous, inverse: redo, actionName: actionName)
+            model.restoreStackKeys(kind: kind, previous, inverse: redo, actionName: actionName)
         }
         windowUndoManager.setActionName(actionName)
         windowUndoManager.endUndoGrouping()
@@ -156,15 +168,18 @@ extension CatalogWindowViewModel {
     /// Runs inside `UndoManager.undo()` / `redo()`: files the opposite entry synchronously,
     /// then writes the restore through the serial lane.
     private func restoreStackKeys(
+        kind: PhotoStackKind,
         _ stamps: [MediaAssetID: Int64?],
         inverse: [MediaAssetID: Int64?],
         actionName: String
     ) {
         windowUndoManager.registerUndo(withTarget: self) { model in
-            model.restoreStackKeys(inverse, inverse: stamps, actionName: actionName)
+            model.restoreStackKeys(kind: kind, inverse, inverse: stamps, actionName: actionName)
         }
         windowUndoManager.setActionName(actionName)
-        stackKeyContinuation.yield(StackKeyCommand(stamps: stamps, actionName: actionName, registersUndo: false))
+        stackKeyContinuation.yield(StackKeyCommand(
+            kind: kind, stamps: stamps, actionName: actionName, registersUndo: false
+        ))
         publishUndoState()
     }
 
