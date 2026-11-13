@@ -864,6 +864,20 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// On This Day picks (ADR 0049): `idx_search_embedding_left_out` holds just the rows
+    /// whose confident labels leave a photo out of On This Day (`OnThisDayPicks`), so each
+    /// anniversary read takes them from a small index instead of probing per row.
+    static let leftOutIndexMigrationIdentifier = "v38_on_this_day_left_out"
+
+    static var leftOutIndexStatements: [String] {
+        [
+            """
+            CREATE INDEX idx_search_embedding_left_out
+            ON search_embedding(library_root_id, relative_path) WHERE \(OnThisDayPicks.leftOutLabelSQL)
+            """,
+        ]
+    }
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

@@ -45,24 +45,28 @@ nonisolated enum CatalogQueryGateway {
         guard let query = try orderedAssetIDQuery(descriptor: descriptor, scope: scope, db: db) else {
             return []
         }
+        // Read by position, in `orderedAssetIDQuery`'s column order: a name lookup per column
+        // per row is the read's own cost on a large order.
+        let likedColumn = scope.requiresLocation ? 5 : 3
         return try Row.fetchAll(
             db,
             sql: query.sql,
             arguments: query.arguments
         ).map { row in
             let coordinate: PlaceCoordinate? = if scope.requiresLocation,
-                                                  let latitude: Double = row["primary_latitude"],
-                                                  let longitude: Double = row["primary_longitude"]
+                                                  let latitude: Double = row[3],
+                                                  let longitude: Double = row[4]
             {
                 PlaceCoordinate(latitude: latitude, longitude: longitude)
             } else {
                 nil
             }
             return OrderedAssetIDRow(
-                libraryRootID: row["library_root_id"],
-                relativePath: MediaRelativePath(rawValue: row["relative_path"]),
-                captureLocalTime: (row["best_capture_local"] as Double?).map(CaptureLocalTime.init(seconds:)),
-                coordinate: coordinate
+                libraryRootID: row[0],
+                relativePath: MediaRelativePath(rawValue: row[1]),
+                captureLocalTime: (row[2] as Double?).map(CaptureLocalTime.init(seconds:)),
+                coordinate: coordinate,
+                isLiked: scope.isAnniversary ? row[likedColumn] : false
             )
         }
     }
@@ -74,6 +78,8 @@ nonisolated enum CatalogQueryGateway {
         let relativePath: MediaRelativePath
         let captureLocalTime: CaptureLocalTime?
         let coordinate: PlaceCoordinate?
+        /// Read only for On This Day, which puts a day's Liked photos first.
+        var isLiked = false
     }
 
     /// `db` is the read's own transaction: a scope with a date dimension reads its year
@@ -99,9 +105,11 @@ nonisolated enum CatalogQueryGateway {
         let locationColumns = scope.requiresLocation
             ? ", asset_metadata.primary_latitude, asset_metadata.primary_longitude"
             : ""
+        // Read by position in `fetchOrderedAssetIDRows`: keep this column order.
+        let likedColumn = scope.isAnniversary ? ", media_asset.media_choice = 'liked' AS is_liked" : ""
         return SQLQuery(
             sql: """
-            SELECT media_asset.library_root_id, media_asset.relative_path, media_asset.best_capture_local\(locationColumns)
+            SELECT media_asset.library_root_id, media_asset.relative_path, media_asset.best_capture_local\(locationColumns)\(likedColumn)
             FROM media_asset INDEXED BY \(order.indexName)\(scopeClause.join)
             WHERE \(scopeClause.sql)\(filterSQL)
             ORDER BY \(order.orderBy)
@@ -807,6 +815,7 @@ private nonisolated func scopeClause(
         predicate += "\n  AND \(anniversary.sql(column: "media_asset.best_capture_local"))"
         arguments.append(anniversary.end)
         arguments.append(anniversary.date)
+        predicate += OnThisDayPicks.exclusionSQL
     }
     var join = ""
     switch scope.location {

@@ -224,6 +224,24 @@ struct CatalogStoreQueryPlanTests {
         #expect(!plan.contains("SCAN still"))
     }
 
+    /// On This Day's left-out photos are read from their own partial index, whose condition
+    /// the clause states in the same text, never by a scan of every search row.
+    @Test func onThisDaysLeftOutPhotosAreReadFromTheirPartialIndex() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let plan = try await dbQueue.read { db in
+            try explainPlan(db, sql: "SELECT 1 FROM media_asset WHERE 1\(OnThisDayPicks.exclusionSQL)")
+        }
+        #expect(plan.contains("USING INDEX idx_search_embedding_left_out"))
+        #expect(!plan.contains("SCAN search_embedding\n") && !plan.hasSuffix("SCAN search_embedding"))
+    }
+
     @Test func metadataOnlyClaimQueriesUseMetadataOnlyIndexes() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")

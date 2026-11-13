@@ -249,6 +249,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.leftOutIndexMigrationIdentifier) { db in
+            for statement in CatalogSchema.leftOutIndexStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

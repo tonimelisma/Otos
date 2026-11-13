@@ -67,11 +67,11 @@ Each increment lands on `main` with its own DoD.
      (`burst_key_chosen_at_unix_ms`), so choosing a frame never clears a pair's choice.
    - **Trash** on a collapsed burst trashes every frame.
    - **Info** reads `Burst · N photos`.
-5. **On This Day picks.**
-   - Leave out Disliked photos, put Liked photos first and cap each anniversary.
-   - Leave out screenshots and documents, using the platform's utility classification once its
-     availability on macOS 27 is verified and measured on the owner's library (a research note).
-   - Choose the cap with the owner from that measurement.
+5. **On This Day picks.** *(done but the cap; measured in `docs/research/2026-11-13-on-this-day-picks.md`)*
+   - Leave out Disliked photos and put Liked photos first. *(done)*
+   - Leave out screenshots and documents by search's confident scene labels, measured on the
+     owner's library. *(done)*
+   - Cap each anniversary: the owner chooses the cap from the measured day sizes.
 6. **Camera bursts: measurement first.** *(measured: `docs/research/2026-11-13-camera-burst-detection.md` — timing cannot tell bursts apart; the camera's maker-note drive mode can; awaiting the owner's decision)*
    - A research note on detecting bursts from capture facts (body serial, sub-seconds, maker
      sequence numbers MediaMetadata can read) on the owner's library, before any rule ships.

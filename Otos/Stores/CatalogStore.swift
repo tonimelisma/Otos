@@ -1781,18 +1781,22 @@ extension CatalogStore {
             scope.rootIDs.contains(rowID) && availableLibraryPaths.contains(path)
         }
         let groupsByDate = descriptor.effectiveSort.field == .bestDate
+        // On This Day shows each day's Liked photos first (`OnThisDayPicks`).
+        let orderedRows = scope.isAnniversary
+            ? OnThisDayPicks.likedFirst(timedRows.value.rows)
+            : timedRows.value.rows
         var ids: [MediaAssetID] = []
         var dayBuckets: [Date?] = []
         var dayStarts: [Int: Date] = [:]
         var coordinates: [PlaceCoordinate] = []
-        ids.reserveCapacity(timedRows.value.rows.count)
+        ids.reserveCapacity(orderedRows.count)
         if groupsByDate {
-            dayBuckets.reserveCapacity(timedRows.value.rows.count)
+            dayBuckets.reserveCapacity(orderedRows.count)
         }
         if scope.requiresLocation {
-            coordinates.reserveCapacity(timedRows.value.rows.count)
+            coordinates.reserveCapacity(orderedRows.count)
         }
-        for row in timedRows.value.rows {
+        for row in orderedRows {
             guard let rootPath = validRootPathsByRowID[row.libraryRootID] else {
                 continue
             }

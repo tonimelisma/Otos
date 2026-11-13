@@ -208,6 +208,14 @@ nonisolated struct CatalogScopePredicate: Equatable {
     let content: ContentConstraint
     let date: DateConstraint
 
+    /// On This Day's scope, which picks its photos (`OnThisDayPicks`).
+    var isAnniversary: Bool {
+        if case .anniversary = date {
+            return true
+        }
+        return false
+    }
+
     init(
         rootIDs: [Int64],
         importBatchUnixMs: Int64? = nil,

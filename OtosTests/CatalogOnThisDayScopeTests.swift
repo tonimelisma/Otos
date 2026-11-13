@@ -186,6 +186,61 @@ struct CatalogOnThisDayScopeTests {
             == [.months(2), .months(4), .months(13)])
     }
 
+    /// On This Day picks (owner, 2026-11-13, as Apple Photos' Memories): a Disliked photo and
+    /// one Vision is confident is a screenshot are left out, a day's Liked photos come first,
+    /// and a day holding only left-out photos is no anniversary.
+    @Test func onThisDayLeavesOutDislikedPhotosAndScreenshotsAndPutsLikedFirst() async throws {
+        let temp = try makeTestDirectory()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let captured: [(String, Date)] = [
+            ("2023-evening.jpg", Self.local(2023, 11, 9, 20)),
+            ("2023-noon.jpg", Self.local(2023, 11, 9, 12)),
+            ("2023-morning.jpg", Self.local(2023, 11, 9, 8)),
+            ("2023-screen.png", Self.local(2023, 11, 9, 9)),
+            ("2022-disliked.jpg", Self.local(2022, 11, 9, 10)),
+        ]
+        for (name, _) in captured {
+            try writeCatalogStoreFile(root.appending(path: name), contents: name)
+        }
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == captured.count }
+        let rootPath = try #require(await store.currentLibraries().first { $0.kind == .library }?.path)
+        func id(_ name: String) -> MediaAssetID {
+            MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: name))
+        }
+        for (name, instant) in captured {
+            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
+            _ = await store.applyEnrichmentBatch([
+                EnrichmentResult(
+                    id: id(name),
+                    metadata: AssetMetadata.absoluteCapture(instant: instant),
+                    thumbnailPath: "\(name)-thumb.jpg",
+                    sourceSize: asset.byteSize,
+                    sourceMTimeSeconds: asset.contentModifiedAt.map { Int($0.timeIntervalSince1970) },
+                    contentHash: .empty
+                ),
+            ])
+        }
+        _ = try await store.setMediaChoice(.liked, for: [id("2023-morning.jpg")])
+        _ = try await store.setMediaChoice(.disliked, for: [id("2022-disliked.jpg")])
+        let screen = try #require(try await store.searchEmbeddingCandidates(limit: 10).first { $0.id == id("2023-screen.png") })
+        let written = try await store.applySearchEmbeddings([
+            SearchEmbeddingResult(id: screen.id, source: screen.source, embedding: nil, confidentLabels: ["screenshot"]),
+        ])
+        #expect(written.count == 1)
+
+        let ordered = try await store.orderedAssetIDs(
+            for: CatalogQueryDescriptor(scope: .onThisDay(Self.today)),
+            availableLibraryPaths: [rootPath]
+        )
+        #expect(ordered.ids == [id("2023-morning.jpg"), id("2023-evening.jpg"), id("2023-noon.jpg")])
+        await store.shutdown()
+    }
+
     @MainActor
     @Test func onThisDayResolvesWithTheFixedLibrariesAndNamesItsEmptiness() {
         let pictures = CatalogLibraryState(
