@@ -193,6 +193,13 @@ extension CatalogStore {
         }
         let libraryRootPath = component.libraryRootPath
         let remaps = identityRemaps(for: component)
+        // Every path this settlement writes takes its name key with it (ARC-056), so a row
+        // is never found by the key of a path it has left.
+        let capabilities = try VolumeNamespaceCapabilities(storedCaseSensitiveColumn: Int?.fetchOne(
+            db,
+            sql: "SELECT case_sensitive_names FROM library_root WHERE id = ?",
+            arguments: [rootRowID]
+        ) ?? nil)
 
         let privatePrefix = ".otos-reorg-tx/\(component.componentKey.rawValue)"
         for (index, remap) in remaps.enumerated() {
@@ -202,6 +209,7 @@ extension CatalogStore {
                 libraryRootPath: libraryRootPath,
                 from: remap.oldID.relativePath,
                 to: privatePath,
+                capabilities: capabilities,
                 recomputeDerived: false,
                 db: db
             )
@@ -213,6 +221,7 @@ extension CatalogStore {
                 libraryRootPath: libraryRootPath,
                 from: privatePath,
                 to: remap.newID.relativePath,
+                capabilities: capabilities,
                 recomputeDerived: true,
                 db: db
             )
@@ -224,6 +233,7 @@ extension CatalogStore {
             privatePrefix: privatePrefix,
             companions: component.members.filter { $0.kind == .companion },
             remaps: remaps,
+            capabilities: capabilities,
             db: db
         )
 
@@ -325,6 +335,7 @@ extension CatalogStore {
         privatePrefix: String,
         companions: [ActiveReorganizationMember],
         remaps: [CatalogIdentityRemap],
+        capabilities: VolumeNamespaceCapabilities,
         db: Database
     ) throws {
         for (index, member) in companions.enumerated() {
@@ -332,11 +343,12 @@ extension CatalogStore {
             try db.execute(
                 sql: """
                 UPDATE media_companion
-                SET relative_path = ?
+                SET relative_path = ?, relative_path_key = ?
                 WHERE library_root_id = ? AND relative_path = ?
                 """,
                 arguments: [
                     privatePath.rawValue,
+                    FilesystemNamespaceSemantics.nameKey(relativePath: privatePath, capabilities: capabilities).rawValue,
                     rootRowID,
                     member.logicalSourceRelativePath.rawValue,
                 ]
@@ -347,11 +359,15 @@ extension CatalogStore {
             try db.execute(
                 sql: """
                 UPDATE media_companion
-                SET relative_path = ?
+                SET relative_path = ?, relative_path_key = ?
                 WHERE library_root_id = ? AND relative_path = ?
                 """,
                 arguments: [
                     member.finalRelativePath.rawValue,
+                    FilesystemNamespaceSemantics.nameKey(
+                        relativePath: member.finalRelativePath,
+                        capabilities: capabilities
+                    ).rawValue,
                     rootRowID,
                     privatePath.rawValue,
                 ]
@@ -396,15 +412,18 @@ extension CatalogStore {
         libraryRootPath: LibraryRootPath,
         from: MediaRelativePath,
         to: MediaRelativePath,
+        capabilities: VolumeNamespaceCapabilities,
         recomputeDerived: Bool,
         db: Database
     ) throws {
+        let key = FilesystemNamespaceSemantics.nameKey(relativePath: to, capabilities: capabilities).rawValue
         if recomputeDerived {
             let name = to.rawValue.split(separator: "/").last.map(String.init) ?? to.rawValue
             try db.execute(
                 sql: """
                 UPDATE media_asset
                 SET relative_path = ?,
+                    relative_path_key = ?,
                     sort_key = ?,
                     name_sort_key = ?,
                     name = ?
@@ -412,6 +431,7 @@ extension CatalogStore {
                 """,
                 arguments: [
                     to.rawValue,
+                    key,
                     MediaSortKey.make(libraryRootPath: libraryRootPath, relativePath: to),
                     MediaSortKey.naturalKey(name),
                     name,
@@ -423,10 +443,10 @@ extension CatalogStore {
             try db.execute(
                 sql: """
                 UPDATE media_asset
-                SET relative_path = ?
+                SET relative_path = ?, relative_path_key = ?
                 WHERE library_root_id = ? AND relative_path = ?
                 """,
-                arguments: [to.rawValue, rootRowID, from.rawValue]
+                arguments: [to.rawValue, key, rootRowID, from.rawValue]
             )
         }
     }

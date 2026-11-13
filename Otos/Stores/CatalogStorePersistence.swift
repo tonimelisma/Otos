@@ -241,6 +241,9 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.pathKeysMigrationIdentifier) { db in
+            try CatalogSchema.recomputePathKeys(db: db)
+        }
         return migrator
     }
 
@@ -1386,8 +1389,10 @@ extension CatalogStore {
                 primary_relative_path = excluded.primary_relative_path,
                 kind = excluded.kind,
                 byte_size = excluded.byte_size,
-                content_modified_at = excluded.content_modified_at
+                content_modified_at = excluded.content_modified_at,
+                relative_path_key = excluded.relative_path_key
             WHERE media_companion.primary_relative_path IS NOT excluded.primary_relative_path
+               OR media_companion.relative_path_key IS NOT excluded.relative_path_key
                OR media_companion.kind IS NOT excluded.kind
                OR media_companion.byte_size IS NOT excluded.byte_size
                OR CAST(COALESCE(media_companion.content_modified_at, -1) AS INTEGER)
@@ -1701,8 +1706,10 @@ extension CatalogStore {
                 created_at_unix = excluded.created_at_unix,
                 content_modified_at_unix = excluded.content_modified_at_unix,
                 file_identifier = excluded.file_identifier,
+                relative_path_key = excluded.relative_path_key,
                 awaiting_presence = 0
             WHERE media_asset.awaiting_presence <> 0
+               OR media_asset.relative_path_key IS NOT excluded.relative_path_key
                OR media_asset.sort_key IS NOT excluded.sort_key
                OR media_asset.file_identifier IS NOT excluded.file_identifier
                OR media_asset.name_sort_key IS NOT excluded.name_sort_key

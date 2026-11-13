@@ -791,6 +791,41 @@ nonisolated enum CatalogSchema {
         ]
     }
 
+    /// Every stored name key, made again from its row's path (ARC-056). A key is the path's
+    /// `FilesystemNameKey` under its root's case capability; catalogs from before every path
+    /// write carried its key hold rows with an empty key, or the key of a path a
+    /// reorganization moved them from, which a scan would match to an unrelated file. The key
+    /// needs Unicode normalization SQLite does not have, so it is made in Swift.
+    static let pathKeysMigrationIdentifier = "v36_path_keys"
+
+    static func recomputePathKeys(db: Database) throws {
+        let roots = try Row.fetchAll(db, sql: "SELECT id, case_sensitive_names FROM library_root")
+        for root in roots {
+            let rootID: Int64 = root["id"]
+            let capabilities = VolumeNamespaceCapabilities(storedCaseSensitiveColumn: root["case_sensitive_names"])
+            for table in ["media_asset", "media_companion"] {
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: "SELECT relative_path, relative_path_key FROM \(table) WHERE library_root_id = ?",
+                    arguments: [rootID]
+                )
+                for row in rows {
+                    let path: String = row[0]
+                    let stored: String = row[1]
+                    let key = FilesystemNamespaceSemantics.nameKey(
+                        relativePath: MediaRelativePath(rawValue: path),
+                        capabilities: capabilities
+                    ).rawValue
+                    guard key != stored else { continue }
+                    try db.execute(
+                        sql: "UPDATE \(table) SET relative_path_key = ? WHERE library_root_id = ? AND relative_path = ?",
+                        arguments: [key, rootID, path]
+                    )
+                }
+            }
+        }
+    }
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

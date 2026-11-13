@@ -149,6 +149,39 @@ struct LibraryReorganizationRunnerTests {
         await relaunched.shutdown()
     }
 
+    /// A reorganized photo's name key follows it to its new path (ARC-056): a new file that
+    /// later appears at the path it left is a new photo, and what the user said about the
+    /// moved one stays on it.
+    @Test func aNewFileAtAReorganizedPhotosOldPathIsANewPhoto() async throws {
+        let fixture = try await RunnerFixture.make(files: [("a.jpg", Self.date(2023, 3, 15))])
+        _ = try await fixture.store.setMediaChoice(.liked, for: [fixture.id("a.jpg")])
+        guard case let .needsConfirmation(summary) = await fixture.runner.preview(libraryRoot: fixture.rootPath) else {
+            Issue.record("Expected a plan to confirm")
+            return
+        }
+        let outcome = await fixture.runner.run(libraryRoot: fixture.rootPath, confirmedRevision: summary.rootRevision)
+        #expect(outcome == .completed(relocatedCount: 1))
+        try Data("another a.jpg".utf8).write(to: fixture.root.appending(path: "a.jpg"))
+        await fixture.store.shutdown()
+
+        let relaunched = CatalogStore(
+            location: .databaseFile(fixture.root.deletingLastPathComponent().appending(path: "db/catalog.sqlite")),
+            filesystemWatcher: .noop
+        )
+        try await relaunched.start()
+        let moved = fixture.id("2023/03/a.jpg"), new = fixture.id("a.jpg")
+        // The relaunch's scan has listed the new file; a regression shows in what follows,
+        // not as a wait that never ends.
+        _ = try await waitForCatalogStoreState(relaunched) { state in
+            !state.isScanning && state.testAssets.contains { $0.id == new }
+        }
+
+        let assets = try await relaunched.mediaAssets(for: [moved, new])
+        #expect(assets[moved]?.mediaChoice == .liked)
+        #expect(assets[new]?.mediaChoice == .notRated)
+        await relaunched.shutdown()
+    }
+
     private static func date(_ year: Int, _ month: Int, _ day: Int) throws -> Date {
         var components = DateComponents()
         components.year = year

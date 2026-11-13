@@ -198,6 +198,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.stackCandidateIndexMigrationIdentifier,
             CatalogSchema.lastSyncedMigrationIdentifier,
             CatalogSchema.videoFacesMigrationIdentifier,
+            CatalogSchema.pathKeysMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -713,6 +714,67 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(assetColumns.contains("face_frames_path"))
         #expect(faceColumns.contains("frame_index"))
         #expect(indexes.isSuperset(of: [EnrichmentClaimGateway.libraryGlobalIndexName, EnrichmentClaimGateway.libraryRootIndexName]))
+    }
+
+    /// v36 (ARC-056): every stored name key is made again from its row's path under its
+    /// root's case capability — an empty key and the key of a path a reorganization moved a
+    /// row from alike, for media and companions.
+    @Test func thePathKeysMigrationMakesEveryKeyFromItsPath() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.videoFacesMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: """
+            INSERT INTO library_root (id, path, kind, case_sensitive_names) VALUES
+                (1, '/Pictures', 'library', 0), (2, '/Sensitive', 'library', 1)
+            """)
+            for (root, path, key) in [
+                (1, "2026/IMG_1.JPG", ""),
+                (1, "2023/03/a.jpg", "a.jpg"),
+                (1, "b.jpg", "b.jpg"),
+                (2, "C.JPG", ""),
+            ] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
+                        name_sort_key, kind)
+                    VALUES (?, ?, ?, ?, ?, 'image')
+                    """,
+                    arguments: [root, path, key, path, path]
+                )
+            }
+            try db.execute(sql: """
+            INSERT INTO media_companion (library_root_id, relative_path, relative_path_key, primary_relative_path, kind)
+            VALUES (1, '2026/IMG_1.XMP', '', '2026/IMG_1.JPG', 'xmp')
+            """)
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
+
+        let keys = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try Row.fetchAll(db, sql: """
+            SELECT relative_path, relative_path_key FROM media_asset
+            UNION ALL SELECT relative_path, relative_path_key FROM media_companion
+            ORDER BY relative_path
+            """).map { row -> String in
+                let path: String = row[0]
+                let key: String = row[1]
+                return "\(path)=\(key)"
+            }
+        }
+        #expect(keys == [
+            "2023/03/a.jpg=2023/03/a.jpg",
+            "2026/IMG_1.JPG=2026/img_1.jpg",
+            "2026/IMG_1.XMP=2026/img_1.xmp",
+            "C.JPG=C.JPG",
+            "b.jpg=b.jpg",
+        ])
     }
 
     @Test func theFacesFromPreviewMigrationReReadsEveryStill() async throws {
