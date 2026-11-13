@@ -198,7 +198,13 @@ batch rather than losing one. An asset with a non-null `deletedAt` (in Immich's 
 hidden but keeps its overlay, the same rule as Otos's own Trash (ADR 0022): its row is
 marked `hidden_by_source` (migration v16), which the shared scope clause and Duplicates'
 reads leave out. Restoring it in Immich shows it again. `AssetDeleteV1` purges the row. `SyncResetV1` runs a full
-resync: rows the resync does not list are purged only after it completes.
+resync: rows the resync does not list are purged only after it completes. The resync is
+recorded as owed in the catalog (`library_root.resync_owed`, migration v41) before the
+reset is acknowledged, and every pass reads the stream in full until one completes. Without
+the record, a resync that dropped partway would leave its batches acknowledged and the next
+pass reading from them, and the deletions the lost history held would never be purged. A
+pass is a sync only when its stream ends with `SyncCompleteV1`; one cut short keeps what it
+applied but is not reported as a sync.
 
 The sync runs when the account is added and at launch. While its server answers, it
 runs again on a schedule (`time: poll`, every five minutes), because Immich offers no
@@ -225,7 +231,11 @@ account's session, loop and status.
   `deviceUnavailable`, never a file provider's failure. Hand-off and Reveal in Finder name
   the account in their alert (ADR 0037).
 - Reachability is learned from requests (a request answers or fails with a transport
-  error); it is never assumed from elapsed time.
+  error); it is never assumed from elapsed time. Only a request that reached no server
+  makes an account offline. A server that answered with a failure (a 5xx, a line Otos
+  cannot read, a reset loop), or a failure of Otos's own, leaves what it last answered
+  standing, and the pass is retried on the backoff. A pass whose loop was stopped
+  (signing in again replaces it) says nothing about the account.
 - A pass's server has answered once its stream's first batch is applied and acknowledged,
   so the account is online from then on, not only when the pass ends: a first sync of a
   large library takes minutes.

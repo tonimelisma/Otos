@@ -248,6 +248,53 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    /// The resync a reset owes outlives a full stream that drops partway: the reset is
+    /// already acknowledged, so the next pass reads the stream in full again, from the
+    /// catalog's record of the debt, and only a full stream that reaches its end purges
+    /// what it no longer lists and settles it.
+    @Test func aResyncThatDropsIsReadInFullAgain() async throws {
+        let fixture = try await Fixture.make()
+        let server = ScriptedServer(
+            [
+                [Self.asset("a"), Self.asset("b"), Self.complete],
+                [.reset(ack: "SyncResetV1|1")],
+                [Self.asset("a"), Self.complete],
+                [Self.asset("a"), Self.complete],
+                [Self.complete],
+            ],
+            failAfter: [nil, nil, 1]
+        )
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        _ = await sync.pass()
+        #expect(await sync.pass() == .serverFailed(.unreachable(.networkConnectionLost)))
+        #expect(try await fixture.store.sourceResyncOwed(rootPath: fixture.rootPath))
+        #expect(try await fixture.visible() == ["a/IMG.JPG", "b/IMG.JPG"])
+
+        #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: true))
+        #expect(try await fixture.visible() == ["a/IMG.JPG"])
+        #expect(try await !fixture.store.sourceResyncOwed(rootPath: fixture.rootPath))
+        #expect(await sync.pass() == .synced(listed: 0, deleted: 0, full: false))
+        await fixture.store.shutdown()
+    }
+
+    /// A stream that ends before `SyncCompleteV1` was cut short: what it applied stays, but
+    /// the pass is not a sync, so no one is told the catalog is current.
+    @Test func aStreamCutShortIsNotASync() async throws {
+        let fixture = try await Fixture.make()
+        let server = ScriptedServer([[Self.asset("a")]])
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        let reports = Mutex<[ImmichSyncReport]>([])
+        let outcome = await sync.pass { report in reports.withLock { $0.append(report) } }
+        #expect(outcome == .serverFailed(.malformedResponse))
+        #expect(!reports.withLock { $0 }.contains(.listed))
+        #expect(try await fixture.visible() == ["a/IMG.JPG"])
+        await fixture.store.shutdown()
+    }
+
     /// A pass reports that its server answered as soon as its first batch is applied and
     /// acknowledged, once, and before the pass ends, so a first sync that takes minutes is
     /// online while it runs. A stream that fails before any batch reports nothing.

@@ -15,8 +15,8 @@ nonisolated struct ImmichAccountStatus: Equatable, Sendable {
         /// The last request did not reach a server that answered. The account's rows,
         /// thumbnails and previews stay browsable.
         case offline
-        /// The server refused the session: logged out, revoked, or the account has no saved
-        /// session. Signing in again resumes it.
+        /// The server refused the session (logged out, revoked), or the account has no
+        /// saved session Otos can read. Signing in again saves a new one and resumes it.
         case signedOut
     }
 
@@ -25,7 +25,8 @@ nonisolated struct ImmichAccountStatus: Equatable, Sendable {
     /// server's images for the rows still owed them.
     var isSyncing = false
     /// When a pass last applied the stream to its end, kept across launches; nil when none
-    /// has, or when the catalog could not say.
+    /// has, or when the catalog could not say (logged), which the status shows alike: it
+    /// then names no time.
     var lastSynced: Date?
 }
 
@@ -53,7 +54,8 @@ nonisolated enum ImmichAddAccountOutcome: Equatable, Sendable {
 /// loop's pass outcomes. After a pass it rings the next one on a timer: a poll while the
 /// server answers, because Immich offers no change notification a native client can
 /// subscribe to, and a growing backoff while it does not. A refused session stops the
-/// account's passes until it signs in again.
+/// account's passes until it signs in again. Each report names the sync it came from, so
+/// a loop being replaced (signing in again) never speaks for its successor.
 ///
 /// Statuses are published newest-wins on `statuses` for the window to show.
 actor ImmichAccounts {
@@ -206,7 +208,7 @@ actor ImmichAccounts {
         stop(root.path)
         status[root.path] = nil
         publish.yield(status)
-        await store.setSourceAnswering(false, for: root.path)
+        await answeringApplied(false, for: root.path)
         do {
             if let token = try sessions.token(for: identity) {
                 do {
@@ -290,6 +292,15 @@ actor ImmichAccounts {
         } catch {
             return result(downloadFailed(error, for: id))
         }
+        // Read after the download's await: an account forgotten or replaced meanwhile
+        // places nothing into a folder that is no longer its.
+        guard accounts[id.libraryRootPath]?.sync === account.sync else {
+            ImmichClient.discardDownload(downloaded, op: "immich.original")
+            OtosLog.mediaIO.noticeOperation("immich.original", phase: "refused", fields: [
+                "reason": "accountChanged", "relativePath": id.relativePath.rawValue,
+            ])
+            return result(.requestFailed)
+        }
         do {
             try await StagingLocation.placeDownloaded(downloaded, at: id.fileURL, inside: id.libraryRootPath.url)
         } catch {
@@ -312,6 +323,9 @@ actor ImmichAccounts {
         OtosLog.mediaIO.noticeOperation("immich.original", phase: "failed", fields: [
             "relativePath": id.relativePath.rawValue, "error": String(describing: error),
         ])
+        if error is CancellationError {
+            return .cancelled
+        }
         switch error as? ImmichClientError {
         case .unreachable:
             return .serverUnreachable
@@ -384,8 +398,11 @@ actor ImmichAccounts {
         let path = root.path
         // The loop holds the sync, never this owner: a weak reference per pass report.
         let loop = Task { [sync] in
-            await sync.run { [weak self] report in
-                await self?.received(report, for: path)
+            await sync.run { [weak self, weak sync] report in
+                guard let sync else {
+                    return
+                }
+                await self?.received(report, for: path, from: sync)
             }
         }
         accounts[path] = Account(root: root, client: client, token: token, sync: sync, loop: loop)
@@ -402,7 +419,12 @@ actor ImmichAccounts {
         account.loop.cancel()
     }
 
-    private func received(_ report: ImmichSyncReport, for path: LibraryRootPath) {
+    /// A report from `sync`'s loop. One from a loop the account no longer runs (stopped, or
+    /// replaced by signing in again) is dropped: its outcome is about a session that is gone.
+    private func received(_ report: ImmichSyncReport, for path: LibraryRootPath, from sync: ImmichCatalogSync) {
+        guard accounts[path]?.sync === sync else {
+            return
+        }
         switch report {
         case .answered:
             serverAnswered(for: path)
@@ -430,45 +452,63 @@ actor ImmichAccounts {
         guard var account = accounts[path] else {
             return
         }
-        let next: Duration?
+        account.timer?.cancel()
+        account.timer = nil
+        setReach(Self.reach(after: outcome, was: status[path]?.reach ?? .connecting), for: path)
         switch outcome {
         case .synced:
             account.failures = 0
-            setReach(.online, for: path)
-            next = schedule.poll
-        case .serverFailed(.unauthorized):
-            setReach(.signedOut, for: path)
-            next = nil
-        case .serverFailed, .resetLoop:
-            setReach(.offline, for: path)
-            next = backoff(after: account.failures)
+            account.timer = poll(account.sync)
+        case .serverFailed(.unauthorized), .stopped:
+            break
+        case .serverFailed, .resetLoop, .catalogFailed:
+            account.timer = retry(account.sync, after: account.failures)
             account.failures += 1
-        case .catalogFailed:
-            setReach(status[path]?.reach ?? .connecting, for: path)
-            next = backoff(after: account.failures)
-            account.failures += 1
-        case .noLease:
-            setReach(status[path]?.reach ?? .connecting, for: path)
-            next = nil
-        }
-        account.timer?.cancel()
-        account.timer = next.map { delay in
-            Task { [clock, sync = account.sync] in
-                do {
-                    // time: poll — Immich reports no change to a native client; between
-                    // passes while it answers, and backoff while it does not.
-                    try await clock.sleep(for: delay)
-                } catch {
-                    return
-                }
-                sync.requestSync()
-            }
         }
         accounts[path] = account
     }
 
-    private func backoff(after failures: Int) -> Duration {
-        schedule.backoff[min(failures, schedule.backoff.count - 1)]
+    /// What the server last answered, after a pass ended with `outcome`. Only a request
+    /// that reached no server makes an account offline; a server that answered with a
+    /// failure, or a failure of Otos's own, leaves what it last answered standing.
+    nonisolated static func reach(
+        after outcome: ImmichSyncPassOutcome,
+        was current: ImmichAccountStatus.Reach
+    ) -> ImmichAccountStatus.Reach {
+        switch outcome {
+        case .synced: .online
+        case .serverFailed(.unauthorized): .signedOut
+        case .serverFailed(.unreachable): .offline
+        case .serverFailed, .resetLoop, .catalogFailed, .stopped: current
+        }
+    }
+
+    /// The next pass while the server answers.
+    private func poll(_ sync: ImmichCatalogSync) -> Task<Void, Never> {
+        let delay = schedule.poll
+        return Task { [clock] in
+            do {
+                // time: poll — Immich offers a native client no change notification to wait on.
+                try await clock.sleep(for: delay)
+            } catch {
+                return
+            }
+            sync.requestSync()
+        }
+    }
+
+    /// The next pass after `failures` failed ones, growing to the schedule's last delay.
+    private func retry(_ sync: ImmichCatalogSync, after failures: Int) -> Task<Void, Never> {
+        let delay = schedule.backoff[min(failures, schedule.backoff.count - 1)]
+        return Task { [clock] in
+            do {
+                // time: backoff — nothing reports when a failing server or catalog recovers.
+                try await clock.sleep(for: delay)
+            } catch {
+                return
+            }
+            sync.requestSync()
+        }
     }
 
     /// A pass applied the stream to its end at `date`: the catalog is current with the
@@ -503,6 +543,22 @@ actor ImmichAccounts {
         update(current, for: path)
     }
 
+    /// Sends the Store's answering fact for `path` through the ordered update stream and
+    /// returns once it is applied, so no earlier fact still queued lands after it.
+    private func answeringApplied(_ answering: Bool, for path: LibraryRootPath) async {
+        let store = store
+        await withCheckedContinuation { (applied: CheckedContinuation<Void, Never>) in
+            let sent = storeUpdates.yield {
+                await store.setSourceAnswering(answering, for: path)
+                applied.resume()
+            }
+            if case .terminated = sent {
+                // Shut down: no update runs any more, so none can land after this one.
+                applied.resume()
+            }
+        }
+    }
+
     private func update(_ new: ImmichAccountStatus, for path: LibraryRootPath) {
         let old = status[path]
         guard old != new else {
@@ -533,7 +589,7 @@ actor ImmichAccounts {
     }
 
     /// The account's last complete pass, as the catalog keeps it; nil, logged, when the
-    /// catalog cannot say, which Settings shows as not known rather than never.
+    /// catalog cannot say (`ImmichAccountStatus.lastSynced`).
     private func lastSynced(of path: LibraryRootPath) async -> Date? {
         do {
             return try await store.sourceLastSynced(rootPath: path)

@@ -4900,6 +4900,29 @@ extension CatalogStore {
         }
     }
 
+    /// Whether a source's listing is owed in full: its server reset the cursor and no full
+    /// pass has reached its end since (ADR 0046 §5). False for a root the catalog does not
+    /// hold.
+    func sourceResyncOwed(rootPath: LibraryRootPath) async throws -> Bool {
+        guard let rootID = roots.rowIDSnapshot()[rootPath] else {
+            return false
+        }
+        return try await database().read { db in
+            try Bool.fetchOne(db, sql: "SELECT resync_owed FROM library_root WHERE id = ?", arguments: [rootID])
+                ?? false
+        }
+    }
+
+    /// Records whether a source's listing is owed in full (`sourceResyncOwed`).
+    func setSourceResyncOwed(_ owed: Bool, rootPath: LibraryRootPath) async throws {
+        guard let rootID = roots.rowIDSnapshot()[rootPath] else {
+            return
+        }
+        try await database().write { db in
+            try db.execute(sql: "UPDATE library_root SET resync_owed = ? WHERE id = ?", arguments: [owed, rootID])
+        }
+    }
+
     /// Records that the source answered it holds no images of these rows (ADR 0046 §7), so
     /// no product pass asks for them again until a later listing says it has them.
     func recordSourceProductsAbsent(_ paths: [MediaRelativePath], rootPath: LibraryRootPath) async throws {

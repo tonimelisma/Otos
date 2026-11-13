@@ -62,6 +62,9 @@ struct ImmichAccountsTests {
                     return (201, Data(reply.utf8))
                 case "/api/sync/stream":
                     let status = streams.withLock { $0.isEmpty ? 200 : $0.removeFirst() }
+                    if status == Self.noAnswer {
+                        throw URLError(.cannotConnectToHost)
+                    }
                     guard status == 200 else {
                         return (status, Data())
                     }
@@ -77,6 +80,9 @@ struct ImmichAccountsTests {
                 }
             }
         }
+
+        /// A scripted stream request that reaches no server.
+        static let noAnswer = 0
 
         static let original = Data((0 ..< 4096).map { UInt8($0 % 251) })
 
@@ -185,10 +191,10 @@ struct ImmichAccountsTests {
         await store.shutdown()
     }
 
-    /// Offline is learned from a failed request and left on the next one that answers;
-    /// a refused session is signed out.
+    /// Offline is learned from a request that reached no server and left on the next one
+    /// that answers; a refused session is signed out.
     @Test func statusFollowsWhatTheServerLastAnswered() async throws {
-        let server = FakeServer(host: "flaky.test", streams: [200, 503, 200, 401])
+        let server = FakeServer(host: "flaky.test", streams: [200, FakeServer.noAnswer, 200, 401])
         let store = try await makeStore()
         // Nothing rings on its own: each pass here is asked for, so each status is read
         // before the next pass can replace it.
@@ -216,6 +222,24 @@ struct ImmichAccountsTests {
         await store.shutdown()
     }
 
+    /// Only a request that reached no server makes an account offline. A server that
+    /// answered with a failure, a stream cut short, a reset loop or the catalog's own failure
+    /// leaves what the server last answered standing, and a stopped pass says nothing.
+    @Test func onlyAServerThatDoesNotAnswerIsOffline() {
+        let everyReach: [ImmichAccountStatus.Reach] = [.connecting, .online, .offline, .signedOut]
+        for current in everyReach {
+            #expect(ImmichAccounts.reach(after: .synced(listed: 0, deleted: 0, full: false), was: current) == .online)
+            #expect(ImmichAccounts.reach(after: .serverFailed(.unauthorized), was: current) == .signedOut)
+            #expect(ImmichAccounts.reach(after: .serverFailed(.unreachable(.timedOut)), was: current) == .offline)
+            for standing: ImmichSyncPassOutcome in [
+                .serverFailed(.refused(status: 503)), .serverFailed(.malformedResponse), .resetLoop,
+                .catalogFailed, .stopped,
+            ] {
+                #expect(ImmichAccounts.reach(after: standing, was: current) == current)
+            }
+        }
+    }
+
     /// A finished pass is kept as the account's last sync, so a launch whose server does not
     /// answer still says when it last synced. A pass is syncing between its server's answer
     /// and its end.
@@ -239,7 +263,7 @@ struct ImmichAccountsTests {
         let kept = try #require(try await store.sourceLastSynced(rootPath: rootPath))
         #expect(kept >= before.addingTimeInterval(-1))
 
-        let down = FakeServer(host: "kept.test", streams: [503])
+        let down = FakeServer(host: "kept.test", streams: [FakeServer.noAnswer])
         let asked = ImmichAccounts.Schedule(poll: .seconds(3600), backoff: [.seconds(3600)])
         let second = try ImmichAccounts(
             store: store, sessions: sessions, urlSession: down.session(), schedule: asked,

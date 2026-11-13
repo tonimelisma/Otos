@@ -189,4 +189,38 @@ struct DeviceStagingRegistryTests {
             container.deletingLastPathComponent().appending(path: "Elsewhere/DSC.ARW"), inContainers: [container]
         ))
     }
+
+    /// A downloaded original that cannot be placed leaves no file behind: not when the
+    /// destination is outside its staging root, and not when a step of the place fails.
+    @Test func aPlaceThatFailsDeletesTheDownload() async throws {
+        let container = try makeTestDirectory()
+        let stagingRoot = container.appending(path: "account", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: stagingRoot, withIntermediateDirectories: true)
+        func downloaded() throws -> URL {
+            let file = container.appending(path: "download-\(UUID().uuidString).tmp")
+            try Data("bytes".utf8).write(to: file)
+            return file
+        }
+
+        let outside = try downloaded()
+        await #expect(throws: (any Error).self) {
+            try await StagingLocation.placeDownloaded(
+                outside, at: container.appending(path: "Elsewhere/IMG.JPG"), inside: stagingRoot
+            )
+        }
+        #expect(!FileManager.default.fileExists(atPath: outside.path(percentEncoded: false)))
+
+        // The asset's folder is a file, so the folder cannot be made.
+        let blocker = stagingRoot.appending(path: "asset")
+        try Data().write(to: blocker)
+        let blocked = try downloaded()
+        await #expect(throws: (any Error).self) {
+            try await StagingLocation.placeDownloaded(
+                blocked, at: blocker.appending(path: "IMG.JPG"), inside: stagingRoot
+            )
+        }
+        #expect(!FileManager.default.fileExists(atPath: blocked.path(percentEncoded: false)))
+        let left = try FileManager.default.contentsOfDirectory(atPath: stagingRoot.path(percentEncoded: false))
+        #expect(left == ["asset"])
+    }
 }

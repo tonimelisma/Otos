@@ -38,7 +38,6 @@ nonisolated struct ImmichSessionSyncSource: ImmichSyncSource {
     }
 }
 
-/// What one sync pass did.
 /// What a pass reports to its account's owner as it goes, in this order: its server
 /// answered (once, as soon as its first batch is applied and acknowledged), its listing was
 /// applied to the stream's end (before the server's images are fetched, which on a first
@@ -49,9 +48,10 @@ nonisolated enum ImmichSyncReport: Equatable, Sendable {
     case ended(ImmichSyncPassOutcome)
 }
 
+/// What one sync pass did.
 nonisolated enum ImmichSyncPassOutcome: Equatable, Sendable {
-    /// The stream was applied to its end. `full` is a resync after the server reset the
-    /// cursor, whose completion proved every unlisted row deleted.
+    /// The stream was applied to its end (`SyncCompleteV1`). `full` is the resync a reset
+    /// of the cursor owed, whose completion proved every unlisted row deleted.
     case synced(listed: Int, deleted: Int, full: Bool)
     /// The server could not be read; nothing past the last applied batch was acknowledged,
     /// so the next pass replays it.
@@ -60,8 +60,9 @@ nonisolated enum ImmichSyncPassOutcome: Equatable, Sendable {
     case catalogFailed
     /// The server reset the cursor again during the resync its first reset started.
     case resetLoop
-    /// The account's root could not take a listing lease (it is being removed).
-    case noLease
+    /// The pass was stopped: its loop was cancelled, or its root could not keep a listing
+    /// lease (it is being removed).
+    case stopped
 }
 
 /// Immich catalog sync guide
@@ -80,9 +81,11 @@ nonisolated enum ImmichSyncPassOutcome: Equatable, Sendable {
 /// - a Live Photo's motion part (`hidden`) is a row in its still's folder, listed with the
 ///   still that links it and named by its own asset ID;
 /// - `AssetDeleteV1` purges the asset's rows: proof of deletion;
-/// - `SyncResetV1` means the server lost this cursor's history: the reset is acknowledged
-///   and the stream read again in full, and its completion purges every row it no longer
-///   lists.
+/// - `SyncResetV1` means the server lost this cursor's history: a full resync is recorded
+///   as owed in the catalog before the reset is acknowledged, and every pass reads the
+///   stream in full until one reaches its end, which purges every row it no longer lists
+///   and clears the debt. A resync that drops partway is never lost to the acknowledged
+///   reset.
 ///
 /// `run()` is the one loop, woken by `requestSync()` (a newest-wins doorbell, ADR 0032):
 /// passes never overlap, and a request during a pass is one more pass.
@@ -136,7 +139,8 @@ actor ImmichCatalogSync {
 
     /// One pass: the stream applied to its end, then the server's own images fetched for
     /// every row still owed them (ADR 0046 §7). The pass's outcome is the stream's; a
-    /// product that could not be fetched stays owed and is asked for again next pass.
+    /// product that could not be fetched stays owed and is asked for again next pass, and
+    /// one the server says it does not have is not.
     /// `onReport` hears `answered` and `listed`; the caller reports the outcome.
     func pass(onReport: @escaping @Sendable (ImmichSyncReport) async -> Void = { _ in }) async -> ImmichSyncPassOutcome {
         var answered = Answered(report: { await onReport(.answered) })
@@ -148,9 +152,19 @@ actor ImmichCatalogSync {
         return outcome
     }
 
-    /// The stream applied to its end. A reset turns it into one full resync.
+    /// The stream applied to its end: in full while a reset's resync is owed, else from
+    /// the cursor, which a reset turns into one full resync.
     private func syncListing(answered: inout Answered) async -> ImmichSyncPassOutcome {
-        switch await stream(full: false, answered: &answered) {
+        let resyncOwed: Bool
+        do {
+            resyncOwed = try await store.sourceResyncOwed(rootPath: rootPath)
+        } catch {
+            OtosLog.catalog.errorOperation("catalog.immich.sync", phase: "resyncReadFailed", fields: [
+                "rootPath": rootPath.rawValue, "error": String(describing: error),
+            ])
+            return .catalogFailed
+        }
+        switch await stream(full: resyncOwed, answered: &answered) {
         case let .done(outcome):
             return outcome
         case .resetRequested:
@@ -179,7 +193,7 @@ actor ImmichCatalogSync {
             OtosLog.catalog.noticeOperation("catalog.immich.sync", phase: "noLease", fields: [
                 "rootPath": rootPath.rawValue,
             ])
-            return .done(.noLease)
+            return .done(.stopped)
         }
         var tally = Tally()
         do {
@@ -192,6 +206,7 @@ actor ImmichCatalogSync {
             }
             if full, tally.completed {
                 try await store.completeSourceListing(scan: scan, observedPaths: tally.observed)
+                try await store.setSourceResyncOwed(false, rootPath: rootPath)
             } else {
                 await store.endSourceListing(scan: scan)
             }
@@ -212,6 +227,11 @@ actor ImmichCatalogSync {
             "full": "\(full)",
             "completed": "\(tally.completed)",
         ])
+        // A stream that ended before `SyncCompleteV1` was cut short: what it applied stays
+        // applied and acknowledged, but the catalog is not current with the server.
+        guard tally.completed else {
+            return .done(.serverFailed(.malformedResponse))
+        }
         return .done(.synced(listed: tally.observed.count, deleted: tally.deleted, full: full))
     }
 
@@ -223,8 +243,8 @@ actor ImmichCatalogSync {
     }
 
     /// Reads one stream to its end, applying it batch by batch. True when the server
-    /// reset the cursor: the reset is acknowledged, and nothing of the stream is applied
-    /// after it.
+    /// reset the cursor: the full resync is recorded as owed, then the reset is
+    /// acknowledged, and nothing of the stream is applied after it.
     private func read(
         scan: CatalogStore.ActiveScan,
         into tally: inout Tally,
@@ -235,6 +255,7 @@ actor ImmichCatalogSync {
         for try await event in try await source.events() {
             switch event {
             case let .reset(ack):
+                try await store.setSourceResyncOwed(true, rootPath: rootPath)
                 try await source.acknowledge([ack])
                 return true
             case .complete:
@@ -310,7 +331,7 @@ actor ImmichCatalogSync {
         switch error {
         case let error as ImmichClientError: .serverFailed(error)
         case let error as URLError: .serverFailed(.unreachable(error.code))
-        case is CancellationError: .noLease
+        case is CancellationError: .stopped
         default: .catalogFailed
         }
     }
@@ -400,32 +421,24 @@ actor ImmichCatalogSync {
             )
         }
 
-        mutating func acknowledge(_ ack: String, type: String) {
-            acksByType[type] = ack
-            lineCount += 1
-        }
-
+        /// Folds one line in; its ack moves its type's cursor when the batch is applied.
         mutating func add(_ event: ImmichSyncEvent) {
+            acksByType[event.lineType] = event.ack
+            lineCount += 1
             switch event {
-            case let .asset(asset, ack):
-                acknowledge(ack, type: "AssetV2")
+            case let .asset(asset, _):
                 listAsset(asset)
-            case let .assetDeleted(assetID, ack):
-                acknowledge(ack, type: "AssetDeleteV1")
+            case let .assetDeleted(assetID, _):
                 listedByAsset[assetID] = nil
                 motionLines[assetID] = nil
                 deletedAssets.insert(assetID)
-            case let .exif(assetID, fileSize, ack):
-                acknowledge(ack, type: "AssetExifV1")
+            case let .exif(assetID, fileSize, _):
                 if let fileSize {
                     sizes[assetID] = fileSize
                 }
-            case let .unrequested(type, ack):
-                acknowledge(ack, type: type)
-            case let .reset(ack):
-                acknowledge(ack, type: "SyncResetV1")
-            case let .complete(ack):
-                acknowledge(ack, type: "SyncCompleteV1")
+            case .reset, .complete, .unrequested:
+                // Nothing in the catalog: only the cursor moves.
+                break
             }
         }
 
@@ -462,6 +475,9 @@ actor ImmichCatalogSync {
         case serverFailed(made: Int)
         /// The images' volume is at its free-space floor (ADR 0027); the rest stay owed.
         case floorHeld(made: Int)
+        /// The Store could not read the rows owed images or write a page of them; the
+        /// rest stay owed.
+        case catalogFailed(made: Int)
     }
 
     /// Rows read from the Store per page.
@@ -485,9 +501,9 @@ actor ImmichCatalogSync {
                 )
             } catch {
                 OtosLog.thumbnails.errorOperation("immich.products", phase: "readFailed", fields: [
-                    "rootPath": rootPath.rawValue, "error": String(describing: error),
+                    "rootPath": rootPath.rawValue, "made": "\(tally.made)", "error": String(describing: error),
                 ])
-                break
+                return .catalogFailed(made: tally.made)
             }
             guard let last = page.last else {
                 break
@@ -505,25 +521,34 @@ actor ImmichCatalogSync {
     }
 
     private struct ProductTally {
+        /// Rows whose images the Store stored.
         var made = 0
         var unreadable = 0
         /// Assets whose preview the server answered it does not have.
         var refused = 0
     }
 
+    /// What one page fetched, kept until it is applied.
+    private struct ProductPage {
+        var results: [EnrichmentResult] = []
+        /// Rows the server answered it has no preview of.
+        var absent: [MediaRelativePath] = []
+    }
+
     /// One page of owed rows: each preview fetched and staged, then the page applied in
-    /// one batch. A stop — the floor, or the server not answering — applies what was made
-    /// and ends the pass.
+    /// one batch. A stop — the floor, or the server not answering — applies what was
+    /// fetched and ends the pass.
     private func fetch(
-        _ page: [SourceProductCandidate],
+        _ candidates: [SourceProductCandidate],
         into directory: URL,
         tally: inout ProductTally
     ) async -> ProductPassOutcome? {
-        var results: [EnrichmentResult] = []
-        var absent: [MediaRelativePath] = []
-        for candidate in page {
+        var page = ProductPage()
+        for candidate in candidates {
             guard await Self.admitsProducts(onVolumeOf: directory, volumeCapacity) else {
-                await apply(results, absent: absent)
+                if let failed = await applyProducts(page, tally: &tally) {
+                    return failed
+                }
                 OtosLog.thumbnails.noticeOperation("immich.products", phase: "floorHeld", fields: [
                     "rootPath": rootPath.rawValue, "made": "\(tally.made)",
                 ])
@@ -536,43 +561,53 @@ actor ImmichCatalogSync {
                 // The server answered that it has no preview of this asset: recorded, so no
                 // pass asks again until a listing says the server has made one, and the
                 // rest are still fetched.
-                absent.append(candidate.id.relativePath)
+                page.absent.append(candidate.id.relativePath)
                 tally.refused += 1
                 OtosLog.thumbnails.noticeOperation("immich.products", phase: "refused", fields: [
                     "relativePath": candidate.id.relativePath.rawValue, "status": "\(status)",
                 ])
                 continue
             } catch {
-                await apply(results, absent: absent)
+                if let failed = await applyProducts(page, tally: &tally) {
+                    return failed
+                }
                 OtosLog.thumbnails.noticeOperation("immich.products", phase: "serverFailed", fields: [
                     "rootPath": rootPath.rawValue, "made": "\(tally.made)", "error": String(describing: error),
                 ])
                 return .serverFailed(made: tally.made)
             }
             if let result = await Self.products(from: data, for: candidate, in: directory) {
-                results.append(result)
-                tally.made += 1
+                page.results.append(result)
             } else {
                 tally.unreadable += 1
             }
         }
-        await apply(results, absent: absent)
-        return nil
+        return await applyProducts(page, tally: &tally)
     }
 
-    /// Applies a page's products, and records the assets the server answered it has no
-    /// preview of. A failed record is logged and leaves them owed, asked for next pass.
-    private func apply(_ results: [EnrichmentResult], absent: [MediaRelativePath]) async {
-        if !results.isEmpty {
-            _ = await store.applyEnrichmentBatch(results)
+    /// Applies a page's images and records the rows the server has none of. Nil when both
+    /// were written; a failed write is logged and ends the pass, its rows still owed.
+    private func applyProducts(_ page: ProductPage, tally: inout ProductTally) async -> ProductPassOutcome? {
+        if !page.results.isEmpty {
+            switch await store.applyEnrichmentBatch(page.results) {
+            case let .applied(count):
+                tally.made += count
+            case .writeFailed:
+                OtosLog.thumbnails.errorOperation("immich.products", phase: "writeFailed", fields: [
+                    "rootPath": rootPath.rawValue, "count": "\(page.results.count)",
+                ])
+                return .catalogFailed(made: tally.made)
+            }
         }
         do {
-            try await store.recordSourceProductsAbsent(absent, rootPath: rootPath)
+            try await store.recordSourceProductsAbsent(page.absent, rootPath: rootPath)
         } catch {
             OtosLog.thumbnails.errorOperation("immich.products", phase: "absentWriteFailed", fields: [
-                "rootPath": rootPath.rawValue, "count": "\(absent.count)", "error": String(describing: error),
+                "rootPath": rootPath.rawValue, "count": "\(page.absent.count)", "error": String(describing: error),
             ])
+            return .catalogFailed(made: tally.made)
         }
+        return nil
     }
 
     /// The free-space floor every background download keeps (ADR 0027), with a megabyte

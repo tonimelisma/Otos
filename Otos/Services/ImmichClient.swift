@@ -74,7 +74,7 @@ nonisolated struct ImmichClient: Sendable {
         do {
             (file, response) = try await session.download(for: request)
         } catch {
-            throw ImmichClientError(transport: error)
+            throw ImmichClientError.transportFailure(error)
         }
         let received = ReceivedDownload(file: file, op: "immich.sync")
         try Self.check(response)
@@ -174,7 +174,7 @@ nonisolated struct ImmichClient: Sendable {
         do {
             (file, response) = try await session.download(for: request)
         } catch {
-            throw ImmichClientError(transport: error)
+            throw ImmichClientError.transportFailure(error)
         }
         do {
             try Self.check(response)
@@ -238,7 +238,7 @@ nonisolated struct ImmichClient: Sendable {
         request.setValue("bytes=\(offset)-\(offset + UInt64(length) - 1)", forHTTPHeaderField: "Range")
         session.dataTask(with: request) { data, response, error in
             if let error {
-                completion(.failure(ImmichClientError(transport: error)))
+                completion(.failure(ImmichClientError.transportFailure(error)))
                 return
             }
             guard let http = response as? HTTPURLResponse else {
@@ -279,7 +279,7 @@ nonisolated struct ImmichClient: Sendable {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
-            throw ImmichClientError(transport: error)
+            throw ImmichClientError.transportFailure(error)
         }
         try Self.check(response)
         return data
@@ -330,13 +330,19 @@ nonisolated enum ImmichClientError: Error, Equatable, Sendable {
     /// The server is an Immich whose major version Otos does not speak.
     case unsupportedVersion(major: Int)
 
-    init(transport error: any Error) {
-        if let error = error as? URLError {
-            self = .unreachable(error.code)
-        } else if let error = error as? ImmichClientError {
-            self = error
-        } else {
-            self = .malformedResponse
+    /// What a request that failed in transport throws: a cancelled request is
+    /// cancellation, never a server that did not answer; any other `URLError` is an
+    /// unreachable server.
+    static func transportFailure(_ error: any Error) -> any Error {
+        switch error {
+        case is CancellationError:
+            error
+        case let error as URLError where error.code == .cancelled:
+            CancellationError()
+        case let error as URLError:
+            ImmichClientError.unreachable(error.code)
+        default:
+            error
         }
     }
 }
@@ -415,6 +421,27 @@ nonisolated enum ImmichSyncEvent: Equatable, Sendable {
     /// A line of a type Otos did not ask for; acknowledged and otherwise ignored.
     case unrequested(type: String, ack: String)
 
+    /// The stream's own name for each line type Otos reads.
+    private enum LineType: String {
+        case asset = "AssetV2"
+        case assetDeleted = "AssetDeleteV1"
+        case exif = "AssetExifV1"
+        case reset = "SyncResetV1"
+        case complete = "SyncCompleteV1"
+    }
+
+    /// The line's type, as the stream names it: the cursor moves per type.
+    var lineType: String {
+        switch self {
+        case .asset: LineType.asset.rawValue
+        case .assetDeleted: LineType.assetDeleted.rawValue
+        case .exif: LineType.exif.rawValue
+        case .reset: LineType.reset.rawValue
+        case .complete: LineType.complete.rawValue
+        case let .unrequested(type, _): type
+        }
+    }
+
     var ack: String {
         switch self {
         case let .asset(_, ack), let .assetDeleted(_, ack), let .exif(_, _, ack), let .reset(ack),
@@ -431,8 +458,8 @@ nonisolated enum ImmichSyncEvent: Equatable, Sendable {
             throw ImmichClientError.malformedResponse
         }
         let ack = envelope.ack
-        switch envelope.type {
-        case "AssetV2":
+        switch LineType(rawValue: envelope.type) {
+        case .asset:
             let data = try Self.decode(AssetLine.self, line)
             guard let type = ImmichAsset.AssetType(rawValue: data.type),
                   let visibility = ImmichAsset.Visibility(rawValue: data.visibility)
@@ -450,16 +477,16 @@ nonisolated enum ImmichSyncEvent: Equatable, Sendable {
                 hasPreview: data.thumbhash != nil,
                 livePhotoVideoID: data.livePhotoVideoId
             ), ack: ack)
-        case "AssetDeleteV1":
+        case .assetDeleted:
             self = try .assetDeleted(assetID: Self.decode(DeleteLine.self, line).assetId, ack: ack)
-        case "AssetExifV1":
+        case .exif:
             let data = try Self.decode(ExifLine.self, line)
             self = .exif(assetID: data.assetId, fileSize: data.fileSizeInByte, ack: ack)
-        case "SyncResetV1":
+        case .reset:
             self = .reset(ack: ack)
-        case "SyncCompleteV1":
+        case .complete:
             self = .complete(ack: ack)
-        default:
+        case nil:
             self = .unrequested(type: envelope.type, ack: ack)
         }
     }

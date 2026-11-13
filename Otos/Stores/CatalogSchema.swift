@@ -922,6 +922,16 @@ nonisolated enum CatalogSchema {
         ]
     }
 
+    /// `library_root.resync_owed`: the server reset an Immich account's cursor (ADR 0046
+    /// §5), so the stream is owed in full. Set before the reset is acknowledged and cleared
+    /// when a full pass reaches its end and purges what it no longer lists, so a resync that
+    /// drops partway is read in full again rather than lost to the acknowledged reset.
+    static let resyncOwedMigrationIdentifier = "v41_library_root_resync_owed"
+
+    static let resyncOwedStatements: [String] = [
+        "ALTER TABLE library_root ADD COLUMN resync_owed INTEGER NOT NULL DEFAULT 0",
+    ]
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 
