@@ -43,7 +43,7 @@ final nonisolated class AutoLevelModel {
     static let maximumUncertainty = 3 * Double.pi / 180
 
     init(bundle: Bundle) throws {
-        guard let url = bundle.url(forResource: "GeoCalib", withExtension: "mlmodelc") else {
+        guard let url = BundledModel.url(named: "GeoCalib", in: bundle) else {
             throw CocoaError(.fileNoSuchFile)
         }
         self.url = url

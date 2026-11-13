@@ -77,6 +77,73 @@ otos_build_settings() {
   otos_seed_source_packages "$root"
 }
 
+# Core ML compiles a model on its first load into the loading process's Caches, keyed by
+# the model's path exactly as given (ADR 0044 §11): the same bytes at another path compile
+# again. Every checkout builds its models into its own DerivedData, and every test process
+# shares the test runner's one Caches folder, so each checkout added a compiled copy of each
+# model there until macOS pruned it, Vision's own models with it. After a build this moves
+# each model of the framework the tests load to `$OTOS_SHARED_MODELS/<source hash>/<name>`
+# and leaves a symlink, which `BundledModel` resolves, so every checkout loads one path per
+# model version. The name is the hash of the source package's files and the Xcode build,
+# not of the compiled model: coremlc writes a different `coremldata.bin` each time it
+# compiles the same package. A copy is an APFS clone made in a staging folder, read-only,
+# and published by rename(2), which refuses an existing target: of two builds sharing one
+# model at once, one publishes and the other uses what it published. The app bundle's copy
+# is left as built.
+OTOS_SHARED_MODELS="$HOME/Library/Developer/Otos/SharedModels"
+
+# Before a build the links are removed again: the models are Xcode's outputs, and it would
+# compile into a link, that is into the shared copy. Compiling all five again costs about
+# 6 s of the build.
+otos_unshare_built_models() {
+  local resources="$1/Build/Products/Debug/OtosKit.framework/Versions/A/Resources"
+  local model
+  for model in "$resources"/*.mlmodelc; do
+    [[ -L "$model" ]] && rm "$model"
+  done
+  return 0
+}
+
+otos_share_built_models() {
+  local root="$1"
+  local resources="$root/build/DerivedData/Build/Products/Debug/OtosKit.framework/Versions/A/Resources"
+  local xcode model name source hash shared staging
+  xcode="$(/usr/bin/xcodebuild -version | tr '\n' ' ')"
+  mkdir -p "$OTOS_SHARED_MODELS"
+  for model in "$resources"/*.mlmodelc; do
+    [[ -d "$model" && ! -L "$model" ]] || continue
+    name="$(basename "$model")"
+    source="$root/Otos/Resources/${name%.mlmodelc}.mlpackage"
+    if [[ ! -d "$source" ]]; then
+      echo "op=build.models phase=failed model=$name reason=noSourcePackage source=$source" >&2
+      return 1
+    fi
+    hash="$( { echo "$xcode"; cd "$source" && /usr/bin/find . -type f -print0 | LC_ALL=C sort -z \
+      | xargs -0 /usr/bin/shasum -a 256; } | /usr/bin/shasum -a 256 | cut -c1-16)"
+    shared="$OTOS_SHARED_MODELS/$hash/$name"
+    if [[ ! -d "$shared" ]]; then
+      staging="$(mktemp -d "$OTOS_SHARED_MODELS/.staging.XXXXXX")"
+      /bin/cp -cR "$model" "$staging/$name"
+      # Read-only, so a build that tried to write a model through its symlink would fail
+      # instead of changing the copy every checkout loads.
+      /bin/chmod -R a-w "$staging/$name"
+      /usr/bin/python3 -I -c 'import os, sys
+try:
+    os.rename(sys.argv[1], sys.argv[2])
+except OSError:
+    pass' "$staging" "$OTOS_SHARED_MODELS/$hash"
+      rm -rf "$staging"
+    fi
+    if [[ ! -d "$shared" ]]; then
+      echo "op=build.models phase=failed model=$name reason=notPublished shared=$shared" >&2
+      return 1
+    fi
+    rm -rf "$model"
+    ln -s "$shared" "$model"
+    echo "op=build.models phase=shared model=$name hash=$hash"
+  done
+}
+
 # A new worktree's first build resolves the Swift packages into its own DerivedData, and
 # GRDB's SQLite submodule clones over HTTPS, which has hung for minutes (2026-11-12). The
 # primary checkout already holds a resolved copy; a worktree that has none starts from it,

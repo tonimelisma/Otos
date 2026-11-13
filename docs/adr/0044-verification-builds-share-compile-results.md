@@ -30,7 +30,8 @@ work per commit to get there. The measurements and sources are in
 Owns: the build settings of the verification build (`script/build.sh`) and the
 benchmark build (`script/bench.sh`); how tests find the checkout; how fast the static
 gates run; the scoped `check.sh --only` mode and what counts as verification evidence;
-one run at a time per build folder, and the tree identity a run reports.
+one run at a time per build folder, the tree identity a run reports, and the path tests
+load each model from.
 
 References but does not own: the check's supervision (heartbeat, deadlock detection,
 one entry point; `AGENTS.md` and ADR 0015), the benchmark design (ADR 0043), the
@@ -104,6 +105,29 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     - **Rejected: choosing tests by changed source file.** OtosKit is one module; an edit
       rebuilds all of it (§1), and its owners reach each other through the catalog, so
       the map from a source file to the tests it can break would be a guess.
+
+11. **Every checkout loads one path per model version.** Core ML compiles a model on first
+    load into the process's Caches and keys the copy by the path it was given, and all test
+    processes share the test runner's one Caches folder
+    (`docs/research/2026-11-12-core-ml-compile-cache-in-test-runs.md`). With a path per
+    checkout the folder gained about 1.3 GB per checkout, reached 37 GB, and was pruned.
+    The pruning took Vision's text models too, which every parallel check then recompiled at
+    once, for 80–220 s and sometimes failing (`e5rtError … 13`). After a build,
+    `otos_share_built_models` (`script/lib/xcode.sh`; called by `build.sh`, `bench.sh` and
+    `face-accuracy.sh`) moves each model of the framework the tests load to
+    `~/Library/Developer/Otos/SharedModels/<hash>/<name>.mlmodelc`, read-only,
+    published by rename, and leaves a symlink. `BundledModel.url(named:in:)` resolves it, so
+    Core ML is given the shared path. Before each build `otos_unshare_built_models` removes
+    the links: the models are Xcode's outputs, and an incremental build compiled into a link,
+    which the read-only copy refused. Compiling the five again costs about 6 s a build. The app bundle's copy is left as built, and the
+    installed app's models are at one path already. The hash is of the source package's
+    files and the Xcode build, not of the compiled model: coremlc writes a different
+    `coremldata.bin` each time it compiles the same package, so a compiled-content name
+    made a new path every build.
+    - **Rejected: a home per checkout (`CFFIXED_USER_HOME`).** Entries were written to the
+      new home and not found by the next process, so every run compiled every model.
+    - **Rejected: retrying a failed read in the test.** It waits out a compile storm the
+      harness causes.
 
 ## Alternatives Considered
 

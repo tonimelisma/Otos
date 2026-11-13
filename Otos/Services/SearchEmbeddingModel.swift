@@ -39,7 +39,7 @@ nonisolated enum SearchEmbedding {
     }
 
     static func load(_ name: String, bundle: Bundle) throws -> MLModel {
-        guard let url = bundle.url(forResource: name, withExtension: "mlmodelc") else {
+        guard let url = BundledModel.url(named: name, in: bundle) else {
             throw ModelError.missingResource(name)
         }
         let configuration = MLModelConfiguration()

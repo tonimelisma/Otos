@@ -39,7 +39,7 @@ nonisolated struct AutoCropModel {
     static let wholeFrameOverlap = 0.97
 
     init(bundle: Bundle) throws {
-        guard let url = bundle.url(forResource: "FocalNet", withExtension: "mlmodelc") else {
+        guard let url = BundledModel.url(named: "FocalNet", in: bundle) else {
             throw CocoaError(.fileNoSuchFile)
         }
         let configuration = MLModelConfiguration()

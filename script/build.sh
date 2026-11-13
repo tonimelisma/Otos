@@ -14,6 +14,7 @@ otos_require_full_xcode
 otos_hold_build_folder "$ROOT_DIR/build/DerivedData" build
 otos_build_settings "$ROOT_DIR"
 
+otos_unshare_built_models "$ROOT_DIR/build/DerivedData"
 /usr/bin/xcodebuild \
   -project "$ROOT_DIR/Otos.xcodeproj" \
   -scheme Otos \
@@ -22,3 +23,5 @@ otos_build_settings "$ROOT_DIR"
   -derivedDataPath "$ROOT_DIR/build/DerivedData" \
   -showBuildTimingSummary \
   build-for-testing "${OTOS_BUILD_SETTINGS[@]}"
+
+otos_share_built_models "$ROOT_DIR"

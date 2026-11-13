@@ -96,6 +96,7 @@ run() {
   mkdir -p "$tree/build/benchmarks"
   rm -f "$measured"
   echo "op=bench phase=build commit=$commit log=$log_file"
+  otos_unshare_built_models "$tree/build/DerivedData"
   /usr/bin/xcodebuild \
     -project "$tree/Otos.xcodeproj" \
     -scheme Otos \
@@ -106,6 +107,7 @@ run() {
     echo "op=bench phase=failed reason=build log=$log_file" >&2
     exit 1
   }
+  otos_share_built_models "$tree" >> "$log_file"
   # A process's count differs from the next process's by more than its own samples vary
   # (ADR 0043), so a run's evidence is several processes, each measured on its own.
   local process

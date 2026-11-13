@@ -34,7 +34,7 @@ nonisolated struct FaceEmbeddingModel {
     }
 
     init(bundle: Bundle) throws {
-        guard let url = bundle.url(forResource: "AdaFaceIR101", withExtension: "mlmodelc") else {
+        guard let url = BundledModel.url(named: "AdaFaceIR101", in: bundle) else {
             throw ModelError.missingResource
         }
         let configuration = MLModelConfiguration()
