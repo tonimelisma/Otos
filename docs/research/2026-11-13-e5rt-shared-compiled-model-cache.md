@@ -36,3 +36,17 @@ file was missing at load time; that the purge removed it is likely, not proven.
   the owner's call. Freeing disk space removes the pressure that drives purges.
 - The growth is an Otos-side question still open: what makes the runtime compile a new entry
   for the same model and shape. Until that is known, both caches keep growing.
+
+## Follow-up: what a fix must not do
+
+- **A cache per check run is the wrong fix.** `CFFIXED_USER_HOME` does move the runtime's cache:
+  a probe doing the same accurate text reading wrote `<fake home>/Library/Caches/<process>/com.apple.e5rt.e5bundlecache`.
+  But #700 made the cache shared on purpose: recompiling Vision's text models costs every
+  check 80–220 s (ADR 0044 §11). A fresh cache per run would bring that back on every run.
+- **Otos's own models already load from one path.** `BundledModel` resolves each model's link
+  before Core ML sees it, and the tests that build a temporary resources folder link back to the
+  real models, so the tests hand Core ML one path per model version.
+- **The growth is still unexplained.** All 196 top-level keys and 231 compiled bundles are
+  distinct, and the same input shapes recur across them (`h320w416` in 115 entries). Otos's
+  model paths do not explain the keys. Finding what varies in them, without deleting the shared
+  cache that #700 relies on, is the open question.
