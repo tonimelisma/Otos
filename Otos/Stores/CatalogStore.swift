@@ -4807,6 +4807,32 @@ extension CatalogStore {
         return (changed, purgedImages)
     }
 
+    /// When the source at `rootPath` last listed in full (an Immich account's last complete
+    /// pass, ADR 0046 §6); nil when it never has, or when the root is gone.
+    func sourceLastSynced(rootPath: LibraryRootPath) async throws -> Date? {
+        guard let rootID = roots.rowIDSnapshot()[rootPath] else {
+            return nil
+        }
+        return try await database().read { db in
+            try Double.fetchOne(
+                db, sql: "SELECT last_synced_at FROM library_root WHERE id = ?", arguments: [rootID]
+            ).map(Date.init(timeIntervalSince1970:))
+        }
+    }
+
+    /// Records that the source at `rootPath` listed in full at `date`.
+    func recordSourceSynced(at date: Date, rootPath: LibraryRootPath) async throws {
+        guard let rootID = roots.rowIDSnapshot()[rootPath] else {
+            return
+        }
+        try await database().write { db in
+            try db.execute(
+                sql: "UPDATE library_root SET last_synced_at = ? WHERE id = ?",
+                arguments: [date.timeIntervalSince1970, rootID]
+            )
+        }
+    }
+
     /// The source's own ID for the item `id` is (ADR 0046 §2), which a request for its
     /// bytes names; nil for a row the source never listed.
     func sourceItemID(for id: MediaAssetID) async throws -> String? {

@@ -104,7 +104,7 @@ struct SidebarView: View {
                 Section("Libraries") {
                     ForEach(libraries) { library in
                         SidebarRow(systemImage: library.kind.sidebarSystemImage, title: library.displayName) {
-                            AccountStatusGlyph(status: accountStatuses[library.path])
+                            AccountStatusGlyph(status: accountStatuses[library.path], server: library.root.remoteBaseURL)
                         }
                         .tag(SidebarSelection.library(library.path))
                     }
@@ -258,14 +258,19 @@ struct SidebarView: View {
 /// never color alone).
 private struct AccountStatusGlyph: View {
     let status: ImmichAccountStatus?
+    let server: URL?
 
     var body: some View {
-        switch status {
+        switch status?.reach {
         case .offline:
-            Image(systemName: "wifi.slash")
-                .foregroundStyle(.secondary)
-                .help("The server can’t be reached. Otos shows the photos it has stored.")
-                .accessibilityLabel("Offline")
+            if let status {
+                TimelineView(.everyMinute) { context in
+                    Image(systemName: "wifi.slash")
+                        .foregroundStyle(.secondary)
+                        .help(status.unreachableHelp(server: server, now: context.date))
+                        .accessibilityLabel("Server unreachable, \(status.label(now: context.date))")
+                }
+            }
         case .signedOut:
             Image(systemName: "person.crop.circle.badge.exclamationmark")
                 .foregroundStyle(.secondary)

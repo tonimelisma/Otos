@@ -211,7 +211,11 @@ account's session, loop and status.
 ### 6. Unreachable is a state, not an absence
 
 - An account's rows stay in the grid while it is unreachable.
-- The sidebar row shows it as offline.
+- The sidebar row marks it with a glyph whose tooltip says the server can't be reached and
+  when the account last synced; Settings says `Synced 3m ago` with the same glyph. An
+  account's status says when it last synced, not whether it is connected: the last pass
+  that applied the stream to its end is kept in the catalog (`library_root.last_synced_at`),
+  so it is known at a launch whose server does not answer.
 - Stored thumbnails and previews, Immich's or Otos's (§7), serve the grid, loupe,
   compare, curation, and every filter.
 - Work that needs original bytes reports that the server is offline instead of waiting

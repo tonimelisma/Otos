@@ -196,6 +196,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.inThisPhotoMigrationIdentifier,
             CatalogSchema.stackKeyMigrationIdentifier,
             CatalogSchema.stackCandidateIndexMigrationIdentifier,
+            CatalogSchema.lastSyncedMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)

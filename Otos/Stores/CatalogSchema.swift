@@ -726,6 +726,15 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// When an Immich account's sync last applied its server's stream to its end (ADR 0046
+    /// §6), as Unix seconds; NULL until its first complete pass. What Settings and the
+    /// sidebar say about the account when its server does not answer.
+    static let lastSyncedMigrationIdentifier = "v34_library_root_last_synced"
+
+    static let lastSyncedStatements: [String] = [
+        "ALTER TABLE library_root ADD COLUMN last_synced_at DOUBLE",
+    ]
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

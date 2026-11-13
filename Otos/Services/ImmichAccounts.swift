@@ -1,20 +1,31 @@
 import Foundation
 import OSLog
 
-/// What an account's server last answered (ADR 0046 §6). Learned from requests, never
-/// assumed from elapsed time.
-nonisolated enum ImmichAccountStatus: Equatable, Sendable {
-    /// No pass has answered yet this launch.
-    case connecting
-    /// The server answered: the running pass has applied a batch of its stream, or the
-    /// last pass applied it to its end.
-    case online
-    /// The last request did not reach a server that answered. The account's rows,
-    /// thumbnails and previews stay browsable.
-    case offline
-    /// The server refused the session: logged out, revoked, or the account has no saved
-    /// session. Signing in again resumes it.
-    case signedOut
+/// What Otos knows of an account's sync (ADR 0046 §6): what its server last answered,
+/// whether a pass is applying its stream now, and when a pass last applied it to its end.
+/// Learned from requests, never assumed from elapsed time.
+nonisolated struct ImmichAccountStatus: Equatable, Sendable {
+    /// What the server last answered.
+    enum Reach: Equatable, Sendable {
+        /// No pass has answered yet this launch.
+        case connecting
+        /// The server answered: the running pass has applied a batch of its stream, or the
+        /// last pass applied it to its end.
+        case online
+        /// The last request did not reach a server that answered. The account's rows,
+        /// thumbnails and previews stay browsable.
+        case offline
+        /// The server refused the session: logged out, revoked, or the account has no saved
+        /// session. Signing in again resumes it.
+        case signedOut
+    }
+
+    var reach: Reach
+    /// A pass whose server answered is applying its stream.
+    var isSyncing = false
+    /// When a pass last applied the stream to its end, kept across launches; nil when none
+    /// has, or when the catalog could not say.
+    var lastSynced: Date?
 }
 
 /// What adding an account did, in the terms the sheet shows.
@@ -125,10 +136,15 @@ actor ImmichAccounts {
                 ])
                 token = nil
             }
+            let lastSynced = await lastSynced(of: root.path)
+            // Read after the await: an account added meanwhile already runs.
+            guard accounts[root.path] == nil else {
+                continue
+            }
             if let token, let server = root.remoteBaseURL {
-                begin(root, token: token, server: server)
+                begin(root, token: token, server: server, lastSynced: lastSynced)
             } else {
-                setStatus(.signedOut, for: root.path)
+                update(ImmichAccountStatus(reach: .signedOut, lastSynced: lastSynced), for: root.path)
             }
         }
     }
@@ -164,8 +180,9 @@ actor ImmichAccounts {
                 return .notSaved
             }
             try sessions.saveToken(login.accessToken, for: identity)
+            let lastSynced = await lastSynced(of: rootPath)
             stop(rootPath)
-            begin(root, token: login.accessToken, server: address)
+            begin(root, token: login.accessToken, server: address, lastSynced: lastSynced)
         } catch {
             OtosLog.catalog.errorOperation("immich.account.add", phase: "notSaved", fields: [
                 "server": address.absoluteString, "error": String(describing: error),
@@ -298,7 +315,7 @@ actor ImmichAccounts {
         case .unreachable:
             return .serverUnreachable
         case .unauthorized:
-            setStatus(.signedOut, for: id.libraryRootPath)
+            setReach(.signedOut, for: id.libraryRootPath)
             return .requestFailed
         case .refused, .malformedResponse, .unsupportedVersion, nil:
             return .requestFailed
@@ -321,7 +338,7 @@ actor ImmichAccounts {
     }
 
     private func isAnswering(_ rootPath: LibraryRootPath) -> Bool {
-        accounts[rootPath] != nil && status[rootPath] == .online
+        accounts[rootPath] != nil && status[rootPath]?.reach == .online
     }
 
     private func rangeReader(for id: MediaAssetID, size: UInt64) async -> RemoteRangeReader? {
@@ -329,7 +346,7 @@ actor ImmichAccounts {
             return nil
         }
         // Read after the lookup's await, so the session and status are the current ones.
-        guard let account = accounts[id.libraryRootPath], status[id.libraryRootPath] == .online else {
+        guard let account = accounts[id.libraryRootPath], status[id.libraryRootPath]?.reach == .online else {
             return nil
         }
         let client = account.client
@@ -355,7 +372,7 @@ actor ImmichAccounts {
 
     // MARK: - Loops
 
-    private func begin(_ root: LibraryRoot, token: String, server: URL) {
+    private func begin(_ root: LibraryRoot, token: String, server: URL, lastSynced: Date?) {
         let client = ImmichClient(server: server, session: urlSession)
         let sync = ImmichCatalogSync(
             rootPath: root.path,
@@ -376,7 +393,7 @@ actor ImmichAccounts {
             )
         }
         accounts[path] = Account(root: root, client: client, token: token, sync: sync, loop: loop)
-        setStatus(.connecting, for: path)
+        update(ImmichAccountStatus(reach: .connecting, lastSynced: lastSynced), for: path)
         sync.requestSync()
     }
 
@@ -389,12 +406,15 @@ actor ImmichAccounts {
         account.loop.cancel()
     }
 
-    /// A running pass's server answered, so the account is online before its pass ends.
+    /// A running pass's server answered, so the account is online and syncing before its
+    /// pass ends.
     private func serverAnswered(for path: LibraryRootPath) {
-        guard accounts[path] != nil else {
+        guard accounts[path] != nil, var current = status[path] else {
             return
         }
-        setStatus(.online, for: path)
+        current.reach = .online
+        current.isSyncing = true
+        update(current, for: path)
     }
 
     /// Records what the server answered and rings the next pass after the delay its
@@ -407,19 +427,21 @@ actor ImmichAccounts {
         switch outcome {
         case .synced:
             account.failures = 0
-            setStatus(.online, for: path)
+            synced(at: Date(), for: path)
             next = schedule.poll
         case .serverFailed(.unauthorized):
-            setStatus(.signedOut, for: path)
+            setReach(.signedOut, for: path)
             next = nil
         case .serverFailed, .resetLoop:
-            setStatus(.offline, for: path)
+            setReach(.offline, for: path)
             next = backoff(after: account.failures)
             account.failures += 1
         case .catalogFailed:
+            setReach(status[path]?.reach ?? .connecting, for: path)
             next = backoff(after: account.failures)
             account.failures += 1
         case .noLease:
+            setReach(status[path]?.reach ?? .connecting, for: path)
             next = nil
         }
         account.timer?.cancel()
@@ -442,20 +464,78 @@ actor ImmichAccounts {
         schedule.backoff[min(failures, schedule.backoff.count - 1)]
     }
 
-    private func setStatus(_ new: ImmichAccountStatus, for path: LibraryRootPath) {
-        guard status[path] != new else {
+    /// A pass applied the stream to its end at `date`: the account is online, no longer
+    /// syncing, and its last sync is kept in the catalog for the next launch.
+    private func synced(at date: Date, for path: LibraryRootPath) {
+        guard var current = status[path] else {
+            return
+        }
+        current.reach = .online
+        current.isSyncing = false
+        current.lastSynced = date
+        update(current, for: path)
+        let store = store
+        storeUpdates.yield {
+            do {
+                try await store.recordSourceSynced(at: date, rootPath: path)
+            } catch {
+                OtosLog.catalog.errorOperation("immich.account.lastSynced", phase: "writeFailed", fields: [
+                    "rootPath": path.rawValue, "error": String(describing: error),
+                ])
+            }
+        }
+    }
+
+    /// A pass that ended without applying its stream: the server's answer, and no pass syncing.
+    private func setReach(_ reach: ImmichAccountStatus.Reach, for path: LibraryRootPath) {
+        guard var current = status[path] else {
+            return
+        }
+        current.reach = reach
+        current.isSyncing = false
+        update(current, for: path)
+    }
+
+    private func update(_ new: ImmichAccountStatus, for path: LibraryRootPath) {
+        let old = status[path]
+        guard old != new else {
             return
         }
         status[path] = new
-        publish.yield(status)
+        publishStatus(for: path)
         // Enrichment reads an account's originals in ranges only while its server answers;
         // the Store's answering fact is what stops claims during an outage.
-        let answering = new == .online
-        let store = store
-        storeUpdates.yield { await store.setSourceAnswering(answering, for: path) }
+        if old?.reach != new.reach {
+            let answering = new.reach == .online
+            let store = store
+            storeUpdates.yield { await store.setSourceAnswering(answering, for: path) }
+        }
+    }
+
+    private func publishStatus(for path: LibraryRootPath) {
+        publish.yield(status)
+        guard let current = status[path] else {
+            return
+        }
         OtosLog.catalog.noticeOperation("immich.account.status", phase: "changed", fields: [
-            "rootPath": path.rawValue, "status": String(describing: new),
+            "rootPath": path.rawValue,
+            "status": String(describing: current.reach),
+            "syncing": "\(current.isSyncing)",
+            "lastSynced": current.lastSynced.map { "\($0.timeIntervalSince1970)" } ?? "none",
         ])
+    }
+
+    /// The account's last complete pass, as the catalog keeps it; nil, logged, when the
+    /// catalog cannot say, which Settings shows as not known rather than never.
+    private func lastSynced(of path: LibraryRootPath) async -> Date? {
+        do {
+            return try await store.sourceLastSynced(rootPath: path)
+        } catch {
+            OtosLog.catalog.errorOperation("immich.account.lastSynced", phase: "readFailed", fields: [
+                "rootPath": path.rawValue, "error": String(describing: error),
+            ])
+            return nil
+        }
     }
 
     private static func addOutcome(_ error: ImmichClientError) -> ImmichAddAccountOutcome {

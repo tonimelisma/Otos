@@ -309,14 +309,31 @@ private struct LibrariesSettingsView: View {
                 }
                 TableColumn("Status") { library in
                     if let status = immichAccounts.statuses[library.path] {
-                        Text(status.label)
-                            .foregroundStyle(status == .signedOut ? Color.orange : Color.secondary)
+                        // A relative time reads true only while it is redrawn.
+                        TimelineView(.everyMinute) { context in
+                            HStack(spacing: 4) {
+                                if status.reach == .offline {
+                                    Image(systemName: "wifi.slash")
+                                        .accessibilityHidden(true)
+                                }
+                                Text(status.label(now: context.date))
+                                    .lineLimit(1)
+                            }
+                            .foregroundStyle(status.reach == .signedOut ? Color.orange : Color.secondary)
+                            .help(status.reach == .offline
+                                ? status.unreachableHelp(server: library.root.remoteBaseURL, now: context.date)
+                                : "")
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel(status.reach == .offline
+                                ? "\(status.label(now: context.date)), server unreachable"
+                                : status.label(now: context.date))
+                        }
                     } else {
                         Text(library.availability.label)
                             .foregroundStyle(library.availability == .unavailable ? Color.orange : Color.secondary)
                     }
                 }
-                .width(min: 90, ideal: 100)
+                .width(min: 90, ideal: 150)
             } rows: {
                 ForEach(libraries) { library in
                     TableRow(library)
@@ -364,7 +381,7 @@ private struct LibrariesSettingsView: View {
                     Button("Sign In…") {
                         immichAccounts.begin(selectedRoot?.remoteBaseURL)
                     }
-                    .disabled(selectedRoot.map { immichAccounts.statuses[$0.path] != .signedOut } ?? true)
+                    .disabled(selectedRoot.map { immichAccounts.statuses[$0.path]?.reach != .signedOut } ?? true)
                     Button("Add Immich Account…") {
                         immichAccounts.begin(nil)
                     }
@@ -493,14 +510,48 @@ struct ImmichAccountControls {
     let cancel: @MainActor () -> Void
 }
 
-private extension ImmichAccountStatus {
-    var label: String {
-        switch self {
-        case .connecting: "Connecting"
-        case .online: "Online"
-        case .offline: "Offline"
-        case .signedOut: "Signed Out"
+/// What Settings and the sidebar say about an account (APP-064): when it last synced,
+/// rather than a connection state, while it has synced before.
+nonisolated extension ImmichAccountStatus {
+    /// Settings' Status cell: `Syncing…` while a pass applies the stream, `Synced 3m
+    /// ago` after one finished (also while the server does not answer, which the glyph
+    /// beside it says), `Signed Out`, and, before any pass this account ever finished,
+    /// `Connecting…` or `Can’t reach server`.
+    func label(now: Date) -> String {
+        if reach == .signedOut {
+            return "Signed Out"
         }
+        if isSyncing {
+            return "Syncing…"
+        }
+        if let lastSynced {
+            return "Synced \(Self.ago(lastSynced, now: now))"
+        }
+        return reach == .offline ? "Can’t reach server" : "Connecting…"
+    }
+
+    /// Why the server does not answer and what Otos still shows, for the glyph's tooltip.
+    func unreachableHelp(server: URL?, now: Date) -> String {
+        let host = server?.host() ?? "the server"
+        let synced = lastSynced.map { " Last synced \(Self.ago($0, now: now))." } ?? ""
+        return "Can’t reach \(host).\(synced) Otos shows the photos it has stored."
+    }
+
+    /// `just now`, `3m ago`, `yesterday` within a week, and the date after that.
+    static func ago(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
+        let seconds = now.timeIntervalSince(date)
+        if seconds < 60 {
+            return "just now"
+        }
+        if seconds < 7 * 24 * 60 * 60 {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.calendar = calendar
+            formatter.locale = calendar.locale ?? .current
+            formatter.dateTimeStyle = .named
+            formatter.unitsStyle = .abbreviated
+            return formatter.localizedString(for: date, relativeTo: now)
+        }
+        return "on \(RelativeDateText.string(for: date, now: now, calendar: calendar))"
     }
 }
 

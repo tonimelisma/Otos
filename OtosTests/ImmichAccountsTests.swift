@@ -109,11 +109,11 @@ struct ImmichAccountsTests {
     /// dictionary and never repeats one, so each wait names a change still to come, or
     /// one condition over every account (`waitForStatuses`).
     private func waitForStatus(
-        _ expected: ImmichAccountStatus,
+        _ expected: ImmichAccountStatus.Reach,
         of path: LibraryRootPath,
         in accounts: ImmichAccounts
     ) async {
-        await waitForStatuses(in: accounts) { $0[path] == expected }
+        await waitForStatuses(in: accounts) { $0[path]?.reach == expected }
     }
 
     private func waitForStatuses(
@@ -216,6 +216,68 @@ struct ImmichAccountsTests {
         await store.shutdown()
     }
 
+    /// A finished pass is kept as the account's last sync, so a launch whose server does not
+    /// answer still says when it last synced. A pass is syncing between its server's answer
+    /// and its end.
+    @Test func theLastSyncIsKeptAcrossLaunches() async throws {
+        let store = try await makeStore()
+        let sessions = MemorySessions()
+        let up = FakeServer(host: "kept.test")
+        let first = try ImmichAccounts(
+            store: store, sessions: sessions, urlSession: up.session(), schedule: Self.quick,
+            stagingContainer: makeTestDirectory(), volumeCapacity: ampleVolumeCapacity
+        )
+        let before = Date()
+        guard case let .added(rootPath) = try await first.add(
+            server: #require(URL(string: "http://kept.test")), email: "a", password: "right"
+        ) else {
+            Issue.record("Expected the account added")
+            return
+        }
+        await waitForStatuses(in: first) { $0[rootPath]?.lastSynced != nil }
+        await first.shutdown()
+        let kept = try #require(try await store.sourceLastSynced(rootPath: rootPath))
+        #expect(kept >= before.addingTimeInterval(-1))
+
+        let down = FakeServer(host: "kept.test", streams: [503])
+        let asked = ImmichAccounts.Schedule(poll: .seconds(3600), backoff: [.seconds(3600)])
+        let second = try ImmichAccounts(
+            store: store, sessions: sessions, urlSession: down.session(), schedule: asked,
+            stagingContainer: makeTestDirectory(), volumeCapacity: ampleVolumeCapacity
+        )
+        await second.start()
+        // The offline status that ends the wait is the kept sync's, not a syncing one.
+        await waitForStatuses(in: second) {
+            $0[rootPath] == ImmichAccountStatus(reach: .offline, isSyncing: false, lastSynced: kept)
+        }
+        await second.shutdown()
+        await store.shutdown()
+    }
+
+    /// Settings says when an account last synced rather than whether it is connected.
+    @Test func anAccountsStatusSaysWhenItLastSynced() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US")
+        calendar.timeZone = .gmt
+        let threeMinutes = now.addingTimeInterval(-180)
+        #expect(ImmichAccountStatus(reach: .connecting).label(now: now) == "Connecting…")
+        #expect(ImmichAccountStatus(reach: .offline).label(now: now) == "Can’t reach server")
+        #expect(ImmichAccountStatus(reach: .online, isSyncing: true, lastSynced: threeMinutes).label(now: now)
+            == "Syncing…")
+        #expect(ImmichAccountStatus(reach: .signedOut, lastSynced: threeMinutes).label(now: now) == "Signed Out")
+        #expect(ImmichAccountStatus(reach: .online, lastSynced: now.addingTimeInterval(-20)).label(now: now)
+            == "Synced just now")
+        #expect(ImmichAccountStatus.ago(threeMinutes, now: now, calendar: calendar) == "3m ago")
+        #expect(ImmichAccountStatus.ago(now.addingTimeInterval(-86400), now: now, calendar: calendar) == "yesterday")
+        #expect(ImmichAccountStatus.ago(now.addingTimeInterval(-20 * 86400), now: now, calendar: calendar)
+            .hasPrefix("on "))
+        let offline = ImmichAccountStatus(reach: .offline, lastSynced: threeMinutes)
+        #expect(offline.label(now: now).hasPrefix("Synced "))
+        #expect(offline.unreachableHelp(server: URL(string: "https://photos.example.com"), now: now)
+            .hasPrefix("Can’t reach photos.example.com. Last synced "))
+    }
+
     /// At launch, an account with a saved session syncs, and one without is signed out.
     @Test func startResumesSavedSessionsAndSignsOutTheRest() async throws {
         let server = FakeServer(host: "resume.test")
@@ -238,7 +300,7 @@ struct ImmichAccountsTests {
         )
 
         await accounts.start()
-        await waitForStatuses(in: accounts) { $0[saved] == .online && $0[unsaved] == .signedOut }
+        await waitForStatuses(in: accounts) { $0[saved]?.reach == .online && $0[unsaved]?.reach == .signedOut }
         #expect(try await assetPaths(store, saved) == ["a1/IMG_1.JPG"])
         await accounts.shutdown()
         await store.shutdown()
