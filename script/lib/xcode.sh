@@ -37,10 +37,54 @@ EOF
   fi
 }
 
-# The build settings the verification build (script/build.sh) and the benchmark
-# build (script/bench.sh) both pass. They build into the same build/DerivedData,
-# so they must agree: any difference makes each one rebuild everything the other
-# built. ADR 0044 holds the measurements behind each setting.
+# Every build into a checkout's build/DerivedData goes through here, so each one first
+# takes back the models a previous build shared (otos_unshare_built_models, below) before
+# Xcode writes there:
+#
+#   otos_build_checkout <root> verification <xcodebuild option or action...>
+#       The builds whose products a test run loads: script/build.sh, script/bench.sh and
+#       script/face-accuracy.sh. They pass otos_build_settings and share the models after.
+#   otos_build_checkout <root> debuggable <xcodebuild option or action...>
+#       script/build_and_run.sh (and so smoke-run.sh, profile.sh and capture-run.sh): an
+#       app to run, debug or profile, built with real source paths and none of the
+#       verification settings (ADR 0044). Its models stay as built.
+#
+# The caller holds the build folder (script/lib/build-folder.sh) and redirects the output.
+# Returns xcodebuild's status, or the sharing step's when the build passed. Each step is
+# checked by status, because a caller may run this in an `||` list, where errexit is off
+# for everything it calls.
+otos_build_checkout() {
+  local root="$1" kind="$2"
+  shift 2
+  local settings=()
+  case "$kind" in
+    verification)
+      otos_build_settings "$root" || return
+      settings=("${OTOS_BUILD_SETTINGS[@]}")
+      ;;
+    debuggable) ;;
+    *)
+      echo "op=build phase=refused reason=unknownBuildKind kind=$kind" >&2
+      return 2
+      ;;
+  esac
+  otos_unshare_built_models "$root/build/DerivedData"
+  # ${settings[@]+...}: bash 3.2 under `set -u` calls an empty array unbound.
+  /usr/bin/xcodebuild \
+    -project "$root/Otos.xcodeproj" \
+    -scheme Otos \
+    -configuration Debug \
+    -destination "platform=macOS" \
+    -derivedDataPath "$root/build/DerivedData" \
+    "$@" ${settings[@]+"${settings[@]}"} || return
+  if [[ "$kind" == "verification" ]]; then
+    otos_share_built_models "$root"
+  fi
+}
+
+# The build settings every verification build passes (otos_build_checkout). They build
+# into the same build/DerivedData, so any difference between two of them makes each one
+# rebuild everything the other built. ADR 0044 holds the measurements behind each setting.
 #
 # Compilation caching stores every compile job's output in one content-addressed
 # store shared by all worktrees, so a fresh worktree's first build replays what
@@ -157,6 +201,6 @@ otos_seed_source_packages() {
   source="$primary/build/DerivedData/SourcePackages"
   [[ "$primary" != "$root" && -d "$source/checkouts" ]] || return 0
   mkdir -p "$root/build/DerivedData"
-  /usr/bin/ditto "$source" "$packages"
+  /usr/bin/ditto "$source" "$packages" || return
   echo "op=build.packages phase=seeded from=$source"
 }

@@ -177,7 +177,10 @@ check_tier() {
       *)
         echo full; return ;;
     esac
-  done < <(git -C "$ROOT_DIR" diff --name-only "$base" "$snapshot")
+  # --no-renames lists both sides of a move: with rename detection on (git's default), a
+  # file moved out of Otos/ into docs/ lists only its docs/ destination and the tree read
+  # as static though the build lost a file.
+  done < <(git -C "$ROOT_DIR" diff --no-renames --name-only "$base" "$snapshot")
   if [[ "$changed" == 0 ]]; then echo full; else echo static; fi
 }
 if [[ -n "$OTOS_ONLY_TESTING" ]]; then
@@ -194,12 +197,29 @@ export OTOS_CHECK_TIER="$CHECK_TIER"
 
 # ── Stage 2: the real check, with a heartbeat so a stall is self-evident ─────
 # One run per build folder: a bench or a second check in this checkout waits here, before
-# the deadlock detector starts, and says whom it waits for.
-otos_hold_build_folder "$ROOT_DIR/build/DerivedData" check || exit 1
+# the deadlock detector starts, and says whom it waits for. The static tier builds nothing,
+# so it never touches the folder and never waits for one.
+if [[ "$CHECK_TIER" != "static" ]]; then
+  otos_hold_build_folder "$ROOT_DIR/build/DerivedData" check || exit 1
+fi
 echo "op=check.stage phase=start stage=verify"
 VERIFY_LOG="$(mktemp)"
-"$ROOT_DIR/script/verify.sh" > "$VERIFY_LOG" 2>&1 &
+# verify.sh reports its own end: the subshell that runs it writes one line to a pipe this
+# script reads the moment verify exits, and exits with verify's status. The heartbeat loop
+# below waits on that line, so a finished run is noticed at once rather than at the next
+# heartbeat. verify and everything it starts get the pipe closed, so only the subshell
+# can write to it.
+VERIFY_DONE="$(mktemp -u)"
+mkfifo "$VERIFY_DONE" || { echo "check: FAILED — could not make the verify pipe" >&2; exit 1; }
+(
+  "$ROOT_DIR/script/verify.sh" 9>&- > "$VERIFY_LOG" 2>&1
+  status=$?
+  echo "exited" >&9
+  exit "$status"
+) 9> "$VERIFY_DONE" &
 verify_pid=$!
+exec 9< "$VERIFY_DONE"
+rm -f "$VERIFY_DONE"
 
 # Deadlock detection, not a timeout. The distinction matters: a log going quiet is
 # not evidence of a hang — one long test can log nothing for minutes while working
@@ -310,10 +330,14 @@ TEST_LOG_ANNOUNCEMENT="Capturing test output to "
 TEST_FINISHED_PATTERN="' (passed|failed) on '"
 
 started_at="$(date +%s)"
-while kill -0 "$verify_pid" 2>/dev/null; do
-  # time: schedule — the heartbeat a watcher reads; it ends with the run, never bounds it
-  sleep "$HEARTBEAT_SECONDS"
-  kill -0 "$verify_pid" 2>/dev/null || break
+while :; do
+  # time: schedule — the heartbeat a watcher reads; verify's own exit ends this wait at once
+  read -r -t "$HEARTBEAT_SECONDS" _ <&9 && break
+  # bash 3.2's read fails the same way on a timeout and on end of file. End of file means
+  # the subshell is gone without its line (killed), and a gone subshell is a zombie until
+  # `wait` below collects it, so only a subshell still running makes this a heartbeat.
+  verify_state="$(ps -o stat= -p "$verify_pid" 2>/dev/null)"
+  [[ -n "$verify_state" && "$verify_state" != Z* ]] || break
   elapsed=$(( $(date +%s) - started_at ))
   # The test log is the one test.sh announces on its first line of output, which
   # lands in VERIFY_LOG. Reading the announcement replaces guessing which file in
@@ -367,6 +391,7 @@ while kill -0 "$verify_pid" 2>/dev/null; do
     exit 1
   fi
 done
+exec 9<&-
 
 wait "$verify_pid"
 verify_status=$?

@@ -18,14 +18,7 @@ otos_require_full_xcode
 # alternative — including a session the user was running. Refuse instead.
 otos_refuse_if_running "$APP_NAME"
 otos_hold_build_folder "$DERIVED_DATA" buildAndRun
-
-/usr/bin/xcodebuild \
-  -project "$ROOT_DIR/Otos.xcodeproj" \
-  -scheme Otos \
-  -configuration Debug \
-  -destination "platform=macOS" \
-  -derivedDataPath "$DERIVED_DATA" \
-  build
+otos_build_checkout "$ROOT_DIR" debuggable build
 
 if [[ ! -d "$APP_BUNDLE" ]]; then
   echo "Built app bundle not found at $APP_BUNDLE" >&2

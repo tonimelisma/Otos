@@ -40,9 +40,10 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
 ## Decision
 
 1. **One shared compilation cache.** `otos_build_settings` in `script/lib/xcode.sh` is
-   the single list of settings `build.sh` and `bench.sh` pass. They build into the same
-   `build/DerivedData`, so they must pass the same settings or each rebuilds what the
-   other built. The list turns on `COMPILATION_CACHE_ENABLE_CACHING` with
+   the single list of settings every verification build passes: `build.sh`, `bench.sh`
+   and `face-accuracy.sh`, each through `otos_build_checkout ... verification`. They build
+   into the same `build/DerivedData`, so they must pass the same settings or each rebuilds
+   what the other built. The list turns on `COMPILATION_CACHE_ENABLE_CACHING` with
    `COMPILATION_CACHE_CAS_PATH` at Xcode's own default store,
    `~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex`. That store is
    content-addressed, used concurrently by Xcode's own builds, and pruned by Xcode.
@@ -75,10 +76,11 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
    `build_and_run.sh` hold `build/DerivedData`, `install.sh` holds
    `build/InstallDerivedData`. A second run waits for the first to exit, which the
    kernel reports, and logs `op=<run>.wait reason=buildFolderBusy holder=<pid> op=<run>`.
-   `check.sh` waits before its deadlock detector starts. A nested script inherits its
-   caller's hold through `OTOS_HELD_BUILD_FOLDERS`. The lock lives in a holder process
-   (`script/lib/hold-build-folder.py`), not in a descriptor every build child would
-   inherit.
+   `check.sh` waits before its deadlock detector starts; a static-tier check (§10) builds
+   nothing and holds nothing. A nested script inherits its caller's hold through
+   `OTOS_HELD_BUILD_FOLDERS`. The lock lives in a holder process (`script/lib/hold-lock.py`,
+   which also holds the daily benchmark's lock, ADR 0043), not in a descriptor every build
+   child would inherit.
 8. **A run names the tree it measured.** `otos_tree_identity` is the git tree id of the
    checkout with uncommitted and untracked files, built in a private copy of the index.
    `check.sh` prints it at the start (`op=check.tree`) and fails when it differs at the
@@ -94,7 +96,10 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
    against it without the network. The folder is copied, never shared: two builds
    resolving into one package folder at once is not a case SwiftPM guards.
 10. **The diff picks the tier.** `check.sh` lists the paths the working tree changes
-    against its merge base with `origin/main`, untracked files included. When every one
+    against its merge base with `origin/main`, untracked files included, with rename
+    detection off (`--no-renames`), so a move lists the path it left as well as the one it
+    reached: with it on, moving `Otos/Foo.swift` to `script/` listed only the `script/`
+    path and the tree took the static tier with the build missing a file. When every one
     is in `docs/`, `.github/`, `.claude/`, a Markdown file, the lint config, or a script
     off the build path, it runs the **static** tier: every gate, no build, no tests.
     Nothing in such a diff is read by the app build or the test suite, so their result
@@ -114,13 +119,14 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     checkout the folder gained about 1.3 GB per checkout, reached 37 GB, and was pruned.
     The pruning took Vision's text models too, which every parallel check then recompiled at
     once, for 80–220 s and sometimes failing (`e5rtError … 13`). After a build,
-    `otos_share_built_models` (`script/lib/xcode.sh`; called by `build.sh`, `bench.sh` and
-    `face-accuracy.sh`) moves each model of the framework the tests load to
+    `otos_share_built_models` (`script/lib/xcode.sh`; called by `otos_build_checkout` for a
+    verification build) moves each model of the framework the tests load to
     `~/Library/Developer/Otos/SharedModels/<hash>/<name>.mlmodelc`, read-only,
     published by rename, and leaves a symlink. `BundledModel.url(named:in:)` resolves it, so
-    Core ML is given the shared path. Before each build `otos_unshare_built_models` removes
-    the links: the models are Xcode's outputs, and an incremental build compiled into a link,
-    which the read-only copy refused. Compiling the five again costs about 6 s a build. The app bundle's copy is left as built. A shared
+    Core ML is given the shared path. Before each build into `build/DerivedData`,
+    `build_and_run.sh`'s included, `otos_build_checkout` calls `otos_unshare_built_models`
+    to remove the links: the models are Xcode's outputs, and an incremental build compiled
+    into a link, which the read-only copy refused. Compiling the five again costs about 6 s a build. The app bundle's copy is left as built. A shared
     copy is published once and never replaced, so its identity holds. The installed app's models
     are copied anew by each install and compile once more each time, which is left to macOS's
     pruning of its Caches. The hash is of the source package's

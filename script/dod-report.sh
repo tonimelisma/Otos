@@ -10,9 +10,9 @@ git_value() {
 
 changed_files() {
   if git -C "$ROOT_DIR" rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
-    git -C "$ROOT_DIR" diff --name-only "$BASE_REF"...HEAD
+    git -C "$ROOT_DIR" diff --no-renames --name-only "$BASE_REF"...HEAD
   else
-    git -C "$ROOT_DIR" diff --name-only HEAD
+    git -C "$ROOT_DIR" diff --no-renames --name-only HEAD
   fi
 }
 

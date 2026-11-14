@@ -84,10 +84,15 @@ The tooling found:
     verdict that is due says so and names its cases (`flagged=`), because only the next
     run can find that a fix landed. The session that sees it starts
     `script/bench.sh daily` in the background and keeps working.
-  - **One run, from the primary checkout.** The run takes a lock directory in the clone's
-    git directory, holding its pid, so every other session sees `verdict=running`, and a
-    second start reports `phase=skipped`. A lock whose pid no longer runs (its session
-    ended mid-run) is taken over. The run re-executes from the primary checkout and
+  - **One run, from the primary checkout.** The run holds a kernel lock (`flock`) on a
+    file in the clone's git directory, through the same holder process that holds a build
+    folder (`otos_hold_lock`, `script/lib/build-folder.sh`), so every other session sees
+    `verdict=running` and a second start reports `phase=skipped`. The lock dies with the
+    run, so a run killed mid-way or a reboot leaves nothing to reclaim. `status` asks the
+    kernel whether the lock is held (`F_GETLK`) without taking it. The pid-in-a-directory
+    lock it replaced outlived a `kill -9`, after which `status` read `verdict=running`
+    forever and no session started another run; and two starts racing between its `mkdir`
+    and the pid write both ran. The run re-executes from the primary checkout and
     measures in a detached checkout under it, because the starting session may remove
     its own worktree before the run ends. It reads `origin/main` as the clone last
     fetched it, since every merge fetches it, so a network that hangs never hangs it.
@@ -96,6 +101,13 @@ The tooling found:
     stays flagged across later runs until one measures clean against the same baseline
     (it was fixed) or the owner accepts it (`script/bench.sh accept`). A baseline that
     followed every run would forget a regression the next day.
+  - **A run that measured nothing judges nothing.** Both sides are measured with this
+    harness first (the baseline too, when it has no record of this harness), a
+    measurement that fails or records nothing fails the run with a named phase, and the
+    judge refuses a side with no records (exit 4). Such a run moves no baseline and writes
+    no last-run day, so the next check reports it due again. Before this, an empty head
+    judged `flagged=0`, an unrecorded base made every case "new", and either one became
+    the baseline.
   - **`check.sh` never fails on the verdict**, because the fix for a flagged case must
     pass the same check.
   - **Attribution is by hand.** A flagged run names a range of commits;
