@@ -18,9 +18,12 @@ carrying its rule, over the groups the rule decides.
 
 ## L1 primary fact
 
-How many items have duplicates: `110 videos with duplicates`, `140 photos with
-duplicates`, `312 items with duplicates` when the groups hold both or a kind is not yet
-read, or `No duplicates`. The sidebar row's count is the same number (DES-017).
+What will happen: `221 copies go to the Trash · 53.9 GB` — the count the button repeats
+and the bytes it does not carry. While nothing would move, how many items have
+duplicates: `6 photos with duplicates`, `110 videos with duplicates`, `312 items with
+duplicates` when the groups hold both or a kind is not yet read, or `No duplicates`. The
+count of items with duplicates is the bar's L3 while something would move, and the
+sidebar row's count is that number (DES-017).
 
 ## Who comes here, and for what
 
@@ -29,8 +32,8 @@ read, or `No duplicates`. The sidebar row's count is the same number (DES-017).
 | Reclaiming space | The total, one button, the biggest first | The bar; each folder's `… in extra copies`; exact copies largest first |
 | Fixing a double import | That folder, in one decision | The folder's header and its rule |
 | Consolidating two folders or a backup library | One side, once | The two-folder header: `Keep the copies in` |
-| Reviewing with care | Each group, which copy stays and why | Every group's line; photos and names tagged Keep or Trash |
-| Arriving from the sidebar count | What this is, and whether it is safe | Each section's one sentence; the bar's legend |
+| Reviewing with care | Each group, which copy stays and why | Every group's line; photos tagged Keep or Trash, names marked by a checkmark or a trash can |
+| Arriving from the sidebar count | What this is, and whether it is safe | Each section's one sentence; the bar's consequence and its legend |
 | Settling what only they can | Just those groups | `Only you can choose`, first |
 
 ## Zones
@@ -43,14 +46,16 @@ list area says why: `Nothing Otos has checked is stored twice.` The window shows
 
 **Sections.** Three, in this order, each present only while it holds a group. A section's
 header is its title in `.headline` (DES-011) with its count beside it (`.subheadline` L3,
-`6 photos`: its groups not kept), over one L3 sentence; a hairline and space above every
-header but the first.
+`6 photos`: its groups not kept), over one L3 sentence that says what its groups are — a
+description, not an instruction: the copies show they can be clicked (below), and the bar's
+legend is the screen's one instruction. A hairline and space above every header but the
+first.
 
 | Section | Holds | Its sentence | Drawn as |
 | --- | --- | --- | --- |
-| `Only you can choose` | Groups whose copies hold work that cannot be combined: two edits, two with `.xmp` / `.srt` files, a like and a dislike | `The copies hold different edits, ratings or .xmp files. Click the one to keep.` | Photos |
-| `Different files of one photo` | Files of one capture whose pixels, format or bytes differ | `Otos keeps the best file of each. Click another to keep it instead.` | Photos |
-| `Exact copies` | The same bytes stored more than once | `The same file stored more than once. Set a rule for a folder, or click a name to keep it.` | Folders, then names |
+| `Only you can choose` | Groups whose copies hold work that cannot be combined: two edits, two with `.xmp` / `.srt` files, a like and a dislike | `Their edits, ratings or .xmp files conflict.` | Photos |
+| `Different files of one photo` | Files of one capture whose pixels, format or bytes differ | `Otos keeps the best file of each.` | Photos |
+| `Exact copies` | The same bytes stored more than once | `The same file stored more than once.` | Folders, then names |
 
 A group's section is a fact about its copies, never about what the user has done to it: a
 group stays where it is when a copy is clicked, when a rule changes and when it is kept
@@ -69,18 +74,25 @@ last, a hairline between groups:
   when nothing moves, it reads that alone. A kept group (Keep All Copies) reads `Kept both
   copies` with a `Review Again` link, and shows no photos.
 - **The photos**: one per copy, 8 pt apart (DES-060), wrapping only when the pane is
-  narrower than the group. Each is a 180 pt square cell with the copy's own thumbnail
-  aspect-fit in it (DES-060A), radius 4, edged with a DES-023 hairline.
+  narrower than the group. A group's cells take the group's own aspect, from its kept
+  copy's upright pixel size (the first copy whose size is known), the longer side 180 pt
+  and the shorter in proportion — square when no size is known — so the picture fills its
+  cell and its caption sits directly under it (DES-107's recorded deviation from
+  DES-060A's uniform cells). The thumbnail is still aspect-fit in the cell, never cropped,
+  radius 4, edged with a DES-023 hairline.
   - Top left, its fate as a tag, word and glyph (DES-029): **Keep** with a checkmark on
-    the accent colour, or **Trash** with a trash can on black 55 %. A copy that goes is
+    the accent colour, or **Trash** with a trash can on black 55 % edged by a white 30 %
+    hairline (`DesignPalette.badgeEdge`), so it reads on a dimmed picture over the dark
+    backdrop. A copy that goes is
     drawn at 40 % opacity, so a group's keeper reads at a glance, in grayscale too. A group
     that waits tags nothing until a click.
-  - Over the bottom of the picture, white over a soft shadow as Photos draws them: the
-    size centred (at the precision that tells the group's copies apart, `39.13 MB`;
-    DES-005A) and the Like or Dislike glyph at the left.
+  - Over the bottom of the picture, each on DES-062's badge (black 55 %, radius 3,
+    `.footnote` white), so they stay legible on a dimmed light picture: the size centred
+    (at the precision that tells the group's copies apart, `39.13 MB`; DES-005A) and the
+    Like or Dislike glyph at the left.
   - Tags and badges appear only once the picture has painted (DES-062); the DES-063 kind
     glyph stands in the cell before then, and its slash variant once a decode has failed.
-  - Under each photo, `.subheadline` L3, one line: what else differs, and the work the
+  - Under each photo, `.subheadline` L3, up to two lines, the cell's width: what else differs, and the work the
     copy holds — the dimensions and the format when the group's files differ in them,
     `Camera original` when not every file is one, then `Liked` / `Disliked`, `Edited in
     Otos`, `Has an .xmp or .srt file` (`6192 × 4128 · Camera original`). What the choice
@@ -107,10 +119,14 @@ it is the only one. A selection made elsewhere (Show, Undo) opens the header tha
     original name`), else the two most common, counted (`96 keeping the original name ·
     14 keeping the older file · 5 more`; `3 chosen by you`). A folder is trusted by
     reading one line, not three hundred.
-  - Trailing, the folder's rule: L3 `Keep the copies in` beside a segmented control
-    `2026/08` | `Imports/Aug 2026` | `Otos decides` (`Both` when the folders are in
-    different libraries, since the keeper rule then keeps each library's copy); or, for one
-    folder, `Keep the` beside `Best copy` | `Original name` | `Oldest` | `Largest`.
+  - Closed, after the text, up to five 28 pt pictures of its first groups — each group's
+    kept copy, aspect-filled squares at radius 4 like a group's picture below — so a closed
+    folder shows what it holds; open, none, since its groups show it.
+  - Trailing, the folder's rule: L3 `Keep the copies in`, 7 pt to the left of a small
+    pop-up menu (DES-017, DES-054) showing only the current choice, offering `2026/08`,
+    `Imports/Aug 2026` and `Otos decides` (`Both` when the folders are in different
+    libraries, since the keeper rule then keeps each library's copy); or, for one folder,
+    `Keep the` beside `Best copy`, `Original name`, `Oldest` and `Largest`.
 - **An Immich account's copies** are never moved (ADR 0046 §8). The account counts as one
   folder, named by the account, since its folders are asset IDs. A set with a library
   folder offers only the account's side and `Both`: keeping the library's side would move
@@ -122,21 +138,29 @@ it is the only one. A selection made elsewhere (Show, Undo) opens the header tha
   rule never reaches the other two sections: files of one photo differ in their pixels and
   are decided by their own photos, and no rule chooses between two people's work.
 - **A group under an open header**, largest first, then newest, kept groups in their place,
-  a hairline under each, indented past the chevron:
-  - one picture, 56 pt, the kept copy's — the copies are one picture, and two of it say
-    nothing one does not;
-  - the capture date, `.body`, then L3: the size the copies share (`4.1 MB each`) and why
-    the group keeps what it keeps (`Keeping the original name`, `…, as the folder rule
-    says`, `You chose this one`); a kept group reads `Kept both copies` with `Review
-    Again` and lists no names;
-  - **one line per copy**, at one left edge so the names compare down a column: its fate
-    tag (**Keep** / **Trash**, as on a photo), then what tells it from the others — its
-    file name when the copies share a folder, its folder when they share a name, else
-    `folder ▸ name` — in `.body`, L3 colour for a copy that goes; then the work it holds,
-    L3 (`Liked · Edited in Otos`).
+  a hairline under each, indented past the chevron — a pair is two lines tall:
+  - one picture, a 40 pt square, the kept copy's thumbnail aspect-filled at radius 4 (DES-107's
+    recorded crop) — the copies are one picture, and two of it say nothing one does not;
+  - **one line per copy**, at one left edge so the names compare down a column: a 20 pt
+    glyph column — an accent `checkmark` for the copy kept, an L3 `trash` for one that goes,
+    blank while the group waits — then what tells it from the others — its file name when
+    the copies share a folder, its folder when they share a name, else `folder ▸ name` — in
+    `.body`, label colour for the copy kept and L3 for one that goes; then the work it
+    holds, L3 (`Liked · Edited in Otos`);
+  - at the trailing edge of the first line, L3: the capture date, the size the copies share
+    and why the group keeps what it keeps (`October 4, 2026 · 4.1 MB each · Keeping the
+    original name`; `…, as the folder rule says`, `You chose this one`). A kept group is
+    one line, its date and `Kept both copies` with `Review Again`, and lists no names.
+
+**A copy shows it can be clicked.** Under the pointer a photo or a name shows the pointing
+hand, and a highlight: a photo's edge becomes a 2 pt secondary border, a name's line a
+rounded tertiary fill — so the affordance is seen without reading.
 
 **A click keeps that copy** — a photo or a name — and tags every other copy of its group
-Trash. It also selects it (DES-061's 3 pt accent border, on the photo or around the line).
+Trash. It also selects it: a photo with DES-061's 3 pt accent border; a name the way a macOS
+list draws its selected row — the system's selected-content fill at radius 4 behind the
+whole line, with its glyph and words in the selected text colour, while the list has focus
+in the key window, and the unemphasized selection gray otherwise.
 A double-click opens the group. Context menu: `Keep This Copy`, `Keep All Copies`, then
 `Move to Trash Now` — the ordinary act on this one copy, now. An Immich account's copy is
 always tagged **Keep**. Its `Move to Trash Now` is disabled, its tooltip adds `Removed only
@@ -146,7 +170,7 @@ in Immich`, and its location reads `Family ▸ IMG_1.HEIC`, with no asset folder
 
 | Zone | Content |
 | --- | --- |
-| What | L1, as above, over one L3 clause: `221 copies go to the Trash · 53.9 GB` — the count the button repeats and the bytes it does not carry; blank space while nothing would move. |
+| What | L1, as above — `221 copies go to the Trash · 53.9 GB` — over L3 the count, `312 photos with duplicates`. While nothing would move, L1 is the count (`6 photos with duplicates`, `No duplicates`) and L3 is blank space at the same height (DES-053). |
 | Middle, behind a hairline | One of three, never blank: the **receipt** of the last move, `221 copies moved to the Trash · 53.9 GB`, written once the Store has hidden the copies, with `Undo` while that move is the window's last change, over `Empty the Trash in Finder to free the space`, until a click or rule changes, a later move replaces it, or the user leaves the list; else the **choices**, `6 photos need your choice` with `Show`, while any group waits (Show selects its first photo); else the **legend**, `Click a photo or a name to keep it, or set a rule for a whole folder.` |
 | Act | `Move 221 Copies to Trash`, a plain bordered button with no Return equivalent (DES-052's deviation), tooltip `Moves every copy tagged Trash to the Trash. Edit ▸ Undo puts them back.` Disabled, it reads `Move Copies to Trash`. No confirmation (DES-076): every Keep and Trash is on screen before the click, the act is undoable, and the receipt says what happened. |
 
@@ -171,8 +195,8 @@ copy leaves the group.
 
 ## Keyboard and VoiceOver
 
-Copies are the selection, as photos or as names. The folder headers and their segmented
-controls are Tab stops, as are `Show`, `Undo` and the bar's button; the copies and the
+Copies are the selection, as photos or as names. The folder headers and their rule pop-ups
+are Tab stops, as are `Show`, `Undo` and the bar's button; the copies and the
 `Review Again` links are not (DES-080).
 
 **Commands**, on the selected photo: **Photo ▸ Keep This Copy**, **Keep All Copies**,
@@ -193,8 +217,9 @@ equivalents: P, U and X already mean curation.
 
 **VoiceOver.**
 - A section's header reads its title, its count and its sentence; a folder's header its
-  name, its lines and `expanded` or `collapsed`. A group's header reads its date and why
-  it keeps what it keeps.
+  name, its lines and `expanded` or `collapsed`. A group's header — for an exact-copy group
+  the facts at its first line's trailing edge — reads its date and why it keeps what it
+  keeps, before the group's copies.
 - A copy is one button reading its file name, its fate (`keep`, `goes to the Trash`,
   `not chosen yet`), then its facts (DES-082); its action keeps it.
 

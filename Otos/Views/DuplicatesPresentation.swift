@@ -25,10 +25,12 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
 
     static let legend = "Click a photo or a name to keep it, or set a rule for a whole folder."
 
+    /// What will happen (DES-010): `221 copies go to the Trash · 53.9 GB`, the count the
+    /// button repeats and the bytes it does not carry; while nothing would move, how many
+    /// items have duplicates (`6 photos with duplicates`, `No duplicates`).
     let primaryLine: String
-    /// `221 copies go to the Trash · 53.9 GB`: what the act moves, the count the button
-    /// repeats and the bytes it does not carry; nil, drawn as blank space at the same
-    /// height, while nothing moves (DES-053).
+    /// How many items have duplicates (`312 photos with duplicates`) under what will move;
+    /// nil, drawn as blank space at the same height, while nothing would move (DES-053).
     let secondaryLine: String?
     let middle: Middle
     let actionTitle: String
@@ -40,11 +42,11 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
         canUndoMove: Bool = false
     ) -> DuplicatesBarPresentation {
         let groups = tally.itemsWithDuplicates
-        let primary = groups == 0
+        let count = groups == 0
             ? "No duplicates"
             : "\(groups) \(tally.noun.string(count: groups)) with duplicates"
         let moving = tally.itemsToMove.count
-        let secondary: String? = if moving > 0 {
+        let consequence: String? = if moving > 0 {
             [
                 "\(moving) \(moving == 1 ? "copy goes" : "copies go") to the Trash",
                 ImportBarByteFormat.phrase(tally.bytesToMove),
@@ -68,8 +70,8 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
             .legend(legend)
         }
         return DuplicatesBarPresentation(
-            primaryLine: primary,
-            secondaryLine: secondary,
+            primaryLine: consequence ?? count,
+            secondaryLine: consequence == nil ? nil : count,
             middle: middle,
             // DES-036: the count is the new information the click commits to; disabled, the
             // title keeps its place and says what it would do (DES-053).
@@ -91,7 +93,8 @@ nonisolated enum DuplicateFolderName {
     }
 }
 
-/// A section's header: what its groups have in common, how many, and what to do with them.
+/// A section's header: what its groups have in common and how many. Its sentence describes;
+/// the bar's legend is the screen's one instruction, and the copies show they can be clicked.
 nonisolated struct DuplicatesSectionPresentation: Equatable, Sendable, Identifiable {
     let id: DuplicatesSection
     /// `Only you can choose`, `Different files of one photo`, `Exact copies`.
@@ -110,11 +113,11 @@ nonisolated struct DuplicatesSectionPresentation: Equatable, Sendable, Identifia
         let noun = DuplicateItemNoun.covering(groups.flatMap(\.copies).map(\.kind))
         let (title, detail) = switch section {
         case .choose:
-            ("Only you can choose", "The copies hold different edits, ratings or .xmp files. Click the one to keep.")
+            ("Only you can choose", "Their edits, ratings or .xmp files conflict.")
         case .different:
-            ("Different files of one photo", "Otos keeps the best file of each. Click another to keep it instead.")
+            ("Different files of one photo", "Otos keeps the best file of each.")
         case .exact:
-            ("Exact copies", "The same file stored more than once. Set a rule for a folder, or click a name to keep it.")
+            ("Exact copies", "The same file stored more than once.")
         }
         return DuplicatesSectionPresentation(
             id: section,
@@ -154,6 +157,11 @@ nonisolated struct DuplicateFolderBucketPresentation: Equatable, Sendable, Ident
     let summary: String?
     let rule: Rule?
     let isTwoFolders: Bool
+    /// What a closed header shows of its folder: the picture of each of its first groups,
+    /// up to `previewLimit`.
+    let previews: [DuplicatePicture]
+
+    static let previewLimit = 5
 
     static func map(
         _ bucket: DuplicateFolderBucket,
@@ -172,12 +180,16 @@ nonisolated struct DuplicateFolderBucketPresentation: Equatable, Sendable, Ident
         let moving = resolutions.reduce(0) { $0 + $1.moving.count }
         let extra = moving > 0 ? ImportBarByteFormat.phrase(bytes).map { "\($0) in extra copies" } : nil
         let summary = summary(of: active, session: session, withLibrary: withLibrary)
+        // An exact-copy group's copies are one picture: its first, the kept copy, stands for it.
+        let previews = bucket.groups.prefix(previewLimit).compactMap { group in
+            group.copies.first.map { DuplicatePicture(id: $0.id, kind: $0.kind) }
+        }
         guard case let .folders(set) = bucket.id else {
             return DuplicateFolderBucketPresentation(
                 id: bucket.id,
                 title: "In three or more folders",
                 detail: ([count == 0 ? "Every copy kept" : things] + [extra].compactMap(\.self)).joined(separator: " · "),
-                summary: summary, rule: nil, isTwoFolders: false
+                summary: summary, rule: nil, isTwoFolders: false, previews: previews
             )
         }
         let folders = set.folders
@@ -207,7 +219,8 @@ nonisolated struct DuplicateFolderBucketPresentation: Equatable, Sendable, Ident
                     ],
                     selected: selected
                 ) : nil,
-                isTwoFolders: true
+                isTwoFolders: true,
+                previews: previews
             )
         }
         let staying = folders.filter { !$0.canMoveToTrash }.map(\.libraryDisplayName)
@@ -229,7 +242,8 @@ nonisolated struct DuplicateFolderBucketPresentation: Equatable, Sendable, Ident
                 ],
                 selected: selected
             ) : nil,
-            isTwoFolders: false
+            isTwoFolders: false,
+            previews: previews
         )
     }
 
@@ -279,6 +293,13 @@ nonisolated enum DuplicatesWords {
         }
         return quoted.dropLast().joined(separator: ", ") + " and " + last
     }
+}
+
+/// One copy's picture where it stands for its group: its thumbnail, or its kind's glyph
+/// before the thumbnail has painted.
+nonisolated struct DuplicatePicture: Equatable, Sendable, Identifiable {
+    let id: MediaAssetID
+    let kind: MediaKind?
 }
 
 /// A copy's fate as its photo shows it: a tag, and a face drawn bright or dimmed (DES-029:
@@ -346,6 +367,31 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
     let pictureKind: MediaKind?
     let tiles: [DuplicateCopyTilePresentation]
     let accessibilityLabel: String
+    /// Each photo's cell: the group's own aspect from its copies' upright pixel size,
+    /// bounded by `cellBound` each way, so the picture fills it and its caption sits right
+    /// under it; square when no copy's size is known.
+    let cell: CGSize
+
+    /// The longer side of a photo's cell.
+    static let cellBound: CGFloat = 180
+
+    /// An exact-copy group's facts as one line at the trailing edge of its first name: its
+    /// date, the size its copies share and why it keeps what it keeps.
+    var dateAndReason: String {
+        [title, reason].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    /// The cell for pictures of `width` × `height`: the longer side `bound`, the shorter in
+    /// proportion, in whole points; square when the size is unknown.
+    static func cell(width: Int?, height: Int?, bound: CGFloat = cellBound) -> CGSize {
+        guard let width, let height, width > 0, height > 0 else {
+            return CGSize(width: bound, height: bound)
+        }
+        let aspect = CGFloat(width) / CGFloat(height)
+        return aspect >= 1
+            ? CGSize(width: bound, height: (bound / aspect).rounded())
+            : CGSize(width: (bound * aspect).rounded(), height: bound)
+    }
 
     static func map(
         _ group: DuplicateGroup,
@@ -359,12 +405,15 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
         let title = group.captureLocalTime.map {
             $0.formatted(Date.FormatStyle(date: .long, time: .omitted, calendar: calendar))
         } ?? "No Date"
+        // The kept copy's size when it is known, else the first copy's that is.
+        let sized = copies.first { $0.pixelWidth != nil && $0.pixelHeight != nil }
+        let cell = cell(width: sized?.pixelWidth, height: sized?.pixelHeight)
         if group.isKept {
             let note = count == 2 ? "Kept both copies" : "Kept all \(count) copies"
             return DuplicateGroupPresentation(
                 id: group.id, title: title, reason: note, isKept: true,
                 picture: copies.first?.id, pictureKind: copies.first?.kind, tiles: [],
-                accessibilityLabel: "\(title), \(note)"
+                accessibilityLabel: "\(title), \(note)", cell: cell
             )
         }
         let resolution = session.resolution(of: group)
@@ -401,7 +450,8 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
             picture: copies.first?.id,
             pictureKind: copies.first?.kind,
             tiles: tiles,
-            accessibilityLabel: [title, reason].filter { !$0.isEmpty }.joined(separator: ", ")
+            accessibilityLabel: [title, reason].filter { !$0.isEmpty }.joined(separator: ", "),
+            cell: cell
         )
     }
 

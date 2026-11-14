@@ -252,6 +252,8 @@ struct DuplicatesTests {
         #expect(Set(buckets.map(\.id)) == [.folders(oneFolder), .folders(pair)])
     }
 
+    /// The bar's L1 is what will happen; the count of items with duplicates is its L3, and
+    /// is L1 only while nothing would move.
     @Test func theBarNamesTheActAndKeepsItsTitleWhenDisabled() {
         let none = DuplicatesBarPresentation.map(DuplicatesTally(
             itemsWithDuplicates: 6, noun: .videos, itemsToMove: [], bytesToMove: .zero, needingChoice: 6
@@ -267,8 +269,8 @@ struct DuplicatesTests {
             itemsToMove: [Self.copy("a.jpg").copy.id, Self.copy("b.mp4").copy.id],
             bytesToMove: PartialByteCount(knownBytes: 14_900_000_000, unknownCount: 0), needingChoice: 0
         ))
-        #expect(two.primaryLine == "110 photos and videos with duplicates")
-        #expect(two.secondaryLine == "2 copies go to the Trash · 14.9 GB")
+        #expect(two.primaryLine == "2 copies go to the Trash · 14.9 GB")
+        #expect(two.secondaryLine == "110 photos and videos with duplicates")
         #expect(two.middle == .legend(DuplicatesBarPresentation.legend))
         #expect(two.actionTitle == "Move 2 Copies to Trash")
         #expect(two.actionEnabled)
@@ -281,6 +283,13 @@ struct DuplicatesTests {
             canUndoMove: true
         )
         #expect(moved.primaryLine == "No duplicates")
+        #expect(moved.secondaryLine == nil)
+        let one = DuplicatesBarPresentation.map(DuplicatesTally(
+            itemsWithDuplicates: 1, noun: .photos, itemsToMove: [Self.copy("a.jpg").copy.id],
+            bytesToMove: PartialByteCount(knownBytes: 4_100_000, unknownCount: 0), needingChoice: 0
+        ))
+        #expect(one.primaryLine == "1 copy goes to the Trash · 4 MB")
+        #expect(one.secondaryLine == "1 photo with duplicates")
         #expect(moved.middle == .receipt(
             line: "2 copies moved to the Trash · 14.9 GB",
             detail: "Empty the Trash in Finder to free the space",
@@ -501,6 +510,13 @@ struct DuplicatesTests {
         #expect(state.layout.buckets.first?.groups.map(\.id) == [moreTwins.id, twins.id])
         #expect(state.groups.map(\.id) == [conflict.id, resized.id, moreTwins.id, twins.id, mirrored.id, scattered.id])
         #expect(DuplicatesSectionPresentation.map(.exact, in: state.layout)?.count == "4 photos")
+        // Each section's sentence says what its groups are; the bar's legend is the one
+        // instruction.
+        #expect(DuplicatesSection.allCases.compactMap { DuplicatesSectionPresentation.map($0, in: state.layout)?.detail } == [
+            "Their edits, ratings or .xmp files conflict.",
+            "Otos keeps the best file of each.",
+            "The same file stored more than once.",
+        ])
         #expect(DuplicatesSectionPresentation.map(.choose, in: CatalogDuplicatesState(groups: [twins]).layout) == nil)
 
         // No rule could decide a group in three or more folders.
@@ -540,6 +556,8 @@ struct DuplicatesTests {
         let twins = try Self.onlyGroup([Self.copy("2026/08/a.jpg", choice: .liked), Self.copy("2026/08/a copy.jpg")])
         let row = DuplicateGroupPresentation.map(twins, session: DuplicatesSession(), style: .names)
         #expect(row.reason == "1 KB each · Keeping the copy you liked")
+        // Beside the names, at the trailing edge of the first: the date, the shared size, why.
+        #expect(row.dateAndReason == "\(row.title) · 1 KB each · Keeping the copy you liked")
         #expect(row.picture == Self.copy("2026/08/a.jpg").copy.id)
         #expect(row.tiles.map(\.label) == ["a.jpg", "a copy.jpg"])
         #expect(row.tiles.map(\.caption) == ["Liked", nil])
@@ -551,6 +569,35 @@ struct DuplicatesTests {
         let renamed = try Self.onlyGroup([Self.copy("2026/08/b.jpg"), Self.copy("Imports/b (1).jpg")])
         #expect(Set(DuplicateGroupPresentation.map(renamed, session: DuplicatesSession(), style: .names).tiles.map(\.label))
             == ["2026/08 ▸ b.jpg", "Imports ▸ b (1).jpg"])
+    }
+
+    /// A group's photos take its own aspect from the copies' upright pixel size, bounded by
+    /// 180 pt each way, so a picture fills its cell; square when no size is known.
+    @Test func aGroupsCellsTakeItsOwnAspect() throws {
+        #expect(DuplicateGroupPresentation.cell(width: 4032, height: 3024) == CGSize(width: 180, height: 135))
+        #expect(DuplicateGroupPresentation.cell(width: 3024, height: 4032) == CGSize(width: 135, height: 180))
+        #expect(DuplicateGroupPresentation.cell(width: 6000, height: 1000) == CGSize(width: 180, height: 30))
+        #expect(DuplicateGroupPresentation.cell(width: nil, height: 3024) == CGSize(width: 180, height: 180))
+        #expect(DuplicateGroupPresentation.cell(width: 0, height: 0) == CGSize(width: 180, height: 180))
+        let landscape = try Self.onlyGroup([Self.copy("a.jpg"), Self.copy("a copy.jpg")])
+        #expect(DuplicateGroupPresentation.map(landscape, session: DuplicatesSession()).cell == CGSize(width: 180, height: 135))
+    }
+
+    /// A closed folder header shows the pictures of its first five groups, each group's
+    /// kept copy.
+    @Test func aFolderHeaderPreviewsItsFirstGroups() throws {
+        let groups = try (0 ..< 7).map { index in
+            try DuplicateGroupPolicy.group(
+                id: .identical(#require(XXH3Digest128(data: Data(repeating: UInt8(10 + index), count: 16)))),
+                copies: [Self.copy("2026/10/p\(index).jpg").copy, Self.copy("2026/10/p\(index)_001.jpg").copy],
+                keptPairs: []
+            )
+        }
+        let bucket = try #require(CatalogDuplicatesState(groups: groups).layout.buckets.first)
+        let header = DuplicateFolderBucketPresentation.map(bucket, session: DuplicatesSession(), withLibrary: false)
+        #expect(header.previews.count == DuplicateFolderBucketPresentation.previewLimit)
+        #expect(header.previews.map(\.id) == bucket.groups.prefix(5).compactMap { $0.copies.first?.id })
+        #expect(header.previews.allSatisfy { !$0.id.relativePath.fileName.contains("_001") })
     }
 
     @Test func theStoreGroupsVisibleCopiesWithCurrentDigestsAndRemembersKeepAll() async throws {

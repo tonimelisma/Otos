@@ -59,6 +59,8 @@ nonisolated struct DuplicateCopy: Equatable, Sendable, Identifiable {
     let byteSize: Int64?
     /// The file's birth time, a filesystem fact.
     let createdAt: Date?
+    /// The upright pixel size, as the photo is seen (its orientation applied): what the
+    /// list prints and lays its cells out by.
     let pixelWidth: Int?
     let pixelHeight: Int?
     let mediaChoice: MediaChoice

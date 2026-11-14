@@ -30,6 +30,9 @@ struct DuplicatesView: View {
     @State private var toggled: Set<DuplicateFolderPlace> = []
     @FocusState private var listFocused: Bool
     @Environment(\.colorScheme) private var colorScheme
+    /// Whether the window is the key one: a selected name is drawn emphasized only while
+    /// the list has focus in the key window, as a macOS list draws its selected row.
+    @Environment(\.appearsActive) private var appearsActive
 
     var body: some View {
         let tally = session.tally(in: duplicates)
@@ -132,7 +135,14 @@ struct DuplicatesView: View {
                         case let .photos(group, isFirst):
                             photosRow(group, isFirst: isFirst, order: tileOrder, withLibrary: withLibrary)
                         case let .bucket(bucket, isExpanded):
-                            DuplicateFolderHeader(bucket: bucket, isExpanded: isExpanded, actions: actions) {
+                            DuplicateFolderHeader(
+                                bucket: bucket,
+                                isExpanded: isExpanded,
+                                tileContentStore: tileContentStore,
+                                thumbnailDirectory: thumbnailDirectory,
+                                detailReader: detailReader,
+                                actions: actions
+                            ) {
                                 toggle(bucket.id)
                             }
                         case let .names(group):
@@ -211,9 +221,10 @@ struct DuplicatesView: View {
             DuplicateGroupSeam(isFirst: isFirst)
             DuplicateGroupHeader(group: group, presentation: presentation, actions: actions)
             if !presentation.tiles.isEmpty {
+                // The group's cells take its own aspect, so a picture fills its cell.
                 LazyVGrid(
                     columns: [GridItem(
-                        .adaptive(minimum: DuplicateCopyTile.edge, maximum: DuplicateCopyTile.edge),
+                        .adaptive(minimum: presentation.cell.width, maximum: presentation.cell.width),
                         spacing: DuplicateCopyTile.gutter,
                         alignment: .topLeading
                     )],
@@ -224,6 +235,7 @@ struct DuplicatesView: View {
                         DuplicateCopyTile(
                             tile: tile,
                             group: group,
+                            cell: presentation.cell,
                             isSelected: selection.contains(tile.id),
                             tileContentStore: tileContentStore,
                             thumbnailDirectory: thumbnailDirectory,
@@ -238,21 +250,18 @@ struct DuplicatesView: View {
         .padding(.bottom, 16)
     }
 
-    /// An exact-copy group: one picture, since its copies are one picture, beside its date,
-    /// the size the copies share and why it keeps what it keeps, over a line per copy.
+    /// An exact-copy group: one picture, since its copies are one picture, beside a line per
+    /// copy, the first carrying the group's date, the size the copies share and why it keeps
+    /// what it keeps at its trailing edge. Kept, its date and `Kept both copies`.
     @ViewBuilder
     private func namesRow(_ group: DuplicateGroup, order: DuplicatesTileOrder, withLibrary: Bool) -> some View {
         let presentation = DuplicateGroupPresentation.map(group, session: session, style: .names, withLibrary: withLibrary)
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 8) {
             if let picture = presentation.picture {
                 DuplicateThumbnail(
                     id: picture,
                     kind: presentation.pictureKind,
-                    edge: DuplicateCopyLine.pictureEdge,
-                    fate: .undecided,
-                    size: nil,
-                    choice: .notRated,
-                    isSelected: false,
+                    face: .cropped(DuplicateCopyLine.pictureEdge),
                     tileContentStore: tileContentStore,
                     thumbnailDirectory: thumbnailDirectory,
                     detailReader: detailReader
@@ -262,21 +271,28 @@ struct DuplicatesView: View {
                 }
                 .accessibilityHidden(true)
             }
-            VStack(alignment: .leading, spacing: 2) {
-                DuplicateGroupHeader(group: group, presentation: presentation, actions: actions)
-                ForEach(presentation.tiles) { tile in
+            VStack(alignment: .leading, spacing: 0) {
+                if presentation.isKept {
+                    DuplicateGroupHeader(group: group, presentation: presentation, actions: actions)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                }
+                ForEach(Array(presentation.tiles.enumerated()), id: \.element.id) { index, tile in
                     DuplicateCopyLine(
                         tile: tile,
                         group: group,
+                        trailing: index == 0 ? presentation.dateAndReason : nil,
                         isSelected: selection.contains(tile.id),
+                        isEmphasized: listFocused && appearsActive,
                         actions: actions,
                         keep: { keep(tile.id, order: order) }
                     )
                 }
             }
-            Spacer(minLength: 0)
+            // VoiceOver reads the group's facts before its names (DES-082).
+            .accessibilityElement(children: .contain)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
         // Under its folder's header, past the header's disclosure mark.
         .padding(.leading, DuplicateFolderHeader.indent)
         .overlay(alignment: .bottom) {
@@ -332,7 +348,7 @@ struct DuplicatesActions {
 }
 
 /// A section's header (DES-011: a group header inside content): its title with how many
-/// it holds, over what to do with them; a hairline and space above every one but the first.
+/// it holds, over what its groups are; a hairline and space above every one but the first.
 private struct DuplicatesSectionHeader: View {
     let header: DuplicatesSectionPresentation
     let isFirst: Bool
@@ -369,14 +385,20 @@ private struct DuplicatesSectionHeader: View {
 }
 
 /// A folder's header in Exact copies: a disclosure mark, the folder (or two), how many and
-/// how much, why its groups keep what they keep, and the folder's rule as a segmented
-/// choice — one click decides every group under it.
+/// how much, why its groups keep what they keep, closed a few of its pictures, and the
+/// folder's rule as a small pop-up beside its prompt (DES-054) — one choice decides every
+/// group under it.
 private struct DuplicateFolderHeader: View {
     /// The disclosure mark's column: a folder's groups start past it.
     static let indent: CGFloat = 22
+    /// A closed header's pictures.
+    static let previewEdge: CGFloat = 28
 
     let bucket: DuplicateFolderBucketPresentation
     let isExpanded: Bool
+    let tileContentStore: TileContentStore?
+    let thumbnailDirectory: URL?
+    let detailReader: MediaTileDetailReader?
     let actions: DuplicatesActions
     let toggle: () -> Void
 
@@ -412,7 +434,23 @@ private struct DuplicateFolderHeader: View {
                                 .lineLimit(1)
                         }
                     }
-                    Spacer(minLength: 0)
+                    Spacer(minLength: 8)
+                    // Closed, a glance at what is inside; open, the groups themselves show it.
+                    if !isExpanded, !bucket.previews.isEmpty {
+                        HStack(spacing: 4) {
+                            ForEach(bucket.previews) { preview in
+                                DuplicateThumbnail(
+                                    id: preview.id,
+                                    kind: preview.kind,
+                                    face: .cropped(Self.previewEdge),
+                                    tileContentStore: tileContentStore,
+                                    thumbnailDirectory: thumbnailDirectory,
+                                    detailReader: detailReader
+                                )
+                            }
+                        }
+                        .accessibilityHidden(true)
+                    }
                 }
                 .contentShape(Rectangle())
             }
@@ -420,20 +458,24 @@ private struct DuplicateFolderHeader: View {
             .accessibilityLabel([bucket.title, bucket.detail, bucket.summary].compactMap(\.self).joined(separator: ", "))
             .accessibilityValue(isExpanded ? "expanded" : "collapsed")
             if let rule = bucket.rule {
-                Text(rule.prompt)
-                    .font(.subheadline)
-                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                Picker(rule.prompt, selection: Binding(
-                    get: { rule.selected },
-                    set: { actions.setRule($0, rule.folderSet) }
-                )) {
-                    ForEach(rule.options, id: \.rule) { option in
-                        Text(option.title).tag(option.rule)
+                // DES-017: the label left of its control, 7 pt apart.
+                HStack(spacing: 7) {
+                    Text(rule.prompt)
+                        .font(.subheadline)
+                        .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                    Picker(rule.prompt, selection: Binding(
+                        get: { rule.selected },
+                        set: { actions.setRule($0, rule.folderSet) }
+                    )) {
+                        ForEach(rule.options, id: \.rule) { option in
+                            Text(option.title).tag(option.rule)
+                        }
                     }
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
+                    .labelsHidden()
+                    .fixedSize()
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
             }
         }
         .padding(.vertical, 8)
@@ -496,28 +538,28 @@ private struct DuplicateGroupHeader: View {
     }
 }
 
-/// What a copy offers under the pointer, as a photo or as a name: a click keeps it, a
-/// double-click opens its group, and its context menu carries the per-copy commands.
-private struct DuplicateCopyControls: ViewModifier {
+/// What a copy offers under the pointer, as a photo or as a name: the pointing hand and a
+/// highlight while the pointer is over it, so a click's effect is seen without a sentence; a
+/// click keeps it, a double-click opens its group, and its context menu carries the per-copy
+/// commands.
+private struct DuplicateCopyPointer: ViewModifier {
     let tile: DuplicateCopyTilePresentation
     let group: DuplicateGroup
-    let isSelected: Bool
+    @Binding var isHovered: Bool
     let actions: DuplicatesActions
     let keep: () -> Void
 
     func body(content: Content) -> some View {
         content
             .contentShape(Rectangle())
+            .onHover { isHovered = $0 }
+            .pointerStyle(.link)
             .onTapGesture(perform: keep)
             // The first click keeps it at once; the second also opens the group (HIG Lists).
             .simultaneousGesture(TapGesture(count: 2).onEnded {
                 actions.openGroupContaining(tile.id)
             })
             .help(tile.help)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(tile.accessibilityLabel)
-            .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
-            .accessibilityAction { keep() }
             .contextMenu {
                 Button("Keep This Copy", action: keep)
                     .disabled(!tile.canKeep)
@@ -529,8 +571,25 @@ private struct DuplicateCopyControls: ViewModifier {
     }
 }
 
-/// `Keep` or `Trash`, a word and a glyph on a capsule (DES-029); nothing while the group
-/// waits.
+/// A copy as VoiceOver reads it: one button naming the file, its fate and its facts
+/// (DES-082), whose action keeps it.
+private struct DuplicateCopyAccessibility: ViewModifier {
+    let tile: DuplicateCopyTilePresentation
+    let isSelected: Bool
+    let keep: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(tile.accessibilityLabel)
+            .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
+            .accessibilityAction { keep() }
+    }
+}
+
+/// `Keep` or `Trash` on a photo, a word and a glyph on a capsule (DES-029); nothing while
+/// the group waits. Trash's dark capsule carries a hairline edge so it reads on a dimmed
+/// picture over the dark backdrop.
 private struct DuplicateFateTag: View {
     let fate: DuplicateCopyFate
 
@@ -541,7 +600,7 @@ private struct DuplicateFateTag: View {
                 .font(.callout)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)
-                .foregroundStyle(.white)
+                .foregroundStyle(DesignPalette.badgeLabel)
                 .background(Capsule().fill(Color.accentColor))
                 .accessibilityHidden(true)
         case .trash:
@@ -549,8 +608,9 @@ private struct DuplicateFateTag: View {
                 .font(.callout)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)
-                .foregroundStyle(.white)
-                .background(Capsule().fill(.black.opacity(0.55)))
+                .foregroundStyle(DesignPalette.badgeLabel)
+                .background(Capsule().fill(DesignPalette.badge))
+                .overlay(Capsule().strokeBorder(DesignPalette.badgeEdge, lineWidth: 1))
                 .accessibilityHidden(true)
         case .undecided:
             EmptyView()
@@ -558,63 +618,124 @@ private struct DuplicateFateTag: View {
     }
 }
 
-/// One exact copy as a line: its fate, then what tells it from the group's other copies —
-/// its name, or its folder — and the work it holds. The names of a group sit under one
-/// another at one left edge, so they compare down a column. A click keeps it; selection is
-/// DES-061's accent border.
+/// One exact copy as a line, drawn as a macOS list row: a glyph column — the accent
+/// checkmark for the copy kept, a secondary trash can for one that goes, blank while the
+/// group waits — then what tells it from the group's other copies (its name, or its folder)
+/// and the work it holds; on the group's first line, the group's date and why at the
+/// trailing edge. The names of a group sit at one left edge, so they compare down a column.
+/// A click keeps it; selected, the line takes the system's selected-row highlight.
 private struct DuplicateCopyLine: View {
     /// The group's one picture.
-    static let pictureEdge: CGFloat = 56
-    /// The fate tags' column, so every name starts at one edge.
-    private static let tagWidth: CGFloat = 74
+    static let pictureEdge: CGFloat = 40
+    /// The fate glyphs' column, so every name starts at one edge.
+    private static let glyphWidth: CGFloat = 20
 
     let tile: DuplicateCopyTilePresentation
     let group: DuplicateGroup
+    let trailing: String?
     let isSelected: Bool
+    /// Whether the selection is drawn in the accent, as the key list's selected row is,
+    /// or in the unemphasized gray of a list without focus.
+    let isEmphasized: Bool
     let actions: DuplicatesActions
     let keep: () -> Void
 
+    @State private var isHovered = false
     @Environment(\.colorScheme) private var colorScheme
 
+    /// On the accent, every glyph and word turns to the selected text colour, as a macOS
+    /// list row's do.
+    private var onAccent: Bool {
+        isSelected && isEmphasized
+    }
+
+    private var nameColor: Color {
+        if onAccent {
+            return Color(nsColor: .alternateSelectedControlTextColor)
+        }
+        return tile.fate == .trash ? DesignPalette.l3(for: colorScheme) : DesignPalette.label(for: colorScheme)
+    }
+
+    private var detailColor: Color {
+        onAccent ? Color(nsColor: .alternateSelectedControlTextColor) : DesignPalette.l3(for: colorScheme)
+    }
+
     var body: some View {
-        HStack(alignment: .center, spacing: 6) {
-            DuplicateFateTag(fate: tile.fate)
-                .frame(width: Self.tagWidth, alignment: .leading)
-            Text(tile.label)
-                .font(.body)
-                .foregroundStyle(tile.fate == .trash ? DesignPalette.l3(for: colorScheme) : DesignPalette.label(for: colorScheme))
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if let caption = tile.caption {
-                Text(caption)
-                    .font(.subheadline)
-                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                glyph
+                    .frame(width: Self.glyphWidth, alignment: .center)
+                Text(tile.label)
+                    .font(.body)
+                    .foregroundStyle(nameColor)
                     .lineLimit(1)
+                    .truncationMode(.middle)
+                if let caption = tile.caption {
+                    Text(caption)
+                        .font(.subheadline)
+                        .foregroundStyle(detailColor)
+                        .lineLimit(1)
+                }
+            }
+            .layoutPriority(1)
+            .modifier(DuplicateCopyAccessibility(tile: tile, isSelected: isSelected, keep: keep))
+            Spacer(minLength: 8)
+            if let trailing {
+                Text(trailing)
+                    .font(.subheadline)
+                    .foregroundStyle(detailColor)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilitySortPriority(1)
             }
         }
         .padding(.horizontal, 4)
-        .padding(.vertical, 3)
-        .overlay {
+        .padding(.vertical, 2)
+        .background {
             if isSelected {
                 RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(Color.accentColor, lineWidth: 3)
+                    .fill(Color(nsColor: isEmphasized
+                            ? .selectedContentBackgroundColor
+                            : .unemphasizedSelectedContentBackgroundColor))
+            } else if isHovered {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(.fill.tertiary)
             }
         }
-        .modifier(DuplicateCopyControls(tile: tile, group: group, isSelected: isSelected, actions: actions, keep: keep))
+        .modifier(DuplicateCopyPointer(tile: tile, group: group, isHovered: $isHovered, actions: actions, keep: keep))
+    }
+
+    @ViewBuilder
+    private var glyph: some View {
+        switch tile.fate {
+        case .keep:
+            Image(systemName: "checkmark")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(onAccent ? Color(nsColor: .alternateSelectedControlTextColor) : Color.accentColor)
+        case .trash:
+            Image(systemName: "trash")
+                .font(.callout)
+                .foregroundStyle(detailColor)
+        case .undecided:
+            Color.clear
+                .frame(height: 1)
+        }
     }
 }
 
-/// One copy's photo: a square cell with its picture, tagged Keep (and bright) or Trash (and
-/// dimmed), its size and its Like or Dislike over the bottom of the picture; under it what
-/// else differs, and its folder when the group spans folders. A click keeps it; where it is
-/// goes in its tooltip.
+/// One copy's photo: a cell of its group's aspect with its picture, tagged Keep (and
+/// bright) or Trash (and dimmed), its size and its Like or Dislike on badges over the bottom
+/// of the picture; under it what else differs, and its folder when the group spans folders.
+/// A click keeps it; where it is goes in its tooltip.
 private struct DuplicateCopyTile: View {
-    static let edge: CGFloat = 180
     /// DES-060's 8 pt gutter between tiles.
     static let gutter: CGFloat = 8
 
     let tile: DuplicateCopyTilePresentation
     let group: DuplicateGroup
+    let cell: CGSize
     let isSelected: Bool
     let tileContentStore: TileContentStore?
     let thumbnailDirectory: URL?
@@ -622,6 +743,7 @@ private struct DuplicateCopyTile: View {
     let actions: DuplicatesActions
     let keep: () -> Void
 
+    @State private var isHovered = false
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -629,11 +751,9 @@ private struct DuplicateCopyTile: View {
             DuplicateThumbnail(
                 id: tile.id,
                 kind: tile.kind,
-                edge: Self.edge,
-                fate: tile.fate,
-                size: tile.size,
-                choice: tile.choice,
+                face: .photo(cell: cell, fate: tile.fate, size: tile.size, choice: tile.choice),
                 isSelected: isSelected,
+                isHovered: isHovered,
                 tileContentStore: tileContentStore,
                 thumbnailDirectory: thumbnailDirectory,
                 detailReader: detailReader
@@ -643,9 +763,9 @@ private struct DuplicateCopyTile: View {
                 Text(caption)
                     .font(.subheadline)
                     .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                    .lineLimit(1)
+                    .lineLimit(2)
                     .truncationMode(.middle)
-                    .frame(width: Self.edge, alignment: .leading)
+                    .frame(width: cell.width, alignment: .leading)
             }
             // Which folder this copy is in, when the group spans folders.
             if let folder = tile.folder {
@@ -654,29 +774,45 @@ private struct DuplicateCopyTile: View {
                     .foregroundStyle(DesignPalette.l3(for: colorScheme))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(width: Self.edge, alignment: .leading)
+                    .frame(width: cell.width, alignment: .leading)
             }
         }
-        .modifier(DuplicateCopyControls(tile: tile, group: group, isSelected: isSelected, actions: actions, keep: keep))
+        .modifier(DuplicateCopyAccessibility(tile: tile, isSelected: isSelected, keep: keep))
+        .modifier(DuplicateCopyPointer(tile: tile, group: group, isHovered: $isHovered, actions: actions, keep: keep))
     }
 }
 
-/// A photo's face: the thumbnail aspect-fit and centred in its square cell (DES-060A),
-/// following the grid's no-blank rule — the kind glyph (DES-063) only before this copy's
-/// thumbnail has ever decoded, and its slash variant once a decode has failed. Its fate is
-/// a tag at the top left — `Keep` with a checkmark on the accent, `Trash` with a trash can
-/// on black — and a copy that goes is drawn at 40 % opacity, so a group's keeper reads at a
-/// glance and in grayscale (DES-029). The size sits at the bottom centre and the Like or
-/// Dislike at the bottom left, white over a shadow; tags and badges appear only once the
-/// picture has painted (DES-062). Selection is DES-061's 3 pt accent border, never a fill.
+/// A copy's picture, following the grid's no-blank rule — the kind glyph (DES-063) only
+/// before this copy's thumbnail has ever decoded, and its slash variant once a decode has
+/// failed — in one of two faces:
+///
+/// - **A photo**: aspect-fit in a cell of its group's aspect (DES-060A), so it fills the
+///   cell. Its fate is a tag at the top left — `Keep` with a checkmark on the accent, `Trash`
+///   with a trash can on black — and a copy that goes is drawn at 40 % opacity, so a group's
+///   keeper reads at a glance and in grayscale (DES-029). The size sits at the bottom centre
+///   and the Like or Dislike at the bottom left, each on DES-062's badge; tags and badges
+///   appear only once the picture has painted (DES-062). Selection is DES-061's 3 pt accent
+///   border, never a fill; under the pointer, a 2 pt secondary border.
+/// - **Cropped**: a small square, aspect-filled, standing for a group whose copies are one
+///   picture (DES-107's recorded deviation from DES-060A, as DES-103's map stack).
 private struct DuplicateThumbnail: View {
+    enum Face {
+        case photo(cell: CGSize, fate: DuplicateCopyFate, size: String?, choice: MediaChoice)
+        case cropped(CGFloat)
+
+        var cell: CGSize {
+            switch self {
+            case let .photo(cell, _, _, _): cell
+            case let .cropped(edge): CGSize(width: edge, height: edge)
+            }
+        }
+    }
+
     let id: MediaAssetID
     let kind: MediaKind?
-    let edge: CGFloat
-    let fate: DuplicateCopyFate
-    let size: String?
-    let choice: MediaChoice
-    let isSelected: Bool
+    let face: Face
+    var isSelected = false
+    var isHovered = false
     let tileContentStore: TileContentStore?
     let thumbnailDirectory: URL?
     let detailReader: MediaTileDetailReader?
@@ -685,88 +821,71 @@ private struct DuplicateThumbnail: View {
     @Environment(\.colorScheme) private var colorScheme
 
     /// The picture's drawn size, aspect-fit in the cell.
-    private func fittedSize(of image: CGImage) -> CGSize {
-        let scale = min(edge / CGFloat(max(image.width, 1)), edge / CGFloat(max(image.height, 1)))
+    private func fittedSize(of image: CGImage, in cell: CGSize) -> CGSize {
+        let scale = min(cell.width / CGFloat(max(image.width, 1)), cell.height / CGFloat(max(image.height, 1)))
         return CGSize(
             width: (CGFloat(image.width) * scale).rounded(),
             height: (CGFloat(image.height) * scale).rounded()
         )
     }
 
+    /// The edge: the selection's accent, the pointer's secondary border, or a DES-023
+    /// hairline so a dark picture reads on the dark backdrop.
+    private var edge: some View {
+        RoundedRectangle(cornerRadius: 4)
+            .strokeBorder(
+                isSelected ? AnyShapeStyle(Color.accentColor)
+                    : isHovered ? AnyShapeStyle(.secondary) : AnyShapeStyle(DesignPalette.hairline(for: colorScheme)),
+                lineWidth: isSelected ? 3 : isHovered ? 2 : 1
+            )
+    }
+
     var body: some View {
+        let cell = face.cell
         ZStack {
             if let image {
-                let fitted = fittedSize(of: image)
-                Image(decorative: image, scale: 1)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: fitted.width, height: fitted.height)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .opacity(fate == .trash ? 0.4 : 1)
-                    .overlay(alignment: .bottom) {
-                        badges
-                    }
-                    .overlay(alignment: .topLeading) {
-                        DuplicateFateTag(fate: fate)
-                            .padding(6)
-                    }
-                    .overlay {
-                        // A hairline edge (DES-023) so a dark picture reads on the dark
-                        // backdrop; the selection border replaces it.
-                        RoundedRectangle(cornerRadius: 4)
-                            .strokeBorder(
-                                isSelected ? Color.accentColor : DesignPalette.hairline(for: colorScheme),
-                                lineWidth: isSelected ? 3 : 1
-                            )
-                    }
+                switch face {
+                case let .photo(_, fate, size, choice):
+                    let fitted = fittedSize(of: image, in: cell)
+                    Image(decorative: image, scale: 1)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: fitted.width, height: fitted.height)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .opacity(fate == .trash ? 0.4 : 1)
+                        .overlay(alignment: .bottom) {
+                            DuplicateThumbnailBadges(size: size, choice: choice)
+                        }
+                        .overlay(alignment: .topLeading) {
+                            DuplicateFateTag(fate: fate)
+                                .padding(4)
+                        }
+                        .overlay { edge }
+                case .cropped:
+                    Image(decorative: image, scale: 1)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: cell.width, height: cell.height)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .overlay { edge }
+                }
             } else {
                 Image(systemName: MediaAssetTilePresentation.placeholderIconSystemName(
                     for: kind, thumbnailUnavailable: unavailable
                 ))
                 .font(.title2)
                 .foregroundStyle(.tertiary)
-                .frame(width: edge, height: edge)
+                .frame(width: cell.width, height: cell.height)
                 .overlay {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 4)
-                            .strokeBorder(Color.accentColor, lineWidth: 3)
+                    if isSelected || isHovered {
+                        edge
                     }
                 }
             }
         }
-        .frame(width: edge, height: edge)
+        .frame(width: cell.width, height: cell.height)
         .task(id: id) {
             await load()
-        }
-    }
-
-    /// The size centred along the bottom and the choice at the bottom left, as Photos
-    /// draws its size and Favorite heart.
-    private var badges: some View {
-        ZStack(alignment: .bottomLeading) {
-            if let size {
-                Text(size)
-                    .font(.callout)
-                    .monospacedDigit()
-                    .frame(maxWidth: .infinity)
-            }
-            if let symbol = choiceSymbol {
-                Image(systemName: symbol)
-                    .font(.callout)
-                    .padding(.leading, 6)
-            }
-        }
-        .foregroundStyle(.white)
-        .shadow(color: .black.opacity(0.6), radius: 2)
-        .padding(.bottom, 5)
-        .accessibilityHidden(true)
-    }
-
-    private var choiceSymbol: String? {
-        switch choice {
-        case .liked: MediaChoiceToggle.like.symbol(isOn: true)
-        case .disliked: MediaChoiceToggle.dislike.symbol(isOn: true)
-        case .notRated: nil
         }
     }
 
@@ -802,6 +921,46 @@ private struct DuplicateThumbnail: View {
         guard !Task.isCancelled else { return }
         tileContentStore?.warm(id: id, image: decoded, detail: detail)
         image = decoded
+    }
+}
+
+/// A photo's size centred along the bottom and its Like or Dislike at the bottom left, as
+/// Photos places its size and Favorite heart, each on DES-062's badge well so it stays
+/// legible on a dimmed light picture.
+private struct DuplicateThumbnailBadges: View {
+    let size: String?
+    let choice: MediaChoice
+
+    private var choiceSymbol: String? {
+        switch choice {
+        case .liked: MediaChoiceToggle.like.symbol(isOn: true)
+        case .disliked: MediaChoiceToggle.dislike.symbol(isOn: true)
+        case .notRated: nil
+        }
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            if let size {
+                badge(Text(size).monospacedDigit())
+                    .frame(maxWidth: .infinity)
+            }
+            if let symbol = choiceSymbol {
+                badge(Text(Image(systemName: symbol)))
+                    .padding(.leading, 4)
+            }
+        }
+        .padding(.bottom, 4)
+        .accessibilityHidden(true)
+    }
+
+    private func badge(_ text: Text) -> some View {
+        text
+            .font(.footnote)
+            .foregroundStyle(DesignPalette.badgeLabel)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(DesignPalette.badge, in: RoundedRectangle(cornerRadius: 3))
     }
 }
 

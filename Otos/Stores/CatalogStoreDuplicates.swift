@@ -24,6 +24,7 @@ nonisolated enum DuplicatesGateway {
         let isEdited: Bool
         let pixelWidth: Int?
         let pixelHeight: Int?
+        let orientation: Int?
         let hasCompanions: Bool
 
         func facts(
@@ -43,6 +44,7 @@ nonisolated enum DuplicatesGateway {
             guard let root = pathsByRowID[rootID], let library = librariesByPath[root] else {
                 return nil
             }
+            let geometry = DuplicatesGateway.upright(width: pixelWidth, height: pixelHeight, orientation: orientation)
             return DuplicateCopy(
                 id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: relativePath)),
                 libraryDisplayName: library.displayName, libraryKind: library.kind,
@@ -50,8 +52,8 @@ nonisolated enum DuplicatesGateway {
                 captureLocalTime: captureLocal.map(CaptureLocalTime.init(seconds:)),
                 byteSize: byteSize,
                 createdAt: createdAt.map(Date.init(timeIntervalSince1970:)),
-                pixelWidth: pixelWidth,
-                pixelHeight: pixelHeight,
+                pixelWidth: geometry.displayPixelWidth,
+                pixelHeight: geometry.displayPixelHeight,
                 mediaChoice: mediaChoice.flatMap(MediaChoice.init(rawValue:)) ?? .default,
                 isEdited: isEdited,
                 hasCompanions: hasCompanions
@@ -100,7 +102,7 @@ nonisolated enum DuplicatesGateway {
             sql: """
             SELECT a.library_root_id, a.relative_path, a.content_hash_xxh3_128, a.best_kind, a.best_capture_local,
                    a.byte_size, a.created_at_unix, a.media_choice, a.edit_recipe_json IS NOT NULL AS edited,
-                   m.pixel_width, m.pixel_height,
+                   m.pixel_width, m.pixel_height, m.orientation,
                    EXISTS(
                        SELECT 1 FROM media_companion c
                        WHERE c.library_root_id = a.library_root_id AND c.primary_relative_path = a.relative_path
@@ -136,6 +138,7 @@ nonisolated enum DuplicatesGateway {
                 isEdited: row["edited"],
                 pixelWidth: row["pixel_width"],
                 pixelHeight: row["pixel_height"],
+                orientation: row["orientation"],
                 hasCompanions: row["has_companions"]
             )
         }
@@ -250,6 +253,16 @@ nonisolated struct SamePhotoDetail: Equatable, Sendable {
 }
 
 nonisolated extension DuplicatesGateway {
+    /// A copy's pixel size as it is seen: the library's answer for the stored size and
+    /// orientation (ADR 0039), so a portrait photo reads, and is laid out, as portrait.
+    static func upright(width: Int?, height: Int?, orientation: Int?) -> PixelGeometry {
+        PixelGeometry(
+            pixelWidth: width,
+            pixelHeight: height,
+            orientation: orientation.flatMap(MediaMetadata.Orientation.init(rawValue:))
+        )
+    }
+
     /// Visible stills with a current render signature, as pairing facts. The read walks a
     /// cursor rather than copying every row, because it covers every still in the libraries.
     static func fetchSamePhotoCandidates(
@@ -329,7 +342,8 @@ nonisolated extension DuplicatesGateway {
                EXISTS(
                    SELECT 1 FROM media_companion c
                    WHERE c.library_root_id = a.library_root_id AND c.primary_relative_path = a.relative_path
-               ) AS has_companions
+               ) AS has_companions,
+               m.orientation
         FROM media_asset a
         LEFT JOIN asset_metadata m
           ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
@@ -340,7 +354,7 @@ nonisolated extension DuplicatesGateway {
         enum Column {
             static let bestKind = 0, bestCapture = 1, byteSize = 2, createdAt = 3, mediaChoice = 4, edited = 5
             static let renderHash = 6, renderGray = 7, pixelWidth = 8, pixelHeight = 9, metadataExtra = 10
-            static let hasCompanions = 11
+            static let hasCompanions = 11, orientation = 12
         }
         guard let row = try Row.fetchOne(statement, arguments: [rootID, id.relativePath.rawValue]),
               let hash = row[Column.renderHash] as Int64?,
@@ -366,6 +380,7 @@ nonisolated extension DuplicatesGateway {
         let createdAt: Double? = row[Column.createdAt]
         let kind: String? = row[Column.bestKind]
         let captureLocal: Double? = row[Column.bestCapture]
+        let geometry = Self.upright(width: row[Column.pixelWidth], height: row[Column.pixelHeight], orientation: row[Column.orientation])
         return SamePhotoDetail(
             copy: DuplicateCopy(
                 id: id,
@@ -374,8 +389,8 @@ nonisolated extension DuplicatesGateway {
                 captureLocalTime: captureLocal.map(CaptureLocalTime.init(seconds:)),
                 byteSize: row[Column.byteSize],
                 createdAt: createdAt.map(Date.init(timeIntervalSince1970:)),
-                pixelWidth: row[Column.pixelWidth],
-                pixelHeight: row[Column.pixelHeight],
+                pixelWidth: geometry.displayPixelWidth,
+                pixelHeight: geometry.displayPixelHeight,
                 mediaChoice: mediaChoice.flatMap(MediaChoice.init(rawValue:)) ?? .default,
                 isEdited: row[Column.edited],
                 hasCompanions: row[Column.hasCompanions]

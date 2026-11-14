@@ -50,6 +50,10 @@ nonisolated enum DesignPalette {
     static let badgeNSColor = NSColor.black.withAlphaComponent(0.55)
     /// Text on `badge`.
     static let badgeLabel = Color.white
+    /// The hairline edge of a dark tag that must read where the picture under it is dark
+    /// too — the duplicates list's Trash tag on a dimmed photo (DES-107): white at 30%, in
+    /// both appearances, because it sits on a photograph, not on chrome.
+    static let badgeEdge = Color.white.opacity(0.30)
 
     /// The edge of a thumbnail stack on the Places map (DES-103): white, so the stack
     /// separates from any map underneath it; the accent replaces it for selection.
