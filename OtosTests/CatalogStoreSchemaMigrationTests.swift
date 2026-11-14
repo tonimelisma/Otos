@@ -218,6 +218,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.unreadTextPreviewsMigrationIdentifier,
             CatalogSchema.facePersonPhotoIndexMigrationIdentifier,
             CatalogSchema.windowReadIndexesMigrationIdentifier,
+            CatalogSchema.wholeSecondCaptureLocalMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -448,6 +449,57 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(!indexesBefore.isEmpty)
         #expect(indexesAfter == indexesBefore)
         #expect(stale.isEmpty)
+    }
+
+    /// ADR 0039: v56 puts an item without a wall clock on the second its absolute time
+    /// falls in, as a wall clock is: an unread Immich still placed by the server's date
+    /// with milliseconds sits where the read's wall clock of that second will put it, so the
+    /// read does not move it. A time before 1970 goes to its earlier second, a wall clock
+    /// keeps its value, and every index over the column is rebuilt under its own name.
+    @Test func theWholeSecondMigrationPutsAnUnreadItemOnTheSecondItsReadWillGiveIt() async throws {
+        let queue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.windowReadIndexesMigrationIdentifier)
+        // 2026-09-12 20:16:27.353 UTC, as Immich reports a still's date, assumed at −07:00;
+        // the same still read: its wall clock 2026-09-12 13:16:27.
+        let reported = 1_789_244_187.353
+        let rows: [(path: String, wall: Int64?, created: Double?)] = [
+            ("unread.jpg", nil, reported),
+            ("read.jpg", 20_260_912_131_627, reported),
+            ("before1970.jpg", nil, -0.5),
+        ]
+        let indexesBefore = try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (path, kind) VALUES ('/Pictures', 'library')")
+            for row in rows {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (
+                        library_root_id, relative_path, relative_path_key, sort_key, name_sort_key,
+                        capture_wall_compact, created_at_unix, assumed_utc_offset_seconds
+                    ) VALUES (1, ?, ?, ?, ?, ?, ?, -25200)
+                    """,
+                    arguments: [row.path, row.path, row.path, row.path, row.wall, row.created]
+                )
+            }
+            return try Set(String.fetchAll(
+                db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND sql LIKE '%best_capture_local%'"
+            ))
+        }
+        try CatalogStore.migrator.migrate(queue)
+        let (local, indexesAfter) = try await queue.read { db in
+            try (
+                Dictionary(uniqueKeysWithValues: Row.fetchAll(
+                    db, sql: "SELECT relative_path, best_capture_local FROM media_asset"
+                ).map { ($0["relative_path"] as String, $0["best_capture_local"] as Double?) }),
+                Set(String.fetchAll(
+                    db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND sql LIKE '%best_capture_local%'"
+                ))
+            )
+        }
+        #expect(local["read.jpg"] == 1_789_218_987) // 2026-09-12 13:16:27 read as UTC
+        #expect(local["unread.jpg"] == local["read.jpg"])
+        #expect(local["before1970.jpg"] == -1 - 25200)
+        #expect(!indexesBefore.isEmpty)
+        #expect(indexesAfter == indexesBefore)
     }
 
     /// ADR 0009: v13 turns the one enrichment stamp into the metadata stamp and gives every

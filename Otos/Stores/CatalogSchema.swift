@@ -1305,18 +1305,64 @@ nonisolated enum CatalogSchema {
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 
+    /// The absolute time an item without a wall clock is placed by, in whole seconds: the
+    /// second it falls in (the floor, so a time before 1970 is not moved forward), as a
+    /// clock's seconds hand reads it. Written without `floor()`, which SQLite provides only
+    /// when built with its math functions.
+    static let absoluteCaptureWholeSecondsSQL = """
+    (CAST(\(absoluteCaptureSQL) AS INTEGER) - (\(absoluteCaptureSQL) < CAST(\(absoluteCaptureSQL) AS INTEGER)))
+    """
+
     /// `best_capture_local`'s definition: the stored wall clock (`YYYYMMDDHHMMSS`) as
-    /// seconds of a UTC reading, else the absolute time plus the assumed offset. A wall that
-    /// is not a real date-time is NULL to `unixepoch` and falls through to the absolute time.
+    /// seconds of a UTC reading, else the absolute time in whole seconds plus the assumed
+    /// offset. A wall that is not a real date-time is NULL to `unixepoch` and falls through
+    /// to the absolute time.
+    ///
+    /// Both branches are whole seconds, because a wall clock is: an Immich asset is placed
+    /// by the server's date, which carries milliseconds, until its bytes are read, and the
+    /// read's wall clock of the same second must not move it (v56).
     static let bestCaptureLocalSQL = """
     COALESCE(
         unixepoch(printf('%04d-%02d-%02d %02d:%02d:%02d',
             capture_wall_compact / 10000000000, (capture_wall_compact / 100000000) % 100,
             (capture_wall_compact / 1000000) % 100, (capture_wall_compact / 10000) % 100,
             (capture_wall_compact / 100) % 100, capture_wall_compact % 100)),
-        \(absoluteCaptureSQL) + assumed_utc_offset_seconds
+        \(absoluteCaptureWholeSecondsSQL) + assumed_utc_offset_seconds
     )
     """
+
+    /// The local capture time is whole seconds in both of its branches (ADR 0039). Before
+    /// v56 an item without a wall clock kept its absolute time's fraction: an unread Immich
+    /// still sorted by the server's date with milliseconds, and the read's wall clock, whole
+    /// seconds, moved it by under a second. On the owner's catalog 41,048 of 51,327 read
+    /// Immich stills had moved that way, each read a change of the sort date and a read of
+    /// the window's order for no reorder a user could see
+    /// (`docs/research/2026-11-14-whole-second-capture-time.md`). The generated column is
+    /// defined again (`bestCaptureLocalSQL`) and every index over it rebuilt under its own
+    /// name; no stored column changes.
+    static let wholeSecondCaptureLocalMigrationIdentifier = "v56_capture_local_whole_seconds"
+
+    static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
+        let indexes = try Row.fetchAll(db, sql: """
+        SELECT name, sql FROM sqlite_master
+        WHERE type = 'index' AND tbl_name = 'media_asset' AND sql LIKE '%best_capture_local%'
+        """)
+        for index in indexes {
+            try db.execute(sql: "DROP INDEX \(index["name"] as String)")
+        }
+        try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN best_capture_local")
+        try db.execute(sql: """
+        ALTER TABLE media_asset ADD COLUMN best_capture_local DOUBLE GENERATED ALWAYS AS (
+            \(bestCaptureLocalSQL)
+        ) VIRTUAL
+        """)
+        for index in indexes {
+            try db.execute(sql: index["sql"] as String)
+        }
+        OtosLog.persistence.noticeOperation("catalog.migration.wholeSecondCaptureLocal", phase: "finish", fields: [
+            "indexes": "\(indexes.count)",
+        ])
+    }
 
     static func migrateToCaptureLocalTime(_ db: Database, timeZone: TimeZone = .current) throws {
         try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN assumed_utc_offset_seconds INTEGER")

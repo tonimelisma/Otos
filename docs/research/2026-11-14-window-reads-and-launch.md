@@ -58,17 +58,14 @@ been read:
   stills whose unread value can be recomputed, the read's value equals it for 14,614,
   differs by under a second for 300 and by a second or more for 1,127. A fraction of a
   second reorders a photo only against another taken in the same second.
-- Every unread Immich video had `assumed_utc_offset_seconds` NULL, so its
-  `best_capture_local` (`COALESCE(wall, absolute + assumed offset)`) was NULL and it sorted
-  after every dated item. Its read gives it a date, and it moves from the end of All Media
-  to its day: a real reorder for each of 14,326 videos.
+- (Corrected in `docs/research/2026-11-14-whole-second-capture-time.md`: no unread Immich
+  video in this copy or a later one has a NULL offset or a NULL `best_capture_local`; each
+  sorts by the server's date in an assumed offset, and a read moves it only when the bytes'
+  wall clock is in another zone.)
 - A read that finds a Live Photo's content identifier pairs a movie with its still, and
   the movie leaves the order (`LivePhotoSQL.isPairedMotion`).
 
-The second is not a change the order should make: an unread video has a date (Immich's),
-and sorts where it was taken only once its bytes are read because nothing assumed an
-offset for it. Where the offset should come from is the Immich sync's question, not the
-window's; it is left as a finding here. The first and third are real changes of what the
+The first's sub-second part is removed by v56 (whole seconds in both readings). The first and third are real changes of what the
 order holds, and with this change each costs an order read (0.08–0.10 s of SQL on the copy)
 but no options read unless a kind or a location changed with it.
 

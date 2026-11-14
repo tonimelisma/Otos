@@ -32,15 +32,13 @@ nonisolated enum StagingContainer: String, CaseIterable, Sendable {
 nonisolated struct StagingContainers: Equatable, Sendable {
     let base: URL
 
-    /// An app's containers: `Caches/<bundle identifier>/`.
+    /// An app's containers: `Caches/<bundle identifier>/`. A path, computed without touching
+    /// the disk, as the thumbnails' folder is (`CatalogStore.applicationThumbnailDirectory`):
+    /// each tree is created by the claim that uses it (`StagingLocation.claimOwnership(of:)`)
+    /// and each download's folder by its placement, so a folder that cannot be made fails
+    /// that claim or that download, logged, and is never answered with another folder.
     static func application(bundleIdentifier: String) -> StagingContainers {
-        let caches = (try? FileManager.default.url(
-            for: .cachesDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? FileManager.default.temporaryDirectory
-        return StagingContainers(base: caches.appending(path: bundleIdentifier, directoryHint: .isDirectory))
+        StagingContainers(base: URL.cachesDirectory.appending(path: bundleIdentifier, directoryHint: .isDirectory))
     }
 
     func url(_ container: StagingContainer) -> URL {

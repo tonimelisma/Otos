@@ -338,6 +338,9 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.wholeSecondCaptureLocalMigrationIdentifier) { db in
+            try CatalogSchema.migrateToWholeSecondCaptureLocal(db)
+        }
         return migrator
     }
 

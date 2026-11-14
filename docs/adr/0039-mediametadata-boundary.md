@@ -106,6 +106,13 @@ what those facts mean. That covers:
     file at import. The assumption is kept while that absolute time is unchanged, so no
     item moves when the Mac changes zone. Migration v23 made it for every existing row in
     the zone the migration ran in.
+  - Both readings are whole seconds. A wall clock has no fraction, so the absolute time
+    is taken at the second it falls in (`CatalogSchema.absoluteCaptureWholeSecondsSQL`).
+    An Immich asset is placed by the server's date, which has milliseconds, until its
+    bytes are read. The read's wall clock for the same second then leaves it where it
+    was. Migration v56 redefined the column; before it, 41,048 of 51,327 read Immich
+    stills on the owner's catalog had moved by under a second when read
+    (`docs/research/2026-11-14-whole-second-capture-time.md`).
   - The grid's day sections (`CatalogStore.orderedAssetIDs`), the Date sort, On This Day
     (`AnniversaryMatch`), search's date spans, People's birthday rules and Info's
     Captured line all read this one value. Day sections are the reading's date. On This Day
