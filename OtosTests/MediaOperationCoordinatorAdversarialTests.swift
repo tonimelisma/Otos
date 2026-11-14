@@ -103,7 +103,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "detach-build"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -161,7 +162,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "prefs-mid-build"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -211,7 +213,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "reattach-A"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -247,7 +250,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "reattach-B"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         _ = try await waitForCatalogStoreState(store) { snap in
             snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
@@ -284,7 +288,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "clear-new"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -319,7 +324,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "clear-new-B"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         _ = try await waitForCatalogStoreState(store) { snap in
             snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
@@ -359,7 +365,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardAURL,
             identity: .volume(uuid: "claim-detach-A"),
             displayName: "CardA",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -394,7 +401,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardBURL,
             identity: .volume(uuid: "claim-detach-B"),
             displayName: "CardB",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -431,14 +439,16 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardAURL,
             identity: .volume(uuid: "cancel-A"),
             displayName: "CardA",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         try await store.attachRemovableVolume(
             mountURL: cardBURL,
             identity: .volume(uuid: "cancel-B"),
             displayName: "CardB",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -536,14 +546,16 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardAURL,
             identity: .volume(uuid: "fail-A"),
             displayName: "CardA",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         try await store.attachRemovableVolume(
             mountURL: cardBURL,
             identity: .volume(uuid: "fail-B"),
             displayName: "CardB",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -623,14 +635,16 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardAURL,
             identity: .volume(uuid: "ledger-A"),
             displayName: "CardA",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         try await store.attachRemovableVolume(
             mountURL: cardBURL,
             identity: .volume(uuid: "ledger-B"),
             displayName: "CardB",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -704,7 +718,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardAURL,
             identity: .volume(uuid: "settle-A"),
             displayName: "CardA",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -738,7 +753,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardBURL,
             identity: .volume(uuid: "settle-B"),
             displayName: "CardB",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -777,7 +793,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "detach-exec"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -841,7 +858,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "batch-id"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -922,7 +940,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "live-progress"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -1018,7 +1037,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "gone-snapshot"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -1083,7 +1103,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "failed-stays"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -1150,7 +1171,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "try-again"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -1217,7 +1239,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "unreadable-defer"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -1293,7 +1316,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "unreadable-persist"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -1362,7 +1386,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "settlement-window"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -1440,7 +1465,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "completion-scope"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -1512,7 +1538,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "space-advisory"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -1568,7 +1595,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "stopped-run"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -1637,7 +1665,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "disk-floor"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -1724,7 +1753,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "executing-reorder"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -1807,14 +1837,16 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardAURL,
             identity: .volume(uuid: "shutdown-A"),
             displayName: "CardA",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         try await store.attachRemovableVolume(
             mountURL: cardBURL,
             identity: .volume(uuid: "shutdown-B"),
             displayName: "CardB",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -1882,7 +1914,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "repeat-import"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -1951,7 +1984,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         try await store.attachRemovableVolume(
-            mountURL: cardURL, identity: .volume(uuid: "c2-count-hold"), displayName: "Card", isEjectable: true
+            mountURL: cardURL, identity: .volume(uuid: "c2-count-hold"), displayName: "Card", isEjectable: true,
+            capabilities: .unknown
         )
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
@@ -2030,7 +2064,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "gains-files-after-import"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -2116,7 +2151,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "metadata-wake-adversarial"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
@@ -2201,7 +2237,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "zero-copy-no-delete"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -2268,7 +2305,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "zero-copy-delete"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -2491,7 +2529,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "early-release"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -2537,7 +2576,8 @@ struct MediaOperationCoordinatorAdversarialTests {
             mountURL: cardURL,
             identity: .volume(uuid: "two-held"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         let destPath = try CatalogPath.normalizedDirectoryPath(for: destURL)

@@ -294,8 +294,11 @@ struct CatalogStoreQueryPlanTests {
         let query = try #require(PhotoStackSQL.candidateQuery(rootIDs: [rootID1, rootID2]))
         let plan = try await dbQueue.read { db in try explainPlan(db, query: query) }
         #expect(plan.contains("SEARCH still USING INDEX idx_media_asset_stack_candidate"))
-        // The burst stills are found through their own partial index, never a scan.
-        #expect(plan.contains("idx_media_asset_burst_or_frame"))
+        // The burst stills are found through their own partial index, and no arm — the RAW
+        // folders' CTE included, whatever alias it reads under — scans the table.
+        #expect(plan.contains("SEARCH still USING INDEX idx_media_asset_burst"))
+        #expect(plan.contains("SEARCH media_asset USING"))
+        #expect(!plan.contains("SCAN media_asset"))
         #expect(!plan.contains("SCAN still"))
     }
 

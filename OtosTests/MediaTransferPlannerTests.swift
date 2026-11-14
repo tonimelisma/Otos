@@ -51,7 +51,8 @@ struct MediaTransferPlannerTests {
             libraryContent: libraryContent,
             policy: policy,
             calendar: Calendar(identifier: .gregorian),
-            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current,
+            destinationCapabilities: .unknown
         )
     }
 
@@ -64,7 +65,8 @@ struct MediaTransferPlannerTests {
     ) -> DestinationNamespace {
         DestinationNamespace(
             entries: entries,
-            enumeratedFolders: folders.union(entries.keys.map(DestinationNamespace.folder(of:)))
+            enumeratedFolders: folders.union(entries.keys.map(DestinationNamespace.folder(of:))),
+            capabilities: .unknown
         )
     }
 
@@ -568,7 +570,7 @@ struct MediaTransferPlannerTests {
 
         let plan = MediaTransferPlanner.planImport(
             snapshot: snapshot,
-            namespace: DestinationNamespace(entries: [:], enumeratedFolders: [])
+            namespace: DestinationNamespace(entries: [:], enumeratedFolders: [], capabilities: .unknown)
         )
 
         #expect(plan.entries.map(\.disposition) == [
@@ -587,7 +589,7 @@ struct MediaTransferPlannerTests {
         policy.destinationNamePolicy = .captureDateTime
         let plan = MediaTransferPlanner.planImport(
             snapshot: Self.snapshot(sourceMedia: [source], policy: policy),
-            namespace: DestinationNamespace(entries: [:], enumeratedFolders: [], occupiedFolders: ["2026/01": "2026"])
+            namespace: DestinationNamespace(entries: [:], enumeratedFolders: [], occupiedFolders: ["2026/01": "2026"], capabilities: .unknown)
         )
         #expect(plan.entries.map(\.disposition) == [.blocked(.destinationFolderOccupied(occupant: "2026"))])
     }
@@ -700,7 +702,8 @@ struct MediaTransferPlannerTests {
                 autoEjectAfterImport: false
             ),
             calendar: Calendar(identifier: .gregorian),
-            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current,
+            destinationCapabilities: .unknown
         )
         let plan = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: .empty)
         let entry = plan.entries.first

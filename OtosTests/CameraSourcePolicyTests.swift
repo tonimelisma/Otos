@@ -36,13 +36,15 @@ struct CameraSourcePolicyTests {
                 mountURL: URL(fileURLWithPath: "/Volumes/CardA", isDirectory: true),
                 identity: .volume(uuid: "duplicate"),
                 displayName: "Card A",
-                isEjectable: true
+                isEjectable: true,
+                capabilities: .unknown
             ),
             RemovableVolumeAttachment(
                 mountURL: URL(fileURLWithPath: "/Volumes/CardB", isDirectory: true),
                 identity: .volume(uuid: "duplicate"),
                 displayName: "Card B",
-                isEjectable: true
+                isEjectable: true,
+                capabilities: .unknown
             ),
         ])
 

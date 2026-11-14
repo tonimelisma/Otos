@@ -27,6 +27,11 @@ import OSLog
 /// What a published pass read is kept (`snapshot`, `ranker`) to answer which people the
 /// faces of the selected photos could be (`candidates(for:)`) without another read.
 ///
+/// Rows only added (`CatalogStoreChange.assetsAdded`) change who no face is: they carry no
+/// face yet. They change the tally alone, since every new still is one not yet checked, so
+/// `CatalogProjection` asks for that with `requestTally()`: a tally pass reads the count by
+/// itself and republishes the last state with it, and a full pass covers it too.
+///
 /// A failed pass publishes nothing and leaves its request outstanding for the next request
 /// to retry. `stop()` is teardown: it ends both streams, so the loop and the consumer end
 /// with them.
@@ -46,6 +51,10 @@ actor PeopleAssignment {
     private var requested: UInt64 = 0
     /// The `requested` value the last successful pass started from.
     private var covered: UInt64 = 0
+    /// Bumped by every request for the unchecked tally alone; a full pass covers it too.
+    private var tallyRequested: UInt64 = 0
+    /// The `tallyRequested` value the last successful pass of either kind started from.
+    private var tallyCovered: UInt64 = 0
     private var runningPasses = 0
     private var published: CatalogPeopleState?
     /// What the last published pass read, for `candidates(for:)`.
@@ -55,7 +64,7 @@ actor PeopleAssignment {
 
     /// True when every request has been covered by a successful pass and none is running.
     var isQuiescent: Bool {
-        requested == covered && runningPasses == 0
+        requested == covered && tallyRequested == tallyCovered && runningPasses == 0
     }
 
     init(store: CatalogStore, builder: Builder?) {
@@ -87,6 +96,12 @@ actor PeopleAssignment {
         doorbell.yield()
     }
 
+    /// Rows were only added: the unchecked tally is owed a read, and nothing else.
+    func requestTally() {
+        tallyRequested &+= 1
+        doorbell.yield()
+    }
+
     /// Teardown, callable from anywhere: ends the loop and the stream of builds.
     nonisolated func stop() {
         doorbell.finish()
@@ -102,13 +117,20 @@ actor PeopleAssignment {
         return await Self.candidates(for: photos, snapshot: snapshot, state: published, ranker: ranker)
     }
 
+    /// A full pass when one is owed, which reads the tally too; else a tally pass.
     private func pass() async {
-        guard requested != covered else {
-            return
+        if requested != covered {
+            await assignmentPass()
+        } else if tallyRequested != tallyCovered {
+            await tallyPass()
         }
+    }
+
+    private func assignmentPass() async {
         runningPasses += 1
         defer { runningPasses -= 1 }
         let startedFrom = requested
+        let tallyStartedFrom = tallyRequested
         let outcome: Outcome
         do {
             // Before the catalog's first load there is nothing to assign; the load is a
@@ -135,6 +157,8 @@ actor PeopleAssignment {
         covered = startedFrom
         switch outcome {
         case let .publish(built, read, ranker):
+            // What it publishes carries the tally it read.
+            tallyCovered = tallyStartedFrom
             if let read {
                 snapshot = read
                 self.ranker = ranker
@@ -147,7 +171,53 @@ actor PeopleAssignment {
             // The next pass reads what this one wrote and publishes it.
             requested &+= 1
         }
-        if requested != covered {
+        ringIfOwed()
+    }
+
+    /// Reads the unchecked tally alone and republishes the last state with it. Before any
+    /// state is published there is nothing to fold it into: the first full pass reads it.
+    private func tallyPass() async {
+        runningPasses += 1
+        defer { runningPasses -= 1 }
+        let startedFrom = tallyRequested
+        // A test builder stands in for every pass, this one too.
+        let built: CatalogPeopleState?
+        let unchecked: MediaCount?
+        do {
+            guard let libraries = await store.loadedLibraries() else {
+                return
+            }
+            if let builder {
+                (built, unchecked) = try await (builder(store, libraries), nil)
+            } else {
+                (built, unchecked) = try await (nil, store.uncheckedForFaces(
+                    availableLibraryPaths: CatalogWindowPolicy.availablePaths(from: libraries)
+                ))
+            }
+            try Task.checkCancellation()
+        } catch is CancellationError {
+            return
+        } catch {
+            OtosLog.catalog.errorOperation("people.tally", phase: "failed", fields: [
+                "error": String(describing: error),
+            ])
+            return
+        }
+        // Synchronous from here: the state the tally goes into is the one published now.
+        tallyCovered = startedFrom
+        var state = built ?? published
+        if let unchecked {
+            state?.unchecked = unchecked
+        }
+        if let state, state != published {
+            published = state
+            buildsContinuation.yield(state)
+        }
+        ringIfOwed()
+    }
+
+    private func ringIfOwed() {
+        if requested != covered || tallyRequested != tallyCovered {
             doorbell.yield()
         }
     }

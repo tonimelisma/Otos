@@ -12,14 +12,13 @@ import Foundation
 nonisolated enum PhotoStackKind: String, Equatable, Hashable, Sendable {
     /// A RAW and the camera's processed still of the same shot: one folder, one stem key.
     case pair
-    /// The frames of one burst: an iPhone's stills carrying one burst identifier, or a
-    /// camera's continuous-shooting frames in sequence.
+    /// The frames of one burst: an iPhone's stills carrying one burst identifier.
     case burst
 }
 
 /// A stack's identity: its kind, its root and the derived key its members share — a pair's
-/// stem key, an iPhone burst's identifier, a camera burst's first frame. It names nothing stored; it is recomputed from the files
-/// on every read.
+/// stem key, an iPhone burst's identifier. It names nothing stored; it is recomputed from the
+/// files on every read.
 nonisolated struct PhotoStackID: Hashable, Sendable {
     let kind: PhotoStackKind
     let libraryRootPath: LibraryRootPath
@@ -28,32 +27,32 @@ nonisolated struct PhotoStackID: Hashable, Sendable {
 
 /// One still that may belong to a stack, as the Store reads it: its path and kind, its
 /// stored name key and natural-order sort key (ARC-056, which every path write keeps
-/// current), its burst identifier and capture time, whether the user liked it, and when the
-/// user made it its pair's or its burst's key (nil when never).
+/// current), its burst identifier and capture time, the user's choice for it (Liked, Not
+/// Rated, Disliked), and when the user made it its pair's or its burst's key (nil when never).
 nonisolated struct PhotoStackCandidate: Equatable, Sendable {
     let relativePath: MediaRelativePath
     let kind: MediaKind
     let nameKey: FilesystemNameKey
     let sortKey: String
     var burstIdentifier: String?
-    /// A camera burst frame's number, and the camera that shot it (make, model, serial).
-    var continuousFrame: Int?
-    var camera: String?
     var captureLocal: Double?
-    var isLiked = false
+    var choice: MediaChoice = .notRated
     var keyChosenAtUnixMs: Int64?
     var burstKeyChosenAtUnixMs: Int64?
 }
 
-/// One stack: its member files, its key — the file it shows when collapsed — and which
-/// members are RAW files. `photos` are the shots it holds, each as the file that shows it:
-/// a pair is one photo, a burst one per frame in capture order. How a surface names a
-/// member follows from these facts.
+/// One stack: its member files, its key — the file it shows when collapsed — the user's
+/// choice for the key, and which members are RAW files. `photos` are the shots it holds,
+/// each as the file that shows it: a pair is one photo, a burst one per frame in capture
+/// order. How a surface names a member follows from these facts.
 nonisolated struct PhotoStack: Equatable, Sendable {
     let id: PhotoStackID
     /// A pair's two files in natural name order; a burst's files frame by frame.
     let members: [MediaAssetID]
     let key: MediaAssetID
+    /// A choice on a collapsed stack is the key's (ADR 0052: curation uses the key member),
+    /// so the stack is Liked or Disliked as its key is.
+    let keyChoice: MediaChoice
     let rawMembers: Set<MediaAssetID>
     let photos: [MediaAssetID]
 
@@ -94,6 +93,16 @@ nonisolated struct CatalogStacks: Equatable, Sendable {
         (burstOfMember[id] ?? pairOfMember[id]).flatMap { stacks[$0] }
     }
 
+    /// Whether a stack `id` is a file of — its pair or its burst — has a Disliked key. A
+    /// choice on a collapsed stack is its key's (ADR 0052), so a surface that leaves Disliked
+    /// photos out (On This Day) leaves out every file of such a stack, the key's RAW twin
+    /// included, and a burst's other frames with it.
+    func isInStackWithDislikedKey(_ id: MediaAssetID) -> Bool {
+        [pairOfMember[id], burstOfMember[id]].contains { stackID in
+            stackID.flatMap { stacks[$0] }?.keyChoice == .disliked
+        }
+    }
+
     /// The file each member shows as when its stacks are collapsed: every burst file as its
     /// burst's key, every other pair file as its pair's key. People count a stack once.
     var keyOfMember: [MediaAssetID: MediaAssetID] {
@@ -117,10 +126,12 @@ nonisolated enum PhotoStackRule {
     /// a RAW alone, two JPEGs, a RAW with a JPEG and a HEIC — pairs nothing. The processed
     /// file is the default key, as Apple Photos shows it (owner, 2026-11-13).
     ///
-    /// A burst is two or more frames: an iPhone's stills carrying one burst identifier, or a
-    /// camera's continuous-shooting frames, from one camera, whose numbers rise in capture
-    /// order (owner, 2026-11-13). A pair is one frame, shown as its pair's key. Its default
-    /// key is its first Liked frame, else its first frame in capture order (ADR 0052).
+    /// A burst is two or more frames whose stills carry one burst identifier. A pair is one
+    /// frame, shown as its pair's key. Its default key is its first Liked frame, else its
+    /// first frame in capture order (ADR 0052). A camera's continuous-shooting frames never
+    /// stack: the frame number a camera records says where a frame stands in its sequence
+    /// but not which sequence, so after the user deletes a burst's leading frames nothing
+    /// tells them from the burst before (ADR 0052).
     static func stacks(
         candidates: [PhotoStackCandidate],
         libraryRootPath: LibraryRootPath
@@ -145,27 +156,27 @@ nonisolated enum PhotoStackRule {
             // The member the user chose most recently, else the processed file.
             let chosen = group.filter { $0.keyChosenAtUnixMs != nil }
                 .max { ($0.keyChosenAtUnixMs ?? 0) < ($1.keyChosenAtUnixMs ?? 0) }
-            let key = chosen.map { $0.relativePath == raw.relativePath ? rawID : processedID } ?? processedID
+            let keyIsRaw = chosen?.relativePath == raw.relativePath
             return PhotoStack(
                 id: PhotoStackID(kind: .pair, libraryRootPath: libraryRootPath, key: stem.rawValue),
                 members: raw.sortKey < processed.sortKey ? [rawID, processedID] : [processedID, rawID],
-                key: key,
+                key: keyIsRaw ? rawID : processedID,
+                keyChoice: keyIsRaw ? raw.choice : processed.choice,
                 rawMembers: [rawID],
-                photos: [key]
+                photos: [keyIsRaw ? rawID : processedID]
             )
         }
     }
 
-    /// iPhone bursts by their identifier, then camera bursts by their camera's sequence.
+    /// Bursts by their identifier.
     private static func bursts(
         _ stills: [PhotoStackCandidate],
         pairs: [PhotoStack],
         libraryRootPath: LibraryRootPath
     ) -> [PhotoStack] {
-        let iPhoneCarriers = stills.filter { $0.burstIdentifier != nil }
-        let cameraCarriers = stills.filter { $0.burstIdentifier == nil && $0.continuousFrame != nil }
+        let carriers = stills.filter { $0.burstIdentifier != nil }
         // Most libraries hold no burst at all; the lookups below are built only for one that does.
-        guard !iPhoneCarriers.isEmpty || !cameraCarriers.isEmpty else { return [] }
+        guard !carriers.isEmpty else { return [] }
         var pairOfFile: [MediaRelativePath: PhotoStack] = [:]
         for pair in pairs {
             for member in pair.members {
@@ -173,42 +184,14 @@ nonisolated enum PhotoStackRule {
             }
         }
         let byPath = Dictionary(stills.map { ($0.relativePath, $0) }, uniquingKeysWith: { first, _ in first })
-        func frames(of carriers: [PhotoStackCandidate]) -> [Frame] {
-            Self.frames(of: carriers, pairOfFile: pairOfFile, byPath: byPath, libraryRootPath: libraryRootPath)
-        }
-        let iPhone = Dictionary(grouping: iPhoneCarriers) { $0.burstIdentifier ?? "" }
+        return Dictionary(grouping: carriers) { $0.burstIdentifier ?? "" }
             .compactMap { identifier, group in
-                stack(identifier: identifier, frames: frames(of: group), libraryRootPath: libraryRootPath)
+                stack(
+                    identifier: identifier,
+                    frames: frames(of: group, pairOfFile: pairOfFile, byPath: byPath, libraryRootPath: libraryRootPath),
+                    libraryRootPath: libraryRootPath
+                )
             }
-        let camera = Dictionary(grouping: cameraCarriers) { $0.camera ?? "" }
-            .flatMap { _, group in cameraSequences(frames(of: group)) }
-            .compactMap { sequence in
-                // Named by its first frame's first file, so switching a pair's shown file keeps
-                // the burst's identity, and with it whether the user expanded it.
-                sequence.first.flatMap { $0.files.map(\.relativePath.rawValue).min() }.flatMap { first in
-                    stack(
-                        identifier: "camera:" + first,
-                        frames: sequence,
-                        libraryRootPath: libraryRootPath
-                    )
-                }
-            }
-        return iPhone + camera
-    }
-
-    /// One camera's continuous frames split into its bursts: in capture order, a burst runs
-    /// while each frame's number is higher than the one before it, so a burst starting again
-    /// at frame 1 begins another, and a frame deleted from the middle splits nothing.
-    private static func cameraSequences(_ frames: [Frame]) -> [[Frame]] {
-        var sequences: [[Frame]] = []
-        for frame in frames.sorted(by: { $0.precedes($1) }) {
-            if let previous = sequences.last?.last?.number, let number = frame.number, number > previous {
-                sequences[sequences.count - 1].append(frame)
-            } else {
-                sequences.append([frame])
-            }
-        }
-        return sequences
     }
 
     /// One frame of a burst: its files, the file that shows it, and the facts that order
@@ -216,6 +199,7 @@ nonisolated enum PhotoStackRule {
     private struct Frame {
         let files: [PhotoStackCandidate]
         let shown: MediaAssetID
+        let shownChoice: MediaChoice
         let rawFiles: [MediaAssetID]
 
         var captureLocal: Double? {
@@ -227,16 +211,11 @@ nonisolated enum PhotoStackRule {
         }
 
         var isLiked: Bool {
-            files.contains(where: \.isLiked)
+            files.contains { $0.choice == .liked }
         }
 
         var chosenAt: Int64? {
             files.compactMap(\.burstKeyChosenAtUnixMs).max()
-        }
-
-        /// The camera's number for the frame; a RAW and its processed file carry the same.
-        var number: Int? {
-            files.compactMap(\.continuousFrame).min()
         }
 
         /// Capture order; a frame without a capture time follows, in name order.
@@ -264,11 +243,15 @@ nonisolated enum PhotoStackRule {
             if let pair = pairOfFile[carrier.relativePath] {
                 let files = pair.members.compactMap { byPath[$0.relativePath] }
                 framed.formUnion(files.map(\.relativePath))
-                frames.append(Frame(files: files, shown: pair.key, rawFiles: Array(pair.rawMembers)))
+                frames.append(Frame(
+                    files: files, shown: pair.key, shownChoice: pair.keyChoice, rawFiles: Array(pair.rawMembers)
+                ))
             } else {
                 framed.insert(carrier.relativePath)
                 let id = MediaAssetID(libraryRootPath: libraryRootPath, relativePath: carrier.relativePath)
-                frames.append(Frame(files: [carrier], shown: id, rawFiles: carrier.kind == .raw ? [id] : []))
+                frames.append(Frame(
+                    files: [carrier], shown: id, shownChoice: carrier.choice, rawFiles: carrier.kind == .raw ? [id] : []
+                ))
             }
         }
         return frames
@@ -280,7 +263,7 @@ nonisolated enum PhotoStackRule {
         guard frames.count >= 2 else { return nil }
         let frames = frames.sorted { $0.precedes($1) }
         let chosen = frames.filter { $0.chosenAt != nil }.max { ($0.chosenAt ?? 0) < ($1.chosenAt ?? 0) }
-        let key = (chosen ?? frames.first(where: \.isLiked) ?? frames[0]).shown
+        let key = chosen ?? frames.first(where: \.isLiked) ?? frames[0]
         return PhotoStack(
             id: PhotoStackID(kind: .burst, libraryRootPath: libraryRootPath, key: identifier),
             members: frames.flatMap { frame in
@@ -288,7 +271,8 @@ nonisolated enum PhotoStackRule {
                     MediaAssetID(libraryRootPath: libraryRootPath, relativePath: $0.relativePath)
                 }
             },
-            key: key,
+            key: key.shown,
+            keyChoice: key.shownChoice,
             rawMembers: Set(frames.flatMap(\.rawFiles)),
             photos: frames.map(\.shown)
         )
@@ -328,8 +312,8 @@ nonisolated struct TileStacks: Equatable, Sendable {
 
 /// How the published order shows each stack (ADR 0052). A collapsed stack is one tile, its
 /// shown file; an expanded stack is every member present, in order, on one band. A stack
-/// with fewer than two members present — a filter showing only RAWs, say — is not one here:
-/// its file shows as any other.
+/// with fewer than two members present — a filter showing only RAWs, say, or a burst with
+/// one frame present, whose pair counts once — is not one here: its files show as any other.
 nonisolated struct CatalogGridStacks: Equatable, Sendable {
     /// Each tile in a stack, with its pair and its burst.
     let tiles: [MediaAssetID: TileStacks]
@@ -368,14 +352,17 @@ nonisolated struct CatalogGridStacks: Equatable, Sendable {
     }
 }
 
-/// The order a build starts from, before collapsing, with the stacks it was read with. A
-/// detail-only pass reuses it, so a stack is never collapsed twice.
+/// The order a build starts from, before collapsing, with its index-paired day buckets and
+/// map coordinates (each empty or the order's length) and the stacks it was read with. An
+/// expansion re-collapses it without a query (ADR 0052), and a detail-only pass reuses it, so
+/// a stack is never collapsed twice.
 nonisolated struct CatalogUncollapsedOrder: Equatable, Sendable {
     let ids: [MediaAssetID]
     let dayBuckets: [Date?]
+    let coordinates: [PlaceCoordinate]
     let stacks: CatalogStacks
 
-    static let empty = CatalogUncollapsedOrder(ids: [], dayBuckets: [], stacks: .empty)
+    static let empty = CatalogUncollapsedOrder(ids: [], dayBuckets: [], coordinates: [], stacks: .empty)
 }
 
 /// The pure collapse pass.
@@ -418,13 +405,21 @@ nonisolated enum PhotoStackCollapse {
         }
         // Each pass touches every ID once; a pass with no stacks of its kind is skipped, and
         // the tiles are built from the stacked IDs alone, a few percent of a library.
+        // A pair's files are one photo, so a pair counts once toward its burst: the burst
+        // level counts frames present, never files.
         let pairs = level(
-            ids, positions: Array(ids.indices), membership: stacks.pairOfMember, stacks: stacks, expanded: expanded
+            ids,
+            positions: Array(ids.indices),
+            membership: stacks.pairOfMember,
+            framing: [:],
+            stacks: stacks,
+            expanded: expanded
         )
         let bursts = level(
             pairs.kept.count == ids.count ? ids : pairs.kept.map { ids[$0] },
             positions: pairs.kept,
             membership: stacks.burstOfMember,
+            framing: stacks.pairOfMember,
             stacks: stacks,
             expanded: expanded
         )
@@ -454,11 +449,21 @@ nonisolated enum PhotoStackCollapse {
         )
     }
 
-    /// One level over `ids`, whose positions in the original order are `positions`.
+    /// What a level counts as one: a file, or the pair the file is one of.
+    private enum Unit: Hashable {
+        case file(MediaAssetID)
+        case pair(PhotoStackID)
+    }
+
+    /// One level over `ids`, whose positions in the original order are `positions`. A stack
+    /// is one here when two or more of its units are present: its files, except that the
+    /// files `framing` maps to one pair are one unit (an expanded pair's two files are one
+    /// frame of its burst).
     private static func level(
         _ ids: [MediaAssetID],
         positions: [Int],
         membership: [MediaAssetID: PhotoStackID],
+        framing: [MediaAssetID: PhotoStackID],
         stacks: CatalogStacks,
         expanded: Set<PhotoStackID>
     ) -> Level {
@@ -468,13 +473,15 @@ nonisolated enum PhotoStackCollapse {
             return level
         }
         var present: [PhotoStackID: [MediaAssetID]] = [:]
+        var units: [PhotoStackID: Set<Unit>] = [:]
         for id in ids {
             if let stackID = membership[id] {
                 present[stackID, default: []].append(id)
+                units[stackID, default: []].insert(framing[id].map(Unit.pair) ?? .file(id))
             }
         }
         var shown: [PhotoStackID: MediaAssetID] = [:]
-        for (stackID, members) in present where members.count >= 2 {
+        for (stackID, members) in present where units[stackID, default: []].count >= 2 {
             guard let stack = stacks.stacks[stackID] else { continue }
             shown[stackID] = members.contains(stack.key) ? stack.key : members[0]
         }

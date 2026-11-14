@@ -208,6 +208,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.placeCellMigrationIdentifier,
             CatalogSchema.undecodableIndexMigrationIdentifier,
             CatalogSchema.placeNameLanguageMigrationIdentifier,
+            CatalogSchema.cameraBurstsRemovedMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -836,6 +837,44 @@ struct CatalogStoreSchemaMigrationTests {
                 }
         }
         #expect(identifiers == ["IMG_1.HEIC=B1", "IMG_2.HEIC=nil", "IMG_3.HEIC=nil"])
+    }
+
+    /// v46 (ADR 0052): camera bursts no longer stack, so the frame-number column and its
+    /// index go; an iPhone burst's identifier stays, read through `idx_media_asset_burst` again.
+    @Test func theCameraBurstMigrationDropsTheFrameNumberAndKeepsBurstIdentifiers() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.continuousFrameMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            try db.execute(sql: """
+            INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key,
+                kind, burst_identifier, continuous_shooting_frame)
+            VALUES (1, 'IMG_1.HEIC', 'img_1.heic', 'IMG_1.HEIC', 'IMG_1.HEIC', 'image', 'B1', NULL),
+                   (1, 'DSC1.JPG', 'dsc1.jpg', 'DSC1.JPG', 'DSC1.JPG', 'image', NULL, 2)
+            """)
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
+
+        let (columns, indexes, identifiers) = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+            .read { db in
+                try (
+                    Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('media_asset')")),
+                    Set(String.fetchAll(db, sql: "SELECT name FROM pragma_index_list('media_asset')")),
+                    String.fetchAll(db, sql: "SELECT burst_identifier FROM media_asset WHERE burst_identifier IS NOT NULL")
+                )
+            }
+        #expect(!columns.contains("continuous_shooting_frame"))
+        #expect(indexes.contains("idx_media_asset_burst"))
+        #expect(!indexes.contains("idx_media_asset_burst_or_frame"))
+        #expect(identifiers == ["B1"])
     }
 
     @Test func theFacesFromPreviewMigrationReReadsEveryStill() async throws {

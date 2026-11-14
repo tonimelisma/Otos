@@ -30,6 +30,9 @@ nonisolated struct CatalogProjectionWindowStateParts {
 nonisolated struct CatalogProjectionOrderReuse {
     let orderedAssetIDs: [MediaAssetID]?
     let dayBuckets: [Date?]?
+    /// The map's coordinates, reused only by an expansion: a detail-only change can move a
+    /// location, so it re-reads them where they are shown.
+    var coordinates: [PlaceCoordinate]?
     /// The stacks the order was read with (ADR 0052); the order is the uncollapsed one.
     var stacks: CatalogStacks = .empty
     /// Reused with the order it was read with: the order is unchanged, so no identity in

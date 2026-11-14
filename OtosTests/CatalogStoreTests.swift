@@ -320,6 +320,87 @@ struct CatalogStoreTests {
         #expect(try await store.mediaAssets(for: [destinationID])[destinationID]?.mediaChoice == .liked)
     }
 
+    /// ARC-056: an import onto a case-sensitive root keys the copy by that volume's name
+    /// equality, so `2024/IMG_1.jpg` landing beside `2024/img_1.jpg` is a photo of its own,
+    /// and the existing photo keeps its path and its overlay. The settlement is driven on the
+    /// catalog itself: no scan of this case-insensitive test volume follows it.
+    @Test func anImportOntoACaseSensitiveRootNeverTakesACaseTwinsOverlay() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let sourcePath = LibraryRootPath(rawValue: "/Volumes/Card")
+        let destinationPath = LibraryRootPath(rawValue: "/Volumes/Photos")
+        let existing = MediaRelativePath(rawValue: "2024/img_1.jpg")
+        let imported = MediaRelativePath(rawValue: "2024/IMG_1.jpg")
+        let operation = ActiveFileOperation(
+            operationKey: .make(),
+            sourceKind: .library,
+            sourceDeviceIdentity: nil,
+            sourceRootPath: sourcePath,
+            sourceRelativePath: MediaRelativePath(rawValue: "DCIM/IMG_1.jpg"),
+            destinationRootPath: destinationPath,
+            destinationRelativePath: imported,
+            stagingURL: nil,
+            companionStagingURLs: [],
+            contentHash: nil,
+            importBatch: ImportBatchID(unixMilliseconds: 1),
+            sourceByteSize: 4,
+            sourceModifiedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            destinationModifiedAt: Date(timeIntervalSince1970: 1_700_000_001),
+            phase: .publishedPendingSettlement,
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_001)
+        )
+        let rows = try await dbQueue.write { db in
+            let source = try CatalogStore.insertLibraryRoot(path: sourcePath, capabilities: .caseInsensitive, db: db)
+            let destination = try CatalogStore.insertLibraryRoot(path: destinationPath, capabilities: .caseSensitive, db: db)
+            _ = try CatalogStore.upsertScannedFile(
+                ScannedMediaFile(
+                    relativePath: existing,
+                    name: existing.fileName,
+                    contentTypeIdentifier: "public.jpeg",
+                    byteSize: 8,
+                    createdAt: Date(timeIntervalSince1970: 1_600_000_000),
+                    contentModifiedAt: Date(timeIntervalSince1970: 1_600_000_000)
+                ),
+                libraryRootPath: destinationPath,
+                libraryRootID: destination.id,
+                capabilities: .caseSensitive,
+                db: db
+            )
+            try db.execute(
+                sql: "UPDATE media_asset SET media_choice = 'liked' WHERE library_root_id = ? AND relative_path = ?",
+                arguments: [destination.id, existing.rawValue]
+            )
+            try CatalogStore.settleImportedAsset(
+                LandedImport(
+                    operation: operation,
+                    destinationRootID: destination.id,
+                    sourceRootID: source.id,
+                    byteSize: 4,
+                    contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_001),
+                    companions: [],
+                    metadata: nil,
+                    rendering: nil
+                ),
+                db: db
+            )
+            return try Row.fetchAll(
+                db,
+                sql: "SELECT relative_path, media_choice FROM media_asset WHERE library_root_id = ? ORDER BY relative_path",
+                arguments: [destination.id]
+            ).map { row -> String in
+                let path: String = row[0]
+                let choice: String = row[1]
+                return "\(path)=\(choice)"
+            }
+        }
+        #expect(rows == ["2024/IMG_1.jpg=notRated", "2024/img_1.jpg=liked"])
+    }
+
     @Test func scanSkipsPackageDescendantsAndRecordsDiagnostics() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

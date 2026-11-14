@@ -20,7 +20,8 @@ import OSLog
 /// The duplicate groups and People have their own owners, `DuplicatesProjection` and
 /// `PeopleAssignment`, each with its own loop. A pass publishes the window with what they
 /// last built and, when it took up a catalog change (`derivedRequested`), asks both owners
-/// for a build; it never waits for one. Builds come back on `duplicatesTask` and
+/// for a build, or People for its unchecked tally alone when rows were only added
+/// (`tallyRequested`); it never waits for one. Builds come back on `duplicatesTask` and
 /// `peopleTask` and go out by republishing the last state with them. So detection and
 /// grouping never hold back the sidebar or the grid, and a change of scope, filter or sort
 /// never rebuilds them, since neither depends on it.
@@ -35,13 +36,17 @@ actor CatalogProjection {
     typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryRequest) async throws
         -> CatalogWindowState
 
-    /// Whether the next pass must rebuild the full ordered-asset query. A detail-only
-    /// change (enrichment that touched no ordering/scope column) reuses the last
-    /// published order — the grid's own same-identity `.refreshVisible` path already
-    /// updates visible details cheaply (ADR 0011). Declaration order is severity order:
-    /// a pending structural change always wins over a detail-only one.
+    /// Whether the next pass must rebuild the full ordered-asset query. An expansion (a
+    /// stack expanded or collapsed, ADR 0052) changes only how the order is collapsed, so it
+    /// re-collapses the last published uncollapsed order, its map coordinates included. A
+    /// detail-only change (enrichment that touched no ordering/scope column) reuses the last
+    /// published order too — the grid's own same-identity `.refreshVisible` path already
+    /// updates visible details cheaply (ADR 0011) — except where a re-read can move what the
+    /// order carries. Declaration order is severity order: a pending structural change always
+    /// wins over a detail-only one, and a detail-only one over an expansion.
     private enum DirtyKind: Comparable {
         case none
+        case expansion
         case detailOnly
         case structural
     }
@@ -95,6 +100,11 @@ actor CatalogProjection {
     /// The `derivedRequested` value last passed on to `duplicatesProjection` and
     /// `peopleAssignment`.
     private var derivedForwarded: UInt64 = 0
+    /// Bumped by rows only added: they carry nothing the groups or the assignment are built
+    /// from, but each new still is one People's tally counts as not yet checked.
+    private var tallyRequested: UInt64 = 0
+    /// The `tallyRequested` value last passed on to `peopleAssignment`.
+    private var tallyForwarded: UInt64 = 0
     /// The last publication was the pre-load `.loadingCatalog` state. The next store
     /// change is the load itself (or something after it), so it publishes immediately
     /// rather than leaving the window blank for a cadence tick (APP-044).
@@ -218,8 +228,11 @@ actor CatalogProjection {
             "covered": "\(covered)",
         ])
         guard queryRequest != request else { return }
+        // The same query with other stacks expanded: only the collapse differs.
+        let expansionOnly = queryRequest.descriptor == request.descriptor
+            && queryRequest.generation == request.generation
         queryRequest = request
-        requestPublication(.structural, ringNow: true)
+        requestPublication(expansionOnly ? .expansion : .structural, ringNow: true)
     }
 
     /// One-shot window-state build for tests. Production UI consumes the publication
@@ -385,8 +398,11 @@ private extension CatalogProjection {
             }
         }
         detailRefreshGeneration &+= 1
-        // Rows that were only added carry nothing the groups or People are built from.
-        if change != .assetsAdded {
+        // Rows that were only added carry nothing the groups or the assignment are built
+        // from; they change People's unchecked tally alone.
+        if change == .assetsAdded {
+            tallyRequested &+= 1
+        } else {
             derivedRequested &+= 1
         }
         if case .assetsDetailChanged = change {
@@ -407,6 +423,7 @@ private extension CatalogProjection {
         defer { runningPasses -= 1 }
         let startedFrom = requested
         let derivedStartedFrom = derivedRequested
+        let tallyStartedFrom = tallyRequested
         let kind = pendingKind
         pendingKind = .none
         let selectedRequest = queryRequest
@@ -424,13 +441,19 @@ private extension CatalogProjection {
         // short-circuits on the shared array buffer. A structural change or a newer
         // user intent re-runs the full query.
         // A search narrows the order after it is read, so the published order is not the
-        // order a search pass starts from: a pass under a search always reads it.
-        let reuse: CatalogProjectionOrderReuse = if kind == .detailOnly, selectedRequest.descriptor.search == nil,
-                                                    let previous = lastPublishedState
-        {
+        // order a search pass starts from: a detail-only pass under a search always reads it.
+        // An expansion reuses the order under any search, scope or filter: it is the same
+        // order, and the build searches and collapses it again.
+        let reusesOrder = switch kind {
+        case .expansion: true
+        case .detailOnly: selectedRequest.descriptor.search == nil
+        case .none, .structural: false
+        }
+        let reuse: CatalogProjectionOrderReuse = if reusesOrder, let previous = lastPublishedState {
             CatalogProjectionOrderReuse(
                 orderedAssetIDs: previous.uncollapsedOrder.ids,
                 dayBuckets: previous.uncollapsedOrder.dayBuckets,
+                coordinates: kind == .expansion ? previous.uncollapsedOrder.coordinates : nil,
                 stacks: previous.uncollapsedOrder.stacks,
                 pendingIdentityRemaps: previous.pendingIdentityRemaps,
                 descriptor: previous.queryDescriptor
@@ -517,15 +540,22 @@ private extension CatalogProjection {
         covered = startedFrom
         ringIfBehind()
         // An injected test builder derives nothing. Otherwise a pass that took up a catalog
-        // change asks both owners for a build, and waits for neither.
-        guard stateBuilder == nil, derivedStartedFrom != derivedForwarded,
-              let duplicatesProjection, let peopleAssignment
-        else {
+        // change asks both owners for a build, and one that took up only added rows asks
+        // People for its tally; it waits for neither.
+        guard stateBuilder == nil, let duplicatesProjection, let peopleAssignment else {
             return
         }
+        let asksBuild = derivedStartedFrom != derivedForwarded
+        let asksTally = tallyStartedFrom != tallyForwarded
         derivedForwarded = derivedStartedFrom
-        await duplicatesProjection.request()
-        await peopleAssignment.request()
+        tallyForwarded = tallyStartedFrom
+        if asksBuild {
+            // A full People pass reads the tally too.
+            await duplicatesProjection.request()
+            await peopleAssignment.request()
+        } else if asksTally {
+            await peopleAssignment.requestTally()
+        }
     }
 
     /// Takes in a fresh People build and republishes the last state with it when it differs
@@ -635,6 +665,8 @@ private extension CatalogProjection {
         peopleTask = nil
         derivedRequested = 0
         derivedForwarded = 0
+        tallyRequested = 0
+        tallyForwarded = 0
         changeTask?.cancel()
         changeTask = nil
         loopTask?.cancel()

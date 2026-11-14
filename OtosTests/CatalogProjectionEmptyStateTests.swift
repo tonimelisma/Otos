@@ -170,6 +170,75 @@ struct CatalogProjectionEmptyStateTests {
         await store.shutdown()
     }
 
+    /// A row only added is one more still not yet checked for faces, so People's unchecked
+    /// tally counts it, though neither the groups nor the assignment are rebuilt for it.
+    @Test func addedRowsAreCountedInPeoplesTallyWithoutRebuildingDuplicates() async throws {
+        let temp = try makeTestDirectory()
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        let rootPath = try await store.addImmichAccount(
+            server: #require(URL(string: "https://photos.example.com")), userID: "user-1", displayName: "Family",
+            stagingContainer: temp.appending(path: "RemoteStaging")
+        )
+        func item(_ id: String) -> SourceListedItem {
+            SourceListedItem(
+                file: ScannedMediaFile(
+                    relativePath: MediaRelativePath(rawValue: "\(id)/IMG.JPG"),
+                    name: "IMG.JPG",
+                    contentTypeIdentifier: "public.jpeg",
+                    byteSize: 10,
+                    createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                    contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
+                ),
+                sourceItemID: id,
+                isHiddenBySource: false,
+                sourceHasProducts: true
+            )
+        }
+        let gate = ArrivalGate()
+        await gate.open()
+        let projection = CatalogProjection(cadence: .milliseconds(10), duplicatesBuilder: { _, _ in
+            await gate.arrive()
+            return .empty
+        })
+        let recorder = EmptyStateRecorder()
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer {
+            recordingTask.cancel()
+        }
+        func settle() async throws {
+            try await waitUntil {
+                let windowSettled = await projection.isQuiescent
+                let duplicatesSettled = await projection.duplicatesAreQuiescent
+                let peopleSettled = await projection.peopleAreQuiescent
+                return windowSettled && duplicatesSettled && peopleSettled
+            }
+        }
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
+        _ = await recorder.waitForState { states in
+            states.contains { state in
+                state.people != nil && state.libraries.contains { $0.path == rootPath && $0.activity == .enumerating }
+            }
+        }
+        try await settle()
+        let built = await gate.arrivalCount
+
+        try await store.applySourceListingChanges(SourceListingChanges(listed: [item("a")]), scan: scan)
+        let counted = await recorder.waitForState { states in
+            states.contains { $0.mediaGrid.orderedAssetIDs.count == 1 && $0.people?.unchecked.photos == 1 }
+        }
+        #expect(counted.contains { $0.people?.unchecked.photos == 1 })
+        try await settle()
+        #expect(await gate.arrivalCount == built)
+        await store.endSourceListing(scan: scan)
+        await store.shutdown()
+    }
+
     /// The groups are a fact about the whole catalog, so a change of scope neither waits for
     /// their build nor starts one: with the build parked at its suspension, choosing a
     /// library publishes it; released, the groups are built exactly once.

@@ -276,7 +276,8 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
     /// Each photo's faces of visible people and unidentified faces, in reading order: what
     /// the photo menus and the Info pane show, at once.
     var photoFaces: [MediaAssetID: [PhotoFace]] = [:]
-    let unchecked: MediaCount
+    /// Read with every pass, and alone when rows were only added (`PeopleAssignment`).
+    var unchecked: MediaCount
     /// Faces found that are still faces (not marked `This Is Not a Face`).
     let faceCount: Int
 

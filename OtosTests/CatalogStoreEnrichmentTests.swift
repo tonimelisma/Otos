@@ -737,7 +737,8 @@ private func enrichedCardImportFixture(rendered: Bool = true) async throws -> En
         mountURL: card,
         identity: .volume(uuid: "test"),
         displayName: "CARD",
-        isEjectable: true
+        isEjectable: true,
+        capabilities: .unknown
     )
     try await store.addLibrary(url: destination)
     let cardID = MediaAssetID(libraryRootPath: cardPath, relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"))

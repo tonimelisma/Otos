@@ -961,7 +961,8 @@ nonisolated enum CatalogSchema {
             "DROP INDEX idx_media_asset_burst",
             """
             CREATE INDEX idx_media_asset_burst_or_frame
-            ON media_asset(library_root_id) WHERE \(PhotoStackSQL.burstOrFrameSQL(nil))
+            ON media_asset(library_root_id)
+            WHERE (burst_identifier IS NOT NULL OR continuous_shooting_frame IS NOT NULL)
             """,
         ]
     }
@@ -1027,6 +1028,22 @@ nonisolated enum CatalogSchema {
             )
         }
     }
+
+    /// Camera bursts no longer stack (ADR 0052): a camera's frame number says where a frame
+    /// stands in its sequence, not which sequence, so `media_asset.continuous_shooting_frame`
+    /// and the index over it go, and `idx_media_asset_burst` serves the candidates' read of
+    /// iPhone bursts again. The number stays in each stored metadata record, as the library
+    /// reported it.
+    static let cameraBurstsRemovedMigrationIdentifier = "v46_camera_bursts_removed"
+
+    static let cameraBurstsRemovedStatements = [
+        "DROP INDEX idx_media_asset_burst_or_frame",
+        "ALTER TABLE media_asset DROP COLUMN continuous_shooting_frame",
+        """
+        CREATE INDEX idx_media_asset_burst
+        ON media_asset(library_root_id, burst_identifier) WHERE burst_identifier IS NOT NULL
+        """,
+    ]
 
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"

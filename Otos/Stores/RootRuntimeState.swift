@@ -106,7 +106,7 @@ nonisolated struct RootRuntimeState: Equatable {
         activity: CatalogLibraryActivity,
         isEjectable: Bool,
         attachmentGeneration: UInt64 = 0,
-        capabilities: VolumeNamespaceCapabilities = .unknown,
+        capabilities: VolumeNamespaceCapabilities,
         skippedPackageCount: Int = 0,
         planRevision: UInt64 = 0,
         namespaceRevision: UInt64 = 0,

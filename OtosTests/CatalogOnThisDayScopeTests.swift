@@ -244,6 +244,56 @@ struct CatalogOnThisDayScopeTests {
         await store.shutdown()
     }
 
+    /// A RAW+JPEG pair is one photo, and a choice on it is its key's (ADR 0052): a Disliked
+    /// key leaves the whole pair out, its RAW twin included; a Disliked RAW behind its key
+    /// leaves the key on the day.
+    @Test func onThisDayJudgesAPairByItsKey() async throws {
+        let temp = try makeTestDirectory()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let captured: [(String, MediaKind, Date)] = [
+            ("DSC1.ARW", .raw, Self.local(2023, 11, 9, 8)),
+            ("DSC1.JPG", .image, Self.local(2023, 11, 9, 8)),
+            ("DSC2.ARW", .raw, Self.local(2022, 11, 9, 8)),
+            ("DSC2.JPG", .image, Self.local(2022, 11, 9, 8)),
+        ]
+        for (name, _, _) in captured {
+            try writeCatalogStoreFile(root.appending(path: name), contents: name)
+        }
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == captured.count }
+        let rootPath = try #require(await store.currentLibraries().first { $0.kind == .library }?.path)
+        func id(_ name: String) -> MediaAssetID {
+            MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: name))
+        }
+        for (name, kind, instant) in captured {
+            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
+            _ = await store.applyEnrichmentBatch([
+                EnrichmentResult(
+                    id: id(name),
+                    metadata: AssetMetadata.absoluteCapture(instant: instant),
+                    enrichedKind: kind,
+                    thumbnailPath: "\(name)-thumb.jpg",
+                    sourceSize: asset.byteSize,
+                    sourceMTimeSeconds: asset.contentModifiedAt.map { Int($0.timeIntervalSince1970) },
+                    contentHash: .empty
+                ),
+            ])
+        }
+        _ = try await store.setMediaChoice(.disliked, for: [id("DSC1.JPG"), id("DSC2.ARW")])
+
+        let ordered = try await store.orderedAssetIDs(
+            for: CatalogQueryDescriptor(scope: .onThisDay(Self.today)),
+            availableLibraryPaths: [rootPath]
+        )
+        #expect(ordered.ids == [id("DSC2.JPG")])
+        #expect(ordered.stacks.stack(containing: id("DSC2.JPG"))?.id.kind == .pair)
+        await store.shutdown()
+    }
+
     @MainActor
     @Test func onThisDayResolvesWithTheFixedLibrariesAndNamesItsEmptiness() {
         let pictures = CatalogLibraryState(

@@ -218,7 +218,8 @@ struct EnrichmentCoordinatorTests {
             mountURL: card,
             identity: .volume(uuid: "test-card"),
             displayName: "CARD",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: card)
         _ = try await waitForCatalogStoreState(store) { state in
@@ -1011,7 +1012,8 @@ struct EnrichmentCoordinatorTests {
             mountURL: removableRoot,
             identity: .volume(uuid: "card-hash-pass"),
             displayName: "Card",
-            isEjectable: false
+            isEjectable: false,
+            capabilities: .unknown
         )
         _ = try await waitForCatalogStoreState(store) { snapshot in
             !snapshot.isScanning

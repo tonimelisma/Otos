@@ -32,7 +32,8 @@ struct MediaOperationCoordinatorProgressTests {
             mountURL: cardURL,
             identity: .volume(uuid: "progress-order"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in

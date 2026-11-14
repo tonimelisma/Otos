@@ -22,7 +22,8 @@ struct MediaOperationCoordinatorSourceReadTests {
             mountURL: cardURL,
             identity: .volume(uuid: "source-read"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in

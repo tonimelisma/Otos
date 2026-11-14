@@ -43,7 +43,8 @@ struct ImportPlanningNamingFactsTests {
             mountURL: cardURL,
             identity: .volume(uuid: "naming-facts"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
 
         let policy = ImportPolicy.from(.default)
@@ -143,7 +144,8 @@ struct ImportPlanningNamingFactsTests {
             mountURL: cardURL,
             identity: .volume(uuid: "naming-facts-mtime"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
 
         let policy = ImportPolicy.from(.default)

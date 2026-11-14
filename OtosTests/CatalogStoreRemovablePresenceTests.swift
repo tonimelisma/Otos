@@ -190,7 +190,8 @@ struct CatalogStoreRemovablePresenceTests {
             mountURL: cardRoot,
             identity: .volume(uuid: "presence-card"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
 
@@ -216,7 +217,7 @@ struct CatalogStoreRemovablePresenceTests {
         let store = CatalogStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         let card = DeviceIdentity.volume(uuid: "presence-resume")
-        try await store.attachRemovableVolume(mountURL: cardRoot, identity: card, displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(mountURL: cardRoot, identity: card, displayName: "Card", isEjectable: true, capabilities: .unknown)
         await cardScans.waitForArrivals(1)
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
 

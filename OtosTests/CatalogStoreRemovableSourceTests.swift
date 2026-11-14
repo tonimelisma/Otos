@@ -95,7 +95,8 @@ struct CatalogStoreRemovableSourceTests {
             mountURL: fixture.firstMount,
             identity: .volume(uuid: "test-card"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         try await store.quiesceRemovableSource(identity: .volume(uuid: "test-card"))
         let quiesced = try await catalogStoreTestState(store)
@@ -113,7 +114,8 @@ struct CatalogStoreRemovableSourceTests {
             mountURL: fixture.firstMount,
             identity: .volume(uuid: "test-card"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: fixture.firstMount)
         _ = try await waitForSelectedRelativePaths(store, rootPath: cardPath, expected: ["card.jpg"])
@@ -138,7 +140,8 @@ struct CatalogStoreRemovableSourceTests {
             mountURL: fixture.firstMount,
             identity: .volume(uuid: "test-card"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: fixture.firstMount)
         _ = try await waitForSelectedRelativePaths(store, rootPath: cardPath, expected: ["card.jpg"])
@@ -169,7 +172,8 @@ struct CatalogStoreRemovableSourceTests {
             mountURL: fixture.firstMount,
             identity: identity,
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: fixture.firstMount)
         _ = try await waitForSelectedRelativePaths(store, rootPath: firstPath, expected: ["card.jpg"])
@@ -179,7 +183,8 @@ struct CatalogStoreRemovableSourceTests {
             mountURL: fixture.secondMount,
             identity: identity,
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: fixture.secondMount)
         _ = try await waitForSelectedRelativePaths(store, rootPath: secondPath, expected: ["card.jpg"])
@@ -199,7 +204,8 @@ struct CatalogStoreRemovableSourceTests {
             mountURL: fixture.firstMount,
             identity: identity,
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: fixture.firstMount)
         _ = try await waitForSelectedRelativePaths(store, rootPath: firstPath, expected: ["card.jpg"])
@@ -216,7 +222,8 @@ struct CatalogStoreRemovableSourceTests {
             mountURL: fixture.secondMount,
             identity: identity,
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let removed = try await waitForCatalogStoreState(store) { $0.removableSources.isEmpty }
         #expect(removed.libraries.map(\.path) == [fixture.fixedRootPath])
@@ -235,7 +242,8 @@ struct CatalogStoreRemovableSourceTests {
             mountURL: fixture.firstMount,
             identity: .volume(uuid: "test-card"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: fixture.firstMount)
         _ = try await waitForSelectedRelativePaths(store, rootPath: cardPath, expected: ["card.jpg"])
@@ -264,7 +272,8 @@ struct CatalogStoreRemovableSourceTests {
             mountURL: fixture.firstMount,
             identity: .volume(uuid: "test-card"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: fixture.firstMount)
         _ = try await waitForSelectedRelativePaths(store, rootPath: firstPath, expected: ["card.jpg"])
@@ -286,7 +295,8 @@ struct CatalogStoreRemovableSourceTests {
             mountURL: fixture.secondMount,
             identity: .volume(uuid: "test-card"),
             displayName: "Card Renamed",
-            isEjectable: false
+            isEjectable: false,
+            capabilities: .unknown
         )
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: fixture.secondMount)
         _ = try await waitForSelectedRelativePaths(store, rootPath: secondPath, expected: ["card.jpg"])
@@ -436,7 +446,8 @@ struct CatalogStoreRemovableSourceTests {
             mountURL: cardRoot,
             identity: .volume(uuid: "card"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         try await store.start(scansSavedLibraries: false)
 

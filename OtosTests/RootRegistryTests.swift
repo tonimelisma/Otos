@@ -24,7 +24,8 @@ struct RootRegistryTests {
             sortIndex: rowID,
             availability: availability,
             activity: .idle,
-            isEjectable: false
+            isEjectable: false,
+            capabilities: .unknown
         )
     }
 
@@ -40,7 +41,8 @@ struct RootRegistryTests {
             sortIndex: rowID,
             availability: availability,
             activity: .idle,
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
     }
 

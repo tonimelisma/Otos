@@ -145,7 +145,7 @@ private func writeSavedSymlinkCatalog(
     let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
     try CatalogStore.migrator.migrate(dbQueue)
     try await dbQueue.write { db in
-        let storedRoot = try CatalogStore.insertLibraryRoot(path: rootPath, db: db)
+        let storedRoot = try CatalogStore.insertLibraryRoot(path: rootPath, capabilities: .unknown, db: db)
         let relativePath = MediaRelativePath(rawValue: "one.jpg")
         try insertSavedAsset(
             rootID: storedRoot.id,

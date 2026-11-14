@@ -23,7 +23,8 @@ struct MediaOperationCoordinatorTests {
             mountURL: sourceURL,
             identity: .volume(uuid: "one-execution"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let source = try CatalogPath.normalizedDirectoryPath(for: sourceURL)
         _ = try await waitForCatalogStoreState(store) { state in
@@ -95,7 +96,8 @@ struct MediaOperationCoordinatorTests {
             mountURL: cardRoot,
             identity: .volume(uuid: "stream-card"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
         // Ready requires proven naming facts (ARC-057). Waiting for the card's own
@@ -160,7 +162,8 @@ struct MediaOperationCoordinatorTests {
             mountURL: cardRoot,
             identity: .volume(uuid: "metadata-wake"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
 
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
@@ -241,7 +244,8 @@ struct MediaOperationCoordinatorTests {
             mountURL: cardRoot,
             identity: .volume(uuid: "churn-card"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
         _ = try await waitForCatalogStoreState(store) { snapshot in
@@ -329,7 +333,8 @@ struct MediaOperationCoordinatorTests {
             mountURL: cardRoot,
             identity: .volume(uuid: "hold-last-plan"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
         _ = try await waitForCatalogStoreState(store) { snapshot in
@@ -403,7 +408,8 @@ struct MediaOperationCoordinatorTests {
             mountURL: cardRoot,
             identity: .volume(uuid: "held-plan-metadata-wait"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
         _ = try await waitForCatalogStoreState(store) { snapshot in
@@ -489,7 +495,8 @@ struct MediaOperationCoordinatorTests {
             mountURL: cardRoot,
             identity: .volume(uuid: "destination-change"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
         _ = try await waitForCatalogStoreState(store) { snapshot in
@@ -554,7 +561,8 @@ struct MediaOperationCoordinatorTests {
             mountURL: cardRoot,
             identity: .volume(uuid: "naming-churn-card"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
         _ = try await waitForCatalogStoreState(store) { snapshot in
@@ -628,7 +636,8 @@ struct MediaOperationCoordinatorTests {
             mountURL: cardRoot,
             identity: .volume(uuid: "source-naming-card"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
         _ = try await waitForCatalogStoreState(store) { snapshot in
@@ -706,7 +715,8 @@ struct MediaOperationCoordinatorTests {
             mountURL: cardURL,
             identity: .volume(uuid: "skip-unavailable"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         // See makeDestinationFixture's comment.
         _ = try await waitForCatalogStoreState(store) { snapshot in
@@ -871,7 +881,8 @@ struct MediaOperationCoordinatorTests {
             mountURL: URL(fileURLWithPath: fixture.source.rawValue),
             identity: fixture.identity,
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         _ = try await readyGeneration(coordinator, source: fixture.source)
         let presentation = try #require(
@@ -910,7 +921,8 @@ struct MediaOperationCoordinatorTests {
             mountURL: cardURL,
             identity: identity,
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         // `.ready` requires the card's own scan to
         // reach `.idle` (ImportSourceReadiness), not just a plan build

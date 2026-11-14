@@ -104,14 +104,16 @@ struct ImportSessionMachineTests {
             destinationOccupants: [:],
             policy: request.policy,
             calendar: Calendar(identifier: .gregorian),
-            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current,
+            destinationCapabilities: .unknown
         )
         // Every folder the plan can touch was read, so absence is a proven fact and the
         // file is copyable.
         let namespace = DestinationNamespace(
             entries: [:],
             enumeratedFolders: Set(MediaTransferPlanner.destinationFolders(for: snapshot)).union([""]),
-            unreadableFolders: unreadableFolders
+            unreadableFolders: unreadableFolders,
+            capabilities: .unknown
         )
         let plan = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: namespace)
         return .built(Machine.BuiltPlan(

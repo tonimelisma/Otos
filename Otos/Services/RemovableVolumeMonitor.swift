@@ -16,7 +16,7 @@ nonisolated struct RemovableVolumeAttachment: Equatable {
         identity: DeviceIdentity,
         displayName: String,
         isEjectable: Bool,
-        capabilities: VolumeNamespaceCapabilities = .unknown,
+        capabilities: VolumeNamespaceCapabilities,
         deviceModel: String? = nil,
         volumeFormat: String? = nil
     ) {

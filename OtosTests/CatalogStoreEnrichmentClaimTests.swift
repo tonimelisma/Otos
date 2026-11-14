@@ -118,7 +118,8 @@ struct CatalogStoreEnrichmentClaimTests {
             mountURL: removableRoot,
             identity: .volume(uuid: "claim-card"),
             displayName: "Card",
-            isEjectable: false
+            isEjectable: false,
+            capabilities: .unknown
         )
         _ = try await waitForCatalogStoreState(store) { snapshot in
             !snapshot.isScanning

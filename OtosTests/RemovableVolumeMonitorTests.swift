@@ -48,7 +48,8 @@ struct RemovableVolumeTrackerTests {
         mountURL: URL(fileURLWithPath: "/Volumes/CARD", isDirectory: true),
         identity: .volume(uuid: "CARD-UUID"),
         displayName: "CARD",
-        isEjectable: true
+        isEjectable: true,
+        capabilities: .unknown
     )
     private static let cardDisk = RemovableVolumeDisk(volumePath: "/Volumes/CARD", volumeUUID: "CARD-UUID")
 

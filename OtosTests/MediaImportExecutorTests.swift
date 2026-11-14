@@ -481,7 +481,8 @@ struct ImportExecutionProgressTests {
             mountURL: sourceURL,
             identity: .volume(uuid: "byte-progress"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let source = try CatalogPath.normalizedDirectoryPath(for: sourceURL)
         _ = try await waitForCatalogStoreState(store) { state in
@@ -589,7 +590,8 @@ struct ImportExecutionProgressTests {
             destinationOccupants: [:],
             policy: policy,
             calendar: Calendar(identifier: .gregorian),
-            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current,
+            destinationCapabilities: .unknown
         )
         let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
         #expect(plan.entries.count == 2)
@@ -663,7 +665,8 @@ struct ImportExecutionProgressTests {
             destinationOccupants: [:],
             policy: policy,
             calendar: Calendar(identifier: .gregorian),
-            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current,
+            destinationCapabilities: .unknown
         )
         let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
         #expect(plan.entries.count == 2)
@@ -742,7 +745,8 @@ struct ImportExecutionProgressTests {
             destinationOccupants: [:],
             policy: policy,
             calendar: Calendar(identifier: .gregorian),
-            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current,
+            destinationCapabilities: .unknown
         )
         let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
         #expect(plan.entries.count == 1)
@@ -1090,7 +1094,8 @@ struct ImportExecutionProgressTests {
             destinationOccupants: [:],
             policy: policy,
             calendar: Calendar(identifier: .gregorian),
-            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current,
+            destinationCapabilities: .unknown
         )
         let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
         #expect(plan.totals.copyCount == count)
@@ -1102,7 +1107,8 @@ struct ImportExecutionProgressTests {
             mountURL: sourceRoot,
             identity: .volume(uuid: "card-fixture"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         return CardFixture(
             store: store,
@@ -1433,7 +1439,8 @@ struct ImportExecutionProgressTests {
             destinationOccupants: [:],
             policy: policy,
             calendar: Calendar(identifier: .gregorian),
-            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current,
+            destinationCapabilities: .unknown
         ))
         #expect(plan.entries.first?.companionDestinations == [sidecar: sidecar])
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
@@ -1443,7 +1450,8 @@ struct ImportExecutionProgressTests {
             mountURL: sourceRoot,
             identity: .volume(uuid: "companion"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         return CardFixture(
             store: store,
@@ -1511,7 +1519,8 @@ struct ImportExecutionProgressTests {
             destinationOccupants: [:],
             policy: policy,
             calendar: Calendar(identifier: .gregorian),
-            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current,
+            destinationCapabilities: .unknown
         )
         let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
         #expect(plan.entries.first?.isSkipPreexisting == true)
@@ -1527,7 +1536,8 @@ struct ImportExecutionProgressTests {
             mountURL: sourceRoot,
             identity: .volume(uuid: "zero-copy-fixture"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         return ZeroCopyFixture(
             store: store,
@@ -1578,7 +1588,8 @@ struct ImportVerifiesTheStagedCopyTests {
             mountURL: sourceURL,
             identity: .volume(uuid: "verify-staged"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let source = try CatalogPath.normalizedDirectoryPath(for: sourceURL)
         _ = try await waitForCatalogStoreState(store) { state in

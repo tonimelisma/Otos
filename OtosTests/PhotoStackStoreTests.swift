@@ -71,23 +71,29 @@ struct PhotoStackStoreTests {
         }
     }
 
-    /// A camera's continuous frames, whose metadata carries the frame number the camera
-    /// recorded, are read as one burst with the order (owner, 2026-11-13).
-    @Test func aCamerasContinuousFramesAreReadAsOneBurst() async throws {
-        try await withLibrary(["DSC1.JPG", "DSC2.JPG", "DSC3.JPG"]) { library in
-            let paths = ["DSC1.JPG", "DSC2.JPG", "DSC3.JPG"]
-            let assets = try await library.store.mediaAssets(for: paths.map(library.id))
+    /// A camera's continuous frames never stack, though their metadata carries the frame
+    /// number the camera recorded: the number says where a frame stands in its sequence, not
+    /// which sequence (ADR 0052). Burst A culled to its frame 2 and burst B, another day in
+    /// another folder, culled to its frames 3 and 5 rise in capture order like one burst, and
+    /// an intact burst numbered 1, 2 reads the same as A's frame 1 beside B's frame 2.
+    @Test func aCamerasContinuousFramesNeverStack() async throws {
+        let frames = [
+            "2024/05/DSC0002.ARW": 2, "2024/05/DSC0002.JPG": 2,
+            "2024/06/DSC0103.JPG": 3, "2024/06/DSC0105.JPG": 5,
+            "2024/07/DSC0201.JPG": 1, "2024/07/DSC0202.JPG": 2,
+        ]
+        try await withLibrary(Array(frames.keys)) { library in
+            let assets = try await library.store.mediaAssets(for: frames.keys.map(library.id))
             let results = assets.values.map { asset in
-                let path = asset.id.relativePath.rawValue
-                return EnrichmentResult(
+                EnrichmentResult(
                     id: asset.id,
                     metadata: AssetMetadata(
                         timestamps: [],
                         cameraMake: "SONY",
                         cameraModel: "ILCE-6700",
-                        continuousShootingFrame: path == "DSC3.JPG" ? nil : (path == "DSC1.JPG" ? 1 : 2)
+                        continuousShootingFrame: frames[asset.id.relativePath.rawValue]
                     ),
-                    enrichedKind: .image,
+                    enrichedKind: asset.id.relativePath.fileExtension == "ARW" ? .raw : .image,
                     thumbnailPath: nil,
                     sourceSize: asset.byteSize,
                     sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
@@ -95,11 +101,13 @@ struct PhotoStackStoreTests {
                 )
             }
             _ = await library.store.applyEnrichmentBatch(results)
-            let first = library.id("DSC1.JPG")
-            let burst = try #require(try await library.ordered().stacks.stack(containing: first))
-            #expect(burst.id.kind == .burst)
-            #expect(Set(burst.members) == [first, library.id("DSC2.JPG")])
-            #expect(try await library.ordered().stacks.stack(containing: library.id("DSC3.JPG")) == nil)
+            let stacks = try await library.ordered().stacks
+            #expect(stacks.burstOfMember.isEmpty)
+            // The RAW+JPEG pair is still one photo.
+            let pair = try #require(stacks.stack(containing: library.id("2024/05/DSC0002.ARW")))
+            #expect(pair.id.kind == .pair)
+            #expect(stacks.stack(containing: library.id("2024/06/DSC0103.JPG")) == nil)
+            #expect(stacks.stack(containing: library.id("2024/07/DSC0201.JPG")) == nil)
         }
     }
 

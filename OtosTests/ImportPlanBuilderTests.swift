@@ -56,7 +56,8 @@ struct ImportPlanBuilderTests {
                 autoEjectAfterImport: false
             ),
             calendar: Calendar(identifier: .gregorian),
-            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current,
+            destinationCapabilities: .unknown
         )
     }
 

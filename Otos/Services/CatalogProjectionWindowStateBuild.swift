@@ -30,15 +30,15 @@ extension CatalogProjection {
         let stacks: CatalogStacks
         let orderQueryMs: Int
         // The map's coordinates are read with the order and can move without it (a
-        // re-enriched location), so a detail-only pass under the Places scope re-runs
-        // the query rather than reusing the last order.
+        // re-enriched location), so a detail-only pass under the Places scope, which reuses
+        // no coordinates, re-runs the query rather than reusing the last order.
         if let reuseIDs = reuse.orderedAssetIDs,
            resolvedDescriptor == reuse.descriptor,
-           resolvedDescriptor.scope != .places
+           resolvedDescriptor.scope != .places || reuse.coordinates != nil
         {
             orderedAssetIDs = reuseIDs
             dayBuckets = reuse.dayBuckets ?? []
-            coordinates = []
+            coordinates = reuse.coordinates ?? []
             pendingIdentityRemaps = reuse.pendingIdentityRemaps ?? []
             stacks = reuse.stacks
             orderQueryMs = 0
@@ -88,7 +88,9 @@ extension CatalogProjection {
             filterOptions: filterOptions
         )
         state.pendingIdentityRemaps = pendingIdentityRemaps
-        state.uncollapsedOrder = CatalogUncollapsedOrder(ids: orderedAssetIDs, dayBuckets: dayBuckets, stacks: stacks)
+        state.uncollapsedOrder = CatalogUncollapsedOrder(
+            ids: orderedAssetIDs, dayBuckets: dayBuckets, coordinates: coordinates, stacks: stacks
+        )
         return (state, metrics)
     }
 

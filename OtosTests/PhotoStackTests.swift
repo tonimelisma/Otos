@@ -131,7 +131,7 @@ struct PhotoStackTests {
         var still = candidate(path, kind)
         still.burstIdentifier = burst
         still.captureLocal = capture
-        still.isLiked = liked
+        still.choice = liked ? .liked : .notRated
         still.burstKeyChosenAtUnixMs = chosenAt
         return still
     }
@@ -230,49 +230,37 @@ struct PhotoStackTests {
         #expect(filesShown.grid.pair(shownBy: id("IMG_1.DNG")) == pair)
     }
 
-    // MARK: Camera bursts
-
-    private func shot(
-        _ path: String, _ kind: MediaKind = .image, frame: Int, at capture: Double, camera: String = "SONY|ILCE-6700|"
-    ) -> PhotoStackCandidate {
-        var still = candidate(path, kind)
-        still.continuousFrame = frame
-        still.camera = camera
-        still.captureLocal = capture
-        return still
+    /// A burst with one frame present is no burst here, even when that frame is an expanded
+    /// pair whose two files are both present: the pair is one frame, so the burst neither
+    /// collapses its files to one tile nor carries Move to Trash to frames the scope hides.
+    @Test func aBurstWithOneFramePresentIsNotOneHereThoughThatFrameIsTwoFiles() throws {
+        let found = stacks([
+            frame("IMG_1.DNG", .raw, burst: nil, at: 1), frame("IMG_1.JPG", at: 1), frame("IMG_2.JPG", at: 2),
+            frame("IMG_3.JPG", at: 3),
+        ])
+        let pair = try #require(found.first { $0.id.kind == .pair })
+        let ids = [id("IMG_1.DNG"), id("IMG_1.JPG")]
+        let result = collapse(ids, found, expanded: [pair.id])
+        #expect(result.ids == ids)
+        #expect(result.grid.collapsed(shownBy: id("IMG_1.JPG")) == nil)
+        #expect(result.grid.expanded(shownBy: id("IMG_1.DNG")) == pair)
+        #expect(result.grid.files(reachedThrough: id("IMG_1.JPG")) == [id("IMG_1.JPG")])
+        #expect(result.grid.shownForHiddenMember.isEmpty)
     }
 
-    private func cameraBursts(_ candidates: [PhotoStackCandidate]) -> [PhotoStack] {
-        stacks(candidates).filter { $0.id.kind == .burst }
-            .sorted { $0.photos[0].relativePath.rawValue < $1.photos[0].relativePath.rawValue }
-    }
+    /// A choice on a collapsed stack is its key's: the stack carries the key's choice, a
+    /// pair's from the file it shows and a burst's from its key frame's shown file.
+    @Test func aStackCarriesItsKeysChoice() throws {
+        var jpeg = candidate("DSC1.JPG", .image)
+        jpeg.choice = .disliked
+        var raw = candidate("DSC1.ARW", .raw, chosenAt: 5)
+        raw.choice = .liked
+        #expect(try #require(stacks([candidate("DSC1.ARW", .raw), jpeg]).first).keyChoice == .disliked)
+        #expect(try #require(stacks([raw, jpeg]).first).keyChoice == .liked)
 
-    /// A camera's continuous frames are one burst while their numbers rise in capture order;
-    /// a sequence starting again at 1 is another burst, and a frame deleted from the middle
-    /// splits nothing.
-    @Test func aCamerasContinuousFramesAreOneBurstWhileTheirNumbersRise() {
-        let found = cameraBursts([
-            shot("A1.JPG", frame: 1, at: 1), shot("A2.JPG", frame: 2, at: 1.1), shot("A4.JPG", frame: 4, at: 1.3),
-            shot("B1.JPG", frame: 1, at: 9), shot("B2.JPG", frame: 2, at: 9.1),
-            shot("C1.JPG", frame: 1, at: 20),
-        ])
-        #expect(found.map(\.photos) == [
-            [id("A1.JPG"), id("A2.JPG"), id("A4.JPG")],
-            [id("B1.JPG"), id("B2.JPG")],
-        ])
-        #expect(found[0].key == id("A1.JPG"))
-    }
-
-    /// Two cameras' frames never make one burst, and a RAW+JPEG pair is one frame.
-    @Test func cameraBurstsKeepToOneCameraAndAPairIsOneFrame() throws {
-        let found = cameraBursts([
-            shot("X1.ARW", .raw, frame: 1, at: 1), shot("X1.JPG", frame: 1, at: 1),
-            shot("X2.ARW", .raw, frame: 2, at: 1.1), shot("X2.JPG", frame: 2, at: 1.1),
-            shot("Y2.JPG", frame: 2, at: 1.05, camera: "NIKON|Z 8|1"),
-        ])
-        let burst = try #require(found.first)
-        #expect(found.count == 1)
-        #expect(burst.photos == [id("X1.JPG"), id("X2.JPG")])
-        #expect(Set(burst.members) == [id("X1.ARW"), id("X1.JPG"), id("X2.ARW"), id("X2.JPG")])
+        var first = frame("IMG_1.HEIC", at: 1)
+        first.choice = .disliked
+        #expect(try burst(in: stacks([first, frame("IMG_2.HEIC", at: 2)])).keyChoice == .disliked)
+        #expect(try burst(in: stacks([first, frame("IMG_2.HEIC", at: 2, liked: true)])).keyChoice == .liked)
     }
 }

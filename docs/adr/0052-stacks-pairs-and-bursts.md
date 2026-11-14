@@ -24,10 +24,11 @@ The owner decided, on 2026-11-13:
 - Move to Trash on a collapsed burst trashes every frame, as Apple Photos does;
 - Move to Trash on one file of an expanded pair trashes only that file;
 - switching an edited pair's shown file keeps each file's own edit;
-- iPhone bursts stack by their identifier; camera bursts stack by the drive mode the camera
-  records in each frame, never by timing (owner, 2026-11-13, after
+- iPhone bursts stack by their identifier; camera bursts were to stack by the drive mode the
+  camera records in each frame, never by timing (owner, 2026-11-13, after
   `docs/research/2026-11-13-camera-burst-detection.md` found no timing threshold in the owner's
-  library).
+  library). The frame number alone cannot bound one burst (below), so camera bursts do not
+  stack until a fact that does is read.
 
 ADR 0041 already makes a Live Photo one item: the motion movie is hidden by an SQL rule
 evaluated where it is used, and Move to Trash takes both files.
@@ -48,15 +49,22 @@ and never stacks; the overlay lifecycle (ADR 0008); the tile and loupe surfaces
 
 - **A pair:** in one root and one folder, one file of kind RAW and one processed still whose
   stem keys match, and no third still with that stem key. Any other count pairs nothing.
-- **A burst:** in one root, two or more frames. An iPhone burst's frames carry the same burst
-  identifier. A camera burst's frames carry the number the camera recorded for each frame of
-  a continuous sequence (MediaMetadata's `continuousShootingFrame`, read from a Sony
-  MakerNote): frames from one camera (make, model, serial) are one burst while their numbers
-  rise in capture order, so a sequence starting again at 1 is another burst and a frame deleted
-  from the middle splits nothing. A pair is one frame of the burst; its two files expand as a
-  pair inside the expanded burst.
+- **A burst:** in one root, two or more frames whose stills carry the same burst identifier
+  (an iPhone's). A pair is one frame of the burst; its two files expand as a pair inside the
+  expanded burst.
+- **Not a burst: a camera's continuous frames.** MediaMetadata reports the number a Sony body
+  records for each frame of a continuous sequence (`continuousShootingFrame`), and the stored
+  metadata record keeps it. It says where a frame stands in its sequence, not which sequence:
+  once the user deletes a burst's leading frames, its frame 3 after the previous burst's frame
+  2 rises like the next frame of that burst, whatever day or folder it is in, and a collapsed
+  stack would hide it and Move to Trash would take it. Nothing else the a6700 records bounds a
+  sequence: its `ShutterCount` counts the mechanical shutter only and stands still under the
+  electronic shutter, and ExifTool documents no shot counter for it
+  (`docs/research/2026-11-13-camera-burst-detection.md`). A wrong stack hides photos, so camera
+  frames do not stack; a fact that names the sequence, read by the library, would let them.
 
-The identity of a stack is the derived key (`PhotoStackID`: kind, root, stem key). The Store
+The identity of a stack is the derived key (`PhotoStackID`: kind, root, stem key or burst
+identifier). The Store
 reads every candidate still — each present RAW and processed image in a folder that holds a
 present RAW, whatever the scope or filter, so a filter that hides one file never unpairs the
 other — in the transaction that reads the order, and the pure `PhotoStackRule` decides the
@@ -85,18 +93,25 @@ other frames' pair choices.
 
 **Two levels.** A pair is one frame of a burst, so the projection collapses pairs first and then
 bursts over what remains, and each tile carries its pair and its burst with whether each is
-expanded. A collapsed burst's tile stands for the burst; on an expanded burst's band a pair frame
+expanded. A stack is collapsed only while two of its units are present in the scope: a pair's
+files, a burst's frames, an expanded pair's two files counting as one frame. A collapsed burst's tile stands for the burst; on an expanded burst's band a pair frame
 is still a collapsed pair with its own badge.
 
 **Collapsing and expanding.** The Store reads the full order with each row's stack key. A pure
 projection pass after search collapses each stack to its key member, keeping the full order
 for reuse, so the grid, day sections and their counts, On This Day, the map and the empty
 state all see the collapsed list. Expanding is a window intent that names stack keys,
-held outside the query descriptor, so it never re-queries and never clears the selection. An
+held outside the query descriptor, so it never re-queries and never clears the selection: the
+projection re-collapses the uncollapsed order it last published, with its day buckets and map
+coordinates. An
 expanded stack's members are ordinary tiles, in capture order, on one band.
 
 **Actions.** Anything that uses the picture uses the key member: view, compare, story, edit,
 crop and rotation, curation, copy, share, open with, drag, export, Info's picture facts.
+Curation being the key's, a collapsed stack is Liked or Disliked as its key is
+(`PhotoStack.keyChoice`): a surface that judges photos by their choice judges a stack by its
+key, so On This Day, which leaves Disliked photos out, leaves out every file of a stack whose
+key is Disliked, and a Disliked RAW behind a JPEG key leaves the JPEG.
 Anything that changes files acts on every member of a collapsed stack: Move to Trash, Reveal in
 Finder, import and reorganization. A member of an expanded stack is an ordinary photo for every
 action, Move to Trash included: it trashes that one file. Each member keeps its own overlay;
@@ -130,9 +145,8 @@ when any member matches, and shows its key member. The duplicates scope never co
 - Every count reads stacks, so a consumer that counts asset IDs directly (People's photo count)
   changes to count stack keys.
 - Migration v32 adds the key-choice stamp; v37 adds `burst_identifier`, filled from the
-  stored metadata, and the burst's key-choice stamp; v42 adds `continuous_shooting_frame`.
-- A camera burst stacks once its frames' metadata is read with MediaMetadata 0.9.5 or later.
-  Otos re-reads older records only from local bytes, so a cloud-only frame stacks when its
-  file is next local.
+  stored metadata, and the burst's key-choice stamp; v42 added `continuous_shooting_frame`,
+  which v46 drops with its index, restoring `idx_media_asset_burst`.
+- A camera's burst shows frame by frame, as before it was read.
 - The stem key change can pair a companion or naming bundle that differs only in Unicode
   normalization on a case-insensitive volume, where Finder already treats the names as equal.

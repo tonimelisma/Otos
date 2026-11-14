@@ -188,11 +188,10 @@ actor CatalogStore {
         let faceFramesPath: String?
         let contentIdentifier: String?
         let burstIdentifier: String?
-        let continuousShootingFrame: Int?
 
         static let columnsSQL = """
         SELECT best_capture_local, best_kind, best_format, capture_wall_compact, thumbnail_path, preview_path,
-            face_frames_path, content_identifier, burst_identifier, continuous_shooting_frame
+            face_frames_path, content_identifier, burst_identifier
         FROM media_asset
         WHERE library_root_id = ? AND relative_path = ?
         """
@@ -207,21 +206,18 @@ actor CatalogStore {
             faceFramesPath = row["face_frames_path"]
             contentIdentifier = row["content_identifier"]
             burstIdentifier = row["burst_identifier"]
-            continuousShootingFrame = row["continuous_shooting_frame"]
         }
 
         /// Whether the write changed what a scoped query returns or its order: the sort
         /// date, the kind and format filters, or — through the content identifier and the
         /// kind — which movies a Live Photo hides (ADR 0041), or through the burst
-        /// identifier or the camera's frame number which frames a burst collapses
-        /// (ADR 0052). Anything else is detail-only.
+        /// identifier which frames a burst collapses (ADR 0052). Anything else is detail-only.
         func changesStructure(to new: EnrichmentOverlayBeforeWrite) -> Bool {
             bestCaptureLocal != new.bestCaptureLocal
                 || bestKind != new.bestKind
                 || bestFormat != new.bestFormat
                 || contentIdentifier != new.contentIdentifier
                 || burstIdentifier != new.burstIdentifier
-                || continuousShootingFrame != new.continuousShootingFrame
         }
     }
 
@@ -922,15 +918,28 @@ extension CatalogStore {
 
     // MARK: - People (ADR 0047)
 
+    /// The roots of `availableLibraryPaths` whose faces Otos reads, by row ID.
+    private func faceRootIDs(_ availableLibraryPaths: Set<LibraryRootPath>) -> [Int64] {
+        availableLibraryPaths.compactMap { path in
+            roots[path].flatMap { $0.root.kind.readsFaces ? $0.rowID : nil }
+        }.sorted()
+    }
+
+    /// The unchecked tally alone (`PeopleSnapshot.unchecked`): what rows only added change.
+    func uncheckedForFaces(availableLibraryPaths: Set<LibraryRootPath>) async throws -> MediaCount {
+        let rootIDs = faceRootIDs(availableLibraryPaths)
+        return try await database().read { db in
+            try Self.uncheckedForFaces(rootIDs: rootIDs, db: db)
+        }
+    }
+
     /// Everything People reads, in one transaction: each face with its photo's capture
     /// instant, its tile, whose word its person is and the user's acts on it, the people, and
     /// the stills in `availableLibraryPaths` whose faces are not yet read. Faces of libraries
     /// no longer cataloged are left out.
     func peopleSnapshot(availableLibraryPaths: Set<LibraryRootPath> = []) async throws -> PeopleSnapshot {
         let pathsByRowID = roots.pathsByRowID
-        let faceRootIDs = availableLibraryPaths.compactMap { path in
-            roots[path].flatMap { $0.root.kind.readsFaces ? $0.rowID : nil }
-        }.sorted()
+        let faceRootIDs = faceRootIDs(availableLibraryPaths)
         let dbWriter = try database()
         return try await dbWriter.read { db in
             var rejections: [FaceRowKey: Set<PersonID>] = [:]
@@ -1886,6 +1895,17 @@ extension CatalogStore {
             stacks += PhotoStackRule.stacks(candidates: candidates, libraryRootPath: rootPath)
         }
         let catalogStacks = CatalogStacks(stacks)
+        // On This Day judges a stack by its key: the SQL left out a Disliked key's row, and
+        // its RAW twin or its burst's other frames leave with it (`OnThisDayPicks`, ADR 0052).
+        if scope.isAnniversary, !catalogStacks.stacks.isEmpty {
+            let kept = ids.indices.filter { !catalogStacks.isInStackWithDislikedKey(ids[$0]) }
+            if kept.count != ids.count {
+                ids = kept.map { ids[$0] }
+                // Each is empty or index-paired with the order.
+                dayBuckets = dayBuckets.isEmpty ? [] : kept.map { dayBuckets[$0] }
+                coordinates = coordinates.isEmpty ? [] : kept.map { coordinates[$0] }
+            }
+        }
         let stackRuleDuration = ContinuousClock.now - ruleStart
         OtosLog.catalog.debug(
             """
@@ -4258,7 +4278,8 @@ extension CatalogStore {
             sortIndex: 0,
             availability: .unknown,
             activity: .idle,
-            isEjectable: false
+            isEjectable: false,
+            capabilities: .unknown
         )
         state.root = newRoot
         state.rowID = rootRowID
@@ -4331,7 +4352,7 @@ extension CatalogStore {
         identity: DeviceIdentity,
         displayName: String,
         isEjectable: Bool,
-        capabilities: VolumeNamespaceCapabilities = .unknown,
+        capabilities: VolumeNamespaceCapabilities,
         deviceModel: String? = nil,
         volumeFormat: String? = nil
     ) async throws {
@@ -4404,6 +4425,9 @@ extension CatalogStore {
                 kind: .immichAccount,
                 deviceIdentity: identity,
                 displayName: displayName,
+                // Otos lays the staging folder out by asset ID and probes no volume for it:
+                // unknown keys compare case-insensitively, the choice that never splits a name.
+                capabilities: .unknown,
                 remoteBaseURL: serverURL,
                 db: db
             )

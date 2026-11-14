@@ -907,7 +907,7 @@ nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
         policy: ImportPolicy,
         calendar: Calendar,
         timeZone: TimeZone,
-        destinationCapabilities: VolumeNamespaceCapabilities = .unknown
+        destinationCapabilities: VolumeNamespaceCapabilities
     ) {
         self.generation = generation
         self.sourceRoot = sourceRoot
@@ -965,7 +965,7 @@ nonisolated struct DestinationNamespace: Equatable, Sendable {
         enumeratedFolders: Set<String>,
         unreadableFolders: [String: String] = [:],
         occupiedFolders: [String: String] = [:],
-        capabilities: VolumeNamespaceCapabilities = .unknown
+        capabilities: VolumeNamespaceCapabilities
     ) {
         var keyed: [FilesystemNameKey: Entry] = [:]
         for (path, result) in entries {
@@ -988,7 +988,7 @@ nonisolated struct DestinationNamespace: Equatable, Sendable {
         occupiedFolders[relativePath.folder]
     }
 
-    static let empty = DestinationNamespace(entries: [:], enumeratedFolders: [])
+    static let empty = DestinationNamespace(entries: [:], enumeratedFolders: [], capabilities: .unknown)
 
     var entryCount: Int {
         entries.count

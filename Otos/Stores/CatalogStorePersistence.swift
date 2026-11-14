@@ -287,6 +287,11 @@ extension CatalogStore {
         migrator.registerMigration(CatalogSchema.placeNameLanguageMigrationIdentifier) { db in
             try CatalogSchema.convertPlaceNameLanguages(db: db)
         }
+        migrator.registerMigration(CatalogSchema.cameraBurstsRemovedMigrationIdentifier) { db in
+            for statement in CatalogSchema.cameraBurstsRemovedStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -395,6 +400,16 @@ extension CatalogStore {
         return (roots, assetCount)
     }
 
+    /// How the root `rootRowID`'s volume compares names (ARC-056), as stored with the root:
+    /// the one read every write that keys a path in a transaction of its own makes.
+    static func storedCapabilities(rootRowID: Int64, db: Database) throws -> VolumeNamespaceCapabilities {
+        try VolumeNamespaceCapabilities(storedCaseSensitiveColumn: Int?.fetchOne(
+            db,
+            sql: "SELECT case_sensitive_names FROM library_root WHERE id = ?",
+            arguments: [rootRowID]
+        ) ?? nil)
+    }
+
     /// One past the highest `sort_index` currently in use, so a newly added root
     /// (library or removable) appends after everything else rather than colliding.
     /// Global rather than scoped to `kind` — the column is only *meaningful* for
@@ -411,7 +426,7 @@ extension CatalogStore {
         displayName: String? = nil,
         lastSeenAt: Date? = nil,
         sortIndex: Int64? = nil,
-        capabilities: VolumeNamespaceCapabilities = .unknown,
+        capabilities: VolumeNamespaceCapabilities,
         deviceModel: String? = nil,
         remoteBaseURL: URL? = nil,
         db: Database
@@ -530,7 +545,7 @@ extension CatalogStore {
         path: LibraryRootPath,
         displayName: String?,
         lastSeenAt: Date?,
-        capabilities: VolumeNamespaceCapabilities = .unknown,
+        capabilities: VolumeNamespaceCapabilities,
         deviceModel: String? = nil,
         db: Database
     ) throws {
@@ -1122,8 +1137,7 @@ extension CatalogStore {
                 capture_wall_compact = ?,
                 capture_wall_precision = ?,
                 content_identifier = ?,
-                burst_identifier = ?,
-                continuous_shooting_frame = ?
+                burst_identifier = ?
             WHERE library_root_id = ?
                 AND relative_path = ?
             """,
@@ -1137,7 +1151,6 @@ extension CatalogStore {
                 captureWall?.precision,
                 metadata.contentIdentifier,
                 metadata.burstIdentifier,
-                metadata.continuousShootingFrame,
                 libraryRootID,
                 relativePath.rawValue,
             ]
@@ -1391,7 +1404,7 @@ extension CatalogStore {
     static func upsertCompanion(
         _ companion: MediaCompanion,
         libraryRootID: Int64,
-        capabilities: VolumeNamespaceCapabilities = .unknown,
+        capabilities: VolumeNamespaceCapabilities,
         db: Database
     ) throws -> Bool {
         let pathKey = FilesystemNamespaceSemantics.nameKey(
@@ -1480,7 +1493,7 @@ extension CatalogStore {
     static func repairCompanionsInDirectory(
         of relativePath: MediaRelativePath,
         libraryRootID: Int64,
-        capabilities: VolumeNamespaceCapabilities = .unknown,
+        capabilities: VolumeNamespaceCapabilities,
         db: Database
     ) throws -> Bool {
         let directoryKey = MediaCompanionPairing.directoryKey(of: relativePath)
@@ -1514,7 +1527,7 @@ extension CatalogStore {
     static func applyScannedCompanions(
         _ companions: [ScannedCompanionFile],
         libraryRootID: Int64,
-        capabilities: VolumeNamespaceCapabilities = .unknown,
+        capabilities: VolumeNamespaceCapabilities,
         db: Database
     ) throws -> Int {
         var changedCount = 0
@@ -1548,7 +1561,7 @@ extension CatalogStore {
     static func reconcileMissingCompanions(
         libraryRootID: Int64,
         observedPaths: Set<MediaRelativePath>,
-        capabilities: VolumeNamespaceCapabilities = .unknown,
+        capabilities: VolumeNamespaceCapabilities,
         underSubtree: MediaRelativePath? = nil,
         db: Database
     ) throws -> Int {
@@ -1649,7 +1662,7 @@ extension CatalogStore {
         _ file: ScannedMediaFile,
         libraryRootPath: LibraryRootPath,
         libraryRootID: Int64,
-        capabilities: VolumeNamespaceCapabilities = .unknown,
+        capabilities: VolumeNamespaceCapabilities,
         db: Database
     ) throws -> ScannedFileUpsert {
         let pathKey = FilesystemNamespaceSemantics.nameKey(

@@ -71,4 +71,28 @@ folder rule.
 - Separately, the Immich account's RAW+HEIF pairs need the account's own stack data.
 
 The owner chose the drive-mode record (2026-11-13). MediaMetadata 0.9.5 reports it as
-`continuousShootingFrame`, and Otos stacks a camera's frames by it (ADR 0052).
+`continuousShootingFrame`, and Otos stacked a camera's frames by it (ADR 0052).
+
+## Follow-up: the frame number does not bound a burst (2026-11-13)
+
+A review found that "one camera's frames while their numbers rise in capture order" joins
+bursts the user culled: burst A kept to its frame 2 and burst B, another day in another
+folder, kept to its frames 3 and 5 read as one rising sequence, and a collapsed stack hid B's
+keepers while Move to Trash on the tile took all three. Deleting a burst's frame 1 inside Otos
+had the same effect. A rule needs a fact that names the sequence, not the frame's place in it.
+
+What the a6700 records, read with ExifTool 13.55 from 673 of the owner's a6700 RAWs copied
+into a research corpus outside the library (nothing in the library read or downloaded):
+
+- `SequenceNumber` / `SequenceImageNumber` / `SequenceFileNumber`: the frame's place, 1 up.
+- `ShutterCount` (Tag9050d, `0x000a`): ExifTool documents it as mechanical actuations only,
+  "does not increase during electronic shutter". Across the corpus it reads 11142 on every
+  shot from 23 to 25 May 2026 and 11146 from 29 to 31 May: it cannot tell two bursts apart.
+- `ShotNumberSincePowerUp` (Tag9400c, `0x000a`): ExifTool lists the models it is valid for,
+  and the ILCE-6700 is not one of them; the a6700 is not in Tag9400c's documented models.
+  It would reset at every power-up even where valid.
+- Undocumented Tag9400c bytes change from shot to shot, but no reference decodes them, and
+  a rule built on them would be a guess.
+
+Conclusion: no fact the a6700 records, as documented, bounds one sequence. Camera frames do
+not stack (ADR 0052, schema v46); the frame number stays in each stored metadata record.

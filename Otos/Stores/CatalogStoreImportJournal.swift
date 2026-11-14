@@ -216,10 +216,15 @@ extension CatalogStore {
             createdAt: contentModifiedAt,
             contentModifiedAt: contentModifiedAt
         )
+        // The copy and its companions are keyed by the destination volume's own name
+        // equality (ARC-056): on a case-sensitive root `IMG_1.jpg` beside `img_1.jpg` is
+        // another file, never a respelling of it.
+        let capabilities = try storedCapabilities(rootRowID: destinationRootID, db: db)
         _ = try upsertScannedFile(
             file,
             libraryRootPath: operation.destinationRootPath,
             libraryRootID: destinationRootID,
+            capabilities: capabilities,
             db: db
         )
         try db.execute(
@@ -278,7 +283,7 @@ extension CatalogStore {
         // it is enrichment's to render for the copy (ADR 0036).
         try releaseUnrenderedEdits(db: db, rootID: destinationRootID, relativePath: relativePath)
         for companion in landed.companions {
-            try upsertCompanion(companion, libraryRootID: destinationRootID, db: db)
+            try upsertCompanion(companion, libraryRootID: destinationRootID, capabilities: capabilities, db: db)
         }
     }
 

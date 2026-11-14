@@ -28,7 +28,8 @@ struct CatalogWindowViewModelImportIntentTests {
             mountURL: cardURL,
             identity: .volume(uuid: "intent-order"),
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let second = try CatalogPath.normalizedDirectoryPath(for: secondURL)
         let source = try CatalogPath.normalizedDirectoryPath(for: cardURL)

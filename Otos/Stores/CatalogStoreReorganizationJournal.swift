@@ -195,11 +195,7 @@ extension CatalogStore {
         let remaps = identityRemaps(for: component)
         // Every path this settlement writes takes its name key with it (ARC-056), so a row
         // is never found by the key of a path it has left.
-        let capabilities = try VolumeNamespaceCapabilities(storedCaseSensitiveColumn: Int?.fetchOne(
-            db,
-            sql: "SELECT case_sensitive_names FROM library_root WHERE id = ?",
-            arguments: [rootRowID]
-        ) ?? nil)
+        let capabilities = try storedCapabilities(rootRowID: rootRowID, db: db)
 
         let privatePrefix = ".otos-reorg-tx/\(component.componentKey.rawValue)"
         for (index, remap) in remaps.enumerated() {

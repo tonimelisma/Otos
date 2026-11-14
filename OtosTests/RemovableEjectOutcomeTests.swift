@@ -195,7 +195,8 @@ struct RemovableEjectOutcomeTests {
             mountURL: cardURL,
             identity: identity,
             displayName: "Card",
-            isEjectable: true
+            isEjectable: true,
+            capabilities: .unknown
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         let snapshot = try await waitForCatalogStoreState(store) { snap in
