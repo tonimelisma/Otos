@@ -382,6 +382,9 @@ struct ContentView: View {
             prompt: "Search"
         )
         .searchFocused($isSearchFocused)
+        // The field's clear button, pressed while the field is not being edited, does not reach
+        // the binding above; the field's own action does (`ToolbarSearchFieldClearRelay`).
+        .background(ToolbarSearchFieldClearRelay { viewModel.setSearchText("") })
         .onChange(of: viewModel.searchFocusRequest) {
             isSearchFocused = true
         }

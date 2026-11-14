@@ -174,6 +174,31 @@ struct PlacesMapView: View {
     }
 }
 
+/// The facts of one left mouse-down the map's monitor saw, and the decision whether the map
+/// hands it to `mapMouseDown(clickCount:)`: a pure function of those facts, so the monitor
+/// is only the hop from AppKit. Any other event is no mouse-down here, and its click count
+/// is never read: `clickCount` raises on an event that is not a mouse event.
+nonisolated struct MapMouseDown: Equatable, Sendable {
+    let windowNumber: Int
+    /// In the window's coordinates.
+    let location: NSPoint
+    let clickCount: Int
+
+    init?(_ event: NSEvent) {
+        guard event.type == .leftMouseDown else { return nil }
+        windowNumber = event.windowNumber
+        location = event.locationInWindow
+        clickCount = event.clickCount
+    }
+
+    /// The click count to hand the map, when the press is in window `number` inside
+    /// `frame` (the map's frame in that window's coordinates); nil when it is elsewhere.
+    func clickCount(inWindow number: Int, frame: NSRect) -> Int? {
+        guard windowNumber == number, frame.contains(location) else { return nil }
+        return clickCount
+    }
+}
+
 /// AppKit's click count for every mouse-down inside the map, delivered before MapKit or a
 /// stack hit-tests it, so a double-click is routed as one gesture rather than by whatever the
 /// first click's camera flight moved under the pointer. SwiftUI offers neither the count nor
@@ -212,20 +237,18 @@ private struct MapMouseDownMonitor: NSViewRepresentable {
             // AppKit runs a local monitor on the main thread, before the event is dispatched;
             // returning nil consumes it.
             monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
-                let windowNumber = event.windowNumber
-                let location = event.locationInWindow
-                let clickCount = event.clickCount
+                guard let down = MapMouseDown(event) else { return event }
                 let taken = MainActor.assumeIsolated {
-                    self?.takes(windowNumber: windowNumber, location: location, clickCount: clickCount) ?? false
+                    self?.takes(down) ?? false
                 }
                 return taken ? nil : event
             }
         }
 
-        private func takes(windowNumber: Int, location: NSPoint, clickCount: Int) -> Bool {
-            guard let window, window.windowNumber == windowNumber,
-                  bounds.contains(convert(location, from: nil))
-            else {
+        /// The hop: the map's window and frame, which only the view knows, decide nothing
+        /// themselves; `MapMouseDown.clickCount(inWindow:frame:)` does.
+        private func takes(_ down: MapMouseDown) -> Bool {
+            guard let window, let clickCount = down.clickCount(inWindow: window.windowNumber, frame: convert(bounds, to: nil)) else {
                 return false
             }
             return onMouseDown?(clickCount) ?? false

@@ -631,6 +631,85 @@ final class ToolbarAnchorView: NSView {
     }
 }
 
+/// Reports the toolbar search field emptied, which `.searchable` misses, so the field and the
+/// search cannot disagree (DES-108). `.searchable` reports what the field's editor changes,
+/// but the field's clear button pressed while the field is not being edited — a click after
+/// the keyboard left the field, or VoiceOver's press — empties the field without calling its
+/// text binding (macOS 27, measured with a bare `.searchable` too; `SearchFieldWindowTests`).
+/// The field sends its action on that clear, and SwiftUI leaves the action unset. The action
+/// also fires on every end of editing, carrying the field's text before SwiftUI has drawn the
+/// binding's: Escape sets the binding empty, then the action still carries the typed text. So
+/// only an empty field is reported — the one fact the binding can miss — and every other text
+/// is the binding's to report. The relay draws nothing, takes no click, and sets the action on
+/// the window's search toolbar item when the item is added.
+struct ToolbarSearchFieldClearRelay: NSViewRepresentable {
+    let onClear: () -> Void
+
+    func makeNSView(context _: Context) -> RelayView {
+        let view = RelayView()
+        view.onClear = onClear
+        return view
+    }
+
+    func updateNSView(_ view: RelayView, context _: Context) {
+        view.onClear = onClear
+    }
+
+    final class RelayView: NSView {
+        var onClear: () -> Void = {}
+        /// The window's toolbar, whose added items are watched.
+        private weak var toolbar: NSToolbar?
+        /// The window's `toolbar`, which SwiftUI may set after this view joins the window.
+        private var toolbarObservation: NSKeyValueObservation?
+
+        override func hitTest(_: NSPoint) -> NSView? {
+            nil
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            toolbarObservation = window?.observe(\.toolbar, options: [.initial, .new]) { [weak self] window, _ in
+                MainActor.assumeIsolated {
+                    self?.watch(window.toolbar)
+                }
+            }
+            if window == nil {
+                watch(nil)
+            }
+        }
+
+        private func watch(_ next: NSToolbar?) {
+            guard next !== toolbar else { return }
+            if let toolbar {
+                NotificationCenter.default.removeObserver(self, name: NSToolbar.willAddItemNotification, object: toolbar)
+            }
+            toolbar = next
+            guard let next else { return }
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(toolbarWillAddItem(_:)), name: NSToolbar.willAddItemNotification, object: next
+            )
+            next.items.forEach(relay(_:))
+        }
+
+        @objc private func toolbarWillAddItem(_ notification: Notification) {
+            guard let item = notification.userInfo?["item"] as? NSToolbarItem else { return }
+            relay(item)
+        }
+
+        private func relay(_ item: NSToolbarItem) {
+            guard let field = (item as? NSSearchToolbarItem)?.searchField else { return }
+            field.target = self
+            field.action = #selector(fieldAction(_:))
+        }
+
+        /// The text the field shows is its editor's while it is being edited.
+        @objc private func fieldAction(_ field: NSSearchField) {
+            guard (field.currentEditor()?.string ?? field.stringValue).isEmpty else { return }
+            onClear()
+        }
+    }
+}
+
 /// Toolbar curation control (APP-024): Like / Not Rated / Dislike for the current
 /// targets — the same intent P, U, X, the Photo menu, the hover group and the context
 /// menu call. Photos' toolbar heart, in Otos's vocabulary. `currentChoice` is the one

@@ -44,6 +44,75 @@ extension AppKitWindowTests {
             try await waitUntil { isEditing(field, in: window) }
         }
 
+        /// The field and the search never disagree: however the field is emptied — its clear
+        /// button clicked or pressed by VoiceOver while the field is not being edited, which
+        /// `.searchable` alone does not report, or Escape while it is — the search ends.
+        @Test func clearingTheFieldEndsTheSearchWhereverTheKeyboardIs() async throws {
+            let model = CatalogWindowViewModel(
+                catalogStore: CatalogStore(location: .inMemory),
+                startsStallMonitor: false,
+                startsEnrichment: false,
+                startsSourceMonitoring: false,
+                preferencesDomain: .suite(UUID().uuidString),
+                volumeCapacity: ampleVolumeCapacity,
+                trashFiles: .refusing
+            )
+            let controller = NSHostingController(rootView: ContentView(viewModel: model))
+            controller.sceneBridgingOptions = [.toolbars]
+            let window = NSWindow(contentViewController: controller)
+            window.styleMask = [.titled, .resizable]
+            window.animationBehavior = .none
+            window.isReleasedWhenClosed = false
+            window.setFrame(NSRect(x: -4000, y: -4000, width: 1100, height: 700), display: true)
+            window.makeKeyAndOrderFront(nil)
+            defer { window.close() }
+            let field = try await waitForValue { searchField(in: window) }
+            let cancel = try #require((field.cell as? NSSearchFieldCell)?.cancelButtonCell)
+
+            func search(_ text: String, thenLeaveTheField leaves: Bool) async throws {
+                #expect(window.makeFirstResponder(field))
+                let editor = try #require(window.firstResponder as? NSTextView)
+                editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+                try await waitUntil { model.queryDescriptor.search?.text == text }
+                if leaves {
+                    window.makeFirstResponder(nil)
+                }
+            }
+            /// The field shows an emptied text once SwiftUI has drawn it; the search must agree
+            /// with what it then shows.
+            func searchEnded() async throws {
+                try await waitUntil { field.stringValue.isEmpty && model.queryDescriptor.search == nil }
+                #expect(model.searchText.isEmpty)
+            }
+
+            // The clear button the field draws, as a click reaches it.
+            try await search("dog", thenLeaveTheField: true)
+            let button = try #require(clearButton(in: field, action: cancel.action))
+            button.performClick(nil)
+            try await searchEnded()
+
+            // VoiceOver's press, on the element the field offers for its clear.
+            try await search("cat", thenLeaveTheField: true)
+            _ = cancel.accessibilityPerformPress()
+            try await searchEnded()
+
+            try await search("owl", thenLeaveTheField: true)
+            cancel.performClick(field)
+            try await searchEnded()
+
+            try await search("elk", thenLeaveTheField: false)
+            try #require(window.firstResponder as? NSTextView).doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+            try await searchEnded()
+        }
+
+        /// The button the field draws for its clear, found by the action it sends.
+        private func clearButton(in view: NSView, action: Selector?) -> NSButton? {
+            if let button = view as? NSButton, button.action == action {
+                return button
+            }
+            return view.subviews.lazy.compactMap { clearButton(in: $0, action: action) }.first
+        }
+
         private func searchField(in window: NSWindow) -> NSSearchField? {
             for item in window.toolbar?.items ?? [] {
                 if let search = item as? NSSearchToolbarItem {

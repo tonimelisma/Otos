@@ -483,8 +483,7 @@ nonisolated struct PeopleRestore: Equatable, Sendable {
 }
 
 /// What `CatalogStore.perform(_:)` did: what undoes it, and the person the faces went to
-/// (for New Person, the person the act created; for a merge, the person merged into, where
-/// the window goes from the person merged away).
+/// (for New Person, the person the act created; for a merge, the person merged into).
 nonisolated struct PeopleActOutcome: Equatable, Sendable {
     let restore: PeopleRestore
     let person: PersonID?

@@ -90,47 +90,61 @@ nonisolated struct PeopleMergeRefusal: Equatable, Sendable {
     let reason: String
 }
 
-/// The People acts the window submitted that the store has not yet confirmed or refused,
-/// each under the number its submission took (ADR 0032 rule 2: a request is a counter, and
-/// the store's answer names the request it is for). While a merge is outstanding, the person
-/// it takes away is the merge's to answer for: the store commits the merge and rings the
-/// projection before its answer reaches the window, so a People state that no longer lists
-/// that person can arrive first. Such a state leaves the window showing and filtering them,
-/// and the store's confirmation names the person the window goes to (`didMerge`); its refusal
-/// hands them back to the published state.
+/// The People writes the window submitted — acts, and the undo and redo of each — that the
+/// store has not yet answered, each under the number its submission took (ADR 0032 rule 2: a
+/// request is a counter, and the store's answer names the request it is for). A merge, and
+/// the redo of one, which is that merge, takes a person away; while it is outstanding that
+/// person is the merge's to answer for: the store commits the write and rings the projection
+/// before its answer reaches the window, so a People state that no longer lists them can
+/// arrive first. Such a state leaves the window showing and filtering them; the store's
+/// confirmation takes the window to the person merged into (`didMerge`), and a refusal or a
+/// failed redo hands them back to the published state.
 nonisolated struct PendingPeopleActs: Equatable, Sendable {
-    private(set) var submitted: UInt64 = 0
-    /// The person each outstanding merge takes away, by its request.
-    private var mergedAway: [UInt64: PersonID] = [:]
+    /// One person a write merges into another.
+    nonisolated struct Merge: Equatable, Sendable {
+        let from: PersonID
+        let into: PersonID
+    }
 
-    /// Numbers `act`'s submission.
-    mutating func submit(_ act: PeopleAct) -> UInt64 {
+    private(set) var submitted: UInt64 = 0
+    /// Each outstanding merge, by its request.
+    private var merges: [UInt64: Merge] = [:]
+
+    /// Numbers a write's submission; `merge` is the merge it makes, if it makes one.
+    mutating func submit(merging merge: Merge?) -> UInt64 {
         submitted &+= 1
-        if case let .merge(from, _) = act {
-            mergedAway[submitted] = from
-        }
+        merges[submitted] = merge
         return submitted
     }
 
-    /// The store answered `request`: the person its merge was taking away, if it was a merge
-    /// still outstanding.
-    mutating func answer(_ request: UInt64) -> PersonID? {
-        mergedAway.removeValue(forKey: request)
+    /// The store answered `request`: the merge it was making, if it was one still outstanding.
+    mutating func answer(_ request: UInt64) -> Merge? {
+        merges.removeValue(forKey: request)
     }
 
     /// Whether an outstanding merge is taking `person` away.
     func isMergingAway(_ person: PersonID) -> Bool {
-        mergedAway.values.contains(person)
+        merges.values.contains { $0.from == person }
     }
 }
 
-/// A People act on its way to the store, or an undo or redo of one.
+extension PeopleAct {
+    /// The merge this act makes, performed or redone: a redo returns the catalog to the state
+    /// the act left, so it takes the same person away into the same person.
+    nonisolated var merge: PendingPeopleActs.Merge? {
+        guard case let .merge(from, into) = self else { return nil }
+        return PendingPeopleActs.Merge(from: from, into: into)
+    }
+}
+
+/// A People act on its way to the store, or an undo or redo of one; `request` is its
+/// `PendingPeopleActs` number.
 nonisolated enum PeopleIntent: Sendable {
     /// `title` is the act's name on the undo stack, decided when the act is submitted, from
-    /// the state it changes (`undoTitle(for:)`); `request` is its `PendingPeopleActs` number.
+    /// the state it changes (`undoTitle(for:)`).
     case perform(PeopleAct, title: String, request: UInt64)
-    /// Undo or redo: writes `record` back. `act` and `undoing` only name it in the log.
-    case flip(PeopleUndoRecord, act: PeopleAct, undoing: Bool)
+    /// Undo or redo: writes `record` back. `act` and `undoing` name it.
+    case flip(PeopleUndoRecord, act: PeopleAct, undoing: Bool, request: UInt64)
 }
 
 /// What the store did with one `PeopleIntent`, applied on the main actor once the store's
@@ -139,10 +153,10 @@ enum PeopleIntentEvent {
     case performed(PeopleAct, title: String, request: UInt64, outcome: PeopleActOutcome)
     case refused(PeopleAct, request: UInt64, error: any Error)
     /// A flip wrote `record`'s restore back; `redo` is what that write replaced.
-    case flipped(PeopleUndoRecord, act: PeopleAct, undoing: Bool, redo: PeopleRestore)
-    case flipFailed(PeopleUndoRecord, act: PeopleAct, undoing: Bool, error: any Error)
+    case flipped(PeopleUndoRecord, act: PeopleAct, undoing: Bool, request: UInt64, redo: PeopleRestore)
+    case flipFailed(PeopleUndoRecord, act: PeopleAct, undoing: Bool, request: UInt64, error: any Error)
     /// An earlier flip of the act failed, so this one had nothing to write.
-    case flipSkipped(act: PeopleAct, undoing: Bool)
+    case flipSkipped(act: PeopleAct, undoing: Bool, request: UInt64)
 }
 
 /// What one act's undo and redo entries write back: the state the act, or the last undo or
@@ -588,9 +602,21 @@ extension CatalogWindowViewModel {
         submitPeopleAct(.merge(question.from, into: question.into))
     }
 
-    /// The store merged `from` into `into`, the person its confirmation names: the person they
-    /// became is selected, and takes their place where the window showed or filtered them,
-    /// rather than the window leaving them.
+    /// The store answered `request`, a write the window numbered, having written it (`wrote`)
+    /// or not. The one place an answer reaches what the window shows: a merge it wrote — the
+    /// act or its redo — takes the window to the person merged into; a merge it did not write
+    /// hands the person it would have taken back to the published state.
+    private func didAnswerPeopleWrite(_ request: UInt64, wrote: Bool) {
+        guard let merge = pendingPeopleActs.answer(request) else { return }
+        if wrote {
+            didMerge(merge.from, into: merge.into)
+        }
+        reconcileShownPeople()
+    }
+
+    /// The store merged `from` into `into`: the person they became is selected, and takes
+    /// their place where the window showed or filtered them, rather than the window leaving
+    /// them.
     private func didMerge(_ from: PersonID, into: PersonID) {
         peopleSession.selectedPeople = [into]
         peopleSession.cursor = into
@@ -617,9 +643,7 @@ extension CatalogWindowViewModel {
         OtosLog.ui.errorOperation("people.act", phase: "refused", fields: [
             "act": act.logName, "faces": "\(act.faceCount)", "error": String(describing: error),
         ])
-        if pendingPeopleActs.answer(request) != nil {
-            reconcileShownPeople()
-        }
+        didAnswerPeopleWrite(request, wrote: false)
         guard case let .merge(from, into) = act, let violation = error as? PeopleRuleViolation else { return }
         peopleSession.mergeRefusal = PeopleMergeRefusal(reason: peopleIndex.mergeRefusal(violation, from: from, into: into))
     }
@@ -906,14 +930,11 @@ extension CatalogWindowViewModel {
     /// Hands an act to the one consumer, numbered in `pendingPeopleActs`.
     private func submitPeopleAct(_ act: PeopleAct) {
         let title = undoTitle(for: act)
-        let request = pendingPeopleActs.submit(act)
+        let request = pendingPeopleActs.submit(merging: act.merge)
         OtosLog.ui.noticeOperation("people.act", phase: "submit", fields: [
             "act": act.logName, "faces": "\(act.faceCount)", "request": "\(request)",
         ])
-        // An act the stream never takes is never answered.
-        if !submitPeopleIntent(.perform(act, title: title, request: request)) {
-            _ = pendingPeopleActs.answer(request)
-        }
+        submitPeopleIntent(.perform(act, title: title, request: request), request: request)
     }
 
     /// The act's name on the undo stack, in the words of the item that made it and the
@@ -946,17 +967,18 @@ extension CatalogWindowViewModel {
         }
     }
 
-    @discardableResult
-    private func submitPeopleIntent(_ intent: PeopleIntent) -> Bool {
+    /// Hands `intent`, numbered `request`, to the stream. An intent the stream never takes is
+    /// never answered, so its number is answered here.
+    private func submitPeopleIntent(_ intent: PeopleIntent, request: UInt64) {
         switch peopleIntentContinuation.yield(intent) {
         case .enqueued:
-            return true
+            return
         case .dropped, .terminated:
             OtosLog.ui.error("op=people.intent phase=dropped")
         @unknown default:
             OtosLog.ui.error("op=people.intent phase=unknownYield")
         }
-        return false
+        _ = pendingPeopleActs.answer(request)
     }
 
     /// The one consumer of People acts and their undo, in submission order: each intent goes
@@ -987,12 +1009,12 @@ extension CatalogWindowViewModel {
             } catch {
                 return .refused(act, request: request, error: error)
             }
-        case let .flip(record, act, undoing):
-            guard let restore = record.restore else { return .flipSkipped(act: act, undoing: undoing) }
+        case let .flip(record, act, undoing, request):
+            guard let restore = record.restore else { return .flipSkipped(act: act, undoing: undoing, request: request) }
             do {
-                return try await .flipped(record, act: act, undoing: undoing, redo: store.restore(restore))
+                return try await .flipped(record, act: act, undoing: undoing, request: request, redo: store.restore(restore))
             } catch {
-                return .flipFailed(record, act: act, undoing: undoing, error: error)
+                return .flipFailed(record, act: act, undoing: undoing, request: request, error: error)
             }
         }
     }
@@ -1004,34 +1026,31 @@ extension CatalogWindowViewModel {
             didPerformPeopleAct(act, title: title, request: request, outcome: outcome)
         case let .refused(act, request, error):
             didRefusePeopleAct(act, request: request, error: error)
-        case let .flipped(record, act, undoing, redo):
+        case let .flipped(record, act, undoing, request, redo):
             record.restore = redo
-            OtosLog.ui.noticeOperation("people.act", phase: undoing ? "undone" : "redone", fields: ["act": act.logName])
-        case let .flipFailed(record, act, undoing, error):
+            OtosLog.ui.noticeOperation("people.act", phase: undoing ? "undone" : "redone", fields: [
+                "act": act.logName, "request": "\(request)",
+            ])
+            didAnswerPeopleWrite(request, wrote: true)
+        case let .flipFailed(record, act, undoing, request, error):
             record.restore = nil
             OtosLog.ui.errorOperation("people.act", phase: "\(undoing ? "undone" : "redone").failed", fields: [
-                "act": act.logName, "error": String(describing: error),
+                "act": act.logName, "request": "\(request)", "error": String(describing: error),
             ])
-        case let .flipSkipped(act, undoing):
+            didAnswerPeopleWrite(request, wrote: false)
+        case let .flipSkipped(act, undoing, request):
             OtosLog.ui.errorOperation("people.act", phase: "\(undoing ? "undone" : "redone").skipped", fields: [
-                "act": act.logName, "reason": "earlierFlipFailed",
+                "act": act.logName, "request": "\(request)", "reason": "earlierFlipFailed",
             ])
+            didAnswerPeopleWrite(request, wrote: false)
         }
     }
 
     /// Registers the act's undo. Explicit groups: registration happens on a store
     /// completion, not inside an AppKit event, so the manager's per-event grouping has
-    /// nothing to close. A merge's confirmation names the person merged into, where the
-    /// window goes from the person merged away.
+    /// nothing to close.
     private func didPerformPeopleAct(_ act: PeopleAct, title: String, request: UInt64, outcome: PeopleActOutcome) {
-        if let from = pendingPeopleActs.answer(request) {
-            if let into = outcome.person {
-                didMerge(from, into: into)
-            } else {
-                OtosLog.ui.errorOperation("people.act", phase: "mergeUnnamed", fields: ["request": "\(request)"])
-            }
-            reconcileShownPeople()
-        }
+        didAnswerPeopleWrite(request, wrote: true)
         let record = PeopleUndoRecord(outcome.restore)
         windowUndoManager.beginUndoGrouping()
         windowUndoManager.registerUndo(withTarget: self) { model in
@@ -1045,14 +1064,18 @@ extension CatalogWindowViewModel {
     /// Runs inside `UndoManager.undo()` and `redo()`: files the opposite entry synchronously
     /// — the manager is undoing or redoing right now, so it lands on the other stack and the
     /// rest of that stack is kept — then writes the act's record back through the serial
-    /// lane. Undo and redo are the same write: each restores what the last one replaced.
+    /// lane. Undo and redo are the same write: each restores what the last one replaced. A
+    /// redo is the act, so it is numbered as the act was and a redone merge is answered as the
+    /// merge is (`didAnswerPeopleWrite`); an undo puts back the person a merge took and takes
+    /// no one away.
     private func flipPeopleAct(_ record: PeopleUndoRecord, act: PeopleAct, title: String) {
         let undoing = windowUndoManager.isUndoing
         windowUndoManager.registerUndo(withTarget: self) { model in
             model.flipPeopleAct(record, act: act, title: title)
         }
         windowUndoManager.setActionName(title)
-        submitPeopleIntent(.flip(record, act: act, undoing: undoing))
+        let request = pendingPeopleActs.submit(merging: undoing ? nil : act.merge)
+        submitPeopleIntent(.flip(record, act: act, undoing: undoing, request: request), request: request)
     }
 
     // MARK: - Face outlines

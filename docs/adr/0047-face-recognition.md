@@ -310,14 +310,18 @@ grouping had put with the right child.
   the face acts in
   the photo menus and the Info pane (`docs/design/people.md`).
 - **Which person the window shows:** one view-model owner (`reconcileShownPeople`) decides it,
-  with the filter's people, from the published People state and the acts the store has not
-  answered. Each act's submission takes a number (`PendingPeopleActs`), and the store's answer
-  comes back under it. The store commits a merge and rings the projection before its answer
-  returns, so the People state without the person merged away can arrive first: while that
-  merge is outstanding, the person stays shown and filtered. Its confirmation names the person
-  merged into (`PeopleActOutcome.person`), who takes their place; its refusal hands them back
-  to the published state. Hide, and a person Otos deletes once empty, have no successor: the
-  window returns to the gallery whichever arrives first.
+  with the filter's people, from the published People state and the writes the store has not
+  answered. Each write's submission — an act, an undo, a redo — takes a number
+  (`PendingPeopleActs`), and the store's answer comes back under it. The store commits a merge
+  and rings the projection before its answer returns, so the People state without the person
+  merged away can arrive first: while that merge is outstanding, the person stays shown and
+  filtered. Its confirmation takes the window to the person merged into, who takes their
+  place; its refusal hands them back to the published state. A redo of a merge is that merge,
+  answered on the same path (`didAnswerPeopleWrite`), though it writes back the state the
+  merge left rather than merging again; an undo of one puts the person back and takes no one
+  away. Hide, and a person Otos deletes once empty, have no successor: the window returns to
+  the gallery whichever arrives first, and so does the undo of a New Person, whose person is
+  gone.
 
 ### Licences and attribution
 

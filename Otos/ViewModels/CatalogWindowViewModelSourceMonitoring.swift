@@ -35,7 +35,16 @@ extension CatalogWindowViewModel {
     }
 
     func startCameraSourceMonitoring() {
-        let monitor = CameraSourceMonitor(
+        let monitor = makeCameraSourceMonitor()
+        cameraSourceMonitor = monitor
+        monitor.start()
+    }
+
+    /// The camera monitor the window runs, not yet started: it stages each camera under the
+    /// catalog's own containers (`CatalogStore.stagingContainers`), so a camera's session and
+    /// the root the Store loads for it are one path.
+    func makeCameraSourceMonitor() -> CameraSourceMonitor {
+        CameraSourceMonitor(
             stagingContainers: catalogStore.stagingContainers,
             onAttach: { [weak self] session in
                 self?.attachCameraSession(session)
@@ -44,8 +53,6 @@ extension CatalogWindowViewModel {
                 self?.detachCameraSession(identity)
             }
         )
-        cameraSourceMonitor = monitor
-        monitor.start()
     }
 
     /// Staging survives a camera eject, so anything on disk at launch belongs to a session

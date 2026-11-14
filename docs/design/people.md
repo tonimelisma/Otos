@@ -108,7 +108,8 @@ catalog when the merge is applied, after any act submitted before it (a birthday
 a taken name). Should it refuse there, `Couldn't Merge These People` says why in the same
 words, with `OK`, and nothing moves. Until the catalog answers, the person merged away is
 still the one shown and filtered, even when the People list without them arrives first; its
-confirmation names the person merged into, who takes their place.
+confirmation names the person merged into, who takes their place. A redo of a merge is that
+merge, and lands the same way.
 
 **Empty states:** one centered L3 sentence under the bar: `People appear here as Otos
 finds faces in your photos.`, `People appear here once Otos finds the same face on

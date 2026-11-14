@@ -508,6 +508,48 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    /// A redo of a merge is that merge: with the window on the person it merges away, a People
+    /// state that no longer lists them, arriving before the redo's answer, leaves the window
+    /// to it, and the answer takes the window to the person merged into, as the merge's own
+    /// confirmation does.
+    @Test func aRedoneMergeTakesTheWindowToThePersonMergedInto() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory(), consumesIntents: false)
+        let other = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
+        try await fixture.show(fixture.people(), scope: .people)
+        var intents = fixture.model.peopleIntentStream.makeAsyncIterator()
+        fixture.model.askMerge(other, into: fixture.sam)
+        fixture.model.answerMerge(true)
+        let merge = try #require(await intents.next())
+        await fixture.model.applyPeopleIntentEvent(CatalogWindowViewModel.runPeopleIntent(merge, store: fixture.store))
+        try await Self.waitForUndo(fixture.model, title: "Undo Merge")
+
+        fixture.model.undoLastChange()
+        let undo = try #require(await intents.next())
+        await fixture.model.applyPeopleIntentEvent(CatalogWindowViewModel.runPeopleIntent(undo, store: fixture.store))
+        let unmerged = try await fixture.people()
+        #expect(unmerged.person(other) != nil)
+        fixture.show(unmerged, scope: .people)
+        fixture.model.openPerson(other)
+        fixture.show(unmerged, scope: .person(other))
+        fixture.model.setPeopleFilter(other, included: true)
+
+        fixture.model.redoLastChange()
+        let redo = try #require(await intents.next())
+        let answer = await CatalogWindowViewModel.runPeopleIntent(redo, store: fixture.store)
+        let merged = try await fixture.people()
+        #expect(merged.person(other) == nil)
+        fixture.show(merged, scope: .person(other))
+        #expect(fixture.model.queryDescriptor.scope == .person(other))
+        #expect(fixture.model.queryDescriptor.filter.people == [other])
+
+        fixture.model.applyPeopleIntentEvent(answer)
+        #expect(fixture.model.queryDescriptor.scope == .person(fixture.sam))
+        #expect(fixture.model.queryDescriptor.filter.people == [fixture.sam])
+        #expect(fixture.model.peopleSession.selectedPeople == [fixture.sam])
+        #expect(fixture.model.undoMenuState.undoTitle == "Undo Merge")
+        await fixture.store.shutdown()
+    }
+
     /// A merge the store refuses hands the person it would have merged away back to the
     /// published state: here they were hidden while the merge was on its way, so its refusal
     /// returns the window to the gallery and the filter lets go of them.
