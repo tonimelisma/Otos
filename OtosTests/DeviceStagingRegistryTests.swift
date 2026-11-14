@@ -145,12 +145,50 @@ struct DeviceStagingRegistryTests {
         let root = StagingLocation.sessionRootURL(identity: .camera(id: "quitting"), inContainer: container)
         let staged = root.appending(path: "A.ARW", directoryHint: .notDirectory)
         try Data(repeating: 3, count: 128).write(to: staged)
-        #expect(StagingLocation.hasStagedBytes())
+        #expect(StagingLocation.hasStagedBytes(inContainers: [container]))
 
         StagingLocation.releaseOwnership()
         StagingLocation.sweepUnownedStaging(inContainers: [container])
 
         #expect(!FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))
+    }
+
+    /// An Immich account's tree is claimed while this process holds the account, signed in
+    /// or not, so another instance's sweep never deletes the originals it staged; forgetting
+    /// the account releases the claim, and the sweep then collects the tree.
+    @Test func anImmichAccountHoldsItsTreeUntilItIsForgotten() async throws {
+        struct NoSessions: ImmichSessionStoring {
+            func saveToken(_: String, for _: DeviceIdentity) throws {}
+            func token(for _: DeviceIdentity) throws -> String? {
+                nil
+            }
+
+            func deleteToken(for _: DeviceIdentity) throws {}
+        }
+        let container = try makeTestDirectory().appending(path: "RemoteStaging", directoryHint: .isDirectory)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        let rootPath = try await store.addImmichAccount(
+            server: #require(URL(string: "https://photos.example.com")), userID: "user-1", displayName: "Family",
+            stagingContainer: container
+        )
+        let staged = rootPath.url.appending(path: "a1/IMG_1.JPG", directoryHint: .notDirectory)
+        try FileManager.default.createDirectory(at: staged.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(repeating: 5, count: 64).write(to: staged)
+        let accounts = ImmichAccounts(
+            store: store, sessions: NoSessions(), stagingContainer: container, volumeCapacity: ampleVolumeCapacity
+        )
+
+        await accounts.start()
+        StagingLocation.sweepUnownedStaging(inContainers: [container])
+        #expect(FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))
+
+        let root = try #require(await store.currentLibraries().first { $0.path == rootPath }?.root)
+        await accounts.forget(root)
+        StagingLocation.sweepUnownedStaging(inContainers: [container])
+        #expect(!FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))
+        await accounts.shutdown()
+        await store.shutdown()
     }
 
     /// Attaching a camera creates its tree whether or not anything is staged into it, and
@@ -165,7 +203,7 @@ struct DeviceStagingRegistryTests {
         defer { StagingLocation.releaseOwnership() }
 
         #expect(
-            !StagingLocation.hasStagedBytes(),
+            !StagingLocation.hasStagedBytes(inContainers: [container]),
             "directories alone are not bytes; quitting must not defer to delete nothing"
         )
     }

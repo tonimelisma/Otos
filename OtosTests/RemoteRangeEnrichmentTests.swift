@@ -25,6 +25,7 @@ struct RemoteRangeEnrichmentTests {
             requests?.increment()
             let start = Int(offset)
             completion(.success(data.subdata(in: start ..< min(data.count, start + length))))
+            return .settled
         }
     }
 
@@ -45,22 +46,30 @@ struct RemoteRangeEnrichmentTests {
     @Test func aReadTheServerDoesNotAnswerInFullThrows() {
         let short = RemoteByteSource(reader: RemoteRangeReader(size: 10) { _, _, completion in
             completion(.success(Data(count: 2)))
+            return .settled
         })
         #expect(throws: RemoteByteSourceError.shortRead(expected: 5, received: 2)) {
             try short.data(offset: 0, length: 5)
         }
         let failing = RemoteByteSource(reader: RemoteRangeReader(size: 10) { _, _, completion in
             completion(.failure(ImmichClientError.unreachable(.timedOut)))
+            return .settled
         })
         #expect(throws: ImmichClientError.unreachable(.timedOut)) {
             try failing.data(offset: 0, length: 5)
         }
+        // An unanswered read is cancelled at its deadline, so its transfer stops.
+        let cancelled = Mutex(false)
         let silent = RemoteByteSource(
-            reader: RemoteRangeReader(size: 10) { _, _, _ in }, readDeadline: .milliseconds(10)
+            reader: RemoteRangeReader(size: 10) { _, _, _ in
+                RemoteRangeRead { cancelled.withLock { $0 = true } }
+            },
+            readDeadline: .milliseconds(10)
         )
         #expect(throws: RemoteByteSourceError.timedOut) {
             try silent.data(offset: 0, length: 5)
         }
+        #expect(cancelled.withLock { $0 })
     }
 
     // MARK: - The Store's answering fact

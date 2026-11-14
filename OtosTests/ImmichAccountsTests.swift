@@ -46,6 +46,13 @@ struct ImmichAccountsTests {
             requests.withLock { $0 }
         }
 
+        /// Whether each sync request asked the server to discard the cursor (`reset`).
+        var streamResets: [Bool] {
+            resets.withLock { $0 }
+        }
+
+        private let resets = Mutex<[Bool]>([])
+
         func session() -> URLSession {
             ImmichStubProtocol.session(host: host) { [self] request, body in
                 let path = request.url?.path ?? ""
@@ -61,6 +68,8 @@ struct ImmichAccountsTests {
                     let reply = #"{"accessToken":"tok","userId":"u1","userEmail":"a@example.com","name":"Family"}"#
                     return (201, Data(reply.utf8))
                 case "/api/sync/stream":
+                    let sent = try JSONSerialization.jsonObject(with: body ?? Data()) as? [String: Any]
+                    resets.withLock { $0.append(sent?["reset"] as? Bool ?? false) }
                     let status = streams.withLock { $0.isEmpty ? 200 : $0.removeFirst() }
                     if status == Self.noAnswer {
                         throw URLError(.cannotConnectToHost)
@@ -196,28 +205,68 @@ struct ImmichAccountsTests {
     @Test func statusFollowsWhatTheServerLastAnswered() async throws {
         let server = FakeServer(host: "flaky.test", streams: [200, FakeServer.noAnswer, 200, 401])
         let store = try await makeStore()
-        // Nothing rings on its own: each pass here is asked for, so each status is read
-        // before the next pass can replace it.
+        // Nothing rings on its own: each pass here is rung by signing in again, so each
+        // status is read before the next pass can replace it.
         let asked = ImmichAccounts.Schedule(poll: .seconds(3600), backoff: [.seconds(3600)])
         let accounts = try ImmichAccounts(
             store: store, sessions: MemorySessions(), urlSession: server.session(), schedule: asked,
             stagingContainer: makeTestDirectory(),
             volumeCapacity: ampleVolumeCapacity
         )
-        guard case let .added(rootPath) = try await accounts.add(
-            server: #require(URL(string: "http://flaky.test")), email: "a", password: "right"
-        ) else {
+        let address = try #require(URL(string: "http://flaky.test"))
+        guard case let .added(rootPath) = await accounts.add(server: address, email: "a", password: "right") else {
             Issue.record("Expected the account added")
             return
         }
         await waitForStatus(.online, of: rootPath, in: accounts)
-        await accounts.syncAll()
+        _ = await accounts.add(server: address, email: "a", password: "right")
         await waitForStatus(.offline, of: rootPath, in: accounts)
-        await accounts.syncAll()
+        _ = await accounts.add(server: address, email: "a", password: "right")
         await waitForStatus(.online, of: rootPath, in: accounts)
-        await accounts.syncAll()
+        _ = await accounts.add(server: address, email: "a", password: "right")
         await waitForStatus(.signedOut, of: rootPath, in: accounts)
         #expect(try await assetPaths(store, rootPath) == ["a1/IMG_1.JPG"])
+        await accounts.shutdown()
+        await store.shutdown()
+    }
+
+    /// A new session's cursor is empty and its server sends it no reset, so its first pass
+    /// is a resync read from zero: signing in again purges a row the server no longer
+    /// lists, such as one deleted while the account was signed out.
+    @Test func signingInAgainResyncsFromZero() async throws {
+        let server = FakeServer(host: "again.test")
+        let store = try await makeStore()
+        let accounts = try ImmichAccounts(
+            store: store, sessions: MemorySessions(), urlSession: server.session(), schedule: Self.quick,
+            stagingContainer: makeTestDirectory(), volumeCapacity: ampleVolumeCapacity
+        )
+        let address = try #require(URL(string: "http://again.test"))
+        guard case let .added(rootPath) = await accounts.add(server: address, email: "a", password: "right") else {
+            Issue.record("Expected the account added")
+            return
+        }
+        // The first pass has ended, so no listing lease is held.
+        await waitForStatuses(in: accounts) { $0[rootPath]?.reach == .online && $0[rootPath]?.isSyncing == false }
+        #expect(try await store.sourceResyncOwed(rootPath: rootPath) == nil)
+
+        // A row the server no longer has, as one deleted while signed out would be.
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
+        try await store.applySourceListingChanges(SourceListingChanges(listed: [SourceListedItem(
+            file: ScannedMediaFile(
+                relativePath: MediaRelativePath(rawValue: "gone/IMG.JPG"), name: "IMG.JPG",
+                contentTypeIdentifier: "public.jpeg", byteSize: 1,
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
+            ),
+            sourceItemID: "gone", isHiddenBySource: false, sourceHasProducts: false
+        )]), scan: scan)
+        await store.endSourceListing(scan: scan)
+        #expect(try await assetPaths(store, rootPath).sorted() == ["a1/IMG_1.JPG", "gone/IMG.JPG"])
+
+        _ = await accounts.add(server: address, email: "a", password: "right")
+        try await waitUntil { await (try? assetPaths(store, rootPath)) == ["a1/IMG_1.JPG"] }
+        #expect(server.streamResets == [true, true])
+        try await waitUntil { await (try? store.sourceResyncOwed(rootPath: rootPath)) == .some(nil) }
         await accounts.shutdown()
         await store.shutdown()
     }
@@ -233,7 +282,7 @@ struct ImmichAccountsTests {
             #expect(ImmichAccounts.reach(after: .serverFailed(.unreachable(.timedOut)), was: current) == .offline)
             for standing: ImmichSyncPassOutcome in [
                 .serverFailed(.refused(status: 503)), .serverFailed(.malformedResponse), .resetLoop,
-                .catalogFailed, .stopped,
+                .catalogFailed, .noLease, .stopped,
             ] {
                 #expect(ImmichAccounts.reach(after: standing, was: current) == current)
             }

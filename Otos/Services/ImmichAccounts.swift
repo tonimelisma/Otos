@@ -126,9 +126,13 @@ actor ImmichAccounts {
     }
 
     /// Starts every saved account's sync: one with a saved session at once, one without
-    /// as signed out.
+    /// as signed out. Each account's staging tree is claimed, signed in or not, so another
+    /// instance's sweep never deletes originals this one staged.
     func start() async {
         let roots = await store.currentLibraries().map(\.root).filter { $0.remoteBaseURL != nil }
+        for root in roots {
+            StagingLocation.claimOwnership(of: root.path.url)
+        }
         for root in roots where accounts[root.path] == nil {
             let token: String?
             do {
@@ -155,6 +159,14 @@ actor ImmichAccounts {
     /// Logs in, checks the server speaks Immich's supported major version, adds the
     /// account's root, saves its session, and starts its sync. Signing in again to an
     /// account Otos already has replaces its session and resumes it.
+    ///
+    /// A new session's cursor is empty, and nothing establishes that the server resets it
+    /// (its age check skips a session that never completed a stream,
+    /// `docs/research/2026-11-13-immich-sync-reset.md`), so the stream it starts proves
+    /// nothing about rows it does not list: deletions while signed out, past the server's
+    /// audit retention, would never be purged. A full resync is recorded as owed before the
+    /// session is saved, so the first pass of every session reads the stream from zero and
+    /// purges what it no longer lists.
     func add(server: URL, email: String, password: String) async -> ImmichAddAccountOutcome {
         guard let address = ImmichServerAddress.normalized(server) else {
             return .invalidServer
@@ -182,6 +194,8 @@ actor ImmichAccounts {
             else {
                 return .notSaved
             }
+            StagingLocation.claimOwnership(of: root.path.url)
+            try await store.requestSourceResync(rootPath: rootPath)
             try sessions.saveToken(login.accessToken, for: identity)
             let lastSynced = await lastSynced(of: rootPath)
             stop(rootPath)
@@ -198,14 +212,15 @@ actor ImmichAccounts {
         return .added(rootPath)
     }
 
-    /// Ends an account before its root is removed: stops its sync, logs its session out
-    /// when the server answers, and deletes its Keychain item. A root that is not an
-    /// account is left alone.
+    /// Ends an account before its root is removed: stops its sync, releases its staging
+    /// tree, logs its session out when the server answers, and deletes its Keychain item. A
+    /// root that is not an account is left alone.
     func forget(_ root: LibraryRoot) async {
         guard let identity = root.deviceIdentity, let server = root.remoteBaseURL else {
             return
         }
         stop(root.path)
+        StagingLocation.releaseOwnership(of: root.path.url)
         status[root.path] = nil
         publish.yield(status)
         await answeringApplied(false, for: root.path)
@@ -226,13 +241,6 @@ actor ImmichAccounts {
             OtosLog.catalog.errorOperation("immich.account.forget", phase: "keychainFailed", fields: [
                 "rootPath": root.path.rawValue, "error": String(describing: error),
             ])
-        }
-    }
-
-    /// Asks every running account for a pass now.
-    func syncAll() {
-        for account in accounts.values {
-            account.sync.requestSync()
         }
     }
 
@@ -447,7 +455,8 @@ actor ImmichAccounts {
     }
 
     /// Records what the server answered and rings the next pass after the delay its
-    /// answer calls for. A refused session or a removed root rings none.
+    /// answer calls for. A refused session or a loop torn down rings none; a root that could
+    /// not get or keep its listing lease is retried, because nothing reports when it can.
     private func passEnded(_ outcome: ImmichSyncPassOutcome, for path: LibraryRootPath) {
         guard var account = accounts[path] else {
             return
@@ -461,7 +470,7 @@ actor ImmichAccounts {
             account.timer = poll(account.sync)
         case .serverFailed(.unauthorized), .stopped:
             break
-        case .serverFailed, .resetLoop, .catalogFailed:
+        case .serverFailed, .resetLoop, .catalogFailed, .noLease:
             account.timer = retry(account.sync, after: account.failures)
             account.failures += 1
         }
@@ -479,7 +488,7 @@ actor ImmichAccounts {
         case .synced: .online
         case .serverFailed(.unauthorized): .signedOut
         case .serverFailed(.unreachable): .offline
-        case .serverFailed, .resetLoop, .catalogFailed, .stopped: current
+        case .serverFailed, .resetLoop, .catalogFailed, .noLease, .stopped: current
         }
     }
 
@@ -502,7 +511,7 @@ actor ImmichAccounts {
         let delay = schedule.backoff[min(failures, schedule.backoff.count - 1)]
         return Task { [clock] in
             do {
-                // time: backoff — nothing reports when a failing server or catalog recovers.
+                // time: backoff — nothing reports when a failing server, catalog or lease recovers.
                 try await clock.sleep(for: delay)
             } catch {
                 return

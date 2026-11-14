@@ -104,7 +104,7 @@ struct ImmichLiveServerTests {
         // Each asset's grid thumbnail came from the server's own preview (ADR 0046 §7).
         #expect(listed.allSatisfy { $0.thumbnailPath != nil })
         await #expect(throws: ImmichClientError.unauthorized) {
-            for try await _ in try await client.syncEvents(token: login.accessToken) {}
+            for try await _ in try await client.syncEvents(token: login.accessToken, fromZero: false) {}
         }
     }
 

@@ -36,6 +36,7 @@ struct ImmichCatalogSyncTests {
         private let previewRequests = Mutex<[String]>([])
         private let details: [String: ImmichAssetDetail]
         private let detailRequests = Mutex<[String]>([])
+        private let fromZero = Mutex<[Bool]>([])
 
         init(
             _ passes: [[ImmichSyncEvent]],
@@ -76,7 +77,13 @@ struct ImmichCatalogSyncTests {
             acked.withLock { $0 }
         }
 
-        func events() async throws -> any AsyncSequence<ImmichSyncEvent, any Error> {
+        /// Whether each stream asked for was asked from zero, in order.
+        var streamsFromZero: [Bool] {
+            fromZero.withLock { $0 }
+        }
+
+        func events(fromZero: Bool) async throws -> any AsyncSequence<ImmichSyncEvent, any Error> {
+            self.fromZero.withLock { $0.append(fromZero) }
             let lines = passes.withLock { $0.isEmpty ? [] : $0.removeFirst() }
             let failAfter = failures.withLock { $0.isEmpty ? nil : $0.removeFirst() }
             return AsyncThrowingStream<ImmichSyncEvent, any Error> { continuation in
@@ -94,6 +101,88 @@ struct ImmichCatalogSyncTests {
         func acknowledge(_ acks: [String]) async throws {
             await onAck(acks)
             acked.withLock { $0.append(acks) }
+        }
+    }
+
+    /// A server that keeps a cursor, as Immich does: a stream resumes after the newest line
+    /// acknowledged, `fromZero` (`reset: true`) discards the cursor first, and a pending reset
+    /// answers a plain stream with `SyncResetV1` until it is acknowledged
+    /// (`docs/research/2026-11-13-immich-sync-reset.md`). `failAfter` drops each stream in
+    /// turn after that many lines.
+    private final class ResumingServer: ImmichSyncSource, Sendable {
+        private struct State {
+            var listing: [ImmichSyncEvent]
+            var cursor = 0
+            var pendingReset = false
+            var failures: [Int?] = []
+            var fromZero: [Bool] = []
+        }
+
+        private static let resetAck = "SyncResetV1|1"
+        private let state: Mutex<State>
+
+        init(_ listing: [ImmichSyncEvent]) {
+            state = Mutex(State(listing: listing))
+        }
+
+        /// What the account holds from now on, and whether the server has lost the
+        /// session's history; `failAfter` scripts the next streams' drops.
+        func serve(_ listing: [ImmichSyncEvent], pendingReset: Bool, failAfter: [Int?] = []) {
+            state.withLock {
+                $0.listing = listing
+                $0.pendingReset = pendingReset
+                $0.failures = failAfter
+            }
+        }
+
+        var streamsFromZero: [Bool] {
+            state.withLock(\.fromZero)
+        }
+
+        func events(fromZero: Bool) async throws -> any AsyncSequence<ImmichSyncEvent, any Error> {
+            let (lines, failAfter) = state.withLock { state in
+                state.fromZero.append(fromZero)
+                if fromZero {
+                    state.cursor = 0
+                    state.pendingReset = false
+                }
+                let failAfter = state.failures.isEmpty ? nil : state.failures.removeFirst()
+                guard !state.pendingReset else {
+                    return ([ImmichSyncEvent.reset(ack: Self.resetAck)], failAfter)
+                }
+                return (Array(state.listing[state.cursor...]) + [ImmichCatalogSyncTests.complete], failAfter)
+            }
+            return AsyncThrowingStream<ImmichSyncEvent, any Error> { continuation in
+                for (index, line) in lines.enumerated() {
+                    if let failAfter, index == failAfter {
+                        continuation.finish(throwing: URLError(.networkConnectionLost))
+                        return
+                    }
+                    continuation.yield(line)
+                }
+                continuation.finish()
+            }
+        }
+
+        func acknowledge(_ acks: [String]) async throws {
+            state.withLock { state in
+                for ack in acks {
+                    if ack == Self.resetAck {
+                        state.cursor = 0
+                        state.pendingReset = false
+                    } else if let index = state.listing.firstIndex(where: { $0.ack == ack }) {
+                        state.cursor = max(state.cursor, index + 1)
+                    }
+                }
+            }
+        }
+
+        func preview(assetID _: String) async throws -> Data {
+            throw URLError(.badServerResponse)
+        }
+
+        func asset(id _: String) async throws -> ImmichAssetDetail {
+            throw ImmichClientError.refused(status: 404)
         }
     }
 
@@ -245,37 +334,72 @@ struct ImmichCatalogSyncTests {
         #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: true))
         #expect(try await fixture.visible() == ["a/IMG.JPG"])
         #expect(server.acknowledgements.contains(["SyncResetV1|1"]))
+        // The resync after the reset asked the server to read from zero.
+        #expect(server.streamsFromZero == [false, false, true])
+        #expect(try await fixture.store.sourceResyncOwed(rootPath: fixture.rootPath) == nil)
         await fixture.store.shutdown()
     }
 
-    /// The resync a reset owes outlives a full stream that drops partway: the reset is
-    /// already acknowledged, so the next pass reads the stream in full again, from the
-    /// catalog's record of the debt, and only a full stream that reaches its end purges
-    /// what it no longer lists and settles it.
-    @Test func aResyncThatDropsIsReadInFullAgain() async throws {
+    /// The resync a reset owes outlives a stream that drops after some of its batches were
+    /// acknowledged. The server resumes a plain stream after those batches, so the next pass
+    /// asks it to read from zero again: only a stream that lists everything and reaches its
+    /// end purges what it no longer lists, and never a row an acknowledged batch carried.
+    @Test func aResyncThatDropsAfterAcknowledgingABatchIsReadFromZeroAgain() async throws {
         let fixture = try await Fixture.make()
-        let server = ScriptedServer(
-            [
-                [Self.asset("a"), Self.asset("b"), Self.complete],
-                [.reset(ack: "SyncResetV1|1")],
-                [Self.asset("a"), Self.complete],
-                [Self.asset("a"), Self.complete],
-                [Self.complete],
-            ],
-            failAfter: [nil, nil, 1]
-        )
+        let kept = (0 ..< ImmichCatalogSync.batchSize).map { Self.asset("x\($0)") }
+        let server = ResumingServer(kept + [Self.asset("gone")])
         let sync = ImmichCatalogSync(
             rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
         )
-        _ = await sync.pass()
-        #expect(await sync.pass() == .serverFailed(.unreachable(.networkConnectionLost)))
-        #expect(try await fixture.store.sourceResyncOwed(rootPath: fixture.rootPath))
-        #expect(try await fixture.visible() == ["a/IMG.JPG", "b/IMG.JPG"])
+        #expect(await sync.pass() == .synced(listed: ImmichCatalogSync.batchSize + 1, deleted: 0, full: false))
 
-        #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: true))
-        #expect(try await fixture.visible() == ["a/IMG.JPG"])
-        #expect(try await !fixture.store.sourceResyncOwed(rootPath: fixture.rootPath))
+        // `gone` was deleted past the server's audit retention: the server lost the cursor's
+        // history, and the resync drops after its first batch was applied and acknowledged.
+        server.serve(kept + [Self.asset("late")], pendingReset: true, failAfter: [nil, ImmichCatalogSync.batchSize])
+        #expect(await sync.pass() == .serverFailed(.unreachable(.networkConnectionLost)))
+        #expect(try await fixture.store.sourceResyncOwed(rootPath: fixture.rootPath) != nil)
+        #expect(try await fixture.visible().contains("gone/IMG.JPG"))
+
+        #expect(await sync.pass() == .synced(listed: ImmichCatalogSync.batchSize + 1, deleted: 0, full: true))
+        let visible = try await fixture.visible()
+        #expect(visible.count == ImmichCatalogSync.batchSize + 1)
+        #expect(visible.contains("x0/IMG.JPG"))
+        #expect(visible.contains("late/IMG.JPG"))
+        #expect(!visible.contains("gone/IMG.JPG"))
+        #expect(try await fixture.store.sourceResyncOwed(rootPath: fixture.rootPath) == nil)
+        #expect(server.streamsFromZero == [false, false, true, true])
+
+        // Settled: the next pass resumes from the cursor.
         #expect(await sync.pass() == .synced(listed: 0, deleted: 0, full: false))
+        await fixture.store.shutdown()
+    }
+
+    /// A resync settles only the request it started from: one recorded while it ran (a new
+    /// session, another reset) stays owed after it completes.
+    @Test func aResyncRequestedWhileOneRunsStaysOwed() async throws {
+        let fixture = try await Fixture.make()
+        let store = fixture.store
+        let first = try #require(try await store.requestSourceResync(rootPath: fixture.rootPath))
+        let scan = try await store.beginSourceListing(rootPath: fixture.rootPath)
+        let second = try #require(try await store.requestSourceResync(rootPath: fixture.rootPath))
+        try await store.completeSourceResync(scan: scan, observedPaths: [], settling: first)
+        #expect(try await store.sourceResyncOwed(rootPath: fixture.rootPath) == second)
+
+        let next = try await store.beginSourceListing(rootPath: fixture.rootPath)
+        try await store.completeSourceResync(scan: next, observedPaths: [], settling: second)
+        #expect(try await store.sourceResyncOwed(rootPath: fixture.rootPath) == nil)
+        await store.shutdown()
+    }
+
+    /// A root that cannot get a listing lease is not a teardown: the pass says so, and its
+    /// owner tries again.
+    @Test func aPassWithoutALeaseIsNotStopped() async throws {
+        let fixture = try await Fixture.make()
+        let sync = ImmichCatalogSync(
+            rootPath: LibraryRootPath(rawValue: "/nowhere/"), source: ScriptedServer([[Self.complete]]),
+            store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        #expect(await sync.pass() == .noLease)
         await fixture.store.shutdown()
     }
 
@@ -578,6 +702,31 @@ struct ImmichCatalogSyncTests {
             rootPath: signedOutFixture.rootPath, after: nil, limit: 10
         ).map(\.sourceItemID) == ["d"])
         await signedOutFixture.store.shutdown()
+
+        // A server failing now (a 5xx, a 429) says nothing about the asset: the preview it
+        // had already given is kept, and the failed one stays owed, never recorded absent.
+        for status in [429, 500, 503] {
+            let failingFixture = try await FileFixture.make()
+            let failing = ScriptedServer(
+                [[Self.asset("e"), Self.asset("f"), Self.exif("e", size: 1), Self.exif("f", size: 1), Self.complete]],
+                previews: { id in
+                    guard id == "e" else {
+                        throw ImmichClientError.refused(status: status)
+                    }
+                    return preview
+                }
+            )
+            let failingSync = ImmichCatalogSync(
+                rootPath: failingFixture.rootPath, source: failing, store: failingFixture.store,
+                volumeCapacity: ampleVolumeCapacity
+            )
+            _ = await failingSync.pass()
+            #expect(try await failingFixture.store.sourceProductCandidates(
+                rootPath: failingFixture.rootPath, after: nil, limit: 10
+            ).map(\.sourceItemID) == ["f"])
+            #expect(await failingSync.fetchProducts() == .serverFailed(made: 0))
+            await failingFixture.store.shutdown()
+        }
     }
 
     /// An asset the server lists without a thumbhash has no previews yet, and a Live
@@ -879,5 +1028,95 @@ struct ImmichCatalogSyncTests {
         #expect(try await fixture.store.sourceItemRows(["m"], in: fixture.rootPath)["m"]?.isHiddenBySource == true)
         #expect(server.requestedDetails.isEmpty)
         await fixture.store.shutdown()
+    }
+
+    /// A video listed on its own that becomes a Live Photo's motion part leaves its own
+    /// folder: its `hidden` line removes the row it had there, whether the still comes in
+    /// a later pass or the line follows the timeline line in the same batch, and the motion
+    /// part is then one row, in its still's folder.
+    @Test func aVideoThatBecomesAMotionPartLeavesItsOwnFolder() async throws {
+        let fixture = try await Fixture.make()
+        let server = ScriptedServer(
+            [
+                [Self.asset("m", name: "IMG_1.MOV", type: .video), Self.exif("m", size: 2), Self.complete],
+                [Self.motion("m"), Self.complete],
+                [Self.asset("s", name: "IMG_1.HEIC", motion: "m"), Self.complete],
+                [Self.asset("v", name: "CLIP.MOV", type: .video), Self.motion("v", name: "CLIP.MOV"), Self.complete],
+            ],
+            details: ["m": Self.detail("m", size: 2)]
+        )
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+
+        _ = await sync.pass()
+        #expect(try await fixture.visible() == ["m/IMG_1.MOV"])
+        _ = await sync.pass()
+        #expect(try await fixture.visible().isEmpty)
+        _ = await sync.pass()
+        #expect(try await fixture.visible() == ["s/IMG_1.HEIC", "s/IMG_1.MOV"])
+        let rows = try await fixture.store.sourceItemRows(["m"], in: fixture.rootPath)
+        #expect(rows["m"]?.relativePath.rawValue == "s/IMG_1.MOV")
+
+        _ = await sync.pass()
+        #expect(try await fixture.visible() == ["s/IMG_1.HEIC", "s/IMG_1.MOV"])
+        await fixture.store.shutdown()
+    }
+
+    /// A motion part whose own line came earlier in the pass is listed from it when its
+    /// still arrives, with no request to the server, even before the server has reported its
+    /// size; the size reaches its row by its own ID when it comes.
+    @Test func aMotionPartIsListedFromItsOwnLineBeforeItsSizeIsKnown() async throws {
+        let fixture = try await Fixture.make()
+        let server = ScriptedServer([
+            [Self.motion("m"), Self.asset("s", name: "IMG_1.HEIC", motion: "m"), Self.complete],
+            [Self.exif("m", size: 2000), Self.complete],
+        ])
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+
+        _ = await sync.pass()
+        #expect(try await fixture.visible() == ["s/IMG_1.HEIC", "s/IMG_1.MOV"])
+        #expect(server.requestedDetails.isEmpty)
+        #expect(try await fixture.size(of: "s/IMG_1.MOV") == nil)
+        _ = await sync.pass()
+        #expect(try await fixture.size(of: "s/IMG_1.MOV") == 2000)
+        await fixture.store.shutdown()
+    }
+
+    /// A motion part the server refuses to describe never holds back the pass: its still is
+    /// listed, the batch acknowledged, and a motion row the still's folder already has keeps
+    /// its overlay. A server failure still fails the pass.
+    @Test func aRefusedMotionPartLeavesItsStillListed() async throws {
+        let fixture = try await Fixture.make()
+        let server = ScriptedServer([
+            [Self.asset("s", name: "IMG_1.HEIC", motion: "gone"), Self.complete],
+        ])
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
+        #expect(try await fixture.visible() == ["s/IMG_1.HEIC"])
+        #expect(server.requestedDetails == ["gone"])
+        #expect(server.acknowledgements == [["AssetV2|s", "SyncCompleteV1|1"]])
+        await fixture.store.shutdown()
+
+        let heldFixture = try await Fixture.make()
+        let held = ScriptedServer([
+            [Self.motion("m"), Self.asset("s", name: "IMG_1.HEIC", motion: "m"), Self.complete],
+            [Self.asset("s", name: "IMG_1.HEIC", modified: 1_700_000_900, motion: "m"), Self.complete],
+        ])
+        let heldSync = ImmichCatalogSync(
+            rootPath: heldFixture.rootPath, source: held, store: heldFixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        _ = await heldSync.pass()
+        let motion = MediaAssetID(
+            libraryRootPath: heldFixture.rootPath, relativePath: MediaRelativePath(rawValue: "s/IMG_1.MOV")
+        )
+        _ = try await heldFixture.store.setMediaChoices([motion: .liked])
+        #expect(await heldSync.pass() == .synced(listed: 1, deleted: 0, full: false))
+        #expect(try await heldFixture.store.mediaAssets(for: [motion])[motion]?.mediaChoice == .liked)
+        await heldFixture.store.shutdown()
     }
 }

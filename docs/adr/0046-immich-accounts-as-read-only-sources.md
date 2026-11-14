@@ -92,8 +92,11 @@ unreachable is never a deletion.
 
 - **Root:** `LibraryRootKind.immichAccount`. Its `device_identity` is
   `immich:<normalized server URL>#<user id>`, and its path is an Otos staging folder
-  `RemoteStaging/<sanitized identity>/` under the app's Caches folder, beside
-  `DeviceStaging` but a separate container, so the camera sweep never touches it. Staged
+  `RemoteStaging/<sanitized identity>/` under the app's Caches folder named by its bundle
+  identifier, beside `DeviceStaging` but a separate container, so a dev build and the
+  installed app (ADR 0030) never share it. While Otos holds the account, signed in or not,
+  it claims the tree with the same `flock` a camera's tree carries, so another instance's
+  sweep never deletes the originals it staged; forgetting the account releases it. Staged
   originals are working copies, not overlay, so they do not belong in the backed-up
   Application Support.
 - **Asset:** the relative path is `<asset id>/<original file name>`. Otos invents no ID:
@@ -110,10 +113,14 @@ unreachable is never a deletion.
 - **Motion part facts:** the stream reports a motion part as its own `hidden` asset,
   linked from its still's `livePhotoVideoId`. A still's line lists its folder in full:
   the still, and the motion part it links. The motion part's facts come from its own line
-  and size in the same pass, or else from `GET /api/assets/{id}`. A still that no longer
-  links its motion part drops it. A motion part's own line without its still's refreshes
-  the row it already has, found by its ID, and keeps the hidden state its still decided;
-  its size arrives by its own ID.
+  in the same pass, with its size when that is there too, or else from
+  `GET /api/assets/{id}`; a motion part the server refuses to describe (400 or 404) leaves
+  its still listed alone and its folder's rows as they are, so one asset never holds back
+  every pass. A still that no longer links its motion part drops it. A motion part's own
+  line without its still's refreshes the row it already has in its still's folder, found by
+  its ID, and keeps the hidden state its still decided; its size arrives by its own ID. A
+  motion part's own folder is never a row's: a video listed there before it became a
+  motion part leaves it when its `hidden` line arrives.
 - **Server and credentials:** `library_root.remote_base_url` holds the server URL that Settings
   shows. The session token lives in the Keychain, never in SQLite.
 
@@ -182,9 +189,11 @@ listing:
 
 Its metadata — capture date, location, camera — is read from the original itself by
 MediaMetadata, which owns those facts (ADR 0039), in byte ranges of `/original` while the
-server answers: a few 128 KB chunks per file, never a download. Enrichment claims an
-account's rows for metadata only, and only while `ImmichAccounts` reports its server
-online (`CatalogStore.setSourceAnswering`); a read the server does not answer paces its
+server answers: a few 128 KB chunks per file, never a download. A ranged read's status is
+judged when its headers arrive, and anything but a 206 cancels the transfer before its body
+is received; a read its caller stops waiting for is cancelled too. Enrichment claims an
+account's rows for metadata and a video's faces (read in the same ranges, ADR 0047) only,
+and only while `ImmichAccounts` reports its server online (`CatalogStore.setSourceAnswering`); a read the server does not answer paces its
 row (`EnrichmentOutcome.unanswered`) rather than claiming it again at once. Immich's own
 EXIF is never used for these facts.
 
@@ -200,11 +209,26 @@ marked `hidden_by_source` (migration v16), which the shared scope clause and Dup
 reads leave out. Restoring it in Immich shows it again. `AssetDeleteV1` purges the row. `SyncResetV1` runs a full
 resync: rows the resync does not list are purged only after it completes. The resync is
 recorded as owed in the catalog (`library_root.resync_owed`, migration v41) before the
-reset is acknowledged, and every pass reads the stream in full until one completes. Without
-the record, a resync that dropped partway would leave its batches acknowledged and the next
-pass reading from them, and the deletions the lost history held would never be purged. A
-pass is a sync only when its stream ends with `SyncCompleteV1`; one cut short keeps what it
-applied but is not reported as a sync.
+reset is acknowledged. A new session owes one too, recorded before its token is saved: its
+cursor is empty and the server sends it no reset, so its first stream lists from zero
+without saying so, and deletions while the account was signed out would never be purged
+(`docs/research/2026-11-13-immich-sync-reset.md`). While a resync is owed, every pass asks
+the server to discard the cursor (`reset: true`) and reads the stream from zero. The server
+resumes a plain stream after the last acknowledged batch, so a resync that dropped after
+acknowledging some batches and was then resumed would list only the rest, and its
+completion would purge every row the acknowledged batches carried; reading from zero each
+time is what makes the completing pass a full listing. The pass that reaches the end purges
+every row it did not list and settles the debt in one Store transaction
+(`CatalogStore.completeSourceResync`), so neither a crash nor a failed write separates the
+two. The debt is a revision counter (ADR 0032 rule 2): each request adds one, and a pass
+settles only the revision it read when it started, so a request made while it ran stays
+owed. A reset answered to a stream read from zero, or a second reset in one pass, ends the
+pass as a reset loop. A pass is a sync only when its stream ends with `SyncCompleteV1`; one
+cut short keeps what it applied but is not reported as a sync.
+
+A line of a type Otos did not ask for, or an asset whose type or visibility this version
+does not know, is logged, ignored and acknowledged: one line a newer server writes never
+fails every pass.
 
 The sync runs when the account is added and at launch. While its server answers, it
 runs again on a schedule (`time: poll`, every five minutes), because Immich offers no
@@ -234,8 +258,9 @@ account's session, loop and status.
   error); it is never assumed from elapsed time. Only a request that reached no server
   makes an account offline. A server that answered with a failure (a 5xx, a line Otos
   cannot read, a reset loop), or a failure of Otos's own, leaves what it last answered
-  standing, and the pass is retried on the backoff. A pass whose loop was stopped
-  (signing in again replaces it) says nothing about the account.
+  standing, and the pass is retried on the backoff, as is a pass whose root could not get
+  or keep its listing lease. A pass whose loop was stopped (signing in again replaces it,
+  removing the account ends it) says nothing about the account and rings no further pass.
 - A pass's server has answered once its stream's first batch is applied and acknowledged,
   so the account is online from then on, not only when the pass ends: a first sync of a
   large library takes minutes.
@@ -258,8 +283,10 @@ Only the server knows whether it has an asset's previews, and it says so twice. 
 writes an asset's `thumbhash` only after it has generated the previews, and that write
 changes the asset, so the stream lists it again; it never generates them for a hidden asset
 (a Live Photo's motion part). And a preview request it cannot serve is answered with a
-refusal (a 404). Otos keeps the newer of the two answers (`source_products_absent`,
-migration v39): an asset listed without a thumbhash, or refused, is not asked for its
+404. Only a 404 is that answer: any other status (a 5xx, a 429) is the server failing now,
+which ends the fetch with the row still owed, after the page's images already fetched are
+written. Otos keeps the newer of the two answers (`source_products_absent`,
+migration v39): an asset listed without a thumbhash, or answered with a 404, is not asked for its
 images again until a later listing carries a thumbhash. Asking again every pass would
 spend one request per such asset per pass for an answer the server has already given.
 
@@ -289,8 +316,9 @@ Consequences per product:
   Immich thumbnail and an Otos rendering of the same photo do not confirm a same-photo
   pair until measurement shows they stay under its threshold.
 
-An original downloaded for any reason stays staged until quit and is swept at launch. It
-is a working copy, not a library, so Otos never holds an opaque mirror of the user's
+An original downloaded for any reason stays staged until quit, which releases the account's
+claim and sweeps it, as it does a camera's staged files; after a crash, the launch sweep collects any tree no
+live instance claims. It is a working copy, not a library, so Otos never holds an opaque mirror of the user's
 Immich library.
 
 ### 8. Refused features

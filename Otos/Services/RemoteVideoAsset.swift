@@ -12,7 +12,8 @@ import UniformTypeIdentifiers
 /// takes.
 ///
 /// A request is served in chunks, each read only once the last has answered, and stops when
-/// AVFoundation cancels it. A read the server does not answer within `readDeadline`, or
+/// AVFoundation cancels it, cancelling the read in flight. A read the server does not answer
+/// within `readDeadline` is cancelled too. A read the deadline settles, or one the server
 /// answers with an error, fails its request and marks the asset `failed`, so the caller knows
 /// a missing frame was the server's and not the file's: such a read is a retry, never a
 /// video with no faces.
@@ -36,6 +37,9 @@ final nonisolated class RemoteVideoAsset: NSObject, AVAssetResourceLoaderDelegat
         /// The requests being served, by a key the reads' callbacks carry, so no callback
         /// holds a request across threads.
         var requests: [Int: AVAssetResourceLoadingRequest] = [:]
+        /// The read in flight for each request, which its deadline or AVFoundation's cancel
+        /// stops.
+        var inFlight: [Int: RemoteRangeRead] = [:]
         var nextKey = 0
     }
 
@@ -90,8 +94,20 @@ final nonisolated class RemoteVideoAsset: NSObject, AVAssetResourceLoaderDelegat
         return true
     }
 
-    /// A cancelled request is seen by `serve` before its next read.
-    func resourceLoader(_ resourceLoader: AVAssetResourceLoader, didCancel loadingRequest: AVAssetResourceLoadingRequest) {}
+    /// A cancelled request's read in flight stops its transfer; its late answer finds the
+    /// request gone.
+    func resourceLoader(_ resourceLoader: AVAssetResourceLoader, didCancel loadingRequest: AVAssetResourceLoadingRequest) {
+        let stopped = state.withLock { state in
+            let keys = state.requests.filter { $0.value === loadingRequest }.map(\.key)
+            return keys.compactMap { key in
+                state.requests[key] = nil
+                return state.inFlight.removeValue(forKey: key)
+            }
+        }
+        for read in stopped {
+            read.cancel()
+        }
+    }
 
     /// The request `key` names while it is still wanted; a finished or cancelled one is
     /// forgotten.
@@ -99,6 +115,7 @@ final nonisolated class RemoteVideoAsset: NSObject, AVAssetResourceLoaderDelegat
         state.withLock { state in
             guard let request = state.requests[key], !request.isCancelled else {
                 state.requests[key] = nil
+                state.inFlight[key] = nil
                 return nil
             }
             return request
@@ -106,7 +123,10 @@ final nonisolated class RemoteVideoAsset: NSObject, AVAssetResourceLoaderDelegat
     }
 
     private func forget(_ key: Int) {
-        _ = state.withLock { $0.requests.removeValue(forKey: key) }
+        state.withLock { state in
+            state.requests[key] = nil
+            state.inFlight[key] = nil
+        }
     }
 
     /// Reads `offset..<end` for request `key` a chunk at a time, on the loader's queue.
@@ -128,10 +148,17 @@ final nonisolated class RemoteVideoAsset: NSObject, AVAssetResourceLoaderDelegat
                 self.finish(key, result, offset: offset, end: end)
             }
         }
-        reader.fetch(offset, length, settle)
+        let read = reader.fetch(offset, length, settle)
+        state.withLock { state in
+            if state.requests[key] != nil {
+                state.inFlight[key] = read
+            }
+        }
         // time: deadline — a server that accepted the request may never answer it
         queue.asyncAfter(deadline: .now() + .milliseconds(DiagnosticsTiming.milliseconds(readDeadline))) {
+            // A read already answered ignores the cancel; one still running stops costing bytes.
             settle(.failure(RemoteByteSourceError.timedOut))
+            read.cancel()
         }
     }
 
@@ -158,6 +185,7 @@ final nonisolated class RemoteVideoAsset: NSObject, AVAssetResourceLoaderDelegat
         state.withLock {
             $0.failed = true
             $0.requests[key] = nil
+            $0.inFlight[key] = nil
         }
         OtosLog.mediaIO.noticeOperation("remote.videoRange", phase: "failed", fields: [
             "error": String(describing: error),

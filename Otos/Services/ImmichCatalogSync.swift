@@ -6,8 +6,9 @@ import UniformTypeIdentifiers
 /// An account's sync stream as the catalog sync sees it. `ImmichSessionSyncSource` is
 /// the server; a test scripts one.
 nonisolated protocol ImmichSyncSource: Sendable {
-    /// One pass of the stream, from the session's cursor.
-    func events() async throws -> any AsyncSequence<ImmichSyncEvent, any Error>
+    /// One pass of the stream: from the session's cursor, or, `fromZero`, from a cursor the
+    /// server discards first, so it lists everything the account holds.
+    func events(fromZero: Bool) async throws -> any AsyncSequence<ImmichSyncEvent, any Error>
     /// Moves the cursor past `acks`.
     func acknowledge(_ acks: [String]) async throws
     /// The server's own preview of an asset.
@@ -21,8 +22,8 @@ nonisolated struct ImmichSessionSyncSource: ImmichSyncSource {
     let client: ImmichClient
     let token: String
 
-    func events() async throws -> any AsyncSequence<ImmichSyncEvent, any Error> {
-        try await client.syncEvents(token: token)
+    func events(fromZero: Bool) async throws -> any AsyncSequence<ImmichSyncEvent, any Error> {
+        try await client.syncEvents(token: token, fromZero: fromZero)
     }
 
     func acknowledge(_ acks: [String]) async throws {
@@ -50,8 +51,8 @@ nonisolated enum ImmichSyncReport: Equatable, Sendable {
 
 /// What one sync pass did.
 nonisolated enum ImmichSyncPassOutcome: Equatable, Sendable {
-    /// The stream was applied to its end (`SyncCompleteV1`). `full` is the resync a reset
-    /// of the cursor owed, whose completion proved every unlisted row deleted.
+    /// The stream was applied to its end (`SyncCompleteV1`). `full` is a resync the account
+    /// owed, read from zero, whose completion proved every unlisted row deleted.
     case synced(listed: Int, deleted: Int, full: Bool)
     /// The server could not be read; nothing past the last applied batch was acknowledged,
     /// so the next pass replays it.
@@ -60,8 +61,10 @@ nonisolated enum ImmichSyncPassOutcome: Equatable, Sendable {
     case catalogFailed
     /// The server reset the cursor again during the resync its first reset started.
     case resetLoop
-    /// The pass was stopped: its loop was cancelled, or its root could not keep a listing
-    /// lease (it is being removed).
+    /// The root could not get or keep a listing lease: it was not available, or another
+    /// owner took its listing. Nothing says when it can again, so the pass is retried.
+    case noLease
+    /// The pass's loop was cancelled: it is being torn down, and no pass follows.
     case stopped
 }
 
@@ -79,13 +82,15 @@ nonisolated enum ImmichSyncPassOutcome: Equatable, Sendable {
 /// - one in Immich's trash is the same row, hidden by its source, with its overlay kept;
 /// - one in the locked folder is never synced: a row it had is purged;
 /// - a Live Photo's motion part (`hidden`) is a row in its still's folder, listed with the
-///   still that links it and named by its own asset ID;
+///   still that links it and named by its own asset ID; a row the video had in a folder of
+///   its own, before it was a motion part, goes;
 /// - `AssetDeleteV1` purges the asset's rows: proof of deletion;
 /// - `SyncResetV1` means the server lost this cursor's history: a full resync is recorded
-///   as owed in the catalog before the reset is acknowledged, and every pass reads the
-///   stream in full until one reaches its end, which purges every row it no longer lists
-///   and clears the debt. A resync that drops partway is never lost to the acknowledged
-///   reset.
+///   as owed in the catalog before the reset is acknowledged (as it is when a new session
+///   begins, `ImmichAccounts`). While one is owed, every pass asks the server to discard
+///   the cursor (`reset: true`) and reads the stream from zero, so a resync that dropped
+///   after acknowledging some batches is never resumed from them. The pass that reaches the
+///   end purges every row it did not list and settles the debt in one Store transaction.
 ///
 /// `run()` is the one loop, woken by `requestSync()` (a newest-wins doorbell, ADR 0032):
 /// passes never overlap, and a request during a pass is one more pass.
@@ -152,61 +157,74 @@ actor ImmichCatalogSync {
         return outcome
     }
 
-    /// The stream applied to its end: in full while a reset's resync is owed, else from
-    /// the cursor, which a reset turns into one full resync.
+    /// The stream applied to its end: from zero while a resync is owed, else from the
+    /// cursor, which a reset the server sends turns into one resync from zero.
     private func syncListing(answered: inout Answered) async -> ImmichSyncPassOutcome {
-        let resyncOwed: Bool
+        let owed: SourceResyncDebt?
         do {
-            resyncOwed = try await store.sourceResyncOwed(rootPath: rootPath)
+            owed = try await store.sourceResyncOwed(rootPath: rootPath)
         } catch {
             OtosLog.catalog.errorOperation("catalog.immich.sync", phase: "resyncReadFailed", fields: [
                 "rootPath": rootPath.rawValue, "error": String(describing: error),
             ])
             return .catalogFailed
         }
-        switch await stream(full: resyncOwed, answered: &answered) {
+        switch await stream(resyncing: owed, answered: &answered) {
         case let .done(outcome):
             return outcome
-        case .resetRequested:
-            switch await stream(full: true, answered: &answered) {
+        case let .resetRequested(debt):
+            // The server's reset is acknowledged, so the cursor is gone already; a resync
+            // that was owed and asked for `reset: true` is never answered with one.
+            guard owed == nil else {
+                return resetLoop()
+            }
+            switch await stream(resyncing: debt, answered: &answered) {
             case let .done(outcome):
                 return outcome
             case .resetRequested:
-                OtosLog.catalog.errorOperation("catalog.immich.sync", phase: "resetLoop", fields: [
-                    "rootPath": rootPath.rawValue,
-                ])
-                return .resetLoop
+                return resetLoop()
             }
         }
+    }
+
+    private func resetLoop() -> ImmichSyncPassOutcome {
+        OtosLog.catalog.errorOperation("catalog.immich.sync", phase: "resetLoop", fields: [
+            "rootPath": rootPath.rawValue,
+        ])
+        return .resetLoop
     }
 
     private enum StreamResult {
         case done(ImmichSyncPassOutcome)
-        case resetRequested
+        /// The server reset the cursor; the resync it owes is recorded and the reset
+        /// acknowledged.
+        case resetRequested(SourceResyncDebt)
     }
 
-    private func stream(full: Bool, answered: inout Answered) async -> StreamResult {
+    /// One stream under one listing lease. `resyncing` reads it from zero, and its end
+    /// purges every row it did not list and settles that debt.
+    private func stream(resyncing debt: SourceResyncDebt?, answered: inout Answered) async -> StreamResult {
         let scan: CatalogStore.ActiveScan
         do {
             scan = try await store.beginSourceListing(rootPath: rootPath)
         } catch {
+            let outcome: ImmichSyncPassOutcome = Task.isCancelled ? .stopped : .noLease
             OtosLog.catalog.noticeOperation("catalog.immich.sync", phase: "noLease", fields: [
-                "rootPath": rootPath.rawValue,
+                "rootPath": rootPath.rawValue, "outcome": String(describing: outcome),
             ])
-            return .done(.stopped)
+            return .done(outcome)
         }
         var tally = Tally()
         do {
-            if try await read(scan: scan, into: &tally, answered: &answered) {
+            if let reset = try await read(fromZero: debt != nil, scan: scan, into: &tally, answered: &answered) {
                 await store.endSourceListing(scan: scan)
                 OtosLog.catalog.noticeOperation("catalog.immich.sync", phase: "reset", fields: [
-                    "rootPath": rootPath.rawValue,
+                    "rootPath": rootPath.rawValue, "revision": "\(reset.revision)",
                 ])
-                return .resetRequested
+                return .resetRequested(reset)
             }
-            if full, tally.completed {
-                try await store.completeSourceListing(scan: scan, observedPaths: tally.observed)
-                try await store.setSourceResyncOwed(false, rootPath: rootPath)
+            if let debt, tally.completed {
+                try await store.completeSourceResync(scan: scan, observedPaths: tally.observed, settling: debt)
             } else {
                 await store.endSourceListing(scan: scan)
             }
@@ -224,7 +242,7 @@ actor ImmichCatalogSync {
             "rootPath": rootPath.rawValue,
             "listed": "\(tally.observed.count)",
             "deleted": "\(tally.deleted)",
-            "full": "\(full)",
+            "full": "\(debt != nil)",
             "completed": "\(tally.completed)",
         ])
         // A stream that ended before `SyncCompleteV1` was cut short: what it applied stays
@@ -232,7 +250,7 @@ actor ImmichCatalogSync {
         guard tally.completed else {
             return .done(.serverFailed(.malformedResponse))
         }
-        return .done(.synced(listed: tally.observed.count, deleted: tally.deleted, full: full))
+        return .done(.synced(listed: tally.observed.count, deleted: tally.deleted, full: debt != nil))
     }
 
     /// What a stream's applied batches established.
@@ -242,22 +260,26 @@ actor ImmichCatalogSync {
         var completed = false
     }
 
-    /// Reads one stream to its end, applying it batch by batch. True when the server
-    /// reset the cursor: the full resync is recorded as owed, then the reset is
-    /// acknowledged, and nothing of the stream is applied after it.
+    /// Reads one stream to its end, applying it batch by batch. The resync the server owes
+    /// when it reset the cursor: it is recorded as owed, then the reset is acknowledged, and
+    /// nothing of the stream is applied after it. Nil when the stream had no reset.
     private func read(
+        fromZero: Bool,
         scan: CatalogStore.ActiveScan,
         into tally: inout Tally,
         answered: inout Answered
-    ) async throws -> Bool {
+    ) async throws -> SourceResyncDebt? {
         var batch = Batch()
         var pass = PassMemory()
-        for try await event in try await source.events() {
+        for try await event in try await source.events(fromZero: fromZero) {
             switch event {
             case let .reset(ack):
-                try await store.setSourceResyncOwed(true, rootPath: rootPath)
+                guard let debt = try await store.requestSourceResync(rootPath: rootPath) else {
+                    // The root is gone from the catalog: nothing is left to resync.
+                    throw CancellationError()
+                }
                 try await source.acknowledge([ack])
-                return true
+                return debt
             case .complete:
                 batch.add(event)
                 tally.completed = true
@@ -271,7 +293,7 @@ actor ImmichCatalogSync {
         }
         try await apply(&batch, pass: &pass, scan: scan, into: &tally)
         await answered.reportOnce()
-        return false
+        return nil
     }
 
     /// A pass's one report that its server answered: its stream was read and a batch of it
@@ -295,7 +317,9 @@ actor ImmichCatalogSync {
 
     /// Applies the batch to the Store, then acknowledges its lines, then empties it. A
     /// still that links a motion part lists it in the still's folder, from the motion's
-    /// own line and size in this pass, or else from the server (ADR 0046 §2).
+    /// own line in this pass, or else from the server (ADR 0046 §2). A motion part the
+    /// server refuses to describe leaves its still listed alone, so one asset never holds
+    /// back every pass.
     private func apply(
         _ batch: inout Batch,
         pass: inout PassMemory,
@@ -304,16 +328,25 @@ actor ImmichCatalogSync {
     ) async throws {
         pass.remember(batch)
         var motions: [String: ImmichAssetDetail] = [:]
-        for motionID in batch.linkedMotions {
+        for motionID in batch.linkedMotions.sorted() {
             if let known = pass.motionDetail(motionID) {
                 motions[motionID] = known
-            } else {
+                continue
+            }
+            do {
                 motions[motionID] = try await source.asset(id: motionID)
+            } catch let ImmichClientError.refused(status) where status == 400 || status == 404 {
+                // The server will not give this asset (Immich answers 400 for an asset the
+                // session cannot read): the still is listed without it, and its next line
+                // asks again.
+                OtosLog.catalog.noticeOperation("catalog.immich.sync", phase: "motionRefused", fields: [
+                    "rootPath": rootPath.rawValue, "assetID": motionID, "status": "\(status)",
+                ])
             }
         }
         // A motion part's own line without its still in the batch refreshes the row it
-        // already has, hidden as its still is. One the catalog does not hold yet is listed
-        // when its still is.
+        // already has in its still's folder, hidden as its still is. One the catalog does
+        // not hold there yet is listed when its still is.
         let alone = Set(batch.motionLines.keys).subtracting(batch.linkedMotions)
         let existing = try await store.sourceItemRows(alone, in: rootPath)
         let changes = batch.changes(motions: motions, existingMotions: existing)
@@ -326,12 +359,14 @@ actor ImmichCatalogSync {
         batch = Batch()
     }
 
-    /// A server failure is reported as the server's; anything else the Store refused.
+    /// A server failure is reported as the server's; anything else the Store refused. A
+    /// cancellation is the loop's teardown only when its task was cancelled: the Store
+    /// refuses a lease the root can no longer keep with one too.
     private static func outcome(of error: any Error) -> ImmichSyncPassOutcome {
         switch error {
         case let error as ImmichClientError: .serverFailed(error)
         case let error as URLError: .serverFailed(.unreachable(error.code))
-        case is CancellationError: .stopped
+        case is CancellationError: Task.isCancelled ? .stopped : .noLease
         default: .catalogFailed
         }
     }
@@ -348,16 +383,16 @@ actor ImmichCatalogSync {
             sizes.merge(batch.sizes) { _, newer in newer }
         }
 
-        /// The motion part's facts from this pass, when its line and its size are both here.
+        /// The motion part's facts from its own line in this pass, with its size when that
+        /// is here too; a size reported later reaches its row by its ID.
         func motionDetail(_ id: String) -> ImmichAssetDetail? {
-            guard let line = motionLines[id], let size = sizes[id],
-                  let created = line.fileCreatedAt, let modified = line.fileModifiedAt
+            guard let line = motionLines[id], let created = line.fileCreatedAt, let modified = line.fileModifiedAt
             else {
                 return nil
             }
             return ImmichAssetDetail(
                 id: id, originalFileName: line.originalFileName, type: line.type,
-                fileCreatedAt: created, fileModifiedAt: modified, fileSize: size,
+                fileCreatedAt: created, fileModifiedAt: modified, fileSize: sizes[id],
                 hasPreview: line.hasPreview
             )
         }
@@ -387,14 +422,23 @@ actor ImmichCatalogSync {
 
         /// The batch as catalog changes. Each listed still's folder is listed in full: the
         /// still, and the motion part it links (from `motions`), under its own name and ID.
+        /// A still whose motion part the server would not describe is listed alone, its folder
+        /// not in full, so the motion's row there keeps its overlay. A motion part's own
+        /// folder is listed empty: a row the video had there, before it was a motion part,
+        /// goes, and its row in its still's folder is the one that stays.
         func changes(
             motions: [String: ImmichAssetDetail],
             existingMotions: [String: SourceItemRow]
         ) -> SourceListingChanges {
             var listed: [SourceListedItem] = []
             var joined: Set<String> = []
+            var completeFolders = Set(motionLines.keys)
             for id in existingMotions.keys.sorted() {
-                guard let row = existingMotions[id], let line = motionLines[id] else {
+                // Only a row in its still's folder is refreshed in place; one in the motion's
+                // own folder is the stray standalone row this batch removes.
+                guard let row = existingMotions[id], let line = motionLines[id],
+                      !row.relativePath.rawValue.hasPrefix("\(id)/")
+                else {
                     continue
                 }
                 listed.append(ImmichCatalogSync.refreshedItem(line, at: row, size: sizes[id]))
@@ -406,16 +450,21 @@ actor ImmichCatalogSync {
                 }
                 listed.append(ImmichCatalogSync.listedItem(for: asset, size: sizes[id]))
                 joined.insert(id)
-                if let motionID = asset.livePhotoVideoID, let motion = motions[motionID] {
+                guard let motionID = asset.livePhotoVideoID else {
+                    completeFolders.insert(id)
+                    continue
+                }
+                if let motion = motions[motionID] {
                     listed.append(ImmichCatalogSync.motionItem(
                         motion, in: asset, size: sizes[motionID] ?? motion.fileSize
                     ))
                     joined.insert(motionID)
+                    completeFolders.insert(id)
                 }
             }
             return SourceListingChanges(
                 listed: listed,
-                completeFolders: listedByAsset.keys.sorted(),
+                completeFolders: completeFolders.sorted(),
                 sizesBySourceItem: sizes.filter { !joined.contains($0.key) },
                 deletedSourceItems: deletedAssets.sorted()
             )
@@ -436,7 +485,7 @@ actor ImmichCatalogSync {
                 if let fileSize {
                     sizes[assetID] = fileSize
                 }
-            case .reset, .complete, .unrequested:
+            case .reset, .complete, .ignored:
                 // Nothing in the catalog: only the cursor moves.
                 break
             }
@@ -453,9 +502,12 @@ actor ImmichCatalogSync {
             case (.image, .timeline), (.image, .archive), (.video, .timeline), (.video, .archive):
                 deletedAssets.remove(asset.id)
                 listedByAsset[asset.id] = asset
+                motionLines[asset.id] = nil
             case (.video, .hidden):
                 // A Live Photo's motion part: listed in its still's folder when the still
-                // is listed (ADR 0046 §2), never in a folder of its own.
+                // is listed (ADR 0046 §2), never in a folder of its own, even one an earlier
+                // line of this batch gave it.
+                listedByAsset[asset.id] = nil
                 motionLines[asset.id] = asset
             case (.image, .hidden), (.audio, _), (.other, _):
                 // Only a motion part is hidden; audio and other types are never Otos
@@ -557,14 +609,15 @@ actor ImmichCatalogSync {
             let data: Data
             do {
                 data = try await source.preview(assetID: candidate.sourceItemID)
-            } catch let ImmichClientError.refused(status) {
+            } catch ImmichClientError.refused(status: 404) {
                 // The server answered that it has no preview of this asset: recorded, so no
                 // pass asks again until a listing says the server has made one, and the
-                // rest are still fetched.
+                // rest are still fetched. Any other refusal (a 5xx, a 429) is the server
+                // failing now, not an answer about the asset, and ends the pass below.
                 page.absent.append(candidate.id.relativePath)
                 tally.refused += 1
                 OtosLog.thumbnails.noticeOperation("immich.products", phase: "refused", fields: [
-                    "relativePath": candidate.id.relativePath.rawValue, "status": "\(status)",
+                    "relativePath": candidate.id.relativePath.rawValue, "status": "404",
                 ])
                 continue
             } catch {

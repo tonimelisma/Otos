@@ -922,10 +922,11 @@ nonisolated enum CatalogSchema {
         ]
     }
 
-    /// `library_root.resync_owed`: the server reset an Immich account's cursor (ADR 0046
-    /// §5), so the stream is owed in full. Set before the reset is acknowledged and cleared
-    /// when a full pass reaches its end and purges what it no longer lists, so a resync that
-    /// drops partway is read in full again rather than lost to the acknowledged reset.
+    /// `library_root.resync_owed`: an Immich account owes a full resync (ADR 0046 §5): its
+    /// server reset the cursor, or a new session began. 0 when none is owed, else the
+    /// revision of the newest request; each request adds one, and a pass that read the stream
+    /// from zero to its end settles only the revision it started from, in the transaction
+    /// that purges what it no longer lists, so a request made meanwhile stays owed.
     static let resyncOwedMigrationIdentifier = "v41_library_root_resync_owed"
 
     static let resyncOwedStatements: [String] = [

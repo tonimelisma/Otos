@@ -4951,27 +4951,95 @@ extension CatalogStore {
         }
     }
 
-    /// Whether a source's listing is owed in full: its server reset the cursor and no full
-    /// pass has reached its end since (ADR 0046 §5). False for a root the catalog does not
-    /// hold.
-    func sourceResyncOwed(rootPath: LibraryRootPath) async throws -> Bool {
+    /// The full resync a source owes: its server reset the cursor, or a new session began,
+    /// and no pass has read the stream from zero to its end since (ADR 0046 §5). Nil when
+    /// none is owed, or for a root the catalog does not hold.
+    func sourceResyncOwed(rootPath: LibraryRootPath) async throws -> SourceResyncDebt? {
         guard let rootID = roots.rowIDSnapshot()[rootPath] else {
-            return false
+            return nil
         }
-        return try await database().read { db in
-            try Bool.fetchOne(db, sql: "SELECT resync_owed FROM library_root WHERE id = ?", arguments: [rootID])
-                ?? false
+        let revision = try await database().read { db in
+            try Int64.fetchOne(db, sql: "SELECT resync_owed FROM library_root WHERE id = ?", arguments: [rootID])
         }
+        return revision.flatMap { $0 > 0 ? SourceResyncDebt(revision: $0) : nil }
     }
 
-    /// Records whether a source's listing is owed in full (`sourceResyncOwed`).
-    func setSourceResyncOwed(_ owed: Bool, rootPath: LibraryRootPath) async throws {
+    /// Records that a source owes a full resync, as a request newer than any before it, so a
+    /// resync already running settles only the debt it started from. Nil for a root the
+    /// catalog does not hold.
+    @discardableResult
+    func requestSourceResync(rootPath: LibraryRootPath) async throws -> SourceResyncDebt? {
         guard let rootID = roots.rowIDSnapshot()[rootPath] else {
-            return
+            return nil
         }
-        try await database().write { db in
-            try db.execute(sql: "UPDATE library_root SET resync_owed = ? WHERE id = ?", arguments: [owed, rootID])
+        let revision = try await database().write { db in
+            try db.execute(sql: "UPDATE library_root SET resync_owed = resync_owed + 1 WHERE id = ?", arguments: [rootID])
+            return try Int64.fetchOne(db, sql: "SELECT resync_owed FROM library_root WHERE id = ?", arguments: [rootID])
         }
+        OtosLog.catalog.noticeOperation("catalog.source.resync", phase: "requested", fields: [
+            "rootPath": rootPath.rawValue, "revision": revision.map { "\($0)" } ?? "none",
+        ])
+        return revision.map(SourceResyncDebt.init(revision:))
+    }
+
+    /// Ends a source's full resync: a listing read from zero to its end under `scan`, which
+    /// proves every row it did not observe deleted (ADR 0046 §1, §5). One transaction purges
+    /// those rows with their overlay and settles `debt` when it is still the newest request,
+    /// so the purge and the settling never part: neither a crash nor a failed write between
+    /// them leaves the debt settled with rows unpurged, or the reverse.
+    func completeSourceResync(
+        scan: ActiveScan,
+        observedPaths: Set<MediaRelativePath>,
+        settling debt: SourceResyncDebt
+    ) async throws {
+        try await ensureStartedForMutation()
+        guard owns(scan),
+              roots[scan.rootPath]?.root.kind.rowsComeFromSourceListing == true,
+              roots[scan.rootPath]?.availability == .available,
+              scanCanDelete(scan)
+        else {
+            throw CancellationError()
+        }
+        let capabilities = roots[scan.rootPath]?.capabilities ?? .unknown
+        let rootRowID = scan.rootRowID
+        let observedKeys = Set(observedPaths.map {
+            FilesystemNamespaceSemantics.nameKey(relativePath: $0, capabilities: capabilities)
+        })
+        let timed = try await timedWrite(database()) { db in
+            let missing = try Self.fetchExistingAssetRows(libraryRootID: rootRowID, underSubtree: nil, db: db)
+                .filter {
+                    !observedKeys.contains(
+                        FilesystemNamespaceSemantics.nameKey(relativePath: $0.relativePath, capabilities: capabilities)
+                    )
+                }
+            for row in missing {
+                try Self.deleteAssetRow(rootRowID: rootRowID, relativePath: row.relativePath, db: db)
+            }
+            try db.execute(
+                sql: "UPDATE library_root SET resync_owed = 0 WHERE id = ? AND resync_owed = ?",
+                arguments: [rootRowID, debt.revision]
+            )
+            return (images: missing.flatMap(\.derivedImagePaths), purged: missing.count, settled: db.changesCount > 0)
+        }
+        guard owns(scan) else {
+            throw CancellationError()
+        }
+        if let thumbnailDirectory {
+            for name in timed.value.images {
+                ThumbnailStore.delete(name, in: thumbnailDirectory)
+            }
+        }
+        OtosLog.catalog.noticeOperation("catalog.source.resync", phase: "complete", fields: [
+            "rootPath": scan.rootPath.rawValue,
+            "observed": "\(observedPaths.count)",
+            "purged": "\(timed.value.purged)",
+            "revision": "\(debt.revision)",
+            "settled": "\(timed.value.settled)",
+            "waitMs": "\(timed.waitMs)",
+            "execMs": "\(timed.execMs)",
+        ])
+        bumpNamespaceRevision(for: scan.rootPath)
+        await endSourceListing(scan: scan)
     }
 
     /// Records that the source answered it holds no images of these rows (ADR 0046 §7), so

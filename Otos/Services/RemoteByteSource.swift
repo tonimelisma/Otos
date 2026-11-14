@@ -5,19 +5,38 @@ import Synchronization
 /// One original a server serves in byte ranges (ADR 0046): its size and how to ask for a
 /// range. An Immich asset's `/original` honours `Range` (research 2026-11-07).
 nonisolated struct RemoteRangeReader: Sendable {
-    /// Issues one ranged read and calls back when it settles.
+    /// Issues one ranged read, calls back when it settles, and returns the read so a caller
+    /// that stops waiting can stop its transfer.
     typealias Fetch = @Sendable (
         _ offset: UInt64,
         _ length: Int,
         _ completion: @escaping @Sendable (Result<Data, any Error>) -> Void
-    ) -> Void
+    ) -> RemoteRangeRead
 
     let size: UInt64
     let fetch: Fetch
 }
 
+/// One ranged read in flight. Cancelling it stops its transfer; a read that already settled
+/// ignores it, and its completion is never called twice.
+nonisolated struct RemoteRangeRead: Sendable {
+    private let stop: @Sendable () -> Void
+
+    init(cancel: @escaping @Sendable () -> Void) {
+        stop = cancel
+    }
+
+    /// A read that settled before it was returned: there is nothing to stop.
+    static let settled = RemoteRangeRead {}
+
+    func cancel() {
+        stop()
+    }
+}
+
 /// Resolves an account row to a reader for its original while its server answers, so
-/// enrichment reads its metadata in ranges instead of downloading it (ADR 0046 §5).
+/// enrichment reads its metadata and a video's faces in ranges instead of downloading it
+/// (ADR 0046 §5, ADR 0047).
 nonisolated struct RemoteRangeAccess: Sendable {
     private let resolve: @Sendable (MediaAssetID, UInt64) async -> RemoteRangeReader?
     private let serves: @Sendable (LibraryRootPath) async -> Bool
@@ -67,13 +86,15 @@ final nonisolated class RemoteByteSource: MediaByteSource {
         }
         let outcome = Mutex<Result<Data, any Error>?>(nil)
         let settled = DispatchSemaphore(value: 0)
-        fetch(offset, length) { result in
+        let read = fetch(offset, length) { result in
             outcome.withLock { $0 = result }
             settled.signal()
         }
         let deadline = DispatchTime.now() + .milliseconds(DiagnosticsTiming.milliseconds(readDeadline))
         // time: deadline — a server that accepted the request may never answer it
         guard settled.wait(timeout: deadline) == .success else {
+            // Nothing waits for the answer any more, so its transfer stops.
+            read.cancel()
             throw RemoteByteSourceError.timedOut
         }
         guard let result = outcome.withLock({ $0 }) else {

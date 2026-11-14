@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import Synchronization
 
 /// Immich client guide
 ///
@@ -63,10 +64,14 @@ nonisolated struct ImmichClient: Sendable {
     /// URLSession then times the request out (-1001) though the server is still sending
     /// (`docs/research/2026-11-13-immich-stream-slow-reader.md`). The file is deleted when
     /// the sequence is released.
-    func syncEvents(token: String) async throws -> some AsyncSequence<ImmichSyncEvent, any Error> {
+    ///
+    /// `fromZero` asks the server to discard the session's cursor first (`reset: true`), so
+    /// the stream lists everything the account holds now instead of resuming after the last
+    /// acknowledged line (`docs/research/2026-11-13-immich-sync-reset.md`).
+    func syncEvents(token: String, fromZero: Bool) async throws -> some AsyncSequence<ImmichSyncEvent, any Error> {
         var request = try request(
             "sync/stream", method: "POST", token: token,
-            body: JSONEncoder().encode(["types": Self.syncTypes])
+            body: JSONEncoder().encode(SyncStreamRequest(types: Self.syncTypes, reset: fromZero))
         )
         request.setValue("application/jsonlines+json", forHTTPHeaderField: "Accept")
         let file: URL
@@ -83,6 +88,11 @@ nonisolated struct ImmichClient: Sendable {
                 try ImmichSyncEvent(line: Data(line.utf8))
             }
         }
+    }
+
+    private struct SyncStreamRequest: Encodable {
+        let types: [String]
+        let reset: Bool
     }
 
     /// Moves the session's sync cursor past `acks` (each the `ack` of a line), so the next
@@ -223,38 +233,88 @@ nonisolated struct ImmichClient: Sendable {
     /// One byte range of an asset's original (`/original` honours `Range`, answering 206),
     /// completion-based for a byte source that blocks its own thread while it waits. A
     /// range past the end comes back clipped; the caller treats that as a short read.
+    ///
+    /// The status is judged when the response's headers arrive: anything but a 206 (a
+    /// server or proxy that ignores `Range` answers 200 with the whole file) settles the
+    /// read and cancels the transfer before its body is received. The returned read cancels
+    /// the transfer, which a caller's deadline uses so an abandoned read stops costing bytes.
     func originalRange(
         assetID: String,
         token: String,
         offset: UInt64,
         length: Int,
         completion: @escaping @Sendable (Result<Data, any Error>) -> Void
-    ) {
+    ) -> RemoteRangeRead {
         var request = URLRequest(
             url: server.appending(path: "api").appending(path: "assets").appending(path: assetID)
                 .appending(path: "original")
         )
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("bytes=\(offset)-\(offset + UInt64(length) - 1)", forHTTPHeaderField: "Range")
-        session.dataTask(with: request) { data, response, error in
-            if let error {
-                completion(.failure(ImmichClientError.transportFailure(error)))
-                return
-            }
+        let task = session.dataTask(with: request)
+        task.delegate = RangeReadDelegate(completion: completion)
+        task.resume()
+        return RemoteRangeRead { task.cancel() }
+    }
+
+    /// One ranged read's transfer: the status judged at the headers, the body gathered as it
+    /// arrives, and the completion called once, by whichever of those settles it first.
+    private final class RangeReadDelegate: NSObject, URLSessionDataDelegate, Sendable {
+        private struct State {
+            var body = Data()
+            var completion: (@Sendable (Result<Data, any Error>) -> Void)?
+        }
+
+        private let state: Mutex<State>
+
+        init(completion: @escaping @Sendable (Result<Data, any Error>) -> Void) {
+            state = Mutex(State(completion: completion))
+        }
+
+        func urlSession(
+            _: URLSession,
+            dataTask _: URLSessionDataTask,
+            didReceive response: URLResponse,
+            completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
+        ) {
             guard let http = response as? HTTPURLResponse else {
-                completion(.failure(ImmichClientError.malformedResponse))
+                settle(.failure(ImmichClientError.malformedResponse))
+                completionHandler(.cancel)
                 return
             }
             switch http.statusCode {
             case 206:
-                completion(.success(data ?? Data()))
+                completionHandler(.allow)
             case 401:
-                completion(.failure(ImmichClientError.unauthorized))
+                settle(.failure(ImmichClientError.unauthorized))
+                completionHandler(.cancel)
             default:
                 // A 200 is the whole file, not the range asked for; anything else a refusal.
-                completion(.failure(ImmichClientError.refused(status: http.statusCode)))
+                // Neither body is received.
+                settle(.failure(ImmichClientError.refused(status: http.statusCode)))
+                completionHandler(.cancel)
             }
-        }.resume()
+        }
+
+        func urlSession(_: URLSession, dataTask _: URLSessionDataTask, didReceive data: Data) {
+            state.withLock { $0.body.append(data) }
+        }
+
+        func urlSession(_: URLSession, task _: URLSessionTask, didCompleteWithError error: (any Error)?) {
+            if let error {
+                settle(.failure(ImmichClientError.transportFailure(error)))
+            } else {
+                settle(.success(state.withLock(\.body)))
+            }
+        }
+
+        private func settle(_ result: Result<Data, any Error>) {
+            let completion = state.withLock { state in
+                defer { state.completion = nil }
+                return state.completion
+            }
+            completion?(result)
+        }
     }
 
     // MARK: - Transport
@@ -418,8 +478,10 @@ nonisolated enum ImmichSyncEvent: Equatable, Sendable {
     case reset(ack: String)
     /// The pass is complete.
     case complete(ack: String)
-    /// A line of a type Otos did not ask for; acknowledged and otherwise ignored.
-    case unrequested(type: String, ack: String)
+    /// A line Otos does not read: a type it did not ask for, or an asset whose type or
+    /// visibility this version does not know. Acknowledged and otherwise ignored, so one
+    /// line a newer server writes never fails every pass.
+    case ignored(type: String, ack: String)
 
     /// The stream's own name for each line type Otos reads.
     private enum LineType: String {
@@ -438,14 +500,14 @@ nonisolated enum ImmichSyncEvent: Equatable, Sendable {
         case .exif: LineType.exif.rawValue
         case .reset: LineType.reset.rawValue
         case .complete: LineType.complete.rawValue
-        case let .unrequested(type, _): type
+        case let .ignored(type, _): type
         }
     }
 
     var ack: String {
         switch self {
         case let .asset(_, ack), let .assetDeleted(_, ack), let .exif(_, _, ack), let .reset(ack),
-             let .complete(ack), let .unrequested(_, ack):
+             let .complete(ack), let .ignored(_, ack):
             ack
         }
     }
@@ -464,7 +526,12 @@ nonisolated enum ImmichSyncEvent: Equatable, Sendable {
             guard let type = ImmichAsset.AssetType(rawValue: data.type),
                   let visibility = ImmichAsset.Visibility(rawValue: data.visibility)
             else {
-                throw ImmichClientError.malformedResponse
+                OtosLog.catalog.noticeOperation("immich.sync", phase: "lineIgnored", fields: [
+                    "reason": "unknownAssetValue", "assetID": data.id, "type": data.type,
+                    "visibility": data.visibility,
+                ])
+                self = .ignored(type: envelope.type, ack: ack)
+                return
             }
             self = try .asset(ImmichAsset(
                 id: data.id,
@@ -487,7 +554,7 @@ nonisolated enum ImmichSyncEvent: Equatable, Sendable {
         case .complete:
             self = .complete(ack: ack)
         case nil:
-            self = .unrequested(type: envelope.type, ack: ack)
+            self = .ignored(type: envelope.type, ack: ack)
         }
     }
 

@@ -1283,6 +1283,12 @@ nonisolated struct SourceListedItem: Hashable, Sendable {
     let sourceHasProducts: Bool
 }
 
+/// A full resync a source owes (`library_root.resync_owed`, ADR 0046 §5): the revision of
+/// the newest request. A resync settles the revision it started from, never a newer one.
+nonisolated struct SourceResyncDebt: Equatable, Sendable {
+    let revision: Int64
+}
+
 /// Where an item its source names by ID already lives, and whether the source hides it.
 nonisolated struct SourceItemRow: Equatable, Sendable {
     let relativePath: MediaRelativePath

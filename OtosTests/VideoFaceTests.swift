@@ -177,10 +177,11 @@ struct VideoFaceTests {
             }
             if let answering, call > answering {
                 completion(.failure(URLError(.networkConnectionLost)))
-                return
+                return .settled
             }
             let start = Int(offset)
             completion(.success(file.subdata(in: start ..< min(file.count, start + length))))
+            return .settled
         }
     }
 
@@ -196,10 +197,11 @@ struct VideoFaceTests {
         let reader = RemoteRangeReader(size: UInt64(data.count)) { offset, length, completion in
             guard offset < UInt64(data.count / 3) else {
                 completion(.failure(Unanswered()))
-                return
+                return .settled
             }
             let start = Int(offset)
             completion(.success(data.subdata(in: start ..< min(data.count, start + length))))
+            return .settled
         }
         let remote = RemoteVideoAsset(reader: reader, filename: "clip.mov")
         await #expect(throws: (any Error).self) {

@@ -33,9 +33,9 @@ nonisolated enum StagingContainer: String, CaseIterable, Sendable {
 /// ## Ownership is a lock, not a name
 ///
 /// The sweep still must not delete what a live instance is using, and that question is asked
-/// of the kernel rather than encoded in a path: each attached session holds an exclusive
-/// `flock` on `<identity>/.otos-owner` for as long as it is attached, and the sweep deletes a
-/// tree only if it can take that lock.
+/// of the kernel rather than encoded in a path: each attached camera and each Immich account
+/// the process holds keeps an exclusive `flock` on `<identity>/.otos-owner` for as long as it
+/// is in use, and the sweep deletes a tree only if it can take that lock.
 ///
 /// Crash-safety falls out for free, which is why this is a lock and not a PID file or a
 /// timestamp: the kernel releases an `flock` when the holder dies, however it dies. Verified
@@ -46,10 +46,10 @@ nonisolated enum StagingContainer: String, CaseIterable, Sendable {
 /// The lock decides *deletion only*, never use. Two instances with the same camera attached
 /// both stage normally; only one of them is responsible for cleaning up.
 nonisolated enum StagingLocation {
-    /// Locks held for cameras attached to this process, keyed by session root path.
+    /// Locks held for the sources this process uses — cameras attached, Immich accounts
+    /// held — keyed by session root path.
     ///
-    /// Held open for the life of each attachment; closing the descriptor is what releases
-    /// the claim.
+    /// Held open for the life of each; closing the descriptor is what releases the claim.
     private static let ownedDescriptors = Mutex<[String: Int32]>([:])
 
     private static let ownerMarkerName = ".otos-owner"
@@ -59,6 +59,10 @@ nonisolated enum StagingLocation {
     /// Under Caches: staging is a rebuildable transfer cache, not overlay. Overlay lives in
     /// Application Support and is backed up; these bytes exist only until the item they
     /// belong to is imported or the app quits.
+    ///
+    /// Named by the running app's bundle identifier, as its Application Support data is, so
+    /// a dev build (`net.melisma.Otos.dev`) and the installed app never share a container
+    /// and never sweep each other's trees (ADR 0030).
     static func containerURL(_ container: StagingContainer) -> URL {
         let caches = (try? FileManager.default.url(
             for: .cachesDirectory,
@@ -67,7 +71,7 @@ nonisolated enum StagingLocation {
             create: true
         )) ?? FileManager.default.temporaryDirectory
         return caches
-            .appending(path: "net.melisma.Otos", directoryHint: .isDirectory)
+            .appending(path: Bundle.main.bundleIdentifier ?? "net.melisma.Otos", directoryHint: .isDirectory)
             .appending(path: container.rawValue, directoryHint: .isDirectory)
     }
 
@@ -99,7 +103,13 @@ nonisolated enum StagingLocation {
     /// in the pathological case of two instances sharing a camera.
     @discardableResult
     static func claimOwnership(identity: DeviceIdentity, inContainer container: URL) -> Bool {
-        let root = sessionRootURL(identity: identity, inContainer: container)
+        claimOwnership(of: sessionRootURL(identity: identity, inContainer: container))
+    }
+
+    /// Claims one staging tree, named by its path: what an Immich account's root is, for as
+    /// long as this process holds the account. The same best-effort claim as a camera's.
+    @discardableResult
+    static func claimOwnership(of root: URL) -> Bool {
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         } catch {
@@ -136,6 +146,18 @@ nonisolated enum StagingLocation {
                 close(descriptor)
             }
             owned.removeAll()
+        }
+    }
+
+    /// Drops this process's claim on one tree: its account is gone, and its tree with it.
+    static func releaseOwnership(of root: URL) {
+        let key = root.standardizedFileURL.path(percentEncoded: false)
+        ownedDescriptors.withLock { owned in
+            guard let descriptor = owned.removeValue(forKey: key) else {
+                return
+            }
+            flock(descriptor, LOCK_UN)
+            close(descriptor)
         }
     }
 
@@ -195,9 +217,11 @@ nonisolated enum StagingLocation {
     ///
     /// Enumerating stops at the first file, so this stays cheap when there genuinely are tens
     /// of gigabytes below it.
-    static func hasStagedBytes() -> Bool {
+    static func hasStagedBytes(
+        inContainers containers: [URL] = StagingContainer.allCases.map(containerURL)
+    ) -> Bool {
         let roots = ownedDescriptors.withLock { Array($0.keys) }
-        for path in roots {
+        for path in roots where isInsideStaging(URL(fileURLWithPath: path, isDirectory: true), inContainers: containers) {
             guard let enumerator = FileManager.default.enumerator(
                 at: URL(fileURLWithPath: path, isDirectory: true),
                 includingPropertiesForKeys: [.isRegularFileKey],

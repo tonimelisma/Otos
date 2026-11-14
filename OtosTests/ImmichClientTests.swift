@@ -65,6 +65,91 @@ final class ImmichStubProtocol: URLProtocol {
     }
 }
 
+/// A transfer that answers its headers with one status and the first part of its body, then
+/// holds the rest, as a large original does while it is still arriving: whatever settles the
+/// read settles it at the headers or by cancelling. It records the `Range` asked for, and when the transfer was
+/// started and stopped.
+final class HeldTransfer: Sendable {
+    private struct Facts {
+        var range: String?
+        var started = false
+        var stopped = false
+    }
+
+    private static let transfers = Mutex<[String: HeldTransfer]>([:])
+    private let status: Int
+    private let facts = Mutex(Facts())
+
+    init(status: Int) {
+        self.status = status
+    }
+
+    var range: String? {
+        facts.withLock(\.range)
+    }
+
+    var started: Bool {
+        facts.withLock(\.started)
+    }
+
+    var stopped: Bool {
+        facts.withLock(\.stopped)
+    }
+
+    /// A session whose every request to `host` is this transfer; each test names its own.
+    func session(host: String) -> URLSession {
+        Self.transfers.withLock { $0[host] = self }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [HeldTransferProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
+    fileprivate static func transfer(for request: URLRequest) -> HeldTransfer? {
+        request.url?.host.flatMap { host in
+            transfers.withLock { $0[host] }
+        }
+    }
+
+    fileprivate func start(_ request: URLRequest) -> Int {
+        facts.withLock {
+            $0.range = request.value(forHTTPHeaderField: "Range")
+            $0.started = true
+        }
+        return status
+    }
+
+    fileprivate func stop() {
+        facts.withLock { $0.stopped = true }
+    }
+}
+
+final class HeldTransferProtocol: URLProtocol {
+    override static func canInit(with _: URLRequest) -> Bool {
+        true
+    }
+
+    override static func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let transfer = HeldTransfer.transfer(for: request) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.cannotFindHost))
+            return
+        }
+        let status = transfer.start(request)
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        // The body's first part, then nothing more: URLSession hands a task its response
+        // only once some body has arrived to sniff.
+        client?.urlProtocol(self, didLoad: Data(repeating: 7, count: 4096))
+    }
+
+    override func stopLoading() {
+        HeldTransfer.transfer(for: request)?.stop()
+    }
+}
+
 /// The Immich HTTP client against a stubbed transport. Lines are shaped as Immich 3.3.6
 /// sent them (`docs/research/2026-11-07-immich-api.md`).
 struct ImmichClientTests {
@@ -153,19 +238,24 @@ struct ImmichClientTests {
             Self.line("AssetDeleteV1", ["assetId": "gone"], ack: "AssetDeleteV1|03"),
             Self.line("SyncCompleteV1", [:], ack: "SyncCompleteV1|04"),
         ]
+        let resets = Mutex<[Bool]>([])
         let session = ImmichStubProtocol.session(host: "sync.test") { request, body in
             #expect(request.url?.path == "/api/sync/stream")
             #expect(request.value(forHTTPHeaderField: "Accept") == "application/jsonlines+json")
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer tok")
-            let sent = try JSONSerialization.jsonObject(with: body ?? Data()) as? [String: [String]]
-            #expect(sent == ["types": ImmichClient.syncTypes])
+            let sent = try JSONSerialization.jsonObject(with: body ?? Data()) as? [String: Any]
+            #expect(sent?["types"] as? [String] == ImmichClient.syncTypes)
+            resets.withLock { $0.append(sent?["reset"] as? Bool ?? false) }
             return (200, Data(lines.joined(separator: "\n").utf8))
         }
         let client = try ImmichClient(server: #require(URL(string: "http://sync.test")), session: session)
         var events: [ImmichSyncEvent] = []
-        for try await event in try await client.syncEvents(token: "tok") {
+        for try await event in try await client.syncEvents(token: "tok", fromZero: false) {
             events.append(event)
         }
+        // A stream from zero asks the server to discard the cursor first.
+        for try await _ in try await client.syncEvents(token: "tok", fromZero: true) {}
+        #expect(resets.withLock { $0 } == [false, true])
         #expect(events.count == 4)
         guard case let .asset(asset, ack) = events.first else {
             Issue.record("Expected an asset line first, got \(events)")
@@ -203,9 +293,9 @@ struct ImmichClientTests {
                 : (401, Data(#"{"message":"Invalid user token"}"#.utf8))
         }
         let client = try ImmichClient(server: #require(URL(string: "http://received.test")), session: session)
-        let events = try await client.syncEvents(token: "tok")
+        let events = try await client.syncEvents(token: "tok", fromZero: false)
         await #expect(throws: ImmichClientError.unauthorized) {
-            _ = try await client.syncEvents(token: "revoked")
+            _ = try await client.syncEvents(token: "revoked", fromZero: false)
         }
         session.invalidateAndCancel()
 
@@ -242,7 +332,68 @@ struct ImmichClientTests {
             try ImmichSyncEvent(line: Data(badDate.utf8))
         }
         let other = #"{"type":"PartnerV1","data":{},"ack":"PartnerV1|1"}"#
-        #expect(try ImmichSyncEvent(line: Data(other.utf8)) == .unrequested(type: "PartnerV1", ack: "PartnerV1|1"))
+        #expect(try ImmichSyncEvent(line: Data(other.utf8)) == .ignored(type: "PartnerV1", ack: "PartnerV1|1"))
+    }
+
+    /// An asset of a type or visibility this version does not know is one line ignored and
+    /// acknowledged, never a stream that cannot be read: a newer server never stops a pass.
+    @Test func anAssetOfAnUnknownKindIsIgnored() throws {
+        for (type, visibility) in [("MODEL3D", "timeline"), ("IMAGE", "shared")] {
+            let line = try Self.line("AssetV2", [
+                "id": "a", "originalFileName": "a.jpg", "type": type, "visibility": visibility,
+            ], ack: "AssetV2|9")
+            #expect(try ImmichSyncEvent(line: Data(line.utf8)) == .ignored(type: "AssetV2", ack: "AssetV2|9"))
+        }
+    }
+
+    /// A ranged read's status is judged when its headers arrive: a server that ignores
+    /// `Range` and starts sending the whole file (a 200) is refused at once, and its
+    /// transfer cancelled before the body is received.
+    @Test func aRangedReadAnsweredInFullIsRefusedAtItsHeaders() async throws {
+        let transfer = HeldTransfer(status: 200)
+        let client = try ImmichClient(
+            server: #require(URL(string: "http://range-full.test")), session: transfer.session(host: "range-full.test")
+        )
+        let result = await withCheckedContinuation { (settled: CheckedContinuation<Result<Data, any Error>, Never>) in
+            _ = client.originalRange(assetID: "a", token: "tok", offset: 0, length: 100) { settled.resume(returning: $0) }
+        }
+        #expect(throws: ImmichClientError.refused(status: 200)) { try result.get() }
+        try await waitUntil { transfer.stopped }
+        #expect(transfer.range == "bytes=0-99")
+    }
+
+    /// A 206 is the range asked for: its body is the read.
+    @Test func aRangedReadAnsweredPartiallyIsItsBody() async throws {
+        let body = Data((0 ..< 100).map { UInt8($0) })
+        let session = ImmichStubProtocol.session(host: "range-partial.test") { request, _ in
+            #expect(request.value(forHTTPHeaderField: "Range") == "bytes=10-109")
+            return (206, body)
+        }
+        let client = try ImmichClient(server: #require(URL(string: "http://range-partial.test")), session: session)
+        let result = await withCheckedContinuation { (settled: CheckedContinuation<Result<Data, any Error>, Never>) in
+            _ = client.originalRange(assetID: "a", token: "tok", offset: 10, length: 100) { settled.resume(returning: $0) }
+        }
+        #expect(try result.get() == body)
+    }
+
+    /// A ranged read its caller stops waiting for is cancelled: its transfer ends, and it
+    /// settles as cancellation, never as a server that did not answer.
+    @Test func aRangedReadCanBeCancelled() async throws {
+        let transfer = HeldTransfer(status: 206)
+        let client = try ImmichClient(
+            server: #require(URL(string: "http://range-cancel.test")), session: transfer.session(host: "range-cancel.test")
+        )
+        let result = await withCheckedContinuation { (settled: CheckedContinuation<Result<Data, any Error>, Never>) in
+            let read = client.originalRange(assetID: "a", token: "tok", offset: 0, length: 100) {
+                settled.resume(returning: $0)
+            }
+            Task {
+                try await waitUntil { transfer.started }
+                read.cancel()
+            }
+        }
+        #expect(throws: CancellationError.self) { try result.get() }
+        try await waitUntil { transfer.stopped }
     }
 
     /// The token round-trips through the Keychain under a service only this test uses,
