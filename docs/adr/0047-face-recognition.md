@@ -189,7 +189,11 @@ grouping had put with the right child.
   guess, a seed (one of the faces a person was first found from), the user's, or held (the
   user removed the name). The user's faces and the seeds are the anchors; every guess is
   rebuilt from them. Also on the face: its likeness to its person (the likeness sort) and
-  whether it is its person's key photo (`is_key_photo`), at most one per person.
+  whether it is its person's key photo (`is_key_photo`), at most one per person. A likeness
+  is rewritten only when it moves by more than 1e-5: Accelerate's matrix product rounds
+  differently from process to process (up to 4.8e-7 on the owner's faces), and a write
+  starts the next assignment, so writing that wobble would never let People settle
+  (`docs/research/2026-11-13-people-assignment-scale.md`).
 - **Media folders:** nothing is written to them. Names exist only in the catalog. Otos never
   reads or writes face regions in files' XMP, and export writes no names (owner decision,
   2026-11-10).

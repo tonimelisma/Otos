@@ -298,6 +298,16 @@ struct BenchmarkTests {
             let result = FaceAssignmentPolicy.assign(faces: large, people: largePeople)
             #expect(!result.guesses.isEmpty)
         }
+        // The owner's shape: hundreds of people, most with a few faces the user gave them.
+        // Each round visits every open face once per person, so cost grows with faces times
+        // people, which the 20-person cases cannot show (2026-11-13: 682 people, 89,474
+        // faces). 400 people is the most the generator's person-per-axis embeddings allow.
+        let (crowd, crowdPeople) = Self.groupingLibrary(faces: 20000, people: 400, confirmedEach: 5)
+        try await Benchmark.measure("people.assign.400people", iterations: 1) {
+            let result = FaceAssignmentPolicy.assign(faces: crowd, people: crowdPeople)
+            #expect(!result.guesses.isEmpty)
+        }
+
         // A cold start: nobody named, every person found among the faces.
         let cold = large.map { face in
             FaceFact(id: face.id, captureSeconds: face.captureSeconds, embedding: face.embedding,

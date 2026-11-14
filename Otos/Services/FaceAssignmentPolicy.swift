@@ -410,7 +410,10 @@ nonisolated struct Fill {
         // person out of the rest of its photo.
         let rows = faces.indices.filter { faces[$0].assignment.isGuessable && anchors[$0] == nil && faces[$0].isRecognisable }
         let rowFaces = rows.map { faces[$0] }
-        let rejected = rowFaces.map { face in Set(face.rejected.compactMap { slotOf[.existing($0)] }) }
+        let rowCaptures = rowFaces.map(\.captureSeconds)
+        let rowPhotos = rowFaces.map(\.id.asset)
+        let rejected = rowFaces.map { face in face.rejected.compactMap { slotOf[.existing($0)] } }
+        let bornSlots = people.indices.filter { birthdayOf[$0] != nil }
         var assigned = anchors
         var photoPeople: [MediaAssetID: Set<Int>] = [:]
         for (index, person) in anchors {
@@ -423,32 +426,39 @@ nonisolated struct Fill {
         var open = Set(rows.indices)
         var evidence = anchors.keys.filter { faces[$0].isRecognisable }.sorted()
 
+        // The row's best similarity per person, with the people it may not have lowered out
+        // of the way, then two vectorised maxima: assignment asks this of every open row
+        // every round, so it is never a loop over the people. The first maximum wins a tie.
+        var candidates = [Float](repeating: -2, count: count)
         func top(_ row: Int, excludingPhoto: Bool) -> (slot: Int, value: Float, second: Float)? {
-            var excluded = rejected[row]
-            if excludingPhoto {
-                excluded.formUnion(photoPeople[rowFaces[row].id.asset] ?? [])
+            guard !people.isEmpty else { return nil }
+            candidates.replaceSubrange(0 ..< people.count, with: best[row * count ..< row * count + people.count])
+            for slot in rejected[row] {
+                candidates[slot] = -2
             }
-            var slot = -1
-            var value: Float = -2
-            var second: Float = -2
-            for candidate in 0 ..< people.count where !excluded.contains(candidate)
-                && FaceAssignmentPolicy.notBeforeBirthday(rowFaces[row].captureSeconds, birthdayOf[candidate])
-            {
-                let similarity = best[row * count + candidate]
-                if similarity > value {
-                    second = value
-                    value = similarity
-                    slot = candidate
-                } else if similarity > second {
-                    second = similarity
+            if excludingPhoto, let inPhoto = photoPeople[rowPhotos[row]] {
+                for slot in inPhoto {
+                    candidates[slot] = -2
                 }
             }
-            return slot < 0 || value <= -2 ? nil : (slot, value, second)
+            for slot in bornSlots where !FaceAssignmentPolicy.notBeforeBirthday(rowCaptures[row], birthdayOf[slot]) {
+                candidates[slot] = -2
+            }
+            var value: Float = 0
+            var index: vDSP_Length = 0
+            vDSP_maxvi(candidates, 1, &value, &index, vDSP_Length(people.count))
+            guard value > -2 else { return nil }
+            candidates[Int(index)] = -2
+            var second: Float = 0
+            vDSP_maxv(candidates, 1, &second, vDSP_Length(people.count))
+            return (Int(index), value, second)
         }
 
         while !evidence.isEmpty, !open.isEmpty {
-            raise(&best, count: count, rows: rowFaces, open: open.sorted(), evidence: evidence.map { (faces[$0], slotOf[assigned[$0]!]!) },
-                  birthdays: birthdayOf)
+            raise(
+                &best, count: count, rows: rowFaces, captures: rowCaptures, open: open.sorted(),
+                evidence: evidence.map { (faces[$0], slotOf[assigned[$0]!]!) }, birthdays: birthdayOf
+            )
             let ranked = open.compactMap { row -> (row: Int, slot: Int, value: Float)? in
                 guard let found = top(row, excludingPhoto: true),
                       found.value >= FaceAssignmentPolicy.threshold,
@@ -491,37 +501,86 @@ nonisolated struct Fill {
 
     /// Raises each open row's best similarity per person with the new evidence within reach:
     /// one matrix product for the round, then one vectorised maximum per person and row.
+    /// Every round visits each open row once per person with new evidence (75 million visits
+    /// a pass on the owner's 89,474 faces and 682 people), so a visit is pointer reads and
+    /// the one reach scan, `PersonRun.best(in:)`, with no copy or allocation.
     private static func raise(
         _ best: inout [Float],
         count: Int,
         rows: [FaceFact],
+        captures: [Double?],
         open: [Int],
         evidence: [(face: FaceFact, slot: Int)],
         birthdays: [Double?]
     ) {
         let bySlot = Dictionary(grouping: evidence, by: \.slot)
-        var runs: [(slot: Int, run: PersonRun)] = []
+        var runs: [PersonRun] = []
+        var slots: [Int] = []
         var columns: [FaceFact] = []
         for slot in bySlot.keys.sorted() {
             let run = PersonRun(faces: bySlot[slot]!.map(\.face), birthday: birthdays[slot], start: columns.count)
-            runs.append((slot, run))
+            runs.append(run)
+            slots.append(slot)
             columns += run.faces
         }
+        // Per cell, only pointer reads: an array subscript is a checked call at -Onone, the
+        // configuration the installed app runs (ADR 0030).
+        var layouts: [RunLayout] = []
+        var times: [Double] = []
+        for (run, slot) in zip(runs, slots) {
+            layouts.append(RunLayout(
+                slot: slot, start: run.start, count: run.faces.count, dated: run.times.count,
+                timeStart: times.count, birthday: run.birthday
+            ))
+            times += run.times
+        }
+        let openRows = open.map { (row: $0, capture: captures[$0]) }
         BlockedSimilarity(rows: open.map { rows[$0] }, columns: columns).forEachBlock { range, values in
-            values.withUnsafeBufferPointer { buffer in
-                for local in range {
-                    let row = open[local]
-                    let start = (local - range.lowerBound) * columns.count
-                    for (slot, run) in runs {
-                        guard let value = run.best(for: rows[row], row: buffer, rowStart: start) else { continue }
-                        let index = row * count + slot
-                        if value > best[index] {
-                            best[index] = value
+            values.withUnsafeBufferPointer { values in
+                times.withUnsafeBufferPointer { times in
+                    layouts.withUnsafeBufferPointer { layouts in
+                        openRows.withUnsafeBufferPointer { openRows in
+                            best.withUnsafeMutableBufferPointer { best in
+                                guard let values = values.baseAddress, let firstRun = layouts.baseAddress,
+                                      let openRows = openRows.baseAddress, let best = best.baseAddress
+                                else { return }
+                                let lastRun = firstRun + layouts.count
+                                let allTimes = times.baseAddress
+                                for local in range {
+                                    let open = (openRows + local).pointee
+                                    let similarities = values + (local - range.lowerBound) * columns.count
+                                    var run = firstRun
+                                    while run < lastRun {
+                                        let layout = run.pointee
+                                        run += 1
+                                        guard let value = PersonRun.best(
+                                            in: similarities + layout.start,
+                                            times: allTimes?.advanced(by: layout.timeStart),
+                                            dated: layout.dated, count: layout.count,
+                                            capture: open.capture, birthday: layout.birthday
+                                        ) else { continue }
+                                        let cell = best + open.row * count + layout.slot
+                                        if value > cell.pointee {
+                                            cell.pointee = value
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    /// Where one person's new evidence sits among a round's columns and capture times.
+    private struct RunLayout {
+        let slot: Int
+        let start: Int
+        let count: Int
+        let dated: Int
+        let timeStart: Int
+        let birthday: Double?
     }
 }
 
@@ -550,40 +609,73 @@ nonisolated struct PersonRun: Sendable {
     /// similarities to every column; `skipping` is a local index left out (the face itself).
     func best(for face: FaceFact, row: UnsafeBufferPointer<Float>, rowStart: Int, skipping: Int? = nil) -> Float? {
         guard let base = row.baseAddress else { return nil }
-        var ranges: [Range<Int>] = []
-        if let capture = face.captureSeconds, !FaceAssignmentPolicy.isAdult(at: capture, birthday: birthday) {
-            let low = times.partitioningIndex { $0 >= capture - FaceAssignmentPolicy.window }
-            let high = times.partitioningIndex { $0 > capture + FaceAssignmentPolicy.window }
-            ranges.append(low ..< high)
-        } else {
-            ranges.append(0 ..< times.count)
+        return times.withUnsafeBufferPointer { times in
+            Self.best(
+                in: base + rowStart + start, times: times.baseAddress, dated: times.count, count: faces.count,
+                capture: face.captureSeconds, birthday: birthday, skipping: skipping
+            )
         }
-        ranges.append(times.count ..< faces.count)
-        if let skipping {
-            ranges = ranges.flatMap { range -> [Range<Int>] in
-                guard range.contains(skipping) else { return [range] }
-                return [range.lowerBound ..< skipping, skipping + 1 ..< range.upperBound]
-            }
-        }
-        var best: Float?
-        for range in ranges where !range.isEmpty {
-            var value: Float = 0
-            var index: vDSP_Length = 0
-            vDSP_maxvi(base + rowStart + start + range.lowerBound, 1, &value, &index, vDSP_Length(range.count))
-            best = max(best ?? -2, value)
-        }
-        return best
     }
-}
 
-private extension Array {
-    /// The first index whose element satisfies `predicate`, for a predicate that is false
-    /// then true along the array.
-    nonisolated func partitioningIndex(where predicate: (Element) -> Bool) -> Int {
+    /// The best of a face's similarities to one person's faces within its reach: `row`
+    /// points at its similarity to that person's first face, `times` at the dated faces'
+    /// capture instants ascending (the first `dated` of `count` faces), the rest undated.
+    /// A face is compared with every face of a person who was an adult on its date, and
+    /// with every undated one; otherwise with those within `window` of it. Nil when no face
+    /// is within reach. It allocates nothing: assignment calls it once per face and person
+    /// every round.
+    static func best(
+        in row: UnsafePointer<Float>,
+        times: UnsafePointer<Double>?,
+        dated datedCount: Int,
+        count: Int,
+        capture: Double?,
+        birthday: Double?,
+        skipping: Int? = nil
+    ) -> Float? {
+        var dated = 0 ..< datedCount
+        if let times, let capture, !FaceAssignmentPolicy.isAdult(at: capture, birthday: birthday) {
+            dated = firstIndex(in: times, count: datedCount, from: capture - FaceAssignmentPolicy.window, inclusive: true)
+                ..< firstIndex(in: times, count: datedCount, from: capture + FaceAssignmentPolicy.window, inclusive: false)
+        }
+        var best: Float = -2
+        var reached = false
+        guard let skipping else {
+            raise(&best, &reached, row, dated)
+            raise(&best, &reached, row, datedCount ..< count)
+            return reached ? best : nil
+        }
+        let (datedBefore, datedAfter) = split(dated, skipping: skipping)
+        let (undatedBefore, undatedAfter) = split(datedCount ..< count, skipping: skipping)
+        raise(&best, &reached, row, datedBefore)
+        raise(&best, &reached, row, datedAfter)
+        raise(&best, &reached, row, undatedBefore)
+        raise(&best, &reached, row, undatedAfter)
+        return reached ? best : nil
+    }
+
+    /// Raises `best` to the maximum of `row` over `part`, a parameter rather than a captured
+    /// variable so no call allocates.
+    private static func raise(_ best: inout Float, _ reached: inout Bool, _ row: UnsafePointer<Float>, _ part: Range<Int>) {
+        guard !part.isEmpty else { return }
+        var value: Float = 0
+        vDSP_maxv(row + part.lowerBound, 1, &value, vDSP_Length(part.count))
+        best = max(best, value)
+        reached = true
+    }
+
+    /// `range` without `skipping`, as at most two ranges.
+    private static func split(_ range: Range<Int>, skipping: Int) -> (Range<Int>, Range<Int>) {
+        guard range.contains(skipping) else { return (range, range.upperBound ..< range.upperBound) }
+        return (range.lowerBound ..< skipping, skipping + 1 ..< range.upperBound)
+    }
+
+    /// The first index whose time is at least `bound` (`inclusive`) or above it.
+    private static func firstIndex(in times: UnsafePointer<Double>, count: Int, from bound: Double, inclusive: Bool) -> Int {
         var low = 0, high = count
         while low < high {
             let middle = (low + high) / 2
-            if predicate(self[middle]) {
+            if inclusive ? times[middle] >= bound : times[middle] > bound {
                 high = middle
             } else {
                 low = middle + 1

@@ -72,6 +72,18 @@ struct PeopleStateTests {
         #expect(state.person(Self.ian)?.anchorPhotos == [faces[3].id.asset])
     }
 
+    /// A likeness is written when it appears, goes, or moves past its precision, never for
+    /// the last-bit wobble Accelerate's matrix product brings from one process to the next,
+    /// so an assignment run on an unchanged catalog writes nothing and People settles.
+    @Test func aLikenessThatOnlyWobblesIsNotWritten() {
+        let stored: Float = 0.8001686
+        #expect(!FaceAssignmentPlan.likenessMoved(from: stored, to: stored + 4.8e-7))
+        #expect(!FaceAssignmentPlan.likenessMoved(from: nil, to: nil))
+        #expect(FaceAssignmentPlan.likenessMoved(from: stored, to: stored + 1e-3))
+        #expect(FaceAssignmentPlan.likenessMoved(from: nil, to: stored))
+        #expect(FaceAssignmentPlan.likenessMoved(from: stored, to: nil))
+    }
+
     /// A photo's faces as the menus and Info show them: a hidden person's face is left out,
     /// an unidentified face is not. (A detection marked not a face never reaches the
     /// snapshot: `PeopleStoreTests`.)

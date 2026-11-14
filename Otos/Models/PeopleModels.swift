@@ -122,6 +122,23 @@ nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
         guesses.isEmpty && newPeople.isEmpty && likeness.isEmpty && emptied.isEmpty && lapsedSeeds.isEmpty
     }
 
+    /// How far a likeness must move to be a change. Accelerate's matrix product rounds
+    /// differently from process to process: on the owner's 89,474 faces, likenesses read by
+    /// the same code in two processes differed by up to 4.8e-7. Writing such a wobble would
+    /// make every assignment change the catalog, and the change starts the next assignment,
+    /// so People would never settle. Likeness only orders a person's photos.
+    static let likenessPrecision: Float = 1e-5
+
+    /// Whether a face's likeness changed: it appeared, went, or moved past
+    /// `likenessPrecision`.
+    static func likenessMoved(from stored: Float?, to computed: Float?) -> Bool {
+        switch (stored, computed) {
+        case let (stored?, computed?): abs(stored - computed) > likenessPrecision
+        case (nil, nil): false
+        default: true
+        }
+    }
+
     /// The changes that take the snapshot to `result`.
     static func changes(from snapshot: PeopleSnapshot, to result: FaceAssignmentResult) -> FaceAssignmentPlan {
         var plan = FaceAssignmentPlan()
@@ -130,7 +147,7 @@ nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
         var keeps: Set<PersonID> = []
         for face in snapshot.faces {
             let computed = result.likeness[face.id]
-            if snapshot.likeness[face.id] != computed {
+            if Self.likenessMoved(from: snapshot.likeness[face.id], to: computed) {
                 plan.likeness[face.id] = .some(computed)
             }
             let lapsed = result.lapsedSeeds.contains(face.id)
