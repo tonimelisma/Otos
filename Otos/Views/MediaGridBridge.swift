@@ -7,13 +7,14 @@ import UniformTypeIdentifiers
 ///
 /// This is the only AppKit boundary in the media browser. SwiftUI owns window
 /// composition and supplies one ordered, scoped value. NSCollectionView owns the
-/// imperative viewport, reuse, layout, and diffable-data-source lifecycle that a
-/// high-cardinality browser requires.
+/// imperative viewport, reuse and layout that a high-cardinality browser requires; this
+/// controller is its data source, answering from one `MediaGridStructure` value.
 ///
 /// Descriptor plus identity order is structural; tile detail is read only for the visible window.
-/// A structural change performs one diffable apply, animating small/user-visible
-/// insert/remove changes while using AppKit's reloadData-class path for large or
-/// reorder-only changes (~110–250 ms at current ~23k scale, not multi-second). Unchanged IDs re-read visible
+/// A structural change builds the next `MediaGridStructure` off the main actor and hands it
+/// to AppKit once: small or same-query reorder changes as an animated batch of
+/// inserts, deletes and moves, query changes and large membership changes as `reloadData`.
+/// Unchanged IDs re-read visible
 /// details and reconfigure existing reusable items in place. Paint truth lives in
 /// `TileContentStore` alone (monotonic detail + cost-bounded decoded image); the
 /// controller owns decode dedup via `inFlightDecodes` and pins the current visible set
@@ -21,7 +22,7 @@ import UniformTypeIdentifiers
 /// cannot be budget-dropped. Scroll-driven detail/preheat work is coalesced on a trailing
 /// ~16 ms edge so bounds notifications do not restart Store queries every tick.
 /// `MediaGridMutationGate` is the single arbiter for both exclusive collection-view
-/// mutations — diffable structural applies and animated zoom swaps — so the two never
+/// mutations — structural applies and animated zoom swaps — so the two never
 /// overlap in either direction; it keeps only the newest pending grid and the newest
 /// requested column count, and the controller is a pure executor of the ordered action
 /// lists the gate returns (`perform(_:)`).
@@ -124,22 +125,6 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
 
 @MainActor
 final class MediaGridViewController: NSViewController {
-    /// DES-069: the grid groups by day only under `.bestDate` sort, where the
-    /// list is date-contiguous — `.name`/`.size` sort has no defined date
-    /// relationship between neighbors, so it stays one ungrouped section, same
-    /// as before day headers existed. `.day(nil)` is the "no known capture
-    /// date" bucket, still grouped (not folded into `.ungrouped`) so those
-    /// assets get their own header rather than silently vanishing from the
-    /// day structure. Section *order* in the diffable snapshot comes from the
-    /// order sections are first encountered walking the already-sorted asset
-    /// list (`mediaSnapshot(for:)`), not from this type — nulls land wherever
-    /// SQLite's `ORDER BY` places them, contiguously, and the walk groups
-    /// whatever run it finds.
-    nonisolated enum Section: Hashable {
-        case ungrouped
-        case day(Date?)
-    }
-
     private static let itemIdentifier = NSUserInterfaceItemIdentifier("MediaGridItem")
     private static let dayHeaderIdentifier = NSUserInterfaceItemIdentifier("MediaGridDayHeader")
 
@@ -150,28 +135,27 @@ final class MediaGridViewController: NSViewController {
     /// frame cannot fall behind the tiles the way a pinned supplementary's does
     /// (`MediaGridDayBar.swift`).
     let dayBar = MediaGridDayBarView()
-    /// Per-section day facts for the snapshot currently applied, in section order;
-    /// `nil` marks an `.ungrouped` section, which names no day.
+    /// What the collection view shows: sections, their days, and the identity at every
+    /// index path. The controller is the collection view's data source and answers from
+    /// this alone, and so does every other reader of sections or index paths (day bar,
+    /// headers, layout, selection, drag, prefetch, zoom, anchoring).
     ///
-    /// Written by `commitStructure` in the same synchronous region that applies
-    /// the snapshot, so the layout and this array are never separately observable.
-    /// It exists because the alternative — asking the data source, whose only route
-    /// to section identifiers is `dataSource.snapshot()` — copies the whole applied
-    /// snapshot to learn one section's date and count.
-    var appliedDaySections: [MediaGridDayBarPolicy.Day?] = []
+    /// Written only where AppKit takes the new value — beside `reloadData`, or inside a
+    /// batch's update block (`commitStructure`) — so the collection view's counts and this
+    /// value are never separately observable.
+    var structure: MediaGridStructure = .empty
     /// The single arbiter for both exclusive collection-view mutations (structural applies
     /// and zoom swaps) and the sole owner of column-count truth (`installedColumnCount`,
     /// `requestedColumnCount`). The controller holds no separate column-count state.
     let mutationGate = MediaGridMutationGate()
-    var dataSource: NSCollectionViewDiffableDataSource<Section, MediaAssetID>!
     /// Sticky, monotonic tile content (detail + best decoded image). Identity order lives
-    /// in the diffable data source; this store is the single paint truth so a tile never
+    /// in `structure`; this store is the single paint truth so a tile never
     /// blanks a painted same-asset thumbnail (APP-015 by construction).
     /// Hoisted to ViewModel ownership so grid, strip, and panes share one decoded-image owner.
     var tileContents: TileContentStore = .init()
     /// Last applied reorganization remap epoch from SwiftUI (ARC-051).
     private(set) var detailQueryTask: Task<Void, Never>?
-    /// The off-main snapshot build of the structural apply in flight
+    /// The off-main structure build of the structural apply in flight
     /// (`applyStructure`). At most one, by the mutation gate's exclusivity.
     var structureBuildTask: Task<Void, Never>?
     private var detailQueryGeneration = 0
@@ -485,7 +469,7 @@ final class MediaGridViewController: NSViewController {
         guard !visible.isEmpty else {
             return
         }
-        let ids = visible.compactMap { dataSource.itemIdentifier(for: $0) }
+        let ids = visible.compactMap { structure.id(at: $0) }
         onViewportChanged(ids)
     }
 
@@ -542,17 +526,17 @@ extension MediaGridViewController {
         }
         collectionView.onHoverChanged = { [weak self] indexPath in
             guard let self else { return }
-            setHoveredAssetID(indexPath.flatMap { dataSource.itemIdentifier(for: $0) })
+            setHoveredAssetID(indexPath.flatMap { structure.id(at: $0) })
         }
         collectionView.onMouseSelection = { [weak self] hit, modifiers in
             self?.applyMouseSelection(hit: hit, modifiers: modifiers)
         }
         collectionView.onStackBadgeHit = { [weak self] hit in
-            guard let self, let id = dataSource.itemIdentifier(for: hit) else { return }
+            guard let self, let id = structure.id(at: hit) else { return }
             onStackBadge(id)
         }
         collectionView.onDoubleClickHit = { [weak self] hit in
-            guard let self, let id = dataSource.itemIdentifier(for: hit) else {
+            guard let self, let id = structure.id(at: hit) else {
                 return
             }
             onItemDoubleClick(id)
@@ -580,7 +564,7 @@ extension MediaGridViewController {
         // test is against the ViewModel's selection model — AppKit's selection is a
         // render output that may lag a model write by an apply pass (APP-011).
         collectionView.onContextMenu = { [weak self] hit in
-            guard let self, let id = dataSource.itemIdentifier(for: hit) else {
+            guard let self, let id = structure.id(at: hit) else {
                 return nil
             }
             if !selectionHandlers.currentSelection().selection.contains(id) {
@@ -601,34 +585,7 @@ extension MediaGridViewController {
             forSupplementaryViewOfKind: MediaGridDayHeaderView.elementKind,
             withIdentifier: Self.dayHeaderIdentifier
         )
-        dataSource = NSCollectionViewDiffableDataSource<Section, MediaAssetID>(
-            collectionView: collectionView
-        ) { [weak self] collectionView, indexPath, assetID in
-            self?.makeCollectionItem(collectionView: collectionView, indexPath: indexPath, assetID: assetID)
-        }
-        dataSource.supplementaryViewProvider = { [weak self] collectionView, kind, indexPath in
-            self?.makeDayHeader(collectionView: collectionView, kind: kind, indexPath: indexPath)
-        }
-    }
-
-    /// Reads the day from `appliedDaySections` rather than `dataSource.snapshot()`,
-    /// which copies the whole applied snapshot to learn one section's date and count.
-    private func makeDayHeader(
-        collectionView: NSCollectionView,
-        kind: NSCollectionView.SupplementaryElementKind,
-        indexPath: IndexPath
-    ) -> MediaGridDayHeaderView? {
-        guard kind == MediaGridDayHeaderView.elementKind,
-              let header = collectionView.makeSupplementaryView(
-                  ofKind: kind,
-                  withIdentifier: Self.dayHeaderIdentifier,
-                  for: indexPath
-              ) as? MediaGridDayHeaderView
-        else {
-            return nil
-        }
-        renderDayHeader(header, section: indexPath.section)
-        return header
+        collectionView.dataSource = self
     }
 
     /// Draws what `MediaGridDayHeaderPolicy` says the header at `section` shows.
@@ -640,17 +597,14 @@ extension MediaGridViewController {
     /// not something the collection view can undo. Set both ways, because supplementary
     /// views are recycled.
     private func renderDayHeader(_ header: MediaGridDayHeaderView, section: Int) {
-        header.configure(MediaGridDayHeaderPolicy.presentation(
-            section: section,
-            daySections: appliedDaySections
-        ))
+        header.configure(MediaGridDayHeaderPolicy.presentation(section: section, in: structure))
     }
 
     /// Redraws every header on screen from the days just applied.
     ///
-    /// The provider runs only when AppKit makes a header view, and a diffable apply keeps
-    /// the view of every section whose identity (`.day(date)`) survives, however far it
-    /// moved. So a header drawn blank as the first section stayed blank after a newer day
+    /// The data source draws a header only when AppKit makes its view, and a batch keeps
+    /// the view of every section that survives, however far it moved. So a header drawn
+    /// blank as the first section stayed blank after a newer day
     /// was inserted above it, and a day that grew kept its old count. What a header draws
     /// is therefore re-derived for its current section after every apply, not only when
     /// the view is made.
@@ -668,22 +622,12 @@ extension MediaGridViewController {
         }
     }
 
-    private func makeCollectionItem(
-        collectionView: NSCollectionView,
-        indexPath: IndexPath,
-        assetID: MediaAssetID
-    ) -> MediaGridItem? {
-        guard let item = collectionView.makeItem(
-            withIdentifier: Self.itemIdentifier,
-            for: indexPath
-        ) as? MediaGridItem else {
-            return nil
-        }
+    private func configure(_ item: MediaGridItem, assetID: MediaAssetID) {
         tileContents.pin(assetID)
         item.onMediaChoice = { [weak self, weak item] choice in
             guard let self, let item,
-                  let indexPath = self.collectionView.indexPath(for: item),
-                  let id = dataSource.itemIdentifier(for: indexPath)
+                  let indexPath = collectionView.indexPath(for: item),
+                  let id = structure.id(at: indexPath)
             else {
                 return
             }
@@ -691,7 +635,6 @@ extension MediaGridViewController {
         }
         let change = ensureContentAndMaybeDecode(for: assetID)
         renderItem(item, assetID: assetID, change: change)
-        return item
     }
 
     private func configureScrollView() {
@@ -773,7 +716,7 @@ extension MediaGridViewController {
             return
         }
         let presentationDescription = String(describing: presentation)
-        guard let path = dataSource.indexPath(for: id) else {
+        guard let path = structure.indexPath(of: id) else {
             pendingFocusTargetID = id
             OtosLog.ui.debugOperation(
                 "ui.mediaGrid.focusTarget",
@@ -988,7 +931,7 @@ extension MediaGridViewController {
         lastReconfigurePinCallCount = 0
         let decodeStartsBefore = decodeStartedCount
         let visibleStart = ContinuousClock.now
-        let visibleIDs = visibleIndexPaths.compactMap { dataSource.itemIdentifier(for: $0) }
+        let visibleIDs = visibleIndexPaths.compactMap { structure.id(at: $0) }
         reconfigureVisibleIDsElapsed += visibleStart.duration(to: .now)
         let pinStart = ContinuousClock.now
         tileContents.pinVisible(Set(visibleIDs))
@@ -1006,7 +949,7 @@ extension MediaGridViewController {
         var renderElapsed = Duration.zero
 
         for indexPath in visibleIndexPaths {
-            guard let assetID = dataSource.itemIdentifier(for: indexPath) else {
+            guard let assetID = structure.id(at: indexPath) else {
                 missingAssetCount += 1
                 continue
             }
@@ -1083,7 +1026,7 @@ extension MediaGridViewController {
     func visibleAssetIDs() -> [MediaAssetID] {
         let attached = collectionView.indexPathsForVisibleItems()
         guard attached.isEmpty else {
-            return attached.sorted().compactMap { dataSource.itemIdentifier(for: $0) }
+            return attached.sorted().compactMap { structure.id(at: $0) }
         }
         return layoutVisibleAssetIDs()
     }
@@ -1100,7 +1043,7 @@ extension MediaGridViewController {
         return attributes
             .compactMap(\.indexPath)
             .sorted()
-            .compactMap { dataSource.itemIdentifier(for: $0) }
+            .compactMap { structure.id(at: $0) }
     }
 
     /// Assigns hover to exactly one tile. Called on pointer moves, on every scroll
@@ -1120,14 +1063,14 @@ extension MediaGridViewController {
         }
         faceOutlines = outlines
         for case let item as MediaGridItem in collectionView.visibleItems() {
-            let id = collectionView.indexPath(for: item).flatMap { dataSource.itemIdentifier(for: $0) }
+            let id = collectionView.indexPath(for: item).flatMap { structure.id(at: $0) }
             item.setFaceOutlines(id.flatMap { faceOutlines[$0] } ?? [])
         }
     }
 
     func applyHoverToVisibleTiles() {
         for case let item as MediaGridItem in collectionView.visibleItems() {
-            let id = collectionView.indexPath(for: item).flatMap { dataSource.itemIdentifier(for: $0) }
+            let id = collectionView.indexPath(for: item).flatMap { structure.id(at: $0) }
             item.setChoiceControlVisible(id != nil && id == hoveredAssetID)
         }
     }
@@ -1187,7 +1130,7 @@ extension MediaGridViewController {
     /// Re-asserts every visible tile's stack presentation after the stacks changed.
     private func applyStacksToVisibleTiles() {
         for case let item as MediaGridItem in collectionView.visibleItems() {
-            guard let id = collectionView.indexPath(for: item).flatMap({ dataSource.itemIdentifier(for: $0) }) else {
+            guard let id = collectionView.indexPath(for: item).flatMap({ structure.id(at: $0) }) else {
                 continue
             }
             item.setStackPresentation(TileStackPresentation.of(id, in: gridStacks))
@@ -1273,7 +1216,7 @@ extension MediaGridViewController {
     }
 
     func renderVisibleItem(id: MediaAssetID, change: TileContentChange) {
-        guard let indexPath = dataSource.indexPath(for: id),
+        guard let indexPath = structure.indexPath(of: id),
               let item = collectionView.item(at: indexPath) as? MediaGridItem
         else {
             return
@@ -1281,5 +1224,44 @@ extension MediaGridViewController {
         item.render(content: tileContents.content(for: id), change: change)
         applyHover(to: item, assetID: id)
         applyFaceOutlines(to: item, assetID: id)
+    }
+}
+
+/// The collection view's data source: every count, item and header answered from
+/// `structure`, the one value `commitStructure` hands AppKit.
+extension MediaGridViewController: NSCollectionViewDataSource {
+    func numberOfSections(in _: NSCollectionView) -> Int {
+        structure.numberOfSections
+    }
+
+    func collectionView(_: NSCollectionView, numberOfItemsInSection section: Int) -> Int {
+        structure.numberOfItems(inSection: section)
+    }
+
+    func collectionView(
+        _ collectionView: NSCollectionView,
+        itemForRepresentedObjectAt indexPath: IndexPath
+    ) -> NSCollectionViewItem {
+        let item = collectionView.makeItem(withIdentifier: Self.itemIdentifier, for: indexPath)
+        if let item = item as? MediaGridItem, let assetID = structure.id(at: indexPath) {
+            configure(item, assetID: assetID)
+        }
+        return item
+    }
+
+    func collectionView(
+        _ collectionView: NSCollectionView,
+        viewForSupplementaryElementOfKind kind: NSCollectionView.SupplementaryElementKind,
+        at indexPath: IndexPath
+    ) -> NSView {
+        let view = collectionView.makeSupplementaryView(
+            ofKind: kind,
+            withIdentifier: Self.dayHeaderIdentifier,
+            for: indexPath
+        )
+        if let header = view as? MediaGridDayHeaderView {
+            renderDayHeader(header, section: indexPath.section)
+        }
+        return view
     }
 }

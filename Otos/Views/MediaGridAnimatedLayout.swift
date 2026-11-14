@@ -43,7 +43,7 @@ nonisolated enum MediaGridAnimatedLayoutPolicy {
 /// `NSCollectionViewCompositionalLayout` gives every appearing/disappearing item the same
 /// transition as the surviving items around it (a plain frame glide) unless a layout
 /// overrides the appear/disappear attribute hooks. This subclass fades and shrinks *only*
-/// the items a diffable apply actually inserted or deleted in the current batch — every
+/// the items a structural apply's batch actually inserted or deleted — every
 /// other appearing item (initial layout install, scroll-driven reuse, a future zoom's
 /// layout swap) falls through to `super` untouched, so those paths never see a spurious
 /// fade. Bookkeeping is populated in `prepare(forCollectionViewUpdates:)` (called once per

@@ -63,11 +63,11 @@ extension MediaGridViewController {
     func applyMouseSelection(hit: IndexPath?, modifiers: NSEvent.ModifierFlags) {
         let shift = modifiers.contains(.shift)
         let command = modifiers.contains(.command)
-        let orderedIDs = mutationGate.displayedOrderedIDs
+        let orderedIDs = structure.orderedIDs
         let live = selectedIdentities()
 
         let clicked: MediaAssetID? = if let hit {
-            dataSource.itemIdentifier(for: hit)
+            structure.id(at: hit)
         } else {
             nil
         }
@@ -105,11 +105,11 @@ extension MediaGridViewController {
         isApplyingModelSelection = true
         defer { isApplyingModelSelection = false }
         if !delta.toDeselect.isEmpty {
-            let paths = Set(delta.toDeselect.compactMap { dataSource.indexPath(for: $0) })
+            let paths = Set(delta.toDeselect.compactMap { structure.indexPath(of: $0) })
             collectionView.deselectItems(at: paths)
         }
         if !delta.toSelect.isEmpty {
-            let paths = Set(delta.toSelect.compactMap { dataSource.indexPath(for: $0) })
+            let paths = Set(delta.toSelect.compactMap { structure.indexPath(of: $0) })
             collectionView.selectItems(at: paths, scrollPosition: [])
         }
     }
@@ -121,7 +121,7 @@ extension MediaGridViewController {
     /// delta and to reconcile the model after native keyboard selection — never to decide
     /// a gesture or to prune the model after a structural apply.
     func selectedIdentities() -> Set<MediaAssetID> {
-        Set(collectionView.selectionIndexPaths.compactMap { dataSource.itemIdentifier(for: $0) })
+        Set(collectionView.selectionIndexPaths.compactMap { structure.id(at: $0) })
     }
 
     /// Model → view, one direction. Idempotent; safe to call at any point where the
@@ -161,18 +161,18 @@ extension MediaGridViewController {
 /// session with the controller's source. No byte read, no materialization.
 extension MediaGridViewController {
     func beginDrag(from hit: IndexPath, event: NSEvent) {
-        guard let hitID = dataSource.itemIdentifier(for: hit) else {
+        guard let hitID = structure.id(at: hit) else {
             return
         }
         let ids = MediaGridDragPolicy.draggedIDs(
             hit: hitID,
             selection: selectedIdentities(),
-            orderedIDs: mutationGate.displayedOrderedIDs
+            orderedIDs: structure.orderedIDs
         )
         let originFrame = collectionView.layoutAttributesForItem(at: hit)?.frame ?? .zero
         let items: [NSDraggingItem] = ids.map { id in
             let item = NSDraggingItem(pasteboardWriter: selectionHandlers.dragWriter(id))
-            if let indexPath = dataSource.indexPath(for: id),
+            if let indexPath = structure.indexPath(of: id),
                let tile = collectionView.item(at: indexPath)?.view
             {
                 let frame = collectionView.layoutAttributesForItem(at: indexPath)?.frame ?? originFrame

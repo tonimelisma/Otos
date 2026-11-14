@@ -215,31 +215,71 @@ struct BenchmarkTests {
         }
     }
 
-    /// The pure half of a grid structural apply, which the user waits for on every switch of
-    /// view: a library of 15,000 photos taken ten a day over 1,500 days, the shape of several
-    /// years, where AppKit's snapshot build grows with days × items.
+    /// A grid structural apply, which the user waits for on every switch of view. The pure
+    /// half at two sizes: 15,000 photos taken ten a day over 1,500 days, and the owner's
+    /// library, 158,000 photos over 5,000 days, where AppKit's diffable snapshot took 13–15
+    /// seconds. Then the whole apply at the owner's size through the controller in a window:
+    /// the off-main build, `reloadData`, the layout resolve and the post-apply pass, which is
+    /// what stands between a sidebar click and a painted grid.
     @Test func gridCases() async throws {
-        let dayCount = 1500, perDay = 10
-        let ids = (0 ..< dayCount * perDay).map { index in
+        let small = Self.dayGroupedGrid(prefix: "", photos: 15000, days: 1500)
+        try await Benchmark.measure("grid.structureBuild.days1500") {
+            let built = await MediaGridViewController.buildStructure(for: small, descriptorChanged: true, previous: .empty)
+            #expect(built.structure.numberOfSections == 1500)
+            #expect(built.structure.orderedIDs.count == 15000)
+        }
+
+        let owner = Self.dayGroupedGrid(prefix: "a/", photos: 158_000, days: 5000)
+        try await Benchmark.measure("grid.structureBuild.days5000") {
+            let built = await MediaGridViewController.buildStructure(for: owner, descriptorChanged: true, previous: .empty)
+            #expect(built.structure.numberOfSections == 5000)
+            #expect(built.structure.orderedIDs.count == 158_000)
+        }
+
+        try await Self.measureOwnerScaleApply(
+            owner,
+            other: Self.dayGroupedGrid(prefix: "b/", photos: 158_000, days: 5000)
+        )
+    }
+
+    /// Two libraries of the owner's size, alternated, so every iteration replaces the whole
+    /// grid as a sidebar switch does.
+    @MainActor
+    private static func measureOwnerScaleApply(
+        _ owner: CatalogMediaGridState,
+        other: CatalogMediaGridState
+    ) async throws {
+        let controller = MediaGridViewController()
+        _ = controller.view
+        let window = orderedInTestWindow(width: 1200, height: 800, contentView: controller.view)
+        defer { window.close() }
+        controller.view.layoutSubtreeIfNeeded()
+        var next = owner
+        try await Benchmark.measure("grid.structuralApply.days5000") {
+            controller.receive(next)
+            try await awaitGridApply(controller, expectedIDs: next.orderedAssetIDs)
+            controller.collectionView.layoutSubtreeIfNeeded()
+            #expect(controller.collectionView.numberOfSections == 5000)
+            next = next.orderedAssetIDs == owner.orderedAssetIDs ? other : owner
+        }
+    }
+
+    /// `photos` photos spread evenly over `days` days, newest first as Date sort shows them.
+    private static func dayGroupedGrid(prefix: String, photos: Int, days: Int) -> CatalogMediaGridState {
+        let ids = (0 ..< photos).map { index in
             MediaAssetID(
                 libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
-                relativePath: MediaRelativePath(rawValue: "DCIM/IMG_\(index).HEIC")
+                relativePath: MediaRelativePath(rawValue: "DCIM/\(prefix)IMG_\(index).HEIC")
             )
         }
-        let days = (0 ..< dayCount * perDay).map { index in
-            Optional(Date(timeIntervalSince1970: Double(dayCount - index / perDay) * 86400))
+        let buckets = (0 ..< photos).map { index in
+            Optional(Date(timeIntervalSince1970: Double(days - index * days / photos) * 86400))
         }
-        let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids, dayBuckets: days)
-        try await Benchmark.measure("grid.structureBuild.days1500") {
-            let built = await MediaGridViewController.buildStructure(
-                for: grid,
-                descriptorChanged: true,
-                previousOrderedIDs: [],
-                previousOrderedIDSet: []
-            )
-            #expect(built.daySections.count == dayCount)
-            #expect(built.snapshot.numberOfItems == ids.count)
-        }
+        return CatalogMediaGridState(
+            scope: .library(LibraryRootPath(rawValue: "/Pictures/\(prefix)")),
+            orderedAssetIDs: ids,
+            dayBuckets: buckets
+        )
     }
 
     /// The Swift around Auto straighten's and Auto crop's models, which runs per photo opened in

@@ -47,7 +47,7 @@ extension MediaGridViewController: NSCollectionViewPrefetching {
     }
 
     private func idsForPrefetch(_ indexPaths: [IndexPath]) -> [MediaAssetID] {
-        uniqueIDs(indexPaths.compactMap { dataSource.itemIdentifier(for: $0) })
+        uniqueIDs(indexPaths.compactMap { structure.id(at: $0) })
     }
 
     private func uniqueIDs(_ ids: [MediaAssetID]) -> [MediaAssetID] {

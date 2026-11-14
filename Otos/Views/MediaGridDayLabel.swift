@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// DES-069 day label display, pure from `(date, itemCount)`. `date == nil` pairs with
-/// `MediaGridViewController.Section.day(nil)` — assets whose capture date is unknown
+/// `MediaGridStructure.SectionKey.day(nil)` — assets whose capture date is unknown
 /// are still grouped into their own section rather than dropped from the day
 /// structure, and the label names that section "No Date" like any other.
 nonisolated struct MediaGridDayLabelPresentation: Equatable, Sendable {
@@ -142,6 +142,21 @@ final class MediaGridDayHeaderView: NSView, NSCollectionViewElement {
     required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
+
+    /// Every header's height, and the bar's (DES-069: one label drawn twice): the label's
+    /// own fitting height with a date and a count in it, measured once.
+    ///
+    /// A fixed height rather than a self-sized one, for two measured reasons. The blank
+    /// first header self-sized to its padding alone (12 pt against the label's 28 pt), so
+    /// the bar resting on it covered the top of the first row instead of the space DES-069
+    /// reserves. And fitting a header per section is half the layout's work on every
+    /// reload: 5.96 G instructions for 5,097 day sections self-sized against 2.72 G fixed
+    /// (`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`).
+    static let height: CGFloat = {
+        let header = MediaGridDayHeaderView()
+        header.configure(.map(date: Date(timeIntervalSince1970: 0), itemCount: 1))
+        return header.fittingSize.height
+    }()
 
     /// The label this header currently draws; `nil` is a blank header.
     private(set) var presentation: MediaGridDayLabelPresentation?

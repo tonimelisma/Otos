@@ -12,7 +12,7 @@ import Foundation
 // `TileContent` value idempotently and hold no asset-identity paint logic of their
 // own — the no-blank grid invariant holds by construction.
 //
-// Entry count is bounded by scope via `prune(to:)`. Decoded-image memory is bounded by
+// Entry count is bounded by scope via `prune(keeping:)`. Decoded-image memory is bounded by
 // `imageByteBudget` via pin-aware `enforceImageBudget()`. Visible IDs are pinned
 // against both prune and budget eviction so a painted thumbnail cannot disappear
 // merely because an off-screen row was trimmed or the budget was under pressure.
@@ -176,12 +176,15 @@ final class TileContentStore {
 
     /// Drops entries whose IDs are neither live nor pinned. Subtracts image bytes for
     /// any dropped images, then enforces the remaining budget.
-    func prune(to liveIDs: Set<MediaAssetID>) {
-        let keep = liveIDs.union(pinnedIDs)
+    ///
+    /// Liveness is a question asked per stored entry, not a set handed in: the grid answers
+    /// it from its structure's identity index, so a prune costs the entries held, not a
+    /// copy of every identity in the library.
+    func prune(keeping isLive: (MediaAssetID) -> Bool) {
         var next: [MediaAssetID: Entry] = [:]
-        next.reserveCapacity(min(entries.count, keep.count))
+        next.reserveCapacity(entries.count)
         for (id, entry) in entries {
-            if keep.contains(id) {
+            if isLive(id) || pinnedIDs.contains(id) {
                 next[id] = entry
             } else {
                 imageBytes -= entry.imageCost

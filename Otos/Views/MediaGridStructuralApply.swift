@@ -10,7 +10,8 @@ extension MediaGridViewController {
         let applyStart: ContinuousClock.Instant
         let applyCallStart: ContinuousClock.Instant
         let diffPolicyMs: Int
-        let snapshotBuildMs: Int
+        let structureBuildMs: Int
+        let batchUpdatesMs: Int
         let insertedCount: Int
         let removedCount: Int
         let reorderOnly: Bool
@@ -18,50 +19,61 @@ extension MediaGridViewController {
         let animatingDifferences: Bool
         let animationSuppressed: Bool
         let usesReloadDataFallback: Bool
+        let appliedBy: AppliedBy
+        let sectionCount: Int
         let heldDuringScroll: Bool
         let signpost: OSSignpostIntervalState
     }
 
-    /// Everything a structural apply needs that is a pure function of values: the diffable
-    /// snapshot, the day facts of its sections, and the diff summary against what is on
-    /// screen. Built off the main actor by `buildStructure`, applied on it by
-    /// `commitStructure`.
-    ///
-    /// Not `Sendable`: AppKit's snapshot is not. It crosses back to the main actor as a
-    /// `sending` result, which the compiler accepts only because nothing else holds it.
-    nonisolated struct BuiltStructure {
-        let snapshot: NSDiffableDataSourceSnapshot<Section, MediaAssetID>
-        let daySections: [MediaGridDayBarPolicy.Day?]
+    /// How the collection view took a new structure (diagnostics).
+    enum AppliedBy: String {
+        /// `reloadData`: every count re-read, every visible item re-requested.
+        case reloadData
+        /// `performBatchUpdates` with the derived `MediaGridBatchUpdates`: surviving items
+        /// keep their views and move.
+        case batchUpdates
+        /// The batch was empty: the structure on screen already was the new one.
+        case nothing
+    }
+
+    /// Everything a structural apply needs that is a pure function of values: the new
+    /// structure, the diff summary against the structure on screen, and, when the apply
+    /// animates, the batch that turns one into the other. Built off the main actor by
+    /// `buildStructure`, applied on it by `commitStructure`.
+    nonisolated struct BuiltStructure: Sendable {
+        let structure: MediaGridStructure
         let summary: MediaGridStructuralApplyPolicy
+        /// `nil` when the apply reloads: the summary chose the reloadData path, or no batch
+        /// can describe the change (`MediaGridBatchUpdates.between`).
+        let batchUpdates: MediaGridBatchUpdates?
         let diffPolicyMs: Int
-        let snapshotBuildMs: Int
+        let structureBuildMs: Int
+        let batchUpdatesMs: Int
     }
 
     /// The gate's `.apply` for `grid`. The gate has already marked the structural apply in
     /// flight, so until `completeStructuralApply` drains it no other exclusive mutation runs
-    /// and `displayedOrderedIDs` does not change: the values handed to the build are still
-    /// the ones on screen when its result is committed, and a grid arriving meanwhile parks
-    /// as the gate's pending grid, applied after this one.
+    /// and `structure` does not change: the structure handed to the build is still the one
+    /// on screen when its result is committed, and a grid arriving meanwhile parks as the
+    /// gate's pending grid, applied after this one.
     ///
-    /// The snapshot is built off the main actor because AppKit's snapshot copies its whole
-    /// item set on every `appendItems`, and a day-grouped grid appends once per day: the
-    /// build grows with days × items (`docs/research/2026-11-04-grid-snapshot-build-off-main.md`).
-    /// One build at a time, by the gate's exclusivity; the task is cancelled only at teardown,
-    /// and a cancelled build is never applied.
+    /// The build is linear in items, but at a library's size that is still tens of
+    /// milliseconds, so it runs off the main actor
+    /// (`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`). One build at
+    /// a time, by the gate's exclusivity; the task is cancelled only at teardown, and a
+    /// cancelled build is never applied.
     func applyStructure(
         _ grid: CatalogMediaGridState,
         change: MediaGridMutationGate.QueryChange
     ) {
         let applyStart = ContinuousClock.now
-        let previousOrderedIDs = mutationGate.displayedOrderedIDs
-        let previousOrderedIDSet = mutationGate.displayedOrderedIDSet
+        let previous = structure
         let descriptorChanged = change != .unchanged
-        structureBuildTask = Task { [weak self, grid, change, previousOrderedIDs, previousOrderedIDSet] in
+        structureBuildTask = Task { [weak self, grid, change, previous] in
             let built = await Self.buildStructure(
                 for: grid,
                 descriptorChanged: descriptorChanged,
-                previousOrderedIDs: previousOrderedIDs,
-                previousOrderedIDSet: previousOrderedIDSet
+                previous: previous
             )
             guard let self, !Task.isCancelled else {
                 return
@@ -76,31 +88,36 @@ extension MediaGridViewController {
     nonisolated static func buildStructure(
         for grid: CatalogMediaGridState,
         descriptorChanged: Bool,
-        previousOrderedIDs: [MediaAssetID],
-        previousOrderedIDSet: Set<MediaAssetID>
-    ) async -> sending BuiltStructure {
+        previous: MediaGridStructure
+    ) async -> BuiltStructure {
+        // Identity order and day buckets are the complete structural contract. Tile
+        // details are read for visible identities after the structural apply, so thumbnail
+        // or video-badge changes never come through here. Selection truth lives in the
+        // ViewModel and is already pruned/cleared in `applyState` before this apply runs;
+        // completion only renders the model.
+        let structureStart = ContinuousClock.now
+        let structure = MediaGridStructure(grid: grid)
+        let structureBuildMs = DiagnosticsTiming.milliseconds(since: structureStart)
+
         let policyStart = ContinuousClock.now
         let summary = MediaGridStructuralApplyPolicy.summarize(
-            previousOrderedIDs: previousOrderedIDs,
-            previousOrderedIDSet: previousOrderedIDSet,
-            nextOrderedIDs: grid.orderedAssetIDs,
+            previous: previous,
+            next: structure,
             descriptorChanged: descriptorChanged
         )
         let diffPolicyMs = DiagnosticsTiming.milliseconds(since: policyStart)
 
-        // Identity order is the complete structural contract. Tile details are
-        // read for visible identities after the structural apply, so thumbnail
-        // or video-badge changes never require this O(n) diffable snapshot path.
-        // Selection truth lives in the ViewModel and is already pruned/cleared in
-        // `applyState` before this apply runs; completion only renders the model.
-        let snapshotStart = ContinuousClock.now
-        let (snapshot, daySections) = mediaSnapshot(for: grid)
+        let batchStart = ContinuousClock.now
+        let batchUpdates = summary.animatingDifferences
+            ? MediaGridBatchUpdates.between(previous, structure)
+            : nil
         return BuiltStructure(
-            snapshot: snapshot,
-            daySections: daySections,
+            structure: structure,
             summary: summary,
+            batchUpdates: batchUpdates,
             diffPolicyMs: diffPolicyMs,
-            snapshotBuildMs: DiagnosticsTiming.milliseconds(since: snapshotStart)
+            structureBuildMs: structureBuildMs,
+            batchUpdatesMs: DiagnosticsTiming.milliseconds(since: batchStart)
         )
     }
 
@@ -121,13 +138,16 @@ extension MediaGridViewController {
         let applyCallStart = ContinuousClock.now
         let animationSuppressed = summary.animatingDifferences
             && suppressesApplyAnimation(anchor: scrollAnchor, nextOrderedIDs: grid.orderedAssetIDs)
+        // A collection view outside a window has nothing on screen to move, so it reloads.
+        let batchUpdates = collectionView.window == nil ? nil : built.batchUpdates
         let context = StructuralApplyCompletionContext(
             grid: grid,
             change: change,
             applyStart: applyStart,
             applyCallStart: applyCallStart,
             diffPolicyMs: built.diffPolicyMs,
-            snapshotBuildMs: built.snapshotBuildMs,
+            structureBuildMs: built.structureBuildMs,
+            batchUpdatesMs: built.batchUpdatesMs,
             insertedCount: summary.insertedCount,
             removedCount: summary.removedCount,
             reorderOnly: summary.reorderOnly,
@@ -135,6 +155,8 @@ extension MediaGridViewController {
             animatingDifferences: summary.animatingDifferences,
             animationSuppressed: animationSuppressed,
             usesReloadDataFallback: summary.usesReloadDataFallback,
+            appliedBy: batchUpdates.map { $0.isEmpty ? .nothing : .batchUpdates } ?? .reloadData,
+            sectionCount: built.structure.numberOfSections,
             heldDuringScroll: mutationGate.lastDrainedHeldDuringScroll,
             signpost: signpost
         )
@@ -151,21 +173,30 @@ extension MediaGridViewController {
                 stallMonitor: stallMonitor
             )
         }
-        // Assigned beside the apply, not in its completion: `dataSource.apply` updates the
-        // layout synchronously and only *animates* items to their new frames (see
-        // `restoreScrollAnchor`), and nothing suspends between this line and that call, so
-        // no reader can observe this array and the layout disagreeing.
-        appliedDaySections = built.daySections
-        applySnapshot(
-            built.snapshot,
-            summary: summary,
+        if batchUpdates?.isEmpty == true {
+            // The new structure is the one on screen: nothing to reload, move or lay out.
+            structure = built.structure
+            completion()
+            return
+        }
+        guard let batchUpdates else {
+            structure = built.structure
+            collectionView.reloadData()
+            restoreScrollAnchor(scrollAnchor)
+            renderVisibleDayHeaders()
+            completion()
+            return
+        }
+        applyBatch(
+            batchUpdates,
+            structure: built.structure,
             animationSuppressed: animationSuppressed,
             scrollAnchor: scrollAnchor,
             completion: completion
         )
-        // Here rather than in the completion: the apply has already placed every surviving
-        // header at its new section (`appliedDaySections` above documents why the layout is
-        // current on return), and an animated apply's completion lands only after the
+        // Here rather than in the completion: the batch has already placed every surviving
+        // header at its new section (the layout is current on return; see
+        // `restoreScrollAnchor`), and an animated batch's completion lands only after the
         // motion, so a header would show its old day for the length of it.
         renderVisibleDayHeaders()
     }
@@ -186,7 +217,7 @@ extension MediaGridViewController {
         }
         return MediaGridAnimation.suppressesAnchoredStripAnimation(
             anchorID: anchor.id,
-            previousOrderedIDs: mutationGate.displayedOrderedIDs,
+            previousOrderedIDs: structure.orderedIDs,
             nextOrderedIDs: nextOrderedIDs
         )
     }
@@ -292,7 +323,7 @@ extension MediaGridViewController {
         }
         guard let survivor = BrowserModePolicy.nearestSurvivor(
             of: leading.id,
-            previousOrderedIDs: mutationGate.displayedOrderedIDs,
+            previousOrderedIDs: structure.orderedIDs,
             surviving: Set(nextOrderedIDs)
         ) else {
             return nil
@@ -332,7 +363,7 @@ extension MediaGridViewController {
             }
             .compactMap { attributes in
                 guard let indexPath = attributes.indexPath,
-                      let id = dataSource.itemIdentifier(for: indexPath)
+                      let id = structure.id(at: indexPath)
                 else {
                     return nil
                 }
@@ -365,7 +396,7 @@ extension MediaGridViewController {
         // displacement this exists to prevent, wearing a different hat. Asking the layout
         // also settles it, so the item frame read next is the post-apply one.
         let contentSize = layout.collectionViewContentSize
-        guard let indexPath = dataSource.indexPath(for: anchor.id),
+        guard let indexPath = structure.indexPath(of: anchor.id),
               let frame = layout.layoutAttributesForItem(at: indexPath)?.frame
         else {
             return
@@ -389,68 +420,58 @@ extension MediaGridViewController {
         scrollView.reflectScrolledClipView(clip)
     }
 
-    /// Animated branch (`animatingDifferences: true`): small insert/remove and
-    /// same-descriptor reorder-only applies (enrichment trickle). Tuned duration/
-    /// timing via an explicit `NSAnimationContext` group. Moves surviving items
-    /// instead of recreating them (ADR 0006). During live scrolling the group
-    /// keeps `animatingDifferences: true` but sets `duration = 0` so completion
-    /// semantics stay identical without feeding CA commit pressure.
+    /// The animated branch: small insert/remove and same-query reorder-only applies (the
+    /// enrichment trickle), which move surviving items instead of recreating them
+    /// (ADR 0006), with tuned duration and timing from an explicit `NSAnimationContext`
+    /// group. When the motion is unwanted or invisible (`animationSuppressed`: Reduce
+    /// Motion, live scrolling, an anchored strip) the group runs with a zero duration, so
+    /// surviving views still move rather than reload. Every other apply is `reloadData`
+    /// (`commitStructure`): a query change resets or re-anchors the position anyway, and a
+    /// large membership change would pay for every removed and inserted item.
     ///
-    /// Unanimated branch (`false`): descriptor-changed reorders and large
-    /// membership applies — AppKit's reloadData-class path. The position resets or is
-    /// re-anchored on a descriptor change anyway; large membership diffs stay off the quadratic
-    /// true-diff cliff (research harness: ~23–28 ms call-to-return for K = 1–3
-    /// moves at n = 23k; cliff above ~1k movers).
-    private func applySnapshot(
-        _ snapshot: NSDiffableDataSourceSnapshot<Section, MediaAssetID>,
-        summary: MediaGridStructuralApplyPolicy,
+    /// The structure changes inside the update block, where AppKit expects the data source
+    /// to switch: it holds the old counts until the block runs and reads the new ones after.
+    /// The layout is current when `performBatchUpdates` returns (only the item views animate
+    /// to their frames), so the anchor restore right after it reads the new geometry.
+    private func applyBatch(
+        _ updates: MediaGridBatchUpdates,
+        structure next: MediaGridStructure,
         animationSuppressed: Bool,
         scrollAnchor: ScrollAnchor?,
         completion: @escaping () -> Void
     ) {
-        guard summary.animatingDifferences else {
-            dataSource.apply(snapshot, animatingDifferences: false, completion: completion)
-            restoreScrollAnchor(scrollAnchor)
-            return
-        }
+        // A batch is relative to the counts the collection view holds. One that has not yet
+        // asked for them would ask after the block, read the new structure as the old one,
+        // and reject the batch; asking here, while `structure` is still the old value,
+        // settles them first.
+        _ = collectionView.numberOfSections
         NSAnimationContext.beginGrouping()
         NSAnimationContext.current.duration = animationSuppressed
             ? 0
             : MediaGridAnimation.applyDuration
         NSAnimationContext.current.timingFunction = MediaGridAnimation.applyTimingFunction
-        dataSource.apply(snapshot, animatingDifferences: true, completion: completion)
+        collectionView.animator().performBatchUpdates({ [weak self] in
+            guard let self else {
+                return
+            }
+            structure = next
+            collectionView.deleteSections(updates.deletedSections)
+            collectionView.insertSections(updates.insertedSections)
+            collectionView.deleteItems(at: updates.deletedItems)
+            collectionView.insertItems(at: updates.insertedItems)
+            for move in updates.movedItems {
+                collectionView.moveItem(at: move.from, to: move.to)
+            }
+        }, completionHandler: { _ in
+            // AppKit runs a batch's completion on the main thread without annotating its
+            // isolation; asserting that, rather than hopping through a task, completes this
+            // apply before any other mutation can begin.
+            MainActor.assumeIsolated {
+                completion()
+            }
+        })
         restoreScrollAnchor(scrollAnchor)
         NSAnimationContext.endGrouping()
-    }
-
-    /// Sections are rebuilt fresh from current identity + bucket data on every
-    /// apply via `MediaGridSectionGroupingPolicy` (`MediaGridSupport.swift`,
-    /// pure and independently tested); nothing here diffs against the previous
-    /// snapshot's sections, so no separate section-level invalidation exists to
-    /// go stale (`MediaGridStructuralApplyPolicy.summarize`, which does drive
-    /// real diffing, works entirely off the flat ID list and needs no
-    /// day-bucket awareness of its own).
-    nonisolated static func mediaSnapshot(
-        for grid: CatalogMediaGridState
-    ) -> (NSDiffableDataSourceSnapshot<Section, MediaAssetID>, [MediaGridDayBarPolicy.Day?]) {
-        var snapshot = NSDiffableDataSourceSnapshot<Section, MediaAssetID>()
-        let runs = MediaGridSectionGroupingPolicy.sectionRuns(
-            orderedIDs: grid.orderedAssetIDs,
-            dayBuckets: grid.dayBuckets
-        )
-        var daySections: [MediaGridDayBarPolicy.Day?] = []
-        daySections.reserveCapacity(runs.count)
-        for run in runs {
-            snapshot.appendSections([run.section])
-            snapshot.appendItems(run.ids, toSection: run.section)
-            switch run.section {
-            case .ungrouped:
-                daySections.append(nil)
-            case let .day(date):
-                daySections.append(MediaGridDayBarPolicy.Day(date: date, itemCount: run.ids.count))
-            }
-        }
-        return (snapshot, daySections)
     }
 
     func completeStructuralApply(
@@ -466,10 +487,10 @@ extension MediaGridViewController {
         if context.change == .scope {
             scrollToTop()
         }
-        // Reorder-only applies keep identical membership by definition; prune's
-        // Set(orderedAssetIDs) rebuild would be a ~27 ms no-op at 23k scale.
+        // Reorder-only applies keep identical membership by definition, so a prune would
+        // only re-ask every stored entry a question whose answer cannot have changed.
         if !context.reorderOnly {
-            tileContents.prune(to: Set(context.grid.orderedAssetIDs))
+            tileContents.prune(keeping: structure.contains)
         }
         let (visibleDetailRequestCount, preheatCount) = runPostApplyDetailAndPreheatPass(
             reason: "structuralApply"
@@ -504,7 +525,7 @@ extension MediaGridViewController {
         // Adopt this apply's identities/descriptor and drain any work parked while it ran:
         // a newer grid state (applied next, content-first) and/or a zoom requested during
         // the apply (a `.zoomSwap` the gate emits once the count actually differs). The
-        // gate guarantees a layout swap never runs concurrently with a diffable apply in
+        // gate guarantees a layout swap never runs concurrently with a structural apply in
         // either direction (ARC-023).
         perform(mutationGate.completeStructuralApply(applied: context.grid))
     }
@@ -570,7 +591,10 @@ extension MediaGridViewController {
             visibleDetailRequestCount=\(visibleDetailRequestCount, privacy: .public) \
             preheatCount=\(preheatCount, privacy: .public) \
             diffPolicyMs=\(context.diffPolicyMs, privacy: .public) \
-            snapshotBuildMs=\(context.snapshotBuildMs, privacy: .public) \
+            structureBuildMs=\(context.structureBuildMs, privacy: .public) \
+            batchUpdatesMs=\(context.batchUpdatesMs, privacy: .public) \
+            appliedBy=\(context.appliedBy.rawValue, privacy: .public) \
+            sections=\(context.sectionCount, privacy: .public) \
             applyCallMs=\(applyCallMs, privacy: .public) \
             completionMs=\(completionMs, privacy: .public) \
             applyMs=\(applyMs, privacy: .public)
@@ -604,7 +628,10 @@ extension MediaGridViewController {
                 "preheatCount": "\(preheatCount)",
                 "detailRefreshGeneration": "\(context.grid.detailRefreshGeneration)",
                 "diffPolicyMs": "\(context.diffPolicyMs)",
-                "snapshotBuildMs": "\(context.snapshotBuildMs)",
+                "structureBuildMs": "\(context.structureBuildMs)",
+                "batchUpdatesMs": "\(context.batchUpdatesMs)",
+                "appliedBy": context.appliedBy.rawValue,
+                "sections": "\(context.sectionCount)",
                 "applyCallMs": "\(applyCallMs)",
                 "completionMs": "\(completionMs)",
                 "applyMs": "\(applyMs)",

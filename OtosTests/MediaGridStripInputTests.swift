@@ -299,10 +299,7 @@ private final class StripHarness {
 /// Synchronously install strip identities (same pattern as selection harness).
 @MainActor
 private func adoptStripGrid(_ controller: MediaGridViewController, ids: [MediaAssetID]) {
-    var snapshot = NSDiffableDataSourceSnapshot<MediaGridViewController.Section, MediaAssetID>()
-    snapshot.appendSections([.ungrouped])
-    snapshot.appendItems(ids, toSection: .ungrouped)
-    controller.dataSource.apply(snapshot, animatingDifferences: false)
+    controller.show(MediaGridStructure(orderedIDs: ids))
 
     let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)
     _ = controller.mutationGate.receive(grid)
@@ -317,7 +314,7 @@ private func assertStripFocusCentered(
     _ controller: MediaGridViewController,
     target: MediaAssetID
 ) {
-    guard let path = controller.dataSource.indexPath(for: target),
+    guard let path = controller.structure.indexPath(of: target),
           let attributes = controller.collectionView.layoutAttributesForItem(at: path)
     else {
         Issue.record("Missing layout attributes for focus target")
@@ -384,7 +381,7 @@ extension AppKitWindowTests {
             harness.hoverItem(0)
             harness.layout()
             #expect(harness.hoveredItemIndexes() == [0])
-            let hovered = try #require(harness.controller.dataSource.indexPath(for: harness.ids[0]))
+            let hovered = try #require(harness.controller.structure.indexPath(of: harness.ids[0]))
 
             // The pointer leaves the grid while the tiles move under it — the exact
             // shape of the leak, since neither produces a `mouseExited`.

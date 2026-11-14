@@ -48,11 +48,8 @@ extension MediaGridViewController {
     /// the sort changes — can differ in whether they carry a day header, without
     /// rebuilding this layout object on a data change.
     ///
-    /// Which sections carry one is answered from `appliedDaySections`, the record the
-    /// controller writes in the same synchronous region that applies the snapshot.
-    /// Not `dataSource.snapshot()`: its only route to section identifiers copies the
-    /// whole applied snapshot — once per section, on every layout pass following an
-    /// apply, with a day section per day and enrichment applying about once a second.
+    /// Which sections carry one is answered from `structure`, which AppKit took in the
+    /// same synchronous region that invalidated this layout.
     ///
     /// Column-count changes still replace the whole layout object via the zoom-swap
     /// path (`MediaGridZoom.swift`); this closure only varies per-section header
@@ -70,10 +67,7 @@ extension MediaGridViewController {
     }
 
     private func sectionShowsDayHeader(at sectionIndex: Int) -> Bool {
-        guard sectionIndex >= 0, sectionIndex < appliedDaySections.count else {
-            return false
-        }
-        return appliedDaySections[sectionIndex] != nil
+        structure.day(inSection: sectionIndex) != nil
     }
 
     private static func gridLayoutSection(columnCount: Int, showsDayHeader: Bool) -> NSCollectionLayoutSection {
@@ -103,14 +97,15 @@ extension MediaGridViewController {
             // Vertical already agrees — the section's top inset lands below the
             // header, between it and the tiles.
             section.supplementariesFollowContentInsets = false
-            // DES-069: an in-flow header, self-sized to its SwiftUI content, that
-            // scrolls with its own run. Deliberately **not** `pinToVisibleBounds` —
-            // `MediaGridDayLabel.swift` records what pinning actually does and why
-            // `MediaGridDayBarView` holds the current day instead.
+            // DES-069: an in-flow header at the label's one height (blank or not, so
+            // the first row sits below the bar), scrolling with its own run.
+            // Deliberately **not** `pinToVisibleBounds` — `MediaGridDayLabel.swift`
+            // records what pinning actually does and why `MediaGridDayBarView` holds the
+            // current day instead.
             let header = NSCollectionLayoutBoundarySupplementaryItem(
                 layoutSize: NSCollectionLayoutSize(
                     widthDimension: .fractionalWidth(1),
-                    heightDimension: .estimated(32)
+                    heightDimension: .absolute(MediaGridDayHeaderView.height)
                 ),
                 elementKind: MediaGridDayHeaderView.elementKind,
                 alignment: .top

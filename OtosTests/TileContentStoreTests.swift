@@ -103,7 +103,7 @@ struct TileContentStoreTests {
         _ = store.mergeDetail(pinned)
         store.pinVisible([pinned.id])
 
-        store.prune(to: [keep.id])
+        store.prune { $0 == keep.id }
 
         #expect(store.content(for: keep.id) != nil)
         #expect(store.content(for: pinned.id) != nil)
@@ -149,7 +149,7 @@ struct TileContentStoreTests {
         #expect(store.content(for: additive.id)?.image != nil)
         #expect(store.content(for: pressure.id)?.image == nil)
 
-        store.prune(to: [pressure.id])
+        store.prune { $0 == pressure.id }
         #expect(store.content(for: additive.id)?.image != nil)
     }
 
@@ -169,7 +169,7 @@ struct TileContentStoreTests {
         #expect(store.content(for: keep.id)?.image != nil)
         #expect(store.content(for: wasAdditive.id)?.image == nil)
 
-        store.prune(to: [keep.id])
+        store.prune { $0 == keep.id }
         #expect(store.content(for: wasAdditive.id) == nil)
         #expect(store.content(for: keep.id) != nil)
     }

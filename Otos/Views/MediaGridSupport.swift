@@ -2,8 +2,9 @@
 //
 // These value helpers back the AppKit collection bridge without belonging to the
 // bridge's view-controller lifecycle. Sticky paint truth lives in `TileContentStore`;
-// `MediaTileDetailReader` lives in Services because it queries the catalog; this file
-// keeps structural-apply, section-grouping, and day-bar policy. `MediaAssetTile*`
+// `MediaTileDetailReader` lives in Services because it queries the catalog; section
+// grouping is `MediaGridStructure`'s own construction; this file keeps structural-apply,
+// day-header and day-bar policy. `MediaAssetTile*`
 // types intentionally keep the per-asset prefix — they are not grid-level and are
 // not part of this rename.
 
@@ -33,16 +34,17 @@ nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
     ///   reloadData switch the other way.
     /// - Small insert/remove: animate.
     ///
-    /// `previousOrderedIDSet` must match `Set(previousOrderedIDs)` — the gate retains
-    /// both so each apply does not rebuild the membership set from 23k IDs.
+    /// Membership is read from `previous`'s own identity index, so no apply rebuilds a set
+    /// of the identities on screen.
     static func summarize(
-        previousOrderedIDs: [MediaAssetID],
-        previousOrderedIDSet: Set<MediaAssetID>,
-        nextOrderedIDs: [MediaAssetID],
+        previous: MediaGridStructure,
+        next: MediaGridStructure,
         descriptorChanged: Bool
     ) -> MediaGridStructuralApplyPolicy {
+        let previousOrderedIDs = previous.orderedIDs
+        let nextOrderedIDs = next.orderedIDs
         let retainedCount = nextOrderedIDs.reduce(into: 0) { count, id in
-            if previousOrderedIDSet.contains(id) {
+            if previous.contains(id) {
                 count += 1
             }
         }
@@ -53,7 +55,10 @@ nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
             && previousOrderedIDs != nextOrderedIDs
         let largeApply = max(previousOrderedIDs.count, nextOrderedIDs.count)
             >= reloadDataFallbackItemCountThreshold
-        let usesReloadDataFallback = if reorderOnly {
+        // Same membership in the same order reaches an apply only when photos changed day
+        // (the gate refreshes otherwise): a few moves between sections, like a reorder.
+        let sameMembership = insertedCount == 0 && removedCount == 0
+        let usesReloadDataFallback = if sameMembership {
             descriptorChanged
         } else if largeApply {
             true
@@ -68,45 +73,6 @@ nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
             animatingDifferences: !usesReloadDataFallback,
             usesReloadDataFallback: usesReloadDataFallback
         )
-    }
-}
-
-/// DES-069 section grouping, pure from identity + day buckets — no `NSCollectionView`
-/// dependency, so it is testable without a live collection view. `mediaSnapshot(for:)`
-/// (`MediaGridStructuralApply.swift`) is a thin adapter that turns these runs into a
-/// diffable snapshot.
-nonisolated enum MediaGridSectionGroupingPolicy {
-    /// One `.ungrouped` run when `dayBuckets` doesn't pair 1:1 with `orderedIDs`
-    /// (any sort but `.bestDate`, or before any capture dates are known) — matches
-    /// grid behavior from before day headers existed. Otherwise a single linear
-    /// pass over the already date-sorted list, splitting into a new `.day` run
-    /// each time the bucket changes; a nil bucket still gets its own run rather
-    /// than being dropped or folded into `.ungrouped`.
-    static func sectionRuns(
-        orderedIDs: [MediaAssetID],
-        dayBuckets: [Date?]
-    ) -> [(section: MediaGridViewController.Section, ids: [MediaAssetID])] {
-        guard dayBuckets.count == orderedIDs.count, !orderedIDs.isEmpty else {
-            return [(.ungrouped, orderedIDs)]
-        }
-        var runs: [(section: MediaGridViewController.Section, ids: [MediaAssetID])] = []
-        var currentSection: MediaGridViewController.Section?
-        var currentRun: [MediaAssetID] = []
-        for (id, bucket) in zip(orderedIDs, dayBuckets) {
-            let section = MediaGridViewController.Section.day(bucket)
-            if section != currentSection {
-                if let currentSection, !currentRun.isEmpty {
-                    runs.append((currentSection, currentRun))
-                }
-                currentSection = section
-                currentRun = []
-            }
-            currentRun.append(id)
-        }
-        if let currentSection, !currentRun.isEmpty {
-            runs.append((currentSection, currentRun))
-        }
-        return runs
     }
 }
 
@@ -125,9 +91,8 @@ nonisolated enum MediaGridSectionGroupingPolicy {
 /// `NSScrollPocket` whose live blur of the passing tiles has no public opt-out
 /// (`docs/research/2026-09-04-grid-day-header-pinning-and-scroll-edge-effect.md`).
 nonisolated enum MediaGridDayBarPolicy {
-    /// One applied section's user-facing day facts. `nil` in an applied array marks
-    /// an `.ungrouped` section, which names no day.
-    struct Day: Equatable {
+    /// One day section's user-facing facts (`MediaGridStructure.Section.day`).
+    struct Day: Equatable, Sendable {
         let date: Date?
         let itemCount: Int
 
@@ -268,13 +233,13 @@ nonisolated enum MediaGridScrollWorkCadence {
 /// this, because no other header is at the top when the content bounces. Since the
 /// first header is never visible on its own anyway, not drawing it removes the
 /// duplicate and nothing else; its space is still reserved, so the first row does not
-/// move. An ungrouped section (`nil` day) draws nothing.
+/// move. An ungrouped section draws nothing.
 nonisolated enum MediaGridDayHeaderPolicy {
     static func presentation(
         section: Int,
-        daySections: [MediaGridDayBarPolicy.Day?]
+        in structure: MediaGridStructure
     ) -> MediaGridDayLabelPresentation? {
-        guard section > 0, section < daySections.count, let day = daySections[section] else {
+        guard section > 0, let day = structure.day(inSection: section) else {
             return nil
         }
         return .map(date: day.date, itemCount: day.itemCount)

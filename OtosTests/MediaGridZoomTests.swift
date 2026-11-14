@@ -57,7 +57,8 @@ struct MediaGridZoomTests {
             applyStart: .now,
             applyCallStart: .now,
             diffPolicyMs: 0,
-            snapshotBuildMs: 0,
+            structureBuildMs: 0,
+            batchUpdatesMs: 0,
             insertedCount: 1,
             removedCount: 0,
             reorderOnly: false,
@@ -65,6 +66,8 @@ struct MediaGridZoomTests {
             animatingDifferences: true,
             animationSuppressed: false,
             usesReloadDataFallback: false,
+            appliedBy: .batchUpdates,
+            sectionCount: 1,
             heldDuringScroll: false,
             signpost: .beginState(id: .exclusive)
         )
@@ -81,10 +84,7 @@ private func makeController(itemCount: Int) -> MediaGridViewController {
     _ = controller.view // forces loadView(), which installs the collection view and data source
 
     let assetIDs = (0 ..< itemCount).map { makeAssetID(path: "asset-\($0).jpg") }
-    var snapshot = NSDiffableDataSourceSnapshot<MediaGridViewController.Section, MediaAssetID>()
-    snapshot.appendSections([.ungrouped])
-    snapshot.appendItems(assetIDs, toSection: .ungrouped)
-    controller.dataSource.apply(snapshot, animatingDifferences: false)
+    controller.show(MediaGridStructure(orderedIDs: assetIDs))
 
     let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: assetIDs)
     _ = controller.mutationGate.receive(grid)

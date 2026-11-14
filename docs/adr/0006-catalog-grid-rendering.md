@@ -33,17 +33,15 @@ large libraries without putting one SwiftUI hosting tree behind every tile.
 
 Paint truth for visible tiles is owned by `TileContentStore` (monotonic detail + decoded image); tiles only render that value. The no-blank invariant adds a stricter rendering fact: a tile whose thumbnail has
 already painted must never render placeholder content for that same on-screen asset.
-Baseline diagnostics showed large reorder-only snapshots being applied with
-`animatingDifferences: false`; the macOS 27 AppKit SDK header documents that this
-path applies by calling `reloadData` (`NSDiffableDataSource.h`), and AppKit does not
-provide `applySnapshotUsingReloadData`. ReloadData tears down visible items, so
-no-blank correctness cannot rely on AppKit preserving cell instances. The invariant
+Large and query-changing structural applies go through `reloadData`, which tears
+down visible items, so no-blank correctness cannot rely on AppKit preserving cell
+instances. The invariant
 is enforced by `TileContentStore` (cost-bounded decoded images, visible IDs pinned
 against prune and budget eviction) so a painted thumbnail never regresses to nil
-for a visible asset; tiles are pure renderers of that store value. Diffable apply
-semantics only affect how much work AppKit does. Same-descriptor same-membership
+for a visible asset; tiles are pure renderers of that store value. Which apply path
+runs only affects how much work AppKit does. Same-descriptor same-membership
 reorders (the enrichment trickle that publishes ~1/s while Date-sort enrichment
-runs) animate with `animatingDifferences: true`, which moves surviving items
+runs) animate as a batch of moves, which moves surviving items
 instead of recreating them — measured `applyCallMs` for K = 1–3 movers at n ≈ 23k
 is in the low tens of milliseconds (`docs/research/grid-reorder-cadence-and-appkit-diffable-apply.md`).
 Descriptor-changed reorders and large membership applies keep the reloadData-class
@@ -57,21 +55,27 @@ reloadData teardown, not how often applies run.
 2. `NSCollectionViewFlowLayout`: reusable cells, but requires manual column
    sizing and resize invalidation.
 3. `NSCollectionViewCompositionalLayout`: reusable cells plus native fractional
-   groups and diffable identity.
+   groups.
+5. `NSCollectionViewDiffableDataSource` over the compositional layout: identity
+   diffing for free, but its snapshot costs days × items to build (13–15 s at the
+   owner's 158,000 items over 5,000 days) and macOS has no section snapshot or
+   multi-section append to avoid that. Used until 2026-11; replaced by Otos's own
+   `MediaGridStructure` and a classic data source.
 4. Custom AppKit tiler: maximum control, but needlessly rebuilds scrolling,
    reuse, layout, and accessibility.
 
 ## Decision
 
 Use a narrow `NSViewControllerRepresentable` containing `NSCollectionView`,
-`NSCollectionViewCompositionalLayout`, and `NSCollectionViewDiffableDataSource`.
+`NSCollectionViewCompositionalLayout`, and the controller as its
+`NSCollectionViewDataSource` over one `MediaGridStructure` value.
 The layout has one full-width group with square fractional items sized from the
 current column count, 12-point section insets, and 8-point effective gaps.
 Column count is user-selected, 3–9, default 6 (APP-006) — not an invariant six
 — owned by `CatalogWindowViewModel.gridColumnCount` and persisted across
 launches; the AppKit controller only ever renders the published value through
 one `receiveColumnCount(_:)` path, whether the request came from the View menu,
-toolbar −/+ buttons, or a pinch gesture. That path and the diffable structural-apply
+toolbar −/+ buttons, or a pinch gesture. That path and the structural-apply
 path are arbitrated by a single owner, `MediaGridMutationGate`, which holds
 column-count truth (`installedColumnCount`/`requestedColumnCount`) and guarantees a
 zoom swap and a structural apply never run concurrently in either direction: a zoom
@@ -89,15 +93,31 @@ Under Date sort the grid groups into day sections (DES-069, APP-030) via a
 `sectionProvider` closure on `NSCollectionViewCompositionalLayout` rather than a
 fixed `section:`, so `.day` and `.ungrouped` sections can differ in whether they
 carry a header without rebuilding the layout object on a data change. Which sections
-carry one is answered from `appliedDaySections`, the record the controller writes in
-the same synchronous region that applies the snapshot; asking the data source instead
-means `dataSource.snapshot()`, whose only route to section identifiers copies the
-whole applied snapshot — once per section, on every layout pass following an apply.
-Section membership is derived fresh from `CatalogMediaGridState.orderedAssetIDs` plus
-a parallel `dayBuckets: [Date?]` on every structural apply
-(`MediaGridSectionGroupingPolicy`, pure and independent of AppKit); nothing diffs
-sections against the previous snapshot, so there is no separate section-level
-invalidation to go stale.
+carry one is answered from the controller's `MediaGridStructure`, the one value the
+collection view's data source, the layout, the day bar, the headers, selection, drag,
+prefetch, zoom and scroll anchoring all read. The structure is built fresh from
+`CatalogMediaGridState.orderedAssetIDs` plus a parallel `dayBuckets: [Date?]` on every
+structural apply, in one pass: sections are contiguous ranges of the order, keyed by day
+(`.day(nil)` for the unknown-date run, `.ungrouped` for any other sort), with an identity
+→ position index for lookups. It is pure and independent of AppKit. An animated apply
+matches sections by key to derive its batch; nothing else compares sections across
+applies, so there is no section-level invalidation to go stale.
+
+The controller is a classic `NSCollectionViewDataSource` over that value, not an
+`NSCollectionViewDiffableDataSource`. AppKit's diffable snapshot copies its whole item set
+on every mutating call and offers no call that fills more than one section, so a
+day-grouped grid cost days × items to describe: 13–15 s for the owner's 158,000 items
+over about 5,000 days, during which the grid was blank
+(`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`). Query changes
+and large membership changes call `reloadData`, which is what the diffable non-animated
+apply did. Small and same-query reorder applies call `performBatchUpdates` with
+`MediaGridBatchUpdates`: sections only in the old structure are deleted and only in the
+new inserted; an item crossing into an inserted or out of a deleted section is a delete
+plus an insert, because AppKit cannot move it there; among the rest, the longest run
+already in old order stays and every other item is an explicit move, so a few photos
+changing day in a large grid are a few moves. A change no batch can describe (surviving
+sections that swap order, a repeated section key — neither occurs under Date sort)
+reloads.
 
 A day is named twice — in flow at the head of its run, and by
 `MediaGridDayBarView` held at the grid's top edge. **Those are one label drawn
@@ -158,15 +178,16 @@ inset; text is centered on its measured width within the badge (including when
 the min-width clamp wins). Faces under 56 pt hide the badge. Images have no
 blue tint or video-only backing color.
 
-Apply a diffable snapshot when ordered IDs change. Small and user-visible
+Apply a new structure when ordered IDs or day buckets change. Small and user-visible
 insert/remove changes, and same-descriptor same-membership reorders (enrichment
-trickle), animate with a tuned duration and ease-out-with-overshoot curve
-(`MediaGridAnimation`), applied through an explicit
-`NSAnimationContext` group around the animated apply branch only. While scroll
-bounds have tickled within the last 250 ms, the group still calls
-`apply(animatingDifferences: true)` but sets `duration = 0` — mid-scroll move
-animations are invisible churn that feeds Core Animation commit pressure. Never downgrade to `animatingDifferences: false` for that case;
-that is the reloadData teardown path. Separately, `MediaGridMutationGate`
+trickle), animate as a `performBatchUpdates` batch with a tuned duration and
+ease-out-with-overshoot curve (`MediaGridAnimation`), applied through an explicit
+`NSAnimationContext` group around the batch only. While scroll
+bounds have tickled within the last 250 ms (or Reduce Motion is on, or an anchored
+strip restore would scroll by the survivors' own travel), the group still runs the
+batch but sets `duration = 0` — mid-scroll move
+animations are invisible churn that feeds Core Animation commit pressure. Never downgrade to `reloadData` for that case;
+that is the teardown path. Separately, `MediaGridMutationGate`
 holds same-descriptor structural-apply *adoption* while scroll is live
 (`scrollHold`, released after the same 250 ms quiet threshold): enrichment
 reorders park newest-wins and apply once on quiet; descriptor-changed grids
@@ -176,15 +197,14 @@ leaving every other appearing/disappearing item (scroll dequeue, a future zoom
 swap) — and every moved item in a move-only batch — at `super`'s unmodified
 attributes so moves animate as plain position changes. Reorder-only completion
 skips `TileContentStore.prune` (membership identical by definition). The
-mutation gate retains `displayedOrderedIDSet` with `displayedOrderedIDs` so
-apply-policy summarize does not rebuild the previous-order Set every apply.
+apply-policy summary reads membership from the previous structure's own identity
+index, so no apply rebuilds a set of the identities on screen.
 Descriptor-changed reorders (sort/scope/filter flips) and large membership
 applies (`n ≥ 1000` on either side: the grid on screen or the next one, because
-the animated diff pays for every removed item as well as every inserted one) use AppKit's reloadData-class diffable path
-(`animatingDifferences: false`), completely unaffected by the animation tuning
-above. Same-descriptor reorders are structurally bounded to small mover counts
-by enrichment batch caps within one projection tick; do not add LIS/mover-count
-gating without a fresh measurement against the research harness table. This is
+an animated batch pays for every removed item as well as every inserted one) use `reloadData`,
+completely unaffected by the animation tuning
+above. Same-descriptor reorders keep only the longest in-order run in place and move
+the rest, so their batch is as small as the change. This is
 visually safe because `TileContentStore` holds any decoded thumbnail for a
 visible (pinned) asset and never drops it under budget pressure, so a recycled
 tile can synchronously repaint and never downgrades a painted same-asset image
@@ -209,19 +229,20 @@ reporting, visible detail queries, and preheat look-ahead coalesce on a trailing
 matching the enrichment viewport's newest-value delivery and avoiding per-bounds-tick
 Store cancellation. Permit one structural apply at a time and retain only the latest
 pending grid state. A structural apply has two halves inside that one exclusive slot.
-The pure half — the diff summary against what is on screen, the diffable snapshot, and
-the day facts of its sections — is built off the main actor (`@concurrent`) from values
-copied when the gate admits the apply; the snapshot returns to the main actor as a
-`sending` result, because AppKit's snapshot is not `Sendable` but nothing else holds it.
-The AppKit half — scroll anchor capture, `appliedDaySections`, `dataSource.apply`, the
-anchor restore — then runs synchronously on the main actor. Nothing on screen can change
-between the halves: the gate is in flight, so no other apply or zoom swap runs and a grid
-arriving meanwhile parks. The build is off the main actor because AppKit's snapshot copies
-its whole item set on every `appendItems`, and a day-grouped grid appends once per day, so
-building it costs days × items — about 70 ms for 150 days and 16,869 items, about 400 ms
-for 1,700 days (`docs/research/2026-11-04-grid-snapshot-build-off-main.md`). The apply
-call stays on the main actor and still grows with days: compositional layout re-solves
-every section on a reload, about 0.09 ms per section. Reset scroll and selection only when the sidebar scope changes; a filter or
+The pure half — the next `MediaGridStructure`, the diff summary against the structure on
+screen, and, for an animated apply, the `MediaGridBatchUpdates` between the two — is
+built off the main actor (`@concurrent`) from `Sendable` values copied when the gate
+admits the apply. The AppKit half — scroll anchor capture, handing AppKit the structure
+(`reloadData`, or `performBatchUpdates` with the structure switched inside the update
+block), the anchor restore — then runs synchronously on the main actor. Nothing on screen
+can change between the halves: the gate is in flight, so no other apply or zoom swap runs
+and a grid arriving meanwhile parks. The build is linear in items and flat in days: 0.16 G
+instructions for 158,000 items over 5,000 days, where the diffable snapshot it replaced
+took 54 G (13–15 s on the owner's library), because AppKit's snapshot copies its whole
+item set on every mutating call and has no call that appends to more than one section
+(`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`). The apply call
+stays on the main actor and still grows with days: compositional layout re-solves every
+section on a reload, measured in the same note. Reset scroll and selection only when the sidebar scope changes; a filter or
 sort change keeps the user's place by anchoring on a visible selected tile or the top tile's
 nearest survivor (APP-042); same-descriptor
 structural applies restore surviving selected identities through the minimal
@@ -242,8 +263,11 @@ data-driven change rather than a new rendering mechanism.
 
 ## Consequences
 
-- Media rendering has one narrow MainActor AppKit boundary. The snapshot a structural
+- Media rendering has one narrow MainActor AppKit boundary. The structure a structural
   apply hands it is built off the main actor; only the apply itself runs on it.
+- Batch derivation is Otos's code, not AppKit's: a wrong batch raises inside AppKit, so
+  `MediaGridStructureTests` replays every derived batch against the structure it must
+  produce, including randomized changes, and drives a live collection view through it.
 - SwiftUI remains responsible for window composition and empty-state shell.
 - Collection updates are imperative but isolated and state-machine tested.
 - Same-identity background enrichment or fact-detail updates do not recycle
@@ -286,8 +310,8 @@ data-driven change rather than a new rendering mechanism.
 - Apple, [NSCollectionView](https://developer.apple.com/documentation/appkit/nscollectionview)
 - Apple, [NSCollectionView layout ownership](https://developer.apple.com/documentation/appkit/nscollectionview/collectionviewlayout)
 - Apple, [UTType.movie](https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/movie)
-- `NSDiffableDataSource.h` (macOS 27 SDK): `animatingDifferences: false` applies via
-  `reloadData`; there is no `applySnapshotUsingReloadData`.
+- `NSDiffableDataSource.h` (macOS 27 SDK): single-section mutators only, no section
+  snapshot; `docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`.
 - Implemented in `Otos/Views/MediaGrid*.swift`, `Otos/Views/MediaGrid*.swift`,
   `Otos/Views/MediaAssetTileView.swift`, `Otos/Views/GridSelection.swift`,
   `Otos/Views/MediaGridDayHeaderView.swift`,

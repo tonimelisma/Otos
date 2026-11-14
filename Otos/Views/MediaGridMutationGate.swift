@@ -3,7 +3,7 @@ import Foundation
 /// Grid mutation gate guide
 ///
 /// One small, testable state machine arbitrates every *exclusive* mutation of the AppKit
-/// collection view — a diffable structural apply and an animated column-count (zoom)
+/// collection view — a structural apply and an animated column-count (zoom)
 /// swap — so those two never overlap in either direction. It keeps the imperative
 /// update lifecycle out of SwiftUI and out of the controller, which becomes a pure
 /// executor of the ordered action lists this gate returns.
@@ -87,7 +87,7 @@ final class MediaGridMutationGate {
         /// Same identities, so no structural apply: re-read visible details and realize
         /// `change` (`QueryChange`). Not exclusive — never occupies `inFlight`.
         case refreshVisible(CatalogMediaGridState, change: QueryChange)
-        /// Exclusive: run one diffable structural apply for a new identity order.
+        /// Exclusive: run one structural apply for a new identity order.
         /// `change` drives the apply-policy choice (same-query reorders animate; a query
         /// change keeps the reloadData-class path) and how the position is kept.
         case apply(CatalogMediaGridState, change: QueryChange)
@@ -108,11 +108,13 @@ final class MediaGridMutationGate {
         }
     }
 
+    /// The identity order and day buckets the gate last adopted, which together decide
+    /// whether a grid needs a structural apply at all: the same two values build the same
+    /// `MediaGridStructure`, so a grid repeating them is a detail refresh that touches no
+    /// section, batch or layout. Sections, index paths and membership are the controller's
+    /// `MediaGridStructure`, built from the same arrays.
     private(set) var displayedOrderedIDs: [MediaAssetID] = []
-    /// Membership set for `displayedOrderedIDs`, retained beside the array so
-    /// `MediaGridStructuralApplyPolicy.summarize` does not rebuild `Set(23k)` on
-    /// every apply. Updated only in `completeStructuralApply(applied:)`.
-    private(set) var displayedOrderedIDSet: Set<MediaAssetID> = []
+    private(set) var displayedDayBuckets: [Date?] = []
     private(set) var displayedDescriptor: CatalogQueryDescriptor = .default
     /// What the installed layout currently shows.
     private(set) var installedColumnCount: Int
@@ -203,12 +205,11 @@ final class MediaGridMutationGate {
         return [.zoomSwap(columnCount: requested)]
     }
 
-    /// The diffable structural apply for `grid` finished. Adopts its identities/descriptor
+    /// The structural apply for `grid` finished. Adopts its identities/descriptor
     /// as displayed, clears the in-flight slot, then drains any parked work.
-    /// Order array and membership set stay in lockstep — one write site only.
     func completeStructuralApply(applied grid: CatalogMediaGridState) -> [Action] {
         displayedOrderedIDs = grid.orderedAssetIDs
-        displayedOrderedIDSet = Set(grid.orderedAssetIDs)
+        displayedDayBuckets = grid.dayBuckets
         displayedDescriptor = grid.descriptor
         inFlight = .none
         guard canDrainPendingGrid else {
@@ -231,12 +232,13 @@ final class MediaGridMutationGate {
     }
 
     /// Evaluates a grid as if the gate were idle: updates descriptor bookkeeping and
-    /// returns either a non-exclusive `.refreshVisible` (identical identities) or an
-    /// exclusive `.apply` (new identity order), marking `inFlight = .structuralApply` in
-    /// the apply case. Shared by `receive`'s idle path and `drain`.
+    /// returns either a non-exclusive `.refreshVisible` (identical identities and days) or
+    /// an exclusive `.apply` (a new order, or a photo moved to another day without moving
+    /// in the order), marking `inFlight = .structuralApply` in the apply case. Shared by
+    /// `receive`'s idle path and `drain`.
     private func idleGridAction(_ grid: CatalogMediaGridState) -> Action {
         let change = QueryChange(from: displayedDescriptor, to: grid.descriptor)
-        if grid.orderedAssetIDs == displayedOrderedIDs {
+        if grid.orderedAssetIDs == displayedOrderedIDs, grid.dayBuckets == displayedDayBuckets {
             displayedDescriptor = grid.descriptor
             return .refreshVisible(grid, change: change)
         }

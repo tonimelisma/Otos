@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 @testable import OtosKit
 import Synchronization
@@ -72,6 +73,15 @@ func awaitGridApply(_ controller: MediaGridViewController, expectedIDs: [MediaAs
         controller.mutationGate.displayedOrderedIDs == expectedIDs && controller.mutationGate.inFlight == .none
     }
     await drainMainQueue()
+}
+
+extension MediaGridViewController {
+    /// Puts `next` on screen synchronously, the way a reloading structural apply does, for
+    /// a test that installs a grid without driving the mutation gate.
+    func show(_ next: MediaGridStructure) {
+        structure = next
+        collectionView.reloadData()
+    }
 }
 
 /// Suspends until the calling task is cancelled. A fake uses it for work that never

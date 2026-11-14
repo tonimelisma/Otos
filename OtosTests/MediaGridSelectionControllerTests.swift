@@ -168,7 +168,8 @@ extension AppKitWindowTests {
                 applyStart: .now,
                 applyCallStart: .now,
                 diffPolicyMs: 0,
-                snapshotBuildMs: 0,
+                structureBuildMs: 0,
+                batchUpdatesMs: 0,
                 insertedCount: 0,
                 removedCount: 0,
                 reorderOnly: false,
@@ -176,6 +177,8 @@ extension AppKitWindowTests {
                 animatingDifferences: true,
                 animationSuppressed: false,
                 usesReloadDataFallback: false,
+                appliedBy: .batchUpdates,
+                sectionCount: 1,
                 heldDuringScroll: false,
                 signpost: .beginState(id: .exclusive)
             )
@@ -263,10 +266,7 @@ private final class GridSelectionTestHarness {
         _ = controller.view // forces loadView()
 
         ids = (0 ..< itemCount).map { makeAssetID(path: "asset-\($0).jpg") }
-        var snapshot = NSDiffableDataSourceSnapshot<MediaGridViewController.Section, MediaAssetID>()
-        snapshot.appendSections([.ungrouped])
-        snapshot.appendItems(ids, toSection: .ungrouped)
-        controller.dataSource.apply(snapshot, animatingDifferences: false)
+        controller.show(MediaGridStructure(orderedIDs: ids))
 
         let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)
         _ = controller.mutationGate.receive(grid)
@@ -355,7 +355,7 @@ private final class GridSelectionTestHarness {
         )
 
         _ = controller.ensureContentAndMaybeDecode(for: id)
-        if let indexPath = controller.dataSource.indexPath(for: id),
+        if let indexPath = controller.structure.indexPath(of: id),
            let item = controller.collectionView.item(at: indexPath) as? MediaGridItem
         {
             item.render(
@@ -368,7 +368,7 @@ private final class GridSelectionTestHarness {
     /// The center point of the tile for `id`, in window coordinates for the synthetic
     /// event's `locationInWindow`.
     private func windowPoint(for id: MediaAssetID) throws -> NSPoint {
-        let indexPath = try #require(controller.dataSource.indexPath(for: id))
+        let indexPath = try #require(controller.structure.indexPath(of: id))
         let attrs = try #require(controller.collectionView.layoutAttributesForItem(at: indexPath))
         let centerInCollectionView = NSPoint(x: attrs.frame.midX, y: attrs.frame.midY)
         let centerInContentView = controller.collectionView.convert(centerInCollectionView, to: controller.view)
@@ -487,7 +487,7 @@ private final class GridSelectionTestHarness {
     }
 
     private func windowPoint(for id: MediaAssetID, target: ClickTarget) throws -> NSPoint {
-        let indexPath = try #require(controller.dataSource.indexPath(for: id))
+        let indexPath = try #require(controller.structure.indexPath(of: id))
         let item = try #require(controller.collectionView.item(at: indexPath) as? MediaGridItem)
         let tileView = try #require(item.view as? MediaAssetTileView)
         let pixelSize = try #require(tileView.paintedImagePixelSize, "Tile has no decoded thumbnail")

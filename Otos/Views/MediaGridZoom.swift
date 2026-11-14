@@ -13,7 +13,7 @@ import OSLog
 // requests arrive through. That one path is what keeps pinch, menu, and slider, and
 // any future automation, from diverging.
 //
-// A zoom swap never overlaps a diffable structural apply, in either direction: the
+// A zoom swap never overlaps a structural apply, in either direction: the
 // arbitration lives entirely in `MediaGridMutationGate`, which owns `installedColumnCount`
 // and `requestedColumnCount` and hands back a `.zoomSwap` action only when no other
 // exclusive mutation is in flight. `performZoomSwap(to:)` runs the animated layout swap

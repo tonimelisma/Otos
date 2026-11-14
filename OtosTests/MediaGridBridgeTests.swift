@@ -1,3 +1,4 @@
+import Foundation
 @testable import OtosKit
 import Testing
 
@@ -30,6 +31,28 @@ struct MediaGridBridgeTests {
             gate.receive(first)
                 == [.refreshVisible(first, change: .unchanged)]
         )
+    }
+
+    /// The same order over the same days builds the same structure, so a republished grid
+    /// (the enrichment trickle re-sending an order) is a detail refresh with no apply; a
+    /// photo moving to another day without moving in the order is a structural change.
+    @Test func onlyAChangedOrderOrDayStartsAStructuralApply() {
+        let gate = MediaGridMutationGate()
+        let ids = ["a.jpg", "b.jpg"].map(makeAssetID)
+        let dayOne = Date(timeIntervalSince1970: 86400)
+        let dayTwo = Date(timeIntervalSince1970: 86400 * 2)
+        let first = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids, dayBuckets: [dayTwo, dayOne])
+        #expect(gate.receive(first) == [.apply(first, change: .unchanged)])
+        #expect(gate.completeStructuralApply(applied: first) == [])
+
+        var republished = first
+        republished.detailRefreshGeneration = 7
+        #expect(gate.receive(republished) == [.refreshVisible(republished, change: .unchanged)])
+        #expect(gate.inFlight == .none)
+
+        let movedDay = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids, dayBuckets: [dayOne, dayOne])
+        #expect(gate.receive(movedDay) == [.apply(movedDay, change: .unchanged)])
+        #expect(gate.inFlight == .structuralApply)
     }
 
     @Test func descriptorChangeResetsScrollAndSelectionAndSameDescriptorStructurePreservesThem() {
@@ -272,9 +295,8 @@ struct MediaGridBridgeTests {
         let previous = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg", "c.jpg"]).orderedAssetIDs
         let smallInsert = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg", "c.jpg", "d.jpg"]).orderedAssetIDs
         let policy = MediaGridStructuralApplyPolicy.summarize(
-            previousOrderedIDs: previous,
-            previousOrderedIDSet: Set(previous),
-            nextOrderedIDs: smallInsert,
+            previous: MediaGridStructure(orderedIDs: previous),
+            next: MediaGridStructure(orderedIDs: smallInsert),
             descriptorChanged: false
         )
         #expect(policy.animatingDifferences)
@@ -286,9 +308,8 @@ struct MediaGridBridgeTests {
         let previous = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg", "c.jpg"]).orderedAssetIDs
         let reordered = [previous[2], previous[1], previous[0]]
         let small = MediaGridStructuralApplyPolicy.summarize(
-            previousOrderedIDs: previous,
-            previousOrderedIDSet: Set(previous),
-            nextOrderedIDs: reordered,
+            previous: MediaGridStructure(orderedIDs: previous),
+            next: MediaGridStructure(orderedIDs: reordered),
             descriptorChanged: false
         )
         #expect(small.reorderOnly)
@@ -300,9 +321,8 @@ struct MediaGridBridgeTests {
         let largePrevious = makeGrid(scope: .allMedia, paths: largePaths).orderedAssetIDs
         let largeReordered = Array(largePrevious.reversed())
         let large = MediaGridStructuralApplyPolicy.summarize(
-            previousOrderedIDs: largePrevious,
-            previousOrderedIDSet: Set(largePrevious),
-            nextOrderedIDs: largeReordered,
+            previous: MediaGridStructure(orderedIDs: largePrevious),
+            next: MediaGridStructure(orderedIDs: largeReordered),
             descriptorChanged: false
         )
         #expect(large.reorderOnly)
@@ -315,9 +335,8 @@ struct MediaGridBridgeTests {
         let previous = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg", "c.jpg"]).orderedAssetIDs
         let reordered = [previous[2], previous[1], previous[0]]
         let policy = MediaGridStructuralApplyPolicy.summarize(
-            previousOrderedIDs: previous,
-            previousOrderedIDSet: Set(previous),
-            nextOrderedIDs: reordered,
+            previous: MediaGridStructure(orderedIDs: previous),
+            next: MediaGridStructure(orderedIDs: reordered),
             descriptorChanged: true
         )
         #expect(policy.reorderOnly)
@@ -331,9 +350,8 @@ struct MediaGridBridgeTests {
             paths: (0 ..< MediaGridStructuralApplyPolicy.reloadDataFallbackItemCountThreshold).map { "asset-\($0).jpg" }
         ).orderedAssetIDs
         let policy = MediaGridStructuralApplyPolicy.summarize(
-            previousOrderedIDs: [],
-            previousOrderedIDSet: [],
-            nextOrderedIDs: largeApply,
+            previous: .empty,
+            next: MediaGridStructure(orderedIDs: largeApply),
             descriptorChanged: false
         )
         #expect(policy.largeApply)
@@ -350,9 +368,8 @@ struct MediaGridBridgeTests {
         ).orderedAssetIDs
         let small = makeGrid(scope: .allMedia, paths: ["other-a.jpg", "other-b.jpg"]).orderedAssetIDs
         let policy = MediaGridStructuralApplyPolicy.summarize(
-            previousOrderedIDs: largePrevious,
-            previousOrderedIDSet: Set(largePrevious),
-            nextOrderedIDs: small,
+            previous: MediaGridStructure(orderedIDs: largePrevious),
+            next: MediaGridStructure(orderedIDs: small),
             descriptorChanged: true
         )
         #expect(policy.removedCount == largePrevious.count)

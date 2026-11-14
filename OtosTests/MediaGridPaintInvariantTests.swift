@@ -62,7 +62,7 @@ extension AppKitWindowTests {
             // the painted visible id, drop the recycled off-screen id, and re-pin.
             let live = Set(harness.ids.prefix(4))
             harness.controller.tileContents.pinVisible([visible])
-            harness.controller.tileContents.prune(to: live)
+            harness.controller.tileContents.prune(keeping: live.contains)
             harness.controller.tileContents.pinVisible([visible])
             harness.reconfigureVisible(visible)
 
@@ -84,17 +84,12 @@ extension AppKitWindowTests {
 
             let dayOne = Date(timeIntervalSince1970: 0)
             let dayTwo = Date(timeIntervalSince1970: 86400)
-            var snapshot = NSDiffableDataSourceSnapshot<MediaGridViewController.Section, MediaAssetID>()
-            for run in MediaGridSectionGroupingPolicy.sectionRuns(
+            harness.controller.show(MediaGridStructure(
                 orderedIDs: harness.ids,
                 dayBuckets: [dayTwo, dayOne, dayOne, dayOne]
-            ) {
-                snapshot.appendSections([run.section])
-                snapshot.appendItems(run.ids, toSection: run.section)
-            }
-            harness.controller.dataSource.apply(snapshot, animatingDifferences: false)
+            ))
             harness.controller.tileContents.pinVisible([visible])
-            harness.controller.tileContents.prune(to: Set(harness.ids))
+            harness.controller.tileContents.prune(keeping: Set(harness.ids).contains)
             harness.reconfigureVisible(visible)
 
             let after = try harness.requirePaintedSize(for: visible)
@@ -184,10 +179,7 @@ private final class PaintInvariantHarness {
         _ = controller.view
 
         self.ids = ids
-        var snapshot = NSDiffableDataSourceSnapshot<MediaGridViewController.Section, MediaAssetID>()
-        snapshot.appendSections([.ungrouped])
-        snapshot.appendItems(ids, toSection: .ungrouped)
-        controller.dataSource.apply(snapshot, animatingDifferences: false)
+        controller.show(MediaGridStructure(orderedIDs: ids))
 
         let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)
         _ = controller.mutationGate.receive(grid)
@@ -226,7 +218,7 @@ private final class PaintInvariantHarness {
     func reconfigureVisible(_ id: MediaAssetID) {
         controller.tileContents.pinVisible(Set([id]))
         _ = controller.ensureContentAndMaybeDecode(for: id)
-        if let indexPath = controller.dataSource.indexPath(for: id),
+        if let indexPath = controller.structure.indexPath(of: id),
            let item = controller.collectionView.item(at: indexPath) as? MediaGridItem
         {
             item.render(
@@ -237,7 +229,7 @@ private final class PaintInvariantHarness {
     }
 
     func requirePaintedSize(for id: MediaAssetID) throws -> CGSize {
-        let indexPath = try #require(controller.dataSource.indexPath(for: id))
+        let indexPath = try #require(controller.structure.indexPath(of: id))
         let item = try #require(controller.collectionView.item(at: indexPath) as? MediaGridItem)
         let tileView = try #require(item.view as? MediaAssetTileView)
         return try #require(tileView.paintedImagePixelSize, "Tile has no decoded thumbnail")
@@ -251,7 +243,7 @@ private final class PaintInvariantHarness {
     }
 
     func requireDisplayedThumbnail(for id: MediaAssetID) throws -> CGImage {
-        let indexPath = try #require(controller.dataSource.indexPath(for: id))
+        let indexPath = try #require(controller.structure.indexPath(of: id))
         let item = try #require(controller.collectionView.item(at: indexPath) as? MediaGridItem)
         let tileView = try #require(item.view as? MediaAssetTileView)
         return try #require(tileView.displayedThumbnail, "Tile layer shows no thumbnail")

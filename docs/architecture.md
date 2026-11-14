@@ -126,8 +126,8 @@ everything expensive happens on an actor off the main thread.
 
 - **Identity** is typed: `LibraryRootPath` + `MediaRelativePath` = `MediaAssetID`. No
   invented durable IDs; the filesystem path is the identity (ADR 0003/0008). Each
-  identity value carries a derived FNV-1a `fingerprint` for cheap Hashable /
-  diffable hashing only — never persisted, never a second identity.
+  identity value carries a derived FNV-1a `fingerprint` for cheap Hashable hashing
+  only — never persisted, never a second identity.
 - **Query scope** is resolved once. `RootRegistry.scopePredicate` turns a
   `SidebarSelection` into one `CatalogScopePredicate` (root IDs plus an optional
   import-batch stamp), and every scoped read — ordered IDs, cataloged count, visible
@@ -139,8 +139,13 @@ everything expensive happens on an actor off the main thread.
 - **The grid** is the one AppKit boundary (`MediaGridBridgeView` +
   `MediaGrid*`), for cell reuse at tens of thousands of tiles. `MediaGridMutationGate`
   is the single arbiter of structural applies and zoom swaps; inside its in-flight slot
-  a structural apply builds its snapshot off the main actor (`buildStructure`) and
-  applies it on the main actor (`commitStructure`). Pointer hover has the
+  a structural apply builds the next `MediaGridStructure` (ordered identities, day
+  sections as contiguous ranges, identity → position index) off the main actor
+  (`buildStructure`) and hands it to AppKit on the main actor (`commitStructure`): `reloadData`
+  for query and large membership changes, `performBatchUpdates` with the derived
+  `MediaGridBatchUpdates` otherwise. The controller is the collection view's plain
+  `NSCollectionViewDataSource` over that one value, which the layout, day bar, headers,
+  selection, drag, prefetch, zoom and scroll anchoring also read. Pointer hover has the
   same single-owner shape as mouse selection: `MediaGridCollectionView` answers only
   the geometry question (which item is under the cursor) through one grid-wide
   tracking area, and the bridge owns what hover means, assigning the curation control
@@ -302,7 +307,8 @@ everything expensive happens on an actor off the main thread.
   root to a removal lease synchronously and the reconcile loop runs the removal.
 - **Pure policy helpers** carry the testable logic beside effectful actors:
   `CatalogWindowPolicy`, `SidebarSelectionPolicy`, `GridColumnCount`,
-  `MediaGridZoomPolicy`, `GridSelection`, `MediaCompanionPairing`.
+  `MediaGridZoomPolicy`, `MediaGridStructure` / `MediaGridBatchUpdates`, `GridSelection`,
+  `MediaCompanionPairing`.
 
 ## Where to make a change
 

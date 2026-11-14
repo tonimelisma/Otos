@@ -61,8 +61,7 @@ extension MediaGridViewController {
     /// they answer "index 0" for a grid that has scrolled but not yet dequeued. The
     /// layout's attributes are a pure function of position. One
     /// `layoutAttributesForElements` call answers both the topmost item and its
-    /// section's header; the preceding day comes from `appliedDaySections`, so neither
-    /// reader needs `dataSource.snapshot()`.
+    /// section's header; both days come from `structure`.
     private func dayBarTopEdge() -> MediaGridDayBarPolicy.TopEdge? {
         guard let layout = collectionView.collectionViewLayout else {
             return nil
@@ -82,7 +81,7 @@ extension MediaGridViewController {
                     : lhs.frame.minY < rhs.frame.minY
             }
         guard let section = topmostItem?.indexPath?.section,
-              let day = appliedDay(at: section)
+              let day = structure.day(inSection: section)
         else {
             return nil
         }
@@ -94,14 +93,7 @@ extension MediaGridViewController {
         return MediaGridDayBarPolicy.TopEdge(
             day: day,
             headerMinY: headerMinY,
-            precedingDay: section > 0 ? appliedDay(at: section - 1) : nil
+            precedingDay: section > 0 ? structure.day(inSection: section - 1) : nil
         )
-    }
-
-    private func appliedDay(at section: Int) -> MediaGridDayBarPolicy.Day? {
-        guard section >= 0, section < appliedDaySections.count else {
-            return nil
-        }
-        return appliedDaySections[section]
     }
 }

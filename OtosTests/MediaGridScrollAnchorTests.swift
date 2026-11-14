@@ -206,7 +206,7 @@ struct MediaGridScrollAnchorTests {
 private extension MediaGridViewController {
     /// The item's top edge relative to the viewport's top edge, or nil when off screen.
     func onScreenOffset(of id: MediaAssetID) -> CGFloat? {
-        guard let indexPath = dataSource.indexPath(for: id),
+        guard let indexPath = structure.indexPath(of: id),
               let frame = collectionView.collectionViewLayout?.layoutAttributesForItem(at: indexPath)?.frame
         else {
             return nil
@@ -220,12 +220,12 @@ private extension MediaGridViewController {
 
     var currentIDs: [MediaAssetID] {
         (0 ..< collectionView.numberOfItems(inSection: 0))
-            .compactMap { dataSource.itemIdentifier(for: IndexPath(item: $0, section: 0)) }
+            .compactMap { structure.id(at: IndexPath(item: $0, section: 0)) }
     }
 
     /// The item's left edge relative to the viewport's left edge.
     func viewportX(of id: MediaAssetID) -> CGFloat? {
-        guard let path = dataSource.indexPath(for: id),
+        guard let path = structure.indexPath(of: id),
               let frame = collectionView.collectionViewLayout?.layoutAttributesForItem(at: path)?.frame
         else {
             return nil
@@ -248,10 +248,7 @@ private extension MediaGridViewController {
                 relativePath: MediaRelativePath(rawValue: "fresh-\($0).jpg")
             )
         }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, MediaAssetID>()
-        snapshot.appendSections([.ungrouped])
-        snapshot.appendItems(fresh + existing, toSection: .ungrouped)
-        dataSource.apply(snapshot, animatingDifferences: false)
+        show(MediaGridStructure(orderedIDs: fresh + existing))
         collectionView.layoutSubtreeIfNeeded()
     }
 }
@@ -276,10 +273,7 @@ private func makeAnchorController(
             relativePath: MediaRelativePath(rawValue: "asset-\($0).jpg")
         )
     }
-    var snapshot = NSDiffableDataSourceSnapshot<MediaGridViewController.Section, MediaAssetID>()
-    snapshot.appendSections([.ungrouped])
-    snapshot.appendItems(ids, toSection: .ungrouped)
-    controller.dataSource.apply(snapshot, animatingDifferences: false)
+    controller.show(MediaGridStructure(orderedIDs: ids))
     controller.collectionView.layoutSubtreeIfNeeded()
     // The gate must know what is on screen: a filter's nearest survivor is found in the
     // order the user was looking at, which is the gate's displayed order.

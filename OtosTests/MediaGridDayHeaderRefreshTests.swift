@@ -44,10 +44,31 @@ extension AppKitWindowTests {
             #expect(harness.header(section: 1) == .map(date: DayHeaderHarness.olderDay, itemCount: 4))
         }
 
-        /// ARC-023: the snapshot is built off the main actor inside the one in-flight slot.
+        /// DES-069: the header and the bar are one label drawn twice, identical in height,
+        /// and the blank first header still reserves that height, so no row moves.
+        @Test func everyHeaderIsTheBarsHeight() async throws {
+            let harness = DayHeaderHarness()
+            let newer = harness.ids(prefix: "newer", count: 2)
+            let older = harness.ids(prefix: "older", count: 4)
+            try await harness.apply(
+                newer.map { ($0, DayHeaderHarness.newerDay) } + older.map { ($0, DayHeaderHarness.olderDay) }
+            )
+            let layout = try #require(harness.controller.collectionView.collectionViewLayout)
+            let heights = (0 ..< 2).compactMap {
+                layout.layoutAttributesForSupplementaryView(
+                    ofKind: MediaGridDayHeaderView.elementKind,
+                    at: IndexPath(item: 0, section: $0)
+                )?.frame.height
+            }
+            let barHeight = harness.controller.dayBar.frame.height
+            #expect(barHeight > 0)
+            #expect(heights == [barHeight, barHeight])
+        }
+
+        /// ARC-023: the structure is built off the main actor inside the one in-flight slot.
         /// Until the build lands nothing on screen changes, and a grid arriving meanwhile
         /// parks and is applied after it, never instead of it or alongside it.
-        @Test func aGridArrivingWhileTheSnapshotBuildsIsAppliedAfterIt() async throws {
+        @Test func aGridArrivingWhileTheStructureBuildsIsAppliedAfterIt() async throws {
             let harness = DayHeaderHarness()
             let older = harness.ids(prefix: "older", count: 4)
             let newer = harness.ids(prefix: "newer", count: 2)
@@ -56,15 +77,15 @@ extension AppKitWindowTests {
 
             harness.receive(first)
             #expect(harness.controller.mutationGate.inFlight == .structuralApply)
-            #expect(harness.controller.dataSource.snapshot().numberOfItems == 0)
+            #expect(harness.controller.collectionView.numberOfSections == 0)
             harness.receive(second)
             #expect(harness.controller.mutationGate.stallDiagnosticFields["pendingGrid"] == "true")
 
             try await awaitGridApply(harness.controller, expectedIDs: second.map(\.0))
-            let applied = harness.controller.dataSource.snapshot()
-            #expect(applied.itemIdentifiers == second.map(\.0))
-            #expect(applied.numberOfSections == 2)
-            #expect(harness.controller.appliedDaySections == [
+            let applied = harness.controller.structure
+            #expect(applied.orderedIDs == second.map(\.0))
+            #expect(harness.controller.collectionView.numberOfSections == 2)
+            #expect(applied.sections.map(\.day) == [
                 MediaGridDayBarPolicy.Day(date: DayHeaderHarness.newerDay, itemCount: 2),
                 MediaGridDayBarPolicy.Day(date: DayHeaderHarness.olderDay, itemCount: 4),
             ])
