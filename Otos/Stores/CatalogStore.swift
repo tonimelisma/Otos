@@ -5089,17 +5089,18 @@ extension CatalogStore {
         db: Database
     ) throws -> (rows: CatalogRowChanges, purgedImages: [String]) {
         var rows = CatalogRowChanges()
+        // Every statement a listed item runs is cached: preparing a write on media_asset
+        // compiles the upkeep of each of its indexes, and costs more than the write itself.
         for item in changes.listed {
             let file = try keepingStoredSize(item.file, libraryRootID: rootRowID, db: db)
             let upsert = try upsertScannedFile(
                 file, libraryRootPath: rootPath, libraryRootID: rootRowID, capabilities: capabilities, db: db
             )
             rows.record(upsert)
-            try db.execute(
-                sql: """
-                UPDATE media_asset SET hidden_by_source = ?
-                WHERE library_root_id = ? AND relative_path = ? AND hidden_by_source IS NOT ?
-                """,
+            try db.cachedStatement(sql: """
+            UPDATE media_asset SET hidden_by_source = ?
+            WHERE library_root_id = ? AND relative_path = ? AND hidden_by_source IS NOT ?
+            """).execute(
                 arguments: [item.isHiddenBySource, rootRowID, file.relativePath.rawValue, item.isHiddenBySource]
             )
             // A new row's hide is part of the new row; an existing one's is a change to it.
@@ -5107,29 +5108,26 @@ extension CatalogStore {
                 rows.recordUpdated(db.changesCount)
             }
             // The source's name for the row: not shown, so not a change the window hears.
-            try db.execute(
-                sql: """
-                UPDATE media_asset SET source_item_id = ?
-                WHERE library_root_id = ? AND relative_path = ? AND source_item_id IS NOT ?
-                """,
+            try db.cachedStatement(sql: """
+            UPDATE media_asset SET source_item_id = ?
+            WHERE library_root_id = ? AND relative_path = ? AND source_item_id IS NOT ?
+            """).execute(
                 arguments: [item.sourceItemID, rootRowID, file.relativePath.rawValue, item.sourceItemID]
             )
             // Whether the source has its own images of the row: what the product pass
             // asks for, not shown, so not a change the window hears either.
-            try db.execute(
-                sql: """
-                UPDATE media_asset SET source_products_absent = ?
-                WHERE library_root_id = ? AND relative_path = ? AND source_products_absent IS NOT ?
-                """,
+            try db.cachedStatement(sql: """
+            UPDATE media_asset SET source_products_absent = ?
+            WHERE library_root_id = ? AND relative_path = ? AND source_products_absent IS NOT ?
+            """).execute(
                 arguments: [!item.sourceHasProducts, rootRowID, file.relativePath.rawValue, !item.sourceHasProducts]
             )
         }
         for (item, size) in changes.sizesBySourceItem {
-            try db.execute(
-                sql: """
-                UPDATE media_asset SET byte_size = ?
-                WHERE library_root_id = ? AND source_item_id = ? AND byte_size IS NOT ?
-                """,
+            try db.cachedStatement(sql: """
+            UPDATE media_asset SET byte_size = ?
+            WHERE library_root_id = ? AND source_item_id = ? AND byte_size IS NOT ?
+            """).execute(
                 arguments: [size, rootRowID, item, size]
             )
             rows.recordUpdated(db.changesCount)
@@ -5400,8 +5398,7 @@ extension CatalogStore {
     ) throws -> ScannedMediaFile {
         guard file.byteSize == nil,
               let stored = try Int64.fetchOne(
-                  db,
-                  sql: "SELECT byte_size FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                  db.cachedStatement(sql: "SELECT byte_size FROM media_asset WHERE library_root_id = ? AND relative_path = ?"),
                   arguments: [libraryRootID, file.relativePath.rawValue]
               )
         else {

@@ -1360,15 +1360,15 @@ extension CatalogStore {
     ) throws -> [ExistingAssetRow] {
         let rows: [Row] = if let underSubtree {
             // Component-safe: `a/b` matches itself and `a/b/...`, never `a/b2`.
+            // Cached: a listing reads one subtree per folder it completes.
             try Row.fetchAll(
-                db,
-                sql: """
+                db.cachedStatement(sql: """
                 SELECT relative_path, thumbnail_path, preview_path, face_frames_path, metadata_source_size,
                     metadata_source_mtime, trash_path
                 FROM media_asset
                 WHERE library_root_id = ?
                   AND \(Self.subtreeSQL)
-                """,
+                """),
                 arguments: [libraryRootID] + Self.subtreeArguments(underSubtree)
             )
         } else {
@@ -1843,13 +1843,13 @@ extension CatalogStore {
         // back — Finder's Put Back, or undo — so the row shows again with everything Otos
         // held for it (ADR 0022). Path is identity (ADR 0008): whatever file now occupies
         // the path is the asset.
-        try db.execute(
-            sql: """
-            UPDATE media_asset SET pending_trash_batch_unix_ms = NULL, trash_path = NULL
-            WHERE library_root_id = ? AND relative_path = ? AND trash_path IS NOT NULL
-            """,
-            arguments: [libraryRootID, file.relativePath.rawValue]
-        )
+        // This statement and the upsert below run for every file a scan or listing writes,
+        // so both are cached: preparing a write on media_asset compiles the upkeep of each of
+        // its indexes, and costs more than the write itself.
+        try db.cachedStatement(sql: """
+        UPDATE media_asset SET pending_trash_batch_unix_ms = NULL, trash_path = NULL
+        WHERE library_root_id = ? AND relative_path = ? AND trash_path IS NOT NULL
+        """).execute(arguments: [libraryRootID, file.relativePath.rawValue])
         let putBack = db.changesCount > 0
         if putBack {
             let message = "op=catalog.scan.reconcile phase=putBack "
@@ -1864,61 +1864,60 @@ extension CatalogStore {
         // absolute time the row is placed by. The file's dates stand in for it only while
         // no capture instant does, and an absolute time unchanged to the second keeps the
         // offset it was given, so a rescan in another zone moves nothing.
-        try db.execute(
-            sql: """
-            INSERT INTO media_asset (
-                library_root_id,
-                relative_path,
-                relative_path_key,
-                sort_key,
-                name_sort_key,
-                name,
-                content_type_identifier,
-                kind,
-                format,
-                byte_size,
-                created_at_unix,
-                content_modified_at_unix,
-                file_identifier,
-                assumed_utc_offset_seconds
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(library_root_id, relative_path) DO UPDATE SET
-                assumed_utc_offset_seconds = CASE
-                    WHEN CAST(COALESCE(media_asset.capture_instant_unix, media_asset.created_at_unix,
-                                       media_asset.content_modified_at_unix) AS INTEGER)
-                      IS CAST(COALESCE(media_asset.capture_instant_unix, excluded.created_at_unix,
-                                       excluded.content_modified_at_unix) AS INTEGER)
-                    THEN media_asset.assumed_utc_offset_seconds
-                    ELSE excluded.assumed_utc_offset_seconds
-                END,
-                sort_key = excluded.sort_key,
-                name_sort_key = excluded.name_sort_key,
-                name = excluded.name,
-                content_type_identifier = excluded.content_type_identifier,
-                kind = excluded.kind,
-                format = excluded.format,
-                byte_size = excluded.byte_size,
-                created_at_unix = excluded.created_at_unix,
-                content_modified_at_unix = excluded.content_modified_at_unix,
-                file_identifier = excluded.file_identifier,
-                relative_path_key = excluded.relative_path_key,
-                awaiting_presence = 0
-            WHERE media_asset.awaiting_presence <> 0
-               OR media_asset.relative_path_key IS NOT excluded.relative_path_key
-               OR media_asset.sort_key IS NOT excluded.sort_key
-               OR media_asset.file_identifier IS NOT excluded.file_identifier
-               OR media_asset.name_sort_key IS NOT excluded.name_sort_key
-               OR media_asset.name IS NOT excluded.name
-               OR media_asset.content_type_identifier IS NOT excluded.content_type_identifier
-               OR media_asset.kind IS NOT excluded.kind
-               OR media_asset.format IS NOT excluded.format
-               OR media_asset.byte_size IS NOT excluded.byte_size
-               OR CAST(COALESCE(media_asset.created_at_unix, -1) AS INTEGER)
-                  IS NOT CAST(COALESCE(excluded.created_at_unix, -1) AS INTEGER)
-               OR CAST(COALESCE(media_asset.content_modified_at_unix, -1) AS INTEGER)
-                  IS NOT CAST(COALESCE(excluded.content_modified_at_unix, -1) AS INTEGER)
-            """,
+        try db.cachedStatement(sql: """
+        INSERT INTO media_asset (
+            library_root_id,
+            relative_path,
+            relative_path_key,
+            sort_key,
+            name_sort_key,
+            name,
+            content_type_identifier,
+            kind,
+            format,
+            byte_size,
+            created_at_unix,
+            content_modified_at_unix,
+            file_identifier,
+            assumed_utc_offset_seconds
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(library_root_id, relative_path) DO UPDATE SET
+            assumed_utc_offset_seconds = CASE
+                WHEN CAST(COALESCE(media_asset.capture_instant_unix, media_asset.created_at_unix,
+                                   media_asset.content_modified_at_unix) AS INTEGER)
+                  IS CAST(COALESCE(media_asset.capture_instant_unix, excluded.created_at_unix,
+                                   excluded.content_modified_at_unix) AS INTEGER)
+                THEN media_asset.assumed_utc_offset_seconds
+                ELSE excluded.assumed_utc_offset_seconds
+            END,
+            sort_key = excluded.sort_key,
+            name_sort_key = excluded.name_sort_key,
+            name = excluded.name,
+            content_type_identifier = excluded.content_type_identifier,
+            kind = excluded.kind,
+            format = excluded.format,
+            byte_size = excluded.byte_size,
+            created_at_unix = excluded.created_at_unix,
+            content_modified_at_unix = excluded.content_modified_at_unix,
+            file_identifier = excluded.file_identifier,
+            relative_path_key = excluded.relative_path_key,
+            awaiting_presence = 0
+        WHERE media_asset.awaiting_presence <> 0
+           OR media_asset.relative_path_key IS NOT excluded.relative_path_key
+           OR media_asset.sort_key IS NOT excluded.sort_key
+           OR media_asset.file_identifier IS NOT excluded.file_identifier
+           OR media_asset.name_sort_key IS NOT excluded.name_sort_key
+           OR media_asset.name IS NOT excluded.name
+           OR media_asset.content_type_identifier IS NOT excluded.content_type_identifier
+           OR media_asset.kind IS NOT excluded.kind
+           OR media_asset.format IS NOT excluded.format
+           OR media_asset.byte_size IS NOT excluded.byte_size
+           OR CAST(COALESCE(media_asset.created_at_unix, -1) AS INTEGER)
+              IS NOT CAST(COALESCE(excluded.created_at_unix, -1) AS INTEGER)
+           OR CAST(COALESCE(media_asset.content_modified_at_unix, -1) AS INTEGER)
+              IS NOT CAST(COALESCE(excluded.content_modified_at_unix, -1) AS INTEGER)
+        """).execute(
             arguments: scannedFileUpsertArguments(
                 file,
                 libraryRootPath: libraryRootPath,

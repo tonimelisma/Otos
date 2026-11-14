@@ -436,10 +436,24 @@ nonisolated enum PhotoStackCollapse {
         )
     }
 
-    /// What a level counts as one: a file, or the pair the file is one of.
-    private enum Unit: Hashable {
-        case file(MediaAssetID)
-        case pair(PhotoStackID)
+    /// How many units `members` are: each file is one, except that the files `framing` maps
+    /// to one pair are one together. Counted only where it can differ from the file count — a
+    /// burst level's stack of two or more files — so a pair level, every file of a library
+    /// of pairs, hashes nothing for it.
+    private static func unitCount(_ members: [MediaAssetID], framing: [MediaAssetID: PhotoStackID]) -> Int {
+        guard members.count >= 2, !framing.isEmpty else {
+            return members.count
+        }
+        var pairs = Set<PhotoStackID>()
+        var count = 0
+        for member in members {
+            if let pair = framing[member] {
+                count += pairs.insert(pair).inserted ? 1 : 0
+            } else {
+                count += 1
+            }
+        }
+        return count
     }
 
     /// One level over `ids`, whose positions in the original order are `positions`. A stack
@@ -460,15 +474,13 @@ nonisolated enum PhotoStackCollapse {
             return level
         }
         var present: [PhotoStackID: [MediaAssetID]] = [:]
-        var units: [PhotoStackID: Set<Unit>] = [:]
         for id in ids {
             if let stackID = membership[id] {
                 present[stackID, default: []].append(id)
-                units[stackID, default: []].insert(framing[id].map(Unit.pair) ?? .file(id))
             }
         }
         var shown: [PhotoStackID: MediaAssetID] = [:]
-        for (stackID, members) in present where units[stackID, default: []].count >= 2 {
+        for (stackID, members) in present where unitCount(members, framing: framing) >= 2 {
             guard let stack = stacks.stacks[stackID] else { continue }
             shown[stackID] = members.contains(stack.key) ? stack.key : members[0]
         }

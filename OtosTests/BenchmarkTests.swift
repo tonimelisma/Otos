@@ -442,12 +442,17 @@ struct BenchmarkTests {
             #expect(vocabulary.labels(namedBy: dog).contains("dog"))
         }
 
-        // A library's readings: 5,000 photos' text, one in fifty holding the word.
+        // A library's readings: 5,000 photos' text, one in fifty holding the word, matched as
+        // a search pass matches them (`PhotoSearchIndex`): the index holds each reading
+        // folded, and the pass reads its query's words once.
         let readings = (0 ..< 5000).map { index in
-            index % 50 == 0 ? "Proof of Insurance · Policy \(index)" : "Menu \(index) · Café crème 4,50 € · Open daily"
+            SearchTextReading.folded(
+                index % 50 == 0 ? "Proof of Insurance · Policy \(index)" : "Menu \(index) · Café crème 4,50 € · Open daily"
+            )
         }
         try await Benchmark.measure("search.textMatch.5k") {
-            #expect(readings.count { SearchTextReading.matches(query: "insurance", in: $0) } == 100)
+            let query = SearchTextQuery("insurance")
+            #expect(readings.count { query.matches(folded: $0) } == 100)
         }
 
         let sign = try #require(SearchReadingTests.picture(saying: "OTOS SEARCH 2026"))
