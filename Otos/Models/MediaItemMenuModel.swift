@@ -49,7 +49,7 @@ nonisolated struct FaceMenu: Equatable, Sendable {
         case unidentified
     }
 
-    nonisolated struct Group: Equatable, Sendable {
+    nonisolated struct Group: Equatable, Sendable, Identifiable {
         let kind: Kind
         /// Nil for unidentified faces.
         let person: PersonID?
@@ -66,6 +66,14 @@ nonisolated struct FaceMenu: Equatable, Sendable {
         /// `This Is Not Sam` or `Not the Same Person`, `This Is Not a Face`, `Make Key
         /// Photo for Sam`.
         let corrections: [Action]
+        /// Unidentified faces only: the three people the ranking says they most likely are,
+        /// which the Info pane offers as buttons; nil until they are ranked.
+        var suggestions: [Action]?
+
+        /// The group's faces name it: no two groups of one menu share a face.
+        var id: [FaceID] {
+            faces
+        }
 
         /// The group's entry: `Sam`, `Sam · 3 Photos`, `Unnamed Person · 14 Photos & Videos`,
         /// `Unidentified Face`, `Unidentified Faces · 3 Photos`.

@@ -20,7 +20,6 @@ struct PhotoInfoTests {
         #expect(info.value("Kind") == "ARW")
         #expect(info.value("Camera") == PhotoInfo.unknown)
         #expect(info.value("Shutter Speed") == PhotoInfo.unknown)
-        #expect(info.facesRead == false)
         #expect(info.value("Place") == PhotoInfo.unknown)
         #expect(info.value("Size") == PhotoInfo.unknown)
         #expect(info.value("Folder") == "Pictures ▸ Trip ▸ Day 1")
@@ -124,16 +123,19 @@ struct PhotoInfoTests {
         #expect(info.value("Original") == "On This Mac")
     }
 
-    /// A photo read for faces says `No Faces` when it has none; one not read yet says so.
+    /// With no face listed, People says `No Faces` only for a photo the catalog read and
+    /// holds no face of, `Not Checked Yet` for one not read; anything it cannot know — several
+    /// photos, a read not landed or of another photo, faces People does not list — is `—`.
     @Test func facesAreKnownOnlyOnceRead() {
-        let read = MediaAsset(
-            libraryRootPath: still.libraryRootPath, relativePath: still.relativePath, name: nil,
-            contentTypeIdentifier: nil, byteSize: nil, createdAt: nil, contentModifiedAt: nil,
-            facesSourceSize: 10
-        )
-        #expect(PhotoInfo.make(PhotoInfo.Source(id: still, asset: read, kind: .raw)).facesRead == true)
-        #expect(PhotoInfo.make(PhotoInfo.Source(id: still, asset: nil, kind: .raw)).facesRead == false)
-        #expect(PhotoInfo.none(itemCount: 2).facesRead == nil)
+        let other = MediaAssetID(libraryRootPath: still.libraryRootPath, relativePath: MediaRelativePath(rawValue: "IMG_0002.ARW"))
+        let none = PhotoFacesRead(photo: still, isRead: true, faceCount: 0)
+        #expect(PhotoFacesRead.line(for: [still], read: none) == "No Faces")
+        #expect(PhotoFacesRead.line(for: [still], read: PhotoFacesRead(photo: still, isRead: false, faceCount: 0)) == "Not Checked Yet")
+        #expect(PhotoFacesRead.line(for: [still], read: PhotoFacesRead(photo: still, isRead: true, faceCount: 2)) == PhotoInfo.notApplicable)
+        #expect(PhotoFacesRead.line(for: [still], read: nil) == PhotoInfo.notApplicable)
+        #expect(PhotoFacesRead.line(for: [other], read: none) == PhotoInfo.notApplicable)
+        #expect(PhotoFacesRead.line(for: [still, other], read: none) == PhotoInfo.notApplicable)
+        #expect(PhotoFacesRead.line(for: [], read: none) == PhotoInfo.notApplicable)
     }
 
     @Test func noSingleItemReadsDashesInTheStillLayout() {

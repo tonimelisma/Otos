@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import Observation
@@ -34,9 +35,10 @@ struct PeopleViewModelTests {
             FaceID(asset: library.id("clip.mov"), index: 0)
         }
 
-        static func make(in directory: URL, withVideo: Bool = false) async throws -> Fixture {
+        /// `others` are more stills, none read for faces.
+        static func make(in directory: URL, withVideo: Bool = false, others: [String] = []) async throws -> Fixture {
             let library = try await FaceEnrichmentTests.ScannedLibrary.make(
-                in: directory, files: ["a.jpg", "b.jpg"] + (withVideo ? ["clip.mov"] : [])
+                in: directory, files: ["a.jpg", "b.jpg"] + (withVideo ? ["clip.mov"] : []) + others
             )
             try await library.readFaces([
                 library.result(for: "a.jpg", faces: [PeopleStoreTests.face(x: 0.1)]),
@@ -182,7 +184,7 @@ struct PeopleViewModelTests {
         fixture.show(people, scope: .allMedia, grid: [photo])
         fixture.model.selectAssets([photo])
 
-        let menu = try #require(fixture.model.faceMenu())
+        let menu = try #require(fixture.model.targetFaceMenu)
         #expect(menu.groups.map(\.title) == ["Sam", "Unidentified Face"])
         #expect(menu.groups[0].faces == [fixture.like])
         #expect(menu.groups[0].listTitle == "Change to")
@@ -200,11 +202,11 @@ struct PeopleViewModelTests {
         fixture.model.openPerson(fixture.sam)
         fixture.show(people, scope: .person(fixture.sam), grid: [photo, fixture.hers.asset])
         fixture.model.selectAssets([photo])
-        #expect(fixture.model.faceMenu()?.isFlat == false)
-        #expect(fixture.model.faceMenu()?.groups.map(\.title) == ["Sam", "Unidentified Face"])
+        #expect(fixture.model.targetFaceMenu?.isFlat == false)
+        #expect(fixture.model.targetFaceMenu?.groups.map(\.title) == ["Sam", "Unidentified Face"])
         // a.jpg holds only her face: its acts sit at the top level.
         fixture.model.selectAssets([fixture.hers.asset])
-        #expect(fixture.model.faceMenu()?.isFlat == true)
+        #expect(fixture.model.targetFaceMenu?.isFlat == true)
         await fixture.store.shutdown()
     }
 
@@ -220,7 +222,7 @@ struct PeopleViewModelTests {
         fixture.show(people, scope: .allMedia, grid: [photo])
         fixture.model.selectAssets([photo])
 
-        let group = try #require(fixture.model.faceMenu()?.groups.first { $0.person == unnamed })
+        let group = try #require(fixture.model.targetFaceMenu?.groups.first { $0.person == unnamed })
         #expect(group.title == "Unnamed Person · 1 Photo")
         #expect(group.kind == .unnamed)
         #expect(group.listTitle == "Name This Person")
@@ -238,7 +240,7 @@ struct PeopleViewModelTests {
         fixture.model.openPerson(unnamed)
         fixture.show(people, scope: .person(unnamed), grid: [photo])
         fixture.model.selectAssets([photo])
-        let own = try #require(fixture.model.faceMenu())
+        let own = try #require(fixture.model.targetFaceMenu)
         let theirs = try #require(own.groups.first { $0.person == unnamed })
         #expect(theirs.corrections.map(\.title) == ["Not the Same Person", "This Is Not a Face"])
         await fixture.store.shutdown()
@@ -254,7 +256,7 @@ struct PeopleViewModelTests {
         try await fixture.show(fixture.people(), scope: .allMedia, grid: [first, second])
         fixture.model.selectAssets([first, second])
 
-        let menu = try #require(fixture.model.faceMenu())
+        let menu = try #require(fixture.model.targetFaceMenu)
         #expect(menu.groups.map(\.title) == ["Sam · 2 Photos", "Unidentified Face · 1 Photo"])
         #expect(!menu.groups[0].corrections.contains { $0.title.hasPrefix("Make Key Photo") })
 
@@ -267,9 +269,9 @@ struct PeopleViewModelTests {
         #expect(try await fixture.assignment(of: fixture.like) == .held)
         #expect(try await fixture.assignment(of: fixture.stranger) == .held)
         fixture.model.selectAssets([first, second])
-        #expect(fixture.model.faceMenu()?.groups.map(\.title) == ["Sam · 1 Photo"])
+        #expect(fixture.model.targetFaceMenu?.groups.map(\.title) == ["Sam · 1 Photo"])
         fixture.model.selectAssets([second])
-        let one = try #require(fixture.model.faceMenu())
+        let one = try #require(fixture.model.targetFaceMenu)
         #expect(one.groups.map(\.title) == ["Unidentified Face", "Unidentified Face"])
         #expect(one.groups.map(\.faces) == [[fixture.like], [fixture.stranger]])
         await fixture.store.shutdown()
@@ -332,9 +334,62 @@ struct PeopleViewModelTests {
         try await fixture.show(fixture.people(), scope: .people)
         fixture.model.performMediaItemCommand(.someoneElse([fixture.like]))
         #expect(fixture.model.peopleSession.sheet?.subject == .faces([fixture.like]))
+        // b.jpg already holds Sam's face: Save is disabled with the reason (DES-038), and
+        // pressing it anyway changes nothing and keeps the sheet.
+        #expect(fixture.model.personSheetRefusal(.faces([fixture.like]), name: "Sam", birthday: nil) == "Sam is already in this photo")
         fixture.model.savePersonSheet(.faces([fixture.like]), name: "Sam", birthday: nil)
-        // b.jpg already holds Sam's face: the store refuses, and nothing changes.
+        #expect(fixture.model.peopleSession.sheet?.subject == .faces([fixture.like]))
         #expect(try await fixture.assignment(of: fixture.like) != .user(fixture.sam))
+        await fixture.store.shutdown()
+    }
+
+    /// A taken name whose merge the hard rules refuse disables Save with the merge's reason,
+    /// rather than closing the sheet with nothing done; a hidden person's name is refused,
+    /// since no surface but the gallery offers them; a name with another birthday for
+    /// `Someone Else…` asks for the birthday to be cleared.
+    @Test func aSheetSaveThatCannotHappenIsDisabledWithItsReason() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        _ = try await fixture.store.perform(.move([fixture.like], to: fixture.sam))
+        let other = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
+        let ian = try #require(try await fixture.store.perform(.moveToNewPerson([], name: "Ian")).person)
+        _ = try await fixture.store.perform(.setHidden(ian, true))
+        try await fixture.show(fixture.people(), scope: .people)
+
+        let refusal = try #require(fixture.model.mergeRefusal(other, into: fixture.sam))
+        #expect(fixture.model.personSheetRefusal(.person(other), name: "Sam", birthday: nil) == refusal)
+        fixture.model.beginEditingPerson(other)
+        fixture.model.savePersonSheet(.person(other), name: "Sam", birthday: nil)
+        #expect(fixture.model.peopleSession.mergeQuestion == nil)
+        #expect(fixture.model.peopleSession.sheet?.subject == .person(other))
+
+        #expect(fixture.model.personSheetRefusal(.person(other), name: "Ian", birthday: nil) == "Ian is a hidden person")
+        #expect(fixture.model.personSheetRefusal(.faces([fixture.hers]), name: "Ian", birthday: nil) == "Ian is a hidden person")
+        #expect(fixture.model.personSheetRefusal(.faces([fixture.hers]), name: "Sam", birthday: "1990") == "Clear the birthday to give these faces to Sam")
+        #expect(fixture.model.personSheetRefusal(.faces([fixture.hers]), name: "Kai", birthday: "1990") == nil)
+        await fixture.store.shutdown()
+    }
+
+    /// `Someone Else…` with a new name and a birthday makes one person with both, in one act:
+    /// one undo takes the person away and gives the face back.
+    @Test func someoneElseKeepsTheBirthdayTyped() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        try await fixture.show(fixture.people(), scope: .allMedia)
+
+        fixture.model.beginNamingFaces([fixture.stranger])
+        fixture.model.savePersonSheet(.faces([fixture.stranger]), name: "Kai", birthday: "1990")
+        try await Self.waitForStore(fixture.store) {
+            try await fixture.store.peopleSnapshot().people.contains { $0.name == "Kai" }
+        }
+        let kai = try #require(try await fixture.store.peopleSnapshot().people.first { $0.name == "Kai" })
+        #expect(kai.birthday == PersonBirthday("1990"))
+        #expect(try await fixture.assignment(of: fixture.stranger) == .user(kai.id))
+        try await Self.waitForUndo(fixture.model, title: "Undo Name 1 Photo")
+
+        fixture.model.undoLastChange()
+        try await Self.waitForStore(fixture.store) {
+            try await !fixture.store.peopleSnapshot().people.contains { $0.name == "Kai" }
+        }
+        #expect(try await fixture.assignment(of: fixture.stranger)?.isGuessable == true)
         await fixture.store.shutdown()
     }
 
@@ -353,6 +408,202 @@ struct PeopleViewModelTests {
         try await Self.waitForStore(fixture.store) { try await fixture.assignment(of: fixture.stranger)?.isGuessable == true }
         fixture.model.redoLastChange()
         try await Self.waitForStore(fixture.store) { try await fixture.assignment(of: fixture.stranger) == .user(ian) }
+        await fixture.store.shutdown()
+    }
+
+    /// Two acts undone in turn redo in turn: redoing the first keeps the second on the redo
+    /// stack (APP-039), so both come back.
+    @Test func redoingOneOfTwoUndoneActsKeepsTheOther() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let ian = try #require(try await fixture.store.perform(.moveToNewPerson([], name: "Ian")).person)
+        try await fixture.show(fixture.people(), scope: .allMedia)
+
+        fixture.model.nameFaces([fixture.stranger], as: ian)
+        try await Self.waitForUndo(fixture.model, title: "Undo Name 1 Photo")
+        fixture.model.setFavorite(fixture.sam, true)
+        try await Self.waitForUndo(fixture.model, title: "Undo Add to Favorites")
+
+        fixture.model.undoLastChange()
+        fixture.model.undoLastChange()
+        try await Self.waitForStore(fixture.store) {
+            let sam = try await fixture.store.peopleSnapshot().people.first { $0.id == fixture.sam }
+            let assignment = try await fixture.assignment(of: fixture.stranger)
+            return sam?.isFavorite == false && assignment?.isGuessable == true
+        }
+        // Redo the first and let it land, its undo filed, before asking for the second.
+        fixture.model.redoLastChange()
+        try await Self.waitForStore(fixture.store) { try await fixture.assignment(of: fixture.stranger) == .user(ian) }
+        try await Self.waitForUndo(fixture.model, title: "Undo Name 1 Photo")
+        #expect(fixture.model.undoMenuState.redoTitle == "Redo Add to Favorites")
+        fixture.model.redoLastChange()
+        try await Self.waitForStore(fixture.store) {
+            let sam = try await fixture.store.peopleSnapshot().people.first { $0.id == fixture.sam }
+            let assignment = try await fixture.assignment(of: fixture.stranger)
+            return sam?.isFavorite == true && assignment == .user(ian)
+        }
+        await fixture.store.shutdown()
+    }
+
+    /// Redo returns the catalog to the state an act left: a person `Someone Else…` created,
+    /// undone away, comes back under the same ID, so a later act that named them redoes too.
+    @Test func aRedonePersonKeepsTheirLaterActs() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        try await fixture.show(fixture.people(), scope: .allMedia)
+
+        fixture.model.savePersonSheet(.faces([fixture.stranger]), name: "Kai", birthday: nil)
+        try await Self.waitForStore(fixture.store) {
+            try await fixture.store.peopleSnapshot().people.contains { $0.name == "Kai" }
+        }
+        let kai = try #require(try await fixture.store.peopleSnapshot().people.first { $0.name == "Kai" }?.id)
+        try await Self.waitForUndo(fixture.model, title: "Undo Name 1 Photo")
+        try await fixture.show(fixture.people(), scope: .allMedia)
+        fixture.model.setFavorite(kai, true)
+        try await Self.waitForUndo(fixture.model, title: "Undo Add to Favorites")
+
+        fixture.model.undoLastChange()
+        fixture.model.undoLastChange()
+        try await Self.waitForStore(fixture.store) {
+            try await !fixture.store.peopleSnapshot().people.contains { $0.id == kai }
+        }
+        fixture.model.redoLastChange()
+        try await Self.waitForStore(fixture.store) { try await fixture.assignment(of: fixture.stranger) == .user(kai) }
+        try await Self.waitForUndo(fixture.model, title: "Undo Name 1 Photo")
+        fixture.model.redoLastChange()
+        try await Self.waitForStore(fixture.store) {
+            try await fixture.store.peopleSnapshot().people.first { $0.id == kai }?.isFavorite == true
+        }
+        #expect(try await fixture.store.peopleSnapshot().people.first { $0.id == kai }?.name == "Kai")
+        await fixture.store.shutdown()
+    }
+
+    /// The Info pane's People section says `No Faces` only for a photo the catalog read and
+    /// holds none of, `Not Checked Yet` for one not read, and `—` for what it cannot know:
+    /// several photos with none listed. A photo read while it is shown says so without being
+    /// reselected, once the People state its read publishes arrives.
+    @Test func theInfoPanesFacesLineIsTheCatalogsFact() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory(), others: ["c.jpg", "d.jpg"])
+        try await fixture.library.readFaces([fixture.library.result(for: "c.jpg", faces: [])])
+        let read = fixture.library.id("c.jpg")
+        let unread = fixture.library.id("d.jpg")
+        try await fixture.show(fixture.people(), scope: .allMedia, grid: [fixture.hers.asset, read, unread])
+        fixture.model.startFacesReadRefresh()
+        fixture.model.toggleInspector(.info)
+
+        fixture.model.selectAssets([read])
+        try await Self.waitForFacesLine(fixture.model, "No Faces")
+        fixture.model.selectAssets([unread])
+        try await Self.waitForFacesLine(fixture.model, "Not Checked Yet")
+        fixture.model.selectAssets([read, unread])
+        #expect(fixture.model.targetFacesLine == PhotoInfo.notApplicable)
+
+        fixture.model.selectAssets([unread])
+        try await Self.waitForFacesLine(fixture.model, "Not Checked Yet")
+        try await fixture.library.readFaces([fixture.library.result(for: "d.jpg", faces: [])])
+        try await fixture.show(fixture.people(), scope: .allMedia, grid: [fixture.hers.asset, read, unread])
+        try await Self.waitForFacesLine(fixture.model, "No Faces")
+        await fixture.store.shutdown()
+    }
+
+    /// An Info row's outline belongs to the targets and the pane: another photo, or the pane
+    /// hidden, lets go of it, though the pointer that set it reported no exit.
+    @Test func anInfoRowsOutlineEndsWithItsTarget() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        try await fixture.show(fixture.people(), scope: .allMedia, grid: [fixture.hers.asset, fixture.like.asset])
+        fixture.model.toggleInspector(.info)
+        fixture.model.selectAssets([fixture.like.asset])
+
+        fixture.model.outlineFaces([fixture.like])
+        fixture.model.selectAssets([fixture.hers.asset])
+        #expect(fixture.model.outlinedFaces.isEmpty)
+
+        fixture.model.outlineFaces([fixture.hers])
+        fixture.model.toggleInspector(.info)
+        #expect(fixture.model.outlinedFaces.isEmpty)
+        await fixture.store.shutdown()
+    }
+
+    /// An unidentified face offers its likely people as Info buttons only once ranked, so no
+    /// button names a person only gallery order put there.
+    @Test func suggestionsWaitForTheRanking() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let ian = try #require(try await fixture.store.perform(.moveToNewPerson([], name: "Ian")).person)
+        let photo = fixture.stranger.asset
+        try await fixture.show(fixture.people(), scope: .allMedia, grid: [photo])
+        fixture.model.selectAssets([photo])
+
+        let unranked = try #require(fixture.model.targetFaceMenu?.groups.first { $0.kind == .unidentified })
+        #expect(unranked.suggestions == nil)
+        #expect(unranked.list.map(\.title).contains("Ian"))
+
+        fixture.model.faceCandidates = FaceCandidates(photos: [photo], candidates: [
+            fixture.like: [FaceCandidate(person: ian, similarity: 0.5)],
+            fixture.stranger: [FaceCandidate(person: ian, similarity: 0.9)],
+        ])
+        let ranked = try #require(fixture.model.targetFaceMenu?.groups.first { $0.kind == .unidentified })
+        #expect(ranked.suggestions?.map(\.title) == ["Ian"])
+        #expect(ranked.suggestions?.map(\.command) == [.giveTo([fixture.stranger], ian)])
+        await fixture.store.shutdown()
+    }
+
+    /// Up and Down keep the column inside each section's own rows, crossing the Hidden header
+    /// into the next section's first row or the previous one's last.
+    @Test func theArrowKeysKeepTheColumnAcrossTheHiddenHeader() {
+        let people = (1 ... 7).map { PersonID(rawValue: Int64($0)) }
+        // Three columns: visible 1 2 3 / 4 5; hidden 6 7.
+        let sections = [Array(people[0 ..< 5]), Array(people[5 ..< 7])]
+        func step(_ from: Int64?, _ key: PeopleGalleryStep) -> Int64? {
+            key.target(from: from.map { PersonID(rawValue: $0) }, columns: 3, sections: sections)?.rawValue
+        }
+        #expect(step(nil, .down) == 1)
+        #expect(step(2, .down) == 5)
+        #expect(step(3, .down) == 5)
+        #expect(step(5, .down) == 7)
+        #expect(step(4, .down) == 6)
+        #expect(step(7, .down) == 7)
+        #expect(step(6, .up) == 4)
+        #expect(step(7, .up) == 5)
+        #expect(step(5, .up) == 2)
+        #expect(step(1, .up) == 1)
+        #expect(step(5, .right) == 6)
+        #expect(step(6, .left) == 5)
+        #expect(PeopleGalleryStep.down.target(from: nil, columns: 3, sections: []) == nil)
+    }
+
+    /// The gallery's context menu, the menu bar's person items and VoiceOver's actions are one
+    /// value: the selected person's settings, Merge Into the other selected people, Hide and
+    /// Show Photos; a hidden person's is Unhide alone. The toolbar's Merge Into offers only
+    /// named people.
+    @Test func everySurfaceOffersAPersonsActsFromOneMenu() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let unnamed = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
+        let ian = try #require(try await fixture.store.perform(.moveToNewPerson([], name: "Ian")).person)
+        _ = try await fixture.store.perform(.setHidden(ian, true))
+        try await fixture.show(fixture.people(), scope: .people)
+
+        #expect(fixture.model.galleryActingPersonMenu == .unavailable)
+        fixture.model.selectPeople(fixture.sam, modifiers: [])
+        fixture.model.selectPeople(unnamed, modifiers: .command)
+        let menu = fixture.model.galleryActingPersonMenu
+        #expect(menu.settings.map(\.title) == ["Add Name…", "Set Birthday…", "Add to Favorites"])
+        #expect(menu.mergeInto?.map(\.act) == [.mergeInto(fixture.sam)])
+        #expect(menu.visibility.title == "Hide")
+        #expect(menu.open?.title == "Show Photos")
+        #expect(menu.accessibilityItems.map(\.title).contains("Merge Into Sam"))
+
+        fixture.model.performGalleryPersonAct(.mergeInto(fixture.sam))
+        #expect(fixture.model.peopleSession.mergeQuestion == PeopleMergeQuestion(from: unnamed, into: fixture.sam))
+        fixture.model.answerMerge(false)
+
+        let hidden = try #require(fixture.model.galleryPersonMenu(ian))
+        #expect(hidden.settings.isEmpty)
+        #expect(hidden.mergeInto == nil)
+        #expect(hidden.visibility.act == .setHidden(false))
+        #expect(hidden.accessibilityItems.map(\.title) == ["Unhide"])
+
+        fixture.model.openPerson(unnamed)
+        try await fixture.show(fixture.people(), scope: .person(unnamed))
+        #expect(fixture.model.shownPersonMenu?.mergeInto?.map(\.act) == [.mergeInto(fixture.sam)])
+        #expect(fixture.model.shownPersonMenu?.open == nil)
         await fixture.store.shutdown()
     }
 
@@ -383,12 +634,12 @@ struct PeopleViewModelTests {
         fixture.show(people, scope: .allMedia, grid: [fixture.hers.asset, video])
 
         fixture.model.selectAssets([video])
-        let menu = try #require(fixture.model.faceMenu())
+        let menu = try #require(fixture.model.targetFaceMenu)
         #expect(menu.groups.map(\.title) == ["Sam"])
         #expect(menu.groups[0].corrections.map(\.title) == ["This Is Not Sam", "This Is Not a Face"])
 
         fixture.model.selectAssets([fixture.hers.asset, video])
-        #expect(fixture.model.faceMenu()?.groups.first?.title == "Sam · 2 Photos & Videos")
+        #expect(fixture.model.targetFaceMenu?.groups.first?.title == "Sam · 2 Photos & Videos")
 
         fixture.model.outlineFaces([fixture.hers, fixture.inVideo])
         #expect(fixture.model.outlinedFaceBoxes.keys.sorted { $0.relativePath.rawValue < $1.relativePath.rawValue } == [fixture.hers.asset])
@@ -401,6 +652,16 @@ struct PeopleViewModelTests {
         var changes = await store.changeNotifications().makeAsyncIterator()
         while try await !condition() {
             guard await changes.next() != nil else { return }
+        }
+    }
+
+    /// Waits for the Info pane's People line to read `line`.
+    static func waitForFacesLine(_ model: CatalogWindowViewModel, _ line: String) async throws {
+        let lines = Observations { @MainActor [weak model] in
+            model?.targetFacesLine
+        }
+        for await value in lines where value == line {
+            return
         }
     }
 

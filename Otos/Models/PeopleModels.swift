@@ -77,9 +77,6 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     /// whose faces are not read from their current stored preview, or whose preview is still
     /// to come, and a library's videos whose frames are not yet read.
     let unchecked: MediaCount
-    /// The store's People revision the snapshot was read under: it includes every act whose
-    /// `PeopleActOutcome.revision` is at most this.
-    let revision: UInt64
 
     /// Whether the user has said nothing about `person`: no name, birthday, favourite,
     /// hidden mark or key photo. A person Otos found and the user never touched is forgotten
@@ -282,8 +279,6 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
     let unchecked: MediaCount
     /// Faces found that are still faces (not marked `This Is Not a Face`).
     let faceCount: Int
-    /// The People revision the state was built from (`PeopleSnapshot.revision`).
-    var revision: UInt64 = 0
 
     static let empty = CatalogPeopleState(people: [], unchecked: MediaCount(), faceCount: 0)
 
@@ -411,8 +406,8 @@ nonisolated struct SelectionFaces: Equatable, Sendable {
 nonisolated enum PeopleAct: Equatable, Sendable {
     /// The faces become this person's, on the user's word (`Change to ▸`, `Assign to ▸`).
     case move([FaceID], to: PersonID)
-    /// The faces become one new person's, with this name (`Someone Else…`).
-    case moveToNewPerson([FaceID], name: String?)
+    /// The faces become one new person's, with this name and birthday (`Someone Else…`).
+    case moveToNewPerson([FaceID], name: String?, birthday: PersonBirthday? = nil)
     /// The faces lose their person and are never given one by Otos again (`This Is Not Sam`,
     /// `Not the Same Person`).
     case removeName([FaceID])
@@ -445,7 +440,7 @@ nonisolated enum PeopleAct: Equatable, Sendable {
 
     var faceCount: Int {
         switch self {
-        case let .move(faces, _), let .moveToNewPerson(faces, _), let .removeName(faces), let .notAFace(faces):
+        case let .move(faces, _), let .moveToNewPerson(faces, _, _), let .removeName(faces), let .notAFace(faces):
             faces.count
         case .makeKeyPhoto:
             1
@@ -483,7 +478,28 @@ nonisolated struct PeopleRestore: Equatable, Sendable {
 nonisolated struct PeopleActOutcome: Equatable, Sendable {
     let restore: PeopleRestore
     let person: PersonID?
-    /// The People revision this act committed as; a People state whose `revision` is at
-    /// least this shows it.
-    let revision: UInt64
+}
+
+/// What the catalog says about one photo's faces (`CatalogStore.facesRead(for:)`): whether
+/// they have been read, and how many of the faces stored for it are still faces, of visible
+/// and hidden people alike.
+nonisolated struct PhotoFacesRead: Equatable, Sendable {
+    let photo: MediaAssetID
+    let isRead: Bool
+    let faceCount: Int
+
+    /// What the Info pane's People section says for `photos` when it lists no face: `Not
+    /// Checked Yet` and `No Faces` only for the one photo this read is of, as the catalog
+    /// holds them; `—` for several photos, before the read lands, and for a photo with faces
+    /// People does not list (not yet published, or a hidden person's), since `No Faces`
+    /// there would be a fact no one read.
+    static func line(for photos: [MediaAssetID], read: PhotoFacesRead?) -> String {
+        guard photos.count == 1, let read, read.photo == photos.first else {
+            return PhotoInfo.notApplicable
+        }
+        if !read.isRead {
+            return "Not Checked Yet"
+        }
+        return read.faceCount == 0 ? "No Faces" : PhotoInfo.notApplicable
+    }
 }

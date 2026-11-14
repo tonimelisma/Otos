@@ -127,9 +127,6 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
     let coordinate: PlaceCoordinate?
     /// The place name looked up from `coordinate`, once it arrives.
     var placeName: String?
-    /// Whether the item's faces have been read, so a photo with no face reads `No Faces`
-    /// and one not read yet `Not Checked Yet`; nil with no single item.
-    var facesRead: Bool?
     /// The item's saved edit and its upright size, which place a face's outline on the
     /// edited photo in the loupe.
     var editRecipe: EditRecipe?
@@ -216,7 +213,6 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
             captured: capturedValue(asset: asset, metadata: metadata, calendar: calendar),
             coordinate: location.map { PlaceCoordinate(latitude: $0.latitude, longitude: $0.longitude) },
             placeName: nil,
-            facesRead: asset?.facesSourceSize != nil,
             editRecipe: source.editRecipe,
             uprightSize: source.nativePixelSize,
             recognized: Recognized(overlay: source.overlay, labelNames: source.labelNames),

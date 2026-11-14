@@ -86,7 +86,6 @@ struct DuplicatesView: View {
             }
             .background(DesignPalette.content(for: colorScheme))
             .focusable()
-            .focusEffectDisabled()
             .focused($listFocused)
             .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
                 guard let direction = DuplicatesTileOrder.Direction(press.key),

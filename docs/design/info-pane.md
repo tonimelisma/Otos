@@ -64,7 +64,12 @@ has a location to show, as a control whose subject does not exist is omitted (DE
 - **One item:** every value the catalog holds, `Unknown` for one it lacks. The place name
   reads `Unknown` until MapKit names the coordinate.
 - **No item / several items:** `No Selection` or the count, every value `—` but People,
-  which lists the people in the selected photos and their unidentified faces.
+  which lists the people in the selected photos and their unidentified faces, `—` when it
+  lists none.
+- **People, one photo:** its faces; with none listed, `No Faces` once the catalog says the
+  photo was checked and holds none, `Not Checked Yet` before, and `—` while unknown or when
+  its only faces are a hidden person's. A photo checked while it is shown fills in without
+  being reselected.
 - **In This Photo:** `Not Checked Yet` until search has read the item's thumbnail;
   `Nothing Recognized` when it found no confident label and no certain text; the labels,
   then `Text` and its lines when there are any (only a still's preview is read for text, so

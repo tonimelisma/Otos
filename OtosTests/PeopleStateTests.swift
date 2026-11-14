@@ -36,8 +36,7 @@ struct PeopleStateTests {
             ],
             likeness: likeness,
             keyPhotos: keyPhotos,
-            unchecked: MediaCount(photos: unchecked),
-            revision: 0
+            unchecked: MediaCount(photos: unchecked)
         )
     }
 
@@ -232,8 +231,12 @@ struct PeopleStateTests {
         #expect(index.sheetRefusal(.person(Self.sam), name: "  ", birthday: nil) == "Enter a name")
         #expect(index.sheetRefusal(.person(Self.sam), name: "Sam", birthday: "20") == "Enter a year, or a full date")
         #expect(index.sheetRefusal(.person(Self.ian), name: "Ian", birthday: "2030") == "1 photo of Ian is from before this date")
-        // A name another person has is not a refusal: saving it asks to merge.
-        #expect(index.sheetRefusal(.person(Self.sam), name: "Ian", birthday: nil) == nil)
+        // A name another person has asks to merge, so Save is refused as that merge is.
+        #expect(index.sheetRefusal(.person(Self.sam), name: "Ian", birthday: nil) == index.mergeRefusal(Self.sam, into: Self.ian))
+        #expect(index.sheetRefusal(.person(Self.sam), name: "Ian", birthday: nil) == "2 photos are from before the birthday")
+        // The birthday typed is the one the merge is judged with: cleared, nothing predates it.
+        #expect(index.mergeRefusal(Self.ian, into: Self.sam) != nil)
+        #expect(index.sheetRefusal(.person(Self.ian), name: "Sam", birthday: nil) == nil)
         #expect(index.person(named: "Ian", excluding: Self.sam) == Self.ian)
     }
 

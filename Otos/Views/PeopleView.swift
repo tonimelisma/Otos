@@ -127,16 +127,15 @@ struct PeopleView: View {
                 }
             }
             .focusable()
-            .focusEffectDisabled()
             .focused($listFocused)
             .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
-                let step = switch press.key {
-                case .leftArrow: -1
-                case .rightArrow: 1
-                case .upArrow: -columns
-                default: columns
+                let step: PeopleGalleryStep = switch press.key {
+                case .leftArrow: .left
+                case .rightArrow: .right
+                case .upArrow: .up
+                default: .down
                 }
-                guard let reached = actions.moveCursor(step, press.modifiers.contains(.shift)) else { return .ignored }
+                guard let reached = actions.moveCursor(step, columns, press.modifiers.contains(.shift)) else { return .ignored }
                 proxy.scrollTo(reached)
                 return .handled
             }
@@ -157,8 +156,6 @@ struct PeopleView: View {
             person: person,
             edge: Self.edge,
             isSelected: session.selectedPeople.contains(person.id),
-            selectedPeople: session.selectedPeople,
-            people: people,
             images: images,
             derivedImageDirectory: derivedImageDirectory,
             actions: actions,
@@ -232,8 +229,6 @@ private struct PersonCell: View {
     let person: PersonSummary
     let edge: CGFloat
     let isSelected: Bool
-    let selectedPeople: Set<PersonID>
-    let people: CatalogPeopleState
     let images: FaceTileImages?
     let derivedImageDirectory: URL?
     let actions: PeopleActions
@@ -279,11 +274,21 @@ private struct PersonCell: View {
         } isTargeted: { targeted in
             isTargeted = targeted
         }
-        .contextMenu { menu }
+        .contextMenu {
+            if let menu = actions.menu(person.id) {
+                PersonMenuContent(menu: menu) { actions.perform($0, person.id) }
+            }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(PeoplePresentation.accessibilityLabel(person))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { actions.open(person.id) }
+        // The context menu's acts, in its words, so VoiceOver reaches every one (DES-080).
+        .accessibilityActions {
+            ForEach(actions.menu(person.id)?.accessibilityItems ?? [], id: \.title) { item in
+                Button(item.title) { actions.perform(item.act, person.id) }
+            }
+        }
     }
 
     @ViewBuilder private var face: some View {
@@ -331,31 +336,41 @@ private struct PersonCell: View {
             }
         }
     }
+}
 
-    @ViewBuilder private var menu: some View {
-        if person.isHidden {
-            Button("Unhide") { actions.setHidden(person.id, false) }
-        } else {
-            Button(person.name == nil ? "Add Name…" : "Rename…") { actions.edit(person.id) }
-            Button("Set Birthday…") { actions.edit(person.id) }
-            Button(person.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
-                actions.setFavorite(person.id, !person.isFavorite)
-            }
-            let targets = people.visiblePeople.filter { selectedPeople.contains($0.id) && $0.id != person.id }
-            if selectedPeople.contains(person.id), !targets.isEmpty {
-                Menu("Merge Into") {
-                    ForEach(targets) { target in
-                        Button(target.displayName) { actions.askMerge(person.id, target.id) }
-                            .disabled(actions.mergeRefusal(person.id, target.id) != nil)
-                            .help(actions.mergeRefusal(person.id, target.id) ?? "")
-                    }
+/// A person's settings as one menu renders them: the gallery's context menu, the menu bar,
+/// and the toolbar menu of a person's photos (`PersonMenu`). A disabled item says why in its
+/// tooltip (DES-038).
+struct PersonMenuContent: View {
+    let menu: PersonMenu
+    let perform: (PersonMenu.Act) -> Void
+
+    var body: some View {
+        ForEach(menu.settings, id: \.title) { item in
+            button(item)
+        }
+        if let targets = menu.mergeInto {
+            Menu("Merge Into") {
+                ForEach(targets, id: \.title) { item in
+                    button(item)
                 }
             }
-            Divider()
-            Button("Hide") { actions.setHidden(person.id, true) }
-            Divider()
-            Button("Show Photos") { actions.open(person.id) }
+            .disabled(targets.isEmpty)
         }
+        if !menu.settings.isEmpty {
+            Divider()
+        }
+        button(menu.visibility)
+        if let open = menu.open {
+            Divider()
+            button(open)
+        }
+    }
+
+    private func button(_ item: PersonMenu.Item) -> some View {
+        Button(item.title) { perform(item.act) }
+            .disabled(item.refusal != nil)
+            .help(item.refusal ?? "")
     }
 }
 

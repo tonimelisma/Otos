@@ -371,6 +371,13 @@ public struct OtosApp: App {
                     catalogViewModel.moveDuplicatesToTrash()
                 }
                 .disabled(!catalogViewModel.canMoveDuplicatesToTrash)
+                Divider()
+                // People (ADR 0047): the gallery's context menu for the person selected there,
+                // in its own words, so the keyboard reaches every act on a person (DES-080).
+                // No keys of their own.
+                PersonMenuContent(menu: catalogViewModel.galleryActingPersonMenu) { act in
+                    catalogViewModel.performGalleryPersonAct(act)
+                }
             }
             CommandMenu("Library") {
                 Button("Reorganize Library…") {

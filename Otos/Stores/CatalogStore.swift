@@ -296,10 +296,6 @@ actor CatalogStore {
     /// it lives as long as the undo stack that names the batch.
     private var carriedWorkByBatch: [MediaTrashBatchID: [DuplicateCarryRecord]] = [:]
     private var changeContinuations: [UUID: AsyncStream<CatalogStoreChange>.Continuation] = [:]
-    /// People writes committed this process (`perform`, `restore`), bumped after each commit.
-    /// A People snapshot carries the value it read under, so a reader can tell whether it
-    /// already includes a given act (ADR 0047).
-    private var peopleRevision: UInt64 = 0
     private var planningChangeContinuations: [UUID: AsyncStream<RootPlanningChange>.Continuation] = [:]
     private var changeDeliveries: [UUID: DeliveryCount] = [:]
     private var planningChangeDeliveries: [UUID: DeliveryCount] = [:]
@@ -797,6 +793,31 @@ extension CatalogStore {
         }
     }
 
+    /// Whether `id`'s faces have been read and how many of its stored faces are still faces,
+    /// whoever's they are, from one read, so the Info pane's `No Faces` and `Not Checked Yet`
+    /// are the catalog's facts (APP-041). Nil when the asset is not cataloged.
+    func facesRead(for id: MediaAssetID) async throws -> PhotoFacesRead? {
+        guard let rootRowID = roots[id.libraryRootPath]?.rowID else {
+            return nil
+        }
+        let dbWriter = try database()
+        return try await dbWriter.read { db -> PhotoFacesRead? in
+            try Row.fetchOne(
+                db,
+                sql: """
+                SELECT m.faces_source_size IS NOT NULL AS is_read,
+                    (SELECT COUNT(*) FROM face AS f
+                     WHERE f.library_root_id = m.library_root_id AND f.relative_path = m.relative_path
+                       AND f.is_not_face = 0) AS faces
+                FROM media_asset AS m WHERE m.library_root_id = ? AND m.relative_path = ?
+                """,
+                arguments: [rootRowID, id.relativePath.rawValue]
+            ).map { row in
+                PhotoFacesRead(photo: id, isRead: row["is_read"], faceCount: row["faces"])
+            }
+        }
+    }
+
     /// The overlay the Info pane shows for `id` (APP-041): its companion files, the import it
     /// arrived in, whether it carries an edit, and what search recognised in it — the confident
     /// scene labels of its current embedding row and the certain lines of its current text
@@ -910,9 +931,6 @@ extension CatalogStore {
         let faceRootIDs = availableLibraryPaths.compactMap { path in
             roots[path].flatMap { $0.root.kind.readsFaces ? $0.rowID : nil }
         }.sorted()
-        // Read before the transaction: every write it counts committed before it was bumped,
-        // so the snapshot includes at least those.
-        let revision = peopleRevision
         let dbWriter = try database()
         return try await dbWriter.read { db in
             var rejections: [FaceRowKey: Set<PersonID>] = [:]
@@ -1001,8 +1019,7 @@ extension CatalogStore {
                 likeness: likeness,
                 keyPhotos: keyPhotos,
                 photoOfStackMember: photoOfStackMember,
-                unchecked: Self.uncheckedForFaces(rootIDs: faceRootIDs, db: db),
-                revision: revision
+                unchecked: Self.uncheckedForFaces(rootIDs: faceRootIDs, db: db)
             )
         }
     }
@@ -1319,13 +1336,13 @@ extension CatalogStore {
             case let .move(faces, person):
                 given = person
                 try Self.give(faces.map(key), to: person, db: db)
-            case let .moveToNewPerson(faces, name):
+            case let .moveToNewPerson(faces, name, birthday):
                 let keys = try faces.map(key)
                 guard Set(keys.map(\.photo)).count == keys.count else { throw PeopleRuleViolation.twoFacesOfOnePhoto }
                 if let name, try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM person WHERE name = ?", arguments: [name]) ?? 0 > 0 {
                     throw PeopleRuleViolation.nameTaken
                 }
-                let person = try Self.insertPerson(name: name, birthday: nil, db: db)
+                let person = try Self.insertPerson(name: name, birthday: birthday, db: db)
                 created.append(person)
                 given = person
                 try Self.give(keys, to: person, db: db)
@@ -1375,11 +1392,10 @@ extension CatalogStore {
             }
             return (PeopleRestore(people: people, faces: before.faces, rejections: before.rejections), given)
         }
-        peopleRevision &+= 1
-        let outcome = PeopleActOutcome(restore: applied.restore, person: applied.person, revision: peopleRevision)
+        let outcome = PeopleActOutcome(restore: applied.restore, person: applied.person)
         notifyCatalogChanged()
         OtosLog.catalog.noticeOperation("people.act", phase: "applied", fields: [
-            "act": act.logName, "faces": "\(act.faceCount)", "revision": "\(outcome.revision)",
+            "act": act.logName, "faces": "\(act.faceCount)",
         ])
         return outcome
     }
@@ -1448,7 +1464,6 @@ extension CatalogStore {
             // removed does not, so the redo removes them again.
             return current
         }
-        peopleRevision &+= 1
         notifyCatalogChanged()
         return redo
     }
@@ -1678,7 +1693,7 @@ extension CatalogStore {
             let keys = try photos(named)
             let involved = try [person] + people(of: keys)
             return try (keys + keyPhotos(of: involved), involved)
-        case let .moveToNewPerson(named, _), let .removeName(named), let .notAFace(named):
+        case let .moveToNewPerson(named, _, _), let .removeName(named), let .notAFace(named):
             let keys = try photos(named)
             let involved = try people(of: keys)
             return try (keys + keyPhotos(of: involved), involved)

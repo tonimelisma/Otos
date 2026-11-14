@@ -82,8 +82,8 @@ struct SidebarView: View {
             // moment a fixed library does, as On This Day does, so they never arrive under the
             // pointer.
             if showsPeople {
-                // The People list (ADR 0047); the row stays highlighted while a person
-                // or the review under it is open.
+                // The People gallery (ADR 0047); the row stays highlighted while a
+                // person's photos under it are open.
                 SidebarRow(systemImage: "person.crop.square", title: "People") {
                     EmptyView()
                 }

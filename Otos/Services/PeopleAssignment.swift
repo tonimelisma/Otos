@@ -288,8 +288,7 @@ nonisolated enum PeopleStateBuilder {
             people: people,
             photoFaces: photoFaces,
             unchecked: snapshot.unchecked,
-            faceCount: snapshot.faces.count,
-            revision: snapshot.revision
+            faceCount: snapshot.faces.count
         )
     }
 

@@ -9,9 +9,9 @@ import OSLog
 // gallery, the sheet and the merge question, a person's photos (the `.person` leaf), the
 // faces of the targeted photos with the people each could be, and every act. An act is one
 // `PeopleAct`, delivered in order on `peopleIntentStream` to `CatalogStore.perform(_:)`,
-// the one write path; its undo writes back the record the store returned, and its redo
-// performs the act again. Buttons, keys, menus, drags and VoiceOver actions all call the
-// intents below.
+// the one write path; its undo writes back the record the store returned, and each undo or
+// redo after that writes back what the one before it replaced (`PeopleUndoRecord`).
+// Buttons, keys, menus, drags and VoiceOver actions all call the intents below.
 
 /// Add Name…, New Name…, Rename… or Set Birthday… on one person, or Someone Else… for faces.
 nonisolated struct PersonSheetRequest: Equatable, Sendable, Identifiable {
@@ -67,6 +67,12 @@ nonisolated struct FaceCandidates: Equatable, Sendable {
     static let none = FaceCandidates(photos: [], candidates: [:])
 }
 
+/// The targets and the pane the targets' face menu was built for.
+struct TargetFacesKey: Equatable {
+    let photos: [MediaAssetID]
+    let showsInfo: Bool
+}
+
 /// People window state.
 struct PeopleSession: Equatable {
     var selectedPeople: Set<PersonID> = []
@@ -75,12 +81,30 @@ struct PeopleSession: Equatable {
     var mergeQuestion: PeopleMergeQuestion?
 }
 
-/// A People act on its way to the store, or the undo of one; a redo is the act again.
+/// A People act on its way to the store, or an undo or redo of one.
 nonisolated enum PeopleIntent: Sendable {
     /// `title` is the act's name on the undo stack, decided when the act is submitted, from
     /// the state it changes (`undoTitle(for:)`).
     case perform(PeopleAct, title: String)
-    case restore(PeopleRestore, act: PeopleAct)
+    /// Undo or redo: writes `record` back. `act` and `undoing` only name it in the log.
+    case flip(PeopleUndoRecord, act: PeopleAct, undoing: Bool)
+}
+
+/// What one act's undo and redo entries write back: the state the act, or the last undo or
+/// redo of it, replaced. Each flip writes it and keeps what that write replaced
+/// (`CatalogStore.restore`), so a redo returns the catalog to the state the act left rather
+/// than performing the act again — a person the act created comes back under the same ID,
+/// and every later act naming them redoes too. Both entries of one act share it; only the
+/// People intent consumer reads or writes it, in submission order, so a flip always finds
+/// what the flip before it kept. Nil once a flip failed: what it would write is no longer
+/// known, so later flips of the act change nothing and say so in the log.
+@MainActor
+final class PeopleUndoRecord {
+    var restore: PeopleRestore?
+
+    init(_ restore: PeopleRestore) {
+        self.restore = restore
+    }
 }
 
 /// Lookups over one People state, and which acts the hard rules allow (ADR 0047). Pure,
@@ -126,6 +150,12 @@ nonisolated struct PeopleIndex {
 
     /// Why `from` cannot merge into `into`, or nil when it can.
     func mergeRefusal(_ from: PersonID, into: PersonID) -> String? {
+        mergeRefusal(from, into: into, sourceBirthday: summaries[from]?.birthday)
+    }
+
+    /// The same, with `from` holding `sourceBirthday`: the Person sheet's Save sets the
+    /// birthday typed before it asks to merge.
+    private func mergeRefusal(_ from: PersonID, into: PersonID, sourceBirthday: PersonBirthday?) -> String? {
         guard from != into, let source = summaries[from], let target = summaries[into] else {
             return "Choose another person"
         }
@@ -133,7 +163,7 @@ nonisolated struct PeopleIndex {
         if shared > 0 {
             return "\(source.displayName) and \(target.displayName) are both in \(PeopleText.count(shared, "photo"))"
         }
-        if let birthday = (target.birthday ?? source.birthday)?.seconds {
+        if let birthday = (target.birthday ?? sourceBirthday)?.seconds {
             let before = Set((source.userFaces + target.userFaces).filter { ($0.captureSeconds ?? .infinity) < birthday }.map(\.id.asset)).count
             if before > 0 {
                 return "\(PeopleText.count(before, "photo")) \(before == 1 ? "is" : "are") from before the birthday"
@@ -142,22 +172,53 @@ nonisolated struct PeopleIndex {
         return nil
     }
 
-    /// Why the Person sheet cannot save, or nil when it can. A name another person has is
-    /// not a refusal: saving it asks to merge them. `birthday` is the sheet's text, which
-    /// must be a year or a full date.
+    /// Why the Person sheet cannot save, or nil when it can, so Save is never pressed for
+    /// nothing (DES-038). `birthday` is the sheet's text, which must be a year or a full date.
+    /// A name another visible person has is not itself a refusal: for a person, Save sets the
+    /// birthday typed and asks to merge, refused as that merge is; for faces, it gives them
+    /// to that person, refused as that move is, and a birthday there would be another
+    /// person's, so it must be cleared. A hidden person's name is refused, as no surface but
+    /// the gallery offers them.
     func sheetRefusal(_ subject: PersonSheetRequest.Subject, name text: String, birthday: String?) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             return "Enter a name"
         }
-        guard let birthday else { return nil }
-        guard let seconds = PersonBirthday(birthday)?.seconds else {
-            return "Enter a year, or a full date"
+        var parsed: PersonBirthday?
+        if let birthday {
+            guard let value = PersonBirthday(birthday) else { return "Enter a year, or a full date" }
+            parsed = value
         }
-        if case let .person(person) = subject {
-            let before = Set(summaries[person]?.userFaces.filter { ($0.captureSeconds ?? .infinity) < seconds }.map(\.id.asset) ?? []).count
-            if before > 0 {
-                return "\(PeopleText.count(before, "photo")) of \(name(person)) \(before == 1 ? "is" : "are") from before this date"
+        switch subject {
+        case let .person(person):
+            if let seconds = parsed?.seconds {
+                let before = Set(summaries[person]?.userFaces.filter { ($0.captureSeconds ?? .infinity) < seconds }.map(\.id.asset) ?? []).count
+                if before > 0 {
+                    return "\(PeopleText.count(before, "photo")) of \(name(person)) \(before == 1 ? "is" : "are") from before this date"
+                }
+            }
+            if isHiddenName(trimmed, excluding: person) {
+                return "\(trimmed) is a hidden person"
+            }
+            if let holder = self.person(named: trimmed, excluding: person) {
+                return mergeRefusal(person, into: holder, sourceBirthday: parsed)
+            }
+        case let .faces(ids):
+            let faces = ids.compactMap(face(_:))
+            if isHiddenName(trimmed, excluding: nil) {
+                return "\(trimmed) is a hidden person"
+            }
+            if let holder = person(named: trimmed) {
+                if let parsed, parsed != summaries[holder]?.birthday {
+                    return "Clear the birthday to give these faces to \(trimmed)"
+                }
+                return moveRefusal(faces, to: holder)
+            }
+            if let seconds = parsed?.seconds {
+                let before = Set(faces.filter { ($0.tile.captureSeconds ?? .infinity) < seconds }.map(\.id.asset)).count
+                if before > 0 {
+                    return "\(PeopleText.count(before, "photo")) \(before == 1 ? "is" : "are") from before this date"
+                }
             }
         }
         return nil
@@ -165,7 +226,18 @@ nonisolated struct PeopleIndex {
 
     /// The visible person called `name`, other than `excluding`.
     func person(named name: String, excluding: PersonID? = nil) -> PersonID? {
-        state.people.first { $0.name == name && $0.id != excluding }?.id
+        state.visiblePeople.first { $0.name == name && $0.id != excluding }?.id
+    }
+
+    /// Whether a hidden person other than `excluding` is called `name`: no two people share
+    /// a name, so the store refuses it.
+    private func isHiddenName(_ name: String, excluding: PersonID?) -> Bool {
+        state.hiddenPeople.contains { $0.name == name && $0.id != excluding }
+    }
+
+    /// A face of the published People state.
+    func face(_ id: FaceID) -> PhotoFace? {
+        state.photoFaces[id.asset]?.first { $0.id == id }
     }
 }
 
@@ -240,7 +312,7 @@ extension CatalogWindowViewModel {
             kept.people = filter.people.intersection(visible)
             setMediaFilter(kept)
         }
-        refreshFaceCandidates()
+        refreshTargetFaces()
         OtosLog.ui.noticeOperation("people.state", phase: "applied", fields: [
             "people": "\(people.people.count)",
             "hidden": "\(people.hiddenPeople.count)",
@@ -296,12 +368,12 @@ extension CatalogWindowViewModel {
         peopleSession.cursor = hit
     }
 
-    /// The arrow keys on the gallery: the person `step` places away in its order.
-    func moveGalleryCursor(by step: Int, extending: Bool) -> PersonID? {
-        let order = galleryOrder
-        guard !order.isEmpty else { return nil }
-        let index = peopleSession.cursor.flatMap { order.firstIndex(of: $0) }.map { $0 + step } ?? 0
-        let target = order[min(max(index, 0), order.count - 1)]
+    /// The arrow keys on the gallery, `columns` people to a row: the person the key reaches
+    /// (`PeopleGalleryStep.target`).
+    func moveGalleryCursor(_ step: PeopleGalleryStep, columns: Int, extending: Bool) -> PersonID? {
+        let people = state.people ?? .empty
+        let sections = [people.visiblePeople.map(\.id), people.hiddenPeople.map(\.id)].filter { !$0.isEmpty }
+        guard let target = step.target(from: peopleSession.cursor, columns: columns, sections: sections) else { return nil }
         selectPeople(target, modifiers: extending ? .shift : [])
         return target
     }
@@ -368,28 +440,35 @@ extension CatalogWindowViewModel {
         peopleIndex.sheetRefusal(subject, name: name, birthday: birthday)
     }
 
-    /// The sheet's Save. A name another person has asks whether they are the same person;
-    /// for `Someone Else…` it gives the faces to that person.
+    /// The sheet's Save, enabled only while `personSheetRefusal` is nil. A name another
+    /// person has asks whether they are the same person; for `Someone Else…` it gives the
+    /// faces to that person, and a new name makes a new person with the birthday typed, one
+    /// act and one undo.
     func savePersonSheet(_ subject: PersonSheetRequest.Subject, name: String, birthday: String?) {
         guard personSheetRefusal(subject, name: name, birthday: birthday) == nil else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         peopleSession.sheet = nil
+        // The refusal above has read the text as a birthday.
+        let parsed = birthday.flatMap(PersonBirthday.init)
         switch subject {
         case let .person(person):
             guard let summary = peopleIndex.summaries[person] else { return }
             if let holder = peopleIndex.person(named: trimmed, excluding: person) {
-                askMerge(person, into: holder)
+                // The birthday typed is saved, then the name asks whether they are one person;
+                // the refusal above judged that merge with this birthday.
+                if parsed != summary.birthday {
+                    submitPeopleAct(.edit(person, name: summary.name, birthday: parsed))
+                }
+                peopleSession.mergeQuestion = PeopleMergeQuestion(from: person, into: holder)
                 return
             }
-            // The refusal above has read the text as a birthday.
-            let parsed = birthday.flatMap(PersonBirthday.init)
             guard trimmed != summary.name || parsed != summary.birthday else { return }
             submitPeopleAct(.edit(person, name: trimmed, birthday: parsed))
         case let .faces(faces):
             if let holder = peopleIndex.person(named: trimmed) {
                 submitPeopleAct(.move(faces, to: holder))
             } else {
-                submitPeopleAct(.moveToNewPerson(faces, name: trimmed))
+                submitPeopleAct(.moveToNewPerson(faces, name: trimmed, birthday: parsed))
             }
         }
     }
@@ -429,6 +508,91 @@ extension CatalogWindowViewModel {
         submitPeopleAct(.merge(question.from, into: question.into))
     }
 
+    // MARK: - A person's settings menu
+
+    /// The gallery's context menu for `person`: their settings, `Merge Into ▸` the other
+    /// selected people while they are selected with others, Hide, and Show Photos; a hidden
+    /// person's is Unhide alone.
+    func galleryPersonMenu(_ person: PersonID) -> PersonMenu? {
+        guard let summary = peopleIndex.summaries[person] else { return nil }
+        let selected = peopleSession.selectedPeople
+        let others = (state.people?.visiblePeople ?? []).filter { selected.contains($0.id) && $0.id != person }
+        return personMenu(summary, mergeTargets: selected.contains(person) && !others.isEmpty ? others : nil, opens: true)
+    }
+
+    /// The person the menu bar's person items act on while the gallery shows: the one the
+    /// keys last reached, if selected, else the one person selected.
+    var galleryActingPerson: PersonID? {
+        guard showsPeopleList else { return nil }
+        let selected = peopleSession.selectedPeople
+        if let cursor = peopleSession.cursor, selected.contains(cursor) {
+            return cursor
+        }
+        return selected.count == 1 ? selected.first : nil
+    }
+
+    /// The menu bar's person items: the gallery's context menu for the person they act on,
+    /// so the keyboard reaches every act the pointer does (DES-080); every item disabled
+    /// while there is none.
+    var galleryActingPersonMenu: PersonMenu {
+        galleryActingPerson.flatMap(galleryPersonMenu) ?? .unavailable
+    }
+
+    /// A menu-bar person item: the same intent the gallery's context menu calls.
+    func performGalleryPersonAct(_ act: PersonMenu.Act) {
+        guard let person = galleryActingPerson else { return }
+        performPersonAct(act, on: person)
+    }
+
+    /// The toolbar menu of a person's photos: their settings, `Merge Into ▸` every other
+    /// visible person with a name (an unnamed one reads `Unnamed Person`, so no row could be
+    /// told from another), and Hide.
+    var shownPersonMenu: PersonMenu? {
+        guard let person = shownPerson else { return nil }
+        let others = (state.people?.visiblePeople ?? []).filter { $0.id != person.id && $0.name != nil }
+        return personMenu(person, mergeTargets: others, opens: false)
+    }
+
+    private func personMenu(_ person: PersonSummary, mergeTargets: [PersonSummary]?, opens: Bool) -> PersonMenu {
+        guard !person.isHidden else {
+            return PersonMenu(
+                settings: [], mergeInto: nil,
+                visibility: PersonMenu.Item(title: "Unhide", act: .setHidden(false)), open: nil
+            )
+        }
+        return PersonMenu(
+            settings: [
+                PersonMenu.Item(title: person.name == nil ? FaceActTitle.addName : "Rename…", act: .edit),
+                PersonMenu.Item(title: "Set Birthday…", act: .edit),
+                PersonMenu.Item(title: person.isFavorite ? "Remove from Favorites" : "Add to Favorites", act: .setFavorite(!person.isFavorite)),
+            ],
+            mergeInto: mergeTargets?.map { target in
+                PersonMenu.Item(
+                    title: target.displayName, act: .mergeInto(target.id),
+                    refusal: peopleIndex.mergeRefusal(person.id, into: target.id)
+                )
+            },
+            visibility: PersonMenu.Item(title: "Hide", act: .setHidden(true)),
+            open: opens ? PersonMenu.Item(title: "Show Photos", act: .open) : nil
+        )
+    }
+
+    /// Every item of every `PersonMenu`, wherever it renders.
+    func performPersonAct(_ act: PersonMenu.Act, on person: PersonID) {
+        switch act {
+        case .edit:
+            beginEditingPerson(person)
+        case let .setFavorite(favorite):
+            setFavorite(person, favorite)
+        case let .mergeInto(target):
+            askMerge(person, into: target)
+        case let .setHidden(hidden):
+            setHidden(person, hidden)
+        case .open:
+            openPerson(person)
+        }
+    }
+
     func setFavorite(_ person: PersonID, _ favorite: Bool) {
         guard let summary = peopleIndex.summaries[person], summary.isFavorite != favorite else { return }
         submitPeopleAct(.setFavorite(person, favorite))
@@ -448,7 +612,7 @@ extension CatalogWindowViewModel {
     // MARK: - Faces of the targeted photos
 
     /// The faces of the targeted photos, with the people each could be once ranked.
-    var targetFaces: SelectionFaces {
+    private var targetFaces: SelectionFaces {
         let photos = targetIDs(.current)
         var faces = (state.people ?? .empty).selectionFaces(for: photos)
         if faceCandidates.photos == photos {
@@ -457,12 +621,25 @@ extension CatalogWindowViewModel {
         return faces
     }
 
-    /// Asks `PeopleAssignment` which people the targeted photos' faces could be. Called by
-    /// every writer of the target (through `refreshPhotoInfo`) and when People changes; a
-    /// ranking for photos no longer targeted is dropped.
-    func refreshFaceCandidates() {
-        faceCandidatesTask?.cancel()
+    /// Rebuilds what the photo menus and the Info pane offer for the targets' faces
+    /// (`targetFaceMenu`), asks `PeopleAssignment` to rank them again, and rings the Info
+    /// pane's read of whether they were checked. Called by every writer of the target
+    /// (through `refreshPhotoInfo`, which the pane's showing and hiding also call) and by
+    /// every new People state, so the menu value is built once per change of what it is
+    /// built from, never in a view's `body`. A ranking for photos no longer targeted is
+    /// dropped. An outline the Info pane's rows held belongs to the targets and the pane it
+    /// was pointed at in: either changing lets go of it, since the row the pointer rested on
+    /// is gone and reports no exit.
+    func refreshTargetFaces() {
         let photos = targetIDs(.current)
+        let key = TargetFacesKey(photos: photos, showsInfo: showsInfo)
+        if key != targetFacesKey {
+            targetFacesKey = key
+            outlineFaces([])
+        }
+        rebuildTargetFaceMenu()
+        facesReadDoorbell?.yield()
+        faceCandidatesTask?.cancel()
         guard !photos.isEmpty, !(state.people ?? .empty).selectionFaces(for: photos).faces.isEmpty else {
             faceCandidates = .none
             faceCandidatesTask = nil
@@ -477,9 +654,79 @@ extension CatalogWindowViewModel {
         }
     }
 
+    /// Builds `targetFaceMenu` from the targets, People and the ranking as they are now; a
+    /// new ranking (`faceCandidates`) rebuilds it as it lands.
+    func rebuildTargetFaceMenu() {
+        let menu = faceMenu(for: targetFaces)
+        if targetFaceMenu != menu {
+            targetFaceMenu = menu
+        }
+    }
+
+    /// What the Info pane's People section says when it lists no face (APP-041).
+    var targetFacesLine: String {
+        PhotoFacesRead.line(for: targetIDs(.current), read: photoFacesRead)
+    }
+
+    /// The one photo whose faces the Info pane says were checked, while it shows one.
+    private var facesReadTarget: MediaAssetID? {
+        guard showsInfo else { return nil }
+        let photos = targetIDs(.current)
+        return photos.count == 1 ? photos.first : nil
+    }
+
+    /// Keeps `photoFacesRead` the catalog's word on the Info pane's photo: each ring reads
+    /// whether its faces were read and how many it holds, and applies the read if that photo
+    /// is still the one shown. `refreshTargetFaces` rings it for every new target and People
+    /// state, so a photo read while it is shown says so without being reselected (the
+    /// reader's write is what publishes the next People state). One loop on a newest-wins
+    /// doorbell; a ring during a read is kept, so the last change is always followed by a
+    /// fresh read. It holds the view model weakly across each wait and ends with it. A failed
+    /// read is logged and changes nothing (ADR 0032 rule 4).
+    func startFacesReadRefresh() {
+        guard facesReadTask == nil else { return }
+        let (rings, doorbell) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        facesReadDoorbell = doorbell
+        let store = catalogStore
+        facesReadTask = Task { [weak self] in
+            for await _ in rings {
+                guard let target = self?.facesReadTarget else {
+                    if self == nil {
+                        break
+                    }
+                    continue
+                }
+                let read: PhotoFacesRead?
+                do {
+                    read = try await store.facesRead(for: target)
+                } catch {
+                    OtosLog.ui.errorOperation("people.facesRead", phase: "readFailed", fields: [
+                        "id": target.relativePath.rawValue, "error": String(describing: error),
+                    ])
+                    continue
+                }
+                guard !Task.isCancelled, let self else {
+                    break
+                }
+                guard facesReadTarget == target, photoFacesRead != read else {
+                    continue
+                }
+                photoFacesRead = read
+                OtosLog.ui.debugOperation("people.facesRead", phase: "applied", fields: [
+                    "id": target.relativePath.rawValue,
+                    "read": read.map { "\($0.isRead)" } ?? "uncataloged",
+                    "faces": read.map { "\($0.faceCount)" } ?? "none",
+                ])
+            }
+        }
+    }
+
     /// How many people a face list offers before `Someone Else…` or `New Name…` (HIG: about
     /// five items in a submenu).
     static let faceListLength = 5
+
+    /// How many likely people an unidentified face in the Info pane offers as buttons.
+    static let faceSuggestionLength = 3
 
     /// The people a face list offers for `faces`: the five they most likely are, most likely
     /// first, filled in gallery order. Only visible people with a name, since several unnamed
@@ -494,6 +741,16 @@ extension CatalogWindowViewModel {
             }
             .prefix(Self.faceListLength)
             .map(\.element)
+    }
+
+    /// The people an unidentified face in the Info pane offers as buttons: the three the
+    /// ranking says it most likely is, under the list's rules. Nil until every one of
+    /// `faces` is ranked, so no button stands for a person only gallery order put there, and
+    /// none moves under the pointer when the ranking lands.
+    func rankedPeople(for faces: [PhotoFace], in selection: SelectionFaces, allowed: (PersonID) -> Bool) -> [PersonSummary]? {
+        guard faces.allSatisfy({ selection.candidates[$0.id] != nil }) else { return nil }
+        let named = Dictionary(uniqueKeysWithValues: (state.people?.visiblePeople ?? []).filter { $0.name != nil }.map { ($0.id, $0) })
+        return Array(selection.likelyPeople(for: faces).compactMap { named[$0] }.filter { allowed($0.id) }.prefix(Self.faceSuggestionLength))
     }
 
     /// `Change to ▸` or `Assign to ▸` a person: on the user's word, the faces are theirs.
@@ -527,8 +784,8 @@ extension CatalogWindowViewModel {
     // MARK: - Delivery
 
     /// Hands an act to the one consumer.
-    private func submitPeopleAct(_ act: PeopleAct, title: String? = nil) {
-        let title = title ?? undoTitle(for: act)
+    private func submitPeopleAct(_ act: PeopleAct) {
+        let title = undoTitle(for: act)
         OtosLog.ui.noticeOperation("people.act", phase: "submit", fields: [
             "act": act.logName, "faces": "\(act.faceCount)",
         ])
@@ -540,7 +797,7 @@ extension CatalogWindowViewModel {
     /// it changes: the person a face is losing, the photos of a person being named.
     func undoTitle(for act: PeopleAct) -> String {
         switch act {
-        case let .move(faces, _), let .moveToNewPerson(faces, _):
+        case let .move(faces, _), let .moveToNewPerson(faces, _, _):
             return FaceActTitle.name(MediaCount(tiles: faces.compactMap(tile(of:))))
         case let .removeName(faces):
             let person = faces.first.flatMap { face in
@@ -594,12 +851,20 @@ extension CatalogWindowViewModel {
                             "act": act.logName, "faces": "\(act.faceCount)", "error": String(describing: error),
                         ])
                     }
-                case let .restore(record, act):
+                case let .flip(record, act, undoing):
+                    let phase = undoing ? "undone" : "redone"
+                    guard let restore = record.restore else {
+                        OtosLog.ui.errorOperation("people.act", phase: "\(phase).skipped", fields: [
+                            "act": act.logName, "reason": "earlierFlipFailed",
+                        ])
+                        continue
+                    }
                     do {
-                        try await store.restore(record)
-                        OtosLog.ui.noticeOperation("people.act", phase: "undone", fields: ["act": act.logName])
+                        record.restore = try await store.restore(restore)
+                        OtosLog.ui.noticeOperation("people.act", phase: phase, fields: ["act": act.logName])
                     } catch {
-                        OtosLog.ui.errorOperation("people.act", phase: "undoFailed", fields: [
+                        record.restore = nil
+                        OtosLog.ui.errorOperation("people.act", phase: "\(phase).failed", fields: [
                             "act": act.logName, "error": String(describing: error),
                         ])
                     }
@@ -611,25 +876,31 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// Registers the act's undo.
+    /// Registers the act's undo. Explicit groups: registration happens on a store
+    /// completion, not inside an AppKit event, so the manager's per-event grouping has
+    /// nothing to close.
     private func didPerformPeopleAct(_ act: PeopleAct, title: String, outcome: PeopleActOutcome) {
+        let record = PeopleUndoRecord(outcome.restore)
         windowUndoManager.beginUndoGrouping()
         windowUndoManager.registerUndo(withTarget: self) { model in
-            model.undoPeopleAct(act, title: title, restore: outcome.restore)
+            model.flipPeopleAct(record, act: act, title: title)
         }
         windowUndoManager.setActionName(title)
         windowUndoManager.endUndoGrouping()
         publishUndoState()
     }
 
-    /// Runs inside `UndoManager.undo()`: files the redo synchronously — the act again — then
-    /// writes back what the act changed.
-    private func undoPeopleAct(_ act: PeopleAct, title: String, restore: PeopleRestore) {
+    /// Runs inside `UndoManager.undo()` and `redo()`: files the opposite entry synchronously
+    /// — the manager is undoing or redoing right now, so it lands on the other stack and the
+    /// rest of that stack is kept — then writes the act's record back through the serial
+    /// lane. Undo and redo are the same write: each restores what the last one replaced.
+    private func flipPeopleAct(_ record: PeopleUndoRecord, act: PeopleAct, title: String) {
+        let undoing = windowUndoManager.isUndoing
         windowUndoManager.registerUndo(withTarget: self) { model in
-            model.submitPeopleAct(act, title: title)
+            model.flipPeopleAct(record, act: act, title: title)
         }
         windowUndoManager.setActionName(title)
-        submitPeopleIntent(.restore(restore, act: act))
+        submitPeopleIntent(.flip(record, act: act, undoing: undoing))
     }
 
     // MARK: - Face outlines
@@ -697,14 +968,14 @@ extension CatalogWindowViewModel {
     var peopleActions: PeopleActions {
         PeopleActions(
             select: { [weak self] person, modifiers in self?.selectPeople(person, modifiers: modifiers) },
-            moveCursor: { [weak self] step, extending in self?.moveGalleryCursor(by: step, extending: extending) },
+            moveCursor: { [weak self] step, columns, extending in self?.moveGalleryCursor(step, columns: columns, extending: extending) },
             open: { [weak self] person in self?.openPerson(person) },
             edit: { [weak self] person in self?.beginEditingPerson(person) },
             askMerge: { [weak self] from, into in self?.askMerge(from, into: into) },
             mergeRefusal: { [weak self] from, into in self?.mergeRefusal(from, into: into) },
             answerMerge: { [weak self] merge in self?.answerMerge(merge) },
-            setFavorite: { [weak self] person, favorite in self?.setFavorite(person, favorite) },
-            setHidden: { [weak self] person, hidden in self?.setHidden(person, hidden) }
+            menu: { [weak self] person in self?.galleryPersonMenu(person) },
+            perform: { [weak self] act, person in self?.performPersonAct(act, on: person) }
         )
     }
 }
@@ -712,12 +983,118 @@ extension CatalogWindowViewModel {
 /// The People gallery's intents, as values the passive views call.
 struct PeopleActions {
     let select: (PersonID?, NSEvent.ModifierFlags) -> Void
-    let moveCursor: (Int, Bool) -> PersonID?
+    /// An arrow key, the gallery's columns, and whether Shift extends the selection.
+    let moveCursor: (PeopleGalleryStep, Int, Bool) -> PersonID?
     let open: (PersonID) -> Void
     let edit: (PersonID) -> Void
     let askMerge: (PersonID, PersonID) -> Void
     let mergeRefusal: (PersonID, PersonID) -> String?
     let answerMerge: (Bool) -> Void
-    let setFavorite: (PersonID, Bool) -> Void
-    let setHidden: (PersonID, Bool) -> Void
+    /// The person's context menu and VoiceOver actions.
+    let menu: (PersonID) -> PersonMenu?
+    let perform: (PersonMenu.Act, PersonID) -> Void
+}
+
+/// An arrow key in the People gallery.
+nonisolated enum PeopleGalleryStep: Sendable {
+    case left, right, up, down
+
+    /// The person the key reaches from `cursor` in a grid of `columns` people to a row,
+    /// whose `sections` (everyone visible, then the hidden people under their header) each
+    /// start their own rows. Left and Right step through the gallery's order across the
+    /// header; Up and Down keep the column, crossing into the next section's first row or
+    /// the previous one's last, and stop on the last person or the first. With no cursor,
+    /// the first person; with nobody, nil.
+    func target(from cursor: PersonID?, columns: Int, sections: [[PersonID]]) -> PersonID? {
+        let order = sections.flatMap(\.self)
+        guard let first = order.first else { return nil }
+        guard let cursor,
+              let section = sections.firstIndex(where: { $0.contains(cursor) }),
+              let index = sections[section].firstIndex(of: cursor)
+        else { return first }
+        let columns = max(columns, 1)
+        let row = sections[section]
+        let column = index % columns
+        switch self {
+        case .left, .right:
+            let flat = order.firstIndex(of: cursor) ?? 0
+            return order[min(max(flat + (self == .left ? -1 : 1), 0), order.count - 1)]
+        case .up:
+            if index >= columns {
+                return row[index - columns]
+            }
+            guard section > 0 else { return row[0] }
+            let above = sections[section - 1]
+            let lastRowStart = (above.count - 1) / columns * columns
+            return above[min(lastRowStart + column, above.count - 1)]
+        case .down:
+            if index + columns < row.count {
+                return row[index + columns]
+            }
+            // A partial last row below: its last person, as Finder does.
+            if index / columns < (row.count - 1) / columns {
+                return row[row.count - 1]
+            }
+            guard section + 1 < sections.count else { return row[row.count - 1] }
+            let below = sections[section + 1]
+            return below[min(column, below.count - 1)]
+        }
+    }
+}
+
+/// One person's settings as a menu offers them (`docs/design/people.md`): the gallery's
+/// context menu, the menu bar's items for the person selected there, the toolbar menu of a
+/// person's photos, and a gallery cell's VoiceOver actions render this one value, built by
+/// the view model, so their words and rules cannot drift.
+nonisolated struct PersonMenu: Equatable, Sendable {
+    nonisolated enum Act: Equatable, Sendable {
+        /// Add Name…, Rename… and Set Birthday…: the Person sheet.
+        case edit
+        case setFavorite(Bool)
+        /// Asks whether they are the same person first.
+        case mergeInto(PersonID)
+        case setHidden(Bool)
+        /// Show Photos.
+        case open
+    }
+
+    nonisolated struct Item: Equatable, Sendable {
+        let title: String
+        let act: Act
+        /// Why the act is disabled, as its tooltip (DES-038); nil while it is enabled.
+        var refusal: String?
+    }
+
+    /// Add Name… or Rename…, Set Birthday…, Add to Favorites or Remove from Favorites; none
+    /// for a hidden person.
+    let settings: [Item]
+    /// `Merge Into ▸`'s people; nil where it is not offered, empty where it is disabled.
+    let mergeInto: [Item]?
+    /// Hide, or Unhide for a hidden person.
+    let visibility: Item
+    /// Show Photos, in the gallery.
+    let open: Item?
+
+    /// The menu bar's person items while the gallery has no person selected: the visible
+    /// person's items, each disabled with the reason.
+    static let unavailable: PersonMenu = {
+        let reason = "Select a person in People"
+        return PersonMenu(
+            settings: [
+                Item(title: "Rename…", act: .edit, refusal: reason),
+                Item(title: "Set Birthday…", act: .edit, refusal: reason),
+                Item(title: "Add to Favorites", act: .setFavorite(true), refusal: reason),
+            ],
+            mergeInto: [],
+            visibility: Item(title: "Hide", act: .setHidden(true), refusal: reason),
+            open: Item(title: "Show Photos", act: .open, refusal: reason)
+        )
+    }()
+
+    /// Every enabled act in menu order, as VoiceOver offers them: a merge reads `Merge Into
+    /// Sam`.
+    var accessibilityItems: [Item] {
+        let merges = (mergeInto ?? []).map { Item(title: "Merge Into \($0.title)", act: $0.act, refusal: $0.refusal) }
+        return (settings + merges + [visibility] + (open.map { [$0] } ?? [])).filter { $0.refusal == nil }
+    }
 }

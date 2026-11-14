@@ -100,7 +100,7 @@ struct InfoPaneView: View {
                         map(coordinate)
                     }
                     if section.id == .people {
-                        InfoPanePeopleSection(people: people, facesRead: shown.facesRead)
+                        InfoPanePeopleSection(people: people)
                     } else if section.id == .recognized {
                         InfoPaneRecognizedSection(recognized: shown.recognized, search: search)
                     } else {
@@ -248,13 +248,15 @@ private struct ChipFlowLayout: Layout {
     }
 }
 
-/// What the Info pane's People section shows and does (ADR 0047): the faces of the targeted
-/// photos, and their groups as the photo menus offer them, worded once by the view model
-/// (`FaceMenu`), so the two surfaces say the same thing.
+/// What the Info pane's People section shows and does (ADR 0047): the targets' face groups
+/// as the photo menus offer them, worded once by the view model (`FaceMenu`), so the two
+/// surfaces say the same thing.
 struct InfoPanePeople {
-    let faces: SelectionFaces
     /// The photo menus' groups; nil while the targets hold no face People shows.
     let menu: FaceMenu?
+    /// What stands in the groups' place when there are none: `No Faces`, `Not Checked Yet` or
+    /// `—`, as the view model knows it (`PhotoFacesRead.line`).
+    let line: String
     let images: FaceTileImages?
     let derivedImageDirectory: URL?
     /// Every face act, as the photo menus perform it.
@@ -267,30 +269,28 @@ struct InfoPanePeople {
 /// its crop with its person's name, `Add Name…` and every photo of them for a person without
 /// one, or `Unidentified`; for several, each person with how many of the photos hold them,
 /// and the unidentified faces where the menus offer them. An unidentified face offers the
-/// three people it most likely is as buttons, and every row's menu holds its group's acts
-/// in the same words and sections (DES-113, `docs/design/people.md`).
+/// three people the ranking says it most likely is as buttons, in a row whose place is kept
+/// while the ranking is owed, and every row's menu holds its group's acts in the same words
+/// and sections (DES-113, `docs/design/people.md`). Leaving the section, by folding it or
+/// hiding the pane, lets go of the outline a row held.
 private struct InfoPanePeopleSection: View {
     let people: InfoPanePeople?
-    let facesRead: Bool?
-
-    /// The likely people an unidentified face shows as buttons.
-    private static let suggestions = 3
 
     var body: some View {
-        if let people, !people.faces.photos.isEmpty {
-            if people.faces.faces.isEmpty {
-                Text(people.faces.photos.count == 1 && facesRead == false ? "Not Checked Yet" : "No Faces")
-                    .foregroundStyle(.secondary)
-            } else {
+        Group {
+            if let people, let groups = people.menu?.groups, !groups.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array((people.menu?.groups ?? []).enumerated()), id: \.offset) { _, group in
+                    ForEach(groups) { group in
                         row(people, group)
                     }
                 }
+            } else {
+                Text(people?.line ?? PhotoInfo.notApplicable)
+                    .foregroundStyle(.secondary)
             }
-        } else {
-            Text(PhotoInfo.notApplicable)
-                .foregroundStyle(.secondary)
+        }
+        .onDisappear {
+            people?.hover([])
         }
     }
 
@@ -330,17 +330,17 @@ private struct InfoPanePeopleSection: View {
                     }
                 }
                 if group.kind == .unidentified {
-                    // The people it most likely is, one click each.
-                    let likely = group.list.filter {
-                        if case .giveTo = $0.command {
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    if !likely.isEmpty {
+                    // The people it most likely is, one click each. The row keeps a button's
+                    // height while the ranking is owed or names no one (DES-053), so nothing
+                    // moves under the pointer when it lands.
+                    ZStack(alignment: .leading) {
+                        Button(" ") {}
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .hidden()
+                            .accessibilityHidden(true)
                         HStack(spacing: 4) {
-                            ForEach(Array(likely.prefix(Self.suggestions).enumerated()), id: \.offset) { _, action in
+                            ForEach(group.suggestions ?? [], id: \.title) { action in
                                 Button(action.title) { people.perform(action.command) }
                                     .buttonStyle(.bordered)
                                     .controlSize(.small)

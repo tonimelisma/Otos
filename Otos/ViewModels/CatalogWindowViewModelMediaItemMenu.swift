@@ -38,7 +38,7 @@ extension CatalogWindowViewModel {
             canReveal: !targets.isEmpty,
             canTrash: canMoveTargetedMediaToTrash
         )
-        model.faces = faceMenu()
+        model.faces = targetFaceMenu
         return model
     }
 
@@ -46,9 +46,8 @@ extension CatalogWindowViewModel {
     /// visible person's in the order their faces come, then the unidentified ones — one
     /// group per face in one photo, and across several photos one group only when no photo
     /// holds more than one, so every act means the faces it names. A lone group sits at the
-    /// top level (`FaceMenu.isFlat`).
-    func faceMenu() -> FaceMenu? {
-        let selection = targetFaces
+    /// top level (`FaceMenu.isFlat`). Built by `refreshTargetFaces` into `targetFaceMenu`.
+    func faceMenu(for selection: SelectionFaces) -> FaceMenu? {
         guard !selection.faces.isEmpty else { return nil }
         let shown = shownPerson?.id
         let severalPhotos = selection.photos.count > 1
@@ -113,17 +112,19 @@ extension CatalogWindowViewModel {
     /// photo, the face most like them.
     private func unidentifiedGroup(_ faces: [PhotoFace], in selection: SelectionFaces, media: MediaCount?) -> FaceMenu.Group {
         let ids = faces.map(\.id)
-        let list = likelyPeople(for: faces, in: selection) { peopleIndex.moveRefusal(faces, to: $0) == nil }
-            .map { person in
-                let given = faces.count == 1 ? ids : selection.unidentifiedFacesToName(as: person.id)
-                return FaceMenu.Action(title: person.displayName, command: .giveTo(given, person.id), faces: given)
-            }
+        let allowed = { [peopleIndex] (person: PersonID) in peopleIndex.moveRefusal(faces, to: person) == nil }
+        let assign = { (person: PersonSummary) in
+            let given = faces.count == 1 ? ids : selection.unidentifiedFacesToName(as: person.id)
+            return FaceMenu.Action(title: person.displayName, command: .giveTo(given, person.id), faces: given)
+        }
         return FaceMenu.Group(
             kind: .unidentified, person: nil, faces: ids, tile: faces.first?.tile,
             media: media,
             listTitle: FaceActTitle.assignTo,
-            list: list + [FaceMenu.Action(title: FaceActTitle.someoneElse, command: .someoneElse(ids), faces: ids)],
-            corrections: [FaceMenu.Action(title: FaceActTitle.notAFace, command: .notAFace(ids), faces: ids)]
+            list: likelyPeople(for: faces, in: selection, allowed: allowed).map(assign)
+                + [FaceMenu.Action(title: FaceActTitle.someoneElse, command: .someoneElse(ids), faces: ids)],
+            corrections: [FaceMenu.Action(title: FaceActTitle.notAFace, command: .notAFace(ids), faces: ids)],
+            suggestions: rankedPeople(for: faces, in: selection, allowed: allowed)?.map(assign)
         )
     }
 

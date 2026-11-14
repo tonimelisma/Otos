@@ -34,8 +34,8 @@ struct ContentView: View {
             InfoPaneView(
                 info: viewModel.photoInfo,
                 people: InfoPanePeople(
-                    faces: viewModel.targetFaces,
-                    menu: viewModel.faceMenu(),
+                    menu: viewModel.targetFaceMenu,
+                    line: viewModel.targetFacesLine,
                     images: viewModel.faceTileImages,
                     derivedImageDirectory: viewModel.thumbnailDirectory,
                     perform: viewModel.performMediaItemCommand,
@@ -411,8 +411,8 @@ struct ContentView: View {
                 Text(message)
             }
         }
-        // Add Name…, Rename…, Set Birthday… and New Person…, and the merge any of them, a
-        // drop or Merge Into ▸ asks first (ADR 0047).
+        // Add Name…, Rename…, Set Birthday…, New Name… and Someone Else…, and the merge any of
+        // them, a drop or Merge Into ▸ asks first (ADR 0047).
         .modifier(PersonSheetHost(viewModel: viewModel))
         .modifier(PeopleMergeAlert(
             question: viewModel.peopleSession.mergeQuestion,
@@ -876,22 +876,9 @@ private struct PersonToolbarMenu: View {
 
     var body: some View {
         Menu {
-            Button(person.name == nil ? "Add Name…" : "Rename…") { viewModel.beginEditingPerson(person.id) }
-            Button("Set Birthday…") { viewModel.beginEditingPerson(person.id) }
-            Button(person.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
-                viewModel.setFavorite(person.id, !person.isFavorite)
+            if let menu = viewModel.shownPersonMenu {
+                PersonMenuContent(menu: menu) { viewModel.performPersonAct($0, on: person.id) }
             }
-            let others = (viewModel.state.people?.visiblePeople ?? []).filter { $0.id != person.id }
-            Menu("Merge Into") {
-                ForEach(others) { target in
-                    Button(target.displayName) { viewModel.askMerge(person.id, into: target.id) }
-                        .disabled(viewModel.mergeRefusal(person.id, into: target.id) != nil)
-                        .help(viewModel.mergeRefusal(person.id, into: target.id) ?? "")
-                }
-            }
-            .disabled(others.isEmpty)
-            Divider()
-            Button("Hide") { viewModel.setHidden(person.id, true) }
         } label: {
             Label(person.displayName, systemImage: "person.crop.circle")
         }

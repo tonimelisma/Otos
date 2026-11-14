@@ -122,7 +122,8 @@ different days.`, `Otos found no faces in your photos.`, or the shared `No Avail
   It exists only in this leaf, so it never stands beside Back to Map. Beside it, a menu
   titled with the person's name and
   `person.crop.circle`: `Add Name…`/`Rename…`, `Set Birthday…`, `Add to Favorites`/`Remove
-  from Favorites`, `Merge Into ▸`, `Hide`.
+  from Favorites`, `Merge Into ▸` (the other visible people with a name: an unnamed one reads
+  `Unnamed Person`, so no row could be told from another), `Hide`.
 - **Likeness sort:** `Likeness — Least Like Sam First` and `Likeness — Most Like Sam
   First` in the Sort menu, beside Date, Filename and Size: how like the person each photo's
   face of theirs is, so the faces most likely wrong come first. Disabled, never hidden,
@@ -233,12 +234,18 @@ The first section (DES-088), `People`:
   face tile, the name, a link-style `Add Name…` with `14 photos` (L3) for a person without
   one, or `Unidentified` (secondary), and an `ellipsis.circle` menu with the face acts, the
   same words and sections as the photo menu's entry. An unidentified face shows the three
-  people it most likely is as small bordered buttons, one click each. `No Faces` once
-  checked with none, `Not Checked Yet` before.
+  people the ranking says it most likely is as small bordered buttons, one click each; until
+  it is ranked the row keeps the buttons' height empty, so no button names a person only the
+  gallery's order put there or moves under the pointer. `No Faces` once the catalog says the
+  photo was checked and holds none, `Not Checked Yet` before; `—` while that is unknown, or
+  when its only faces are a hidden person's. A photo checked while it is shown says so without
+  being reselected.
 - **Several photos:** each visible person in them with `12 photos` (an unnamed person: every
   photo of them), and the unidentified faces with `5 photos` and the three people they most
   likely are as buttons, under the photo menu's rule: only when no photo holds more than one.
-- **Hover:** pointing at a row outlines its faces on their photos (see Face outlines).
+  With none listed, `—`.
+- **Hover:** pointing at a row outlines its faces on their photos (see Face outlines). Another
+  target, folding the section or hiding the pane lets go of it.
 
 ## Person sheet
 
@@ -253,10 +260,18 @@ The first section (DES-088), `People`:
 | Footnote: `Faces from before this date are never given to Sam.` | L3 |
 
 - **Buttons:** `Save` (default) and `Cancel`.
-- **Save is disabled** with the reason as its tooltip: `Enter a name`; `Enter a year, or a
-  full date`; `4 photos of Sam are from before this date` (photos the user gave her).
-- **A name another person has** is not refused: for a person, Save asks `Are these the same
-  person?` and merges on `Merge`; for `Someone Else…`, the faces go to that person.
+- **Save is disabled** with the reason as its tooltip (DES-038), never pressed for nothing:
+  `Enter a name`; `Enter a year, or a full date`; `4 photos of Sam are from before this
+  date` (photos the user gave her); for `Someone Else…` with a new name, `2 photos are from
+  before this date`; a name a hidden person has, `Ian is a hidden person`; and a taken name
+  whose act the hard rules refuse, that act's reason (`Sam and Ian are both in 3 photos`,
+  `Sam is already in this photo`).
+- **A name another visible person has** is otherwise not refused: for a person, Save keeps
+  the birthday typed, then asks `Are these the same person?` and merges on `Merge`; for
+  `Someone Else…`, the faces go to that person, and a birthday other than theirs is refused
+  with `Clear the birthday to give these faces to Sam`.
+- **`Someone Else…` with a new name** makes one new person with the name and birthday typed:
+  one act, one undo.
 
 ## Appearance and accessibility
 
@@ -264,10 +279,16 @@ The first section (DES-088), `People`:
   the accent only on selection, the face outline and focus rings (DES-024).
 - **Grayscale (DES-029):** selection is a border; a favourite is a glyph; a hidden person
   is dimmed and under its own header.
-- **Keyboard (DES-080, DES-081):** in the gallery the arrows move, Return opens, Escape
-  clears the selection; every face act is in a menu reachable from the keyboard.
-- **VoiceOver:** a cell reads `Sam, 312 photos` with `favorite` or `hidden` when so; the
-  Info pane's face menu is `Actions for Sam`.
+- **Keyboard (DES-080, DES-081):** in the gallery the arrows move — Up and Down keep the
+  column within the visible people's rows and the hidden people's, crossing the `Hidden`
+  header into the nearest row — Return opens, Escape clears the selection, and the gallery
+  draws its focus ring. The context menu's acts for the selected person (the one the keys
+  last reached) are also at the end of the menu bar's Photo menu, in the same words, with no
+  keys of their own, disabled with `Select a person in People` while none is selected; every
+  face act is in a menu reachable from the keyboard.
+- **VoiceOver:** a cell reads `Sam, 312 photos` with `favorite` or `hidden` when so, opens
+  as its default action, and offers the context menu's acts as its actions (`Merge Into
+  Sam` for each merge); the Info pane's face menu is `Actions for Sam`.
 - **Reduce Motion (DES-075):** nothing on these surfaces translates.
 
 ## Undo
@@ -277,8 +298,10 @@ how many photos it changed: `Undo Name 3 Photos` (Change to, Assign to, Someone 
 naming an unnamed person), `Undo This Is Not Sam`, `Undo Not the Same Person`, `Undo This
 Is Not a Face`, `Undo Make Key Photo for Sam`, `Undo Edit Person`, `Undo Merge`, `Undo
 Hide`, `Undo Unhide`, `Undo Add to Favorites`, `Undo Remove from Favorites`. An undo writes
-back exactly what the act changed; the guesses that followed from it are rebuilt by
-assignment (ADR 0047). Entries live for the session.
+back exactly what the act changed, and a redo writes back the state the act left, so a person
+the act created returns as themselves and the acts after it redo too; undoing several acts
+and redoing one keeps the rest to redo. The guesses that followed are rebuilt by assignment
+(ADR 0047). Entries live for the session.
 
 ## Owner decisions
 

@@ -137,8 +137,24 @@ final class CatalogWindowViewModel {
     /// gallery. Window state, not catalog state.
     var peopleSession = PeopleSession()
     /// The people each face of the targets could be, as `PeopleAssignment` last ranked them
-    /// for those photos (`refreshFaceCandidates`).
-    var faceCandidates = FaceCandidates.none
+    /// for those photos (`refreshTargetFaces`).
+    var faceCandidates = FaceCandidates.none {
+        didSet { rebuildTargetFaceMenu() }
+    }
+
+    /// The targets' faces as the photo menus and the Info pane offer them, built once per
+    /// change of the targets, People or the ranking (`refreshTargetFaces`); nil while the
+    /// targets hold no face People shows.
+    var targetFaceMenu: FaceMenu?
+    /// Whether the Info pane's photo was read for faces and how many it holds, as the catalog
+    /// last said (`startFacesReadRefresh`).
+    var photoFacesRead: PhotoFacesRead?
+    /// The targets and pane `targetFaceMenu` was last built for: a change lets go of an Info
+    /// row's outline.
+    @ObservationIgnored var targetFacesKey: TargetFacesKey?
+    @ObservationIgnored var facesReadTask: Task<Void, Never>?
+    /// Rings `facesReadTask`: every new target and People state.
+    @ObservationIgnored var facesReadDoorbell: AsyncStream<Void>.Continuation?
     /// The faces outlined on their photos: the face the pointer is over in the Info pane, or
     /// the faces of the face-menu item highlighted in a photo's context menu.
     var outlinedFaces: [FaceID] = []
@@ -870,6 +886,8 @@ final class CatalogWindowViewModel {
         photoInfoTask?.cancel()
         recognizedRefreshTask?.cancel()
         recognizedDoorbell?.finish()
+        facesReadTask?.cancel()
+        facesReadDoorbell?.finish()
         faceCandidatesTask?.cancel()
         placeNameTask?.cancel()
         focusedKindTask?.cancel()
@@ -974,6 +992,7 @@ extension CatalogWindowViewModel {
 
         startQueryForwarding(projection: projection)
         startRecognizedRefresh()
+        startFacesReadRefresh()
         startMutationForwarding(store: store, coordinator: enrichmentCoordinator)
         startMediaChoiceForwarding(store: store)
         startStackKeyForwarding(store: store)

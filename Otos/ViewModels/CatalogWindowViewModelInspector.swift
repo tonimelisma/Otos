@@ -57,7 +57,7 @@ extension CatalogWindowViewModel {
     /// the main actor and applied when it still describes the target. Called when the pane is
     /// shown and by every writer of the target.
     func refreshPhotoInfo() {
-        refreshFaceCandidates()
+        refreshTargetFaces()
         photoInfoTask?.cancel()
         placeNameTask?.cancel()
         placeNameTask = nil

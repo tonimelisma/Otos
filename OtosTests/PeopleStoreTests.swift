@@ -208,7 +208,7 @@ struct PeopleStoreTests {
             let snapshot = try await library.store.peopleSnapshot()
             return PeopleSnapshot(
                 faces: snapshot.faces, tiles: [:], people: snapshot.people, keyPhotos: snapshot.keyPhotos,
-                unchecked: MediaCount(), revision: 0
+                unchecked: MediaCount()
             )
         }
         let before = try await state()
