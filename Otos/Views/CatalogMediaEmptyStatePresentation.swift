@@ -23,6 +23,8 @@ extension CatalogMediaEmptyState {
             "No Matching Media"
         case let .noSearchResults(text, _):
             "No Results for \u{201C}\(text)\u{201D}"
+        case let .searchFailed(text):
+            "Couldn\u{2019}t Search for \u{201C}\(text)\u{201D}"
         case .checkingLibraries:
             "Checking Libraries"
         case .noAvailableMedia:
@@ -56,6 +58,8 @@ extension CatalogMediaEmptyState {
             "Otos is still reading \(stillReading.formatted()) \(stillReading == 1 ? "item" : "items") for search. They appear here if they match."
         case .noSearchResults:
             "Check the spelling or try a new search."
+        case .searchFailed:
+            "Otos tries again on its own. The results appear here when it succeeds."
         case .checkingLibraries:
             "Otos is checking whether saved library folders are reachable."
         case .noAvailableMedia:
@@ -90,6 +94,8 @@ extension CatalogMediaEmptyState {
             "line.3.horizontal.decrease.circle"
         case .noSearchResults:
             "magnifyingglass"
+        case .searchFailed:
+            "exclamationmark.magnifyingglass"
         case .checkingLibraries, .libraryChecking:
             "externaldrive.badge.timemachine"
         case .noAvailableMedia, .libraryUnavailable:

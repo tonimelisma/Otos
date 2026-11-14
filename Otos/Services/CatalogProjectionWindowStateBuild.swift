@@ -14,7 +14,7 @@ extension CatalogProjection {
         libraries unsortedLibraries: [CatalogLibraryState],
         request: CatalogQueryRequest,
         reuse: CatalogProjectionOrderReuse
-    ) async throws -> (CatalogWindowState, CatalogProjectionBuildMetrics) {
+    ) async throws -> CatalogProjectionBuild {
         let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
         let importBatches = try await store.importBatches()
         let placeNameLanguages = try await store.placeNameLanguages()
@@ -25,11 +25,12 @@ extension CatalogProjection {
             placeNameLanguages: placeNameLanguages
         )
         // The query is read by the index's own owner; a pass only takes what it has read, so
-        // it never waits on Translation or Maps. A query still being read publishes nothing
-        // yet: its reading rings the loop when it lands.
+        // it never waits on Translation or Maps. A query still being read builds nothing yet:
+        // the pass keeps the last state and says it is searching, and the reader's report
+        // that the reading ended rings the loop.
         let searchStatus = try await searchStatus(for: resolvedDescriptor.effectiveSearch, store: store)
         if searchStatus == .reading {
-            throw CatalogProjectionSearchStillReading()
+            return .queryBeingRead
         }
         let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: allRoots)
         let orderedAssetIDs: [MediaAssetID]
@@ -69,7 +70,7 @@ extension CatalogProjection {
         if let stateBuilder {
             var state = try await stateBuilder(allRoots, orderedAssetIDs, request)
             state.pendingIdentityRemaps = pendingIdentityRemaps
-            return (state, CatalogProjectionBuildMetrics(orderQueryMs: 0))
+            return .built(state, CatalogProjectionBuildMetrics(orderQueryMs: 0))
         }
 
         var unsearched = makeBuildFacts(
@@ -81,7 +82,14 @@ extension CatalogProjection {
             orderQueryMs: orderQueryMs
         )
         if let search = resolvedDescriptor.effectiveSearch, let searchStatus {
-            try await applySearch(search, status: searchStatus, to: &unsearched, store: store)
+            switch searchStatus {
+            case let .read(encoding):
+                try await applySearch(search, encoding: encoding, to: &unsearched, store: store)
+            case .failed:
+                Self.failSearch(in: &unsearched)
+            case .reading:
+                return .queryBeingRead
+            }
         }
         Self.collapseStacks(stacks, expanded: request.expandedStacks, in: &unsearched)
         Self.capAnniversaries(in: &unsearched)
@@ -104,7 +112,8 @@ extension CatalogProjection {
         state.uncollapsedOrder = CatalogUncollapsedOrder(
             ids: orderedAssetIDs, dayBuckets: dayBuckets, coordinates: coordinates, stacks: stacks
         )
-        return (state, metrics)
+        state.searchPhase = facts.search?.phase
+        return .built(state, metrics)
     }
 
     /// Collapses each stack in the scoped order to its shown member (ADR 0052), after the
@@ -178,21 +187,27 @@ extension CatalogProjection {
         return await searchIndex.queries.status(for: request)
     }
 
-    /// Narrows the scope to what `search` matches (ADR 0048), among the scope's own assets.
-    /// A query the reader could not answer (a failed reading waiting for its retry, or one past
-    /// its deadline) leaves the scope unsearched, never narrowed by another query's results.
+    /// A query whose reading failed shows none of the scope, so the empty state says the
+    /// search could not be made (ADR 0048): the scope unsearched under the field's text would
+    /// read as its answer.
+    static func failSearch(in facts: inout CatalogProjectionBuildFacts) {
+        OtosLog.catalog.noticeOperation("projection.search", phase: "failed", fields: [
+            "scope": "\(facts.scopedAssetIDs.count)",
+        ])
+        facts.search = .failed(unsearchedScopeCount: facts.scopedAssetIDs.count)
+        facts.scopedAssetIDs = []
+        facts.scopedDayBuckets = []
+        facts.scopedCoordinates = []
+    }
+
+    /// Narrows the scope to what the read query matches (ADR 0048), among the scope's own
+    /// assets.
     private func applySearch(
         _ search: CatalogSearch,
-        status: SearchQueryStatus,
+        encoding: SearchQueryEncoding,
         to facts: inout CatalogProjectionBuildFacts,
         store: CatalogStore
     ) async throws {
-        guard case let .read(encoding) = status else {
-            OtosLog.catalog.noticeOperation("projection.search", phase: "unanswered", fields: [
-                "scope": "\(facts.scopedAssetIDs.count)",
-            ])
-            return
-        }
         guard let searchIndex else {
             throw CatalogProjectionSearchUnavailable()
         }
@@ -209,7 +224,7 @@ extension CatalogProjection {
         facts.scopedAssetIDs = searched.ids
         facts.scopedDayBuckets = searched.dayBuckets
         facts.scopedCoordinates = searched.coordinates
-        facts.search = try await CatalogSearchOutcome(
+        facts.search = try await .read(
             unsearchedScopeCount: unsearched,
             stillReadingCount: searched.ids.isEmpty ? store.searchEmbeddingPendingCount() : 0
         )
@@ -340,7 +355,3 @@ extension CatalogProjection {
 
 /// A search was asked of a projection that has no index to answer it.
 nonisolated struct CatalogProjectionSearchUnavailable: Error {}
-
-/// The search's query is still being read (`SearchQueryReader`): the pass publishes nothing
-/// yet, and the reading rings the loop when it lands.
-nonisolated struct CatalogProjectionSearchStillReading: Error {}

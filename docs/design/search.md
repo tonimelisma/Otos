@@ -23,10 +23,19 @@ field, menu item and empty state, and Lightroom's two orders. It adds nothing of
   toolbar, with the prompt `Search`. Edit ▸ Find (⌘F) focuses it.
 - Typing searches as the text changes; Return is not needed, and an emptied field, or the
   field's clear button, ends the search. The newest text wins: a result for text since
-  replaced is never shown. While the new text is read (about 40 ms, 0.35 s translated) the
-  grid keeps what it shows; a query not answered within a second (Translation or Maps not
-  answering, or a reading that failed) shows the scope unsearched until its answer lands. No
-  new state or wording marks it.
+  replaced is never shown. A query is in one of three states, and the window shows which:
+  - **Being read** (about 40 ms, 0.35 s translated, or as long as Translation or Maps take):
+    the grid keeps what it shows, and the window's subtitle reads `Searching…`
+    (`Filtered · Searching…` under a filter). It lasts until the reading ends; no timer
+    replaces it with anything else.
+  - **Read:** the matches, or `No Results for “…”` (below). The subtitle says nothing of
+    search.
+  - **Could not be read** (a reading that failed; Otos reads it again on its own, 2 s
+    doubling to a minute): the grid holds the empty state `Couldn’t Search for “…”`
+    (`exclamationmark.magnifyingglass`) over `Otos tries again on its own. The results appear
+    here when it succeeds.` It is never shown the scope unsearched, which under the field's
+    text would read as the answer. Like an empty result, it shows no tiles, so no painted
+    thumbnail is drawn as a placeholder; the matches replace it when a reading succeeds.
 - The search stays when the sidebar scope changes: it narrows the new scope. It is not
   restored on relaunch.
 - Bare-key commands (DES-093) never fire while the field is being edited.
@@ -73,8 +82,13 @@ tooltip: `Searches in these languages are understood best`.
 | String | Level |
 | --- | --- |
 | The scope's title | L1 (unchanged) |
-| `No Results for “dog”` | empty-state title (`.title2`, DES-003) |
-| `Check the spelling…` / `Otos is still reading N items…` | empty-state message, L3 |
+| `No Results for “dog”` / `Couldn’t Search for “dog”` | empty-state title (`.title2`, DES-003), the empty grid's primary fact |
+| `Check the spelling…` / `Otos is still reading N items…` / `Otos tries again on its own…` | empty-state message, L3 |
+| `Searching…` (beside `Filtered`, a middot apart, DES-034) | window subtitle, L3 under the scope's title |
+
+The subtitle sits in the toolbar's title block, as `Filtered` does: the toolbar keeps its
+height in every state, so the grid never reflows (DES-018, DES-053). The three states differ in words and glyph,
+never in color alone (DES-029).
 | `Relevance` | L2 menu item |
 
 ## Accessibility

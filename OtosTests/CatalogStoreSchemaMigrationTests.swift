@@ -215,6 +215,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.facesOwedIndexesMigrationIdentifier,
             CatalogSchema.unreadThumbnailsMigrationIdentifier,
             CatalogSchema.leftOutIndexDroppedMigrationIdentifier,
+            CatalogSchema.unreadTextPreviewsMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -1414,5 +1415,50 @@ extension CatalogStoreSchemaMigrationTests {
             try Int.fetchAll(db, sql: "SELECT assignment FROM face ORDER BY face_index")
         }
         #expect(assignments == [FaceAssignmentColumn.user, .model].map(\.rawValue))
+    }
+
+    /// v53: an empty text reading of a photo with a stored preview may be a preview that did
+    /// not decode, so it goes and the photo is owed a reading from its preview again; a reading
+    /// with lines stays current, and a photo with no preview, which is never read, keeps its row.
+    @Test func theUnreadTextPreviewsMigrationReReadsEmptyReadingsOfStoredPreviews() async throws {
+        let queue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.unreadThumbnailsMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            for (path, preview, lines) in [
+                ("empty.jpg", String?("empty.heic"), "[]"),
+                ("sign.jpg", String?("sign.heic"), #"[{"text":"STOP","confidence":1}]"#),
+                ("previewless.jpg", String?.none, "[]"),
+            ] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key,
+                        kind, thumbnail_path, preview_path)
+                    VALUES (1, ?, ?, ?, ?, 'image', 'thumb.jpg', ?)
+                    """,
+                    arguments: [path, path, path, path, preview]
+                )
+                try db.execute(
+                    sql: """
+                    INSERT INTO search_text (library_root_id, relative_path, source, lines)
+                    SELECT a.library_root_id, a.relative_path, IFNULL(\(SearchTextStorage.currentSource("a")), 'none'), ?
+                    FROM media_asset AS a WHERE a.relative_path = ?
+                    """,
+                    arguments: [lines, path]
+                )
+            }
+        }
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.unreadTextPreviewsMigrationIdentifier)
+        let (readings, owed) = try await queue.read { db in
+            try (
+                String.fetchAll(db, sql: "SELECT relative_path FROM search_text ORDER BY relative_path"),
+                String.fetchAll(
+                    db, sql: "SELECT a.relative_path \(SearchTextStorage.owedFrom(rootCount: 1)) ORDER BY a.relative_path",
+                    arguments: [1]
+                )
+            )
+        }
+        #expect(readings == ["previewless.jpg", "sign.jpg"])
+        #expect(owed == ["empty.jpg"])
     }
 }

@@ -341,6 +341,19 @@ struct CatalogStoreQueryPlanTests {
         }
     }
 
+    /// v53's one-time cleanup visits each text reading once, as it must to find the empty ones,
+    /// and finds each reading's asset by the asset's key: it never scans `media_asset`.
+    @Test func theEmptyTextReadingsCleanupFindsEachAssetByItsKey() async throws {
+        let dbQueue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(dbQueue)
+        let plan = try await dbQueue.read { db in
+            try explainPlan(db, sql: CatalogSchema.unreadTextPreviewsStatements[0])
+        }
+        let lines = plan.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        #expect(lines.filter { $0.hasPrefix("SCAN ") } == ["SCAN search_text"], "\(plan)")
+        #expect(lines.contains { $0.hasPrefix("SEARCH a USING") && $0.hasSuffix("(library_root_id=? AND relative_path=?)") }, "\(plan)")
+    }
+
     /// The filter's options are read over the shown row's scope (APP-013, APP-025), whatever
     /// that row is: the file types from the scope's own rows, the places from the named cells
     /// in the catalog's language reaching each located row through the place-cell index —

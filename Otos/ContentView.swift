@@ -160,14 +160,7 @@ struct ContentView: View {
                     )
                 } else {
                     detailContent
-                        // An active filter names itself under the title, so a scope that
-                        // looks short is never mistaken for the whole of it (DES-029:
-                        // never the filter glyph's color alone). The duplicates list
-                        // ignores the filter, so it never claims to be filtered.
-                        .navigationSubtitle(
-                            viewModel.queryDescriptor.filter.isActive && !viewModel.showsDuplicatesList
-                                && !viewModel.showsPeopleList ? "Filtered" : ""
-                        )
+                        .navigationSubtitle(viewModel.windowSubtitle)
                 }
                 if let presentation = viewModel.selectedImportPresentation {
                     ImportPlanFooter(

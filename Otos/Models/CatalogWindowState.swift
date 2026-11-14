@@ -26,6 +26,10 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
     /// A search matched nothing in a scope that holds items (ADR 0048). Carries the text and
     /// how many items search has not read yet, which may still match.
     case noSearchResults(String, stillReading: Int)
+    /// A search whose query could not be read, in a scope that holds items (ADR 0048): the
+    /// grid holds this rather than the scope unsearched, until a reading succeeds. Carries the
+    /// text.
+    case searchFailed(String)
     case checkingLibraries
     case noAvailableMedia
     case libraryChecking
@@ -57,6 +61,8 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
             "noFilterMatches"
         case let .noSearchResults(_, stillReading):
             "noSearchResults stillReading=\(stillReading)"
+        case .searchFailed:
+            "searchFailed"
         case .checkingLibraries:
             "checkingLibraries"
         case .noAvailableMedia:
@@ -73,6 +79,19 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
             "catalogIncompatible"
         }
     }
+}
+
+/// Where a shown search's query stands (ADR 0048, DES-108). Projection publishes it; the
+/// window renders it and derives nothing.
+nonisolated enum CatalogSearchPhase: Equatable {
+    /// The query is being read: the state is the last one shown, kept, and the window says
+    /// it is searching. Nothing ends this but the reader's report that the reading ended.
+    case reading
+    /// Read: the grid holds the matches, or `noSearchResults` when none matched.
+    case read
+    /// The query could not be read: the grid holds `searchFailed`, never the scope
+    /// unsearched, until a reading succeeds.
+    case failed
 }
 
 nonisolated struct CatalogDeviceConnectionBanner: Equatable {
@@ -107,6 +126,8 @@ nonisolated struct CatalogWindowState: Equatable {
     /// `PeopleAssignment`; nil until the first build. Like the duplicate groups, the same in
     /// every scope.
     var people: CatalogPeopleState?
+    /// Where the shown search stands (ADR 0048); nil while nothing is searched.
+    var searchPhase: CatalogSearchPhase?
     var queryGeneration: UInt64 = 0
     /// Remaps committed but not yet acknowledged by the window, read with the ordered
     /// IDs. The window applies each batch once, before it shows the new identities.

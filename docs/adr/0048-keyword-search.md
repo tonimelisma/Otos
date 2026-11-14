@@ -81,16 +81,25 @@ model reached 68%, and a multilingual text encoder distilled into CLIP's space r
 at a time on one loop woken by a doorbell (ADR 0032): the newest query is read next, and a
 reading in flight is never cancelled, because a Translation session killed mid-request can
 stall Translation for many minutes. `CatalogProjection` only asks it what it holds for the
-query shown (`status(for:)`), so the window's publication never waits on Translation or Maps:
-- **Being read:** the window keeps what it shows; the reading rings the projection when it
-  lands. A reading takes about 40 ms in English and 0.35 s translated.
-- **Not answered:** a reading still in flight after 1 s (ADR 0033 `time: deadline`; nothing
-  reports that Translation or Maps stopped answering), or one that failed, shows the scope
-  unsearched — never another query's results — until its answer lands. A failed reading is
-  read again after a backoff, 2 s doubling to a minute (`time: backoff`), not by the
-  window's cadence. The search design names no state for a query still being read, so the
-  unsearched scope is what shows; meanwhile ending the search, or a scope, filter or catalog
-  change, publishes.
+query shown (`status(for:)`), so the window's publication never waits on Translation or Maps.
+The projection publishes which of three states the shown query is in
+(`CatalogWindowState.searchPhase`), and the window only renders it:
+- **Being read** (`reading`): the pass builds nothing and republishes the last state as it
+  is, marked as searching, so the window keeps what it shows and its subtitle says
+  `Searching…`. Nothing is covered: the reader's report that the reading ended rings the
+  projection, and that pass builds the answer. There is no deadline: the reader knows when a
+  reading ends, so time never stands in for that report (ADR 0033), however long Translation
+  or Maps take. A reading takes about 40 ms in English and 0.35 s translated. Ending the
+  search publishes at once; a scope, filter or catalog change under the same query waits
+  for its reading, still marked as searching.
+- **Read** (`read`): the matches, or `No Results`.
+- **Could not be read** (`failed`): the scope shows none of its items and the empty state
+  says the search could not be made, until a retry reads it. A failed reading is read again
+  after a backoff, 2 s doubling to a minute (`time: backoff`), not by the window's cadence,
+  and logged with its error's domain and code; every failure is the same state, so nothing
+  reads the error's text.
+
+The reader:
 - **What is kept:** only what does not change with time or with the Mac — a text's
   translation from a language, a text's embedding, Maps' answer for a name (found, or no place;
   a failed lookup is not kept). Recognition, which packs are installed and the facts are read
@@ -104,6 +113,12 @@ Rejected:
 - **Awaiting the encoding inside the projection's pass.** One publication loop serves the whole
   window: a wedged Translation or a hanging Maps request held every publication, and a failed
   translation re-ran the pass, and Translation, once a second.
+- **A deadline after which the scope shows unsearched.** The grid then shows every photo
+  under the field's text, which reads as the search's answer and is not one, and the
+  deadline stands in for a fact the reader reports.
+- **Keeping what the window shows when a reading fails.** A failure has no end the reader
+  can report, and under a scope change the kept grid would be another scope's photos; the
+  empty state is the one answer true for every scope.
 - **A cross-lingual embedding instead of translation.** It scored 44–68, against 78.
 - **A word-by-word translation model.** A sentence translator already handles a single word.
 - **For a language Translation lacks:** the system language model (Foundation Models)
@@ -139,6 +154,10 @@ against 77.3, 85 in English for both), and every asset has one.
   failed, so neither holds up the assets after it, nor the text readings after every
   embedding. Recording one as an empty reading had the Info pane say `Nothing Recognized` for
   a picture nothing had read (ADR 0050). A preview that does not decode for text is the same.
+  The readings recorded that way before this rule cannot be told from a preview that holds
+  no text, so schema v53 drops every empty text reading of an asset with a stored preview,
+  and each is read once more from that preview (1,498 of 1,930 readings on the owner's
+  catalog; at about 0.15 s each, some four minutes of reading, and nothing downloads).
 
 ### The index: one owner, in memory
 

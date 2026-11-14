@@ -1201,6 +1201,25 @@ nonisolated enum CatalogSchema {
         "DROP INDEX idx_search_embedding_left_out",
     ]
 
+    /// A preview that did not decode was once recorded as a text reading with no lines, which
+    /// reads the same as a preview read and found to hold no text (ADR 0048). Every empty
+    /// reading of an asset with a stored preview goes, so each is owed and read once more by
+    /// the index from that preview in Application Support: nothing downloads, and a preview
+    /// that holds no text is recorded empty again. The statement visits each reading once and
+    /// finds its asset by the asset's key (`CatalogStoreQueryPlanTests`); on the owner's
+    /// catalog it removed 1,498 of 1,930 readings.
+    static let unreadTextPreviewsMigrationIdentifier = "v53_search_unread_text_previews"
+
+    static let unreadTextPreviewsStatements: [String] = [
+        """
+        DELETE FROM search_text WHERE lines = '[]' AND EXISTS (
+            SELECT 1 FROM media_asset AS a
+            WHERE a.library_root_id = search_text.library_root_id AND a.relative_path = search_text.relative_path
+              AND a.preview_path IS NOT NULL
+        )
+        """,
+    ]
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

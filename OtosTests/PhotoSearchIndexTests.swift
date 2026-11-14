@@ -278,15 +278,17 @@ struct PhotoSearchIndexTests {
         await catalog.store.shutdown()
     }
 
-    /// A query whose reading does not answer (a wedged Translation) never holds the window:
-    /// past the reader's deadline the scope shows unsearched, never the last query's results,
-    /// and ending the search publishes at once.
-    @Test func aQueryThatDoesNotAnswerNeverHoldsTheWindow() async throws {
+    /// A query being read (here a wedged Translation, held at its suspension) keeps what the
+    /// window shows and says it is searching, for as long as the reading lasts: a filter change
+    /// delivered while it is held publishes nothing else, never the scope unsearched; ending
+    /// the search publishes the whole scope at once; and the answer goes out when the reading
+    /// ends.
+    @Test func aQueryBeingReadKeepsWhatTheWindowShowsAndSaysSo() async throws {
         let catalog = try await makeCatalog()
         let bundle = Bundle(for: CatalogWindowViewModel.self)
         let encoder = SearchQueryEncoder(bundle: bundle)
         let (gate, open) = AsyncStream<Void>.makeStream()
-        let reader = SearchQueryReader(deadline: .zero) { request in
+        let reader = SearchQueryReader { request in
             if request.text == "järvi" {
                 for await _ in gate {
                     break
@@ -314,19 +316,102 @@ struct PhotoSearchIndexTests {
         }
         defer { recording.cancel() }
         let red = catalog.red
+        let lake = CatalogSearch(text: "järvi")
         await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia, search: CatalogSearch(text: "a red picture")))
-        _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs == [red] }
+        let answered = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs == [red] }
+        #expect(answered.last?.searchPhase == .read)
 
-        await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia, search: CatalogSearch(text: "järvi")))
-        let unanswered = await recorder.waitForValues {
-            $0.last?.queryDescriptor.search?.text == "järvi" && $0.last?.mediaGrid.orderedAssetIDs.count == 2
-        }.last
-        #expect(unanswered?.mediaGrid.orderedAssetIDs.count == 2)
+        await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia, search: lake))
+        let marked = await recorder.waitForValues { $0.last?.searchPhase == .reading }
+        let firstMark = marked.count - 1
+        #expect(marked.last?.mediaGrid.orderedAssetIDs == [red])
+        // Delivered while the reading is held at its suspension.
+        await projection.updateQueryDescriptor(CatalogQueryDescriptor(
+            scope: .allMedia, filter: MediaFilter(kinds: [.image]), search: lake
+        ))
+        await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia, filter: MediaFilter(kinds: [.image])))
+        let ended = await recorder.waitForValues { $0.last?.queryDescriptor.search == nil }
+        #expect(ended.last?.mediaGrid.orderedAssetIDs.count == 2)
+        #expect(ended.last?.searchPhase == nil)
+        for state in ended[firstMark ..< ended.count - 1] {
+            #expect(state.searchPhase == .reading)
+            #expect(state.mediaGrid.orderedAssetIDs == [red])
+        }
 
-        await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia))
-        _ = await recorder.waitForValues { $0.last?.queryDescriptor.search == nil && $0.last?.mediaGrid.orderedAssetIDs.count == 2 }
+        // Searched again while the first reading is still held: the whole scope shown is kept.
+        await projection.updateQueryDescriptor(CatalogQueryDescriptor(
+            scope: .allMedia, filter: MediaFilter(kinds: [.image]), search: lake
+        ))
+        let remarked = await recorder.waitForValues { $0.last?.searchPhase == .reading && $0.last?.queryDescriptor.search == nil }
+        let secondMark = remarked.count - 1
+        #expect(remarked.last?.mediaGrid.orderedAssetIDs.count == 2)
         open.yield()
         open.finish()
+        let read = await recorder.waitForValues { $0.last?.searchPhase == .read && $0.last?.queryDescriptor.search == lake }
+        for state in read[secondMark ..< read.count - 1] {
+            #expect(state.searchPhase == .reading)
+        }
+        await index.shutdown()
+        await catalog.store.shutdown()
+    }
+
+    /// A Translation that fails until the test lets it succeed.
+    private actor ReadingFailure {
+        private(set) var failing = true
+
+        func stop() {
+            failing = false
+        }
+    }
+
+    /// A query whose reading fails is never answered with the scope unsearched: the grid holds
+    /// the empty state that says the search could not be made, and the answer replaces it when
+    /// a retry reads the query.
+    @Test func aQueryThatCannotBeReadSaysSoAndNeverShowsTheScopeUnsearched() async throws {
+        let catalog = try await makeCatalog()
+        let bundle = Bundle(for: CatalogWindowViewModel.self)
+        let encoder = SearchQueryEncoder(bundle: bundle)
+        let failure = ReadingFailure()
+        let reader = SearchQueryReader(backoff: (.zero, .zero)) { request in
+            if await failure.failing {
+                throw CocoaError(.featureUnsupported)
+            }
+            return try await encoder.englishEncoding(of: request.text)
+        }
+        let index = PhotoSearchIndex(
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: bundle,
+            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: reader
+        )
+        let changes = await index.changes()
+        await index.start()
+        for await _ in changes where await index.embeddedCount == 2 {
+            break
+        }
+        let projection = CatalogProjection(cadence: .milliseconds(10))
+        await projection.attachSearchIndex(index)
+        let stream = await projection.states(store: catalog.store, initialDescriptor: .default)
+        let recorder = AsyncValueRecorder<CatalogWindowState>()
+        let recording = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer { recording.cancel() }
+        _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.count == 2 }
+
+        let red = CatalogSearch(text: "a red picture")
+        await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia, search: red))
+        let failed = await recorder.waitForValues { $0.last?.searchPhase == .failed }.last
+        #expect(failed?.mediaEmptyState == .searchFailed("a red picture"))
+        #expect(failed?.mediaGrid.orderedAssetIDs.isEmpty == true)
+
+        await failure.stop()
+        let read = await recorder.waitForValues { $0.last?.searchPhase == .read }
+        #expect(read.last?.mediaGrid.orderedAssetIDs == [catalog.red])
+        for state in read where state.queryDescriptor.search == red {
+            #expect(state.searchPhase != nil)
+            #expect(state.searchPhase == .read || state.mediaGrid.orderedAssetIDs.isEmpty)
+        }
         await index.shutdown()
         await catalog.store.shutdown()
     }

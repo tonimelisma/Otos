@@ -63,7 +63,7 @@ nonisolated struct CatalogProjectionBuildFacts {
     /// Each scoped ID's location, index-paired; empty unless the scope requires one.
     var scopedCoordinates: [PlaceCoordinate]
     let orderQueryMs: Int
-    /// Set when a search narrowed the scope.
+    /// Set when a search answered for the scope, or could not.
     var search: CatalogSearchOutcome?
     /// The stacks read with the order (ADR 0052), and how the scoped order shows them once
     /// collapsed.
@@ -71,10 +71,34 @@ nonisolated struct CatalogProjectionBuildFacts {
     var gridStacks: CatalogGridStacks = .empty
 }
 
-/// What a search left of a scope, for the empty state (ADR 0048).
-nonisolated struct CatalogSearchOutcome: Equatable {
-    /// The scope's items before the search narrowed it.
-    let unsearchedScopeCount: Int
-    /// Items whose thumbnails search has not read yet; counted only when nothing matched.
-    let stillReadingCount: Int
+/// What a search made of a scope, for the empty state (ADR 0048). `unsearchedScopeCount` is
+/// the scope's items before the search: a scope that holds none keeps its own empty state.
+nonisolated enum CatalogSearchOutcome: Equatable {
+    /// The query was read and narrowed the scope to its matches. `stillReadingCount`: items
+    /// whose thumbnails search has not read yet, counted only when nothing matched.
+    case read(unsearchedScopeCount: Int, stillReadingCount: Int)
+    /// The query could not be read: the scope shows none of its items rather than all of
+    /// them unsearched.
+    case failed(unsearchedScopeCount: Int)
+
+    var unsearchedScopeCount: Int {
+        switch self {
+        case let .read(count, _), let .failed(count):
+            count
+        }
+    }
+
+    var phase: CatalogSearchPhase {
+        switch self {
+        case .read: .read
+        case .failed: .failed
+        }
+    }
+}
+
+/// What a build made: the window state, or nothing yet because the shown search's query is
+/// still being read (`SearchQueryReader`), whose report rings the loop when it ends.
+nonisolated enum CatalogProjectionBuild {
+    case built(CatalogWindowState, CatalogProjectionBuildMetrics)
+    case queryBeingRead
 }

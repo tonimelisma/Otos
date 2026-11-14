@@ -320,6 +320,14 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.unreadTextPreviewsMigrationIdentifier) { db in
+            for statement in CatalogSchema.unreadTextPreviewsStatements {
+                try db.execute(sql: statement)
+            }
+            OtosLog.persistence.noticeOperation("catalog.migration.unreadTextPreviews", phase: "finish", fields: [
+                "readings": "\(db.changesCount)",
+            ])
+        }
         return migrator
     }
 

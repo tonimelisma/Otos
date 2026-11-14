@@ -273,7 +273,12 @@ nonisolated enum CatalogWindowPolicy {
     ) -> CatalogMediaEmptyState {
         guard selectedAssetCount == 0 else { return .noMedia }
         if let search, let text = descriptor.search?.text, search.unsearchedScopeCount > 0 {
-            return .noSearchResults(text, stillReading: search.stillReadingCount)
+            switch search {
+            case let .read(_, stillReading):
+                return .noSearchResults(text, stillReading: stillReading)
+            case .failed:
+                return .searchFailed(text)
+            }
         }
         if descriptor.filter.isActive, unfilteredVisibleAssetCount > 0 {
             return .noFilterMatches

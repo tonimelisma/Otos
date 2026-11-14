@@ -1484,6 +1484,19 @@ extension CatalogWindowViewModel {
         searchFocusRequest &+= 1
     }
 
+    /// The window's subtitle, under its title (DES-012 L3, DES-034): `Filtered` while a filter
+    /// narrows the scope, so a scope that looks short is never mistaken for the whole of it
+    /// (DES-029: never the filter glyph's color alone), and `Searching…` while the search's
+    /// query is being read and the window keeps what it showed (ADR 0048). The duplicates
+    /// list and People ignore the filter, so they never claim to be filtered.
+    var windowSubtitle: String {
+        let filtered = queryDescriptor.filter.isActive && !showsDuplicatesList && !showsPeopleList
+        let searching = state.searchPhase == .reading && queryDescriptor.search != nil
+        return [filtered ? "Filtered" : nil, searching ? "Searching\u{2026}" : nil]
+            .compactMap(\.self)
+            .joined(separator: " \u{00B7} ")
+    }
+
     /// The search field's text (ADR 0048). Typing a new search orders by relevance; editing
     /// one keeps the order chosen for it; an empty field ends the search.
     func setSearchText(_ text: String) {

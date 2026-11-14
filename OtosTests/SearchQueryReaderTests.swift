@@ -49,13 +49,11 @@ struct SearchQueryReaderTests {
         )
     }
 
-    private static let never = Duration.seconds(86400)
-
     /// A query typed while another is read waits for it and is read next; the one typed between
     /// is never read, and an answer is reported only for the query it read.
     @Test func theNewestQueryWinsAndAReadingInFlightIsNeverCancelled() async throws {
         let held = HeldReading()
-        let reader = SearchQueryReader(deadline: Self.never) { try await held.read($0) }
+        let reader = SearchQueryReader { try await held.read($0) }
         let dog = SearchQueryRequest(text: "dog"), dogs = SearchQueryRequest(text: "dogs"), dogsOnBeach = SearchQueryRequest(text: "dogs on beach")
         #expect(await reader.status(for: dog) == .reading)
         try await waitUntil { await held.started == ["dog"] }
@@ -70,36 +68,40 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
-    /// A reading that fails is not a fact: the query is unanswered, and it is read again after
-    /// the backoff, not by the window's asking.
-    @Test func aFailedReadingIsUnansweredAndRetriedOnItsBackoff() async throws {
+    /// A reading that fails is not a fact: the query is reported failed, and it is read again
+    /// after the backoff, not by the window's asking.
+    @Test func aFailedReadingIsReportedAndRetriedOnItsBackoff() async throws {
         let held = HeldReading()
         await held.fail("koira")
         await held.release("koira")
-        let reader = SearchQueryReader(deadline: Self.never, backoff: (.zero, .zero)) { try await held.read($0) }
+        let reader = SearchQueryReader(backoff: (.zero, .zero)) { try await held.read($0) }
         let koira = SearchQueryRequest(text: "koira", languages: ["fi"])
         _ = await reader.status(for: koira)
-        try await waitUntil { await reader.status(for: koira) == .unanswered }
+        try await waitUntil { await reader.status(for: koira) == .failed }
         await held.succeed("koira")
         try await waitUntil { await reader.status(for: koira) == .read(Self.encoding("koira")) }
         #expect(await held.started.count >= 2)
         await reader.shutdown()
     }
 
-    /// A reading that does not answer by the deadline (a wedged Translation) is reported
-    /// unanswered, and its answer is reported when it lands.
-    @Test func aReadingPastItsDeadlineIsUnansweredUntilItLands() async throws {
+    /// A reading that has not ended (a wedged Translation) is being read for as long as it
+    /// lasts: no timer reports it as anything else, and its answer is reported when it ends.
+    @Test func aQueryIsBeingReadUntilItsReadingEnds() async throws {
         let held = HeldReading()
-        let reader = SearchQueryReader(deadline: .zero) { try await held.read($0) }
+        let reader = SearchQueryReader { try await held.read($0) }
         let lake = SearchQueryRequest(text: "järvi")
         let readings = await reader.readings()
-        _ = await reader.status(for: lake)
-        try await waitUntil { await reader.status(for: lake) == .unanswered }
+        #expect(await reader.status(for: lake) == .reading)
+        try await waitUntil { await held.started == ["järvi"] }
+        // Held at its suspension: the reading is in flight, and nothing has ended.
+        #expect(await reader.status(for: lake) == .reading)
+        #expect(await reader.readingsEnded == 0)
         await held.release("järvi")
         for await _ in readings where await reader.status(for: lake) == .read(Self.encoding("järvi")) {
             break
         }
         #expect(await reader.status(for: lake) == .read(Self.encoding("järvi")))
+        #expect(await reader.readingsEnded == 1)
         await reader.shutdown()
     }
 
@@ -108,7 +110,7 @@ struct SearchQueryReaderTests {
     @Test func aForgottenQueryIsReadAgain() async throws {
         let held = HeldReading()
         await held.release("koira")
-        let reader = SearchQueryReader(deadline: Self.never) { try await held.read($0) }
+        let reader = SearchQueryReader { try await held.read($0) }
         let koira = SearchQueryRequest(text: "koira")
         _ = await reader.status(for: koira)
         try await waitUntil { await reader.status(for: koira) == .read(Self.encoding("koira")) }

@@ -20,12 +20,15 @@ struct BenchmarkTests {
         let projection = CatalogProjection()
         let request = CatalogQueryRequest(descriptor: .default, generation: 0)
         try await Benchmark.measure("projection.windowState.allMedia") {
-            let (state, _) = try await projection.buildWindowState(
+            guard case let .built(state, _) = try await projection.buildWindowState(
                 store: store,
                 libraries: libraries,
                 request: request,
                 reuse: .none
-            )
+            ) else {
+                Issue.record("nothing is searched, so nothing waits on a reading")
+                return
+            }
             #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkLibrary.stillCount)
         }
 
@@ -43,12 +46,15 @@ struct BenchmarkTests {
         ] {
             let onThisDay = CatalogQueryRequest(descriptor: CatalogQueryDescriptor(scope: .onThisDay(day)), generation: 0)
             try await Benchmark.measure(name) {
-                let (state, _) = try await projection.buildWindowState(
+                guard case let .built(state, _) = try await projection.buildWindowState(
                     store: store,
                     libraries: libraries,
                     request: onThisDay,
                     reuse: .none
-                )
+                ) else {
+                    Issue.record("nothing is searched, so nothing waits on a reading")
+                    return
+                }
                 #expect(state.onThisDay?.anniversaries.isEmpty == false)
             }
         }
@@ -95,12 +101,15 @@ struct BenchmarkTests {
         let projection = CatalogProjection()
         let request = CatalogQueryRequest(descriptor: .default, generation: 0)
         try await Benchmark.measure("projection.windowState.pairs") {
-            let (state, _) = try await projection.buildWindowState(
+            guard case let .built(state, _) = try await projection.buildWindowState(
                 store: library.store,
                 libraries: library.libraries,
                 request: request,
                 reuse: .none
-            )
+            ) else {
+                Issue.record("nothing is searched, so nothing waits on a reading")
+                return
+            }
             #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkPairLibrary.tileCount)
         }
         await library.store.shutdown()

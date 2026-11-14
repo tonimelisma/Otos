@@ -188,8 +188,8 @@ actor CatalogProjection {
     }
 
     /// Uses `index` for searches from now on. A change to what it holds asks for a
-    /// publication while a search is shown, on the cadence; a query its reader has read, or
-    /// given up waiting for, asks for one at once.
+    /// publication while a search is shown, on the cadence; a query whose reading ended, read
+    /// or failed, asks for one at once.
     func attachSearchIndex(_ index: PhotoSearchIndex) async {
         searchTask?.cancel()
         searchQueryTask?.cancel()
@@ -499,7 +499,7 @@ private extension CatalogProjection {
             defer {
                 OtosSignpost.performance.endInterval("CatalogWindowPublication", signpost)
             }
-            let (state, buildMetrics) = try await buildWindowState(
+            let build = try await buildWindowState(
                 store: store,
                 libraries: libraries,
                 request: selectedRequest,
@@ -507,6 +507,17 @@ private extension CatalogProjection {
             )
             // A cancelled pass is a teardown: whatever it read is not the catalog.
             try Task.checkCancellation()
+            guard case let .built(state, buildMetrics) = build else {
+                // Owed, not failed: the window keeps what it shows and says it is searching,
+                // and the reader's report that the reading ended rings the loop.
+                pendingKind = max(pendingKind, kind)
+                OtosLog.catalog.noticeOperation("projection.publish", phase: "searchReading", fields: [
+                    "projection": diagnosticID,
+                    "generation": "\(selectedRequest.generation)",
+                ])
+                publishSearchReading()
+                return
+            }
             completed = CatalogProjectionCompletedPublication(
                 state: state,
                 buildMetrics: buildMetrics,
@@ -520,14 +531,6 @@ private extension CatalogProjection {
         } catch is CancellationError {
             // Teardown (`removeContinuation`) already reset the counters; this pass
             // belongs to a subscription that no longer exists.
-            return
-        } catch is CatalogProjectionSearchStillReading {
-            // Owed, not failed: the query's reading rings the loop when it lands.
-            pendingKind = max(pendingKind, kind)
-            OtosLog.catalog.noticeOperation("projection.publish", phase: "searchReading", fields: [
-                "projection": diagnosticID,
-                "generation": "\(selectedRequest.generation)",
-            ])
             return
         } catch {
             // The work is still owed: `covered` stays put and the severity is
@@ -580,6 +583,17 @@ private extension CatalogProjection {
         } else if asksTally {
             await peopleAssignment.requestTally()
         }
+    }
+
+    /// Republishes the last state, as it is, marked as searching: while a query is read the
+    /// window keeps what it shows (ADR 0048). Nothing is covered, so the pass the reading's
+    /// end rings builds the answer. Synchronous.
+    func publishSearchReading() {
+        guard var state = lastPublishedState, state.searchPhase != .reading else {
+            return
+        }
+        state.searchPhase = .reading
+        yield(state)
     }
 
     /// Takes in a fresh People build and republishes the last state with it when it differs

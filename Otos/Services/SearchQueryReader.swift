@@ -1,16 +1,15 @@
 import Foundation
 import OSLog
 
-/// What the window can show for a query (ADR 0048).
+/// Where a query stands with its reader (ADR 0048): what the window shows for it.
 nonisolated enum SearchQueryStatus: Sendable, Equatable {
-    /// Being read, within `SearchQueryReader.deadline`: the window keeps what it shows until
-    /// the reading lands.
+    /// Being read: the window keeps what it shows and says it is searching, until the reader
+    /// reports that the reading ended.
     case reading
     case read(SearchQueryEncoding)
-    /// Not read: the reading failed and waits for its retry, or it has outrun the deadline
-    /// (Translation or Maps not answering). The window shows the scope unsearched rather than
-    /// another query's results.
-    case unanswered
+    /// The last reading failed. It is read again on its backoff; until one succeeds the window
+    /// says the search could not be made, and never shows the scope unsearched.
+    case failed
 }
 
 /// Search query reader guide (ADR 0048, ADR 0032)
@@ -27,28 +26,22 @@ nonisolated enum SearchQueryStatus: Sendable, Equatable {
 ///   another is read waits for it, then is read; the one between is never read.
 /// - **The answer** is kept for the query it read, and only that query's status reports it,
 ///   so a result for text since replaced is never shown.
-/// - **A deadline** (`deadline`, ADR 0033 `time: deadline`): nothing reports that Translation
-///   or Maps has stopped answering, so a reading still in flight after it reports the query
-///   `unanswered`; the window then shows the scope unsearched, and the reading's answer is
-///   shown when it lands.
-/// - **A failed reading** is an error, not a fact (ADR 0032 rule 4): it is reported
-///   `unanswered`, logged, and read again after a backoff (`time: backoff`), doubling to
-///   `backoff.last`, never by the window's own cadence.
+/// - **No deadline.** A reading reports when it ends, so a query is `reading` until it does,
+///   however long Translation or Maps take; no timer stands in for that report (ADR 0033).
+/// - **A failed reading** is an error, not a fact (ADR 0032 rule 4): it is reported `failed`,
+///   logged with its error's domain and code, and read again after a backoff
+///   (`time: backoff`), doubling to `backoff.last`, never by the window's own cadence.
 ///
-/// `readings()` yields whenever a status may have changed. The loop and the timers hold this
+/// `readings()` yields whenever a status may have changed. The loop and the retry hold this
 /// actor weakly and end with it.
 actor SearchQueryReader {
     typealias Encode = @Sendable (SearchQueryRequest) async throws -> SearchQueryEncoding
 
     private let encode: Encode
-    let deadline: Duration
     private let backoff: (first: Duration, last: Duration)
 
     /// The query asked for last; nil while nothing is searched.
     private var wanted: SearchQueryRequest?
-    /// The query being read, and whether it has outrun the deadline.
-    private var inFlight: SearchQueryRequest?
-    private var overdue = false
     /// The last reading that ended: its query and encoding, nil for a reading that failed.
     private var answer: (request: SearchQueryRequest, encoding: SearchQueryEncoding?)?
     /// A failed reading's retry came due.
@@ -58,18 +51,14 @@ actor SearchQueryReader {
     private var loop: Task<Void, Never>?
     private var ring: AsyncStream<Void>.Continuation?
     private var retry: Task<Void, Never>?
-    private var deadlineTask: Task<Void, Never>?
     private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:]
     /// Readings that ended, failed or not: what a test waits on.
     private(set) var readingsEnded = 0
 
-    /// `deadline`: about three times the 0.35 s a translated query takes (ADR 0048).
     init(
-        deadline: Duration = .seconds(1),
         backoff: (first: Duration, last: Duration) = (.seconds(2), .seconds(60)),
         encode: @escaping Encode
     ) {
-        self.deadline = deadline
         self.backoff = backoff
         nextRetry = backoff.first
         self.encode = encode
@@ -78,12 +67,12 @@ actor SearchQueryReader {
     /// What the window can show for `request` now; a query not held is asked to be read.
     func status(for request: SearchQueryRequest) -> SearchQueryStatus {
         if let answer, answer.request == request {
-            return answer.encoding.map(SearchQueryStatus.read) ?? .unanswered
+            return answer.encoding.map(SearchQueryStatus.read) ?? .failed
         }
         if wanted != request {
             want(request)
         }
-        return inFlight == request && overdue ? .unanswered : .reading
+        return .reading
     }
 
     /// Nothing is searched: the last answer is let go, so a query typed again later is read
@@ -108,14 +97,12 @@ actor SearchQueryReader {
         return stream
     }
 
-    /// Ends the loop and the timers now — a test's teardown; in the app they end with the actor.
+    /// Ends the loop and the retry now — a test's teardown; in the app they end with the actor.
     func shutdown() {
         loop?.cancel()
         retry?.cancel()
-        deadlineTask?.cancel()
         loop = nil
         retry = nil
-        deadlineTask = nil
         ring = nil
         for continuation in continuations.values {
             continuation.finish()
@@ -153,21 +140,18 @@ actor SearchQueryReader {
             return
         }
         retryDue = false
-        inFlight = request
-        overdue = false
-        startDeadline(for: request)
         let encoding: SearchQueryEncoding?
         do {
             encoding = try await encode(request)
         } catch {
+            let failure = error as NSError
             OtosLog.catalog.errorOperation("search.query", phase: "readFailed", fields: [
+                "domain": failure.domain,
+                "code": "\(failure.code)",
                 "error": String(describing: error),
             ])
             encoding = nil
         }
-        inFlight = nil
-        deadlineTask?.cancel()
-        deadlineTask = nil
         guard !Task.isCancelled else { return }
         answer = (request, encoding)
         readingsEnded += 1
@@ -180,27 +164,6 @@ actor SearchQueryReader {
         if wanted != request {
             ring?.yield()
         }
-    }
-
-    private func startDeadline(for request: SearchQueryRequest) {
-        deadlineTask?.cancel()
-        let deadline = deadline
-        deadlineTask = Task { [weak self] in
-            // time: deadline — Translation and Maps may never answer; past this the window
-            // shows the scope unsearched instead of another query's results.
-            try? await Task.sleep(for: deadline)
-            guard !Task.isCancelled, let self else { return }
-            await deadlinePassed(for: request)
-        }
-    }
-
-    private func deadlinePassed(for request: SearchQueryRequest) {
-        guard inFlight == request, !overdue else { return }
-        overdue = true
-        OtosLog.catalog.noticeOperation("search.query", phase: "overdue", fields: [
-            "deadline": "\(deadline)",
-        ])
-        announce()
     }
 
     /// One retry at a time; each waits twice as long as the last, up to `backoff.last`.

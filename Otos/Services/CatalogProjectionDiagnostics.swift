@@ -37,6 +37,8 @@ nonisolated struct CatalogProjectionChangeSummary {
     /// The map's located items or its left-off count moved without the identities
     /// moving — a re-enriched coordinate, or an item that gained one.
     let mapChanged: Bool
+    /// Where the shown search stands moved: searching, read, or failed (ADR 0048).
+    let searchPhaseChanged: Bool
     let mediaIdentityEqualityUs: Int
 
     var stateChanged: Bool {
@@ -48,6 +50,7 @@ nonisolated struct CatalogProjectionChangeSummary {
             || resolvedSelectionChanged
             || detailRefreshChanged
             || mapChanged
+            || searchPhaseChanged
     }
 
     static func compare(
@@ -65,6 +68,7 @@ nonisolated struct CatalogProjectionChangeSummary {
                 resolvedSelectionChanged: true,
                 detailRefreshChanged: true,
                 mapChanged: current.map != nil,
+                searchPhaseChanged: current.searchPhase != nil,
                 mediaIdentityEqualityUs: 0
             )
         }
@@ -87,6 +91,7 @@ nonisolated struct CatalogProjectionChangeSummary {
             detailRefreshChanged: previous.mediaGrid.detailRefreshGeneration
                 != current.mediaGrid.detailRefreshGeneration,
             mapChanged: previous.map != current.map,
+            searchPhaseChanged: previous.searchPhase != current.searchPhase,
             mediaIdentityEqualityUs: identityUs
         )
     }
@@ -135,6 +140,7 @@ nonisolated struct CatalogProjectionPublicationDiagnostics {
                 "resolvedSidebarSelection": state.resolvedSidebarSelection.diagnosticDescription,
                 "retainedResolvedSelection": "\(retainedResolvedSelection)",
                 "emptyState": state.mediaEmptyState.diagnosticDescription,
+                "searchPhase": state.searchPhase.map { "\($0)" } ?? "none",
                 "storeReadMs": "\(storeReadMs)",
                 "projectionMs": "\(projectionMs)",
                 "totalMs": "\(totalMs)",
