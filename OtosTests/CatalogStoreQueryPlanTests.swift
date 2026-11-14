@@ -608,3 +608,37 @@ private func explainPlan(_ db: Database, query: SQLQuery) throws -> String {
 private func usesTemporarySort(_ plan: String) -> Bool {
     plan.localizedCaseInsensitiveContains("TEMP B-TREE")
 }
+
+extension CatalogStoreQueryPlanTests {
+    /// ADR 0047: what is owed faces is read from partial indexes over only the rows that owe
+    /// them, never a walk of every row, which the preview reader's candidates and People's
+    /// unchecked count each did on every catalog change. Each query states its index's
+    /// condition, so SQLite reads it from that index.
+    @Test func whatIsOwedFacesIsReadFromItsPartialIndexes() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        let (candidates, unchecked) = try await dbQueue.read { db in
+            try (
+                explainPlan(
+                    db, sql: PreviewFaceSQL.candidatesSQL(rootCount: 2),
+                    arguments: [rootID1, rootID2, Int64.min, "", 32]
+                ),
+                explainPlan(
+                    db, sql: PreviewFaceSQL.uncheckedSQL(rootCount: 2),
+                    arguments: [rootID1, rootID2, rootID1, rootID2, rootID1, rootID2]
+                )
+            )
+        }
+        #expect(candidates.contains("USING INDEX \(CatalogSchema.stillOwesFacesIndexName)"))
+        #expect(!candidates.contains("SCAN media_asset"))
+        #expect(!usesTemporarySort(candidates))
+        for index in [CatalogSchema.stillOwesFacesIndexName, CatalogSchema.stillAwaitsPreviewIndexName, CatalogSchema.videoOwesFacesIndexName] {
+            #expect(unchecked.contains("USING INDEX \(index)") || unchecked.contains("USING COVERING INDEX \(index)"), "\(unchecked)")
+        }
+        #expect(!unchecked.contains("SCAN media_asset"))
+    }
+}

@@ -1045,6 +1045,145 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// The source a photo's stored faces were read from (ADR 0047):
+    /// `media_asset.faces_read_source_size` and `faces_read_source_mtime`, written with every
+    /// reading beside the faces stamp. The stamp says whether the faces are owed, and a
+    /// migration clears it to owe a re-read; this pair says what the faces came from, so a
+    /// re-read of a file that changed meanwhile is read afresh rather than taken for the same
+    /// source (ENR-023). Filled for every photo holding a face row: from its stamp where it
+    /// has one; where a migration cleared it, the faces are taken to come from the source the
+    /// stamp would name now (a still's stored preview, a video's file), as every reading
+    /// before this migration took them.
+    static let facesReadSourceMigrationIdentifier = "v47_faces_read_source"
+
+    static var facesReadSourceStatements: [String] {
+        let stamped = "faces_source_size IS NOT NULL AND faces_source_mtime IS NOT NULL"
+        let previewSize = "CASE WHEN rendered_source_size IS NOT NULL THEN rendered_source_size ELSE source_products_size END"
+        let previewMTime = "CASE WHEN rendered_source_size IS NOT NULL THEN rendered_source_mtime ELSE source_products_mtime END"
+        let fileMTime = "CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)"
+        return [
+            "ALTER TABLE media_asset ADD COLUMN faces_read_source_size INTEGER",
+            "ALTER TABLE media_asset ADD COLUMN faces_read_source_mtime INTEGER",
+            """
+            UPDATE media_asset SET
+                faces_read_source_size = CASE
+                    WHEN \(stamped) THEN faces_source_size
+                    WHEN best_kind = 'video' OR (\(previewSize)) IS NULL THEN COALESCE(byte_size, -1)
+                    ELSE \(previewSize) END,
+                faces_read_source_mtime = CASE
+                    WHEN \(stamped) THEN faces_source_mtime
+                    WHEN best_kind = 'video' OR (\(previewSize)) IS NULL THEN \(fileMTime)
+                    ELSE \(previewMTime) END
+            WHERE EXISTS (
+                SELECT 1 FROM face
+                WHERE face.library_root_id = media_asset.library_root_id
+                  AND face.relative_path = media_asset.relative_path
+            )
+            """,
+        ]
+    }
+
+    /// Every stored birthday in its one form, `YYYY` or `YYYY-MM-DD` (`PersonBirthday`). The
+    /// rule before this migration let through other spellings of a valid date (`1985-6-7`, `+985`), and
+    /// a year 0 (`0000`), which the People read now refuses as a malformed person row. A
+    /// spelling of a valid date is rewritten in its form; one that names no date is cleared,
+    /// and logged with the person it was cleared from.
+    static let canonicalBirthdayMigrationIdentifier = "v48_person_birthday_canonical"
+
+    static func canonicalizeBirthdays(_ db: Database) throws {
+        var rewritten = 0
+        for row in try Row.fetchAll(db, sql: "SELECT id, birthday FROM person WHERE birthday IS NOT NULL") {
+            let id: Int64 = row["id"]
+            let text: String = row["birthday"]
+            let birthday = PersonBirthday(text) ?? legacyBirthday(text)
+            guard birthday?.text != text else { continue }
+            try db.execute(sql: "UPDATE person SET birthday = ? WHERE id = ?", arguments: [birthday?.text, id])
+            rewritten += 1
+            if birthday == nil {
+                OtosLog.persistence.errorOperation("catalog.migration.birthday", phase: "cleared", fields: [
+                    "person": "\(id)", "reason": "namesNoDate",
+                ])
+            }
+        }
+        OtosLog.persistence.noticeOperation("catalog.migration.birthday", phase: "finish", fields: [
+            "rewritten": "\(rewritten)",
+        ])
+    }
+
+    /// A birthday in a spelling the rule before v48 accepted: `-`-separated integers, one or
+    /// three of them, the year written in four characters. Nil unless it names a valid date.
+    static func legacyBirthday(_ text: String) -> PersonBirthday? {
+        let parts = text.split(separator: "-", omittingEmptySubsequences: false).map { Int($0) }
+        guard parts.count == 1 || parts.count == 3, text.split(separator: "-").first?.count == 4 else { return nil }
+        let values = parts.compactMap(\.self)
+        guard values.count == parts.count else { return nil }
+        let form = values.count == 1
+            ? String(format: "%04d", values[0])
+            : String(format: "%04d-%02d-%02d", values[0], values[1], values[2])
+        return PersonBirthday(form)
+    }
+
+    /// A key photo is the user's word about its face (ADR 0047): choosing one confirms the
+    /// face as the person's, so a re-read carries it and assignment never moves it. Key photos
+    /// chosen before on a face Otos had guessed become the user's.
+    static let keyPhotoIsUsersWordMigrationIdentifier = "v49_key_photo_users_word"
+
+    static var keyPhotoIsUsersWordStatements: [String] {
+        [
+            """
+            UPDATE face SET assignment = \(FaceAssignmentColumn.user.rawValue)
+            WHERE is_key_photo = 1 AND person_id IS NOT NULL
+              AND assignment IN (\(FaceAssignmentColumn.model.rawValue), \(FaceAssignmentColumn.seed.rawValue))
+            """,
+        ]
+    }
+
+    /// What is owed faces is read from three partial indexes, each over only the rows that
+    /// owe them, so a catalog with nothing owed reads none (ADR 0047): stills owed faces from
+    /// their stored preview (`PreviewFaceSQL.stillOwesFaces`, the preview reader's candidates
+    /// and the unchecked count), stills still waiting for one (`stillAwaitsPreview`) and videos
+    /// whose frames are not yet read (`videoOwesFaces`). Each one's condition is frozen here,
+    /// and SQLite reads a partial index only for a query whose terms state its condition, so a
+    /// plan test holds every query `PreviewFaceSQL` makes to its index.
+    static let facesOwedIndexesMigrationIdentifier = "v50_faces_owed_indexes"
+
+    static let stillOwesFacesIndexName = "idx_media_asset_still_owes_faces"
+    static let stillAwaitsPreviewIndexName = "idx_media_asset_still_awaits_preview"
+    static let videoOwesFacesIndexName = "idx_media_asset_video_owes_faces"
+
+    static let stillOwesFacesPredicate = """
+    kind IN ('image', 'raw') AND trash_path IS NULL AND preview_path IS NOT NULL
+      AND (CASE WHEN rendered_source_size IS NOT NULL THEN rendered_source_size ELSE source_products_size END) IS NOT NULL
+      AND (faces_source_size IS NOT (CASE WHEN rendered_source_size IS NOT NULL THEN rendered_source_size ELSE source_products_size END)
+           OR faces_source_mtime IS NOT (CASE WHEN rendered_source_size IS NOT NULL THEN rendered_source_mtime ELSE source_products_mtime END))
+    """
+
+    static let stillAwaitsPreviewPredicate = """
+    kind IN ('image', 'raw') AND trash_path IS NULL AND preview_path IS NULL
+      AND source_products_size IS NULL
+      AND (rendered_source_size IS NULL
+       OR rendered_source_mtime IS NULL
+       OR COALESCE(byte_size, -1) <> COALESCE(rendered_source_size, -1)
+       OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+          <> COALESCE(rendered_source_mtime, -1))
+    """
+
+    static let videoOwesFacesPredicate = """
+    trash_path IS NULL AND best_kind = 'video' AND (faces_source_size IS NULL
+       OR faces_source_mtime IS NULL
+       OR COALESCE(byte_size, -1) <> COALESCE(faces_source_size, -1)
+       OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+          <> COALESCE(faces_source_mtime, -1))
+    """
+
+    static var facesOwedIndexesStatements: [String] {
+        [
+            "CREATE INDEX \(stillOwesFacesIndexName) ON media_asset(library_root_id, relative_path) WHERE \(stillOwesFacesPredicate)",
+            "CREATE INDEX \(stillAwaitsPreviewIndexName) ON media_asset(library_root_id) WHERE \(stillAwaitsPreviewPredicate)",
+            "CREATE INDEX \(videoOwesFacesIndexName) ON media_asset(library_root_id) WHERE \(videoOwesFacesPredicate)",
+        ]
+    }
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

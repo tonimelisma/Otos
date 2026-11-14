@@ -68,7 +68,7 @@ extension EnrichmentCoordinator {
                 for candidate in claimed {
                     await recordClaimedCandidate(candidate.asset)
                 }
-                let (ready, deferred) = partitionByRetryLedger(claimed, now: now)
+                let (ready, deferred) = partitionByWaits(claimed, now: now)
                 routing.examined += claimed.count
                 routing.deferred += deferred.count
                 if !deferred.isEmpty {
@@ -230,7 +230,7 @@ extension EnrichmentCoordinator {
                 break
             }
             totalExamined += batch.count
-            let (batchReady, batchDeferred) = partitionByRetryLedger(batch, now: now)
+            let (batchReady, batchDeferred) = partitionByWaits(batch, now: now)
             ready.append(contentsOf: batchReady)
             deferredIDs.append(contentsOf: batchDeferred)
             if !batchReady.isEmpty || batch.count < limit {
@@ -241,16 +241,20 @@ extension EnrichmentCoordinator {
     }
 
     /// Splits a claimed batch into the rows the pacing ledger lets through at `now` and
-    /// the rows it defers back to the Store (`EnrichmentSchedule.ledgerAdmits`).
-    private func partitionByRetryLedger(
+    /// the rows it defers back to the Store (`EnrichmentSchedule.ledgerAdmits`). While the face
+    /// model is missing, a row loses its video's faces from its scope, and a row claimed only
+    /// for them is deferred too (`EnrichmentSchedule.admittingVideoFaces`).
+    private func partitionByWaits(
         _ candidates: [ClaimedEnrichmentCandidate],
         now: ContinuousClock.Instant
     ) -> (ready: [ClaimedEnrichmentCandidate], deferred: [MediaAssetID]) {
         var ready: [ClaimedEnrichmentCandidate] = []
         var deferred: [MediaAssetID] = []
         for candidate in candidates {
-            if schedule.ledgerAdmits(candidate.asset.id, sourceSize: candidate.asset.byteSize, now: now) {
-                ready.append(candidate)
+            if schedule.ledgerAdmits(candidate.asset.id, sourceSize: candidate.asset.byteSize, now: now),
+               let admitted = schedule.admittingVideoFaces(candidate, now: now)
+            {
+                ready.append(admitted)
             } else {
                 deferred.append(candidate.asset.id)
             }

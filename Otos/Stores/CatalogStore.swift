@@ -936,12 +936,16 @@ extension CatalogStore {
     /// Everything People reads, in one transaction: each face with its photo's capture
     /// instant, its tile, whose word its person is and the user's acts on it, the people, and
     /// the stills in `availableLibraryPaths` whose faces are not yet read. Faces of libraries
-    /// no longer cataloged are left out.
+    /// no longer cataloged are left out. A photo with a face row no reading writes (an
+    /// embedding not of unit length, an assignment no case holds) is left out whole and owes
+    /// its faces again: its faces stamp is cleared, so it is read afresh, and it is logged.
     func peopleSnapshot(availableLibraryPaths: Set<LibraryRootPath> = []) async throws -> PeopleSnapshot {
         let pathsByRowID = roots.pathsByRowID
+        let rowIDs = roots.rowIDSnapshot()
         let faceRootIDs = faceRootIDs(availableLibraryPaths)
         let dbWriter = try database()
-        return try await dbWriter.read { db in
+        let (snapshot, malformed) = try await dbWriter.read { db -> (PeopleSnapshot, Set<FaceRowKey.Photo>) in
+            var malformed: Set<FaceRowKey.Photo> = []
             var rejections: [FaceRowKey: Set<PersonID>] = [:]
             for row in try Row.fetchAll(db, sql: "SELECT library_root_id, relative_path, face_index, person_id FROM face_rejection") {
                 rejections[FaceRowKey(row), default: []].insert(PersonID(rawValue: row["person_id"]))
@@ -970,21 +974,20 @@ extension CatalogStore {
                     path: MediaRelativePath(rawValue: row[PeopleFaceColumn.path.rawValue]),
                     index: row[PeopleFaceColumn.faceIndex.rawValue]
                 )
-                guard let rootPath = pathsByRowID[key.rootID] else { continue }
+                guard let rootPath = pathsByRowID[key.rootID], !malformed.contains(key.photo) else { continue }
                 let asset = MediaAssetID(libraryRootPath: rootPath, relativePath: key.path)
                 let data: Data = row[PeopleFaceColumn.embedding.rawValue]
-                guard let embedding = FaceStorage.embedding(from: data) else {
-                    throw CatalogStoreError.malformedFaceRow(asset)
+                let person: Int64? = row[PeopleFaceColumn.personID.rawValue]
+                guard let embedding = FaceStorage.embedding(from: data),
+                      let assignment = try? FaceAssignmentColumn.assignment(
+                          column: row[PeopleFaceColumn.assignment.rawValue], person: person
+                      )
+                else {
+                    malformed.insert(key.photo)
+                    continue
                 }
                 let id = FaceID(asset: asset, index: key.index)
                 let capture: Double? = row[PeopleFaceColumn.captureLocal.rawValue]
-                let person: Int64? = row[PeopleFaceColumn.personID.rawValue]
-                let assignment: FaceAssignment
-                do {
-                    assignment = try FaceAssignmentColumn.assignment(column: row[PeopleFaceColumn.assignment.rawValue], person: person)
-                } catch {
-                    throw CatalogStoreError.malformedFaceRow(asset)
-                }
                 faces.append(FaceFact(
                     id: id,
                     captureSeconds: capture,
@@ -1021,15 +1024,56 @@ extension CatalogStore {
                 stacks += PhotoStackRule.stacks(candidates: candidates, libraryRootPath: rootPath)
             }
             let photoOfStackMember = CatalogStacks(stacks).keyOfMember
-            return try PeopleSnapshot(
-                faces: faces,
-                tiles: tiles,
+            // A malformed row's photo is left out whole: its other faces were read before the
+            // bad row was reached.
+            let left = { (id: FaceID) in
+                rowIDs[id.asset.libraryRootPath].map { !malformed.contains(FaceRowKey.Photo(rootID: $0, path: id.asset.relativePath)) } ?? true
+            }
+            let snapshot = try PeopleSnapshot(
+                faces: faces.filter { left($0.id) },
+                tiles: tiles.filter { left($0.key) },
                 people: people,
-                likeness: likeness,
-                keyPhotos: keyPhotos,
+                likeness: likeness.filter { left($0.key) },
+                keyPhotos: keyPhotos.filter { left($0.value) },
                 photoOfStackMember: photoOfStackMember,
                 unchecked: Self.uncheckedForFaces(rootIDs: faceRootIDs, db: db)
             )
+            return (snapshot, malformed)
+        }
+        if !malformed.isEmpty {
+            try await oweFacesAgain(malformed, pathsByRowID: pathsByRowID)
+        }
+        return snapshot
+    }
+
+    /// Clears the faces stamp of each photo holding a malformed face row, so it is read for its
+    /// faces again and the reading replaces the row (ADR 0047). Rings the change notifications
+    /// only when a stamp was cleared, so the People read that found the rows does not start
+    /// itself again.
+    private func oweFacesAgain(_ photos: Set<FaceRowKey.Photo>, pathsByRowID: [Int64: LibraryRootPath]) async throws {
+        let cleared = try await database().write { db -> Int in
+            var cleared = 0
+            for photo in photos {
+                try db.execute(
+                    sql: """
+                    UPDATE media_asset SET faces_source_size = NULL, faces_source_mtime = NULL
+                    WHERE library_root_id = ? AND relative_path = ? AND faces_source_size IS NOT NULL
+                    """,
+                    arguments: [photo.rootID, photo.path.rawValue]
+                )
+                cleared += db.changesCount
+            }
+            return cleared
+        }
+        for photo in photos {
+            OtosLog.catalog.errorOperation("people.snapshot", phase: "malformedFaceRow", fields: [
+                "rootPath": pathsByRowID[photo.rootID]?.rawValue ?? "?",
+                "relativePath": photo.path.rawValue,
+                "owedAgain": "\(cleared > 0)",
+            ])
+        }
+        if cleared > 0 {
+            notifyCatalogChanged(.assetsDetailChanged)
         }
     }
 
@@ -1086,60 +1130,28 @@ extension CatalogStore {
     /// an Immich account whose frames are not yet read. A Live Photo's movie is not counted: its still holds its faces.
     private static func uncheckedForFaces(rootIDs: [Int64], db: Database) throws -> MediaCount {
         guard !rootIDs.isEmpty else { return MediaCount() }
-        let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
         let row = try Row.fetchOne(
             db,
-            sql: """
-            SELECT
-                SUM(kind IN ('image', 'raw') AND ((\(PreviewFaceSQL.owesFaces)) OR (\(PreviewFaceSQL.awaitsPreview)))),
-                SUM(best_kind = 'video'
-                    AND library_root_id IN (
-                        SELECT id FROM library_root
-                        WHERE kind IN (\(LibraryRootKind.sqlLiteralList(\.readsVideoFaces)))
-                    )
-                    AND (\(EnrichmentClaimGateway.videoFacesStalenessSQLPredicate()))
-                    AND NOT \(LivePhotoSQL.isPairedMotion("media_asset")))
-            FROM media_asset
-            WHERE library_root_id IN (\(placeholders))
-              AND trash_path IS NULL
-              AND pending_trash_batch_unix_ms IS NULL
-              AND hidden_by_source = 0
-              AND awaiting_presence = 0
-            """,
-            arguments: StatementArguments(rootIDs)
+            sql: PreviewFaceSQL.uncheckedSQL(rootCount: rootIDs.count),
+            arguments: StatementArguments(rootIDs + rootIDs + rootIDs)
         )
-        return MediaCount(photos: row?[0] ?? 0, videos: row?[1] ?? 0)
+        let owed: Int = row?[0] ?? 0
+        let awaiting: Int = row?[1] ?? 0
+        return MediaCount(photos: owed + awaiting, videos: row?[2] ?? 0)
     }
 
     /// Stills whose faces are owed from their stored preview (ADR 0047), in every library and
     /// Immich account: the preview's edit is known, and the faces stamp does not name the
     /// source that preview was made from. Videos are never read for faces. In catalog order,
-    /// after `cursor`; a row whose edit cannot be read is passed over and logged.
+    /// after `cursor`, from the partial index over the stills that owe them, so a catalog with
+    /// nothing owed reads no row; a row whose edit cannot be read is passed over and logged.
     func previewFaceCandidates(after cursor: PreviewFaceCursor? = nil, limit: Int) async throws -> PreviewFacePage {
         let rootIDs = roots.values.filter(\.root.kind.readsFaces).map(\.rowID).sorted()
         guard !rootIDs.isEmpty else { return PreviewFacePage(candidates: [], next: nil) }
         let pathsByRowID = roots.pathsByRowID
-        let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
         let arguments = StatementArguments(rootIDs) + [cursor?.rootID ?? Int64.min, cursor?.relativePath ?? "", limit]
         return try await database().read { db in
-            let rows = try Row.fetchAll(
-                db,
-                sql: """
-                SELECT library_root_id, relative_path, preview_path, rendered_revision, edit_recipe_json,
-                       \(PreviewFaceSQL.previewSize) AS preview_source_size,
-                       \(PreviewFaceSQL.previewMTime) AS preview_source_mtime
-                FROM media_asset
-                WHERE library_root_id IN (\(placeholders))
-                  AND kind IN ('image', 'raw')
-                  AND trash_path IS NULL
-                  AND \(PreviewFaceSQL.previewEditIsKnown)
-                  AND \(PreviewFaceSQL.owesFaces)
-                  AND (library_root_id, relative_path) > (?, ?)
-                ORDER BY library_root_id, relative_path
-                LIMIT ?
-                """,
-                arguments: arguments
-            )
+            let rows = try Row.fetchAll(db, sql: PreviewFaceSQL.candidatesSQL(rootCount: rootIDs.count), arguments: arguments)
             let candidates = rows.compactMap { row -> PreviewFaceCandidate? in
                 guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
                 let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"]))
@@ -1384,16 +1396,21 @@ extension CatalogStore {
             case let .setFavorite(person, favorite):
                 try db.execute(sql: "UPDATE person SET is_favorite = ? WHERE id = ?", arguments: [favorite ? 1 : 0, person.rawValue])
             case let .makeKeyPhoto(face, person):
+                // Choosing a face as a person's cover is the user's word that it is them: the
+                // face becomes theirs on the user's word, so a re-read carries the key photo
+                // and assignment never moves it (ADR 0047).
                 let face = try key(face)
+                guard try Int64.fetchOne(
+                    db,
+                    sql: "SELECT person_id FROM face WHERE library_root_id = ? AND relative_path = ? AND face_index = ?",
+                    arguments: [face.rootID, face.path.rawValue, face.index]
+                ) == person.rawValue else { throw PeopleRuleViolation.unknownFace }
+                try Self.give([face], to: person, db: db)
                 try db.execute(sql: "UPDATE face SET is_key_photo = 0 WHERE person_id = ?", arguments: [person.rawValue])
                 try db.execute(
-                    sql: """
-                    UPDATE face SET is_key_photo = 1
-                    WHERE library_root_id = ? AND relative_path = ? AND face_index = ? AND person_id = ?
-                    """,
-                    arguments: [face.rootID, face.path.rawValue, face.index, person.rawValue]
+                    sql: "UPDATE face SET is_key_photo = 1 WHERE library_root_id = ? AND relative_path = ? AND face_index = ?",
+                    arguments: [face.rootID, face.path.rawValue, face.index]
                 )
-                guard db.changesCount == 1 else { throw PeopleRuleViolation.unknownFace }
             }
             var people = before.people
             for person in created {
@@ -1487,7 +1504,7 @@ extension CatalogStore {
     /// Rename, Add Name and Set Birthday. A name another person holds is refused: the two
     /// are merged instead. A birthday after a photo the user gave the person is refused;
     /// Otos's own guesses and seeds from before it lose the person, and assignment gives
-    /// those faces to someone else.
+    /// those faces to someone else (`holdToBirthday`).
     private static func updatePerson(_ person: PersonID, name: String?, birthday: PersonBirthday?, db: Database) throws {
         if let name, try Int.fetchOne(
             db,
@@ -1496,31 +1513,40 @@ extension CatalogStore {
         ) ?? 0 > 0 {
             throw PeopleRuleViolation.nameTaken
         }
-        if let birthdaySeconds = birthday?.seconds {
-            let before = """
-            FROM face f
-            JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
-            WHERE f.person_id = ? AND m.best_capture_local < ?
-            """
-            let earlier = try Int.fetchOne(
-                db,
-                sql: "SELECT COUNT(*) \(before) AND f.assignment = \(FaceAssignmentColumn.user.rawValue)",
-                arguments: [person.rawValue, birthdaySeconds]
-            ) ?? 0
-            guard earlier == 0 else { throw PeopleRuleViolation.confirmedBeforeBirthday(count: earlier) }
-            try db.execute(
-                sql: """
-                UPDATE face SET person_id = NULL, assignment = \(FaceAssignmentColumn.open.rawValue), is_key_photo = 0
-                WHERE (library_root_id, relative_path, face_index) IN (
-                    SELECT f.library_root_id, f.relative_path, f.face_index \(before)
-                )
-                """,
-                arguments: [person.rawValue, birthdaySeconds]
-            )
-        }
+        try holdToBirthday(birthday, faces: [person], db: db)
         try db.execute(
             sql: "UPDATE person SET name = ?, birthday = ? WHERE id = ?",
             arguments: [name, birthday?.text, person.rawValue]
+        )
+    }
+
+    /// The birthday rule on the faces of `people`, who are to have `birthday` (ADR 0047): a face
+    /// from before it is never theirs. Refused when the user gave one of them such a face;
+    /// every other such face, Otos's guess or seed, loses its person, for assignment to give
+    /// out again. The one statement of the rule for Set Birthday and for a merge.
+    private static func holdToBirthday(_ birthday: PersonBirthday?, faces people: [PersonID], db: Database) throws {
+        guard let birthdaySeconds = birthday?.seconds, !people.isEmpty else { return }
+        let placeholders = Array(repeating: "?", count: people.count).joined(separator: ", ")
+        let before = """
+        FROM face f
+        JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
+        WHERE f.person_id IN (\(placeholders)) AND m.best_capture_local < ?
+        """
+        let arguments = StatementArguments(people.map(\.rawValue)) + [birthdaySeconds]
+        let earlier = try Int.fetchOne(
+            db,
+            sql: "SELECT COUNT(*) \(before) AND f.assignment = \(FaceAssignmentColumn.user.rawValue)",
+            arguments: arguments
+        ) ?? 0
+        guard earlier == 0 else { throw PeopleRuleViolation.confirmedBeforeBirthday(count: earlier) }
+        try db.execute(
+            sql: """
+            UPDATE face SET person_id = NULL, assignment = \(FaceAssignmentColumn.open.rawValue), is_key_photo = 0
+            WHERE (library_root_id, relative_path, face_index) IN (
+                SELECT f.library_root_id, f.relative_path, f.face_index \(before)
+            )
+            """,
+            arguments: arguments
         )
     }
 
@@ -1584,8 +1610,9 @@ extension CatalogStore {
     }
 
     /// The first person's faces become the second's. Refused when the user gave both a face
-    /// of one photo, or gave the first a photo from before the second's birthday. Where Otos
-    /// had guessed both into one photo, the guesses there are dropped for assignment to redo.
+    /// of one photo, or gave either a photo from before the merged birthday; Otos's guesses and
+    /// seeds from before it lose their person (`holdToBirthday`). Where Otos had guessed both
+    /// into one photo, the guesses there are dropped for assignment to redo.
     /// The second keeps its name, birthday and key photo, taking the first's where it
     /// has none, and is a favourite if either was.
     private static func mergePerson(_ from: PersonID, into: PersonID, db: Database) throws {
@@ -1606,18 +1633,7 @@ extension CatalogStore {
             throw PeopleRuleViolation.unknownFace
         }
         let birthday = target.birthday ?? source.birthday
-        if let birthdaySeconds = birthday?.seconds {
-            let earlier = try Int.fetchOne(
-                db,
-                sql: """
-                SELECT COUNT(*) FROM face f
-                JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
-                WHERE f.person_id IN (?, ?) AND f.assignment = \(FaceAssignmentColumn.user.rawValue) AND m.best_capture_local < ?
-                """,
-                arguments: [from.rawValue, into.rawValue, birthdaySeconds]
-            ) ?? 0
-            guard earlier == 0 else { throw PeopleRuleViolation.confirmedBeforeBirthday(count: earlier) }
-        }
+        try holdToBirthday(birthday, faces: [from, into], db: db)
         // Guesses of either in a photo the other is in.
         try db.execute(
             sql: """

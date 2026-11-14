@@ -302,3 +302,30 @@ struct EnrichmentScheduleTests {
         #expect(lines == [0, nil, nil, 2, 0])
     }
 }
+
+extension EnrichmentScheduleTests {
+    /// ADR 0047: while the face model cannot be loaded, no row is read for a video's faces.
+    /// A row claimed for other products too keeps them; one claimed only for its faces gives
+    /// its claim back; and the hold is a wait the scheduler wakes for, spent once it passes.
+    @Test func aMissingFaceModelHoldsEveryVideosFacesUntilItsBackoffPasses() {
+        var schedule = EnrichmentSchedule(retrySchedule: .production)
+        let video = MediaAsset(
+            libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "clip.mov"), name: "clip.mov",
+            contentTypeIdentifier: nil, byteSize: 100, createdAt: nil, contentModifiedAt: nil, bestKind: .video
+        )
+        let facesOnly = ClaimedEnrichmentCandidate(asset: video, scope: .videoFaces)
+        let everything = ClaimedEnrichmentCandidate(asset: video, scope: [.metadata, .videoFaces])
+        #expect(schedule.admittingVideoFaces(facesOnly, now: start)?.scope == .videoFaces)
+
+        schedule.holdVideoFaces(now: start)
+        let backoff = EnrichmentRetrySchedule.production.faceModelBackoff
+        #expect(schedule.admittingVideoFaces(facesOnly, now: start) == nil)
+        #expect(schedule.admittingVideoFaces(everything, now: start)?.scope == .metadata)
+        #expect(schedule.nextWake(after: start) == start.advanced(by: backoff))
+
+        let after = start.advanced(by: backoff)
+        #expect(schedule.admittingVideoFaces(facesOnly, now: after)?.scope == .videoFaces)
+        schedule.endPass(at: after)
+        #expect(schedule.videoFacesHeldUntil == nil)
+    }
+}

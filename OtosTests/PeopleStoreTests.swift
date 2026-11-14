@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import GRDB
 @testable import OtosKit
 import Testing
 
@@ -101,31 +102,122 @@ struct PeopleStoreTests {
 
     /// Reading a photo again keeps the user's word: their face and its rejections, the seed,
     /// the removed name and the key photo move to the new face that overlaps the old;
-    /// Otos's guess and "not a face" do not.
+    /// Otos's guess does not. A key photo the user chose on a face Otos had guessed is the
+    /// user's word too: choosing it confirmed the face, so a re-read keeps both.
     @Test func aNewReadingKeepsTheUsersWord() async throws {
-        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
         try await library.readFaces([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.4), Self.face(x: 0.7)]),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
         ])
         let old = [0, 1, 2].map { FaceID(asset: library.id("a.jpg"), index: $0) }
+        let guessed = FaceID(asset: library.id("b.jpg"), index: 0)
         let sam = try #require(try await library.store.perform(.moveToNewPerson([old[0]], name: "Sam")).person)
         let ian = try #require(try await library.store.perform(.moveToNewPerson([old[1]], name: "Ian")).person)
         _ = try await library.store.perform(.removeName([old[1]]))
         _ = try await library.store.perform(.makeKeyPhoto(old[0], of: sam))
-        try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [.init(face: old[2], person: .existing(ian))]))
+        try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [
+            .init(face: old[2], person: .existing(ian)), .init(face: guessed, person: .existing(ian)),
+        ]))
+        _ = try await library.store.perform(.makeKeyPhoto(guessed, of: ian))
+        #expect(try await library.store.peopleSnapshot().faces.first { $0.id == guessed }?.assignment == .user(ian))
 
         // The new reading finds the faces in another order, shifted a little.
         try await library.readFaces([
             library.result(for: "a.jpg", faces: [Self.face(x: 0.71), Self.face(x: 0.41), Self.face(x: 0.11)]),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.31)]),
         ])
 
         let snapshot = try await library.store.peopleSnapshot()
-        let byIndex = Dictionary(uniqueKeysWithValues: snapshot.faces.map { ($0.id.index, $0) })
+        let byIndex = Dictionary(uniqueKeysWithValues: snapshot.faces.filter { $0.id.asset == library.id("a.jpg") }.map { ($0.id.index, $0) })
         #expect(byIndex[2]?.assignment == .user(sam))
         #expect(byIndex[1]?.assignment == .held)
         #expect(byIndex[1]?.rejected == [ian])
         #expect(byIndex[0]?.assignment == .open)
         #expect(snapshot.keyPhotos[sam]?.index == 2)
+        #expect(snapshot.faces.first { $0.id == guessed }?.assignment == .user(ian))
+        #expect(snapshot.keyPhotos[ian] == guessed)
+        await library.store.shutdown()
+    }
+
+    /// The faces stamp a migration clears owes a re-read, but says nothing of the source the
+    /// faces came from: a re-read of the same source keeps "not a face" and a named face it
+    /// does not find, and a re-read after the file changed reads it afresh.
+    @Test func aClearedStampStillKnowsTheSourceTheFacesCameFrom() async throws {
+        let directory = try makeTestDirectory()
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(
+            in: directory, files: ["a.jpg", "b.jpg"], database: directory.appending(path: "db/catalog.sqlite")
+        )
+        for name in ["a.jpg", "b.jpg"] {
+            try await library.readFaces([library.result(for: name, faces: [Self.face(x: 0.1), Self.face(x: 0.6)])])
+            _ = try await library.store.perform(.notAFace([FaceID(asset: library.id(name), index: 0)]))
+            _ = try await library.store.perform(.moveToNewPerson([FaceID(asset: library.id(name), index: 1)], name: "Sam \(name)"))
+        }
+        let database = try DatabaseQueue(path: #require(library.databaseURL).path(percentEncoded: false))
+        try await database.write { db in
+            // A migration owes every re-read; b's file changed before its re-read.
+            try db.execute(sql: "UPDATE media_asset SET faces_source_size = NULL, faces_source_mtime = NULL")
+            try db.execute(sql: "UPDATE media_asset SET byte_size = byte_size + 1 WHERE relative_path = 'b.jpg'")
+        }
+        try await library.readFaces([
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1)]),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.1)]),
+        ])
+
+        let rows = try await database.read { db in
+            try Row.fetchAll(db, sql: "SELECT relative_path, is_not_face, person_id FROM face ORDER BY relative_path, face_index")
+                .map { "\($0["relative_path"] as String) notFace=\($0["is_not_face"] as Int) named=\(($0["person_id"] as Int64?) != nil)" }
+        }
+        #expect(rows == ["a.jpg notFace=1 named=false", "a.jpg notFace=0 named=true", "b.jpg notFace=0 named=false"])
+        await library.store.shutdown()
+    }
+
+    /// A face row no reading writes fails only its own photo: the People read leaves that
+    /// photo out, its faces are owed again, and a new reading replaces the row.
+    @Test func aMalformedFaceRowIsLeftOutAndReadAgain() async throws {
+        let directory = try makeTestDirectory()
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(
+            in: directory, files: ["a.jpg", "b.jpg"], database: directory.appending(path: "db/catalog.sqlite")
+        )
+        try await library.readFaces([
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)]),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
+        ])
+        let database = try DatabaseQueue(path: #require(library.databaseURL).path(percentEncoded: false))
+        try await database.write { db in
+            try db.execute(sql: "UPDATE face SET embedding = x'00' WHERE relative_path = 'a.jpg' AND face_index = 1")
+        }
+
+        let snapshot = try await library.store.peopleSnapshot()
+        #expect(snapshot.faces.map(\.id.asset) == [library.id("b.jpg")])
+        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg")])
+
+        try await library.readFaces([library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)])])
+        #expect(try await library.store.peopleSnapshot().faces.count == 3)
+        await library.store.shutdown()
+    }
+
+    /// A merged person's birthday holds both people's faces: Otos's guesses and seeds of
+    /// either from before it lose their person, as Set Birthday's do, and the user's are
+    /// refused.
+    @Test func aMergeHoldsBothPeopleToTheMergedBirthday() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
+        try await library.readFaces([
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1)], captured: Date(timeIntervalSince1970: 1_262_304_000)),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.3)], captured: Date(timeIntervalSince1970: 1_577_836_800)),
+        ])
+        let early = FaceID(asset: library.id("a.jpg"), index: 0)
+        let late = FaceID(asset: library.id("b.jpg"), index: 0)
+        try await library.store.applyAssignment(FaceAssignmentPlan(newPeople: [[early]]))
+        let found = try #require(try await library.store.peopleSnapshot().people.first?.id)
+        let sam = try #require(try await library.store.perform(.moveToNewPerson([late], name: "Sam")).person)
+        _ = try await library.store.perform(.edit(sam, name: "Sam", birthday: PersonBirthday("2015")))
+
+        _ = try await library.store.perform(.merge(found, into: sam))
+
+        let snapshot = try await library.store.peopleSnapshot()
+        #expect(snapshot.faces.first { $0.id == early }?.assignment == .open)
+        #expect(snapshot.faces.first { $0.id == late }?.assignment == .user(sam))
         await library.store.shutdown()
     }
 

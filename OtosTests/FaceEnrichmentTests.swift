@@ -144,20 +144,29 @@ struct FaceEnrichmentTests {
         let root: URL
         let rootPath: LibraryRootPath
         let emit: @Sendable (FilesystemEvent) -> Void
+        /// The catalog's file, when the test asked for one to write rows the store never writes.
+        var databaseURL: URL?
 
-        static func make(in directory: URL, files: [String]) async throws -> ScannedLibrary {
+        /// `database` puts the catalog in a file, which a test can open beside the store.
+        static func make(in directory: URL, files: [String], database: URL? = nil) async throws -> ScannedLibrary {
             let root = directory.appending(path: "Pictures", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             for name in files {
                 try writeCatalogStoreFile(root.appending(path: name), contents: "jpeg \(name)")
             }
+            if let database {
+                try FileManager.default.createDirectory(at: database.deletingLastPathComponent(), withIntermediateDirectories: true)
+            }
             let (watcher, emit) = CatalogFilesystemWatcher.testing()
-            let store = CatalogStore(location: .inMemory, filesystemWatcher: watcher, scanCadence: .milliseconds(10))
+            let store = CatalogStore(
+                location: database.map { .databaseFile($0) } ?? .inMemory, filesystemWatcher: watcher, scanCadence: .milliseconds(10)
+            )
             try await store.start(scansSavedLibraries: false)
             try await store.addLibrary(url: root)
             _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == files.count }
             return try ScannedLibrary(
-                store: store, root: root, rootPath: CatalogPath.normalizedDirectoryPath(for: root), emit: emit
+                store: store, root: root, rootPath: CatalogPath.normalizedDirectoryPath(for: root), emit: emit,
+                databaseURL: database
             )
         }
 
@@ -166,15 +175,16 @@ struct FaceEnrichmentTests {
         }
 
         /// One still's faces, read from a stored preview of the file as scanned; `sizeOffset`
-        /// makes it a reading of a preview of other bytes.
+        /// makes it a reading of a preview of other bytes, and `captured` dates the photo.
         struct FaceReading {
             let name: String
             let faces: [DetectedFace]
             let sizeOffset: Int64
+            var captured: Date?
         }
 
-        func result(for name: String, faces: [DetectedFace], sizeOffset: Int64 = 0) -> FaceReading {
-            FaceReading(name: name, faces: faces, sizeOffset: sizeOffset)
+        func result(for name: String, faces: [DetectedFace], sizeOffset: Int64 = 0, captured: Date? = nil) -> FaceReading {
+            FaceReading(name: name, faces: faces, sizeOffset: sizeOffset, captured: captured)
         }
 
         /// Writes a video's faces as enrichment reads them, with every other product current
@@ -210,7 +220,7 @@ struct FaceEnrichmentTests {
                 let mtime = MediaAsset.mtimeSeconds(asset.contentModifiedAt)
                 renderings.append(EnrichmentResult(
                     id: id(reading.name),
-                    metadata: AssetMetadata(),
+                    metadata: AssetMetadata(timestamps: reading.captured.map { [.absolute(instant: $0)] } ?? []),
                     thumbnailPath: "thumb-\(reading.name).jpg",
                     sourceSize: size,
                     sourceMTimeSeconds: mtime,

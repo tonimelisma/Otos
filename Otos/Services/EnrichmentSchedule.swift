@@ -22,6 +22,9 @@ nonisolated struct EnrichmentRetrySchedule: Equatable, Sendable {
     var deviceAttemptLimit: Int
     /// After a catalog write fails, the wait before the scheduler wakes to retry it.
     var writeFailureBackoff: Duration
+    /// After the face model could not be loaded, how long no row is read for a video's faces.
+    /// The model reports nothing when it would load, so this is a backoff.
+    var faceModelBackoff: Duration = .seconds(900)
 
     static let production = EnrichmentRetrySchedule(
         backgroundDownloadDelays: [.seconds(15), .seconds(60), .seconds(300), .seconds(900)],
@@ -86,6 +89,9 @@ nonisolated struct EnrichmentSchedule: Sendable {
     private(set) var retryLedger: [MediaAssetID: RetryLedgerEntry] = [:]
     private(set) var readinessRechecks: [MediaAssetID: ContinuousClock.Instant] = [:]
     private(set) var writeRetryAt: ContinuousClock.Instant?
+    /// Until when no row is read for a video's faces, because the face model could not be
+    /// loaded (`holdVideoFaces`).
+    private(set) var videoFacesHeldUntil: ContinuousClock.Instant?
     /// Last emitted scheduler-route facts, and how many identical passes have been
     /// collapsed since (B1). The route line was once unconditional, so a scheduler spinning
     /// at zero delay emitted hundreds of identical `dispatched=0` lines per second: the
@@ -322,6 +328,28 @@ nonisolated struct EnrichmentSchedule: Sendable {
         return entry.notBefore <= now
     }
 
+    // MARK: - Video faces while the model is missing
+
+    /// Holds every video's faces for `faceModelBackoff`: no video can be read for them while the
+    /// face model cannot be loaded, so reading one after another would download and decode
+    /// every library video for nothing.
+    mutating func holdVideoFaces(now: ContinuousClock.Instant) {
+        videoFacesHeldUntil = now.advanced(by: retrySchedule.faceModelBackoff)
+    }
+
+    /// `candidate` as it may proceed at `now`: as claimed, without a video's faces while they
+    /// are held, or nil when its faces were all it was claimed for, so its claim is released.
+    func admittingVideoFaces(
+        _ candidate: ClaimedEnrichmentCandidate,
+        now: ContinuousClock.Instant
+    ) -> ClaimedEnrichmentCandidate? {
+        guard let held = videoFacesHeldUntil, held > now, candidate.scope.contains(.videoFaces) else {
+            return candidate
+        }
+        let scope = candidate.scope.subtracting(.videoFaces)
+        return scope.isEmpty ? nil : ClaimedEnrichmentCandidate(asset: candidate.asset, scope: scope)
+    }
+
     // MARK: - Readiness rechecks
 
     /// Whether a claimed row's readiness may be probed at `now`. A row deferred until
@@ -364,6 +392,9 @@ nonisolated struct EnrichmentSchedule: Sendable {
         if let writeRetryAt, writeRetryAt <= now {
             self.writeRetryAt = nil
         }
+        if let videoFacesHeldUntil, videoFacesHeldUntil <= now {
+            self.videoFacesHeldUntil = nil
+        }
     }
 
     /// The earliest wait still ahead of `now`, or nil when nothing waits. Due work needs no
@@ -374,7 +405,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
         let deadlines = downloads
             + retryLedger.values.map(\.notBefore)
             + readinessRechecks.values
-            + [writeRetryAt].compactMap(\.self)
+            + [writeRetryAt, videoFacesHeldUntil].compactMap(\.self)
         return deadlines.filter { $0 > now }.min()
     }
 

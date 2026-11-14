@@ -20,6 +20,17 @@ extension EnrichmentCoordinator {
         switch outcome {
         case let .complete(result):
             await recordCompletedEnrichment(result, id: id)
+        case let .facesUnread(result, unread):
+            // The products are written; the faces stay owed, and are not read again until
+            // the ledger's pacing passes, or for every video until the model's backoff does.
+            // Not `.transient`: the bytes were read, and the row is no unreadable source.
+            let now = ContinuousClock.now
+            schedule.pace(id, sourceSize: work.sourceSize, now: now)
+            if unread == .model {
+                schedule.holdVideoFaces(now: now)
+            }
+            await recordCompletedEnrichment(result, id: id)
+            await recordVisibleThumbnailLifecycle(phase: "videoFacesUnread", id: id, fields: ["unread": "\(unread)"])
         case let .hashed(result):
             // A digest alone changes nothing the user sees, so it is written at once rather
             // than batched with products; the write releases the row's claim.

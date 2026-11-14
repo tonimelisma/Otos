@@ -209,6 +209,10 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.undecodableIndexMigrationIdentifier,
             CatalogSchema.placeNameLanguageMigrationIdentifier,
             CatalogSchema.cameraBurstsRemovedMigrationIdentifier,
+            CatalogSchema.facesReadSourceMigrationIdentifier,
+            CatalogSchema.canonicalBirthdayMigrationIdentifier,
+            CatalogSchema.keyPhotoIsUsersWordMigrationIdentifier,
+            CatalogSchema.facesOwedIndexesMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -1316,5 +1320,97 @@ private extension CatalogStoreSchemaMigrationTests {
                 )
             }
         }
+    }
+}
+
+/// ADR 0047's catalog after the faces review: where faces were read from, birthdays in their
+/// one form, and key photos on the user's word.
+extension CatalogStoreSchemaMigrationTests {
+    /// v47 records the source each photo's faces were read from: its stamp where it has one,
+    /// else the source the stamp would name now. A photo with no face row records none.
+    @Test func theFacesReadSourceMigrationKeepsWhereFacesCameFrom() async throws {
+        let queue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.continuousFrameMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (path, kind) VALUES ('/Pictures', 'library')")
+            for (path, stamp, rendered, faces) in [
+                ("stamped.jpg", Int64?(5), Int64(7), true), ("cleared.jpg", nil, 7, true), ("none.jpg", nil, 7, false),
+            ] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key,
+                        kind, byte_size, faces_source_size, faces_source_mtime, rendered_source_size, rendered_source_mtime)
+                    VALUES (1, ?, ?, ?, ?, 'image', 7, ?, ?, ?, 70)
+                    """,
+                    arguments: [path, path, path, path, stamp, stamp.map { $0 * 10 }, rendered]
+                )
+                if faces {
+                    try db.execute(
+                        sql: """
+                        INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
+                            landmarks, quality, analysis_revision, embedding)
+                        VALUES (1, ?, 0, 0, 0, 0.1, 0.1, x'', 0.5, 3, x'')
+                        """,
+                        arguments: [path]
+                    )
+                }
+            }
+        }
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.facesReadSourceMigrationIdentifier)
+        let sources = try await queue.read { db in
+            try Row.fetchAll(db, sql: "SELECT relative_path, faces_read_source_size, faces_read_source_mtime FROM media_asset ORDER BY relative_path")
+                .map { "\($0["relative_path"] as String) \(($0["faces_read_source_size"] as Int64?).map(String.init) ?? "nil") \(($0["faces_read_source_mtime"] as Int64?).map(String.init) ?? "nil")" }
+        }
+        #expect(sources == ["cleared.jpg 7 70", "none.jpg nil nil", "stamped.jpg 5 50"])
+    }
+
+    /// v48 writes each birthday in its one form: a spelling of a valid date the rule before
+    /// it accepted is rewritten, and one naming no date is cleared, so no stored birthday
+    /// fails the People read.
+    @Test func theBirthdayMigrationWritesEachBirthdayInItsForm() async throws {
+        let queue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.facesReadSourceMigrationIdentifier)
+        let stored = ["1985-6-7", "+985", "0000", "2020", "2021-02-30", "1990-01-02"]
+        try await queue.write { db in
+            for (id, birthday) in stored.enumerated() {
+                try db.execute(sql: "INSERT INTO person (id, birthday) VALUES (?, ?)", arguments: [id + 1, birthday])
+            }
+        }
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.canonicalBirthdayMigrationIdentifier)
+        let birthdays = try await queue.read { db in
+            try String?.fetchAll(db, sql: "SELECT birthday FROM person ORDER BY id")
+        }
+        #expect(birthdays == ["1985-06-07", "0985", nil, "2020", nil, "1990-01-02"])
+        #expect(birthdays.compactMap(\.self).allSatisfy { PersonBirthday($0) != nil })
+    }
+
+    /// v49 makes a key photo chosen on a face Otos had guessed the user's word, as choosing
+    /// one now is; every other face keeps whose word it was.
+    @Test func aKeyPhotoOnAGuessBecomesTheUsersWord() async throws {
+        let queue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.canonicalBirthdayMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (path, kind) VALUES ('/Pictures', 'library')")
+            try db.execute(sql: """
+            INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key)
+            VALUES (1, 'a.jpg', 'a.jpg', 'a.jpg', 'a.jpg')
+            """)
+            try db.execute(sql: "INSERT INTO person (id, name) VALUES (1, 'Sam'), (2, 'Ian')")
+            for (index, person, assignment, key) in [(0, 1, FaceAssignmentColumn.model, 1), (1, 2, .model, 0)] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
+                        landmarks, quality, analysis_revision, embedding, person_id, assignment, is_key_photo)
+                    VALUES (1, 'a.jpg', ?, 0, 0, 0.1, 0.1, x'', 0.5, 3, x'', ?, ?, ?)
+                    """,
+                    arguments: [index, person, assignment.rawValue, key]
+                )
+            }
+        }
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.keyPhotoIsUsersWordMigrationIdentifier)
+        let assignments = try await queue.read { db in
+            try Int.fetchAll(db, sql: "SELECT assignment FROM face ORDER BY face_index")
+        }
+        #expect(assignments == [FaceAssignmentColumn.user, .model].map(\.rawValue))
     }
 }

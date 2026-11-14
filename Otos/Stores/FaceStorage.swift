@@ -29,12 +29,46 @@ nonisolated enum FaceStorage {
 }
 
 /// Which face of a new reading each face of the previous reading of the same photo became
-/// (ADR 0047): the user's acts — a confirmed person, an ignored group, rejections — move to
-/// it, so reading a photo again never loses what the user decided. Faces are matched one to
-/// one by the overlap of their boxes (intersection over union), the most overlapping pair
-/// first; an overlap under `minimumOverlap` is a different face.
+/// (ADR 0047): the user's acts — a person given, a removed name, a key photo, rejections, "not
+/// a face" — move to it, so reading a photo again never loses what the user decided. Faces are
+/// matched one to one, the closest pair first. A still's faces match by the overlap of their
+/// boxes (intersection over union); an overlap under `minimumOverlap` is a different face. A
+/// video's faces match by likeness, the one-per-person rule of `VideoFaceReader`: each box is a
+/// fraction of the frame its face was read in, and two readings may keep a person from
+/// different frames, where one box can hold someone else.
 nonisolated enum FaceCarryOver {
     static let minimumOverlap = 0.5
+
+    /// How a reading's faces are matched to the previous reading's.
+    enum Match {
+        /// A still's: by the overlap of their boxes.
+        case box
+        /// A video's: by likeness.
+        case likeness
+    }
+
+    /// `[new index: previous index]`, by likeness: a pair is one person when both faces are
+    /// recognisable and their cosine reaches assignment's threshold, as `VideoFaceReader`
+    /// keeps one face per person.
+    static func matches(previous: [FaceEmbedding], new: [FaceEmbedding]) -> [Int: Int] {
+        var pairs: [(likeness: Float, previous: Int, new: Int)] = []
+        for (p, old) in previous.enumerated() where FaceRecognisability.isRecognisable(old) {
+            for (n, embedding) in new.enumerated() where FaceRecognisability.isRecognisable(embedding) {
+                let likeness = old.cosine(with: embedding)
+                if likeness >= FaceAssignmentPolicy.threshold {
+                    pairs.append((likeness, p, n))
+                }
+            }
+        }
+        var result: [Int: Int] = [:], usedPrevious: Set<Int> = []
+        for pair in pairs.sorted(by: { ($0.likeness, $1.new, $1.previous) > ($1.likeness, $0.new, $0.previous) })
+            where result[pair.new] == nil && !usedPrevious.contains(pair.previous)
+        {
+            result[pair.new] = pair.previous
+            usedPrevious.insert(pair.previous)
+        }
+        return result
+    }
 
     /// `[new index: previous index]`.
     static func matches(previous: [CGRect], new: [CGRect]) -> [Int: Int] {
@@ -345,10 +379,68 @@ nonisolated enum PreviewFaceSQL {
       AND source_products_size IS NULL
       AND (\(EnrichmentClaimGateway.renderingStalenessSQLPredicate()))
     """
+
+    /// A still out of the Trash owed faces from its stored preview: the condition of the
+    /// partial index `CatalogSchema.stillOwesFacesIndexName`, which its migration froze. A
+    /// query states it as these AND terms, so SQLite reads it from that index.
+    static let stillOwesFaces = "kind IN ('image', 'raw') AND trash_path IS NULL AND \(owesFaces)"
+    /// A still out of the Trash whose stored preview is still to come; the condition of
+    /// `CatalogSchema.stillAwaitsPreviewIndexName`.
+    static let stillAwaitsPreview = "kind IN ('image', 'raw') AND trash_path IS NULL AND \(awaitsPreview)"
+    /// A video out of the Trash whose frames are not yet read for faces; the condition of
+    /// `CatalogSchema.videoOwesFacesIndexName`.
+    static let videoOwesFaces = "trash_path IS NULL AND \(EnrichmentClaimGateway.videoFacesStalenessSQLPredicate())"
+
+    /// The preview reader's page of candidates in `rootCount` roots (`CatalogStore.previewFaceCandidates`),
+    /// read from the stills-owing index; its arguments are the roots, the cursor's root and
+    /// path, and the limit.
+    static func candidatesSQL(rootCount: Int) -> String {
+        """
+        SELECT library_root_id, relative_path, preview_path, rendered_revision, edit_recipe_json,
+               \(previewSize) AS preview_source_size,
+               \(previewMTime) AS preview_source_mtime
+        FROM media_asset
+        WHERE library_root_id IN (\(placeholders(rootCount)))
+          AND \(stillOwesFaces)
+          AND \(previewEditIsKnown)
+          AND (library_root_id, relative_path) > (?, ?)
+        ORDER BY library_root_id, relative_path
+        LIMIT ?
+        """
+    }
+
+    /// What is not yet read for faces in `rootCount` roots (`CatalogStore.uncheckedForFaces`):
+    /// the stills owed faces, the stills waiting for a preview, and the videos whose frames
+    /// are unread, each counted from its own partial index. The videos' is named: SQLite would
+    /// otherwise seek every video through the stack candidates' index. Its arguments are the
+    /// roots, three times.
+    static func uncheckedSQL(rootCount: Int) -> String {
+        let visible = """
+        library_root_id IN (\(placeholders(rootCount)))
+          AND pending_trash_batch_unix_ms IS NULL
+          AND hidden_by_source = 0
+          AND awaiting_presence = 0
+        """
+        return """
+        SELECT
+            (SELECT COUNT(*) FROM media_asset WHERE \(visible) AND \(stillOwesFaces)),
+            (SELECT COUNT(*) FROM media_asset WHERE \(visible) AND \(stillAwaitsPreview)),
+            (SELECT COUNT(*) FROM media_asset INDEXED BY \(CatalogSchema.videoOwesFacesIndexName)
+                WHERE \(visible) AND \(videoOwesFaces)
+                AND library_root_id IN (
+                    SELECT id FROM library_root WHERE kind IN (\(LibraryRootKind.sqlLiteralList(\.readsVideoFaces)))
+                )
+                AND NOT \(LivePhotoSQL.isPairedMotion("media_asset")))
+        """
+    }
+
+    private static func placeholders(_ count: Int) -> String {
+        Array(repeating: "?", count: count).joined(separator: ", ")
+    }
 }
 
-/// The faces read from one candidate's preview; none when the preview does not decode, which
-/// is recorded so the row is not offered again until a new preview arrives.
+/// The faces read from one candidate's preview; none when it decoded and held no face, which is
+/// recorded so the row is not offered again until a new preview arrives.
 nonisolated struct PreviewFaceResult: Equatable, Sendable {
     let candidate: PreviewFaceCandidate
     let faces: EnrichedFaces

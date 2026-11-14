@@ -401,3 +401,61 @@ struct VideoFaceTests {
         }
     }
 }
+
+extension VideoFaceTests {
+    /// A library video whose faces cannot be read keeps every other product: its metadata,
+    /// digest and thumbnail are made and returned, and only the faces stay owed, as their own
+    /// outcome, which names whether this video or the model failed. Never `.transient`.
+    @Test func aVideoWhoseFacesFailKeepsEveryOtherProduct() async throws {
+        let directory = try makeTestDirectory()
+        let video = directory.appending(path: "clip.mov")
+        try FileManager.default.copyItem(at: Self.fixture, to: video)
+        let size = try #require(try FileManager.default.attributesOfItem(atPath: video.path)[.size] as? Int64)
+        let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: directory.path), relativePath: MediaRelativePath(rawValue: "clip.mov"))
+        struct FrameFailed: Error {}
+        let failures: [(any Error & Sendable, VideoFacesUnread)] = [
+            (FrameFailed(), .video), (FaceAnalysisError.modelUnavailable(description: "missing"), .model),
+        ]
+        for (failure, expected) in failures {
+            let enricher = MediaEnricher.live(
+                thumbnailDirectory: directory.appending(path: "Thumbnails", directoryHint: .isDirectory),
+                readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+                analyzeFaces: { _ in throw failure }
+            )
+            let outcome = await enricher.enrich(id, .localFile(video), size, 1000, [.metadata, .rendering, .hash, .videoFaces], nil)
+            guard case let .facesUnread(result, unread) = outcome else {
+                Issue.record("expected .facesUnread, got \(outcome)")
+                continue
+            }
+            #expect(unread == expected)
+            #expect(result.metadata != nil)
+            #expect(result.contentHash != nil)
+            #expect(result.rendering != nil)
+            #expect(result.videoFaces == nil)
+        }
+    }
+
+    /// A video's re-read carries what the user said by likeness, not by box: its boxes belong
+    /// to the frames they were read in, so the box a named face had can hold someone else in
+    /// the frame a re-read keeps.
+    @Test func aVideosNamedFaceMovesToTheSamePersonNotTheSameBox() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["clip.mov"])
+        let here = CGRect(x: 0.1, y: 0.2, width: 0.2, height: 0.3)
+        let there = CGRect(x: 0.6, y: 0.2, width: 0.2, height: 0.3)
+        func face(person: Int, box: CGRect) -> DetectedFace {
+            let face = Self.face(person: person, quality: 0.5)
+            return DetectedFace(box: box, landmarks: face.landmarks, quality: face.quality, embedding: face.embedding)
+        }
+        try await library.readVideoFaces("clip.mov", faces: [face(person: 1, box: here), face(person: 2, box: there)])
+        let sam = try #require(try await library.store.perform(
+            .moveToNewPerson([FaceID(asset: library.id("clip.mov"), index: 0)], name: "Sam")
+        ).person)
+
+        // The re-read keeps person 2 from a frame where they stand where Sam stood.
+        try await library.readVideoFaces("clip.mov", faces: [face(person: 2, box: here), face(person: 1, box: there)])
+
+        let faces = try await library.store.peopleSnapshot().faces
+        #expect(faces.map(\.assignment) == [.open, .user(sam)])
+        await library.store.shutdown()
+    }
+}

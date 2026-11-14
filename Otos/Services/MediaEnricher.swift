@@ -34,7 +34,9 @@ import UniformTypeIdentifiers
 /// staged, not published to their final deterministic filename, so Store remains the
 /// owner that decides whether a derived product matches current catalog truth. A
 /// transient read failure yields `.transient` (retry); a regressed-to-dataless file
-/// yields `.notMaterialized` (route back to download).
+/// yields `.notMaterialized` (route back to download). A video whose faces could not be read
+/// yields `.facesUnread` with every other product: those are written, and only the faces stay
+/// owed, paced by the coordinator.
 nonisolated struct MediaEnricher {
     var enrich: @Sendable (
         _ id: MediaAssetID,
@@ -206,34 +208,24 @@ nonisolated struct MediaEnricher {
             )
         }
         var videoFaces: EnrichedVideoFaces?
+        var facesUnread: VideoFacesUnread?
         if read.scope.contains(.videoFaces) {
             let started = ContinuousClock.now
             let remote = RemoteVideoAsset(reader: reader, filename: relativePath.rawValue)
-            let faces: EnrichedVideoFaces
-            do {
-                faces = try await VideoFaceReader.read(
-                    remote.asset, analyzeFaces: analyzeFaces,
-                    framesRelativeName: ThumbnailStore.faceFramesRelativeName(for: id), in: thumbnailDirectory
-                )
-            } catch {
-                // A frame the server did not send is not an unreadable video.
-                guard !remote.failed else {
-                    OtosLog.metadata.noticeOperation("videoFaces.remote", phase: "unanswered", fields: [
-                        "rootPath": id.libraryRootPath.rawValue, "relativePath": relativePath.rawValue,
-                        "bytes": "\(remote.cost.bytes)",
-                    ])
-                    return .unanswered
-                }
-                OtosLog.metadata.errorOperation("videoFaces.read", phase: "failed", fields: [
-                    "rootPath": id.libraryRootPath.rawValue, "relativePath": relativePath.rawValue,
-                    "error": String(describing: error),
-                ])
-                return .transient
+            let faces: EnrichedVideoFaces?
+            switch await Self.readVideoFaces(remote.asset, id: id, analyzeFaces: analyzeFaces, directory: thumbnailDirectory) {
+            case let .success(read):
+                faces = read
+            case let .failure(unread):
+                faces = nil
+                // A frame the server did not send is not an unreadable video: `remote.failed`
+                // below makes it `.unanswered`.
+                facesUnread = unread
             }
             let cost = remote.cost
             guard !remote.failed else {
                 // A frame the server did not send is not a frame without a face.
-                if let frames = faces.frames {
+                if let frames = faces?.frames {
                     ThumbnailStore.discard(frames, in: thumbnailDirectory)
                 }
                 OtosLog.metadata.noticeOperation("videoFaces.remote", phase: "unanswered", fields: [
@@ -242,10 +234,10 @@ nonisolated struct MediaEnricher {
                 ])
                 return .unanswered
             }
-            OtosLog.metadata.noticeOperation("videoFaces.remote", phase: "finish", fields: [
+            OtosLog.metadata.noticeOperation("videoFaces.remote", phase: faces == nil ? "unread" : "finish", fields: [
                 "rootPath": id.libraryRootPath.rawValue,
                 "relativePath": relativePath.rawValue,
-                "faces": "\(faces.faces.count)",
+                "faces": faces.map { "\($0.faces.count)" } ?? "unread",
                 "reads": "\(cost.reads)",
                 "bytes": "\(cost.bytes)",
                 "fileBytes": "\(reader.size)",
@@ -253,7 +245,7 @@ nonisolated struct MediaEnricher {
             ])
             videoFaces = faces
         }
-        return .complete(EnrichmentResult(
+        let result = EnrichmentResult(
             id: id,
             metadata: metadata,
             rendering: nil,
@@ -261,7 +253,8 @@ nonisolated struct MediaEnricher {
             sourceMTimeSeconds: read.sourceMTimeSeconds ?? -1,
             contentHash: nil,
             videoFaces: videoFaces
-        ))
+        )
+        return facesUnread.map { .facesUnread(result, $0) } ?? .complete(result)
     }
 
     /// Enriches a row whose bytes are ranges on an attached camera.
@@ -453,22 +446,17 @@ nonisolated struct MediaEnricher {
         let productsStart = ContinuousClock.now
         var products: [String] = []
         var videoFaces: EnrichedVideoFaces?
-        // Read before anything is staged, so a failed read leaves nothing to discard.
+        var facesUnread: VideoFacesUnread?
+        // A failed face read is its own outcome: the other products are made and written, and
+        // only the faces stay owed (`EnrichmentOutcome.facesUnread`).
         if scope.contains(.videoFaces) {
-            do {
-                let faces = try await VideoFaceReader.read(
-                    AVURLAsset(url: url), analyzeFaces: analyzeFaces,
-                    framesRelativeName: ThumbnailStore.faceFramesRelativeName(for: id), in: thumbnailDirectory
-                )
+            switch await Self.readVideoFaces(AVURLAsset(url: url), id: id, analyzeFaces: analyzeFaces, directory: thumbnailDirectory) {
+            case let .success(faces):
                 videoFaces = faces
                 products.append("videoFaces=\(faces.faces.count)")
-            } catch {
-                OtosLog.metadata.errorOperation("videoFaces.read", phase: "failed", fields: [
-                    "rootPath": id.libraryRootPath.rawValue,
-                    "relativePath": id.relativePath.rawValue,
-                    "error": String(describing: error),
-                ])
-                return .transient
+            case let .failure(unread):
+                facesUnread = unread
+                products.append("videoFacesUnread=\(unread)")
             }
         }
         var rendering: EnrichedRendering?
@@ -509,20 +497,48 @@ nonisolated struct MediaEnricher {
             "products": products.isEmpty ? "none" : products.joined(separator: "+"),
             "productsMs": "\(DiagnosticsTiming.milliseconds(since: productsStart))",
         ])
-        return .complete(
-            EnrichmentResult(
-                id: id,
-                metadata: metadata,
-                rendering: rendering,
-                provisionalThumbnail: provisionalThumbnail,
-                sourceSize: read.sourceSize ?? -1,
-                sourceMTimeSeconds: read.sourceMTimeSeconds ?? -1,
-                contentHash: contentHash,
-                editRevision: recipe?.revision ?? 0,
-                decodeVerdict: verdict,
-                videoFaces: videoFaces
-            )
+        let result = EnrichmentResult(
+            id: id,
+            metadata: metadata,
+            rendering: rendering,
+            provisionalThumbnail: provisionalThumbnail,
+            sourceSize: read.sourceSize ?? -1,
+            sourceMTimeSeconds: read.sourceMTimeSeconds ?? -1,
+            contentHash: contentHash,
+            editRevision: recipe?.revision ?? 0,
+            decodeVerdict: verdict,
+            videoFaces: videoFaces
         )
+        return facesUnread.map { .facesUnread(result, $0) } ?? .complete(result)
+    }
+
+    /// A video's faces, or why they could not be read: the model (no video can be read until
+    /// it loads) or this video (its frames or their analysis). Logged either way.
+    private static func readVideoFaces(
+        _ asset: AVURLAsset,
+        id: MediaAssetID,
+        analyzeFaces: @escaping FaceAnalysisReader,
+        directory: URL
+    ) async -> Result<EnrichedVideoFaces, VideoFacesUnread> {
+        do {
+            return try await .success(VideoFaceReader.read(
+                asset, analyzeFaces: analyzeFaces,
+                framesRelativeName: ThumbnailStore.faceFramesRelativeName(for: id), in: directory
+            ))
+        } catch {
+            let unread: VideoFacesUnread = if case FaceAnalysisError.modelUnavailable = error {
+                .model
+            } else {
+                .video
+            }
+            OtosLog.metadata.errorOperation("videoFaces.read", phase: "failed", fields: [
+                "rootPath": id.libraryRootPath.rawValue,
+                "relativePath": id.relativePath.rawValue,
+                "unread": "\(unread)",
+                "error": String(describing: error),
+            ])
+            return .failure(unread)
+        }
     }
 
     /// What one rendering of a still made: its staged rendering, when the renderer could make
@@ -724,4 +740,23 @@ nonisolated enum EnrichmentOutcome {
     /// A server that serves the bytes in ranges did not answer this read. The row is
     /// paced rather than claimed again at once, so an outage is never a storm of claims.
     case unanswered
+    /// Every product the scope covered but a video's faces, which could not be read: the
+    /// products are written, and the faces stay owed, paced (ADR 0047).
+    case facesUnread(EnrichmentResult, VideoFacesUnread)
+}
+
+/// Why a video's faces could not be read, which says what waits: this video, or every video
+/// while the model cannot be loaded.
+nonisolated enum VideoFacesUnread: Error, Equatable, Sendable, CustomStringConvertible {
+    /// This video's frames could not be read or analysed.
+    case video
+    /// The embedding model could not be loaded (`FaceAnalysisError.modelUnavailable`).
+    case model
+
+    var description: String {
+        switch self {
+        case .video: "video"
+        case .model: "model"
+        }
+    }
 }

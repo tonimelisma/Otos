@@ -185,14 +185,17 @@ struct PreviewFaceReaderTests {
     }
 
     /// A still whose analysis fails is passed over, not waited on: the stills after it are
-    /// read in the same drain, and it is read again at the next ring.
-    @Test func aStillThatFailsDoesNotHoldBackTheRest() async throws {
+    /// read in the same drain. It is not read again at the next ring, only once its pacing
+    /// passes: a still that keeps failing is not analysed on every catalog change.
+    @Test func aStillThatFailsDoesNotHoldBackTheRestAndIsPaced() async throws {
         let directory = try makeTestDirectory()
-        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: ["a.jpg", "b.jpg"])
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: ["a.jpg", "b.jpg", "c.jpg"])
         let previews = directory.appending(path: "Previews", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: previews, withIntermediateDirectories: true)
-        for name in ["a.jpg", "b.jpg"] {
+        for name in ["a.jpg", "b.jpg", "c.jpg"] {
             try writeSubjectJPEG(to: previews.appending(path: "preview-\(name)"), center: CGPoint(x: 0.5, y: 0.5))
+        }
+        for name in ["a.jpg", "b.jpg"] {
             try await Self.render(library.id(name), in: library, editRevision: 0, preview: "preview-\(name)")
         }
         let face = FaceEnrichmentTests.face(seed: 3)
@@ -210,20 +213,20 @@ struct PreviewFaceReaderTests {
         )
 
         await reader.start()
-        try await waitUntil {
-            let first = try await library.store.faces(of: library.id("a.jpg"))
-            let second = try await library.store.faces(of: library.id("b.jpg"))
-            return first == [face] && second == [face]
-        }
+        try await waitUntil { try await library.store.faces(of: library.id("b.jpg")) == [face] }
+        // A new rendering rings the reader: c is read, a is not tried again.
+        try await Self.render(library.id("c.jpg"), in: library, editRevision: 0, preview: "preview-c.jpg")
+        try await waitUntil { try await library.store.faces(of: library.id("c.jpg")) == [face] }
         await reader.shutdown()
         #expect(analysed.value == 3)
+        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg")])
         await library.store.shutdown()
     }
 
-    /// A preview whose file cannot be read leaves its still owed: the stamp follows the
-    /// original, so it would outlive the preview's return. A preview whose bytes are not an
-    /// image is stamped with no faces. Neither reaches the analyser.
-    @Test func aMissingPreviewStaysOwedAndAnUndecodableOneHasNoFaces() async throws {
+    /// A preview whose file cannot be read, and one whose bytes are not an image, leave their
+    /// stills owed: nothing is known of their faces, so neither is stamped with none (ENR-026).
+    /// Neither reaches the analyser.
+    @Test func aMissingOrUndecodablePreviewStaysOwed() async throws {
         let directory = try makeTestDirectory()
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: ["a.jpg", "b.jpg"])
         let previews = directory.appending(path: "Previews", directoryHint: .isDirectory)
@@ -243,13 +246,105 @@ struct PreviewFaceReaderTests {
         )
 
         await reader.start()
-        try await waitUntil {
-            try await library.store.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg")]
-        }
+        try await waitUntil { await reader.drains >= 1 }
         await reader.shutdown()
-        #expect(try await library.store.faces(of: library.id("b.jpg")).isEmpty)
+        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg"), library.id("b.jpg")])
         #expect(analysed.value == 0)
         await library.store.shutdown()
+    }
+
+    /// A model that cannot be loaded stops the drain at the first still, which stays owed with
+    /// every other, and a catalog change does not start reading again: only the pacing does.
+    @Test func aMissingModelStopsTheReadUntilItsPacingPasses() async throws {
+        let directory = try makeTestDirectory()
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: ["a.jpg", "b.jpg", "c.jpg"])
+        let previews = directory.appending(path: "Previews", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: previews, withIntermediateDirectories: true)
+        for name in ["a.jpg", "b.jpg", "c.jpg"] {
+            try writeSubjectJPEG(to: previews.appending(path: "preview-\(name)"), center: CGPoint(x: 0.5, y: 0.5))
+        }
+        for name in ["a.jpg", "b.jpg"] {
+            try await Self.render(library.id(name), in: library, editRevision: 0, preview: "preview-\(name)")
+        }
+        let analysed = Calls()
+        let reader = PreviewFaceReader(
+            store: library.store,
+            thumbnailDirectory: previews,
+            analyzeFaces: { _ in
+                analysed.record()
+                throw FaceAnalysisError.modelUnavailable(description: "missing")
+            },
+            pageSize: 1
+        )
+
+        await reader.start()
+        try await waitUntil { await reader.drains >= 1 }
+        let before = await reader.drains
+        try await Self.render(library.id("c.jpg"), in: library, editRevision: 0, preview: "preview-c.jpg")
+        try await waitUntil { await reader.drains > before }
+        await reader.shutdown()
+        #expect(analysed.value == 1)
+        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.count == 3)
+        await library.store.shutdown()
+    }
+
+    /// Starting the reader twice starts one loop: a still is analysed once.
+    @Test func startingTwiceStartsOneLoop() async throws {
+        let directory = try makeTestDirectory()
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: ["a.jpg"])
+        let previews = directory.appending(path: "Previews", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: previews, withIntermediateDirectories: true)
+        try writeSubjectJPEG(to: previews.appending(path: "preview-a.jpg"), center: CGPoint(x: 0.5, y: 0.5))
+        try await Self.render(library.id("a.jpg"), in: library, editRevision: 0, preview: "preview-a.jpg")
+        let face = FaceEnrichmentTests.face(seed: 4)
+        let analysed = Calls()
+        let reader = PreviewFaceReader(
+            store: library.store,
+            thumbnailDirectory: previews,
+            analyzeFaces: { _ in
+                analysed.record()
+                return FaceAnalysis(faces: [face], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
+            }
+        )
+
+        async let first: Void = reader.start()
+        async let second: Void = reader.start()
+        _ = await (first, second)
+        try await waitUntil { try await library.store.faces(of: library.id("a.jpg")) == [face] }
+        try await waitUntil { await reader.drains >= 1 }
+        await reader.shutdown()
+        #expect(analysed.value == 1)
+        await library.store.shutdown()
+    }
+
+    /// The retry ledger, driven by the instants it covers: a failed still waits out its pacing
+    /// unless its preview changes, a missing model holds every still, and a read clears both.
+    @Test func aFailedStillWaitsOutItsPacingUnlessItsPreviewChanges() {
+        let start = ContinuousClock.now
+        var retries = PreviewFaceRetries(pacing: .seconds(900))
+        let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/L"), relativePath: MediaRelativePath(rawValue: "a.jpg"))
+        let candidate = PreviewFaceCandidate(
+            id: id, previewPath: "p.heic", sourceSize: 1, sourceMTimeSeconds: 1, renderedRevision: 0, recipe: .neutral
+        )
+        let newPreview = PreviewFaceCandidate(
+            id: id, previewPath: "p.heic", sourceSize: 2, sourceMTimeSeconds: 2, renderedRevision: 0, recipe: .neutral
+        )
+        retries.failed(candidate, at: start)
+        #expect(!retries.admits(candidate, at: start.advanced(by: .seconds(899))))
+        #expect(retries.admits(candidate, at: start.advanced(by: .seconds(900))))
+        #expect(retries.admits(newPreview, at: start))
+        #expect(retries.nextWake(after: start) == start.advanced(by: .seconds(900)))
+
+        retries.modelFailed(at: start)
+        #expect(!retries.admitsModel(at: start.advanced(by: .seconds(1))))
+        #expect(retries.admitsModel(at: start.advanced(by: .seconds(900))))
+        retries.read(candidate)
+        #expect(retries.admitsModel(at: start) && retries.admits(candidate, at: start))
+        #expect(retries.nextWake(after: start) == nil)
+
+        retries.failed(candidate, at: start)
+        retries.keep(only: [])
+        #expect(retries.stills.isEmpty)
     }
 
     private static let leftHalf = EditRecipe(crop: EditCrop(left: 0, top: 0, width: 0.5, height: 1))

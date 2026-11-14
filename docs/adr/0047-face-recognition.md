@@ -95,6 +95,11 @@ grouping had put with the right child.
   627 GB (owner decision, 2026-11-13). `VideoFaceReader` decodes the frames at 0, 10, 25,
   50, 75 and 90% upright at full resolution with no time tolerance, so a re-read finds the
   same frames, and reads each with `FaceAnalyzer`.
+- **A read that fails:** a frame that cannot be read or a failed analysis stamps no faces,
+  and is its own outcome, never the whole read's failure: the video's other products are
+  written and only its faces stay owed, paced for 900 s on the retry ledger. A model that
+  cannot be loaded holds every video's faces for 900 s, so a missing model does not download
+  and decode every library video in turn.
 - **An Immich account's videos are read in byte ranges,** never downloaded: AVFoundation asks
   a resource loader for each range it needs (`RemoteVideoAsset`), and each is read with the
   account's `RemoteRangeReader`, the access its metadata takes (ADR 0046 §5), under the
@@ -178,6 +183,14 @@ grouping had put with the right child.
   `(size, mtime)` of the source the preview read was made from. A reading replaces every face
   of its asset, and a still with no face has the stamp and no rows, so it is not read again
   until a preview of other bytes arrives. An edit is not a new source and is not read again.
+  Beside it, the source the faces were read from (`faces_read_source_size`,
+  `faces_read_source_mtime`): a migration clears the stamp to owe a re-read, and the re-read
+  compares against this pair, so a file that changed meanwhile is read afresh.
+- **A preview that cannot be read:** only a preview that decoded and held no face is stamped
+  with none. A preview that cannot be read or decoded, or whose analysis failed, writes
+  nothing; the still stays owed and is offered again after 900 s, or at once when its preview
+  changes. A model that cannot be loaded stops the reader until the same 900 s pass: the
+  model is loaded before any Vision work, and a failed load is not kept.
 - **Who owes faces:** a library's and an Immich account's stills (`LibraryRootKind.readsFaces`).
   Faces are not an enrichment product, so no enrichment claim owes them. A card's or camera's
   rows are read for faces once imported into a library, which is where their overlay lives on.
@@ -189,7 +202,10 @@ grouping had put with the right child.
   guess, a seed (one of the faces a person was first found from), the user's, or held (the
   user removed the name). The user's faces and the seeds are the anchors; every guess is
   rebuilt from them. Also on the face: its likeness to its person (the likeness sort) and
-  whether it is its person's key photo (`is_key_photo`), at most one per person. A likeness
+  whether it is its person's key photo (`is_key_photo`), at most one per person. Choosing a
+  key photo is the user's word that the face is that person: Make Key Photo makes it theirs
+  on the user's word (since 2026-11-13), so a re-read carries the cover and
+  assignment never moves it. A likeness
   is rewritten only when it moves by more than 1e-5: Accelerate's matrix product rounds
   differently from process to process (up to 4.8e-7 on the owner's faces), and a write
   starts the next assignment, so writing that wobble would never let People settle
@@ -241,7 +257,9 @@ grouping had put with the right child.
 - **Hard rules:**
   - Two faces in one photo are never the same person.
   - A face from before a person's birthday is never theirs. A birthday may be only a year,
-    which counts from 1 January (owner decision, 2026-11-10).
+    which counts from 1 January (owner decision, 2026-11-10). One rule holds Set Birthday and
+    a merge: the user's faces from before it refuse the act, and Otos's guesses and seeds
+    from before it lose the person.
   - A face the user said is not someone (`This Is Not Sam`, or `Not the Same Person` in an unnamed person's own photos) is held: Otos never gives it a person
     again, and never offers that person for it.
 - **Corrections propagate:** a correction is a new anchor, and every guess is rebuilt from the
@@ -250,9 +268,12 @@ grouping had put with the right child.
   labels.
 - **Settles on its own output:** assignment reads only the anchors, so run on what it wrote it
   writes nothing. A pass that wrote is followed by one that publishes.
-- **A new reading** of the same source keeps the user's word: each act moves to the new face
-  that overlaps it, and a face with the user's word that the reading does not find is kept as it
-  was read (`CatalogStorePersistence.writeFaces`). A reading of a changed file is read afresh.
+- **A new reading** of the same source keeps the user's word: each act, and each seed, moves
+  to the new face that matches it — a still's by box overlap, a video's by likeness, since a
+  video's boxes belong to different frames — and a face with the user's word that the reading
+  does not find is kept as it was read (`CatalogStorePersistence.writeFaces`). A reading of a
+  changed file is read afresh. A stored face row no reading writes is not a fact: the People
+  read leaves its photo out and owes it a re-read, which replaces the row.
 - **What the user's acts store** (overlay, ADR 0008; undoable): a face's person on their word;
   a held face and its rejection; `This Is Not a Face`, until the photo's file changes; a person's
   name, birthday, hidden and favourite marks and key photo. A person Otos found is
@@ -260,9 +281,11 @@ grouping had put with the right child.
 
 ### Work and placement
 
-- **Owner:** `PreviewFaceReader`, one loop woken by the catalog's change notifications. It reads
-  the stills whose faces stamp does not name their preview's source, a page at a time, and
-  writes a reading only while the row still has the preview it read.
+- **Owner:** `PreviewFaceReader`, one loop woken by the catalog's change notifications and by
+  its own retry wake. It reads the stills whose faces stamp does not name their preview's
+  source, a page at a time, and writes a reading only while the row still has the preview it
+  read. What is owed faces is read from partial indexes over only the rows that owe them, so a
+  catalog with nothing owed reads no row on a catalog change.
 - **Downloads:** none. A still waits for its preview, which enrichment renders from the
   original when that is local or downloaded for the rendering (ADR 0035), or which an Immich
   sync fetches (ADR 0046 §7).

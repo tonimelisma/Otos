@@ -32,8 +32,18 @@ nonisolated struct FaceAnalysis: Sendable, Equatable {
 }
 
 /// Reads one upright image's faces: a `FaceAnalyzer`'s `analyze` in production, a stub in
-/// tests. One is shared by every face reader, so the model loads once.
+/// tests. One is shared by every face reader, so the model loads once. It throws
+/// `FaceAnalysisError.modelUnavailable` when no image can be read, and any other error for
+/// the one image it was handed.
 typealias FaceAnalysisReader = @Sendable (CGImage) async throws -> FaceAnalysis
+
+/// Why no image can be read for faces, as opposed to why one image could not be: a reader
+/// that meets it stops reading and tries again after a backoff, rather than failing every
+/// image in turn (ADR 0047).
+nonisolated enum FaceAnalysisError: Error, Equatable {
+    /// The embedding model could not be loaded.
+    case modelUnavailable(description: String)
+}
 
 /// Face analyzer guide
 ///
@@ -83,9 +93,9 @@ actor FaceAnalyzer {
     /// Made on first use, on the analysis queue: an analyzer is built on the main actor at
     /// launch, and a Core Image context costs several milliseconds to make.
     private lazy var context = CIContext()
-    /// The model, or why it could not be loaded: a model missing from the bundle stays missing
-    /// for the process, so its error is kept and every analysis fails with it, logged once.
-    private var model: Result<FaceEmbeddingModel, any Error>?
+    /// The model, once loaded. A failed load is not kept: it is reported to the reader as
+    /// `FaceAnalysisError.modelUnavailable`, which backs off, and the next analysis loads again.
+    private var model: FaceEmbeddingModel?
 
     nonisolated var unownedExecutor: UnownedSerialExecutor {
         queue.asUnownedSerialExecutor()
@@ -102,8 +112,11 @@ actor FaceAnalyzer {
         return { image in try await analyzer.analyze(image) }
     }
 
-    /// The faces in `image`: a still's upright stored preview or a video's frame.
+    /// The faces in `image`: a still's upright stored preview or a video's frame. The model is
+    /// loaded before any Vision work, so an image is never analysed, and its result never
+    /// depends on whether it held a face, while the model is missing.
     func analyze(_ image: CGImage) throws -> FaceAnalysis {
+        let model = try embeddingModel()
         let start = ContinuousClock.now
         let size = CGSize(width: image.width, height: image.height)
         let (observations, qualities) = try Self.detect(image)
@@ -135,7 +148,7 @@ actor FaceAnalyzer {
                 noPerson += 1
                 continue
             }
-            let embedding = try embeddingModel().embedding(of: crop)
+            let embedding = try model.embedding(of: crop)
             faces.append(DetectedFace(
                 box: Self.topLeft(observation.boundingBox),
                 landmarks: points.map { CGPoint(x: $0.x / size.width, y: 1 - $0.y / size.height) },
@@ -210,24 +223,23 @@ actor FaceAnalyzer {
         case cropFailed
     }
 
-    private func embeddingModel() throws -> FaceEmbeddingModel {
+    private func embeddingModel() throws(FaceAnalysisError) -> FaceEmbeddingModel {
         if let model {
-            return try model.get()
+            return model
         }
         let start = ContinuousClock.now
         do {
             let loaded = try FaceEmbeddingModel(bundle: bundle)
-            model = .success(loaded)
+            model = loaded
             OtosLog.metadata.noticeOperation("face.model", phase: "loaded", fields: [
                 "model": FaceEmbeddingModel.resourceName, "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
             ])
             return loaded
         } catch {
-            model = .failure(error)
             OtosLog.metadata.errorOperation("face.model", phase: "loadFailed", fields: [
                 "model": FaceEmbeddingModel.resourceName, "error": String(describing: error),
             ])
-            throw error
+            throw .modelUnavailable(description: String(describing: error))
         }
     }
 

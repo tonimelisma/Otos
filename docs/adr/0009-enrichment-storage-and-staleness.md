@@ -57,10 +57,15 @@ This ADR owns:
   in-flight enrichment completion must revalidate the source signature in SQLite
   before it can stamp a row current.
 - Staleness is per product: the metadata, the rendering (thumbnail and preview), the
-  canonical XXH3-128 hash and a library still's faces (ADR 0047) each record the
+  canonical XXH3-128 hash and a video's faces (ADR 0047) each record the
   `(size, mtime)` source signature they were made from, and each is stale on its own; a missing, malformed, or
   signature-mismatched hash is stale. mtime-only changes count. One read of a file
   makes every product its row owes.
+- A video's faces that could not be read are not the read's failure: the other products of
+  that read are written, and only the faces stay owed, paced on the retry ledger, or held for
+  every video while the face model cannot be loaded (`EnrichmentOutcome.facesUnread`, ADR
+  0047). Treating it as a transient read discarded the metadata, digest and thumbnail made
+  from the same bytes and claimed the row again at once.
 - A still the renderer cannot decode is a fact about the decoder, not the photo. Its
   rendering falls back to QuickLook's thumbnail and it is stamped with no faces, so
   it is not read again on every pass, and `undecodable_by` names the decoder that

@@ -136,6 +136,13 @@ nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
         }
     }
 
+    /// What one assignment of `snapshot` changes: the policy's result, as changes to it. The
+    /// one path from a snapshot to what `CatalogStore.applyAssignment` writes, which People and
+    /// the accuracy harness both take.
+    static func assignment(of snapshot: PeopleSnapshot) -> FaceAssignmentPlan {
+        changes(from: snapshot, to: FaceAssignmentPolicy.assign(faces: snapshot.faces, people: snapshot.personFacts))
+    }
+
     /// The changes that take the snapshot to `result`.
     static func changes(from snapshot: PeopleSnapshot, to result: FaceAssignmentResult) -> FaceAssignmentPlan {
         var plan = FaceAssignmentPlan()
@@ -420,7 +427,8 @@ nonisolated enum PeopleAct: Equatable, Sendable {
     case merge(PersonID, into: PersonID)
     case setHidden(PersonID, Bool)
     case setFavorite(PersonID, Bool)
-    /// The face is its person's key photo.
+    /// The face is its person's key photo, and theirs on the user's word: choosing a cover is
+    /// saying who it shows (ADR 0047).
     case makeKeyPhoto(FaceID, of: PersonID)
 
     /// The act's name in the log. The undo stack names it in the user's words, decided by

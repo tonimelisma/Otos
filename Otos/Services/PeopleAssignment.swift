@@ -262,8 +262,7 @@ extension PeopleAssignment {
     /// Assignment, off the actor.
     @concurrent
     private static func assign(_ snapshot: PeopleSnapshot) async -> FaceAssignmentPlan {
-        let result = FaceAssignmentPolicy.assign(faces: snapshot.faces, people: snapshot.personFacts)
-        return FaceAssignmentPlan.changes(from: snapshot, to: result)
+        FaceAssignmentPlan.assignment(of: snapshot)
     }
 
     /// The gallery and the ranker, off the actor.
