@@ -81,7 +81,7 @@ folder, kept to its frames 3 and 5 read as one rising sequence, and a collapsed 
 keepers while Move to Trash on the tile took all three. Deleting a burst's frame 1 inside Otos
 had the same effect. A rule needs a fact that names the sequence, not the frame's place in it.
 
-What the a6700 records, read with ExifTool 13.55 from 673 of the owner's a6700 RAWs copied
+What the a6700 records, read with ExifTool 13.55 from the 668 ARW files of the owner's a6700 copied
 into a research corpus outside the library (nothing in the library read or downloaded):
 
 - `SequenceNumber` / `SequenceImageNumber` / `SequenceFileNumber`: the frame's place, 1 up.
@@ -96,3 +96,32 @@ into a research corpus outside the library (nothing in the library read or downl
 
 Conclusion: no fact the a6700 records, as documented, bounds one sequence. Camera frames do
 not stack (ADR 0052, schema v46); the frame number stays in each stored metadata record.
+
+## Follow-up: the file-number rule is rejected too (2026-11-13)
+
+Candidate: two frames of one camera in one folder are one burst exactly when, in capture
+order, the difference of their camera file numbers (the digits of `DSC01234`) equals the
+difference of their frame numbers. A burst writes its frames consecutively on the camera's
+counter, so culled frames keep the equality.
+
+- **The owner's library cannot carry it.** Of the corpus's 668 ARW files, 667 are named by
+  capture time (`YYYYMMDD_HHMMSS`, then `_001`, `_002`… for files sharing a second: 538 with
+  no suffix, 108 `_001`, 18 `_002`, 4 `_003`) and one is `original.arw`. That is Otos's own
+  import naming (`ImportNaming`, collision suffix `_%03d`), so an import removes the camera's
+  counter, and the RAW itself records no file number (ExifTool finds no `FileNumber`,
+  `ImageNumber` or `FolderNumber`). No file in the corpus can test the rule.
+- **Counter-example: a trailing number that is not the counter.** Burst A's frames 1 and 2 in
+  one second import as `20260503_104710` and `20260503_104710_001`; burst B three weeks later
+  as `…_090000`, `…_090000_001`, `…_090000_002`, all in one `2026/05` folder. Keeping A2 and
+  B3, the trailing digits differ by 1 and the frame numbers by 1: they join. A strict camera
+  name pattern avoids this only by stacking nothing in the owner's library.
+- **Counter-example: a counter reset.** Two bursts satisfy the equality exactly when they
+  started at the same counter value. Sony's `File Number: Reset` restarts the counter when a
+  card is formatted: A at `DSC00004`–`DSC00006` kept to A2 (`DSC00005`), then B at
+  `DSC00004`–`DSC00008` kept to B3 (`DSC00006`, free because A3 was deleted), imported with
+  their names into one folder, differ by 1 in both and join.
+- **Two bodies of one model.** The a6700 RAW carries no Exif `SerialNumber`, only the
+  MakerNote's `InternalSerialNumber`, which MediaMetadata does not read for TIFF/ARW, so two
+  a6700 bodies are one camera to Otos.
+
+Conclusion: rejected; camera frames still do not stack (ADR 0052).

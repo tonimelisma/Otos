@@ -138,6 +138,9 @@ when any member matches, and shows its key member. The duplicates scope never co
 - **Group camera bursts by time.** The owner's library shows no gap that separates burst frames
   from quick single shots: stacking at 0.15 s joins 0.8 % of shots, at 0.5 s 29.4 %. A wrong
   stack hides photos, and the camera already records what it did.
+- **Bound a camera burst by its file numbers.** Otos's import naming removes the camera's
+  counter, and its `_NNN` suffix or a counter reset makes frames of two bursts satisfy the
+  rule; the a6700 records no serial Otos reads (`docs/research/2026-11-13-camera-burst-detection.md`).
 
 ## Consequences
 
