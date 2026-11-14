@@ -419,6 +419,10 @@ struct ContentView: View {
             name: { viewModel.peopleIndex.name($0) },
             answer: { viewModel.answerMerge($0) }
         ))
+        .modifier(PeopleMergeRefusalAlert(
+            refusal: viewModel.peopleSession.mergeRefusal,
+            dismiss: { viewModel.dismissMergeRefusal() }
+        ))
         .sheet(
             isPresented: Binding(
                 get: { viewModel.exportSheet != nil },

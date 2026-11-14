@@ -193,6 +193,33 @@ struct PeopleMergeAlert: ViewModifier {
     }
 }
 
+/// A merge the user answered that the store refused when it applied it: the act could not
+/// stay a disabled control, since an act submitted before it changed the state it was judged
+/// in, so its reason is said here, in the words the disabled act uses (DES-038).
+struct PeopleMergeRefusalAlert: ViewModifier {
+    let refusal: PeopleMergeRefusal?
+    let dismiss: () -> Void
+
+    func body(content: Content) -> some View {
+        content.alert(
+            "Couldn't Merge These People",
+            isPresented: Binding(
+                get: { refusal != nil },
+                set: {
+                    if !$0 {
+                        dismiss()
+                    }
+                }
+            ),
+            presenting: refusal
+        ) { _ in
+            Button("OK", action: dismiss)
+        } message: { refusal in
+            Text(refusal.reason)
+        }
+    }
+}
+
 /// The gallery's bar (DES-109): L1 over the tally.
 private struct PeopleBar: View {
     let people: CatalogPeopleState

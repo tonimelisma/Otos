@@ -79,6 +79,15 @@ struct PeopleSession: Equatable {
     var cursor: PersonID?
     var sheet: PersonSheetRequest?
     var mergeQuestion: PeopleMergeQuestion?
+    /// A merge the store refused after the user answered Merge, with its reason (DES-038).
+    var mergeRefusal: PeopleMergeRefusal?
+}
+
+/// Why a merge the user answered was refused when the store applied it: the question was
+/// judged against the state it was asked in, and an act submitted earlier, still in the
+/// stream, can change what the store finds.
+nonisolated struct PeopleMergeRefusal: Equatable, Sendable {
+    let reason: String
 }
 
 /// A People act on its way to the store, or an undo or redo of one.
@@ -161,15 +170,28 @@ nonisolated struct PeopleIndex {
         }
         let shared = Set(source.anchorPhotos).intersection(target.anchorPhotos).count
         if shared > 0 {
-            return "\(source.displayName) and \(target.displayName) are both in \(PeopleText.count(shared, "photo"))"
+            return PeopleText.bothIn(source.displayName, target.displayName, photos: shared)
         }
         if let birthday = (target.birthday ?? sourceBirthday)?.seconds {
             let before = Set((source.userFaces + target.userFaces).filter { ($0.captureSeconds ?? .infinity) < birthday }.map(\.id.asset)).count
             if before > 0 {
-                return "\(PeopleText.count(before, "photo")) \(before == 1 ? "is" : "are") from before the birthday"
+                return PeopleText.beforeTheBirthday(photos: before)
             }
         }
         return nil
+    }
+
+    /// The store's refusal of `from` merging into `into`, in the words the disabled act
+    /// would have shown (`mergeRefusal`).
+    func mergeRefusal(_ violation: PeopleRuleViolation, from: PersonID, into: PersonID) -> String {
+        switch violation {
+        case let .bothInPhotos(count):
+            PeopleText.bothIn(name(from), name(into), photos: count)
+        case let .confirmedBeforeBirthday(count):
+            PeopleText.beforeTheBirthday(photos: count)
+        case .twoFacesOfOnePhoto, .personAlreadyInPhoto, .beforeBirthday, .nameTaken, .unknownFace:
+            "Choose another person"
+        }
     }
 
     /// Why the Person sheet cannot save, or nil when it can, so Save is never pressed for
@@ -245,6 +267,16 @@ nonisolated struct PeopleIndex {
 nonisolated enum PeopleText {
     static func count(_ value: Int, _ noun: String) -> String {
         "\(value.formatted()) \(value == 1 ? noun : noun + "s")"
+    }
+
+    /// A merge refused because the user gave both people a face in the same photos.
+    static func bothIn(_ first: String, _ second: String, photos: Int) -> String {
+        "\(first) and \(second) are both in \(count(photos, "photo"))"
+    }
+
+    /// A merge refused because photos the user gave either predate the birthday kept.
+    static func beforeTheBirthday(photos: Int) -> String {
+        "\(count(photos, "photo")) \(photos == 1 ? "is" : "are") from before the birthday"
     }
 }
 
@@ -483,29 +515,54 @@ extension CatalogWindowViewModel {
         peopleIndex.mergeRefusal(from, into: into)
     }
 
+    /// The merge question's answer. Merge submits the merge without judging it again: it was
+    /// judged when asked, against the state it was asked in (for a taken name, with the
+    /// birthday typed), and an act submitted before it — that birthday — is still ahead of it
+    /// in the one ordered People stream, so the published state may not show it yet. The store
+    /// applies the merge after that act and is its judge: what the window does with the merged
+    /// people follows its confirmation (`didMerge`), and its refusal reaches the user with the
+    /// reason (`mergeRefusal`).
     func answerMerge(_ merge: Bool) {
         guard let question = peopleSession.mergeQuestion else { return }
         peopleSession.mergeQuestion = nil
-        guard merge, peopleIndex.mergeRefusal(question.from, into: question.into) == nil else { return }
-        peopleSession.selectedPeople = [question.into]
-        peopleSession.cursor = question.into
-        // The person merged away was being shown or filtered: the one they became takes their
-        // place, rather than the window leaving them.
-        if queryDescriptor.scope.person == question.from {
+        guard merge else { return }
+        submitPeopleAct(.merge(question.from, into: question.into))
+    }
+
+    /// The store merged `from` into `into`: the person they became is selected, and takes
+    /// their place where the window showed or filtered them, rather than the window leaving
+    /// them.
+    private func didMerge(_ from: PersonID, into: PersonID) {
+        peopleSession.selectedPeople = [into]
+        peopleSession.cursor = into
+        if queryDescriptor.scope.person == from {
             setQueryDescriptor(CatalogQueryDescriptor(
-                scope: .person(question.into),
+                scope: .person(into),
                 filter: queryDescriptor.filter,
                 sort: queryDescriptor.sort,
                 search: queryDescriptor.search
             ))
         }
-        if queryDescriptor.filter.people.contains(question.from) {
+        if queryDescriptor.filter.people.contains(from) {
             var filter = queryDescriptor.filter
-            filter.people.remove(question.from)
-            filter.people.insert(question.into)
+            filter.people.remove(from)
+            filter.people.insert(into)
             setMediaFilter(filter)
         }
-        submitPeopleAct(.merge(question.from, into: question.into))
+    }
+
+    /// The store refused an act. A merge the user answered says why; every other act is
+    /// offered only while its rules allow it, so its refusal is a race the log records.
+    private func didRefusePeopleAct(_ act: PeopleAct, error: any Error) {
+        OtosLog.ui.errorOperation("people.act", phase: "refused", fields: [
+            "act": act.logName, "faces": "\(act.faceCount)", "error": String(describing: error),
+        ])
+        guard case let .merge(from, into) = act, let violation = error as? PeopleRuleViolation else { return }
+        peopleSession.mergeRefusal = PeopleMergeRefusal(reason: peopleIndex.mergeRefusal(violation, from: from, into: into))
+    }
+
+    func dismissMergeRefusal() {
+        peopleSession.mergeRefusal = nil
     }
 
     // MARK: - A person's settings menu
@@ -847,9 +904,7 @@ extension CatalogWindowViewModel {
                         let outcome = try await store.perform(act)
                         self?.didPerformPeopleAct(act, title: title, outcome: outcome)
                     } catch {
-                        OtosLog.ui.errorOperation("people.act", phase: "refused", fields: [
-                            "act": act.logName, "faces": "\(act.faceCount)", "error": String(describing: error),
-                        ])
+                        self?.didRefusePeopleAct(act, error: error)
                     }
                 case let .flip(record, act, undoing):
                     let phase = undoing ? "undone" : "redone"
@@ -880,6 +935,9 @@ extension CatalogWindowViewModel {
     /// completion, not inside an AppKit event, so the manager's per-event grouping has
     /// nothing to close.
     private func didPerformPeopleAct(_ act: PeopleAct, title: String, outcome: PeopleActOutcome) {
+        if case let .merge(from, into) = act {
+            didMerge(from, into: into)
+        }
         let record = PeopleUndoRecord(outcome.restore)
         windowUndoManager.beginUndoGrouping()
         windowUndoManager.registerUndo(withTarget: self) { model in

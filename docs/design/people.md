@@ -103,7 +103,11 @@ the name), which keeps its name, birthday and key photo, taking the other's wher
 has none, and is a favourite if either was. Refused, by a disabled act with its reason
 (DES-038), when the user's faces or the faces a person was first found from put both in
 one photo (`Sam and Ian are both in 3 photos`) or a photo the user gave either predates
-the birthday kept.
+the birthday kept. The question is judged when asked; the answer `Merge` is judged by the
+catalog when the merge is applied, after any act submitted before it (a birthday saved with
+a taken name). Should it refuse there, `Couldn't Merge These People` says why in the same
+words, with `OK`, and nothing moves: the person merged away is still the one shown and
+filtered until the merge has happened.
 
 **Empty states:** one centered L3 sentence under the bar: `People appear here as Otos
 finds faces in your photos.`, `People appear here once Otos finds the same face on

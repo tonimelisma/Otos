@@ -411,6 +411,60 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    /// Merge answered while an act ahead of it in the People stream is unpublished: the
+    /// question was judged when asked, so the answer submits the merge and the store, applying
+    /// it after that act, judges it — here This Is Not Sam frees the photo both shared, and
+    /// the merge lands though the published state still refuses it. What the window does with
+    /// the merged people waits for the store's confirmation.
+    @Test func aMergeAnsweredBeforeTheActAheadOfItPublishesIsJudgedByTheStore() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let other = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
+        _ = try await fixture.store.perform(.move([fixture.like], to: fixture.sam))
+        try await fixture.show(fixture.people(), scope: .people)
+        #expect(fixture.model.mergeRefusal(other, into: fixture.sam) != nil)
+        fixture.model.setPeopleFilter(other, included: true)
+
+        fixture.model.removeNames([fixture.like])
+        // The question as asked against the state the act ahead of it changes; no People
+        // state publishes before the answer.
+        fixture.model.peopleSession.mergeQuestion = PeopleMergeQuestion(from: other, into: fixture.sam)
+        fixture.model.answerMerge(true)
+        #expect(fixture.model.queryDescriptor.filter.people == [other])
+
+        try await Self.waitForStore(fixture.store) { try await fixture.assignment(of: fixture.stranger) == .user(fixture.sam) }
+        try await Self.waitForUndo(fixture.model, title: "Undo Merge")
+        #expect(fixture.model.queryDescriptor.filter.people == [fixture.sam])
+        #expect(fixture.model.peopleSession.selectedPeople == [fixture.sam])
+        #expect(fixture.model.peopleSession.mergeRefusal == nil)
+        await fixture.store.shutdown()
+    }
+
+    /// A merge the store refuses when it applies it says why, in the words the disabled act
+    /// uses (DES-038), and the window keeps showing and filtering the person it would have
+    /// merged away.
+    @Test func aMergeTheStoreRefusesSaysWhyAndMovesNothing() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let other = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
+        _ = try await fixture.store.perform(.move([fixture.like], to: fixture.sam))
+        let people = try await fixture.people()
+        fixture.show(people, scope: .people)
+        fixture.model.openPerson(other)
+        fixture.show(people, scope: .person(other))
+        fixture.model.setPeopleFilter(other, included: true)
+
+        fixture.model.peopleSession.mergeQuestion = PeopleMergeQuestion(from: other, into: fixture.sam)
+        fixture.model.answerMerge(true)
+        try await Self.waitForMergeRefusal(fixture.model)
+
+        #expect(fixture.model.peopleSession.mergeRefusal?.reason == "Unnamed Person and Sam are both in 1 photo")
+        #expect(fixture.model.queryDescriptor.scope == .person(other))
+        #expect(fixture.model.queryDescriptor.filter.people == [other])
+        #expect(try await fixture.assignment(of: fixture.stranger) == .user(other))
+        fixture.model.dismissMergeRefusal()
+        #expect(fixture.model.peopleSession.mergeRefusal == nil)
+        await fixture.store.shutdown()
+    }
+
     /// Two acts undone in turn redo in turn: redoing the first keeps the second on the redo
     /// stack (APP-039), so both come back.
     @Test func redoingOneOfTwoUndoneActsKeepsTheOther() async throws {
@@ -661,6 +715,16 @@ struct PeopleViewModelTests {
             model?.targetFacesLine
         }
         for await value in lines where value == line {
+            return
+        }
+    }
+
+    /// Waits for a refused merge to be reported.
+    static func waitForMergeRefusal(_ model: CatalogWindowViewModel) async throws {
+        let refusals = Observations { @MainActor [weak model] in
+            model?.peopleSession.mergeRefusal
+        }
+        for await refusal in refusals where refusal != nil {
             return
         }
     }
