@@ -70,4 +70,5 @@ folder rule.
   (ADR 0039).
 - Separately, the Immich account's RAW+HEIF pairs need the account's own stack data.
 
-The owner decides whether camera bursts proceed on the drive-mode record (plan 0115 increment 6).
+The owner chose the drive-mode record (2026-11-13). MediaMetadata 0.9.5 reports it as
+`continuousShootingFrame`, and Otos stacks a camera's frames by it (ADR 0052).

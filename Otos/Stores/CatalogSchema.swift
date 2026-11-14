@@ -932,6 +932,39 @@ nonisolated enum CatalogSchema {
         "ALTER TABLE library_root ADD COLUMN resync_owed INTEGER NOT NULL DEFAULT 0",
     ]
 
+    /// Camera bursts (ADR 0052): `media_asset.continuous_shooting_frame`, the frame's number
+    /// in its camera's continuous-shooting sequence as MediaMetadata 0.9.5 reports it,
+    /// written with each metadata record and filled from the records already stored (only a
+    /// re-read from local bytes reports it). `idx_media_asset_burst_or_frame` replaces
+    /// `idx_media_asset_burst`: one index over every still in an iPhone or a camera burst, so
+    /// the candidates' read stays two arms.
+    static let continuousFrameMigrationIdentifier = "v42_continuous_shooting_frame"
+
+    static var continuousFrameStatements: [String] {
+        [
+            "ALTER TABLE media_asset ADD COLUMN continuous_shooting_frame INTEGER",
+            """
+            UPDATE media_asset SET continuous_shooting_frame = (
+                SELECT CASE WHEN json_valid(metadata.metadata_extra_json)
+                    THEN json_extract(metadata.metadata_extra_json, '$.continuousShootingFrame') END
+                FROM asset_metadata AS metadata
+                WHERE metadata.library_root_id = media_asset.library_root_id
+                  AND metadata.relative_path = media_asset.relative_path
+            )
+            WHERE (library_root_id, relative_path) IN (
+                SELECT library_root_id, relative_path FROM asset_metadata
+                WHERE json_valid(metadata_extra_json)
+                  AND json_extract(metadata_extra_json, '$.continuousShootingFrame') IS NOT NULL
+            )
+            """,
+            "DROP INDEX idx_media_asset_burst",
+            """
+            CREATE INDEX idx_media_asset_burst_or_frame
+            ON media_asset(library_root_id) WHERE \(PhotoStackSQL.burstOrFrameSQL(nil))
+            """,
+        ]
+    }
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/tonimelisma/MediaMetadata.git",
       "state" : {
-        "revision" : "12eb0ecab21031e0712c1cbd674372a299e6ad35",
-        "version" : "0.9.4"
+        "revision" : "c7beb799baf9df3c02e5aa281a06da8174dabff1",
+        "version" : "0.9.5"
       }
     }
   ],

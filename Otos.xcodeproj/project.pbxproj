@@ -1395,7 +1395,7 @@
 			repositoryURL = "https://github.com/tonimelisma/MediaMetadata.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.9.4;
+				minimumVersion = 0.9.5;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

@@ -12,12 +12,13 @@ import Foundation
 nonisolated enum PhotoStackKind: String, Equatable, Hashable, Sendable {
     /// A RAW and the camera's processed still of the same shot: one folder, one stem key.
     case pair
-    /// The frames of one iPhone burst: stills carrying the same burst identifier.
+    /// The frames of one burst: an iPhone's stills carrying one burst identifier, or a
+    /// camera's continuous-shooting frames in sequence.
     case burst
 }
 
 /// A stack's identity: its kind, its root and the derived key its members share — a pair's
-/// stem key, a burst's identifier. It names nothing stored; it is recomputed from the files
+/// stem key, an iPhone burst's identifier, a camera burst's first frame. It names nothing stored; it is recomputed from the files
 /// on every read.
 nonisolated struct PhotoStackID: Hashable, Sendable {
     let kind: PhotoStackKind
@@ -35,6 +36,9 @@ nonisolated struct PhotoStackCandidate: Equatable, Sendable {
     let nameKey: FilesystemNameKey
     let sortKey: String
     var burstIdentifier: String?
+    /// A camera burst frame's number, and the camera that shot it (make, model, serial).
+    var continuousFrame: Int?
+    var camera: String?
     var captureLocal: Double?
     var isLiked = false
     var keyChosenAtUnixMs: Int64?
@@ -113,9 +117,10 @@ nonisolated enum PhotoStackRule {
     /// a RAW alone, two JPEGs, a RAW with a JPEG and a HEIC — pairs nothing. The processed
     /// file is the default key, as Apple Photos shows it (owner, 2026-11-13).
     ///
-    /// A burst is two or more frames whose stills carry one burst identifier; a pair whose
-    /// file carries it is one frame, shown as its pair's key. Its default key is its first
-    /// Liked frame, else its first frame in capture order (ADR 0052).
+    /// A burst is two or more frames: an iPhone's stills carrying one burst identifier, or a
+    /// camera's continuous-shooting frames, from one camera, whose numbers rise in capture
+    /// order (owner, 2026-11-13). A pair is one frame, shown as its pair's key. Its default
+    /// key is its first Liked frame, else its first frame in capture order (ADR 0052).
     static func stacks(
         candidates: [PhotoStackCandidate],
         libraryRootPath: LibraryRootPath
@@ -151,13 +156,16 @@ nonisolated enum PhotoStackRule {
         }
     }
 
+    /// iPhone bursts by their identifier, then camera bursts by their camera's sequence.
     private static func bursts(
         _ stills: [PhotoStackCandidate],
         pairs: [PhotoStack],
         libraryRootPath: LibraryRootPath
     ) -> [PhotoStack] {
-        let carriers = stills.filter { $0.burstIdentifier != nil }
-        guard !carriers.isEmpty else { return [] }
+        let iPhoneCarriers = stills.filter { $0.burstIdentifier != nil }
+        let cameraCarriers = stills.filter { $0.burstIdentifier == nil && $0.continuousFrame != nil }
+        // Most libraries hold no burst at all; the lookups below are built only for one that does.
+        guard !iPhoneCarriers.isEmpty || !cameraCarriers.isEmpty else { return [] }
         var pairOfFile: [MediaRelativePath: PhotoStack] = [:]
         for pair in pairs {
             for member in pair.members {
@@ -165,15 +173,42 @@ nonisolated enum PhotoStackRule {
             }
         }
         let byPath = Dictionary(stills.map { ($0.relativePath, $0) }, uniquingKeysWith: { first, _ in first })
-        return Dictionary(grouping: carriers) { $0.burstIdentifier ?? "" }.compactMap { identifier, group in
-            burst(
-                identifier: identifier,
-                carriers: group,
-                pairOfFile: pairOfFile,
-                byPath: byPath,
-                libraryRootPath: libraryRootPath
-            )
+        func frames(of carriers: [PhotoStackCandidate]) -> [Frame] {
+            Self.frames(of: carriers, pairOfFile: pairOfFile, byPath: byPath, libraryRootPath: libraryRootPath)
         }
+        let iPhone = Dictionary(grouping: iPhoneCarriers) { $0.burstIdentifier ?? "" }
+            .compactMap { identifier, group in
+                stack(identifier: identifier, frames: frames(of: group), libraryRootPath: libraryRootPath)
+            }
+        let camera = Dictionary(grouping: cameraCarriers) { $0.camera ?? "" }
+            .flatMap { _, group in cameraSequences(frames(of: group)) }
+            .compactMap { sequence in
+                // Named by its first frame's first file, so switching a pair's shown file keeps
+                // the burst's identity, and with it whether the user expanded it.
+                sequence.first.flatMap { $0.files.map(\.relativePath.rawValue).min() }.flatMap { first in
+                    stack(
+                        identifier: "camera:" + first,
+                        frames: sequence,
+                        libraryRootPath: libraryRootPath
+                    )
+                }
+            }
+        return iPhone + camera
+    }
+
+    /// One camera's continuous frames split into its bursts: in capture order, a burst runs
+    /// while each frame's number is higher than the one before it, so a burst starting again
+    /// at frame 1 begins another, and a frame deleted from the middle splits nothing.
+    private static func cameraSequences(_ frames: [Frame]) -> [[Frame]] {
+        var sequences: [[Frame]] = []
+        for frame in frames.sorted(by: { $0.precedes($1) }) {
+            if let previous = sequences.last?.last?.number, let number = frame.number, number > previous {
+                sequences[sequences.count - 1].append(frame)
+            } else {
+                sequences.append([frame])
+            }
+        }
+        return sequences
     }
 
     /// One frame of a burst: its files, the file that shows it, and the facts that order
@@ -199,6 +234,11 @@ nonisolated enum PhotoStackRule {
             files.compactMap(\.burstKeyChosenAtUnixMs).max()
         }
 
+        /// The camera's number for the frame; a RAW and its processed file carry the same.
+        var number: Int? {
+            files.compactMap(\.continuousFrame).min()
+        }
+
         /// Capture order; a frame without a capture time follows, in name order.
         func precedes(_ other: Frame) -> Bool {
             switch (captureLocal, other.captureLocal) {
@@ -210,13 +250,14 @@ nonisolated enum PhotoStackRule {
         }
     }
 
-    private static func burst(
-        identifier: String,
-        carriers: [PhotoStackCandidate],
+    /// The frames `carriers` make: a pair is one frame, shown as its pair's key; any other
+    /// still is a frame by itself.
+    private static func frames(
+        of carriers: [PhotoStackCandidate],
         pairOfFile: [MediaRelativePath: PhotoStack],
         byPath: [MediaRelativePath: PhotoStackCandidate],
         libraryRootPath: LibraryRootPath
-    ) -> PhotoStack? {
+    ) -> [Frame] {
         var frames: [Frame] = []
         var framed = Set<MediaRelativePath>()
         for carrier in carriers where !framed.contains(carrier.relativePath) {
@@ -230,8 +271,14 @@ nonisolated enum PhotoStackRule {
                 frames.append(Frame(files: [carrier], shown: id, rawFiles: carrier.kind == .raw ? [id] : []))
             }
         }
+        return frames
+    }
+
+    /// A burst of two or more `frames`, in capture order, keyed by the frame the user chose
+    /// last, else its first Liked frame, else its first frame.
+    private static func stack(identifier: String, frames: [Frame], libraryRootPath: LibraryRootPath) -> PhotoStack? {
         guard frames.count >= 2 else { return nil }
-        frames.sort { $0.precedes($1) }
+        let frames = frames.sorted { $0.precedes($1) }
         let chosen = frames.filter { $0.chosenAt != nil }.max { ($0.chosenAt ?? 0) < ($1.chosenAt ?? 0) }
         let key = (chosen ?? frames.first(where: \.isLiked) ?? frames[0]).shown
         return PhotoStack(

@@ -3,8 +3,18 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-- [Plan 0115: Stacks — RAW+JPEG pairs and bursts as one photo](0115-stacks.md), opened
-  2026-11-13 (ADR 0052).
+Plan 0115 (stacks: RAW+JPEG pairs and bursts as one photo) is complete in six increments
+and was removed at closure. It opened 2026-11-13 from the survey
+`docs/research/2026-11-13-stacks-pairs-and-bursts.md`. Its decisions live in ADR 0052, ARC-062,
+APP-075, APP-076, APP-069, DES-116 and DES-117; the measurements are
+`docs/research/2026-11-13-on-this-day-picks.md` and
+`docs/research/2026-11-13-camera-burst-detection.md`. **Owner decisions.** RAW+JPEG pairs and
+bursts are one photo everywhere, the camera JPEG shown by default; a `JPG`/`RAW` switch in the
+edit panel and on the loupe; a stack expands in place from its badge; Move to Trash on a
+collapsed stack takes every file and on an expanded file only that file; iPhone bursts by
+their identifier, camera bursts by the camera's drive-mode record, never by timing; On This Day
+leaves out Disliked photos, screenshots and documents, puts Liked photos first and shows at
+most 25 photos an anniversary.
 
 Plan 0114 (On This Day and its story player) is complete in one increment and was removed
 at closure. It opened 2026-11-09 from the survey

@@ -188,10 +188,11 @@ actor CatalogStore {
         let faceFramesPath: String?
         let contentIdentifier: String?
         let burstIdentifier: String?
+        let continuousShootingFrame: Int?
 
         static let columnsSQL = """
         SELECT best_capture_local, best_kind, best_format, capture_wall_compact, thumbnail_path, preview_path,
-            face_frames_path, content_identifier, burst_identifier
+            face_frames_path, content_identifier, burst_identifier, continuous_shooting_frame
         FROM media_asset
         WHERE library_root_id = ? AND relative_path = ?
         """
@@ -206,18 +207,21 @@ actor CatalogStore {
             faceFramesPath = row["face_frames_path"]
             contentIdentifier = row["content_identifier"]
             burstIdentifier = row["burst_identifier"]
+            continuousShootingFrame = row["continuous_shooting_frame"]
         }
 
         /// Whether the write changed what a scoped query returns or its order: the sort
         /// date, the kind and format filters, or — through the content identifier and the
         /// kind — which movies a Live Photo hides (ADR 0041), or through the burst
-        /// identifier which frames a burst collapses (ADR 0052). Anything else is detail-only.
+        /// identifier or the camera's frame number which frames a burst collapses
+        /// (ADR 0052). Anything else is detail-only.
         func changesStructure(to new: EnrichmentOverlayBeforeWrite) -> Bool {
             bestCaptureLocal != new.bestCaptureLocal
                 || bestKind != new.bestKind
                 || bestFormat != new.bestFormat
                 || contentIdentifier != new.contentIdentifier
                 || burstIdentifier != new.burstIdentifier
+                || continuousShootingFrame != new.continuousShootingFrame
         }
     }
 

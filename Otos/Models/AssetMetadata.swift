@@ -34,6 +34,9 @@ nonisolated struct AssetMetadata: Codable, Equatable {
     var contentIdentifier: String?
     /// Apple's burst identifier, shared by every frame of one burst (MediaMetadata 0.9).
     var burstIdentifier: String?
+    /// A camera burst frame's number in its continuous-shooting sequence, 1 for the first
+    /// (MediaMetadata 0.9.5); nil for a single shot.
+    var continuousShootingFrame: Int?
     /// How a still was exposed, as the library reports it (MediaMetadata 0.9.4).
     var exposure: ExposureRecord?
     /// `MediaMetadataReader.extractionRevision` of the reader that produced this record;
@@ -59,6 +62,7 @@ nonisolated struct AssetMetadata: Codable, Equatable {
         videoCodec: String? = nil,
         contentIdentifier: String? = nil,
         burstIdentifier: String? = nil,
+        continuousShootingFrame: Int? = nil,
         exposure: ExposureRecord? = nil,
         extractionRevision: Int? = nil
     ) {
@@ -79,6 +83,7 @@ nonisolated struct AssetMetadata: Codable, Equatable {
         self.videoCodec = videoCodec
         self.contentIdentifier = contentIdentifier
         self.burstIdentifier = burstIdentifier
+        self.continuousShootingFrame = continuousShootingFrame
         self.exposure = exposure
         self.extractionRevision = extractionRevision
     }

@@ -71,6 +71,38 @@ struct PhotoStackStoreTests {
         }
     }
 
+    /// A camera's continuous frames, whose metadata carries the frame number the camera
+    /// recorded, are read as one burst with the order (owner, 2026-11-13).
+    @Test func aCamerasContinuousFramesAreReadAsOneBurst() async throws {
+        try await withLibrary(["DSC1.JPG", "DSC2.JPG", "DSC3.JPG"]) { library in
+            let paths = ["DSC1.JPG", "DSC2.JPG", "DSC3.JPG"]
+            let assets = try await library.store.mediaAssets(for: paths.map(library.id))
+            let results = assets.values.map { asset in
+                let path = asset.id.relativePath.rawValue
+                return EnrichmentResult(
+                    id: asset.id,
+                    metadata: AssetMetadata(
+                        timestamps: [],
+                        cameraMake: "SONY",
+                        cameraModel: "ILCE-6700",
+                        continuousShootingFrame: path == "DSC3.JPG" ? nil : (path == "DSC1.JPG" ? 1 : 2)
+                    ),
+                    enrichedKind: .image,
+                    thumbnailPath: nil,
+                    sourceSize: asset.byteSize,
+                    sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
+                    contentHash: nil
+                )
+            }
+            _ = await library.store.applyEnrichmentBatch(results)
+            let first = library.id("DSC1.JPG")
+            let burst = try #require(try await library.ordered().stacks.stack(containing: first))
+            #expect(burst.id.kind == .burst)
+            #expect(Set(burst.members) == [first, library.id("DSC2.JPG")])
+            #expect(try await library.ordered().stacks.stack(containing: library.id("DSC3.JPG")) == nil)
+        }
+    }
+
     private struct Library {
         let store: CatalogStore
         let rootPath: LibraryRootPath

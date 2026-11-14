@@ -269,6 +269,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.continuousFrameMigrationIdentifier) { db in
+            for statement in CatalogSchema.continuousFrameStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -1104,7 +1109,8 @@ extension CatalogStore {
                 capture_wall_compact = ?,
                 capture_wall_precision = ?,
                 content_identifier = ?,
-                burst_identifier = ?
+                burst_identifier = ?,
+                continuous_shooting_frame = ?
             WHERE library_root_id = ?
                 AND relative_path = ?
             """,
@@ -1118,6 +1124,7 @@ extension CatalogStore {
                 captureWall?.precision,
                 metadata.contentIdentifier,
                 metadata.burstIdentifier,
+                metadata.continuousShootingFrame,
                 libraryRootID,
                 relativePath.rawValue,
             ]

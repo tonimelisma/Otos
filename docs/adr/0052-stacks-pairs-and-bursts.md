@@ -24,8 +24,10 @@ The owner decided, on 2026-11-13:
 - Move to Trash on a collapsed burst trashes every frame, as Apple Photos does;
 - Move to Trash on one file of an expanded pair trashes only that file;
 - switching an edited pair's shown file keeps each file's own edit;
-- iPhone bursts stack by their identifier; camera bursts stack only after timing is measured
-  on the owner's library.
+- iPhone bursts stack by their identifier; camera bursts stack by the drive mode the camera
+  records in each frame, never by timing (owner, 2026-11-13, after
+  `docs/research/2026-11-13-camera-burst-detection.md` found no timing threshold in the owner's
+  library).
 
 ADR 0041 already makes a Live Photo one item: the motion movie is hidden by an SQL rule
 evaluated where it is used, and Move to Trash takes both files.
@@ -46,8 +48,12 @@ and never stacks; the overlay lifecycle (ADR 0008); the tile and loupe surfaces
 
 - **A pair:** in one root and one folder, one file of kind RAW and one processed still whose
   stem keys match, and no third still with that stem key. Any other count pairs nothing.
-- **A burst:** in one root, two or more stills carrying the same burst identifier. A pair whose
-  processed file carries the identifier is one frame of the burst; its two files expand as a
+- **A burst:** in one root, two or more frames. An iPhone burst's frames carry the same burst
+  identifier. A camera burst's frames carry the number the camera recorded for each frame of
+  a continuous sequence (MediaMetadata's `continuousShootingFrame`, read from a Sony
+  MakerNote): frames from one camera (make, model, serial) are one burst while their numbers
+  rise in capture order, so a sequence starting again at 1 is another burst and a frame deleted
+  from the middle splits nothing. A pair is one frame of the burst; its two files expand as a
   pair inside the expanded burst.
 
 The identity of a stack is the derived key (`PhotoStackID`: kind, root, stem key). The Store
@@ -114,8 +120,9 @@ when any member matches, and shows its key member. The duplicates scope never co
 - **A separate burst view (Apple, Google).** A second browser duplicates every action; expanding
   in place keeps one path per action.
 - **Apple's "Use RAW as Original".** "Original" already names a photo without its edit in Otos.
-- **Group camera bursts by time now.** No pixel threshold separates burst frames, and timing is
-  not yet measured on the owner's library; a wrong stack hides photos.
+- **Group camera bursts by time.** The owner's library shows no gap that separates burst frames
+  from quick single shots: stacking at 0.15 s joins 0.8 % of shots, at 0.5 s 29.4 %. A wrong
+  stack hides photos, and the camera already records what it did.
 
 ## Consequences
 
@@ -123,6 +130,9 @@ when any member matches, and shows its key member. The duplicates scope never co
 - Every count reads stacks, so a consumer that counts asset IDs directly (People's photo count)
   changes to count stack keys.
 - Migration v32 adds the key-choice stamp; v37 adds `burst_identifier`, filled from the
-  stored metadata, and the burst's key-choice stamp.
+  stored metadata, and the burst's key-choice stamp; v42 adds `continuous_shooting_frame`.
+- A camera burst stacks once its frames' metadata is read with MediaMetadata 0.9.5 or later.
+  Otos re-reads older records only from local bytes, so a cloud-only frame stacks when its
+  file is next local.
 - The stem key change can pair a companion or naming bundle that differs only in Unicode
   normalization on a case-insensitive volume, where Finder already treats the names as equal.

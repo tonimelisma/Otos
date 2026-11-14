@@ -220,7 +220,7 @@ struct CatalogStoreQueryPlanTests {
         let plan = try await dbQueue.read { db in try explainPlan(db, query: query) }
         #expect(plan.contains("SEARCH still USING INDEX idx_media_asset_stack_candidate"))
         // The burst stills are found through their own partial index, never a scan.
-        #expect(plan.contains("idx_media_asset_burst"))
+        #expect(plan.contains("idx_media_asset_burst_or_frame"))
         #expect(!plan.contains("SCAN still"))
     }
 

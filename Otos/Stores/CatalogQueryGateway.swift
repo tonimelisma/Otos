@@ -460,7 +460,7 @@ nonisolated enum PhotoStackSQL {
     /// The columns `candidateQuery` selects, in order: each row is read by position.
     private enum Column: Int {
         case libraryRootID, relativePath, bestKind, nameKey, sortKey, keyChosenAt
-        case burstIdentifier, captureLocal, isLiked, burstKeyChosenAt
+        case burstIdentifier, captureLocal, isLiked, burstKeyChosenAt, continuousFrame
     }
 
     static func fetchCandidates(rootIDs: [Int64], db: Database) throws -> Candidates {
@@ -469,6 +469,9 @@ nonisolated enum PhotoStackSQL {
             return Candidates(byRoot: [:], count: 0, readDuration: .zero)
         }
         let rows = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments)
+        // A camera burst frame's camera comes from its own small read, so a library without
+        // one pays nothing for it.
+        let cameras = try cameraOfFrame(rootIDs: rootIDs, db: db)
         var byRoot: [Int64: [PhotoStackCandidate]] = [:]
         var count = 0
         for row in rows {
@@ -477,12 +480,17 @@ nonisolated enum PhotoStackSQL {
                 continue
             }
             count += 1
-            byRoot[row[Column.libraryRootID.rawValue], default: []].append(PhotoStackCandidate(
-                relativePath: MediaRelativePath(rawValue: row[Column.relativePath.rawValue]),
+            let rootID: Int64 = row[Column.libraryRootID.rawValue]
+            let path: String = row[Column.relativePath.rawValue]
+            let continuousFrame: Int? = row[Column.continuousFrame.rawValue]
+            byRoot[rootID, default: []].append(PhotoStackCandidate(
+                relativePath: MediaRelativePath(rawValue: path),
                 kind: kind,
                 nameKey: FilesystemNameKey(rawValue: row[Column.nameKey.rawValue]),
                 sortKey: row[Column.sortKey.rawValue],
                 burstIdentifier: row[Column.burstIdentifier.rawValue],
+                continuousFrame: continuousFrame,
+                camera: continuousFrame == nil ? nil : cameras[FrameKey(rootID: rootID, path: path)],
                 captureLocal: row[Column.captureLocal.rawValue],
                 isLiked: row[Column.isLiked.rawValue],
                 keyChosenAtUnixMs: row[Column.keyChosenAt.rawValue],
@@ -492,10 +500,48 @@ nonisolated enum PhotoStackSQL {
         return Candidates(byRoot: byRoot, count: count, readDuration: ContinuousClock.now - start)
     }
 
+    /// Whether a row is a frame of a burst: an iPhone's (its burst identifier) or a camera's
+    /// (its continuous-shooting frame). One text for `idx_media_asset_burst_or_frame`, whose
+    /// condition names columns bare, and the reads that use it, which name `row`.
+    static func burstOrFrameSQL(_ row: String?) -> String {
+        let prefix = row.map { "\($0)." } ?? ""
+        return "(\(prefix)burst_identifier IS NOT NULL OR \(prefix)continuous_shooting_frame IS NOT NULL)"
+    }
+
+    private struct FrameKey: Hashable {
+        let rootID: Int64
+        let path: String
+    }
+
+    /// Each present camera burst frame's camera (make, model, serial), through
+    /// `idx_media_asset_burst_or_frame`; empty, and one index probe, in a library with none.
+    private static func cameraOfFrame(rootIDs: [Int64], db: Database) throws -> [FrameKey: String] {
+        guard !rootIDs.isEmpty else { return [:] }
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+            SELECT still.library_root_id, still.relative_path,
+                   COALESCE(shot.camera_make, '') || '|' || COALESCE(shot.camera_model, '') || '|'
+                       || COALESCE(shot.serial_number, '')
+            FROM media_asset AS still INDEXED BY idx_media_asset_burst_or_frame
+            JOIN asset_metadata AS shot
+              ON shot.library_root_id = still.library_root_id AND shot.relative_path = still.relative_path
+            WHERE still.library_root_id IN (\(sqlPlaceholders(count: rootIDs.count)))
+              AND \(burstOrFrameSQL("still")) AND still.continuous_shooting_frame IS NOT NULL
+            """,
+            arguments: StatementArguments(rootIDs)
+        )
+        var cameras: [FrameKey: String] = [:]
+        for row in rows {
+            cameras[FrameKey(rootID: row[0], path: row[1])] = row[2]
+        }
+        return cameras
+    }
+
     /// The candidates' read: the folders holding a present RAW, then each folder's present
     /// stills, both through `idx_media_asset_stack_candidate` (root, kind, folder); and every
-    /// present still carrying a burst identifier, through `idx_media_asset_burst` by name: the
-    /// planner otherwise picks the primary key and walks every row of a root.
+    /// present frame of an iPhone or a camera burst, through `idx_media_asset_burst_or_frame` by
+    /// name: the planner otherwise picks the primary key and walks every row of a root.
     static func candidateQuery(rootIDs: [Int64]) -> SQLQuery? {
         guard !rootIDs.isEmpty else {
             return nil
@@ -504,7 +550,8 @@ nonisolated enum PhotoStackSQL {
         let columns = """
         still.library_root_id, still.relative_path, still.best_kind, still.relative_path_key,
                    still.sort_key, still.stack_key_chosen_at_unix_ms, still.burst_identifier,
-                   still.best_capture_local, still.media_choice = 'liked', still.burst_key_chosen_at_unix_ms
+                   still.best_capture_local, still.media_choice = 'liked', still.burst_key_chosen_at_unix_ms,
+                   still.continuous_shooting_frame
         """
         return SQLQuery(
             sql: """
@@ -522,8 +569,8 @@ nonisolated enum PhotoStackSQL {
               AND \(CatalogVisibilitySQL.isPresent("still"))
             UNION
             SELECT \(columns)
-            FROM media_asset AS still INDEXED BY idx_media_asset_burst
-            WHERE still.library_root_id IN (\(placeholders)) AND still.burst_identifier IS NOT NULL
+            FROM media_asset AS still INDEXED BY idx_media_asset_burst_or_frame
+            WHERE still.library_root_id IN (\(placeholders)) AND \(burstOrFrameSQL("still"))
               AND still.best_kind IN ('raw', 'image')
               AND \(CatalogVisibilitySQL.isPresent("still"))
             """,

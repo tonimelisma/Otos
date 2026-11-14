@@ -229,4 +229,50 @@ struct PhotoStackTests {
         #expect(filesShown.grid.expanded(shownBy: id("IMG_1.DNG")) == pair)
         #expect(filesShown.grid.pair(shownBy: id("IMG_1.DNG")) == pair)
     }
+
+    // MARK: Camera bursts
+
+    private func shot(
+        _ path: String, _ kind: MediaKind = .image, frame: Int, at capture: Double, camera: String = "SONY|ILCE-6700|"
+    ) -> PhotoStackCandidate {
+        var still = candidate(path, kind)
+        still.continuousFrame = frame
+        still.camera = camera
+        still.captureLocal = capture
+        return still
+    }
+
+    private func cameraBursts(_ candidates: [PhotoStackCandidate]) -> [PhotoStack] {
+        stacks(candidates).filter { $0.id.kind == .burst }
+            .sorted { $0.photos[0].relativePath.rawValue < $1.photos[0].relativePath.rawValue }
+    }
+
+    /// A camera's continuous frames are one burst while their numbers rise in capture order;
+    /// a sequence starting again at 1 is another burst, and a frame deleted from the middle
+    /// splits nothing.
+    @Test func aCamerasContinuousFramesAreOneBurstWhileTheirNumbersRise() {
+        let found = cameraBursts([
+            shot("A1.JPG", frame: 1, at: 1), shot("A2.JPG", frame: 2, at: 1.1), shot("A4.JPG", frame: 4, at: 1.3),
+            shot("B1.JPG", frame: 1, at: 9), shot("B2.JPG", frame: 2, at: 9.1),
+            shot("C1.JPG", frame: 1, at: 20),
+        ])
+        #expect(found.map(\.photos) == [
+            [id("A1.JPG"), id("A2.JPG"), id("A4.JPG")],
+            [id("B1.JPG"), id("B2.JPG")],
+        ])
+        #expect(found[0].key == id("A1.JPG"))
+    }
+
+    /// Two cameras' frames never make one burst, and a RAW+JPEG pair is one frame.
+    @Test func cameraBurstsKeepToOneCameraAndAPairIsOneFrame() throws {
+        let found = cameraBursts([
+            shot("X1.ARW", .raw, frame: 1, at: 1), shot("X1.JPG", frame: 1, at: 1),
+            shot("X2.ARW", .raw, frame: 2, at: 1.1), shot("X2.JPG", frame: 2, at: 1.1),
+            shot("Y2.JPG", frame: 2, at: 1.05, camera: "NIKON|Z 8|1"),
+        ])
+        let burst = try #require(found.first)
+        #expect(found.count == 1)
+        #expect(burst.photos == [id("X1.JPG"), id("X2.JPG")])
+        #expect(Set(burst.members) == [id("X1.ARW"), id("X1.JPG"), id("X2.ARW"), id("X2.JPG")])
+    }
 }
