@@ -66,15 +66,14 @@ and never stacks; the overlay lifecycle (ADR 0008); the tile and loupe surfaces
 The identity of a stack is the derived key (`PhotoStackID`: kind, root, stem key or burst
 identifier). The Store
 reads every candidate still — each present RAW and processed image in a folder that holds a
-present RAW, whatever the scope or filter, so a filter that hides one file never unpairs the
+present RAW, and every present still carrying a burst identifier — whatever the scope or filter, so a filter that hides one file never unpairs the
 other — in the transaction that reads the order, and the pure `PhotoStackRule` decides the
 stacks in Swift, through the same stem key companions use. Nothing about the stack is stored. `media_asset.burst_identifier` becomes a column, written with every metadata record
 like `content_identifier` and backfilled from the stored metadata JSON.
 
 **The stem key has one owner.** Companion pairing, import naming bundles and stacks compare
 stems through one key that follows the volume's case and normalization (ARC-056's
-`FilesystemNameKey` semantics), replacing the unconditional `lowercased()` the first two use
-today.
+`FilesystemNameKey` semantics), replacing the unconditional `lowercased()` the first two used.
 
 **The key member.** A collapsed stack shows its key member:
 
@@ -120,8 +119,10 @@ action, Move to Trash included: it trashes that one file. Each member keeps its 
 nothing is moved between members when the key changes.
 
 **Counting.** A stack counts once: day counts, On This Day's item counts, a person's photo
-count, a map stack's count and search results. A collapsed stack matches a filter or search
-when any member matches, and shows its key member. The duplicates scope never collapses.
+count, a map stack's count and search results. A filter or search narrows a stack's members
+first: a stack collapses only when two or more of its units match, and its tile is the key
+member when that matches, else its first matching member; a single matching member shows as
+an ordinary photo. The duplicates scope never collapses.
 
 ## Rejected alternatives
 
@@ -130,8 +131,8 @@ when any member matches, and shows its key member. The duplicates scope never co
 - **Store stacks as rows.** A stack is a fact of file names and capture metadata; storing it
   would make a second source of truth that drifts from the files.
 - **Evaluate the pair rule in SQL, as `LivePhotoSQL` is.** SQLite's `lower()` folds ASCII
-  only, and the stored path key does not follow every Otos move, so SQL could not apply the
-  volume's own stem equality; the rule runs in Swift over candidates SQL reads.
+  only, so SQL could not apply the volume's own stem equality; the rule runs in Swift over
+  candidates SQL reads, cutting each candidate's stored name key (ARC-056).
 - **Show the RAW by default, as Lightroom Classic does.** The owner chose the camera JPEG, as
   Apple Photos shows it.
 - **A separate burst view (Apple, Google).** A second browser duplicates every action; expanding

@@ -184,6 +184,9 @@ actor MaterializationCoordinator: MaterializationRequesting {
 
     private let store: CatalogStore
     private let executor: Executor
+    /// The `SF_DATALESS` detector `locality(of:)` reads a file's status with: the one place
+    /// that status decides where an original is (ADR 0046 §4).
+    private let status: @Sendable (URL) -> FileMaterializationStatus
     /// Reads a volume's free space for the floor every background and device download
     /// keeps (ADR 0027). Injected because the floor is otherwise untestable.
     private let volumeCapacity: VolumeCapacityReader
@@ -242,10 +245,12 @@ actor MaterializationCoordinator: MaterializationRequesting {
         executor: @escaping Executor,
         volumeCapacity: @escaping VolumeCapacityReader,
         policy: MaterializationAdmissionPolicy = .production,
-        diagnosticSink: DiagnosticSink? = nil
+        diagnosticSink: DiagnosticSink? = nil,
+        status: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:)
     ) {
         self.store = store
         self.executor = executor
+        self.status = status
         self.volumeCapacity = volumeCapacity
         self.policy = policy
         self.diagnosticSink = diagnosticSink
@@ -299,7 +304,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         let kind = await store.rootKind(for: id.libraryRootPath)
         return OriginalLocality.of(
             stagesOriginals: kind?.stagesOriginals ?? false,
-            status: FileMaterialization.status(of: id.fileURL)
+            status: status(id.fileURL)
         )
     }
 

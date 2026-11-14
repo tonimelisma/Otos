@@ -328,6 +328,11 @@ extension CatalogStore {
                 "readings": "\(db.changesCount)",
             ])
         }
+        migrator.registerMigration(CatalogSchema.facePersonPhotoIndexMigrationIdentifier) { db in
+            for statement in CatalogSchema.facePersonPhotoIndexStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

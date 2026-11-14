@@ -198,9 +198,9 @@ nonisolated struct PersonSummary: Hashable, Sendable, Identifiable {
     /// The faces the user gave this person, newest first: the facts the hard rules hold
     /// them to.
     let userFaces: [FaceTile]
-    /// The photos of the faces that define this person (the user's and the seeds), which two
-    /// people merged may not share.
-    var anchorPhotos: Set<MediaAssetID> = []
+    /// The photos and videos of the faces that define this person (the user's and the
+    /// seeds), each with whether it is a video, which two people merged may not share.
+    var anchorMedia: [MediaAssetID: Bool] = [:]
 
     /// What the person is called where only text fits; a person without a name is
     /// `Unnamed Person`, which no one is called. Where a control fits, a person without a
@@ -315,7 +315,7 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
     }
 }
 
-extension MediaCount {
+nonisolated extension MediaCount {
     /// The photos and videos `faces` are in, each counted once.
     init(faces: some Sequence<PhotoFace>) {
         self.init(tiles: faces.map(\.tile))

@@ -484,8 +484,9 @@ reached the top 10 for 21% of 74 words, names and brands included. So text is re
 Recognition on macOS 27: the accurate level failed for every image after a process's first
 (`e5rt_execution_stream_operation_create_precompiled_compute_operation_with_options`, error
 13), pinned to the CPU or not, while the fast level never failed and reads a 2,560 px preview in
-0.07 s, cleanly on screenshots. At 512 px the fast level read noise. The shipped reader uses the
-fast level on the preview.
+0.07 s, cleanly on screenshots. At 512 px the fast level read noise. The reader shipped then used the
+fast level on the preview; it now reads at the accurate level on the CPU
+(`docs/research/2026-11-12-text-and-labels-in-the-info-pane.md`).
 
 Read over all 10,065 previews with the shipped reader, 5,322 held some text. 60 words sampled
 from the readings (in 2–25 photos each, in the dictionary or capitalised), every top 10 and

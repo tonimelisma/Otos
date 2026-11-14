@@ -1220,6 +1220,24 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// A person's photos are read as "this row holds a face of this person": the order of
+    /// `SidebarSelection.person`, the People filter, a person named in a search and the
+    /// likeness sort each ask it once per row of the scope. v19's index on `person_id` alone
+    /// answered it by walking every face of the person for every row — on the owner's catalog
+    /// (147,024 rows, 14,614 faces of one person) the person's photos never finished
+    /// opening. The index keyed by person and photo, with `is_not_face`, answers it with one
+    /// seek, and still serves every read of a person's faces by its prefix
+    /// (`docs/research/2026-11-14-owner-scale-query-plans.md`).
+    static let facePersonPhotoIndexMigrationIdentifier = "v54_face_person_photo_index"
+
+    static let facePersonPhotoIndexStatements: [String] = [
+        "DROP INDEX idx_face_person",
+        """
+        CREATE INDEX idx_face_person_photo
+        ON face(person_id, library_root_id, relative_path, is_not_face) WHERE person_id IS NOT NULL
+        """,
+    ]
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

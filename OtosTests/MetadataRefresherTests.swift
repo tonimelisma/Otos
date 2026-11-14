@@ -28,7 +28,7 @@ struct MetadataRefresherTests {
             _ = await library.store.applyEnrichmentBatch(stale)
             let local = library.ids[0]
             let cloudOnly = library.ids[1]
-            let refresher = MetadataRefresher(store: library.store, isLocal: { $0 == local.fileURL }, pageSize: 1)
+            let refresher = MetadataRefresher(store: library.store, locality: { $0 == local ? .local : .fetchable }, pageSize: 1)
 
             let summary = await refresher.refresh()
 
@@ -38,7 +38,7 @@ struct MetadataRefresherTests {
             #expect(rows[local.relativePath.rawValue]?.family == "heif")
             #expect(rows[cloudOnly.relativePath.rawValue]?.revision == nil)
 
-            let again = await MetadataRefresher(store: library.store, isLocal: { _ in true }).refresh()
+            let again = await MetadataRefresher(store: library.store, locality: { _ in .local }).refresh()
             #expect(again.written == 1)
             #expect(try await revisions(library.databaseURL)[cloudOnly.relativePath.rawValue]?.revision
                 == MediaMetadataReader.extractionRevision(for: .heif))
@@ -68,7 +68,7 @@ struct MetadataRefresherTests {
                 ),
             ])
 
-            let summary = await MetadataRefresher(store: library.store, isLocal: { _ in true }).refresh()
+            let summary = await MetadataRefresher(store: library.store, locality: { _ in .local }).refresh()
 
             #expect(summary == MetadataRefreshSummary(read: 1, written: 1, skipped: 0, failed: false))
             let row = try await revisions(library.databaseURL)[asset.id.relativePath.rawValue]
@@ -157,7 +157,7 @@ struct MetadataRefresherTests {
             )
         })
 
-        let summary = await MetadataRefresher(store: store, isLocal: { _ in false }).refresh()
+        let summary = await MetadataRefresher(store: store, locality: { _ in .fetchable }).refresh()
 
         #expect(summary == MetadataRefreshSummary(read: 0, written: 0, skipped: 1, downloadsRequested: 1, failed: false))
         let handedOver = try await catalogStoreTestState(store).testAssets
@@ -195,7 +195,7 @@ struct MetadataRefresherTests {
                 await state.materialize(url.path(percentEncoded: false))
                 return .testMaterialized
             },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+            originalStatus: { _ in .materialized }
         )
         await coordinator.start()
         let enriched = try await waitForCatalogStoreState(store) { snapshot in

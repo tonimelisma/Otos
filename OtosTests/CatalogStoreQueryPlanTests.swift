@@ -399,6 +399,83 @@ struct CatalogStoreQueryPlanTests {
         #expect(!languagesPlan.contains("media_asset") && !languagesPlan.contains("asset_metadata"))
     }
 
+    /// Duplicates group copies by digest through the digest index alone: the copies read and
+    /// the Duplicates scope's group subquery never visit a row without a digest and never
+    /// group through a temporary B-tree. On the owner's catalog (2026-11-14) the copies read
+    /// fell from 1.4 s to 0.04 s warm, since most of its rows, an Immich account's, have none.
+    @Test func duplicatesGroupThroughTheDigestIndex() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        let plans = try await dbQueue.read { db in
+            try [[rootID1], [rootID1, rootID2]].flatMap { roots in
+                let scope = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
+                    descriptor: CatalogQueryDescriptor(scope: .duplicates),
+                    scope: CatalogScopePredicate(rootIDs: roots, content: .duplicated),
+                    db: db
+                ))
+                return try [
+                    ("copies \(roots.count)", explainPlan(
+                        db, sql: DuplicatesGateway.duplicateCopiesSQL(rootCount: roots.count),
+                        arguments: StatementArguments(roots + roots)
+                    )),
+                    ("scope \(roots.count)", explainPlan(db, query: scope)),
+                ]
+            }
+        }
+        for (name, plan) in plans {
+            #expect(!plan.contains("TEMP B-TREE FOR GROUP BY"), "\(name): \(plan)")
+            #expect(plan.contains("USING INDEX idx_media_asset_content_hash"), "\(name): \(plan)")
+        }
+    }
+
+    /// Whether a row holds a face of one person is answered with one seek by person and
+    /// photo, never by walking every face of the person: the person's own photos (in date
+    /// and likeness order), the People filter, for one library and for several. On the
+    /// owner's catalog (2026-11-14: 147,024 rows of one account, 14,614 faces of its most
+    /// photographed person) the walk never let a person's photos open.
+    @Test func whetherARowHoldsAPersonIsOneSeekByPersonAndPhoto() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        let person = PersonID(rawValue: 1)
+        var filter = MediaFilter.all
+        filter.people = [person]
+        let reads: [(String, CatalogQueryDescriptor, CatalogScopePredicate)] = [[rootID1], [rootID1, rootID2]]
+            .flatMap { roots in
+                let name = "\(roots.count) libraries"
+                return [
+                    ("person \(name)", CatalogQueryDescriptor(scope: .person(person)),
+                     CatalogScopePredicate(rootIDs: roots, content: .person(person.rawValue))),
+                    ("person by likeness \(name)",
+                     CatalogQueryDescriptor(scope: .person(person), sort: MediaSortOrder(field: .likeness, direction: .descending)),
+                     CatalogScopePredicate(rootIDs: roots, content: .person(person.rawValue))),
+                    ("People filter \(name)", CatalogQueryDescriptor(scope: .allMedia, filter: filter),
+                     CatalogScopePredicate(rootIDs: roots)),
+                ]
+            }
+        let plans = try await dbQueue.read { db in
+            try reads.map { name, descriptor, scope in
+                let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(descriptor: descriptor, scope: scope, db: db))
+                return try (name, explainPlan(db, query: query))
+            }
+        }
+        for (name, plan) in plans {
+            let faceLines = plan.split(separator: "\n").filter { $0.contains(" face ") }
+            #expect(!faceLines.isEmpty, "\(name): \(plan)")
+            for line in faceLines {
+                #expect(line.contains("idx_face_person_photo (person_id=? AND library_root_id=? AND relative_path=?"),
+                        "\(name): \(plan)")
+            }
+        }
+    }
+
     /// On This Day's left-out photos are sought by each row's key, never by a scan of every
     /// search row — which a `NOT IN` list did once per outer row when the read started from
     /// the place cells (the filter's place options).

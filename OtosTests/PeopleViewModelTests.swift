@@ -350,6 +350,33 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    /// A hidden person has no act but Unhide (DES-111): it is merged neither away nor into,
+    /// however the merge is asked for — a drag, Merge Into or a taken name — and its cell is
+    /// not draggable. Unhidden, it merges again.
+    @Test func aHiddenPersonIsNeitherMergedAwayNorInto() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let ian = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: "Ian")).person)
+        _ = try await fixture.store.perform(.setHidden(ian, true))
+        try await fixture.show(fixture.people(), scope: .people)
+
+        let actions = fixture.model.peopleActions
+        #expect(!actions.canMergeAway(ian))
+        #expect(actions.canMergeAway(fixture.sam))
+        #expect(actions.mergeRefusal(ian, fixture.sam) == "Ian is a hidden person")
+        #expect(actions.mergeRefusal(fixture.sam, ian) == "Ian is a hidden person")
+        actions.askMerge(ian, fixture.sam)
+        #expect(fixture.model.peopleSession.mergeQuestion == nil)
+        actions.askMerge(fixture.sam, ian)
+        #expect(fixture.model.peopleSession.mergeQuestion == nil)
+
+        _ = try await fixture.store.perform(.setHidden(ian, false))
+        try await fixture.show(fixture.people(), scope: .people)
+        #expect(fixture.model.peopleActions.canMergeAway(ian))
+        fixture.model.peopleActions.askMerge(ian, fixture.sam)
+        #expect(fixture.model.peopleSession.mergeQuestion == PeopleMergeQuestion(from: ian, into: fixture.sam))
+        await fixture.store.shutdown()
+    }
+
     /// A taken name whose merge the hard rules refuse disables Save with the merge's reason,
     /// rather than closing the sheet with nothing done; a hidden person's name is refused,
     /// since no surface but the gallery offers them; a name with another birthday for

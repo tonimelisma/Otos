@@ -25,7 +25,8 @@ import OSLog
 /// ledger, readiness rechecks and the catalog-write retry. Every wait that schedule holds
 /// wakes the loop through one owned deadline (`armWake(after:)`).
 ///
-/// A bounded readiness pass checks live materialization status before ready admission.
+/// A bounded readiness pass asks the shared materializer where each original is
+/// (`locality(of:)`) before ready admission.
 /// The enricher repeats the final byte-read gate for provider races; physical transfer
 /// admission and priority remain entirely inside the shared materializer.
 ///
@@ -157,7 +158,6 @@ actor EnrichmentCoordinator {
     let admissionPolicy: EnrichmentAdmissionPolicy
     let handoffPolicy: EnrichmentMaterializationHandoffPolicy
     let claimWindowLimit: Int
-    let readinessChecker: any EnrichmentReadinessChecking
 
     var viewport: [MediaAssetID] = []
     var freshly: [MediaAssetID] = []
@@ -220,7 +220,7 @@ actor EnrichmentCoordinator {
         cameraRangeAccess: CameraRangeAccess? = nil,
         remoteRangeAccess: RemoteRangeAccess? = nil,
         materialize: @escaping @Sendable (URL) async -> MaterializationResult = { _ in .cancelled },
-        readinessChecker: any EnrichmentReadinessChecking = LiveEnrichmentReadinessChecker(),
+        originalStatus: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:),
         enrichConcurrency: Int = EnrichmentAdmissionPolicy.production.enrichConcurrency,
         claimBatchSize: Int = 32,
         schedule: EnrichmentSchedule = EnrichmentSchedule(retrySchedule: .production),
@@ -233,7 +233,7 @@ actor EnrichmentCoordinator {
         self.cameraRangeAccess = cameraRangeAccess
         self.remoteRangeAccess = remoteRangeAccess
         self.materializationRequester = materializationRequester
-            ?? ClosureMaterializationRequester(operation: materialize)
+            ?? ClosureMaterializationRequester(status: originalStatus, operation: materialize)
         var policy = admissionPolicy
         policy.enrichConcurrency = enrichConcurrency
         self.admissionPolicy = policy
@@ -242,7 +242,6 @@ actor EnrichmentCoordinator {
         self.schedule = schedule
         self.handoffPolicy = handoffPolicy
         self.claimWindowLimit = max(claimWindowLimit, enrichConcurrency)
-        self.readinessChecker = readinessChecker
         let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         signalStream = stream
         signalContinuation = continuation

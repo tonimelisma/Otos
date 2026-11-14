@@ -31,6 +31,16 @@ nonisolated struct MediaCount: Hashable, Sendable {
         "\(total.formatted()) \(noun(photo: "photo", video: "video", both: "photos and videos"))"
     }
 
+    /// What the count holds, without the number: `photo`, `videos`, `photos and videos`.
+    var noun: String {
+        noun(photo: "photo", video: "video", both: "photos and videos")
+    }
+
+    /// The verb a count takes: `1 photo is`, `2 videos are`.
+    var isOrAre: String {
+        total == 1 ? "is" : "are"
+    }
+
     /// Title case, for menu items and titles (DES-037): `3 Photos`, `14 Photos & Videos`.
     var title: String {
         "\(total.formatted()) \(noun(photo: "Photo", video: "Video", both: "Photos & Videos"))"

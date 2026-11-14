@@ -276,10 +276,10 @@ nonisolated enum PeopleRuleViolation: Error, Equatable {
     case personAlreadyInPhoto
     /// The photo was taken before the person's birthday.
     case beforeBirthday
-    /// `count` photos the user gave the person predate the birthday.
-    case confirmedBeforeBirthday(count: Int)
-    /// The user gave both people a face in `count` photos.
-    case bothInPhotos(count: Int)
+    /// The photos and videos the user gave the person predate the birthday.
+    case confirmedBeforeBirthday(MediaCount)
+    /// The user gave both people a face in these photos and videos.
+    case bothIn(MediaCount)
     /// Another person already has the name; merging them is the act.
     case nameTaken
     /// The face's library is not cataloged.

@@ -291,9 +291,9 @@ private struct PersonCell: View {
             focusList()
             actions.select(person.id, [])
         }
-        .draggable(PeopleDrag.payload(person.id))
+        .modifier(PersonCellDrag(person: person.id, isDraggable: actions.canMergeAway(person.id)))
         .dropDestination(for: String.self) { items, _ in
-            guard !person.isHidden, let from = items.first.flatMap(PeopleDrag.person(from:)), from != person.id,
+            guard let from = items.first.flatMap(PeopleDrag.person(from:)), from != person.id,
                   actions.mergeRefusal(from, person.id) == nil
             else { return false }
             actions.askMerge(from, person.id)
@@ -413,5 +413,20 @@ nonisolated enum PeopleDrag {
     static func person(from payload: String) -> PersonID? {
         guard payload.hasPrefix(prefix), let value = Int64(payload.dropFirst(prefix.count)) else { return nil }
         return PersonID(rawValue: value)
+    }
+}
+
+/// A person's cell is dragged onto another to merge them, unless the person can be merged
+/// into no one (a hidden person, DES-111): then it is not draggable at all.
+private struct PersonCellDrag: ViewModifier {
+    let person: PersonID
+    let isDraggable: Bool
+
+    func body(content: Content) -> some View {
+        if isDraggable {
+            content.draggable(PeopleDrag.payload(person))
+        } else {
+            content
+        }
     }
 }

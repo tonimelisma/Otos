@@ -926,7 +926,10 @@ private nonisolated func scopeClause(
         predicate += "\n  AND media_asset.import_batch_unix_ms = ?"
     }
     // A duplicate's digest must be current for its file; the group subquery repeats the
-    // visibility rules so a copy waiting for the Trash makes no one else a duplicate.
+    // visibility rules so a copy waiting for the Trash makes no one else a duplicate. The
+    // group subquery walks only the rows that have a digest, in digest order, so it groups
+    // without a temporary B-tree over every row of the scope: most of the owner's rows (an
+    // Immich account's) have none (`docs/research/2026-11-14-owner-scale-query-plans.md`).
     let currentDigest = """
       AND media_asset.content_hash_xxh3_128 IS NOT NULL
       AND length(media_asset.content_hash_xxh3_128) = 16
@@ -941,8 +944,9 @@ private nonisolated func scopeClause(
         predicate += """
 
           AND media_asset.content_hash_xxh3_128 IN (
-              SELECT twin.content_hash_xxh3_128 FROM media_asset AS twin
-              WHERE twin.library_root_id IN (\(sqlPlaceholders(count: scope.rootIDs.count)))
+              SELECT twin.content_hash_xxh3_128 FROM media_asset AS twin INDEXED BY idx_media_asset_content_hash
+              WHERE twin.content_hash_xxh3_128 IS NOT NULL
+                AND twin.library_root_id IN (\(sqlPlaceholders(count: scope.rootIDs.count)))
                 AND twin.pending_trash_batch_unix_ms IS NULL
                 AND twin.trash_path IS NULL
                 AND twin.hidden_by_source = 0

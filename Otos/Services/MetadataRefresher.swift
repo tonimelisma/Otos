@@ -22,23 +22,24 @@ import OSLog
 /// product from that one read.
 ///
 /// One pass per launch, started with enrichment. The pass walks candidates in path order
-/// through the store's cursor, checks each file's materialization immediately before its
-/// read, reads on the cooperative pool off this actor (`@concurrent`), and hands records
+/// through the store's cursor, asks the shared materializer where each original is
+/// (`locality(of:)`, ADR 0046 §4) and reads only a local one, re-checking the file's
+/// materialization immediately before its read, reads on the cooperative pool off this actor (`@concurrent`), and hands records
 /// to `CatalogStore.applyMetadataRefresh`, which writes one only while its row still has
 /// the signature it was read at. The actor holds no state but the pass's task.
 actor MetadataRefresher {
     private let store: CatalogStore
-    private let isLocal: @Sendable (URL) -> Bool
+    private let locality: @Sendable (MediaAssetID) async -> OriginalLocality
     private let pageSize: Int
     private var task: Task<MetadataRefreshSummary, Never>?
 
     init(
         store: CatalogStore,
-        isLocal: @escaping @Sendable (URL) -> Bool = { FileMaterialization.status(of: $0) == .materialized },
+        locality: @escaping @Sendable (MediaAssetID) async -> OriginalLocality,
         pageSize: Int = 64
     ) {
         self.store = store
-        self.isLocal = isLocal
+        self.locality = locality
         self.pageSize = pageSize
     }
 
@@ -49,10 +50,10 @@ actor MetadataRefresher {
             return await task.value
         }
         let store = store
-        let isLocal = isLocal
+        let locality = locality
         let pageSize = pageSize
         let pass = Task {
-            await Self.runPass(store: store, isLocal: isLocal, pageSize: pageSize)
+            await Self.runPass(store: store, locality: locality, pageSize: pageSize)
         }
         task = pass
         return await pass.value
@@ -64,7 +65,7 @@ actor MetadataRefresher {
 
     private static func runPass(
         store: CatalogStore,
-        isLocal: @escaping @Sendable (URL) -> Bool,
+        locality: @escaping @Sendable (MediaAssetID) async -> OriginalLocality,
         pageSize: Int
     ) async -> MetadataRefreshSummary {
         let start = ContinuousClock.now
@@ -87,7 +88,7 @@ actor MetadataRefresher {
             var refreshes: [MetadataRefresh] = []
             var downloads: [MetadataRefreshCandidate] = []
             for candidate in page where !Task.isCancelled {
-                switch await read(candidate, isLocal: isLocal) {
+                switch await read(candidate, locality: locality) {
                 case let .read(refresh):
                     refreshes.append(refresh)
                 case .notLocal where candidate.mayCompleteLivePhoto:
@@ -127,15 +128,18 @@ actor MetadataRefresher {
         case retry
     }
 
-    /// The candidate's record as the current reader reads it. The materialization check
-    /// sits immediately before the read, so the read never downloads.
+    /// The candidate's record as the current reader reads it, when its original is local.
+    /// The file's own materialization is re-checked immediately before the read, so the read
+    /// never downloads one evicted since `locality` answered.
     @concurrent
     private static func read(
         _ candidate: MetadataRefreshCandidate,
-        isLocal: @Sendable (URL) -> Bool
+        locality: @Sendable (MediaAssetID) async -> OriginalLocality
     ) async -> CandidateRead {
         let url = candidate.id.fileURL
-        guard isLocal(url) else { return .notLocal }
+        guard await locality(candidate.id) == .local, FileMaterialization.status(of: url) == .materialized else {
+            return .notLocal
+        }
         let result = MediaMetadataReader.read(url: url)
         guard !result.outcome.shouldRetry else { return .retry }
         return .read(MetadataRefresh(

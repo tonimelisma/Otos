@@ -141,7 +141,7 @@ grouping had put with the right child.
     did on originals (with the person rule, 5,493 against 5,471 on the owner's library).
   - **Alignment:** the face box height in pixels times the alignment scale is between 50 and
     150. Below that, Vision's landmarks were spread over the scene, and the crop is not a face
-    (59 of 3,293 measured faces).
+    (61 of 3,293 measured detections).
   - **A person:** Vision's image classifier (`VNClassifyImageRequest`, revision 2), shown a
     square twice the face box, gives a person label (`people`, `adult`, `child`, `baby`,
     `teen` or `crowd`) a confidence of at least 0.2. Capture quality says how well a face was
@@ -202,7 +202,8 @@ grouping had put with the right child.
   changes. A model that cannot be loaded stops the reader until the same 900 s pass: the
   model is loaded before any Vision work, and a failed load is not kept.
 - **Who owes faces:** a library's and an Immich account's stills (`LibraryRootKind.readsFaces`).
-  Faces are not an enrichment product, so no enrichment claim owes them. A card's or camera's
+  A still's faces are not an enrichment product, so no enrichment claim owes them; a
+  video's are (see Videos). A card's or camera's
   rows are read for faces once imported into a library, which is where their overlay lives on.
 - **People** are catalog rows: an optional name, an optional birthday, a hidden mark, a
   favourite mark, and a stable row ID. A person is not a media asset, so this is not an asset

@@ -27,7 +27,8 @@ struct PeopleStateTests {
             tiles: Dictionary(uniqueKeysWithValues: faces.map {
                 ($0.id, FaceTile(
                     id: $0.id, box: CGRect(x: 0.4, y: 0.3, width: 0.2, height: 0.2),
-                    preview: FacePreview(name: "p", recipe: .neutral), captureSeconds: $0.captureSeconds
+                    preview: FacePreview(name: "p", recipe: .neutral), captureSeconds: $0.captureSeconds,
+                    isInVideo: $0.id.asset.relativePath.rawValue.hasSuffix(".mov")
                 ))
             }),
             people: people ?? [
@@ -68,7 +69,7 @@ struct PeopleStateTests {
         #expect(state.person(Self.sam)?.cover?.id == faces[0].id)
         #expect(state.person(tyler)?.cover?.id == faces[4].id)
         #expect(state.person(Self.sam)?.userFaces.map(\.id) == [faces[0].id])
-        #expect(state.person(Self.ian)?.anchorPhotos == [faces[3].id.asset])
+        #expect(state.person(Self.ian)?.anchorMedia.keys.map(\.self) == [faces[3].id.asset])
     }
 
     /// A likeness is written when it appears, goes, or moves past its precision, never for
@@ -238,6 +239,41 @@ struct PeopleStateTests {
         #expect(index.mergeRefusal(Self.ian, into: Self.sam) != nil)
         #expect(index.sheetRefusal(.person(Self.ian), name: "Sam", birthday: nil) == nil)
         #expect(index.person(named: "Ian", excluding: Self.sam) == Self.ian)
+    }
+
+    /// Every refusal that counts says what it counts (`MediaCount`, ADR 0047's Counts): photos,
+    /// videos, or photos and videos, each counted once however many faces it holds.
+    @Test func refusalsCountPhotosAndVideosAsWhatTheyAre() throws {
+        let birthday = try #require(PersonBirthday("2021-01-01")?.seconds)
+        let before = birthday - Self.day
+        let people: [PeopleSnapshot.Person] = [
+            .init(id: Self.sam, name: "Sam", birthday: nil),
+            .init(id: Self.ian, name: "Ian", birthday: nil),
+        ]
+        func index(_ paths: [String], ianToo: Bool = false) -> PeopleIndex {
+            let faces = paths.flatMap { path in
+                [Fixture.face(path, index: 0, toward: [0: 1], at: 0, assignment: .user(Self.sam))]
+                    + (ianToo ? [Fixture.face(path, index: 1, toward: [1: 1], at: 0, assignment: .user(Self.ian))] : [])
+            }
+            return PeopleIndex(PeopleStateBuilder.state(from: Self.snapshot(faces, people: people)))
+        }
+        for (paths, said) in [(["a.jpg", "b.jpg"], "2 photos"), (["a.mov", "b.mov"], "2 videos"), (["a.jpg", "b.mov"], "2 photos and videos")] {
+            #expect(index(paths).sheetRefusal(.person(Self.sam), name: "Sam", birthday: "2030") == "\(said) of Sam are from before this date")
+            #expect(index(paths, ianToo: true).mergeRefusal(Self.sam, into: Self.ian) == "Sam and Ian are both in \(said)")
+        }
+        // Two faces of one video are in the same video; a video Ian was given holds him.
+        let video = PeopleIndex(PeopleStateBuilder.state(from: Self.snapshot(
+            [Fixture.face("v.mov", index: 0, toward: [1: 1], at: before, assignment: .user(Self.ian))],
+            people: [.init(id: Self.sam, name: "Sam", birthday: nil), .init(id: Self.ian, name: "Ian", birthday: PersonBirthday("2021-01-01"))]
+        )))
+        let pair = [Self.tile("w.mov", at: Fixture.epoch), Self.tile("w.mov", index: 1, at: Fixture.epoch)].map { PhotoFace(tile: $0, person: nil) }
+        #expect(video.moveRefusal(pair, to: Self.ian) == "2 of these faces are in the same video")
+        let inVideo = PhotoFace(tile: Self.tile("v.mov", index: 1, at: Fixture.epoch), person: nil)
+        #expect(video.moveRefusal([inVideo], to: Self.ian) == "Ian is already in this video")
+        let early = [Self.tile("x.mov", at: before), Self.tile("x.mov", index: 1, at: before), Self.tile("y.jpg", at: before)]
+            .map { PhotoFace(tile: $0, person: nil) }
+        #expect(video.moveRefusal(Array(early.dropFirst()), to: Self.ian) == "2 photos and videos are from before Ian's birthday")
+        #expect(PeopleText.beforeTheBirthday(MediaCount(videos: 1)) == "1 video is from before the birthday")
     }
 
     @Test func mergingIsRefusedWhenTheUserGaveBothAFaceOfOnePhoto() {
@@ -411,7 +447,7 @@ struct PeopleStateTests {
     static func tile(_ path: String, index: Int = 0, at seconds: Double?) -> FaceTile {
         FaceTile(
             id: FaceID(asset: MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Lib"), relativePath: MediaRelativePath(rawValue: path)), index: index),
-            box: .zero, preview: nil, captureSeconds: seconds
+            box: .zero, preview: nil, captureSeconds: seconds, isInVideo: path.hasSuffix(".mov")
         )
     }
 }

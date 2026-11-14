@@ -346,6 +346,78 @@ struct ImmichClientTests {
         }
     }
 
+    /// The lines a full resync reads, as Immich 3.3 writes them (`server/src/utils/sync.ts`,
+    /// `sync.service.ts` at v3.3.0, `docs/research/2026-11-14-immich-resync-against-3-3.md`):
+    /// a stream the server resets is one `SyncResetV1` line acked `SyncResetV1|reset`, with
+    /// no completion line after it; within `AssetsV2` the deletions come before the
+    /// upserts; a trashed asset is still an `AssetV2` with its `deletedAt`; an audio asset
+    /// is a line Otos reads and leaves out; an EXIF line without a size says so with null.
+    @Test func aFullResyncsLinesDecodeAsImmich33WritesThem() async throws {
+        let reset = #"{"type":"SyncResetV1","data":{},"ack":"SyncResetV1|reset"}"#
+        let trashed: [String: Any] = [
+            "id": "6f1c", "ownerId": "o", "originalFileName": "IMG_4821.HEIC", "thumbhash": "3OcRJYB4",
+            "checksum": "q3xQ0C6Yh0m1Z8vK2bJw9sT4uE8=", "fileCreatedAt": "2024-06-01T14:03:22.000Z",
+            "fileModifiedAt": "2024-06-01T14:03:22.000Z", "createdAt": "2024-06-02T08:11:45.123Z",
+            "localDateTime": "2024-06-01T17:03:22.000Z", "type": "IMAGE", "deletedAt": "2026-11-01T09:00:00.000Z",
+            "isFavorite": true, "visibility": "archive", "duration": NSNull(), "livePhotoVideoId": NSNull(),
+            "stackId": NSNull(), "libraryId": NSNull(), "width": 4032, "height": 3024, "isEdited": false,
+        ]
+        var audio = trashed
+        audio["id"] = "a0d1"
+        audio["type"] = "AUDIO"
+        audio["deletedAt"] = NSNull()
+        let exif: [String: Any] = [
+            "assetId": "6f1c", "description": "", "exifImageWidth": NSNull(), "exifImageHeight": NSNull(),
+            "fileSizeInByte": NSNull(), "orientation": "6", "dateTimeOriginal": NSNull(), "modifyDate": NSNull(),
+            "timeZone": NSNull(), "latitude": NSNull(), "longitude": NSNull(), "projectionType": NSNull(),
+            "city": NSNull(), "state": NSNull(), "country": NSNull(), "make": NSNull(), "model": NSNull(),
+            "lensModel": NSNull(), "fNumber": NSNull(), "focalLength": NSNull(), "iso": NSNull(),
+            "exposureTime": NSNull(), "profileDescription": NSNull(), "rating": NSNull(), "fps": NSNull(),
+        ]
+        let fromZero = try [
+            Self.line("AssetDeleteV1", ["assetId": "a2b3"], ack: "AssetDeleteV1|0190d3a3-0a1b"),
+            Self.line("AssetV2", trashed, ack: "AssetV2|0190d3a2-7c41"),
+            Self.line("AssetV2", audio, ack: "AssetV2|0190d3a2-7c42"),
+            Self.line("AssetExifV1", exif, ack: "AssetExifV1|0190d3a2-7d02"),
+            Self.line("SyncCompleteV1", [:], ack: "SyncCompleteV1|0190d3a4-1b2c"),
+        ]
+        let session = ImmichStubProtocol.session(host: "resync.test") { _, body in
+            let sent = try JSONSerialization.jsonObject(with: body ?? Data()) as? [String: Any]
+            let lines = sent?["reset"] as? Bool == true ? fromZero : [reset]
+            return (200, Data(lines.joined(separator: "\n").utf8))
+        }
+        let client = try ImmichClient(server: #require(URL(string: "http://resync.test")), session: session)
+
+        var resetStream: [ImmichSyncEvent] = []
+        for try await event in try await client.syncEvents(token: "tok", fromZero: false) {
+            resetStream.append(event)
+        }
+        #expect(resetStream == [.reset(ack: "SyncResetV1|reset")])
+
+        var events: [ImmichSyncEvent] = []
+        for try await event in try await client.syncEvents(token: "tok", fromZero: true) {
+            events.append(event)
+        }
+        #expect(events.count == 5)
+        #expect(events.first == .assetDeleted(assetID: "a2b3", ack: "AssetDeleteV1|0190d3a3-0a1b"))
+        guard events.count == 5, case let .asset(asset, _) = events[1] else {
+            Issue.record("Expected a trashed asset second, got \(events)")
+            return
+        }
+        #expect(asset.visibility == .archive)
+        #expect(asset.deletedAt == Date(timeIntervalSince1970: 1_793_523_600))
+        #expect(asset.hasPreview)
+        guard case let .asset(audioAsset, _) = events[2] else {
+            Issue.record("Expected the audio asset third, got \(events)")
+            return
+        }
+        #expect(audioAsset.type == .audio)
+        #expect(Array(events.suffix(2)) == [
+            .exif(assetID: "6f1c", fileSize: nil, ack: "AssetExifV1|0190d3a2-7d02"),
+            .complete(ack: "SyncCompleteV1|0190d3a4-1b2c"),
+        ])
+    }
+
     /// A ranged read's status is judged when its headers arrive: a server that ignores
     /// `Range` and starts sending the whole file (a 200) is refused at once, and its
     /// transfer cancelled before the body is received.

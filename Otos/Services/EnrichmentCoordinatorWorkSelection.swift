@@ -149,16 +149,11 @@ extension EnrichmentCoordinator {
             // A row on a device that answers ranged reads is reachable without a
             // local file, so the filesystem is not the right thing to ask about it.
             //
-            // Checked *before* the readiness probe rather than as a fallback after
-            // it, because `lstat` on a staging path that was never written answers
-            // `.unknown`, which routes to a readiness retry — and that retry can
-            // never succeed, because nothing is ever going to create the file. Every
-            // camera row would be deferred, re-probed, and deferred again forever,
-            // which is exactly what a live 991-item card did: `probes=128 ready=0
-            // retryReadiness=32 dispatched=0`, on repeat, with no enrichment at all.
-            //
-            // This is the "route, not a bypass" the design called for: the row is
-            // genuinely ready, by a different route to its bytes.
+            // Checked *before* locality: a staged row not yet copied is fetchable, and
+            // fetching it would copy the whole file from the device, where ranged reads
+            // need only the bytes the read touches. This is the "route, not a bypass"
+            // the design called for: the row is genuinely ready, by a different route
+            // to its bytes.
             if rangeCapableRootPaths.contains(asset.id.libraryRootPath) {
                 enqueueReadyCandidate(candidate)
                 routing.readinessCounts["rangedReady", default: 0] += 1
@@ -174,11 +169,15 @@ extension EnrichmentCoordinator {
                 continue
             }
 
-            switch readinessChecker.status(of: asset.id.fileURL) {
-            case .materialized:
+            // Where the original is has one owner (`MaterializationRequesting.locality`, ADR
+            // 0046 §4): a folder's file by its `SF_DATALESS` status, a staged source's by
+            // whether its staging folder holds it. The enricher re-checks the file itself
+            // right before it reads.
+            switch await materializationRequester.locality(of: asset.id) {
+            case .local:
                 enqueueReadyCandidate(candidate)
                 routing.readinessCounts["ready", default: 0] += 1
-            case .dataless:
+            case .fetchable:
                 guard schedule.outstandingCount < handoffPolicy.globalOutstandingLimit else {
                     releasedIDs.append(asset.id)
                     routing.readinessCounts["materializationBound", default: 0] += 1
@@ -196,7 +195,7 @@ extension EnrichmentCoordinator {
                     ownsStoreClaim: true
                 )
                 routing.readinessCounts["needsMaterialization", default: 0] += 1
-            case .unknown:
+            case .unreachable:
                 schedule.deferReadinessProbe(asset.id, now: now)
                 releasedIDs.append(asset.id)
                 routing.readinessCounts["retryReadiness", default: 0] += 1

@@ -502,7 +502,7 @@ extension VideoFaceTests {
                 store: library.store,
                 enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
                 materialize: { _ in .testMaterialized },
-                readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+                originalStatus: { _ in .materialized },
                 schedule: schedule
             )
         }

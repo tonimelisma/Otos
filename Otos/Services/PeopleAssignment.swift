@@ -315,7 +315,7 @@ nonisolated enum PeopleStateBuilder {
     static func state(from snapshot: PeopleSnapshot) -> CatalogPeopleState {
         var faces: [PersonID: [FaceTile]] = [:]
         var userFaces: [PersonID: [FaceTile]] = [:]
-        var anchorPhotos: [PersonID: Set<MediaAssetID>] = [:]
+        var anchorMedia: [PersonID: [MediaAssetID: Bool]] = [:]
         for face in snapshot.faces {
             guard let person = face.assignment.person, let tile = snapshot.tiles[face.id] else { continue }
             faces[person, default: []].append(tile)
@@ -323,7 +323,7 @@ nonisolated enum PeopleStateBuilder {
                 userFaces[person, default: []].append(tile)
             }
             if face.assignment.isAnchor {
-                anchorPhotos[person, default: []].insert(face.id.asset)
+                anchorMedia[person, default: [:]][face.id.asset] = tile.isInVideo
             }
         }
         let hidden = Set(snapshot.people.filter(\.isHidden).map(\.id))
@@ -350,7 +350,7 @@ nonisolated enum PeopleStateBuilder {
                 }),
                 cover: keyPhoto ?? own.first,
                 userFaces: (userFaces[person.id] ?? []).sorted(by: newestFirst),
-                anchorPhotos: anchorPhotos[person.id] ?? []
+                anchorMedia: anchorMedia[person.id] ?? [:]
             )
         }.sorted(by: galleryOrder)
         return CatalogPeopleState(

@@ -257,27 +257,28 @@ struct MediaImportRecovery {
             ])
             return .foreign
         }
-        if FileMaterialization.status(of: final) != .materialized {
-            OtosLog.catalog.noticeOperation("mediaOperation.recover", phase: "deferredMaterialization", fields: [
+        let id = MediaAssetID(libraryRootPath: operation.destinationRootPath, relativePath: operation.destinationRelativePath)
+        // Where the published file is has one owner (`locality(of:)`, ADR 0046 §4): a
+        // fetchable one is downloaded deliberately before its bytes are hashed.
+        if let materializationRequester, await materializationRequester.locality(of: id) == .fetchable {
+            OtosLog.catalog.noticeOperation("mediaOperation.recover", phase: "materializing", fields: [
                 "key": operation.operationKey.rawValue,
             ])
-            guard let materializationRequester else {
-                return .deferredMaterialization
-            }
-            let result = await materializationRequester.materialize(
+            _ = await materializationRequester.materialize(
                 MaterializationCoordinator.Request(
-                    id: MediaAssetID(
-                        libraryRootPath: operation.destinationRootPath,
-                        relativePath: operation.destinationRelativePath
-                    ),
+                    id: id,
                     sourceSize: operation.sourceByteSize,
                     isVideo: UTType(filenameExtension: final.pathExtension)?.conforms(to: .movie) == true,
                     priority: .background
                 )
             )
-            guard result.isMaterialized, FileMaterialization.status(of: final) == .materialized else {
-                return .deferredMaterialization
-            }
+        }
+        // The re-check immediately before the hash reads the bytes (ADR 0008).
+        guard FileMaterialization.status(of: final) == .materialized else {
+            OtosLog.catalog.noticeOperation("mediaOperation.recover", phase: "deferredMaterialization", fields: [
+                "key": operation.operationKey.rawValue,
+            ])
+            return .deferredMaterialization
         }
         guard case let .complete(actualHash) = ContentHasher().hashMaterializedFile(at: final) else {
             return .deferredMaterialization

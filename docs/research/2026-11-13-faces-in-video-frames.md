@@ -14,9 +14,9 @@ People finds no faces in videos and whether the first frame would do (owner, 202
 - **Frames per video:** the thumbnail QuickLook makes (what Otos shows for a video today,
   ADR 0035), requested at full size, and frames at 0 %, 10 %, 25 %, 50 %, 75 % and 90 % of
   the duration (`AVAssetImageGenerator`, zero tolerance, preferred transform applied).
-- **A face that counts** passes Otos's admission rule for stills (`FaceAnalyzer`, ADR 0047):
-  Vision face landmarks and capture quality, revision 3; quality ≥ 0.3; eyes, nose and lips
-  found. The alignment-scale rule and the embedding model were not run, so this counts faces
+- **A face that counts** has Vision face landmarks and capture quality, revision 3; quality
+  ≥ 0.3; eyes, nose and lips found. This is close to, but not, `FaceAnalyzer`'s admission
+  for stills (ADR 0047: quality ≥ 0.28 plus the alignment and person rules). The alignment-scale rule and the embedding model were not run, so this counts faces
   Otos would read, not faces it would recognise.
 - The tool was a throwaway Swift program; owner media and results stay outside the repo.
 

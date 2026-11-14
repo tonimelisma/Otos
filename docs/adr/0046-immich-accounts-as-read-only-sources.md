@@ -38,11 +38,11 @@ kind. An Immich account takes the same shape, with three differences:
 - its rows stay browsable while it is unreachable;
 - its listing is a durable cursor, not a fresh enumeration on each attach.
 
-The code has many bare `kind == .library` and `kind != .library` comparisons. Each one
-answers a different question: All Media membership, import source or destination,
-Trash, retention, scan and watch, the sidebar section. A fourth kind added to those
-comparisons would be wrong in most of them. For example, `kind != .library` makes a root
-an import source (`ImportSessionMachine`). Those comparisons are replaced, not extended.
+Before this decision the code had many bare `kind == .library` and `kind != .library`
+comparisons. Each one answered a different question: All Media membership, import source
+or destination, Trash, retention, scan and watch, the sidebar section. A fourth kind added to those
+comparisons would have been wrong in most of them. For example, `kind != .library` made a
+root an import source (`ImportSessionMachine`). Those comparisons are replaced, not extended.
 
 ## MECE Decision Scope
 
@@ -143,13 +143,18 @@ unreachable is never a deletion.
 | Capability | library | removableVolume | deviceMTP | immichAccount |
 |---|---|---|---|---|
 | `isMemberOfAllMedia` (All Media, Places, Duplicates) | yes | — | — | yes |
-| `acceptsFileOperations` (import destination, reorganization, Move to Trash) | yes | — | — | — |
+| `isImportDestination` | yes | — | — | — |
+| `supportsReorganization` | yes | — | — | — |
+| `supportsMoveToTrash` | yes | yes | — | — |
 | `isRemovable` (attach/detach, Removable section, 90-day retention, `awaiting_presence`, import source, Erase) | — | yes | yes | — |
 | `hasFilesystemNamespace` (scan, FSEvents watch, integrity, path normalization) | yes | yes | — | — |
 | `showsRowsWhileUnreachable` | — | — | — | yes |
-| `bytesArrive` | in place | in place | staged | staged |
+| `stagesOriginals` (`stagingContainer`) | — | — | DeviceStaging | RemoteStaging |
 
-No call site compares a kind directly. A new kind is a new column in this table.
+The enum answers further questions the same way (`isUserChosenFolder`,
+`isInLibrariesSection`, `rowsComeFromSourceListing`, `readsFaces`, `readsVideoFaces`,
+`availabilityAtLaunch` and others in `Otos/Models/CatalogModels.swift`). No call site
+compares a kind directly. A new kind is a new column in this table.
 
 ### 4. One owner of original locality
 
@@ -157,13 +162,16 @@ No call site compares a kind directly. A new kind is a new column in this table.
 `.unreachable`:
 
 - for in-place roots, from `SF_DATALESS`;
-- for staged roots, from whether the staged file exists and whether the source can
-  currently serve it.
+- for staged roots, from whether the staged file exists (absent is `.fetchable`); whether
+  the source can serve it now is the executor's answer (`deviceUnavailable`,
+  `serverUnreachable`), not part of locality.
 
-It also owns `ensureLocal(_:priority:)`, which replaces `makeLocal`.
-`PreviewImageLoader`, `VideoPreviewLoader`, enrichment readiness, `MetadataRefresher`,
-export, hand-off, and the edit lanes all ask it. Each keeps its synchronous re-check
-immediately before the read. The executor gains an `immichAccount` branch:
+It also owns `ensureLocal(_:)` (on `MaterializationRequesting`; the request carries the
+priority), which replaces `makeLocal`. `PreviewImageLoader`, `VideoPreviewLoader`,
+enrichment readiness, `MetadataRefresher`, import recovery, export, hand-off, the edit
+lanes and the Inspector all ask it; enrichment first routes a row whose source serves
+ranged reads to them, since that needs no download. Each keeps its synchronous re-check
+of the file's own status immediately before the read. The executor gains an `immichAccount` branch:
 
 1. an HTTP download into a temporary file, through `ImmichAccounts`, which holds the
    account's session;
@@ -177,7 +185,8 @@ immediately before the read. The executor gains an `immichAccount` branch:
 An original that lands is offered to enrichment ahead of other work, for every product it
 still owes (`CatalogStore.originalBecameLocal`, the list imported copies use): Otos's
 rendering — RAW9 for a RAW — replaces Immich's images, and its digest is taken. Ranged
-reads serve only claims that need metadata alone (`EnrichmentScope.isReadableInRanges`).
+reads serve only claims that need no rendering or digest — metadata and a video's faces
+(`EnrichmentScope.isReadableInRanges`).
 
 ### 5. Rows arrive from the sync stream
 
@@ -426,9 +435,9 @@ Cons:
 - An account behaves like a library in browsing, curation, editing, places,
   duplicates, and export. It does not behave like one in file operations.
 - Offline, everything that needs no original bytes keeps working.
-- A first sync of a large account downloads Immich's thumbnail and preview of each asset,
-  about 6 GB for 14,000 stills, under the free-space floor. Originals are downloaded only
-  for work that needs their bytes.
+- A first sync of a large account downloads Immich's preview of each asset, from which
+  Otos draws its grid thumbnail, about 6 GB for 14,000 stills, under the free-space floor.
+  Originals are downloaded only for work that needs their bytes.
 - Until Otos renders them, an account's RAWs show Immich's development and its stills a
   smaller loupe preview.
 - Otos gains its first networking code (URLSession) and Keychain code (Security
@@ -437,11 +446,12 @@ Cons:
 ## Retirement Proof
 
 - Every bare `kind == .library` and `kind != .library` comparison in `Otos/` is replaced
-  by a capability. Afterwards a search for `kind == .` and `kind != .` outside
-  `LibraryRootKind` finds nothing.
+  by a capability. Afterwards no comparison of a root kind with `==` or `!=` is left
+  outside `LibraryRootKind`.
 - `MaterializationCoordinator.makeLocal` is replaced by `ensureLocal`.
 - Byte readers no longer call `FileMaterialization.status` directly to decide whether to
-  fetch; they ask `locality(of:)`.
+  fetch; they ask `locality(of:)`, and read the status themselves only to re-check it
+  immediately before the read.
 - The camera-specific Store enumeration names become kind-neutral source-enumeration
   names.
 

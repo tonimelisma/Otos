@@ -12,7 +12,8 @@ APP-075, APP-076, APP-069, DES-116 and DES-117; the measurements are
 bursts are one photo everywhere, the camera JPEG shown by default; a `JPG`/`RAW` switch in the
 edit panel and on the loupe; a stack expands in place from its badge; Move to Trash on a
 collapsed stack takes every file and on an expanded file only that file; iPhone bursts by
-their identifier, camera bursts by the camera's drive-mode record, never by timing; On This Day
+their identifier; camera bursts were to stack by the camera's drive-mode record, never by
+timing, but no recorded fact bounds a camera's sequence, so camera frames do not stack (ADR 0052); On This Day
 leaves out Disliked photos, screenshots and documents, puts Liked photos first and shows at
 most 25 photos an anniversary.
 

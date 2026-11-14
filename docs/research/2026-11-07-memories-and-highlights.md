@@ -241,7 +241,8 @@ rediscover them. None of this is a decision.
 - **No ratings, labels or albums** (owner, 2026-10-31). Two common features cross
   that line and are out of scope as stated: Instagram-style Highlights and
   "save/favourite a memory" (Immich `isSaved`) are user albums by another name, and
-  Apple and Google rank favourited items higher, which Otos has no signal for.
+  Apple and Google rank favourited items higher; Otos's counterpart is the Liked choice, which
+  On This Day already ranks first.
 - **No audio-specific playback.** Every movie-style memory ships a music soundtrack.
   A soundtrack is audio-specific playback, so a movie-style memory in Otos would
   play a video's own sound only, or the principle would have to change first.

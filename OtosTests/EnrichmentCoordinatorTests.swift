@@ -47,7 +47,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: blocker.enricher(),
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            originalStatus: { _ in .materialized },
             enrichConcurrency: 8,
             claimBatchSize: 8,
             admissionPolicy: policy
@@ -74,7 +74,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+            originalStatus: { _ in .materialized }
         )
         let seeds = [
             deviceStagingSeed(rootPath: rootPath, relativePath: "video.mov", captureSeconds: 50, isVideo: true),
@@ -107,7 +107,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: blocker.enricher(),
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            originalStatus: { _ in .materialized },
             enrichConcurrency: 1,
             claimBatchSize: 3
         )
@@ -140,7 +140,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: enrichment.enricher(),
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            originalStatus: { _ in .materialized },
             enrichConcurrency: 1,
             claimBatchSize: 3
         )
@@ -184,7 +184,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: gate.enricher(),
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            originalStatus: { _ in .materialized },
             enrichConcurrency: 1,
             claimBatchSize: 3,
             claimWindowLimit: 3
@@ -231,7 +231,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: gate.enricher(),
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            originalStatus: { _ in .materialized },
             enrichConcurrency: 1,
             claimBatchSize: 3,
             claimWindowLimit: 3
@@ -327,7 +327,7 @@ struct EnrichmentCoordinatorTests {
                 await state.materialize(url.path(percentEncoded: false))
                 return .testMaterialized
             },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+            originalStatus: { _ in .materialized }
         )
         await coordinator.start()
 
@@ -371,7 +371,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: enricher,
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+            originalStatus: { _ in .materialized }
         )
         await coordinator.start()
 
@@ -415,7 +415,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: enricher,
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+            originalStatus: { _ in .materialized }
         )
         await coordinator.start()
 
@@ -456,7 +456,7 @@ struct EnrichmentCoordinatorTests {
                 Issue.record("materialize must not run for zero-byte short-circuit")
                 return .testMaterialized
             },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+            originalStatus: { _ in .materialized }
         )
         await coordinator.start()
         let enriched = try await waitForCatalogStoreState(store) {
@@ -496,13 +496,13 @@ struct EnrichmentCoordinatorTests {
         let materializer = MaterializationCoordinator(
             store: store,
             executor: { await executor.run($0.id.fileURL) },
-            volumeCapacity: ampleVolumeCapacity
+            volumeCapacity: ampleVolumeCapacity,
+            status: { _ in .dataless }
         )
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: MediaEnricher { _, _, _, _, _, _ in .notMaterialized },
             materializationRequester: materializer,
-            readinessChecker: TestEnrichmentReadinessChecker(result: .dataless),
             claimBatchSize: 32
         )
         await materializer.start()
@@ -559,7 +559,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            originalStatus: { _ in .materialized },
             claimBatchSize: 8,
             schedule: schedule,
             claimWindowLimit: 32
@@ -612,7 +612,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            originalStatus: { _ in .materialized },
             schedule: paced
         )
         let deferred = await deferring.dequeueEnrichmentWork()
@@ -625,7 +625,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            originalStatus: { _ in .materialized },
             schedule: pacedSchedule([(id, 999)])
         )
         let claimed = await changed.dequeueEnrichmentWork()
@@ -656,7 +656,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            originalStatus: { _ in .materialized },
             enrichConcurrency: 2,
             claimBatchSize: 2,
             schedule: pacedSchedule(blocked.map { ($0.id, $0.byteSize) })
@@ -679,7 +679,7 @@ struct EnrichmentCoordinatorTests {
             store: CatalogStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+            originalStatus: { _ in .materialized }
         )
         let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/BigCamera")
         let limit = EnrichmentMaterializationHandoffPolicy.production().globalOutstandingLimit
@@ -714,7 +714,7 @@ struct EnrichmentCoordinatorTests {
             store: CatalogStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+            originalStatus: { _ in .materialized }
         )
         let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/RangedCamera")
         await coordinator.markRangeCapable(rootPath)
@@ -747,7 +747,7 @@ struct EnrichmentCoordinatorTests {
             store: CatalogStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+            originalStatus: { _ in .materialized }
         )
         let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/OldCamera")
         let total = 40
@@ -778,7 +778,7 @@ struct EnrichmentCoordinatorTests {
             store: CatalogStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+            originalStatus: { _ in .materialized }
         )
         let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/GoneCamera")
         await coordinator.markRangeCapable(rootPath)
@@ -802,16 +802,10 @@ struct EnrichmentCoordinatorTests {
 
     /// The defect a live 991-item card found, which no unit test had caught.
     ///
-    /// Not seeding a range-capable device is only half the change: the rows must then be
-    /// *routed* to enrichment. They were not. `LiveEnrichmentReadinessChecker` asks the
-    /// filesystem, a camera row has no file, `lstat` answers `.unknown`, and `.unknown`
-    /// routes to a readiness retry — one that can never succeed, because nothing is going
-    /// to create that file. Every camera row was deferred, re-probed and deferred again:
-    /// `probes=128 ready=0 retryReadiness=32 dispatched=0`, forever, with no enrichment.
-    ///
-    /// The bug was invisible in the catalog because a re-attached camera keeps the overlay
-    /// it already had, so rows still looked enriched from a previous session. It only showed
-    /// once that overlay was cleared.
+    /// A range-capable device's rows are routed to enrichment by their ranged reads, before
+    /// locality is asked: a camera row has no file in its staging folder, and reading it in
+    /// ranges needs none, so it is dispatched, never parked on a readiness retry or demanded
+    /// as a whole-file download.
     @Test func rowsOnARangeCapableDeviceAreDispatchedDespiteHavingNoLocalFile() async throws {
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
@@ -838,7 +832,7 @@ struct EnrichmentCoordinatorTests {
             // exists at the staging path, so `lstat` fails.
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .unknown)
+            originalStatus: { _ in .unknown }
         )
         await coordinator.markRangeCapable(rootPath)
 
@@ -851,6 +845,55 @@ struct EnrichmentCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    /// Readiness asks the one owner of where an original is (`locality(of:)`, ADR 0046 §4),
+    /// never the file's `SF_DATALESS` flag, which says nothing for a source that stages its
+    /// originals: a camera row whose original is not in its staging folder is not ready for
+    /// byte work, and is demanded from the device rather than parked on a probe that can
+    /// never succeed.
+    @Test func aStagedOriginalNotYetCopiedIsDemandedNotEnriched() async throws {
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        let rootPath = try await store.attachDeviceMTP(
+            stagingRootURL: makeTestDirectory().appending(path: "Camera", directoryHint: .isDirectory),
+            identity: .camera(id: "staged-route"),
+            displayName: "Camera"
+        )
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
+        try await store.recordSourceListingBatch([
+            ScannedMediaFile(
+                relativePath: MediaRelativePath(rawValue: "DSC00002.JPG"),
+                name: "DSC00002.JPG",
+                contentTypeIdentifier: "public.jpeg",
+                byteSize: 4096,
+                createdAt: nil,
+                contentModifiedAt: nil
+            ),
+        ], scan: scan)
+        await store.endSourceListing(scan: scan)
+        let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "DSC00002.JPG"))
+
+        let executor = HeldMaterializationExecutor()
+        let materializer = MaterializationCoordinator(
+            store: store,
+            executor: { await executor.run($0.id.fileURL) },
+            volumeCapacity: ampleVolumeCapacity
+        )
+        #expect(await materializer.locality(of: id) == .fetchable)
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
+            materializationRequester: materializer
+        )
+
+        let work = await coordinator.dequeueEnrichmentWork()
+
+        #expect(!work.contains { $0.id == id }, "an original not yet copied from the camera has no bytes to read")
+        let state = await coordinator.workStateSnapshot()
+        #expect(state.materializationPending + state.materializationInFlight == 1)
+        await coordinator.shutdown()
+        await materializer.shutdown()
+    }
+
     /// The other half: a device that is *not* range-capable must still be governed by the
     /// filesystem, so a row with no local bytes routes to materialization rather than being
     /// handed to an enricher that has nothing to read.
@@ -859,7 +902,7 @@ struct EnrichmentCoordinatorTests {
             store: CatalogStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .unknown)
+            originalStatus: { _ in .unknown }
         )
         let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/PlainCamera")
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "a.arw"))
@@ -877,7 +920,7 @@ struct EnrichmentCoordinatorTests {
             store: CatalogStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+            originalStatus: { _ in .materialized }
         )
         let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/Camera")
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "video.mov"))
@@ -907,7 +950,8 @@ struct EnrichmentCoordinatorTests {
         let materializer = MaterializationCoordinator(
             store: store,
             executor: { await executor.run($0.id.fileURL) },
-            volumeCapacity: ampleVolumeCapacity
+            volumeCapacity: ampleVolumeCapacity,
+            status: { _ in .dataless }
         )
         await materializer.start()
 
@@ -928,8 +972,7 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
-            materializationRequester: materializer,
-            readinessChecker: TestEnrichmentReadinessChecker(result: .dataless)
+            materializationRequester: materializer
         )
 
         // The drain returns while the interactive request is still held: had it waited on
@@ -968,7 +1011,7 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: enricher,
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+            originalStatus: { _ in .materialized }
         )
 
         await coordinator.start()
@@ -1043,7 +1086,7 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: enricher,
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+            originalStatus: { _ in .materialized }
         )
         await coordinator.start()
 
@@ -1276,7 +1319,7 @@ private func visibleLifecycleCoordinator(
         store: store,
         enricher: visibleLifecycleEnricher(),
         materialize: { _ in .testMaterialized },
-        readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+        originalStatus: { _ in .materialized },
         enrichConcurrency: 2,
         claimBatchSize: 2
     )

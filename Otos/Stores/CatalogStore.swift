@@ -1535,6 +1535,21 @@ extension CatalogStore {
     /// from before it is never theirs. Refused when the user gave one of them such a face;
     /// every other such face, Otos's guess or seed, loses its person, for assignment to give
     /// out again. The one statement of the rule for Set Birthday and for a merge.
+    /// The photos and videos `sql` lists, one row per item: its root, its path and whether it
+    /// is a video. A refusal counts items, as its words do, never faces (`MediaCount`).
+    private static func mediaCount(_ db: Database, sql: String, arguments: StatementArguments) throws -> MediaCount {
+        var count = MediaCount()
+        let rows = try Row.fetchCursor(db, sql: sql, arguments: arguments)
+        while let row = try rows.next() {
+            if (row[2] as Bool?) == true {
+                count.videos += 1
+            } else {
+                count.photos += 1
+            }
+        }
+        return count
+    }
+
     private static func holdToBirthday(_ birthday: PersonBirthday?, faces people: [PersonID], db: Database) throws {
         guard let birthdaySeconds = birthday?.seconds, !people.isEmpty else { return }
         let placeholders = Array(repeating: "?", count: people.count).joined(separator: ", ")
@@ -1544,12 +1559,15 @@ extension CatalogStore {
         WHERE f.person_id IN (\(placeholders)) AND m.best_capture_local < ?
         """
         let arguments = StatementArguments(people.map(\.rawValue)) + [birthdaySeconds]
-        let earlier = try Int.fetchOne(
+        let earlier = try mediaCount(
             db,
-            sql: "SELECT COUNT(*) \(before) AND f.assignment = \(FaceAssignmentColumn.user.rawValue)",
+            sql: """
+            SELECT DISTINCT f.library_root_id, f.relative_path, m.best_kind = 'video'
+            \(before) AND f.assignment = \(FaceAssignmentColumn.user.rawValue)
+            """,
             arguments: arguments
-        ) ?? 0
-        guard earlier == 0 else { throw PeopleRuleViolation.confirmedBeforeBirthday(count: earlier) }
+        )
+        guard earlier.total == 0 else { throw PeopleRuleViolation.confirmedBeforeBirthday(earlier) }
         try db.execute(
             sql: """
             UPDATE face SET person_id = NULL, assignment = \(FaceAssignmentColumn.open.rawValue), is_key_photo = 0
@@ -1628,16 +1646,17 @@ extension CatalogStore {
     /// has none, and is a favourite if either was.
     private static func mergePerson(_ from: PersonID, into: PersonID, db: Database) throws {
         let anchors = FaceAssignmentColumn.sqlList { $0.isAnchor }
-        let shared = try Int.fetchOne(
+        let shared = try mediaCount(
             db,
             sql: """
-            SELECT COUNT(*) FROM face a JOIN face b
+            SELECT DISTINCT a.library_root_id, a.relative_path, m.best_kind = 'video' FROM face a JOIN face b
               ON a.library_root_id = b.library_root_id AND a.relative_path = b.relative_path
+            JOIN media_asset m ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
             WHERE a.person_id = ? AND b.person_id = ? AND a.assignment IN \(anchors) AND b.assignment IN \(anchors)
             """,
             arguments: [from.rawValue, into.rawValue]
-        ) ?? 0
-        guard shared == 0 else { throw PeopleRuleViolation.bothInPhotos(count: shared) }
+        )
+        guard shared.total == 0 else { throw PeopleRuleViolation.bothIn(shared) }
         guard let target = try Row.fetchOne(db, sql: "SELECT * FROM person WHERE id = ?", arguments: [into.rawValue]).map(person),
               let source = try Row.fetchOne(db, sql: "SELECT * FROM person WHERE id = ?", arguments: [from.rawValue]).map(person)
         else {

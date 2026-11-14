@@ -771,7 +771,11 @@ final class CatalogWindowViewModel {
         // pipeline: a caller that injects its own coordinator controls enrichment and gets
         // only the refresher it injects.
         self.metadataRefresher = metadataRefresher ?? (
-            startsEnrichment && enrichmentCoordinator == nil ? MetadataRefresher(store: catalogStore) : nil
+            startsEnrichment && enrichmentCoordinator == nil
+                ? MetadataRefresher(store: catalogStore) { [materializationCoordinator] in
+                    await materializationCoordinator.locality(of: $0)
+                }
+                : nil
         )
         renderSignatureRefresher = startsEnrichment && enrichmentCoordinator == nil
             ? RenderSignatureRefresher(store: catalogStore, thumbnailDirectory: catalogStore.thumbnailDirectory)

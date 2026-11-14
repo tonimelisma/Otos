@@ -53,7 +53,7 @@ struct CatalogWindowViewModelEnrichmentTests {
             store: secondStore,
             enricher: completeEnricher(captureDate: captureDate),
             materialize: { _ in .testMaterialized },
-            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+            originalStatus: { _ in .materialized }
         )
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(

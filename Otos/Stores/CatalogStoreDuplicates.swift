@@ -95,31 +95,40 @@ nonisolated enum DuplicatesGateway {
         """
     }
 
+    /// Every visible copy whose current digest another visible copy shares, over `rootCount`
+    /// roots (their IDs bound twice). Both reads walk the digest index, which holds only rows
+    /// that have a digest, so neither visits a row without one nor groups through a temporary
+    /// B-tree: most of the owner's rows (an Immich account's) have none
+    /// (`docs/research/2026-11-14-owner-scale-query-plans.md`).
+    static func duplicateCopiesSQL(rootCount: Int) -> String {
+        let placeholders = Array(repeating: "?", count: rootCount).joined(separator: ", ")
+        return """
+        SELECT a.library_root_id, a.relative_path, a.content_hash_xxh3_128, a.best_kind, a.best_capture_local,
+               a.byte_size, a.created_at_unix, a.media_choice, a.edit_recipe_json IS NOT NULL AS edited,
+               m.pixel_width, m.pixel_height, m.orientation,
+               EXISTS(
+                   SELECT 1 FROM media_companion c
+                   WHERE c.library_root_id = a.library_root_id AND c.primary_relative_path = a.relative_path
+               ) AS has_companions
+        FROM media_asset a INDEXED BY idx_media_asset_content_hash
+        LEFT JOIN asset_metadata m
+          ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
+        WHERE a.library_root_id IN (\(placeholders))
+          AND \(visibleCurrentPredicate("a"))
+          AND a.content_hash_xxh3_128 IN (
+              SELECT d.content_hash_xxh3_128 FROM media_asset d INDEXED BY idx_media_asset_content_hash
+              WHERE d.library_root_id IN (\(placeholders))
+                AND \(visibleCurrentPredicate("d"))
+              GROUP BY d.content_hash_xxh3_128
+              HAVING COUNT(*) > 1
+          )
+        """
+    }
+
     static func fetchDuplicateCopies(rootIDs: [Int64], db: Database) throws -> [CopyRow] {
-        let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
         let rows = try Row.fetchAll(
             db,
-            sql: """
-            SELECT a.library_root_id, a.relative_path, a.content_hash_xxh3_128, a.best_kind, a.best_capture_local,
-                   a.byte_size, a.created_at_unix, a.media_choice, a.edit_recipe_json IS NOT NULL AS edited,
-                   m.pixel_width, m.pixel_height, m.orientation,
-                   EXISTS(
-                       SELECT 1 FROM media_companion c
-                       WHERE c.library_root_id = a.library_root_id AND c.primary_relative_path = a.relative_path
-                   ) AS has_companions
-            FROM media_asset a
-            LEFT JOIN asset_metadata m
-              ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
-            WHERE a.library_root_id IN (\(placeholders))
-              AND \(visibleCurrentPredicate("a"))
-              AND a.content_hash_xxh3_128 IN (
-                  SELECT d.content_hash_xxh3_128 FROM media_asset d
-                  WHERE d.library_root_id IN (\(placeholders))
-                    AND \(visibleCurrentPredicate("d"))
-                  GROUP BY d.content_hash_xxh3_128
-                  HAVING COUNT(*) > 1
-              )
-            """,
+            sql: duplicateCopiesSQL(rootCount: rootIDs.count),
             arguments: StatementArguments(rootIDs + rootIDs)
         )
         return rows.compactMap { row in

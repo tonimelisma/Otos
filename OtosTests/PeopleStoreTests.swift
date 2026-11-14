@@ -252,7 +252,7 @@ struct PeopleStoreTests {
         #expect(try await library.store.peopleSnapshot().faces.first { $0.id == b0 }?.rejected == [found])
 
         let other = try #require(try await library.store.perform(.moveToNewPerson([a1], name: "Ian")).person)
-        await #expect(throws: PeopleRuleViolation.bothInPhotos(count: 1)) {
+        await #expect(throws: PeopleRuleViolation.bothIn(MediaCount(photos: 1))) {
             _ = try await library.store.perform(.merge(other, into: found))
         }
         await library.store.shutdown()

@@ -15,6 +15,24 @@ struct MaterializationCoordinatorTests {
         #expect(OriginalLocality.of(stagesOriginals: true, status: .dataless) == .fetchable)
     }
 
+    /// The coordinator answers a folder's file from its own detector: a dataless file is
+    /// fetchable, never local, and only a materialized one is local.
+    @Test func aDatalessFolderFileIsFetchableNotLocal() async {
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/Library/Root"),
+            relativePath: MediaRelativePath(rawValue: "cloud.jpg")
+        )
+        for (status, locality) in [(FileMaterializationStatus.dataless, OriginalLocality.fetchable), (.materialized, .local)] {
+            let coordinator = MaterializationCoordinator(
+                store: CatalogStore(location: .inMemory),
+                executor: { _ in .cancelled },
+                volumeCapacity: { _ in nil },
+                status: { _ in status }
+            )
+            #expect(await coordinator.locality(of: id) == locality)
+        }
+    }
+
     /// An original that is neither local nor fetchable is answered without a transfer.
     @Test func ensureLocalNeverFetchesAnUnreachableOriginal() async {
         let calls = Mutex(0)

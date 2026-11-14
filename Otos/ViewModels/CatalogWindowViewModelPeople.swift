@@ -201,20 +201,34 @@ nonisolated struct PeopleIndex {
     func moveRefusal(_ faces: [PhotoFace], to person: PersonID) -> String? {
         let photos = faces.map(\.id.asset)
         if Set(photos).count < photos.count {
-            return "\(photos.count - Set(photos).count + 1) of these faces are in the same photo"
+            let shared = Dictionary(grouping: faces.map(\.tile), by: \.id.asset).values.filter { $0.count > 1 }
+            return "\(photos.count - Set(photos).count + 1) of these faces are in the same \(MediaCount(tiles: shared.flatMap(\.self)).noun)"
         }
         guard let target = summaries[person] else { return "Choose another person" }
         let anchored = Set(target.userFaces.map(\.id.asset))
-        if faces.contains(where: { anchored.contains($0.id.asset) && $0.person != person }) {
-            return "\(target.displayName) is already in this photo"
+        let taken = faces.filter { anchored.contains($0.id.asset) && $0.person != person }
+        if !taken.isEmpty {
+            let media = MediaCount(faces: taken)
+            return "\(target.displayName) is already in \(media.total == 1 ? "this" : "these") \(media.noun)"
         }
         if let birthday = target.birthday?.seconds {
-            let before = faces.count { ($0.tile.captureSeconds ?? .infinity) < birthday }
-            if before > 0 {
-                return "\(PeopleText.count(before, "photo")) \(before == 1 ? "is" : "are") from before \(target.displayName)'s birthday"
+            let before = MediaCount(faces: faces.filter { ($0.tile.captureSeconds ?? .infinity) < birthday })
+            if before.total > 0 {
+                return "\(before.text) \(before.isOrAre) from before \(target.displayName)'s birthday"
             }
         }
         return nil
+    }
+
+    /// Why `person` cannot be merged into anyone, whoever it is dropped on or named as, or
+    /// nil when someone could take it: a hidden person has no act but Unhide (DES-111,
+    /// `docs/design/people.md`), so it is merged neither away nor into.
+    func mergeSourceRefusal(_ person: PersonID) -> String? {
+        summaries[person].flatMap(hiddenRefusal)
+    }
+
+    private func hiddenRefusal(_ person: PersonSummary) -> String? {
+        person.isHidden ? "\(person.displayName) is a hidden person" : nil
     }
 
     /// Why `from` cannot merge into `into`, or nil when it can.
@@ -228,14 +242,17 @@ nonisolated struct PeopleIndex {
         guard from != into, let source = summaries[from], let target = summaries[into] else {
             return "Choose another person"
         }
-        let shared = Set(source.anchorPhotos).intersection(target.anchorPhotos).count
-        if shared > 0 {
-            return PeopleText.bothIn(source.displayName, target.displayName, photos: shared)
+        if let refusal = mergeSourceRefusal(from) ?? hiddenRefusal(target) {
+            return refusal
+        }
+        let shared = MediaCount(items: source.anchorMedia.filter { target.anchorMedia[$0.key] != nil }.map { ($0.key, $0.value) })
+        if shared.total > 0 {
+            return PeopleText.bothIn(source.displayName, target.displayName, media: shared)
         }
         if let birthday = (target.birthday ?? sourceBirthday)?.seconds {
-            let before = Set((source.userFaces + target.userFaces).filter { ($0.captureSeconds ?? .infinity) < birthday }.map(\.id.asset)).count
-            if before > 0 {
-                return PeopleText.beforeTheBirthday(photos: before)
+            let before = MediaCount(tiles: (source.userFaces + target.userFaces).filter { ($0.captureSeconds ?? .infinity) < birthday })
+            if before.total > 0 {
+                return PeopleText.beforeTheBirthday(before)
             }
         }
         return nil
@@ -245,10 +262,10 @@ nonisolated struct PeopleIndex {
     /// would have shown (`mergeRefusal`).
     func mergeRefusal(_ violation: PeopleRuleViolation, from: PersonID, into: PersonID) -> String {
         switch violation {
-        case let .bothInPhotos(count):
-            PeopleText.bothIn(name(from), name(into), photos: count)
-        case let .confirmedBeforeBirthday(count):
-            PeopleText.beforeTheBirthday(photos: count)
+        case let .bothIn(media):
+            PeopleText.bothIn(name(from), name(into), media: media)
+        case let .confirmedBeforeBirthday(media):
+            PeopleText.beforeTheBirthday(media)
         case .twoFacesOfOnePhoto, .personAlreadyInPhoto, .beforeBirthday, .nameTaken, .unknownFace:
             "Choose another person"
         }
@@ -274,9 +291,9 @@ nonisolated struct PeopleIndex {
         switch subject {
         case let .person(person):
             if let seconds = parsed?.seconds {
-                let before = Set(summaries[person]?.userFaces.filter { ($0.captureSeconds ?? .infinity) < seconds }.map(\.id.asset) ?? []).count
-                if before > 0 {
-                    return "\(PeopleText.count(before, "photo")) of \(name(person)) \(before == 1 ? "is" : "are") from before this date"
+                let before = MediaCount(tiles: summaries[person]?.userFaces.filter { ($0.captureSeconds ?? .infinity) < seconds } ?? [])
+                if before.total > 0 {
+                    return "\(before.text) of \(name(person)) \(before.isOrAre) from before this date"
                 }
             }
             if isHiddenName(trimmed, excluding: person) {
@@ -297,9 +314,9 @@ nonisolated struct PeopleIndex {
                 return moveRefusal(faces, to: holder)
             }
             if let seconds = parsed?.seconds {
-                let before = Set(faces.filter { ($0.tile.captureSeconds ?? .infinity) < seconds }.map(\.id.asset)).count
-                if before > 0 {
-                    return "\(PeopleText.count(before, "photo")) \(before == 1 ? "is" : "are") from before this date"
+                let before = MediaCount(faces: faces.filter { ($0.tile.captureSeconds ?? .infinity) < seconds })
+                if before.total > 0 {
+                    return "\(before.text) \(before.isOrAre) from before this date"
                 }
             }
         }
@@ -329,14 +346,16 @@ nonisolated enum PeopleText {
         "\(value.formatted()) \(value == 1 ? noun : noun + "s")"
     }
 
-    /// A merge refused because the user gave both people a face in the same photos.
-    static func bothIn(_ first: String, _ second: String, photos: Int) -> String {
-        "\(first) and \(second) are both in \(count(photos, "photo"))"
+    /// A merge refused because the user gave both people a face in the same photos and
+    /// videos, named by what they are (`MediaCount`).
+    static func bothIn(_ first: String, _ second: String, media: MediaCount) -> String {
+        "\(first) and \(second) are both in \(media.text)"
     }
 
-    /// A merge refused because photos the user gave either predate the birthday kept.
-    static func beforeTheBirthday(photos: Int) -> String {
-        "\(count(photos, "photo")) \(photos == 1 ? "is" : "are") from before the birthday"
+    /// A merge refused because photos and videos the user gave either predate the birthday
+    /// kept.
+    static func beforeTheBirthday(_ media: MediaCount) -> String {
+        "\(media.text) \(media.isOrAre) from before the birthday"
     }
 }
 
@@ -585,6 +604,11 @@ extension CatalogWindowViewModel {
 
     func mergeRefusal(_ from: PersonID, into: PersonID) -> String? {
         peopleIndex.mergeRefusal(from, into: into)
+    }
+
+    /// Whether `person` can be merged into anyone: a cell the gallery lets the user drag.
+    func canMergeAway(_ person: PersonID) -> Bool {
+        peopleIndex.mergeSourceRefusal(person) == nil
     }
 
     /// The merge question's answer. Merge submits the merge without judging it again: it was
@@ -1148,6 +1172,7 @@ extension CatalogWindowViewModel {
             edit: { [weak self] person in self?.beginEditingPerson(person) },
             askMerge: { [weak self] from, into in self?.askMerge(from, into: into) },
             mergeRefusal: { [weak self] from, into in self?.mergeRefusal(from, into: into) },
+            canMergeAway: { [weak self] person in self?.canMergeAway(person) ?? false },
             answerMerge: { [weak self] merge in self?.answerMerge(merge) },
             menu: { [weak self] person in self?.galleryPersonMenu(person) },
             perform: { [weak self] act, person in self?.performPersonAct(act, on: person) }
@@ -1164,6 +1189,8 @@ struct PeopleActions {
     let edit: (PersonID) -> Void
     let askMerge: (PersonID, PersonID) -> Void
     let mergeRefusal: (PersonID, PersonID) -> String?
+    /// Whether the person can be merged into anyone, so its cell can be dragged.
+    let canMergeAway: (PersonID) -> Bool
     let answerMerge: (Bool) -> Void
     /// The person's context menu and VoiceOver actions.
     let menu: (PersonID) -> PersonMenu?

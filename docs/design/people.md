@@ -51,7 +51,7 @@ is written into media folders (ADR 0008).
 | **Unnamed** | A person without a name: `Unnamed Person` where only text fits, a link-style `Add Name…` where a control fits, so it never reads as someone called Unnamed. | "unknown person", "group" |
 | **Key photo** | The face a person is shown by, as Photos calls it. | "feature photo", "cover" |
 | **Hidden** | A person the user hid: seen only in the gallery. | "ignored", "removed" |
-| **Checked** | A photo that has a current face reading (ADR 0009 stamp and model revision). | "analysed", "scanned" |
+| **Checked** | A photo whose faces stamp names its current source (ADR 0047; a new analysis revision clears the stamp). | "analysed", "scanned" |
 
 Forbidden in copy (DES-035): embedding, threshold, margin, score, cluster, seed, guess,
 confidence, model.
@@ -62,8 +62,8 @@ confidence, model.
   `On This Day` and before `Places` — the ways to browse the whole library sit together
   (owner decision, 2026-11-12). It exists whenever one fixed library exists (APP-057).
 - **No trailing count and no row per person.** The row stays highlighted while the gallery
-  shows; a person's photos highlight the library or All Media row they show.
-- **No progress indicator.** Face reading is enrichment (DES-040).
+  shows and while a person's photos under it are open.
+- **No progress indicator.** Face reading is background work with no status surface (DES-040).
 
 ## People gallery
 
@@ -301,7 +301,8 @@ The first section (DES-088), `People`:
 
 Every act goes on the window's one undo stack (APP-039), named by the item that made it and
 how many photos it changed: `Undo Name 3 Photos` (Change to, Assign to, Someone Else…, and
-naming an unnamed person), `Undo This Is Not Sam`, `Undo Not the Same Person`, `Undo This
+naming an unnamed person with Add Name… or New Name…; `Name This Person ▸` a person is
+`Undo Merge`), `Undo This Is Not Sam`, `Undo Not the Same Person`, `Undo This
 Is Not a Face`, `Undo Make Key Photo for Sam`, `Undo Edit Person`, `Undo Merge`, `Undo
 Hide`, `Undo Unhide`, `Undo Add to Favorites`, `Undo Remove from Favorites`. An undo writes
 back exactly what the act changed, and a redo writes back the state the act left, so a person

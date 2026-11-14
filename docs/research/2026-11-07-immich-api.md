@@ -76,7 +76,8 @@ else is marked unverified.
 - `GET /api/assets/{id}/thumbnail?size=thumbnail` → `image/webp`, about 18 KB;
   `size=preview` → `image/jpeg`, about 390 KB (**live**). Defaults are 250 px WebP and
   1440 px JPEG, admin-configurable (**source**). Either is a provisional thumbnail only:
-  ADR 0035 requires Otos's own rendering in the grid and loupe.
+  ADR 0035 then required Otos's own rendering in the grid and loupe (ADR 0046 §7 later
+  accepted Immich's preview as a source-provisional product).
 - `GET /api/assets/{id}/video/playback` serves the transcode, falling back to the
   original, with byte ranges (**source**).
 - `checksum` is the SHA-1 of the original, base64-encoded. It is not Otos's xxh3 digest
