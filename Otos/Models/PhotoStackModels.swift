@@ -352,24 +352,11 @@ nonisolated struct CatalogGridStacks: Equatable, Sendable {
     }
 }
 
-/// The order a build starts from, before collapsing, with its index-paired day buckets and
-/// map coordinates (each empty or the order's length) and the stacks it was read with. An
-/// expansion re-collapses it without a query (ADR 0052), and a detail-only pass reuses it, so
-/// a stack is never collapsed twice.
-nonisolated struct CatalogUncollapsedOrder: Equatable, Sendable {
-    let ids: [MediaAssetID]
-    let dayBuckets: [Date?]
-    let coordinates: [PlaceCoordinate]
-    let stacks: CatalogStacks
-
-    static let empty = CatalogUncollapsedOrder(ids: [], dayBuckets: [], coordinates: [], stacks: .empty)
-}
-
 /// The pure collapse pass.
 nonisolated enum PhotoStackCollapse {
     /// The collapsed order, its index-paired day buckets and coordinates, and how it shows
     /// its stacks.
-    struct Result: Equatable {
+    struct Result: Equatable, Sendable {
         let ids: [MediaAssetID]
         let dayBuckets: [Date?]
         let coordinates: [PlaceCoordinate]

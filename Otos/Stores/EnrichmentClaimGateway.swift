@@ -287,15 +287,17 @@ nonisolated enum EnrichmentClaimGateway {
 
     @discardableResult
     static func clearEnrichmentClaims(db: Database) throws -> Int {
-        try db.execute(
-            sql: """
-            UPDATE media_asset
-            SET enrichment_claimed = NULL
-            WHERE enrichment_claimed IS NOT NULL
-            """
-        )
+        try db.execute(sql: clearEnrichmentClaimsSQL)
         return db.changesCount
     }
+
+    /// Every claim a previous process left, through `idx_media_asset_enrichment_claimed`
+    /// (v55): the rows it changes, never every row.
+    static let clearEnrichmentClaimsSQL = """
+    UPDATE media_asset
+    SET enrichment_claimed = NULL
+    WHERE enrichment_claimed IS NOT NULL
+    """
 }
 
 private nonisolated struct EnrichmentCandidateKey: Hashable {

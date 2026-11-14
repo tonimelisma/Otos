@@ -5,19 +5,89 @@ import MediaMetadata
 import OSLog
 import Synchronization
 
-/// Store notifications remain cheap invalidation signals. Most changes carry no
-/// payload; root removal carries its typed path because a remove followed by a
-/// same-path add can otherwise coalesce into a queried state where Projection cannot
-/// observe that the selected library instance disappeared.
-nonisolated enum CatalogStoreChange: Equatable {
-    case catalogChanged
+/// Store notifications remain cheap invalidation signals: each says which kinds of fact a
+/// write touched, never the facts themselves. Root removal also carries its typed path,
+/// because a remove followed by a same-path add can otherwise coalesce into a queried state
+/// where Projection cannot observe that the selected library instance disappeared.
+nonisolated enum CatalogStoreChange: Equatable, Sendable {
     /// Rows were inserted and nothing else changed (`CatalogRowChanges`). They carry
     /// nothing derived yet, so only the window and enrichment have new input; an owner
     /// of derived facts (duplicates, people, search, places, faces, render signatures)
     /// hears them when enrichment writes what it derives from them.
     case assetsAdded
-    case assetsDetailChanged
+    /// Facts of rows or roots that existed changed; `CatalogChangedFacts` says which kinds.
+    case changed(CatalogChangedFacts)
     case libraryRemoved(LibraryRootPath)
+
+    /// The kinds of fact the change touched: added rows are a membership change, and a
+    /// removed library may have held any fact.
+    var facts: CatalogChangedFacts {
+        switch self {
+        case .assetsAdded: .membership
+        case let .changed(facts): facts
+        case .libraryRemoved: .all
+        }
+    }
+}
+
+/// What a catalog write touched, by the kind of fact (ADR 0005). The Store names it where
+/// it writes, which is the one place that knows what changed; a reader repeats a read only
+/// when a kind of fact the read depends on was touched (`CatalogProjectionReads`). A write
+/// that changes facts of many kinds at once — a scan, a root added or removed, a Trash
+/// move — names `.all`.
+nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
+    let rawValue: UInt16
+
+    /// Which rows exist and are shown: rows added, removed, renamed or resized, moved to or
+    /// from the Trash, seen or unseen by a source's attachment, hidden by a source; the
+    /// roots, their order and availability; import batches.
+    static let membership = CatalogChangedFacts(rawValue: 1 << 0)
+    /// A row's best capture date: what the date order sorts by and On This Day matches.
+    static let captureDate = CatalogChangedFacts(rawValue: 1 << 1)
+    /// A row's best kind or format: what the filter offers and selects by.
+    static let kindAndFormat = CatalogChangedFacts(rawValue: 1 << 2)
+    /// What makes rows one item or one stack: the Live Photo and burst identifiers.
+    static let grouping = CatalogChangedFacts(rawValue: 1 << 3)
+    /// A row's location.
+    static let location = CatalogChangedFacts(rawValue: 1 << 4)
+    /// The names Maps gave the map's cells.
+    static let placeNames = CatalogChangedFacts(rawValue: 1 << 5)
+    /// Faces, and who they are.
+    static let faces = CatalogChangedFacts(rawValue: 1 << 6)
+    /// Which files are copies of which: digests and copies kept together.
+    static let copies = CatalogChangedFacts(rawValue: 1 << 7)
+    /// What search read of a row that decides where it shows: the labels On This Day
+    /// leaves a photo out by.
+    static let searchReadings = CatalogChangedFacts(rawValue: 1 << 8)
+    /// What only a tile, a pane or enrichment reads: thumbnails, previews, edits, render
+    /// signatures, what enrichment owes.
+    static let detail = CatalogChangedFacts(rawValue: 1 << 9)
+    /// The user's choices (Liked, Disliked) and stack keys: what the choices filter selects
+    /// by, On This Day ranks by and a stack shows (ADR 0052).
+    static let choices = CatalogChangedFacts(rawValue: 1 << 10)
+
+    static let all: CatalogChangedFacts = [
+        .membership, .captureDate, .kindAndFormat, .grouping, .location, .placeNames, .faces, .copies,
+        .searchReadings, .detail, .choices,
+    ]
+
+    /// How many kinds there are: the bits `all` sets.
+    static let bitCount = 11
+
+    private static let names: [(CatalogChangedFacts, String)] = [
+        (.membership, "membership"), (.captureDate, "captureDate"), (.kindAndFormat, "kindAndFormat"),
+        (.grouping, "grouping"), (.location, "location"), (.placeNames, "placeNames"), (.faces, "faces"),
+        (.copies, "copies"), (.searchReadings, "searchReadings"), (.detail, "detail"), (.choices, "choices"),
+    ]
+
+    /// The kinds by name, comma-separated, `all` or `none`: one log field.
+    var diagnosticDescription: String {
+        if self == .all {
+            return "all"
+        }
+        let names = Self.names.filter { contains($0.0) }.map(\.1)
+        return names.isEmpty ? "none" : names.joined(separator: ",")
+    }
 }
 
 /// An asset the Store has claimed for enrichment, together with the claim-time scope —
@@ -57,11 +127,12 @@ nonisolated struct ClaimedEnrichmentCandidate: Sendable {
 /// can run another message mid-operation — which is exactly why scans carry the
 /// ownership lease described below.
 ///
-/// Store notifications are intentionally lightweight. Ordinary events only mark
-/// Projection dirty; successful root removal additionally carries its typed path
-/// so same-path replacement cannot hide selection invalidation. Projection pulls
-/// cheap root state and descriptor-ordered asset IDs on its background cadence
-/// and owns presentation.
+/// Store notifications are intentionally lightweight. Each names the kinds of fact
+/// its write touched (`CatalogChangedFacts`), which this actor knows at the write and
+/// no reader could reconstruct; successful root removal additionally carries its typed
+/// path so same-path replacement cannot hide selection invalidation. Projection pulls
+/// cheap root state and, when a fact they depend on changed, descriptor-ordered asset
+/// IDs and filter options on its background cadence, and owns presentation.
 /// Initial loading is represented by one finite task so every concurrent caller
 /// observes the same load instead of applying competing root sets. Awaited GRDB calls
 /// make this actor reentrant, so active scans carry the root path, private root-row
@@ -139,11 +210,12 @@ actor CatalogStore {
 
     private struct EnrichmentBatchWriteOutcome {
         var appliedCount = 0
-        /// True when any applied result changed the *effective* generated
-        /// ordering/scope columns (`best_capture_local`, `best_kind`, `best_format`).
-        /// A batch that changed none of these is detail-only: the projection can skip
-        /// the full order query and re-sort (ADR 0011).
-        var structureChanged = false
+        /// The kinds of fact the applied results changed, from what SQLite stored before
+        /// and after each write (`EnrichmentOverlayBeforeWrite.changedFacts(to:)`): a batch
+        /// that moved no capture date, kind, format, grouping identifier or location is
+        /// `.detail` (with `.faces` and `.copies` for what it read of them), and a reader
+        /// of the order or the filter's options does not repeat its read for it (ADR 0005).
+        var facts: CatalogChangedFacts = []
         var namingChangedRoots: Set<LibraryRootPath> = []
         var promotionFailed = false
         var discardedImages: [StagedDerivedImage] = []
@@ -172,12 +244,10 @@ actor CatalogStore {
         }
     }
 
-    /// Ordering/scope-relevant STORED generated columns, read either before or after an
-    /// enrichment overwrite, so the batch can tell a detail-only apply from one that
-    /// actually changes the effective `best_capture`/`best_kind`/`best_format` (ADR
-    /// 0011) by comparing what SQLite actually stored, not a Swift guess at what
-    /// it would store (the guess had no fallback path matching the generated
-    /// column's own COALESCE chain and could silently disagree with it).
+    /// The columns a reader's answer depends on, read before and after an enrichment
+    /// overwrite, so the batch can say which kinds of fact it changed by comparing what
+    /// SQLite stored — the generated `best_*` columns' own COALESCE chains, not a Swift guess
+    /// at them (ADR 0005, ADR 0011).
     private struct EnrichmentOverlayBeforeWrite {
         let bestCaptureLocal: Double?
         let bestKind: String?
@@ -188,36 +258,51 @@ actor CatalogStore {
         let faceFramesPath: String?
         let contentIdentifier: String?
         let burstIdentifier: String?
+        let latitude: Double?
+        let longitude: Double?
 
         static let columnsSQL = """
-        SELECT best_capture_local, best_kind, best_format, capture_wall_compact, thumbnail_path, preview_path,
-            face_frames_path, content_identifier, burst_identifier
-        FROM media_asset
-        WHERE library_root_id = ? AND relative_path = ?
+        SELECT a.best_capture_local, a.best_kind, a.best_format, a.capture_wall_compact, a.thumbnail_path,
+            a.preview_path, a.face_frames_path, a.content_identifier, a.burst_identifier,
+            m.primary_latitude, m.primary_longitude
+        FROM media_asset AS a
+        LEFT JOIN asset_metadata AS m USING (library_root_id, relative_path)
+        WHERE a.library_root_id = ? AND a.relative_path = ?
         """
 
         init(row: Row) {
-            bestCaptureLocal = row["best_capture_local"]
-            bestKind = row["best_kind"]
-            bestFormat = row["best_format"]
-            captureWallCompact = row["capture_wall_compact"]
-            thumbnailPath = row["thumbnail_path"]
-            previewPath = row["preview_path"]
-            faceFramesPath = row["face_frames_path"]
-            contentIdentifier = row["content_identifier"]
-            burstIdentifier = row["burst_identifier"]
+            bestCaptureLocal = row[0]
+            bestKind = row[1]
+            bestFormat = row[2]
+            captureWallCompact = row[3]
+            thumbnailPath = row[4]
+            previewPath = row[5]
+            faceFramesPath = row[6]
+            contentIdentifier = row[7]
+            burstIdentifier = row[8]
+            latitude = row[9]
+            longitude = row[10]
         }
 
-        /// Whether the write changed what a scoped query returns or its order: the sort
-        /// date, the kind and format filters, or — through the content identifier and the
-        /// kind — which movies a Live Photo hides (ADR 0041), or through the burst
-        /// identifier which frames a burst collapses (ADR 0052). Anything else is detail-only.
-        func changesStructure(to new: EnrichmentOverlayBeforeWrite) -> Bool {
-            bestCaptureLocal != new.bestCaptureLocal
-                || bestKind != new.bestKind
-                || bestFormat != new.bestFormat
-                || contentIdentifier != new.contentIdentifier
-                || burstIdentifier != new.burstIdentifier
+        /// The kinds of fact the write changed besides its detail: the sort date; the kind
+        /// and format filters; through the content identifier which movies a Live Photo
+        /// hides (ADR 0041) and through the burst identifier which frames a burst collapses
+        /// (ADR 0052); the location the map and the places filter read (ADR 0040).
+        func changedFacts(to new: EnrichmentOverlayBeforeWrite) -> CatalogChangedFacts {
+            var facts: CatalogChangedFacts = []
+            if bestCaptureLocal != new.bestCaptureLocal {
+                facts.insert(.captureDate)
+            }
+            if bestKind != new.bestKind || bestFormat != new.bestFormat {
+                facts.insert(.kindAndFormat)
+            }
+            if contentIdentifier != new.contentIdentifier || burstIdentifier != new.burstIdentifier {
+                facts.insert(.grouping)
+            }
+            if latitude != new.latitude || longitude != new.longitude {
+                facts.insert(.location)
+            }
+            return facts
         }
     }
 
@@ -1083,7 +1168,7 @@ extension CatalogStore {
             ])
         }
         if cleared > 0 {
-            notifyCatalogChanged(.assetsDetailChanged)
+            notifyCatalogChanged(.changed(.detail))
         }
     }
 
@@ -1230,7 +1315,7 @@ extension CatalogStore {
         }
         // People and the grid's faces read what was written.
         if written > 0 {
-            notifyCatalogChanged(.assetsDetailChanged)
+            notifyCatalogChanged(.changed([.faces, .detail]))
         }
         return written
     }
@@ -1340,7 +1425,7 @@ extension CatalogStore {
             return (written, skipped)
         }
         if written > 0 {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.faces))
         }
         OtosLog.catalog.debugOperation("people.applyAssignment", phase: "applied", fields: [
             "guesses": "\(plan.guesses.count)", "newPeople": "\(plan.newPeople.count)",
@@ -1430,7 +1515,7 @@ extension CatalogStore {
             return (PeopleRestore(people: people, faces: before.faces, rejections: before.rejections), given)
         }
         let outcome = PeopleActOutcome(restore: applied.restore, person: applied.person)
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.faces))
         OtosLog.catalog.noticeOperation("people.act", phase: "applied", fields: [
             "act": act.logName, "faces": "\(act.faceCount)",
         ])
@@ -1501,7 +1586,7 @@ extension CatalogStore {
             // removed does not, so the redo removes them again.
             return current
         }
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.faces))
         return redo
     }
 
@@ -2101,7 +2186,7 @@ extension CatalogStore {
                 )
             }
         }
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.placeNames))
     }
 
     /// Forgets the names stored in any language but `language` (ADR 0051): the catalog keeps
@@ -2115,7 +2200,7 @@ extension CatalogStore {
             return db.changesCount
         }
         if forgotten > 0 {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.placeNames))
         }
         return forgotten
     }
@@ -2311,7 +2396,7 @@ extension CatalogStore {
         // Forgotten only once written: a failed write leaves the record for a retry.
         carriedWorkByBatch[batch] = nil
         if reverted > 0 {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.all))
         }
         OtosLog.catalog.noticeOperation("catalog.duplicateCarry", phase: "reverted", fields: [
             "batch": "\(batch.unixMilliseconds)",
@@ -2374,7 +2459,7 @@ extension CatalogStore {
             carriedWorkByBatch[batch] = carried
         }
         if !changed.isEmpty {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.all))
         }
         OtosLog.catalog.noticeOperation(
             "catalog.pendingTrash",
@@ -2481,7 +2566,7 @@ extension CatalogStore {
             isBack = false
         }
         if changed || isBack {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.all))
         }
         OtosLog.catalog.noticeOperation("mediaTrash.undo", phase: "restored", fields: [
             "path": primaryPath,
@@ -2588,7 +2673,7 @@ extension CatalogStore {
             "kind": kind.rawValue, "requested": "\(stamps.count)", "existing": "\(previous.count)", "changed": "\(changed)",
         ])
         if changed > 0 {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.choices))
         }
         return previous
     }
@@ -2633,7 +2718,7 @@ extension CatalogStore {
             )
         }
         if result.changedCount > 0 {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.choices))
         }
         OtosLog.catalog.noticeOperation(
             "catalog.mediaChoice",
@@ -2715,7 +2800,7 @@ extension CatalogStore {
             )
         }
         if result.saved != nil {
-            notifyCatalogChanged(.assetsDetailChanged)
+            notifyCatalogChanged(.changed(.detail))
         }
         OtosLog.catalog.noticeOperation("catalog.editRecipe", phase: "finish", fields: [
             "rootPath": id.libraryRootPath.rawValue,
@@ -2785,7 +2870,7 @@ extension CatalogStore {
         }
         if outcome.applied {
             deleteSupersededImages(outcome.superseded)
-            notifyCatalogChanged(.assetsDetailChanged)
+            notifyCatalogChanged(.changed(.detail))
         } else {
             discardStagedImages(staged)
         }
@@ -2811,9 +2896,16 @@ extension CatalogStore {
             "released": "\(released)",
         ])
         if released {
-            notifyCatalogChanged(.assetsDetailChanged)
+            notifyCatalogChanged(.changed(.detail))
         }
     }
+
+    /// Every edit not yet rendered, through `idx_media_asset_unrendered_edit` (v55): the
+    /// rows it changes, never every row.
+    nonisolated static let releaseAllUnrenderedEditsSQL = """
+    UPDATE media_asset SET rendered_source_size = NULL, rendered_source_mtime = NULL
+    WHERE edit_revision <> rendered_revision
+    """
 
     /// Clears the rendering stamp of every photo — or the one named — whose saved edit is
     /// newer than its thumbnail and preview, so enrichment claims it again for a rendering
@@ -2833,10 +2925,7 @@ extension CatalogStore {
                 arguments: [rootID, relativePath.rawValue]
             )
         } else {
-            try db.execute(sql: """
-            UPDATE media_asset SET rendered_source_size = NULL, rendered_source_mtime = NULL
-            WHERE edit_revision <> rendered_revision
-            """)
+            try db.execute(sql: releaseAllUnrenderedEditsSQL)
         }
         return db.changesCount > 0
     }
@@ -3338,16 +3427,25 @@ extension CatalogStore {
             OtosSignpost.persistence.endInterval("CatalogStart", state)
         }
 
+        // Every step is timed into the finish line: the load sits between launch and the
+        // first grid (`op=launch.firstGrid`), so where it spends its time must be readable from
+        // the installed app's log. Each maintenance write is index-driven (v55), so none walks
+        // the rows of the catalog.
+        var phases = LoadPhaseTimer()
         let dbQueue = try database()
-        let loaded = try await dbQueue.read { db in
-            try Self.fetchCatalog(db)
+        phases.lap("openMs")
+        let loadedRoots = try await dbQueue.read { db in
+            try Self.fetchRoots(db)
         }
+        phases.lap("rootsMs")
         try await clearAbandonedEnrichmentClaims(dbQueue)
+        phases.lap("claimsMs")
         // An edit saved but not yet rendered into its thumbnail and preview when the last
         // process ended is enrichment's to render (ADR 0036).
         try await dbQueue.write { db in
             _ = try Self.releaseUnrenderedEdits(db: db)
         }
+        phases.lap("editsMs")
         // A still or video no decoder could read was read by this build's decoder or an
         // earlier one; one an earlier decoder could not read is this decoder's to try
         // (ENR-029, ENR-031).
@@ -3356,33 +3454,40 @@ extension CatalogStore {
         let releasedUndecodable = try await dbQueue.write { db in
             try Self.releaseUndecodedByAnotherDecoder(still: stillDecoder, video: videoDecoder, db: db)
         }
+        phases.lap("undecodableMs")
         OtosLog.catalog.noticeOperation("catalog.start", phase: "undecodableReleased", fields: [
             "stills": "\(releasedUndecodable.stills)", "stillDecoder": stillDecoder,
             "videos": "\(releasedUndecodable.videos)", "videoDecoder": videoDecoder,
         ])
         // No card or camera is attached while the catalog loads; a process that ended
-        // while one was being read left its unseen rows marked (ADR 0013).
+        // while one was being read left its unseen rows marked (ADR 0013). Before the first
+        // grid: a marked row is hidden from every read.
         let clearedAwaiting = try await dbQueue.write { db in
             try Self.clearAllAwaitingPresence(db: db)
         }
+        phases.lap("awaitingMs")
         if clearedAwaiting > 0 {
             OtosLog.catalog.noticeOperation("catalog.start", phase: "clearedAwaitingPresence", fields: [
                 "count": "\(clearedAwaiting)",
             ])
         }
         // Remap batches a previous process settled had a window that no longer exists;
-        // no identity this process shows was ever under their old paths (ARC-052).
+        // no identity this process shows was ever under their old paths (ARC-052). Before
+        // the first grid: the order read carries the pending batches.
         try await dbQueue.write { db in
             try Self.deleteAllPendingIdentityRemapBatches(db: db)
         }
+        phases.lap("remapsMs")
         // Tests pause precisely at this real suspension boundary to prove that
         // concurrent mutation callers join this load. Production leaves the
         // hook nil and performs no additional work.
         await initialLoadDidRead?()
-        let normalizedRoots = await normalizeLoadedRoots(loaded.roots, dbWriter: dbQueue)
+        let normalizedRoots = await normalizeLoadedRoots(loadedRoots, dbWriter: dbQueue)
+        phases.lap("normalizeMs")
         let journaledRoots = try await dbQueue.read { db in
             try Set(Self.fetchAllActiveReorganizationComponents(db: db).map(\.libraryRootPath))
         }
+        phases.lap("journalMs")
         let applyState = OtosSignpost.catalog.beginInterval("CatalogApplyLoadedCatalog")
         applyLoadedCatalog(roots: normalizedRoots)
         holdJournaledReorganizationRoots(journaledRoots)
@@ -3391,16 +3496,23 @@ extension CatalogStore {
             .map(\.path)
         OtosSignpost.catalog.endInterval("CatalogApplyLoadedCatalog", applyState)
         started = true
-        OtosLog.persistence.info(
-            """
-            Catalog loaded roots=\(normalizedRoots.count, privacy: .public) \
-            assets=\(loaded.assetCount, privacy: .public)
-            """
-        )
-        OtosLog.catalog.notice(
-            "op=catalog.start phase=finish roots=\(normalizedRoots.count, privacy: .public) assets=\(loaded.assetCount, privacy: .public)"
-        )
-        notifyCatalogChanged()
+        var fields = phases.fields
+        fields["roots"] = "\(normalizedRoots.count)"
+        OtosLog.catalog.noticeOperation("catalog.start", phase: "finish", fields: fields)
+        notifyCatalogChanged(.changed(.all))
+    }
+
+    /// Times the catalog load's steps, each from the end of the one before.
+    private struct LoadPhaseTimer {
+        private let start = ContinuousClock.now
+        private var lapStart = ContinuousClock.now
+        private(set) var fields: [String: String] = [:]
+
+        mutating func lap(_ name: String) {
+            fields[name] = "\(DiagnosticsTiming.milliseconds(since: lapStart))"
+            fields["ms"] = "\(DiagnosticsTiming.milliseconds(since: start))"
+            lapStart = .now
+        }
     }
 
     /// A root with a journaled reorganization component is half-moved until its recovery
@@ -3485,7 +3597,7 @@ extension CatalogStore {
                 "relativePath": relativePath,
             ])
             if written > 0 {
-                notifyCatalogChanged()
+                notifyCatalogChanged(.changed(.copies))
             }
             return .applied(count: written)
         } catch {
@@ -3557,11 +3669,10 @@ extension CatalogStore {
             for rootPath in writeOutcome.namingChangedRoots {
                 bumpNamingRevision(for: rootPath)
             }
-            // An enrichment batch that changed no effective ordering/scope column is a
-            // detail-only change: the projection refreshes visible detail but skips the
-            // full order re-query (ADR 0011). Any `best_capture`/`best_kind`/
-            // `best_format` change is structural and keeps the full rebuild.
-            notifyCatalogChanged(writeOutcome.structureChanged ? .catalogChanged : .assetsDetailChanged)
+            // The change names what the batch changed, so a reader repeats only the reads
+            // that depend on it: a batch that moved no capture date, kind, format, grouping
+            // identifier or location leaves the window's order and options standing.
+            notifyCatalogChanged(.changed(writeOutcome.facts))
         }
         if writeOutcome.promotionFailed {
             return .writeFailed
@@ -3574,7 +3685,7 @@ extension CatalogStore {
         writeOutcome: EnrichmentBatchWriteOutcome
     ) async {
         OtosLog.metadata.notice(
-            "op=catalog.enrichment.batch phase=finish attempted=\(resultsCount, privacy: .public) count=\(writeOutcome.appliedCount, privacy: .public) namingChanged=\(writeOutcome.namingChangedRoots.count, privacy: .public) rootPaths=\(writeOutcome.namingChangedRoots.map(\.rawValue).sorted().joined(separator: ","), privacy: .public) discardedImages=\(writeOutcome.discardedImages.count, privacy: .public) supersededImages=\(writeOutcome.supersededImagePaths.count, privacy: .public) promotionFailed=\(writeOutcome.promotionFailed, privacy: .public) waitMs=\(writeOutcome.waitMs, privacy: .public) execMs=\(writeOutcome.execMs, privacy: .public) writeMs=\(writeOutcome.waitMs + writeOutcome.execMs, privacy: .public)"
+            "op=catalog.enrichment.batch phase=finish attempted=\(resultsCount, privacy: .public) count=\(writeOutcome.appliedCount, privacy: .public) namingChanged=\(writeOutcome.namingChangedRoots.count, privacy: .public) facts=\(writeOutcome.facts.diagnosticDescription, privacy: .public) rootPaths=\(writeOutcome.namingChangedRoots.map(\.rawValue).sorted().joined(separator: ","), privacy: .public) discardedImages=\(writeOutcome.discardedImages.count, privacy: .public) supersededImages=\(writeOutcome.supersededImagePaths.count, privacy: .public) promotionFailed=\(writeOutcome.promotionFailed, privacy: .public) waitMs=\(writeOutcome.waitMs, privacy: .public) execMs=\(writeOutcome.execMs, privacy: .public) writeMs=\(writeOutcome.waitMs + writeOutcome.execMs, privacy: .public)"
         )
     }
 
@@ -3673,8 +3784,15 @@ extension CatalogStore {
             sql: overlayColumnsSQL,
             arguments: overlayColumnsArguments
         ).map(EnrichmentOverlayBeforeWrite.init(row:))
-        if let old = oldRow, let newRow, old.changesStructure(to: newRow) {
-            outcome.structureChanged = true
+        outcome.facts.insert(.detail)
+        if let old = oldRow, let newRow {
+            outcome.facts.formUnion(old.changedFacts(to: newRow))
+        }
+        if result.videoFaces != nil {
+            outcome.facts.insert(.faces)
+        }
+        if result.contentHash != nil {
+            outcome.facts.insert(.copies)
         }
         if oldRow?.captureWallCompact != newRow?.captureWallCompact {
             outcome.namingChangedRoots.insert(result.id.libraryRootPath)
@@ -3790,7 +3908,7 @@ extension CatalogStore {
             "candidates": "\(candidates.count)", "requested": "\(requested)",
         ])
         if requested > 0 {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.detail))
         }
         return requested
     }
@@ -3846,8 +3964,9 @@ extension CatalogStore {
                 )
                 let newRow = try Row.fetchOne(db, sql: overlaySQL, arguments: arguments)
                     .map(EnrichmentOverlayBeforeWrite.init(row:))
-                if let oldRow, let newRow, oldRow.changesStructure(to: newRow) {
-                    outcome.structureChanged = true
+                outcome.facts.insert(.detail)
+                if let oldRow, let newRow {
+                    outcome.facts.formUnion(oldRow.changedFacts(to: newRow))
                 }
                 if oldRow?.captureWallCompact != newRow?.captureWallCompact {
                     outcome.namingChangedRoots.insert(refresh.id.libraryRootPath)
@@ -3860,14 +3979,14 @@ extension CatalogStore {
         OtosLog.metadata.noticeOperation("metadata.refresh.write", phase: "finish", fields: [
             "attempted": "\(refreshes.count)",
             "applied": "\(outcome.appliedCount)",
-            "structureChanged": "\(outcome.structureChanged)",
+            "facts": outcome.facts.diagnosticDescription,
             "writeMs": "\(timed.waitMs + timed.execMs)",
         ])
         if outcome.appliedCount > 0 {
             for rootPath in outcome.namingChangedRoots {
                 _ = bumpNamingRevision(for: rootPath, reason: "metadataRefresh")
             }
-            notifyCatalogChanged(outcome.structureChanged ? .catalogChanged : .assetsDetailChanged)
+            notifyCatalogChanged(.changed(outcome.facts))
         }
         return outcome.appliedCount
     }
@@ -4065,7 +4184,7 @@ extension CatalogStore {
         filesystemWatchingArmed.insert(path)
         filesystemWatcher.addRoot(path)
         enqueueScans([path])
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.all))
     }
 
     /// Reorders library-kind roots, moving the one at `sourceIndex` (within the
@@ -4106,7 +4225,7 @@ extension CatalogStore {
         OtosLog.catalog.notice(
             "op=catalog.library.reorder phase=finish count=\(orderedPaths.count, privacy: .public)"
         )
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.membership))
     }
 
     private func rootForDeviceIdentity(_ identity: DeviceIdentity) -> LibraryRoot? {
@@ -4330,7 +4449,7 @@ extension CatalogStore {
         OtosLog.catalog.notice(
             "op=catalog.removable.attach phase=finish kind=\(attachment.kind.rawValue, privacy: .public) identity=\(attachment.identity, privacy: .public) rootPath=\(attachment.path.rawValue, privacy: .public) displayName=\(attachment.displayName, privacy: .public) capabilities=\(String(describing: attachment.capabilities), privacy: .public) deviceModel=\(attachment.deviceModel ?? "unknown", privacy: .public) volumeFormat=\(attachment.volumeFormat ?? "unknown", privacy: .public)"
         )
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.all))
         if attachment.enqueuesScan {
             enqueueScans([attachment.path], priority: .front)
         }
@@ -4417,7 +4536,7 @@ extension CatalogStore {
             + "rootPath=\(root.path.rawValue) "
             + "capabilities=\(storedRoot.capabilities)"
         OtosLog.catalog.notice("\(message, privacy: .public)")
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.all))
         filesystemWatcher.addRoot(root.path)
         enqueueScans([root.path])
     }
@@ -4519,7 +4638,7 @@ extension CatalogStore {
             "rootPath": path.rawValue,
             "server": serverURL.absoluteString,
         ])
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.all))
         return path
     }
 
@@ -4571,7 +4690,7 @@ extension CatalogStore {
                     "count": "\(released)",
                 ])
                 bumpNamespaceRevision(for: rootPath)
-                notifyCatalogChanged()
+                notifyCatalogChanged(.changed(.membership))
             }
         } catch {
             OtosLog.catalog.errorOperation("catalog.removable.awaitingPresence", phase: "releaseFailed", fields: [
@@ -4657,7 +4776,7 @@ extension CatalogStore {
         OtosLog.catalog.notice(
             "op=catalog.removable.detach phase=finish identity=\(identity, privacy: .public) rootPath=\(root.path.rawValue, privacy: .public) kind=\(root.kind.rawValue, privacy: .public) reason=\(reason.rawValue, privacy: .public)"
         )
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.all))
         startNextScanIfNeeded()
     }
 
@@ -4699,7 +4818,7 @@ extension CatalogStore {
         let paused = wasEnrichable && !state.isEnrichable
         if paused {
             await releaseEnrichmentClaimsForRoot(state.rowID)
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.detail))
         }
         OtosLog.catalog.noticeOperation("import.sourceRead", phase: "begin", fields: [
             "rootPath": source.rawValue,
@@ -4719,7 +4838,7 @@ extension CatalogStore {
         state.importingBatches.remove(batch)
         upsert(state)
         if !wasEnrichable, state.isEnrichable {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.detail))
         }
         OtosLog.catalog.noticeOperation("import.sourceRead", phase: "end", fields: [
             "rootPath": source.rawValue,
@@ -4742,7 +4861,7 @@ extension CatalogStore {
         OtosLog.catalog.noticeOperation("enrichment.candidates", phase: "originalLocal", fields: [
             "rootPath": id.libraryRootPath.rawValue, "relativePath": id.relativePath.rawValue,
         ])
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.detail))
     }
 
     /// Records whether the source behind `path` answers reads now (`RootRuntimeState.isSourceAnswering`).
@@ -4760,7 +4879,7 @@ extension CatalogStore {
         if !answering {
             await releaseEnrichmentClaimsForRoot(state.rowID)
         }
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.membership))
     }
 
     func enrichableRootPaths() -> Set<LibraryRootPath> {
@@ -4780,7 +4899,7 @@ extension CatalogStore {
         }
         let changed = setAvailability(.available, for: root.path)
         if changed {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.membership))
         }
         // The quiesce cancelled any scan reading the card, and rows that scan had not
         // reached are still awaiting presence; a card that stays mounted is read again.
@@ -4809,7 +4928,7 @@ extension CatalogStore {
             state.activity = .enumerating
             upsert(state)
         }
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.membership))
         return scan
     }
 
@@ -5309,7 +5428,7 @@ extension CatalogStore {
         if var state = roots[scan.rootPath], state.root.kind.rowsComeFromSourceListing {
             state.activity = .idle
             upsert(state)
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.membership))
         }
         // A completed enumeration has already deleted what it never saw; one that ended
         // without completing leaves its unseen rows to be shown as last held.
@@ -5342,7 +5461,7 @@ extension CatalogStore {
             return count
         }
         if changed.value > 0 {
-            notifyCatalogChanged(.assetsDetailChanged)
+            notifyCatalogChanged(.changed(.detail))
         }
     }
 
@@ -5378,7 +5497,7 @@ extension CatalogStore {
         filesystemEventConsumer = nil
         filesystemWatchingStarted = false
         filesystemWatchingArmed.removeAll()
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.all))
     }
 }
 
@@ -5887,7 +6006,7 @@ private extension CatalogStore {
             scanLeases.beginFilesystemScan(scan, lane: lane)
             filesystemWatchingArmed.insert(nextPath)
             filesystemWatcher.addRoot(nextPath)
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.membership))
             OtosLog.catalog.info("Catalog scan started path=\(nextPath.rawValue, privacy: .public)")
             recordDiagnostic(
                 operation: "catalog.scan",
@@ -6009,7 +6128,7 @@ private extension CatalogStore {
                 bumpPlanRevision(for: scan.rootPath)
             }
             if companionChanged || observation.skippedPackageCount > 0 {
-                notifyCatalogChanged()
+                notifyCatalogChanged(.changed(.all))
             }
             OtosLog.catalog.info(
                 """
@@ -6268,7 +6387,7 @@ private extension CatalogStore {
             enqueueScans([rootPath])
         }
 
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.membership))
         // Drain every dirty root before starting the next queued full-root scan:
         // subtree/root dirt waits while any scan holds the global lease, so starting B
         // first would leave A's retained dirt waiting behind B.
@@ -6315,7 +6434,7 @@ private extension CatalogStore {
         }
     }
 
-    private func notifyCatalogChanged(_ change: CatalogStoreChange = .catalogChanged) {
+    private func notifyCatalogChanged(_ change: CatalogStoreChange) {
         let state = OtosSignpost.catalog.beginInterval("CatalogChangeNotify")
         defer {
             OtosSignpost.catalog.endInterval("CatalogChangeNotify", state)
@@ -6389,7 +6508,7 @@ private extension CatalogStore {
             fields: ["rootPath": path.rawValue]
         )
         if changed {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.membership))
         }
     }
 
@@ -6766,7 +6885,7 @@ private extension CatalogStore {
         }
         if changedCount > 0 {
             bumpNamespaceRevision(for: root)
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.all))
         }
         let totalMs = DiagnosticsTiming.milliseconds(since: started)
         OtosLog.catalog.notice(
@@ -6787,7 +6906,7 @@ private extension CatalogStore {
         scanLeases.beginFilesystemScan(scan, lane: lane)
         filesystemWatchingArmed.insert(root)
         filesystemWatcher.addRoot(root)
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.membership))
         OtosLog.catalog.info(
             "Catalog scoped reconcile started path=\(root.rawValue, privacy: .public) subtrees=\(dirt.subtreeCount, privacy: .public)"
         )
@@ -7317,7 +7436,7 @@ extension CatalogStore {
             "derivedImages": "\(derivedImagePaths.count)",
         ])
         bumpNamespaceRevision(for: operation.sourceRootPath)
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.all))
     }
 
     func beginImportOperation(_ operation: ActiveFileOperation) async throws {
@@ -7477,7 +7596,7 @@ extension CatalogStore {
             localBytesAwaitingProducts.append(destinationID)
         }
         _ = bumpNamespaceRevision(for: operation.destinationRootPath)
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.all))
         requestReconcile()
         OtosLog.catalog.noticeOperation("mediaOperation.settle", phase: "finish", fields: [
             "destination": operation.destinationRelativePath.rawValue,
@@ -7674,7 +7793,7 @@ extension CatalogStore {
             ) == .changed || changed
         }
         if changed {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.all))
         }
     }
 
@@ -7895,7 +8014,7 @@ extension CatalogStore {
         // against this root replans. Reorg's own `rootRevision` stays the general
         // planRevision, which the occupancy bump also advances.
         bumpNamespaceRevision(for: settled.libraryRootPath)
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.all))
         OtosLog.catalog.notice(
             "op=reorganization.settle phase=finish rootPath=\(settled.libraryRootPath.rawValue, privacy: .public) remapCount=\(settled.remaps.count, privacy: .public) batch=\(settled.id, privacy: .public)"
         )
@@ -7977,7 +8096,7 @@ extension CatalogStore {
             "groups": "\(groups.count)", "pairs": "\(added.count)",
         ])
         if !added.isEmpty {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.copies))
         }
         return added
     }
@@ -8002,7 +8121,7 @@ extension CatalogStore {
             }
         }
         OtosLog.catalog.noticeOperation("duplicates.keepAll", phase: "forgotten", fields: ["pairs": "\(pairs.count)"])
-        notifyCatalogChanged()
+        notifyCatalogChanged(.changed(.copies))
     }
 }
 
@@ -8074,7 +8193,7 @@ extension CatalogStore {
             return written
         }
         if written > 0 {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.copies))
         }
         return written
     }
@@ -8178,7 +8297,7 @@ extension CatalogStore {
             return (written, changesOnThisDay)
         }
         if changesOnThisDay {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.changed(.searchReadings))
         }
         return applied
     }

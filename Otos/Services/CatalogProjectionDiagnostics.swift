@@ -9,7 +9,13 @@ import OSLog
 /// agent; interval signposts for Instruments) lets the actor read as publication
 /// machinery while preserving the same bounded scalar diagnostics.
 nonisolated struct CatalogProjectionBuildMetrics {
+    /// What the pass's own read of the order took; 0 when it reused the last answer.
     let orderQueryMs: Int
+    /// What the read of the filter's options took; 0 when they were reused.
+    var filterOptionsMs = 0
+    var collapseMs = 0
+    /// Which reads the pass answered from the last answer.
+    var reuse = CatalogProjectionReuse()
 }
 
 nonisolated struct CatalogProjectionPublicationTiming {
@@ -126,6 +132,9 @@ nonisolated struct CatalogProjectionPublicationDiagnostics {
                 "previousSelectedScopeAssetCount": "\(changeSummary.previousSelectedScopeAssetCount)",
                 "selectedScopeAssetCount": "\(state.mediaGrid.orderedAssetIDs.count)",
                 "assetOrderQueryMs": "\(metrics.orderQueryMs)",
+                "filterOptionsMs": "\(metrics.filterOptionsMs)",
+                "collapseMs": "\(metrics.collapseMs)",
+                "reused": metrics.reuse.diagnosticDescription,
                 "titleChanged": "\(changeSummary.titleChanged)",
                 "mediaIdentityChanged": "\(changeSummary.mediaIdentityChanged)",
                 "librariesChanged": "\(changeSummary.librariesChanged)",

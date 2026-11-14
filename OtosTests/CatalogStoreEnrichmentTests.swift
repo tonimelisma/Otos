@@ -291,7 +291,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(persisted.needsEnrichment(.products))
     }
 
-    /// `structureChanged` must compare the STORED generated columns
+    /// The batch's facts must compare the STORED generated columns
     /// before vs after the write, not a Swift-side prediction of what the write will
     /// produce. Fixture: the asset scans with `created_at_unix = 500`; a first
     /// enrichment sets `capture_instant_unix = 700`, so `best_capture_local` becomes 700. A
@@ -299,7 +299,7 @@ struct CatalogStoreEnrichmentTests {
     /// back to NULL (plain-assignment write, not COALESCE-preserved — see
     /// `writeEnrichmentOverlay`), so SQLite's generated column falls back to
     /// `created_at_unix = 500` — an effective order change that must be reported as
-    /// `.catalogChanged`, not coalesced away as `.assetsDetailChanged`.
+    /// a `.captureDate` change, not coalesced away as detail alone.
     ///
     /// Verified against the pre-refactor Swift recompute (`git stash` of the Stage 2a
     /// diff, then re-run): it also passes this exact scenario, because its own fallback
@@ -310,7 +310,7 @@ struct CatalogStoreEnrichmentTests {
     /// database instead of predicting is that a *future* migration adding a new
     /// `best_capture_local` source cannot silently desync a Swift twin that no longer
     /// exists.
-    @Test func timestampClearingStructuralChangeIsCatalogChanged() async throws {
+    @Test func timestampClearingChangeIsACaptureDateChange() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -363,7 +363,7 @@ struct CatalogStoreEnrichmentTests {
             ),
         ])
 
-        _ = await changes.waitForValues { $0.last == .catalogChanged }
+        _ = await changes.waitForValues { $0.last?.facts.contains(.captureDate) == true }
         let afterSecond = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
         #expect(afterSecond.captureLocalTime == CaptureLocalTime(readingOf: Date(timeIntervalSince1970: 500)))
     }

@@ -20,15 +20,43 @@ struct BenchmarkTests {
         let projection = CatalogProjection()
         let request = CatalogQueryRequest(descriptor: .default, generation: 0)
         try await Benchmark.measure("projection.windowState.allMedia") {
-            guard case let .built(state, _) = try await projection.buildWindowState(
+            guard case let .built(state, _, _) = try await projection.buildWindowState(
                 store: store,
                 libraries: libraries,
                 request: request,
-                reuse: .none
+                reads: .none,
+                revisions: CatalogFactRevisions()
             ) else {
                 Issue.record("nothing is searched, so nothing waits on a reading")
                 return
             }
+            #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkLibrary.stillCount)
+        }
+
+        // The pass an enrichment write that moved no fact the window reads costs: the order,
+        // the filter's options and the collapse answered from the last pass (ADR 0005).
+        guard case let .built(_, _, lastReads) = try await projection.buildWindowState(
+            store: store,
+            libraries: libraries,
+            request: request,
+            reads: .none,
+            revisions: CatalogFactRevisions()
+        ) else {
+            Issue.record("nothing is searched, so nothing waits on a reading")
+            return
+        }
+        try await Benchmark.measure("projection.windowState.allMedia.heldReads") {
+            guard case let .built(state, metrics, _) = try await projection.buildWindowState(
+                store: store,
+                libraries: libraries,
+                request: request,
+                reads: lastReads,
+                revisions: CatalogFactRevisions()
+            ) else {
+                Issue.record("nothing is searched, so nothing waits on a reading")
+                return
+            }
+            #expect(metrics.reuse == CatalogProjectionReuse(order: true, filterOptions: true, collapse: true))
             #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkLibrary.stillCount)
         }
 
@@ -46,11 +74,12 @@ struct BenchmarkTests {
         ] {
             let onThisDay = CatalogQueryRequest(descriptor: CatalogQueryDescriptor(scope: .onThisDay(day)), generation: 0)
             try await Benchmark.measure(name) {
-                guard case let .built(state, _) = try await projection.buildWindowState(
+                guard case let .built(state, _, _) = try await projection.buildWindowState(
                     store: store,
                     libraries: libraries,
                     request: onThisDay,
-                    reuse: .none
+                    reads: .none,
+                    revisions: CatalogFactRevisions()
                 ) else {
                     Issue.record("nothing is searched, so nothing waits on a reading")
                     return
@@ -101,11 +130,12 @@ struct BenchmarkTests {
         let projection = CatalogProjection()
         let request = CatalogQueryRequest(descriptor: .default, generation: 0)
         try await Benchmark.measure("projection.windowState.pairs") {
-            guard case let .built(state, _) = try await projection.buildWindowState(
+            guard case let .built(state, _, _) = try await projection.buildWindowState(
                 store: library.store,
                 libraries: library.libraries,
                 request: request,
-                reuse: .none
+                reads: .none,
+                revisions: CatalogFactRevisions()
             ) else {
                 Issue.record("nothing is searched, so nothing waits on a reading")
                 return

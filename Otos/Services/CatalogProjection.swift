@@ -17,6 +17,18 @@ import OSLog
 /// the doorbell directly; other store changes wait for `cadenceTask`, which rings it
 /// every `cadence` while the projection is behind.
 ///
+/// A pass repeats a catalog read only when its answer can have changed (ADR 0005). Each Store
+/// change says which kinds of fact it touched (`CatalogChangedFacts`), and `storeDidChange`
+/// counts them in `factRevisions`. `reads` keeps the last answer of the order read, of the
+/// filter's options and of the stack collapse, each with what it was read for and the
+/// revisions its pass started from; a pass reuses one while those inputs are unchanged and no
+/// kind of fact it depends on moved (`CatalogChangedFacts.orderInputs(of:)`,
+/// `filterOptionsInputs(of:)`), and reads it again otherwise. An enrichment write that
+/// touched only faces or a tile's detail therefore publishes its detail refresh without
+/// reading the order or the options, while one that moved a capture date reads the order
+/// again. A pass takes `reads` as a value and keeps the reads it built from only when it
+/// publishes, so a failed or cancelled pass leaves the last answers standing.
+///
 /// The duplicate groups and People have their own owners, `DuplicatesProjection` and
 /// `PeopleAssignment`, each with its own loop. A pass publishes the window with what they
 /// last built and, when it took up a catalog change (`derivedRequested`), asks both owners
@@ -35,21 +47,6 @@ import OSLog
 actor CatalogProjection {
     typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryRequest) async throws
         -> CatalogWindowState
-
-    /// Whether the next pass must rebuild the full ordered-asset query. An expansion (a
-    /// stack expanded or collapsed, ADR 0052) changes only how the order is collapsed, so it
-    /// re-collapses the last published uncollapsed order, its map coordinates included. A
-    /// detail-only change (enrichment that touched no ordering/scope column) reuses the last
-    /// published order too — the grid's own same-identity `.refreshVisible` path already
-    /// updates visible details cheaply (ADR 0011) — except where a re-read can move what the
-    /// order carries. Declaration order is severity order: a pending structural change always
-    /// wins over a detail-only one, and a detail-only one over an expansion.
-    private enum DirtyKind: Comparable {
-        case none
-        case expansion
-        case detailOnly
-        case structural
-    }
 
     /// How often background Store changes may publish: at most once a second. A rate
     /// limit standing on a measurement: each publication that reorders the grid costs
@@ -71,8 +68,10 @@ actor CatalogProjection {
     private var requested: UInt64 = 0
     /// The `requested` value the last *successful* pass started from.
     private var covered: UInt64 = 0
-    /// Severity merged since the last pass started.
-    private var pendingKind: DirtyKind = .none
+    /// How many times each kind of catalog fact changed, by the Store's own account.
+    private var factRevisions = CatalogFactRevisions()
+    /// The last published pass's reads, which the next pass answers from while they hold.
+    private var reads = CatalogProjectionReads.none
     /// Passes between their first and last line. Not request state: a count rather than
     /// a flag so a cancelled pass finishing after a re-subscribe cannot mask a live one.
     private var runningPasses = 0
@@ -110,10 +109,12 @@ actor CatalogProjection {
     /// change is the load itself (or something after it), so it publishes immediately
     /// rather than leaving the window blank for a cadence tick (APP-044).
     private var publishedBeforeCatalogLoad = false
-    /// Count of full ordered-asset queries executed by publications. A detail-only
-    /// publication skips it; the count is the observable "full-catalog re-sort per
-    /// enrichment batch" metric (ADR 0011) and drives the regression test.
+    /// Count of ordered-asset reads executed by publications. A pass whose order still
+    /// answers skips it; the count is the observable "full-catalog re-sort per enrichment
+    /// batch" metric (ADR 0005) and drives the regression tests.
     var orderQueryCount: UInt64 = 0
+    /// Count of filter-option reads executed by publications, likewise.
+    var filterOptionsQueryCount: UInt64 = 0
     /// Window states published so far. Read with `isQuiescent`, it says whether a change
     /// published anything, without depending on when a subscriber receives it.
     private(set) var publicationCount: UInt64 = 0
@@ -183,7 +184,7 @@ actor CatalogProjection {
         continuation.onTermination = { [weak self] _ in
             Task { await self?.removeContinuation(id) }
         }
-        requestPublication(.structural, ringNow: true)
+        requestPublication(ringNow: true)
         return stream
     }
 
@@ -225,7 +226,7 @@ actor CatalogProjection {
             descriptor: descriptor,
             generation: queryRequest.generation &+ 1
         )
-        requestPublication(.structural, ringNow: true)
+        requestPublication(ringNow: true)
     }
 
     func updateQueryRequest(_ request: CatalogQueryRequest) {
@@ -238,11 +239,10 @@ actor CatalogProjection {
             "covered": "\(covered)",
         ])
         guard queryRequest != request else { return }
-        // The same query with other stacks expanded: only the collapse differs.
-        let expansionOnly = queryRequest.descriptor == request.descriptor
-            && queryRequest.generation == request.generation
+        // The same query with other stacks expanded reuses the order: only the collapse
+        // differs (ADR 0052).
         queryRequest = request
-        requestPublication(expansionOnly ? .expansion : .structural, ringNow: true)
+        requestPublication(ringNow: true)
     }
 
     /// One-shot window-state build for tests. Production UI consumes the publication
@@ -379,9 +379,8 @@ private extension CatalogProjection {
 
     /// The only way work becomes owed. `ringNow` wakes the loop immediately; without it
     /// the cadence tick picks the request up.
-    private func requestPublication(_ kind: DirtyKind, ringNow: Bool) {
+    private func requestPublication(ringNow: Bool) {
         requested &+= 1
-        pendingKind = max(pendingKind, kind)
         if ringNow {
             doorbell?.yield()
         }
@@ -395,13 +394,13 @@ private extension CatalogProjection {
 
     func searchIndexDidChange() {
         guard queryRequest.descriptor.search != nil else { return }
-        requestPublication(.structural, ringNow: false)
+        requestPublication(ringNow: false)
     }
 
     /// The answer to a user's query: published now, not on the cadence.
     func searchQueryDidRead() {
         guard queryRequest.descriptor.search != nil else { return }
-        requestPublication(.structural, ringNow: true)
+        requestPublication(ringNow: true)
     }
 
     func storeDidChange(_ change: CatalogStoreChange) {
@@ -414,6 +413,7 @@ private extension CatalogProjection {
             }
         }
         detailRefreshGeneration &+= 1
+        factRevisions.record(change.facts)
         // Rows that were only added carry nothing the groups or the assignment are built
         // from; they change People's unchecked tally alone.
         if change == .assetsAdded {
@@ -421,11 +421,7 @@ private extension CatalogProjection {
         } else {
             derivedRequested &+= 1
         }
-        if case .assetsDetailChanged = change {
-            requestPublication(.detailOnly, ringNow: false)
-        } else {
-            requestPublication(.structural, ringNow: publishedBeforeCatalogLoad)
-        }
+        requestPublication(ringNow: publishedBeforeCatalogLoad)
     }
 
     /// One publication pass. It only runs on `loopTask`, so passes never overlap. It
@@ -440,8 +436,8 @@ private extension CatalogProjection {
         let startedFrom = requested
         let derivedStartedFrom = derivedRequested
         let tallyStartedFrom = tallyRequested
-        let kind = pendingKind
-        pendingKind = .none
+        let startedReads = reads
+        let startedRevisions = factRevisions
         let selectedRequest = queryRequest
         OtosLog.catalog.noticeOperation("projection.publish", phase: "start", fields: [
             "projection": diagnosticID,
@@ -449,38 +445,10 @@ private extension CatalogProjection {
             "scope": String(describing: selectedRequest.descriptor.scope),
         ])
 
-        // Detail-only dirt reuses the order we last published — but only when the
-        // freshly-resolved descriptor still matches the descriptor that order was
-        // built for (libraries/import batches are unchanged), so a concurrent scope
-        // resolution change still re-runs the query. The grid renders the same
-        // identities (a cheap `.refreshVisible`) and the identity comparison
-        // short-circuits on the shared array buffer. A structural change or a newer
-        // user intent re-runs the full query.
-        // A search narrows the order after it is read, so the published order is not the
-        // order a search pass starts from: a detail-only pass under a search always reads it.
-        // An expansion reuses the order under any search, scope or filter: it is the same
-        // order, and the build searches and collapses it again.
-        let reusesOrder = switch kind {
-        case .expansion: true
-        case .detailOnly: selectedRequest.descriptor.search == nil
-        case .none, .structural: false
-        }
-        let reuse: CatalogProjectionOrderReuse = if reusesOrder, let previous = lastPublishedState {
-            CatalogProjectionOrderReuse(
-                orderedAssetIDs: previous.uncollapsedOrder.ids,
-                dayBuckets: previous.uncollapsedOrder.dayBuckets,
-                coordinates: kind == .expansion ? previous.uncollapsedOrder.coordinates : nil,
-                stacks: previous.uncollapsedOrder.stacks,
-                pendingIdentityRemaps: previous.pendingIdentityRemaps,
-                descriptor: previous.queryDescriptor
-            )
-        } else {
-            .none
-        }
-
         let publicationStart = ContinuousClock.now
         let storeReadStart = ContinuousClock.now
         let completed: CatalogProjectionCompletedPublication
+        let passReads: CatalogProjectionReads
         do {
             // Before the catalog's first load there is nothing to query and nothing to
             // claim: publish the loading state instead of an empty catalog (APP-044).
@@ -503,14 +471,14 @@ private extension CatalogProjection {
                 store: store,
                 libraries: libraries,
                 request: selectedRequest,
-                reuse: reuse
+                reads: startedReads,
+                revisions: startedRevisions
             )
             // A cancelled pass is a teardown: whatever it read is not the catalog.
             try Task.checkCancellation()
-            guard case let .built(state, buildMetrics) = build else {
+            guard case let .built(state, buildMetrics, builtReads) = build else {
                 // Owed, not failed: the window keeps what it shows and says it is searching,
                 // and the reader's report that the reading ended rings the loop.
-                pendingKind = max(pendingKind, kind)
                 OtosLog.catalog.noticeOperation("projection.publish", phase: "searchReading", fields: [
                     "projection": diagnosticID,
                     "generation": "\(selectedRequest.generation)",
@@ -518,6 +486,7 @@ private extension CatalogProjection {
                 publishSearchReading()
                 return
             }
+            passReads = builtReads
             completed = CatalogProjectionCompletedPublication(
                 state: state,
                 buildMetrics: buildMetrics,
@@ -533,10 +502,9 @@ private extension CatalogProjection {
             // belongs to a subscription that no longer exists.
             return
         } catch {
-            // The work is still owed: `covered` stays put and the severity is
-            // re-merged. No doorbell here — a persistent error must not retry in a
-            // tight loop; the next intent or cadence tick retries it.
-            pendingKind = max(pendingKind, kind)
+            // The work is still owed: `covered` stays put and the last reads stand. No
+            // doorbell here — a persistent error must not retry in a tight loop; the next
+            // intent or cadence tick retries it.
             OtosLog.catalog.errorOperation("projection.publish", phase: "failed", fields: [
                 "projection": diagnosticID,
                 "generation": "\(selectedRequest.generation)",
@@ -564,6 +532,7 @@ private extension CatalogProjection {
         guard !Task.isCancelled else {
             return
         }
+        reads = passReads
         covered = startedFrom
         ringIfBehind()
         // An injected test builder derives nothing. Otherwise a pass that took up a catalog
@@ -715,10 +684,11 @@ private extension CatalogProjection {
         doorbell = nil
         requested = 0
         covered = 0
-        pendingKind = .none
+        reads = .none
         lastPublishedState = nil
         duplicates = nil
         people = nil
         orderQueryCount = 0
+        filterOptionsQueryCount = 0
     }
 }

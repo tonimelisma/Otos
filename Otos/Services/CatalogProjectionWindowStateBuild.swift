@@ -9,11 +9,16 @@ import OSLog
 /// for a failed build. No `catch` here substitutes `[]`, `0` or `.empty` for a value
 /// the window would show as fact (MED-002).
 extension CatalogProjection {
+    /// Builds the window state for `request`, answering each catalog read from `previous`
+    /// while it still holds (`CatalogProjectionReads`): `revisions` are the fact revisions
+    /// the pass started from, which a read made now records. Returns the reads the state was
+    /// built from, for the pass to keep once it publishes.
     func buildWindowState(
         store: CatalogStore,
         libraries unsortedLibraries: [CatalogLibraryState],
         request: CatalogQueryRequest,
-        reuse: CatalogProjectionOrderReuse
+        reads previous: CatalogProjectionReads,
+        revisions: CatalogFactRevisions
     ) async throws -> CatalogProjectionBuild {
         let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
         let importBatches = try await store.importBatches()
@@ -33,44 +38,57 @@ extension CatalogProjection {
             return .queryBeingRead
         }
         let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: allRoots)
-        let orderedAssetIDs: [MediaAssetID]
-        let dayBuckets: [Date?]
-        let coordinates: [PlaceCoordinate]
-        let pendingIdentityRemaps: [CatalogIdentityRemapBatch]
-        let stacks: CatalogStacks
+        var reads = previous
+        var reuse = CatalogProjectionReuse()
+
+        // The filter's options depend on neither the order nor its search, so their read,
+        // when one is owed, runs beside the order's. An injected test builder shows none.
+        let optionsRow = resolvedDescriptor.scope.sidebarRow
+        let heldOptions = stateBuilder != nil ? CatalogFilterOptions.empty : previous.filterOptions(
+            for: optionsRow,
+            availableLibraryPaths: availableLibraryPaths,
+            placeNameLanguages: placeNameLanguages,
+            at: revisions
+        )
+        reuse.filterOptions = heldOptions != nil && stateBuilder == nil
+        if heldOptions == nil {
+            filterOptionsQueryCount &+= 1
+        }
+        async let readOptions = Self.filterOptions(
+            held: heldOptions,
+            store: store,
+            row: optionsRow,
+            availableLibraryPaths: availableLibraryPaths,
+            placeNameLanguages: placeNameLanguages
+        )
+
+        let ordered: CatalogOrderedAssets
         let orderQueryMs: Int
-        // The map's coordinates are read with the order and can move without it (a
-        // re-enriched location), so a detail-only pass under the Places scope, which reuses
-        // no coordinates, re-runs the query rather than reusing the last order.
-        if let reuseIDs = reuse.orderedAssetIDs,
-           resolvedDescriptor == reuse.descriptor,
-           resolvedDescriptor.scope != .places || reuse.coordinates != nil
-        {
-            orderedAssetIDs = reuseIDs
-            dayBuckets = reuse.dayBuckets ?? []
-            coordinates = reuse.coordinates ?? []
-            pendingIdentityRemaps = reuse.pendingIdentityRemaps ?? []
-            stacks = reuse.stacks
+        if let held = previous.order(for: resolvedDescriptor, availableLibraryPaths: availableLibraryPaths, at: revisions) {
+            ordered = held
             orderQueryMs = 0
+            reuse.order = true
         } else {
             orderQueryCount &+= 1
             let orderStart = ContinuousClock.now
-            let ordered = try await store.orderedAssetIDs(
+            ordered = try await store.orderedAssetIDs(
                 for: resolvedDescriptor,
                 availableLibraryPaths: availableLibraryPaths
             )
-            orderedAssetIDs = ordered.ids
-            dayBuckets = ordered.dayBuckets
-            coordinates = ordered.coordinates
-            pendingIdentityRemaps = ordered.pendingIdentityRemaps
-            stacks = ordered.stacks
             orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
+            reads.order = CatalogProjectionReads.Order(
+                descriptor: resolvedDescriptor,
+                availableLibraryPaths: availableLibraryPaths,
+                revisions: revisions,
+                answer: ordered
+            )
         }
         // Tests inject controlled derivation while keeping the real publication loop.
         if let stateBuilder {
-            var state = try await stateBuilder(allRoots, orderedAssetIDs, request)
-            state.pendingIdentityRemaps = pendingIdentityRemaps
-            return .built(state, CatalogProjectionBuildMetrics(orderQueryMs: 0))
+            _ = try await readOptions
+            var state = try await stateBuilder(allRoots, ordered.ids, request)
+            state.pendingIdentityRemaps = ordered.pendingIdentityRemaps
+            return .built(state, CatalogProjectionBuildMetrics(orderQueryMs: orderQueryMs, reuse: reuse), reads)
         }
 
         var unsearched = makeBuildFacts(
@@ -78,7 +96,7 @@ extension CatalogProjection {
             request: request,
             resolvedDescriptor: resolvedDescriptor,
             importBatches: importBatches,
-            ordered: (orderedAssetIDs, dayBuckets, coordinates),
+            ordered: (ordered.ids, ordered.dayBuckets, ordered.coordinates),
             orderQueryMs: orderQueryMs
         )
         if let search = resolvedDescriptor.effectiveSearch, let searchStatus {
@@ -91,66 +109,128 @@ extension CatalogProjection {
                 return .queryBeingRead
             }
         }
-        Self.collapseStacks(stacks, expanded: request.expandedStacks, in: &unsearched)
+        let collapseStart = ContinuousClock.now
+        let collapse = Self.collapseStacks(
+            ordered.stacks,
+            expanded: request.expandedStacks,
+            in: &unsearched,
+            last: previous.collapse
+        )
+        reads.collapse = collapse.made
+        reuse.collapse = collapse.reused
+        let collapseMs = DiagnosticsTiming.milliseconds(since: collapseStart)
         Self.capAnniversaries(in: &unsearched)
         let facts = unsearched
         // The supplementary reads are independent; an error in any fails the build.
         async let unfilteredVisibleAssetCount = unfilteredVisibleAssetCount(facts, store: store)
         async let allAssetCount = catalogedAssetCount(facts, store: store)
-        async let filterOptions = store.filterOptions(
-            for: facts.resolvedDescriptor.scope,
-            availableLibraryPaths: facts.availableLibraryPaths,
-            placeNameLanguages: placeNameLanguages
-        )
-        var (state, metrics) = try await windowState(
+        let options = try await readOptions
+        if heldOptions == nil {
+            reads.filterOptions = CatalogProjectionReads.FilterOptions(
+                row: optionsRow,
+                availableLibraryPaths: availableLibraryPaths,
+                placeNameLanguages: placeNameLanguages,
+                revisions: revisions,
+                answer: options.options
+            )
+        }
+        var (state, _) = try await windowState(
             from: facts,
             allAssetCount: allAssetCount,
             unfilteredVisibleAssetCount: unfilteredVisibleAssetCount,
-            filterOptions: filterOptions
+            filterOptions: options.options
         )
-        state.pendingIdentityRemaps = pendingIdentityRemaps
-        state.uncollapsedOrder = CatalogUncollapsedOrder(
-            ids: orderedAssetIDs, dayBuckets: dayBuckets, coordinates: coordinates, stacks: stacks
-        )
+        state.pendingIdentityRemaps = ordered.pendingIdentityRemaps
         state.searchPhase = facts.search?.phase
-        return .built(state, metrics)
+        let metrics = CatalogProjectionBuildMetrics(
+            orderQueryMs: orderQueryMs,
+            filterOptionsMs: options.ms,
+            collapseMs: collapseMs,
+            reuse: reuse
+        )
+        return .built(state, metrics, reads)
+    }
+
+    /// `held` when the last options still answer, else the Store's read of them, with what
+    /// the read took (0 for held options).
+    private static func filterOptions(
+        held: CatalogFilterOptions?,
+        store: CatalogStore,
+        row: SidebarSelection,
+        availableLibraryPaths: Set<LibraryRootPath>,
+        placeNameLanguages: Set<PlaceNameLanguage>
+    ) async throws -> (options: CatalogFilterOptions, ms: Int) {
+        if let held {
+            return (held, 0)
+        }
+        let start = ContinuousClock.now
+        let options = try await store.filterOptions(
+            for: row,
+            availableLibraryPaths: availableLibraryPaths,
+            placeNameLanguages: placeNameLanguages
+        )
+        return (options, DiagnosticsTiming.milliseconds(since: start))
     }
 
     /// Collapses each stack in the scoped order to its shown member (ADR 0052), after the
     /// search so a stack matches when any member does. The duplicates list shows every
-    /// copy as itself and never collapses.
+    /// copy as itself and never collapses. The collapse is a pure step, so `last`, when it
+    /// was made from the same order, stacks and expansions, is the answer. Returns the
+    /// collapse for the next pass (nil where nothing collapses) and whether it was `last`.
+    @discardableResult
     static func collapseStacks(
         _ stacks: CatalogStacks,
         expanded: Set<PhotoStackID>,
-        in facts: inout CatalogProjectionBuildFacts
-    ) {
+        in facts: inout CatalogProjectionBuildFacts,
+        last: CatalogProjectionReads.Collapse? = nil
+    ) -> (made: CatalogProjectionReads.Collapse?, reused: Bool) {
         facts.stacks = stacks
         switch facts.resolvedDescriptor.scope {
         case .duplicates, .duplicateGroup:
-            return
+            return (nil, false)
         case .allMedia, .library, .places, .mapArea, .mapStack, .onThisDay, .importBatch, .allImports, .people, .person:
             break
         }
         let start = ContinuousClock.now
-        let collapsed = PhotoStackCollapse.collapse(
-            ids: facts.scopedAssetIDs,
-            dayBuckets: facts.scopedDayBuckets,
-            coordinates: facts.scopedCoordinates,
-            stacks: stacks,
-            expanded: expanded
-        )
+        let collapse: CatalogProjectionReads.Collapse
+        let reused: Bool
+        if let last, last.expanded == expanded, last.stacks == stacks, last.ids == facts.scopedAssetIDs,
+           last.dayBuckets == facts.scopedDayBuckets, last.coordinates == facts.scopedCoordinates
+        {
+            collapse = last
+            reused = true
+        } else {
+            collapse = CatalogProjectionReads.Collapse(
+                ids: facts.scopedAssetIDs,
+                dayBuckets: facts.scopedDayBuckets,
+                coordinates: facts.scopedCoordinates,
+                stacks: stacks,
+                expanded: expanded,
+                result: PhotoStackCollapse.collapse(
+                    ids: facts.scopedAssetIDs,
+                    dayBuckets: facts.scopedDayBuckets,
+                    coordinates: facts.scopedCoordinates,
+                    stacks: stacks,
+                    expanded: expanded
+                )
+            )
+            reused = false
+        }
+        let collapsed = collapse.result
         // The pass's cost on the user's own order, which no benchmark fixture has the shape of.
         OtosLog.catalog.noticeOperation("projection.stacks", phase: "collapsed", fields: [
             "ids": "\(facts.scopedAssetIDs.count)",
             "shown": "\(collapsed.ids.count)",
             "stacks": "\(stacks.stacks.count)",
             "expanded": "\(expanded.count)",
+            "reused": "\(reused)",
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
         facts.scopedAssetIDs = collapsed.ids
         facts.scopedDayBuckets = collapsed.dayBuckets
         facts.scopedCoordinates = collapsed.coordinates
         facts.gridStacks = collapsed.grid
+        return (collapse, reused)
     }
 
     /// On This Day shows at most `OnThisDayPicks.anniversaryCap` photos an anniversary,

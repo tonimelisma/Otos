@@ -411,9 +411,10 @@ nonisolated enum PreviewFaceSQL {
 
     /// What is not yet read for faces in `rootCount` roots (`CatalogStore.uncheckedForFaces`):
     /// the stills owed faces, the stills waiting for a preview, and the videos whose frames
-    /// are unread, each counted from its own partial index. The videos' is named: SQLite would
-    /// otherwise seek every video through the stack candidates' index. Its arguments are the
-    /// roots, three times.
+    /// are unread, each counted from its own partial index, named: SQLite would otherwise seek
+    /// every video through the stack candidates' index, and every still of a root through the
+    /// date order's, which carries the visibility columns these counts test (v55). Its
+    /// arguments are the roots, three times.
     static func uncheckedSQL(rootCount: Int) -> String {
         let visible = """
         library_root_id IN (\(placeholders(rootCount)))
@@ -423,8 +424,10 @@ nonisolated enum PreviewFaceSQL {
         """
         return """
         SELECT
-            (SELECT COUNT(*) FROM media_asset WHERE \(visible) AND \(stillOwesFaces)),
-            (SELECT COUNT(*) FROM media_asset WHERE \(visible) AND \(stillAwaitsPreview)),
+            (SELECT COUNT(*) FROM media_asset INDEXED BY \(CatalogSchema.stillOwesFacesIndexName)
+                WHERE \(visible) AND \(stillOwesFaces)),
+            (SELECT COUNT(*) FROM media_asset INDEXED BY \(CatalogSchema.stillAwaitsPreviewIndexName)
+                WHERE \(visible) AND \(stillAwaitsPreview)),
             (SELECT COUNT(*) FROM media_asset INDEXED BY \(CatalogSchema.videoOwesFacesIndexName)
                 WHERE \(visible) AND \(videoOwesFaces)
                 AND library_root_id IN (

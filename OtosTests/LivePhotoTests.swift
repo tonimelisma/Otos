@@ -70,7 +70,7 @@ struct LivePhotoTests {
             // changes, and it changes which rows the grid shows.
             try await library.enrich("IMG_6.HEIC", kind: .image, contentIdentifier: identifier)
 
-            _ = await changes.waitForValues { $0.last == .catalogChanged }
+            _ = await changes.waitForValues { $0.last?.facts.contains(.grouping) == true }
             #expect(try await library.visible() == ["IMG_6.HEIC"])
         }
     }

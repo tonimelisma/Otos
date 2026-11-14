@@ -2,10 +2,10 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// ARC-018: enrichment that leaves the effective ordering/scope facts
-/// (`best_capture`, `best_kind`, `best_format`) unchanged is a detail-only change, and
-/// the projection must refresh visible detail without re-running the full ordered-asset
-/// query. Only an effective order/scope change is structural and triggers a rebuild.
+/// ARC-018 / ARC-022: each Store change names the kinds of fact it touched, and the projection
+/// repeats a read only when a kind it depends on was touched. An enrichment write that cannot
+/// change the shown order or the filter's options publishes its detail refresh without reading
+/// either; one that can — a capture date read from bytes, a stack fact — reads the order again.
 @Suite(.testDirectory)
 struct ProjectionEnrichmentCoalescingTests {
     private static let assetCount = 2000
@@ -41,17 +41,70 @@ struct ProjectionEnrichmentCoalescingTests {
         return (store, state)
     }
 
-    /// Store-level oracle: a batch that changes no effective ordering/scope column emits
-    /// `.assetsDetailChanged`; one that changes `best_capture` emits `.catalogChanged`.
-    @Test func enrichmentNotificationDistinguishesDetailFromStructural() async throws {
+    /// A seeded store with a projection publishing it, settled on the library's own order.
+    private struct Window {
+        let store: CatalogStore
+        let projection: CatalogProjection
+        let recorder: AsyncValueRecorder<CatalogWindowState>
+        let recording: Task<Void, Never>
+        let ids: [MediaAssetID]
+        let assets: [MediaAssetID: MediaAsset]
+
+        /// What the projection has read so far: its order reads and its options reads.
+        var reads: (order: UInt64, options: UInt64) {
+            get async {
+                await (projection.orderQueryCount, projection.filterOptionsQueryCount)
+            }
+        }
+
+        /// Waits for `write`'s change to be published: a newer detail refresh, settled.
+        func publish(_ write: () async throws -> Void) async throws {
+            let generation = await recorder.snapshot().last?.mediaGrid.detailRefreshGeneration ?? 0
+            try await write()
+            _ = await recorder.waitForValues { ($0.last?.mediaGrid.detailRefreshGeneration ?? 0) > generation }
+            try await waitForProjectionQuiescence(projection)
+        }
+    }
+
+    private func settledWindow() async throws -> Window {
+        let temp = try makeTestDirectory()
+        let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let store = CatalogStore(location: .inMemory, scanner: seededScanner())
+        let projection = CatalogProjection(cadence: .milliseconds(25))
+        let recorder = AsyncValueRecorder<CatalogWindowState>()
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recording = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: rootURL)
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: rootURL)
+        _ = try await waitForCatalogStoreState(store) {
+            !$0.isScanning && $0.testAssets.count == Self.assetCount
+        }
+        // Settled on the library's scope, so no resolution transition reads in what follows.
+        _ = await recorder.waitForValues {
+            $0.last?.resolvedSidebarSelection == .library(rootPath)
+                && $0.last?.mediaGrid.orderedAssetIDs.count == Self.assetCount
+        }
+        try await waitForProjectionQuiescence(projection)
+        let ids = try #require(await recorder.snapshot().last?.mediaGrid.orderedAssetIDs)
+        let assets = try await store.mediaAssets(for: ids)
+        return Window(store: store, projection: projection, recorder: recorder, recording: recording, ids: ids, assets: assets)
+    }
+
+    /// Store-level oracle: a batch that changes no capture date, kind, format, grouping
+    /// identifier or location names its detail alone; one that changes the capture date
+    /// names it.
+    @Test func enrichmentNotificationNamesWhatTheBatchChanged() async throws {
         let (store, state) = try await seededStore()
         let asset = try #require(state.testAssets.first)
         // Subscribe synchronously (the `await` only returns once the continuation is
         // registered on the Store actor) before firing the writes below, rather than
-        // racing a spawned Task's own subscription against them — a spawned Task only
-        // schedules its body, it does not block until the `for await` actually
-        // registers, so a write completing first would fire its notification with no
-        // listener yet and hang the test until timeout.
+        // racing a spawned Task's own subscription against them.
         let changes = AsyncValueRecorder<CatalogStoreChange>()
         let changeStream = await store.changeNotifications()
         let changeTask = Task {
@@ -61,95 +114,124 @@ struct ProjectionEnrichmentCoalescingTests {
         }
         defer { changeTask.cancel() }
 
-        // Detail-only: enrichment matches the asset's current effective facts.
-        _ = await store.applyEnrichmentBatch([
-            detailEnrichment(for: asset),
-        ])
-        _ = await changes.waitForValues { $0.last == .assetsDetailChanged }
+        _ = await store.applyEnrichmentBatch([detailEnrichment(for: asset)])
+        let detail = await changes.waitForValues { $0.count == 1 }
+        #expect(detail.last == .changed([.detail, .copies]))
 
-        // Structural: a newer capture date changes best_capture.
         _ = await store.applyEnrichmentBatch([
-            detailEnrichment(
-                for: asset,
-                captureDate: Self.baseDate.addingTimeInterval(1_000_000)
-            ),
+            detailEnrichment(for: asset, captureDate: Self.baseDate.addingTimeInterval(1_000_000)),
         ])
-        _ = await changes.waitForValues { $0.last == .catalogChanged }
+        let dated = await changes.waitForValues { $0.count == 2 }
+        #expect(dated.last == .changed([.detail, .copies, .captureDate]))
     }
 
-    /// End-to-end: M detail-only enrichment batches must not re-run the full order query,
-    /// while a structural batch must re-run it once and reorder.
-    @Test func detailOnlyEnrichmentBatchesSkipTheFullOrderQuery() async throws {
-        let temp = try makeTestDirectory()
-        let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+    /// End-to-end: detail-only enrichment batches read neither the order nor the options; a
+    /// capture date read from bytes reads the order once and reorders, and leaves the options
+    /// standing, since a date offers no other type or place.
+    @Test func detailOnlyEnrichmentBatchesSkipTheOrderAndOptionsReads() async throws {
+        let window = try await settledWindow()
+        defer { window.recording.cancel() }
+        let baseline = await window.reads
 
-        let store = CatalogStore(location: .inMemory, scanner: seededScanner())
+        // 35 detail-only batches of 2 assets each — effective facts unchanged.
+        let detailResults = try window.ids.prefix(70).map { id -> EnrichmentResult in
+            try detailEnrichment(for: #require(window.assets[id]))
+        }
+        try await window.publish {
+            for batchStart in stride(from: 0, to: detailResults.count, by: 2) {
+                let end = min(batchStart + 2, detailResults.count)
+                _ = await window.store.applyEnrichmentBatch(Array(detailResults[batchStart ..< end]))
+            }
+        }
+        let afterDetail = await window.reads
+        #expect(afterDetail.order == baseline.order, "baseline=\(baseline) afterDetail=\(afterDetail)")
+        #expect(afterDetail.options == baseline.options, "baseline=\(baseline) afterDetail=\(afterDetail)")
+
+        // A newer capture date moves the oldest asset to the top.
+        let reorderTarget = try #require(window.ids.last)
+        let reorderAsset = try #require(window.assets[reorderTarget])
+        _ = await window.store.applyEnrichmentBatch([
+            detailEnrichment(for: reorderAsset, captureDate: Self.baseDate.addingTimeInterval(10000)),
+        ])
+        let reordered = await window.recorder.waitForValues {
+            $0.last?.mediaGrid.orderedAssetIDs.first == reorderTarget
+        }
+        #expect(reordered.last?.mediaGrid.orderedAssetIDs.first == reorderTarget)
+        try await waitForProjectionQuiescence(window.projection)
+        let final = await window.reads
+        #expect(final.order == afterDetail.order + 1, "afterDetail=\(afterDetail) final=\(final)")
+        #expect(final.options == afterDetail.options, "afterDetail=\(afterDetail) final=\(final)")
+        await window.store.shutdown()
+    }
+
+    /// Copies kept together change what the Duplicates rows hold, never the library's order
+    /// or its options: the change is published as a refresh with neither read again.
+    @Test func aWriteThatCannotChangeTheOrderIsPublishedWithoutReadingIt() async throws {
+        let window = try await settledWindow()
+        defer { window.recording.cancel() }
+        let before = await window.reads
+        try await window.publish {
+            _ = try await window.store.keepCopiesTogether([Array(window.ids.prefix(2))])
+        }
+        let after = await window.reads
+        #expect(after == before, "before=\(before) after=\(after)")
+        #expect(await window.recorder.snapshot().last?.mediaGrid.orderedAssetIDs == window.ids)
+        await window.store.shutdown()
+    }
+
+    /// A choice is a stack fact (ADR 0052) and what the choices filter selects by, so the order
+    /// is read again; it offers no other type or place, so the options are not.
+    @Test func aStackFactReadsTheOrderAgain() async throws {
+        let window = try await settledWindow()
+        defer { window.recording.cancel() }
+        let before = await window.reads
+        try await window.publish {
+            _ = try await window.store.setMediaChoice(.liked, for: [window.ids[0]])
+        }
+        let after = await window.reads
+        #expect(after.order == before.order + 1, "before=\(before) after=\(after)")
+        #expect(after.options == before.options, "before=\(before) after=\(after)")
+        await window.store.shutdown()
+    }
+
+    /// Faces decide nothing the library's order holds, so reading them reads no order there;
+    /// a person's photos are the faces given that person, so a face given the person shown
+    /// reads that order again.
+    @Test func facesReadTheOrderOnlyWhereTheScopeIsByPerson() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
         let projection = CatalogProjection(cadence: .milliseconds(25))
         let recorder = AsyncValueRecorder<CatalogWindowState>()
-        let stream = await projection.states(store: store, initialDescriptor: .default)
-        let recordingTask = Task {
+        let stream = await projection.states(
+            store: library.store,
+            initialDescriptor: CatalogQueryDescriptor(scope: .library(library.rootPath))
+        )
+        let recording = Task {
             for await state in stream {
                 await recorder.append(state)
             }
         }
-        defer { recordingTask.cancel() }
-
-        try await store.start(scansSavedLibraries: false)
-        try await store.addLibrary(url: rootURL)
-        let rootPath = try CatalogPath.normalizedDirectoryPath(for: rootURL)
-        _ = await recorder.waitForValues {
-            $0.last?.mediaGrid.orderedAssetIDs.count == Self.assetCount
-        }
-        // Wait for scan completion and for the allMedia → library scope resolution to
-        // settle, so the detail-batch measurement is not polluted by structural
-        // resolution-transition publications.
-        _ = try await waitForCatalogStoreState(store) {
-            !$0.isScanning && $0.testAssets.count == Self.assetCount
-        }
-        _ = await recorder.waitForValues {
-            $0.last?.resolvedSidebarSelection == .library(rootPath)
-        }
-        try await waitForProjectionQuiescence(projection)
-        let baselineOrderQueries = await projection.orderQueryCount
-        let ids = try #require(await recorder.snapshot().last?.mediaGrid.orderedAssetIDs)
-        let assetsByID = try await store.mediaAssets(for: ids)
-
-        // 35 detail-only batches of 2 assets each — effective facts unchanged.
-        let detailResults = try ids.prefix(70).map { id -> EnrichmentResult in
-            let asset = try #require(assetsByID[id])
-            return detailEnrichment(for: asset)
-        }
-        for batchStart in stride(from: 0, to: detailResults.count, by: 2) {
-            let end = min(batchStart + 2, detailResults.count)
-            _ = await store.applyEnrichmentBatch(Array(detailResults[batchStart ..< end]))
-        }
+        defer { recording.cancel() }
+        _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.count == 2 }
         try await waitForProjectionQuiescence(projection)
 
-        let afterDetailOrderQueries = await projection.orderQueryCount
-        #expect(
-            afterDetailOrderQueries - baselineOrderQueries <= 1,
-            "baseline=\(baselineOrderQueries) afterDetail=\(afterDetailOrderQueries)"
-        )
-        // Structural batch: a newer capture date moves the oldest asset to the top and
-        // must re-run the full query once.
-        let reorderTarget = try #require(ids.last)
-        let reorderAsset = try #require(assetsByID[reorderTarget])
-        _ = await store.applyEnrichmentBatch([
-            detailEnrichment(
-                for: reorderAsset,
-                captureDate: Self.baseDate.addingTimeInterval(10000)
-            ),
-        ])
-        let reordered = await recorder.waitForValues {
-            $0.last?.mediaGrid.orderedAssetIDs.first == reorderTarget
-        }
-        #expect(reordered.last?.mediaGrid.orderedAssetIDs.first == reorderTarget)
-        let finalCount = await projection.orderQueryCount
-        #expect(
-            finalCount == afterDetailOrderQueries + 1,
-            "afterDetail=\(afterDetailOrderQueries) final=\(finalCount)"
-        )
+        let beforeFaces = await projection.orderQueryCount
+        let refreshed = await recorder.snapshot().last?.mediaGrid.detailRefreshGeneration ?? 0
+        try await library.readFaces([library.result(for: "a.jpg", faces: [PeopleStoreTests.face(x: 0.1)])])
+        _ = await recorder.waitForValues { ($0.last?.mediaGrid.detailRefreshGeneration ?? 0) > refreshed }
+        try await waitForProjectionQuiescence(projection)
+        #expect(await projection.orderQueryCount == beforeFaces)
+
+        let sam = try #require(try await library.store.perform(.moveToNewPerson([], name: "Sam")).person)
+        await projection.updateSidebarSelection(.person(sam))
+        try await waitForProjectionQuiescence(projection)
+        let beforeAssignment = await projection.orderQueryCount
+        try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [
+            .init(face: FaceID(asset: library.id("a.jpg"), index: 0), person: .existing(sam)),
+        ]))
+        let shown = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs == [library.id("a.jpg")] }
+        #expect(shown.last?.mediaGrid.orderedAssetIDs == [library.id("a.jpg")])
+        #expect(await projection.orderQueryCount > beforeAssignment)
+        await library.store.shutdown()
     }
 
     private func detailEnrichment(

@@ -132,9 +132,6 @@ nonisolated struct CatalogWindowState: Equatable {
     /// Remaps committed but not yet acknowledged by the window, read with the ordered
     /// IDs. The window applies each batch once, before it shows the new identities.
     var pendingIdentityRemaps: [CatalogIdentityRemapBatch] = []
-    /// The order this state was collapsed from, with its stacks (ADR 0052): what a
-    /// detail-only pass starts again from. The window never reads it.
-    var uncollapsedOrder: CatalogUncollapsedOrder = .empty
 
     var queryDescriptor: CatalogQueryDescriptor {
         mediaGrid.descriptor

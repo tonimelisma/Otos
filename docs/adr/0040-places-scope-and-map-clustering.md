@@ -218,9 +218,9 @@ plan pinned by `CatalogStoreQueryPlanTests`).
   gains two cases, and every exhaustive switch over it names them; `BrowserPlace`
   persists both.
 - `CatalogWindowState` grows `map`; `CatalogProjectionChangeSummary` compares it so a
-  re-enriched coordinate publishes without an identity change. A detail-only pass under
-  Places re-runs the order query instead of reusing it, because the coordinates travel
-  with the order.
+  re-enriched coordinate publishes without an identity change. The Places scopes' order
+  depends on locations (ADR 0005), so a write that moves a location reads it again,
+  because the coordinates travel with the order.
 - "Show me where this card or batch was shot" is not reachable; the map always covers
   the fixed libraries. A contextual command from the grid could add it later without
   reopening this decision.

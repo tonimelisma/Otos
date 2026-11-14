@@ -333,6 +333,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.windowReadIndexesMigrationIdentifier) { db in
+            for statement in CatalogSchema.windowReadIndexesStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -406,8 +411,8 @@ extension CatalogStore {
         }
     }
 
-    static func fetchCatalog(_ db: Database) throws -> (roots: [StoredRoot], assetCount: Int) {
-        let roots = try Row.fetchAll(
+    static func fetchRoots(_ db: Database) throws -> [StoredRoot] {
+        try Row.fetchAll(
             db,
             sql: """
             SELECT id, path, kind, device_identity, display_name, last_seen_at, sort_index,
@@ -437,8 +442,6 @@ extension CatalogStore {
                 remoteBaseURL: remoteBaseURL.flatMap(URL.init(string:))
             )
         }
-        let assetCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM media_asset") ?? 0
-        return (roots, assetCount)
     }
 
     /// How the root `rootRowID`'s volume compares names (ARC-056), as stored with the root:

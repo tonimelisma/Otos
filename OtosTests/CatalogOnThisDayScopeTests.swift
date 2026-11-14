@@ -235,7 +235,7 @@ struct CatalogOnThisDayScopeTests {
         ])
         #expect(written.count == 1)
         // The label takes the photo out of On This Day, so the scope is read again.
-        #expect(await changes.next() == .catalogChanged)
+        #expect(await changes.next() == .changed(.searchReadings))
 
         let ordered = try await store.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .onThisDay(Self.today)),

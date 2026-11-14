@@ -537,6 +537,12 @@ final class CatalogWindowViewModel {
     /// requests cancel before enqueueing another full-size decode.
     @ObservationIgnored var paneRequestTasks: [PaneSlot: Task<Void, Never>] = [:]
     @ObservationIgnored private var hasStarted = false
+    /// When `start()` ran, which the app calls as launch finishes, and how long the catalog
+    /// took to load from then: the parts of `op=launch.firstGrid`, logged once, when the
+    /// first state the catalog's load answers is applied.
+    @ObservationIgnored private var launchStartedAt: ContinuousClock.Instant?
+    @ObservationIgnored private var catalogLoadedMs: Int?
+    @ObservationIgnored private var firstGridLogged = false
     @ObservationIgnored var queryGeneration = CatalogQueryRequest.initial.generation
     @ObservationIgnored var userHasChosenSource = false
     @ObservationIgnored var hasAppliedInitialDefault = false
@@ -967,6 +973,7 @@ extension CatalogWindowViewModel {
             return
         }
         hasStarted = true
+        launchStartedAt = .now
         // Quit is the one moment the place is written: `willTerminate` runs for every
         // ordinary quit, and the write is a single small preference value.
         terminationObserver = NotificationCenter.default.addObserver(
@@ -1199,6 +1206,9 @@ extension CatalogWindowViewModel {
         catalogStartupTask = Task { [weak self, store] in
             do {
                 try await store.start()
+                if let self, let launchStartedAt {
+                    catalogLoadedMs = DiagnosticsTiming.milliseconds(since: launchStartedAt)
+                }
             } catch let CatalogStoreError.unsupportedCatalogSchema(problem) {
                 OtosLog.persistence.error(
                     "Catalog start refused problem=\(problem.errorDescription, privacy: .public)"
@@ -1350,6 +1360,25 @@ extension CatalogWindowViewModel {
             "delta": "\(itemCount - previousItemCount)",
             "libraries": "\(nextState.libraries.count)",
             "applyMs": "\(applyMs)",
+        ])
+        logFirstGridIfLoaded(nextState, items: itemCount, applyMs: applyMs)
+    }
+
+    /// Launch to the first grid, once: the first applied state the catalog's load answers,
+    /// whatever it holds. `catalogMs` is launch to the catalog's load finishing; the rest is
+    /// the window's first publication and this apply.
+    private func logFirstGridIfLoaded(_ state: CatalogWindowState, items: Int, applyMs: Int) {
+        guard !firstGridLogged, let launchStartedAt, state.mediaEmptyState != .loadingCatalog else {
+            return
+        }
+        firstGridLogged = true
+        OtosLog.ui.noticeOperation("launch.firstGrid", phase: "applied", fields: [
+            "ms": "\(DiagnosticsTiming.milliseconds(since: launchStartedAt))",
+            "catalogMs": catalogLoadedMs.map { "\($0)" } ?? "unknown",
+            "applyMs": "\(applyMs)",
+            "items": "\(items)",
+            "scope": state.resolvedSidebarSelection.diagnosticDescription,
+            "emptyState": state.mediaEmptyState.diagnosticDescription,
         ])
     }
 

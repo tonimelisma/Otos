@@ -474,11 +474,11 @@ struct PeopleStoreTests {
         try await library.readFaces([library.result(for: "a.jpg", faces: [Self.face(x: 0.1)])])
         var changes = await library.store.changeNotifications().makeAsyncIterator()
         let sam = try #require(try await library.store.perform(.moveToNewPerson([], name: "Sam")).person)
-        #expect(await changes.next() == .catalogChanged)
+        #expect(await changes.next() == .changed(.faces))
         try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [
             .init(face: FaceID(asset: library.id("a.jpg"), index: 0), person: .existing(sam)),
         ]))
-        #expect(await changes.next() == .catalogChanged)
+        #expect(await changes.next() == .changed(.faces))
         await library.store.shutdown()
     }
 

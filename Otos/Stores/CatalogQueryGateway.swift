@@ -47,9 +47,10 @@ nonisolated enum CatalogQueryGateway {
             return []
         }
         // Read by position, in `orderedAssetIDQuery`'s column order: a name lookup per column
-        // per row is the read's own cost on a large order.
+        // per row is the read's own cost on a large order. Each row is mapped as the cursor
+        // reaches it, so no copy of every row is made first.
         let likedColumn = scope.requiresLocation ? 5 : 3
-        return try Row.fetchAll(
+        return try Array(Row.fetchCursor(
             db,
             sql: query.sql,
             arguments: query.arguments
@@ -69,7 +70,7 @@ nonisolated enum CatalogQueryGateway {
                 coordinate: coordinate,
                 isLiked: scope.isAnniversary ? row[likedColumn] : false
             )
-        }
+        })
     }
 
     /// One row of the ordered-ID query. `coordinate` is set only for a scope that
@@ -435,19 +436,20 @@ nonisolated enum CatalogQueryGateway {
         return motions
     }
 
+    /// Each import batch with its items, read every pass: through
+    /// `idx_media_asset_import_batch`, which carries the columns its tests read (v55).
+    static let importBatchesSQL = """
+    SELECT import_batch_unix_ms AS batch_ms, COUNT(*) AS asset_count
+    FROM media_asset
+    WHERE import_batch_unix_ms IS NOT NULL
+      AND pending_trash_batch_unix_ms IS NULL
+      AND NOT \(LivePhotoSQL.isPairedMotion("media_asset"))
+    GROUP BY import_batch_unix_ms
+    ORDER BY import_batch_unix_ms DESC
+    """
+
     static func fetchImportBatches(db: Database) throws -> [ImportBatchSummary] {
-        try Row.fetchAll(
-            db,
-            sql: """
-            SELECT import_batch_unix_ms AS batch_ms, COUNT(*) AS asset_count
-            FROM media_asset
-            WHERE import_batch_unix_ms IS NOT NULL
-              AND pending_trash_batch_unix_ms IS NULL
-              AND NOT \(LivePhotoSQL.isPairedMotion("media_asset"))
-            GROUP BY import_batch_unix_ms
-            ORDER BY import_batch_unix_ms DESC
-            """
-        ).map { row in
+        try Row.fetchAll(db, sql: importBatchesSQL).map { row in
             let batchMs: Int64 = row["batch_ms"]
             let count: Int = row["asset_count"]
             return ImportBatchSummary(
@@ -608,10 +610,10 @@ nonisolated enum PhotoStackSQL {
         guard let query = candidateQuery(rootIDs: rootIDs) else {
             return Candidates(byRoot: [:], count: 0, readDuration: .zero)
         }
-        let rows = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments)
+        let rows = try Row.fetchCursor(db, sql: query.sql, arguments: query.arguments)
         var byRoot: [Int64: [PhotoStackCandidate]] = [:]
         var count = 0
-        for row in rows {
+        while let row = try rows.next() {
             let kindValue: String = row[Column.bestKind.rawValue]
             guard let kind = MediaKind(rawValue: kindValue) else {
                 continue

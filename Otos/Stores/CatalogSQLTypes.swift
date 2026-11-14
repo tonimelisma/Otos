@@ -21,8 +21,9 @@ nonisolated enum ScannedFileUpsert: Equatable, Sendable {
 
 /// The rows one write changed, split by whether they existed before it. A write that
 /// only inserted rows changed nothing any derived owner reads, so it is announced as
-/// `.assetsAdded` and only what lists rows (the window, enrichment) takes it up; any
-/// change to an existing row is a `.catalogChanged`.
+/// `.assetsAdded` and only what lists rows (the window, enrichment) takes it up; a change
+/// to an existing row's filesystem facts, presence or path can move any fact derived from
+/// it, so it is `.changed(.all)`.
 nonisolated struct CatalogRowChanges: Equatable, Sendable {
     private(set) var inserted = 0
     private(set) var updated = 0
@@ -55,7 +56,7 @@ nonisolated struct CatalogRowChanges: Equatable, Sendable {
         } else if updated == 0 {
             .assetsAdded
         } else {
-            .catalogChanged
+            .changed(.all)
         }
     }
 }

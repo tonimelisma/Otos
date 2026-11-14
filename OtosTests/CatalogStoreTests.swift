@@ -24,7 +24,7 @@ struct CatalogStoreTests {
 
         try await store.start(scansSavedLibraries: false)
         await recorder.waitForCount(1)
-        #expect(await recorder.snapshot().first == .catalogChanged)
+        #expect(await recorder.snapshot().first == .changed(.all))
 
         let snapshot = try await catalogStoreTestState(store)
         #expect(snapshot.libraries.isEmpty)

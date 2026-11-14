@@ -1238,6 +1238,70 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// The window's reads walk an index and test every row they reach for whether it is
+    /// shown (`CatalogVisibilitySQL`) and whether it is a Live Photo's movie
+    /// (`LivePhotoSQL`). Their indexes held the order alone, so each row reached cost a read
+    /// of its table row: on the owner's catalog (166,555 rows of about 3.3 KB, a 542 MB table)
+    /// the All Media order took 13–34 s cold and 2–4 s warm, the filter's types 18 s cold,
+    /// one random page read per row (`docs/research/2026-11-14-window-reads-and-launch.md`).
+    /// These indexes carry the columns those tests read, so a row is tested in the index
+    /// and only the rows that pass are read — the order took 0.08–0.10 s and the types
+    /// 0.33 s on the same copy. The date order's four indexes, the stack candidates' (whose
+    /// folder walk the filter's types share) and the import batches' are recreated with them.
+    ///
+    /// The launch's two maintenance writes each walked the whole table for the few rows
+    /// they change (8.9 s and 15.2 s cold on the copy): an enrichment claim a previous
+    /// process left, and an edit not yet rendered. Each now has a partial index of exactly
+    /// those rows (1.6 ms and 0.3 ms).
+    static let windowReadIndexesMigrationIdentifier = "v55_window_read_indexes"
+
+    /// The columns every window read tests a row by: whether it is shown, and whether it is
+    /// a Live Photo's movie.
+    static let windowReadTestedColumns =
+        "pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, content_identifier"
+
+    static let windowReadIndexesStatements: [String] = [
+        "DROP INDEX idx_media_asset_best_capture_global_desc",
+        "DROP INDEX idx_media_asset_best_capture_root_desc",
+        "DROP INDEX idx_media_asset_best_capture_global_asc",
+        "DROP INDEX idx_media_asset_best_capture_root_asc",
+        "DROP INDEX idx_media_asset_stack_candidate",
+        "DROP INDEX idx_media_asset_import_batch",
+        """
+        CREATE INDEX idx_media_asset_best_capture_global_desc
+        ON media_asset(best_capture_local DESC, library_root_id, relative_path, \(windowReadTestedColumns))
+        """,
+        """
+        CREATE INDEX idx_media_asset_best_capture_root_desc
+        ON media_asset(library_root_id, best_capture_local DESC, relative_path, \(windowReadTestedColumns))
+        """,
+        """
+        CREATE INDEX idx_media_asset_best_capture_global_asc
+        ON media_asset(best_capture_local ASC, library_root_id, relative_path, \(windowReadTestedColumns))
+        """,
+        """
+        CREATE INDEX idx_media_asset_best_capture_root_asc
+        ON media_asset(library_root_id, best_capture_local ASC, relative_path, \(windowReadTestedColumns))
+        """,
+        """
+        CREATE INDEX idx_media_asset_stack_candidate
+        ON media_asset(library_root_id, best_kind, parent_path, best_format, \(windowReadTestedColumns))
+        """,
+        """
+        CREATE INDEX idx_media_asset_import_batch
+        ON media_asset(import_batch_unix_ms, library_root_id, relative_path, \(windowReadTestedColumns))
+        WHERE import_batch_unix_ms IS NOT NULL
+        """,
+        """
+        CREATE INDEX idx_media_asset_enrichment_claimed
+        ON media_asset(enrichment_claimed) WHERE enrichment_claimed IS NOT NULL
+        """,
+        """
+        CREATE INDEX idx_media_asset_unrendered_edit
+        ON media_asset(library_root_id, relative_path) WHERE edit_revision <> rendered_revision
+        """,
+    ]
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

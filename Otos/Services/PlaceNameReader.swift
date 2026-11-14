@@ -87,7 +87,7 @@ actor PlaceNameReader {
         forwarder = Task { [weak self] in
             for await change in changes {
                 guard self != nil else { break }
-                if change == .catalogChanged || change == .assetsDetailChanged {
+                if case .changed = change {
                     ring.yield()
                 }
             }

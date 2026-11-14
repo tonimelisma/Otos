@@ -301,6 +301,60 @@ struct CatalogStoreQueryPlanTests {
         #expect(!plan.contains("SCAN still"))
     }
 
+    /// v55: the window's reads test every row they walk for whether it is shown and whether it
+    /// is a Live Photo's movie. Each walks an index that carries those columns, so a row is
+    /// tested without its table row being read (one random page read per row on the owner's
+    /// catalog, `docs/research/2026-11-14-window-reads-and-launch.md`); and the launch's
+    /// maintenance writes find their few rows through partial indexes, never a table walk.
+    @Test func theWindowReadsTestRowsInTheirIndexesAndLaunchWritesFindTheirRowsByIndex() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        let tested: Set = ["pending_trash_batch_unix_ms", "awaiting_presence", "hidden_by_source", "best_kind", "content_identifier"]
+        var orderQueries: [(String, SQLQuery)] = []
+        for (direction, suffix) in [(MediaSortDirection.descending, "desc"), (.ascending, "asc")] {
+            let descriptor = CatalogQueryDescriptor(scope: .allMedia, sort: MediaSortOrder(field: .bestDate, direction: direction))
+            for (name, roots) in [("root", [rootID1]), ("global", [rootID1, rootID2])] {
+                let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
+                    descriptor: descriptor, scope: CatalogScopePredicate(rootIDs: roots)
+                ))
+                orderQueries.append(("idx_media_asset_best_capture_\(name)_\(suffix)", query))
+            }
+        }
+        let orders = orderQueries
+        let (plans, typesPlan, batchesPlan, claimsPlan, editsPlan, indexColumns) = try await dbQueue.read { db in
+            let types = try #require(try CatalogQueryGateway.distinctFilterableTypesQuery(
+                scope: CatalogScopePredicate(rootIDs: [rootID1, rootID2]), db: db
+            ))
+            var columns: [String: Set<String>] = [:]
+            for index in orders.map(\.0) + ["idx_media_asset_stack_candidate", "idx_media_asset_import_batch"] {
+                columns[index] = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_index_info(?)", arguments: [index]))
+            }
+            return try (
+                orders.map { name, query in try (name, explainPlan(db, query: query)) },
+                explainPlan(db, query: types),
+                explainPlan(db, sql: "SELECT batch_ms FROM (\(CatalogQueryGateway.importBatchesSQL))"),
+                explainPlan(db, sql: EnrichmentClaimGateway.clearEnrichmentClaimsSQL),
+                explainPlan(db, sql: CatalogStore.releaseAllUnrenderedEditsSQL),
+                columns
+            )
+        }
+        for (index, plan) in plans {
+            #expect(plan.contains("USING INDEX \(index)") || plan.contains("USING COVERING INDEX \(index)"), "\(plan)")
+            #expect(!usesTemporarySort(plan), "\(plan)")
+            #expect(tested.isSubset(of: indexColumns[index] ?? []), "\(index): \(indexColumns[index] ?? [])")
+        }
+        #expect(typesPlan.contains("idx_media_asset_stack_candidate"), "\(typesPlan)")
+        #expect(tested.union(["best_format"]).isSubset(of: indexColumns["idx_media_asset_stack_candidate"] ?? []))
+        #expect(batchesPlan.contains("idx_media_asset_import_batch"), "\(batchesPlan)")
+        #expect(tested.isSubset(of: indexColumns["idx_media_asset_import_batch"] ?? []))
+        #expect(claimsPlan.contains("USING INDEX idx_media_asset_enrichment_claimed"), "\(claimsPlan)")
+        #expect(editsPlan.contains("USING INDEX idx_media_asset_unrendered_edit"), "\(editsPlan)")
+    }
+
     /// Search's reads (ADR 0048): what is owed walks each root's assets by an index and looks
     /// each up in the reading table by its key; what is current is read by the reading table's
     /// key, each asset looked up by its own. Nothing scans a table whole.

@@ -846,7 +846,7 @@ struct ImmichCatalogSyncTests {
         defer { recording.cancel() }
         let scan = try await store.beginSourceListing(rootPath: fixture.rootPath)
         // The lease announces itself; each batch after it is one change of its own.
-        #expect(await changes.waitForValues { $0.count == 1 } == [.catalogChanged])
+        #expect(await changes.waitForValues { $0.count == 1 } == [.changed(.membership)])
         func apply(_ batch: SourceListingChanges) async throws -> CatalogStoreChange? {
             let before = await changes.count()
             try await store.applySourceListingChanges(batch, scan: scan)
@@ -854,10 +854,10 @@ struct ImmichCatalogSyncTests {
         }
 
         #expect(try await apply(SourceListingChanges(listed: [item("a"), item("b", hidden: true)])) == .assetsAdded)
-        #expect(try await apply(SourceListingChanges(listed: [item("a", size: 20), item("c")])) == .catalogChanged)
-        #expect(try await apply(SourceListingChanges(listed: [item("c", hidden: true)])) == .catalogChanged)
-        #expect(try await apply(SourceListingChanges(sizesBySourceItem: ["b": 30])) == .catalogChanged)
-        #expect(try await apply(SourceListingChanges(deletedSourceItems: ["a"])) == .catalogChanged)
+        #expect(try await apply(SourceListingChanges(listed: [item("a", size: 20), item("c")])) == .changed(.all))
+        #expect(try await apply(SourceListingChanges(listed: [item("c", hidden: true)])) == .changed(.all))
+        #expect(try await apply(SourceListingChanges(sizesBySourceItem: ["b": 30])) == .changed(.all))
+        #expect(try await apply(SourceListingChanges(deletedSourceItems: ["a"])) == .changed(.all))
         await store.endSourceListing(scan: scan)
         await store.shutdown()
     }

@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-15
-- Last updated: 2026-06-22
+- Last updated: 2026-11-14
 
 ## Context
 
@@ -61,20 +61,24 @@ ID through Store queries.
 This keeps UI cadence out of Store mutation paths. SQLite and Store-owned root
 runtime state remain catalog truth.
 
-A change says whose input moved. `.assetsDetailChanged` is an enrichment write that
-changed no ordering or scope column. `.assetsAdded` is a scan, device-listing or
-source-listing batch that only inserted rows: the type that says so is
-`ScannedFileUpsert.inserted`, tallied per write in `CatalogRowChanges`. A new row
-carries nothing Otos derives — no metadata, so no Live Photo pairing key, and no
-digest, rendering, faces, place or embedding — so only what lists rows has new
-input: the window publishes it and enrichment claims it, while Duplicates, People,
-search, place names, preview faces and render signatures wait for the enrichment
-write that gives them something to read. Every other change, including a batch that
-changes, hides or deletes a held row, is `.catalogChanged`, which every owner takes
-up. Without the split, a 147k-asset Immich first sync ran a whole-catalog pass in
-each derived owner for every 500-line batch, all competing with the listing's own
-writes for the page cache and the disk
-(`docs/research/2026-11-12-listing-batch-cost.md`).
+A change says what a write touched. `.changed(CatalogChangedFacts)` names the kinds of
+fact the write changed — which rows are shown (`membership`), capture dates, kinds and
+formats, grouping identifiers (Live Photo and burst), the user's choices and stack keys,
+locations, place names, faces and who they are, copies (digests, render signatures, copies
+kept together), the search labels On This Day reads, and `detail`: what only a tile, a pane
+or enrichment reads. The Store names them at the write, the one place that knows what it
+changed; an enrichment batch compares what SQLite stored before and after each row, and a
+write that changes facts of many kinds at once (a scan, a root added or removed, a Trash
+move, an import) names `.all`. `.assetsAdded` is a scan, device-listing or source-listing
+batch that only inserted rows: the type that says so is `ScannedFileUpsert.inserted`,
+tallied per write in `CatalogRowChanges`. A new row carries nothing Otos derives — no
+metadata, so no Live Photo pairing key, and no digest, rendering, faces, place or
+embedding — so only what lists rows has new input: the window publishes it and enrichment
+claims it, while Duplicates, People, search, place names, preview faces and render
+signatures wait for the enrichment write that gives them something to read. Without the
+split, a 147k-asset Immich first sync ran a whole-catalog pass in each derived owner for
+every 500-line batch, all competing with the listing's own writes for the page cache and
+the disk (`docs/research/2026-11-12-listing-batch-cost.md`).
 
 Rejected: holding back every derived owner while any listing lease is open. A lease
 says a source is being read, not that a write left derived facts alone; a resync's
@@ -92,6 +96,36 @@ every pass off a `bufferingNewest(1)` doorbell: intents ring it directly, other
 Store changes wait for a cadence task that rings it while Projection is behind. On
 a pass, Projection asks Store for current root rows plus descriptor-ordered asset
 IDs, derives one `CatalogWindowState`, and yields it. ADR 0032 states the rule.
+
+A pass repeats a catalog read only when a change that can alter its answer has happened.
+Projection counts each kind of fact a change names (`CatalogFactRevisions`, one revision
+per kind, never a flag). It keeps the last answer of each read — the ordered assets with
+their stacks, the filter's options, and the stack collapse — with what the read was for
+(the resolved descriptor or sidebar row, the available roots, the place-name languages) and
+the revisions its pass started from (`CatalogProjectionReads`). A pass reuses an answer
+while what it was for is unchanged and no kind it depends on moved, and reads it again
+otherwise. The order depends on rows shown, capture dates, kinds, formats, grouping and
+choices always, and on locations and place names, faces, copies or On This Day's labels
+where the scope or the filter is by them (`CatalogChangedFacts.orderInputs(of:)`); the
+options depend on rows shown, kinds, formats, grouping, locations and place names
+(`filterOptionsInputs(of:)`); the collapse is a pure step over the scoped order, its stacks
+and expansions. The filter's options are read beside the order, since neither depends on
+the other. Every change still advances `detailRefreshGeneration`, so a pass that reused
+every read publishes the refresh the grid's visible tiles read their details by.
+
+Before this, the only distinction was detail-only versus structural, and every enrichment
+write that moved a stored date by any amount, every face assignment, every place name and
+every digest was structural: on the owner's 166,555-asset catalog, while faces and Immich
+metadata were read, the window re-read the 164k-row order (2–4 s), the options (0.9–1.2 s)
+and the collapse (0.4–0.9 s) back to back at over 300% CPU, and 368 of 642 order reads in
+three hours returned the order it already showed
+(`docs/research/2026-11-14-window-reads-and-launch.md`).
+
+Rejected: a time-based throttle on background passes beyond the existing cadence (ADR
+0033: whether a read can have changed is a fact the Store holds), a generic query cache in
+the Store (the Store would have to know who reads what; the reader knows its inputs), and
+patching the order incrementally from the changed rows (a second ordering path beside the
+SQL that owns it).
 
 Before the Store's initial load has applied, its roots are unknown, not absent.
 `CatalogStore.loadedLibraries()` returns nil until then, and Projection publishes a

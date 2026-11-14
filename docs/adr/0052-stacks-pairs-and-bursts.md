@@ -101,8 +101,9 @@ projection pass after search collapses each stack to its key member, keeping the
 for reuse, so the grid, day sections and their counts, On This Day, the map and the empty
 state all see the collapsed list. Expanding is a window intent that names stack keys,
 held outside the query descriptor, so it never re-queries and never clears the selection: the
-projection re-collapses the uncollapsed order it last published, with its day buckets and map
-coordinates. An
+projection re-collapses the order it last read, with its day buckets and map coordinates,
+which it keeps while no fact the order depends on changes (ADR 0005); and a pass whose
+order, stacks and expansions are those of the last collapse reuses that collapse. An
 expanded stack's members are ordinary tiles, in capture order, on one band.
 
 **Actions.** Anything that uses the picture uses the key member: view, compare, story, edit,
