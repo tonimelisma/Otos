@@ -1,6 +1,7 @@
 import Foundation
 import MapKit
 @testable import OtosKit
+import Synchronization
 import Testing
 
 /// Place names and the Places filter (ADR 0051): cells of the map computed in Swift and SQL
@@ -19,39 +20,136 @@ struct PlaceNamesTests {
         #expect(cell == PlaceCell(latitude: -1694, longitude: 7560))
         #expect(PlaceCell(cell.center) == cell)
         #expect(PlaceCell(PlaceCoordinate(latitude: -0.001, longitude: 0.001)) == PlaceCell(latitude: -1, longitude: 0))
+        // The north pole and the 180th meridian fall in the cell below them, whose center is
+        // a valid coordinate; the south pole and −180° are a cell's own edge.
+        let top = PlaceCell(PlaceCoordinate(latitude: 90, longitude: 180))
+        #expect(top == PlaceCell(latitude: 4499, longitude: 8999))
+        #expect(top.center.latitude < 90 && top.center.longitude < 180)
+        #expect(PlaceCell(PlaceCoordinate(latitude: -90, longitude: -180)) == PlaceCell(latitude: -4500, longitude: -9000))
+    }
+
+    /// The language is the Mac's language and script, never its region.
+    @Test func theNamingLanguageIgnoresTheRegion() {
+        #expect(PlaceNameLanguage(Locale(identifier: "en_US")) == PlaceNameLanguage(Locale(identifier: "en_FI")))
+        #expect(PlaceNameLanguage(Locale(identifier: "en_US")).identifier == "en-Latn")
+        #expect(PlaceNameLanguage(Locale(identifier: "zh_TW")) != PlaceNameLanguage(Locale(identifier: "zh-Hans_CN")))
+        #expect(PlaceNameLanguage(Locale(identifier: "fi_FI")) != PlaceNameLanguage(Locale(identifier: "en_FI")))
     }
 
     /// The reader names every cell holding a located item once, from its center, in the Mac's
-    /// language; a photo's own coordinate never reaches Maps. A throttled answer is waited out
-    /// and asked again; a cell Maps names nothing for is stored with no names.
-    @Test func everyCellIsNamedOnceAndAThrottleIsWaitedOut() async throws {
+    /// language; a photo's own coordinate never reaches Maps. A failed naming — a throttle,
+    /// or an error Maps does not explain — stores nothing: it is waited out, the next cell is
+    /// asked, and another pass asks the failed cell again. A cell Maps names nothing for is
+    /// stored with no names.
+    @Test func everyCellIsNamedOnceAndAFailureIsAskedAgain() async throws {
         let library = try await Self.library(in: makeTestDirectory())
         let asked = Asked()
         let namer = PlaceNameReader.Namer { coordinate, locale in
             #expect(locale.identifier == "fi_FI")
-            if await asked.add(coordinate) == 1 {
+            let cell = PlaceCell(coordinate)
+            let times = await asked.add(coordinate, counting: cell)
+            if cell == PlaceCell(Self.helsinki), times == 1 {
                 throw MKError(.loadingThrottled)
             }
-            if PlaceCell(coordinate) == PlaceCell(Self.sydney) {
-                return PlaceNames(country: "Australia", town: "Sydney NSW")
+            if cell == PlaceCell(Self.espoo), times == 1 {
+                throw MKError(.unknown)
             }
-            return coordinate.latitude > 0 ? PlaceNames(country: "Suomi", town: "Helsinki") : .none
+            if cell == PlaceCell(Self.sydney) {
+                return .none
+            }
+            return PlaceNames(country: "Suomi", town: cell == PlaceCell(Self.espoo) ? "Espoo" : "Helsinki")
         }
         let waits = Asked()
         let reader = PlaceNameReader(
             store: library.store, namer: namer, locale: { Locale(identifier: "fi_FI") },
             sleep: { _ in await waits.add(PlaceCoordinate(latitude: 0, longitude: 0)) }
         )
+        let finnish = PlaceNameLanguage(Locale(identifier: "fi_FI"))
 
         await reader.drain()
 
         let centers = await asked.coordinates
-        #expect(Set(centers.map(PlaceCell.init)) == [PlaceCell(Self.helsinki), PlaceCell(Self.espoo), PlaceCell(Self.sydney)])
         #expect(centers.allSatisfy { PlaceCell($0).center == $0 })
-        #expect(await waits.coordinates.count == 1)
-        #expect(try await library.store.unnamedPlaceCells(locale: "fi_FI", limit: 10).isEmpty)
-        #expect(try await library.store.unnamedPlaceCells(locale: "en_US", limit: 10).count == 3)
+        #expect(await asked.count(of: PlaceCell(Self.helsinki)) == 2)
+        #expect(await asked.count(of: PlaceCell(Self.espoo)) == 2)
+        #expect(await asked.count(of: PlaceCell(Self.sydney)) == 1)
+        #expect(await waits.coordinates.count == 2)
+        #expect(try await library.store.unnamedPlaceCells(language: finnish, limit: 10).isEmpty)
+        let options = try await library.store.filterOptions(availableLibraryPaths: [library.rootPath])
+        #expect(options.countries == [PlaceFilterCountry(name: "Suomi", towns: ["Helsinki", "Espoo"])])
         await library.store.shutdown()
+    }
+
+    /// An error is not a fact (ADR 0032 rule 4): a naming that fails stores no names, so the
+    /// cell stays unnamed, to be asked again, rather than stored as a place with none.
+    @Test func aFailedNamingStoresNothing() async throws {
+        let library = try await Self.library(in: makeTestDirectory())
+        let reader = PlaceNameReader(
+            store: library.store,
+            namer: PlaceNameReader.Namer { _, _ in throw MKError(.decodingFailed) },
+            locale: { Locale(identifier: "en_US") },
+            sleep: { _ in throw CancellationError() }
+        )
+
+        await reader.drain()
+
+        let english = PlaceNameLanguage(Locale(identifier: "en_US"))
+        #expect(try await library.store.unnamedPlaceCells(language: english, limit: 10).count == 3)
+        await library.store.shutdown()
+    }
+
+    /// The catalog keeps one language's names: a drain in a new language forgets the old
+    /// one's before naming again, so the filter never offers one place under two names. A
+    /// change of region alone keeps them and asks Maps nothing.
+    @Test func aNewLanguageNamesEveryCellAgainAndANewRegionDoesNot() async throws {
+        let library = try await Self.library(in: makeTestDirectory())
+        let asked = Asked()
+        let locale = Mutex(Locale(identifier: "en_US"))
+        let reader = PlaceNameReader(
+            store: library.store,
+            namer: PlaceNameReader.Namer { coordinate, locale in
+                await asked.add(coordinate)
+                let finnish = locale.language.languageCode == .finnish
+                return PlaceNames(country: finnish ? "Suomi" : "Finland", town: nil)
+            },
+            locale: { locale.withLock { $0 } },
+            sleep: { _ in }
+        )
+
+        await reader.drain()
+        #expect(await asked.coordinates.count == 3)
+        locale.withLock { $0 = Locale(identifier: "en_FI") }
+        await reader.drain()
+        #expect(await asked.coordinates.count == 3)
+
+        locale.withLock { $0 = Locale(identifier: "fi_FI") }
+        await reader.drain()
+        #expect(await asked.coordinates.count == 6)
+        let options = try await library.store.filterOptions(availableLibraryPaths: [library.rootPath])
+        #expect(options.countries.map(\.name) == ["Suomi"])
+        await library.store.shutdown()
+    }
+
+    /// Every place the filter holds has a row: a held town under its country even while the
+    /// country is offered for other towns, every held town of a country nothing names, and
+    /// a held country nothing names (#649: a filter never holds a value the user cannot see).
+    @Test func everyHeldPlaceHasARow() {
+        let options = CatalogFilterOptions(countries: [
+            PlaceFilterCountry(name: "Finland", towns: ["Helsinki", "Espoo"]),
+        ])
+        let filter = MediaFilter(places: [
+            PlaceFilterKey(country: "Finland", town: "Turku"),
+            PlaceFilterKey(country: "Finland", town: "Helsinki"),
+            PlaceFilterKey(country: "Suomi", town: "Tampere"),
+            PlaceFilterKey(country: "Suomi", town: "Oulu"),
+            PlaceFilterKey(country: "Australia", town: nil),
+        ])
+        #expect(options.countries(holding: filter) == [
+            PlaceFilterCountry(name: "Finland", towns: ["Helsinki", "Espoo", "Turku"]),
+            PlaceFilterCountry(name: "Australia", towns: []),
+            PlaceFilterCountry(name: "Suomi", towns: ["Oulu", "Tampere"]),
+        ])
+        #expect(options.countries(holding: .all) == options.countries)
     }
 
     /// The filter offers the countries and towns named, most items first, and narrows by them:
@@ -62,7 +160,7 @@ struct PlaceNamesTests {
             PlaceCell(Self.helsinki): PlaceNames(country: "Finland", town: "Helsinki"),
             PlaceCell(Self.espoo): PlaceNames(country: "Finland", town: "Espoo"),
             PlaceCell(Self.sydney): PlaceNames(country: "Australia", town: "Sydney NSW"),
-        ], locale: "en_US")
+        ], language: PlaceNameLanguage(Locale(identifier: "en_US")))
         let options = try await library.store.filterOptions(availableLibraryPaths: [library.rootPath])
         #expect(options.countries == [
             PlaceFilterCountry(name: "Finland", towns: ["Helsinki", "Espoo"]),
@@ -130,6 +228,16 @@ struct PlaceNamesTests {
         func add(_ coordinate: PlaceCoordinate) -> Int {
             coordinates.append(coordinate)
             return coordinates.count
+        }
+
+        /// Adds `coordinate` and returns how many times `cell` has been asked, this one included.
+        func add(_ coordinate: PlaceCoordinate, counting cell: PlaceCell) -> Int {
+            coordinates.append(coordinate)
+            return count(of: cell)
+        }
+
+        func count(of cell: PlaceCell) -> Int {
+            coordinates.count { PlaceCell($0) == cell }
         }
     }
 }

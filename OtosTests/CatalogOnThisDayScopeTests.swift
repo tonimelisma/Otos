@@ -228,10 +228,13 @@ struct CatalogOnThisDayScopeTests {
         _ = try await store.setMediaChoice(.liked, for: [id("2023-morning.jpg")])
         _ = try await store.setMediaChoice(.disliked, for: [id("2022-disliked.jpg")])
         let screen = try #require(try await store.searchEmbeddingCandidates(limit: 10).first { $0.id == id("2023-screen.png") })
+        var changes = await store.changeNotifications().makeAsyncIterator()
         let written = try await store.applySearchEmbeddings([
             SearchEmbeddingResult(id: screen.id, source: screen.source, embedding: nil, confidentLabels: ["screenshot"]),
         ])
         #expect(written.count == 1)
+        // The label takes the photo out of On This Day, so the scope is read again.
+        #expect(await changes.next() == .catalogChanged)
 
         let ordered = try await store.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .onThisDay(Self.today)),

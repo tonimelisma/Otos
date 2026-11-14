@@ -14,8 +14,12 @@ volume to keep at least the free-space floor after that entry lands:
 - the capacity read fresh from `volumeAvailableCapacityForImportantUsage` for this
   entry, which shows every write that has reached the disk;
 - the run's first reading less every byte the run has committed since: entries in
-  flight and entries landed, with a refused, failed or cancelled entry's bytes
-  returned.
+  flight and the bytes entries landed, with a refused, failed or cancelled entry's
+  bytes, and a download's whose file was already local, returned (a write settles with
+  the bytes it landed: `FreeSpaceLedger.settle`, `MaterializationOutcome.landedBytes`).
+  A figure above the one read before it is live and shows freed space, so the
+  projection is re-based on it, the figure less every byte still in flight, if that is
+  more.
 
 The first catches everyone else's writes; the second catches the run's own writes the
 figure has not shown yet. `copyfile` reserves a file's whole size when it starts
@@ -129,9 +133,11 @@ floor, make the stop a designed and resumable outcome.
   when an entry is admitted. A figure that lags or never moves still counts every entry
   the run has started or landed, which a figure less the in-flight bytes alone would
   forget as each entry lands.
-- Space freed by others during a run is not credited until the run ends, because the
-  projection never rises. A long-running downloader drops its ledger when nothing is in
-  flight, so its next stretch starts from a fresh reading.
+- Space freed by others during a run is credited at the first figure that rises: a
+  figure that lags or never moves does not rise, so it never re-bases the projection,
+  and a live figure that still lags a landed write when it rises over-admits by that lag
+  at most (`ENOSPC` is the backstop). A long-running downloader drops its ledger when
+  nothing is in flight, so its next stretch starts from a fresh reading.
 - The figure's unreliability is now in the conservative direction only: a stale-low
   capacity stops a little early, and the remainder is offered again; a stale-high
   one is caught by the `ENOSPC` backstop one entry later.

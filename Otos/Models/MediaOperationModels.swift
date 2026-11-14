@@ -310,15 +310,24 @@ nonisolated enum FreeSpaceFloor {
 /// which still counts every landed write. That is safer than a figure less what is in
 /// flight now, which forgets an entry the moment it lands.
 ///
-/// Committed bytes stay committed when their write lands: they are on the disk. A write
-/// that leaves nothing behind (failed, cancelled, refused) is released. The owner sets
-/// the ledger's lifetime: one import run, or one busy stretch of downloads that ends when
-/// nothing is in flight, after which the next write reads the figure afresh.
+/// A figure that rises above the one read before it is live — a figure that lags or never
+/// moves does not rise — and space was freed: the user emptied the Trash, or a write was
+/// given back. The projection is then re-based on it, the figure less every byte still in
+/// flight, if that is more, so the freed space is admitted before the stretch ends.
+///
+/// A write settles with the bytes it landed (`settle`): those stay subtracted, since they
+/// are on the disk, and the rest are given back — all of a write that failed, was
+/// cancelled or refused, or found its file already local. The owner sets the ledger's
+/// lifetime: one import run, or one busy stretch of downloads that ends when nothing is in
+/// flight, after which the next write reads the figure afresh.
 nonisolated struct FreeSpaceLedger: Equatable, Sendable {
-    /// The first figure read, less every byte committed since; `nil` until a reading.
+    /// The first figure read, less every byte committed since and not given back; `nil`
+    /// until a reading.
     private var projected: Int64?
-    /// Every byte this ledger has admitted and not released.
-    private(set) var committedBytes: Int64 = 0
+    /// The figure read for the newest decision.
+    private var lastReported: Int64?
+    /// Every byte this ledger has committed whose write has not settled.
+    private(set) var inFlightBytes: Int64 = 0
 
     /// The free space the floor is checked against, given the figure read now: the
     /// lesser of that figure and the projection. `nil` when neither is known.
@@ -333,10 +342,19 @@ nonisolated struct FreeSpaceLedger: Equatable, Sendable {
 
     /// Admits a write of `bytes` if it keeps the floor, and commits it. `reported` is the
     /// volume's figure read for this decision. The first one read sets the projection,
-    /// less whatever was committed before it: those bytes are assumed not to be in it yet.
+    /// less whatever is in flight: those bytes are assumed not to be in it yet. A figure
+    /// above the last one re-bases the projection the same way.
     mutating func admit(_ bytes: Int64, reported: Int64?) -> Bool {
-        if projected == nil, let reported {
-            projected = reported - committedBytes
+        if let reported {
+            let rebased = reported - inFlightBytes
+            if let current = projected {
+                if let lastReported, reported > lastReported {
+                    projected = max(current, rebased)
+                }
+            } else {
+                projected = rebased
+            }
+            lastReported = reported
         }
         guard FreeSpaceFloor.admits(bytes, available: available(reported: reported)) else {
             return false
@@ -349,13 +367,14 @@ nonisolated struct FreeSpaceLedger: Equatable, Sendable {
     /// the user gave), so the writes that do wait still count it.
     mutating func commit(_ bytes: Int64) {
         projected = projected.map { $0 - bytes }
-        committedBytes += bytes
+        inFlightBytes += bytes
     }
 
-    /// Returns a committed write's bytes: it left nothing on the disk.
-    mutating func release(_ bytes: Int64) {
-        projected = projected.map { $0 + bytes }
-        committedBytes -= bytes
+    /// Settles a committed write of `committed` bytes that left `landed` of them on the
+    /// disk: those stay subtracted, the rest are given back.
+    mutating func settle(committed: Int64, landed: Int64) {
+        projected = projected.map { $0 + committed - landed }
+        inFlightBytes -= committed
     }
 }
 

@@ -25,6 +25,7 @@ struct PlacesMapView: View {
     let onViewportChanged: (MapViewport) -> Void
     let onClusterClick: (MapPlaceCluster) -> Void
     let onClusterDoubleClick: (MapPlaceCluster) -> Void
+    let onClusterOpen: (MapPlaceCluster) -> Void
     var clearFilters: () -> Void = {}
     @State private var camera: MapCameraPosition = .automatic
     @State private var appliedCameraRevision: UInt64 = 0
@@ -67,7 +68,7 @@ struct PlacesMapView: View {
                         }
                     }
                     .accessibilityAction(named: "Show Photos") {
-                        onClusterDoubleClick(cluster)
+                        onClusterOpen(cluster)
                     }
                 }
                 .annotationTitles(.hidden)

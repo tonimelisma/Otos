@@ -5,6 +5,7 @@ import Foundation
 // The map is cut into cells (`PlaceCell`); Apple Maps names each cell a located photo falls
 // in once (`PlaceNames`), and the Places filter (`MediaFilter.places`) narrows by those names.
 // Values only: `PlaceNameReader` reads the names, the store keeps them, the filter reads them.
+// The store keeps one language's names at a time (`PlaceNameLanguage`).
 
 /// One cell of the map, `PlaceCell.degrees` on a side: every photo located in it shares its
 /// names. The cell is named from its center, so Apple Maps is sent the cell, never a photo's
@@ -25,22 +26,41 @@ nonisolated struct PlaceCell: Hashable, Sendable {
         self.longitude = longitude
     }
 
-    /// The cell `coordinate` falls in.
+    /// The southernmost and northernmost cell rows, and the westernmost and easternmost
+    /// columns. A coordinate on the north pole or on the 180th meridian falls in the cell
+    /// below it, so every cell's center is a valid coordinate.
+    static let latitudes = -Int(90 * perDegree) ... Int(90 * perDegree) - 1
+    static let longitudes = -Int(180 * perDegree) ... Int(180 * perDegree) - 1
+
+    /// The cell `coordinate` falls in. `asset_metadata.place_cell_latitude` and
+    /// `place_cell_longitude` compute the same cell in SQL (`CatalogSchema.placeCellStatements`).
     init(_ coordinate: PlaceCoordinate) {
-        latitude = Int((coordinate.latitude * Self.perDegree).rounded(.down))
-        longitude = Int((coordinate.longitude * Self.perDegree).rounded(.down))
+        latitude = Self.index(coordinate.latitude, in: Self.latitudes)
+        longitude = Self.index(coordinate.longitude, in: Self.longitudes)
+    }
+
+    private static func index(_ degrees: Double, in range: ClosedRange<Int>) -> Int {
+        min(max(Int((degrees * perDegree).rounded(.down)), range.lowerBound), range.upperBound)
     }
 
     /// The cell's center, which names it.
     var center: PlaceCoordinate {
         PlaceCoordinate(latitude: (Double(latitude) + 0.5) * Self.degrees, longitude: (Double(longitude) + 0.5) * Self.degrees)
     }
+}
 
-    /// `column`'s cell index in SQL: its floor after scaling, written without SQLite's math
-    /// functions, which a build may lack.
-    static func sql(_ column: String) -> String {
-        let scaled = "(\(column) * \(perDegree))"
-        return "(CAST(\(scaled) AS INTEGER) - (\(scaled) < CAST(\(scaled) AS INTEGER)))"
+/// The language place names are read in: the Mac's language and its script, never its
+/// region, so a change of region alone asks Maps nothing again (ADR 0051). `zh-Hans` and
+/// `zh-Hant` are two languages; `en_US` and `en_GB` are one, `en-Latn`.
+nonisolated struct PlaceNameLanguage: Hashable, Sendable {
+    /// The value stored with a cell's names (`place_cell.language`).
+    let identifier: String
+
+    init(_ locale: Locale) {
+        let language = locale.language
+        identifier = [language.languageCode?.identifier, language.script?.identifier]
+            .compactMap(\.self)
+            .joined(separator: "-")
     }
 }
 

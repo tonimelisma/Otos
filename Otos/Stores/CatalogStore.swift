@@ -1951,9 +1951,9 @@ extension CatalogStore {
         return timedCount.value
     }
 
-    /// The file types the filter popover offers, drawn from every available source —
-    /// fixed libraries, cards and cameras alike — and not from the shown scope: the
-    /// filter spans scopes, so its choices must too (`CatalogFilterOptions`).
+    /// The file types and places the filter popover offers, drawn from every available
+    /// source — fixed libraries, cards and cameras alike — and not from the shown scope, so
+    /// the choices are the same under every row and its leaves (`CatalogFilterOptions`).
     func filterOptions(availableLibraryPaths: Set<LibraryRootPath>) async throws -> CatalogFilterOptions {
         let scope = CatalogScopePredicate(rootIDs: roots.rootIDs(in: availableLibraryPaths))
         guard !scope.selectsNothing else {
@@ -1971,51 +1971,56 @@ extension CatalogStore {
 
     // MARK: - Place names (ADR 0040)
 
-    /// Cells of the map holding a located item that Maps has not named in `locale` yet, at
-    /// most `limit`. Every located item counts, wherever it is cataloged, so a card's photos
-    /// are named before they are imported.
-    func unnamedPlaceCells(locale: String, limit: Int) async throws -> [PlaceCell] {
+    /// Cells of the map holding a located item that Maps has not named in `language` yet,
+    /// in cell order after `after` (from the first when nil), at most `limit`. Every located
+    /// item counts, wherever it is cataloged, so a card's photos are named before they are
+    /// imported. Walks `idx_asset_metadata_place_cell`.
+    func unnamedPlaceCells(language: PlaceNameLanguage, after: PlaceCell? = nil, limit: Int) async throws -> [PlaceCell] {
         try await database().read { db in
             try Row.fetchAll(
                 db,
-                sql: """
-                SELECT DISTINCT cells.cell_latitude, cells.cell_longitude FROM (
-                    SELECT \(PlaceCell.sql("primary_latitude")) AS cell_latitude,
-                           \(PlaceCell.sql("primary_longitude")) AS cell_longitude
-                    FROM asset_metadata
-                    WHERE primary_latitude IS NOT NULL AND primary_longitude IS NOT NULL
-                ) AS cells
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM place_cell
-                    WHERE place_cell.cell_latitude = cells.cell_latitude
-                      AND place_cell.cell_longitude = cells.cell_longitude
-                      AND place_cell.locale = ?
+                sql: CatalogQueryGateway.unnamedPlaceCellsSQL(after: after != nil),
+                arguments: StatementArguments(
+                    (after.map { [$0.latitude, $0.longitude] as [any DatabaseValueConvertible] } ?? [])
+                        + [language.identifier, limit]
                 )
-                ORDER BY cells.cell_latitude, cells.cell_longitude
-                LIMIT ?
-                """,
-                arguments: [locale, limit]
-            ).map { PlaceCell(latitude: $0["cell_latitude"], longitude: $0["cell_longitude"]) }
+            ).map { PlaceCell(latitude: $0["place_cell_latitude"], longitude: $0["place_cell_longitude"]) }
         }
     }
 
-    /// Stores what Maps named each cell in `locale`, replacing a naming in another language.
-    /// A catalog change: the Places filter offers what was named.
-    func applyPlaceNames(_ names: [PlaceCell: PlaceNames], locale: String) async throws {
+    /// Stores what Maps named each cell in `language`. Only an answer reaches here, never a
+    /// failed naming (`PlaceNameReader`), so a stored name is only ever replaced by another
+    /// answer. A catalog change: the Places filter offers what was named.
+    func applyPlaceNames(_ names: [PlaceCell: PlaceNames], language: PlaceNameLanguage) async throws {
         guard !names.isEmpty else { return }
         try await database().write { db in
             for (cell, name) in names {
                 try db.execute(
                     sql: """
-                    INSERT INTO place_cell (cell_latitude, cell_longitude, country, town, locale) VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO place_cell (cell_latitude, cell_longitude, country, town, language) VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(cell_latitude, cell_longitude) DO UPDATE SET
-                        country = excluded.country, town = excluded.town, locale = excluded.locale
+                        country = excluded.country, town = excluded.town, language = excluded.language
                     """,
-                    arguments: [cell.latitude, cell.longitude, name.country, name.town, locale]
+                    arguments: [cell.latitude, cell.longitude, name.country, name.town, language.identifier]
                 )
             }
         }
         notifyCatalogChanged()
+    }
+
+    /// Forgets the names stored in any language but `language` (ADR 0051): the catalog keeps
+    /// one language's names, so the filter never offers one place under two names, and
+    /// a place held in the filter under its old name matches nothing rather than a dwindling
+    /// share of its photos. Returns how many cells were forgotten; a catalog change when any.
+    func forgetPlaceNames(notIn language: PlaceNameLanguage) async throws -> Int {
+        let forgotten = try await database().write { db in
+            try db.execute(sql: "DELETE FROM place_cell WHERE language <> ?", arguments: [language.identifier])
+            return db.changesCount
+        }
+        if forgotten > 0 {
+            notifyCatalogChanged()
+        }
+        return forgotten
     }
 
     func mediaAssets(for ids: [MediaAssetID]) async throws -> [MediaAssetID: MediaAsset] {
@@ -7983,12 +7988,15 @@ extension CatalogStore {
     }
 
     /// Writes search embeddings for assets whose thumbnail is still the one they were read
-    /// from, and returns the ones written. No change notification: nothing the catalog
-    /// publishes depends on an embedding; `PhotoSearchIndex` keeps what it wrote.
+    /// from, and returns the ones written. `PhotoSearchIndex` keeps what it wrote, so a write
+    /// notifies only when it puts a photo into or out of On This Day (`OnThisDayPicks`: a
+    /// confident screenshot or document label), a catalog change that scope is read again for.
     func applySearchEmbeddings(_ results: [SearchEmbeddingResult]) async throws -> [SearchEmbeddingResult] {
         let rowIDs = roots.rowIDSnapshot()
-        return try await database().write { db -> [SearchEmbeddingResult] in
+        let leftOut = "SELECT \(OnThisDayPicks.leftOutLabelSQL) FROM search_embedding WHERE library_root_id = ? AND relative_path = ?"
+        let (applied, changesOnThisDay) = try await database().write { db -> ([SearchEmbeddingResult], Bool) in
             var written: [SearchEmbeddingResult] = []
+            var changesOnThisDay = false
             for result in results {
                 guard let rootID = rowIDs[result.id.libraryRootPath] else { continue }
                 let path = result.id.relativePath.rawValue
@@ -8002,6 +8010,7 @@ extension CatalogStore {
                 ) == true else {
                     continue
                 }
+                let wasLeftOut = try Bool.fetchOne(db, sql: leftOut, arguments: [rootID, path]) ?? false
                 try db.execute(
                     sql: """
                     INSERT INTO search_embedding (library_root_id, relative_path, source, embedding, labels, confident_labels)
@@ -8016,10 +8025,17 @@ extension CatalogStore {
                         SearchEmbeddingStorage.confidentLabelsText(result.confidentLabels),
                     ]
                 )
+                if try (Bool.fetchOne(db, sql: leftOut, arguments: [rootID, path]) ?? false) != wasLeftOut {
+                    changesOnThisDay = true
+                }
                 written.append(result)
             }
-            return written
+            return (written, changesOnThisDay)
         }
+        if changesOnThisDay {
+            notifyCatalogChanged()
+        }
+        return applied
     }
 
     /// The assets in available roots that have a current search embedding, without the

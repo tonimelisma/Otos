@@ -3,8 +3,9 @@ import Foundation
 /// On This Day anniversary policy guide
 ///
 /// Pure grouping of the On This Day scope's items into anniversaries (ADR 0049). The
-/// scope's reads use its fixed order (`SidebarSelection.fixedSort`: newest capture first),
-/// so the items of one day are contiguous and the days arrive newest first — one year ago
+/// scope's reads use its fixed order (`SidebarSelection.fixedSort`: newest capture first,
+/// then each day's Liked photos moved to its front, `OnThisDayPicks.likedFirst`), so the
+/// items of one day are contiguous and the days arrive newest first — one year ago
 /// before three, one month ago before two. A run is the Gregorian year and month
 /// (`CalendarDay.calendar(in:)`) of the item's day bucket, the same bucket the grid groups
 /// days by (DES-069), whatever calendar the user reads dates in: the scope holds one day

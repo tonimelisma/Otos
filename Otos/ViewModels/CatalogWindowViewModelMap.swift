@@ -134,8 +134,12 @@ extension CatalogWindowViewModel {
         let entered = previous.resolvedSidebarSelection != .places || previous.map == nil
         let filterChanged = previous.mediaGrid.descriptor.filter != next.mediaGrid.descriptor.filter
         let firstLocated = (previous.map?.located.isEmpty ?? true) && !map.located.isEmpty
-        if entered, previous.resolvedSidebarSelection.sidebarRow == .places, let viewport = mapViewport {
-            // Back from a place: the map the user left.
+        let leftViewport = entered ? mapLeftViewport : nil
+        if entered {
+            mapLeftViewport = nil
+        }
+        if entered, previous.resolvedSidebarSelection.sidebarRow == .places, let viewport = leftViewport ?? mapViewport {
+            // Back from a place: the map the user left, not one a flight reported after.
             requestMapCamera(MapClusterPolicy.bounds(of: viewport), reason: "return")
         } else if entered || filterChanged || firstLocated {
             let reason = entered ? "enter" : (filterChanged ? "filter" : "firstLocated")
@@ -220,6 +224,7 @@ extension CatalogWindowViewModel {
     /// can still be split zooms the map into it; one whose members share a coordinate, which
     /// no zoom can split, opens (`openMapCluster`). The map has no selection.
     func zoomIntoMapCluster(_ cluster: MapPlaceCluster) {
+        mapClusterZoom = nil
         if cluster.isExactPlace {
             openMapCluster(cluster)
             return
@@ -234,12 +239,27 @@ extension CatalogWindowViewModel {
             MapClusterPolicy.zoomBounds(into: cluster, members: coordinates, viewport: viewport),
             reason: "cluster"
         )
+        mapClusterZoom = (cluster.id, viewport)
     }
 
-    /// A double-click on a stack: exactly the items it counted, as the grid. The double-click's
-    /// first click has already asked to zoom; the stack is the one the click landed on, so
-    /// the camera moving underneath does not change what opens.
+    /// The second click of a double-click on a stack. Its first click has already asked to
+    /// zoom (`zoomIntoMapCluster`); the stack is the one the click landed on, so the camera
+    /// moving underneath does not change what opens, and the map the user left is the one
+    /// that click zoomed from, however far the flight got before the stack opened.
+    func doubleClickMapCluster(_ cluster: MapPlaceCluster) {
+        let zoomedFrom = mapClusterZoom.flatMap { $0.cluster == cluster.id ? $0.from : nil }
+        openMapCluster(cluster, leaving: zoomedFrom ?? mapViewport)
+    }
+
+    /// Opens a stack: exactly the items it counted, as the grid — a click on a stack no zoom
+    /// can split, and VoiceOver's `Show Photos`. Back returns to the map as it is now.
     func openMapCluster(_ cluster: MapPlaceCluster) {
+        openMapCluster(cluster, leaving: mapViewport)
+    }
+
+    private func openMapCluster(_ cluster: MapPlaceCluster, leaving viewport: MapViewport?) {
+        mapClusterZoom = nil
+        mapLeftViewport = viewport
         userHasChosenSource = true
         OtosLog.ui.noticeOperation("map.stack", phase: "open", fields: ["count": "\(cluster.count)"])
         setQueryDescriptor(CatalogQueryDescriptor(
@@ -269,6 +289,8 @@ extension CatalogWindowViewModel {
             return
         }
         let area = MapClusterPolicy.area(of: viewport)
+        mapClusterZoom = nil
+        mapLeftViewport = viewport
         userHasChosenSource = true
         OtosLog.ui.noticeOperation("map.area", phase: "enter", fields: [
             "area": area.diagnosticDescription,

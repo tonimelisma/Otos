@@ -145,20 +145,10 @@ nonisolated enum CatalogQueryGateway {
     /// The countries and towns Maps named for the located items in scope, most items first,
     /// then the name in the locale's order (ADR 0051). A cell named nothing offers nothing.
     static func placeOptions(scope: CatalogScopePredicate, db: Database) throws -> [PlaceFilterCountry] {
-        guard let scopeClause = try scopeClause(scope, db: db) else {
+        guard let query = try placeOptionsQuery(scope: scope, db: db) else {
             return []
         }
-        let rows = try Row.fetchAll(
-            db,
-            sql: """
-            SELECT place_cell.country, place_cell.town, COUNT(*) AS items
-            FROM media_asset\(scopeClause.join)
-            \(placeJoin)
-            WHERE \(scopeClause.sql) AND place_cell.country IS NOT NULL
-            GROUP BY place_cell.country, place_cell.town
-            """,
-            arguments: StatementArguments(scopeClause.arguments)
-        )
+        let rows = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments)
         var countryItems: [String: Int] = [:]
         var townItems: [String: [String: Int]] = [:]
         for row in rows {
@@ -172,6 +162,50 @@ nonisolated enum CatalogQueryGateway {
         return PlaceFilterCountry.mostItemsFirst(countryItems).map { country in
             PlaceFilterCountry(name: country, towns: PlaceFilterCountry.mostItemsFirst(townItems[country] ?? [:]))
         }
+    }
+
+    /// The options' read, from the named cells: each country and town's cells, their located
+    /// rows through `idx_asset_metadata_place_cell`, and each row's scope by its key — work in
+    /// the located rows of named cells, not in every row of the scope. The join order is
+    /// fixed (`CROSS JOIN`) because the planner otherwise starts from the scope's rows.
+    static func placeOptionsQuery(scope: CatalogScopePredicate, db: Database) throws -> SQLQuery? {
+        guard let scopeClause = try scopeClause(scope, db: db) else {
+            return nil
+        }
+        return SQLQuery(
+            sql: """
+            SELECT place_cell.country, place_cell.town, COUNT(*) AS items
+            FROM place_cell
+            CROSS JOIN asset_metadata AS place_metadata
+              ON place_metadata.place_cell_latitude = place_cell.cell_latitude
+              AND place_metadata.place_cell_longitude = place_cell.cell_longitude
+            CROSS JOIN media_asset
+              ON media_asset.library_root_id = place_metadata.library_root_id
+              AND media_asset.relative_path = place_metadata.relative_path\(scopeClause.join)
+            WHERE place_cell.country IS NOT NULL AND \(scopeClause.sql)
+            GROUP BY place_cell.country, place_cell.town
+            """,
+            arguments: StatementArguments(scopeClause.arguments)
+        )
+    }
+
+    /// The read of `CatalogStore.unnamedPlaceCells`: the distinct cells of located rows in
+    /// index order, from after a cell when `after`, with no name in the language argued.
+    static func unnamedPlaceCellsSQL(after: Bool) -> String {
+        """
+        SELECT DISTINCT place_cell_latitude, place_cell_longitude FROM asset_metadata AS cells
+        WHERE place_cell_latitude IS NOT NULL AND place_cell_longitude IS NOT NULL\(
+            after ? "\n  AND (place_cell_latitude, place_cell_longitude) > (?, ?)" : ""
+        )
+          AND NOT EXISTS (
+            SELECT 1 FROM place_cell
+            WHERE place_cell.cell_latitude = cells.place_cell_latitude
+              AND place_cell.cell_longitude = cells.place_cell_longitude
+              AND place_cell.language = ?
+          )
+        ORDER BY place_cell_latitude, place_cell_longitude
+        LIMIT ?
+        """
     }
 
     static func distinctFilterableTypesQuery(scope: CatalogScopePredicate, db: Database) throws -> SQLQuery? {
@@ -886,18 +920,6 @@ private nonisolated func scopeClause(
     return (join, predicate, arguments)
 }
 
-/// Each row's place cell, through its primary location (ADR 0040). A row with no location,
-/// or in a cell not named yet, joins nothing.
-private nonisolated let placeJoin = """
-
-JOIN asset_metadata AS place_metadata
-  ON place_metadata.library_root_id = media_asset.library_root_id
-  AND place_metadata.relative_path = media_asset.relative_path
-JOIN place_cell
-  ON place_cell.cell_latitude = \(PlaceCell.sql("place_metadata.primary_latitude"))
-  AND place_cell.cell_longitude = \(PlaceCell.sql("place_metadata.primary_longitude"))
-"""
-
 private nonisolated let locationJoin = """
 
 JOIN asset_metadata
@@ -965,8 +987,8 @@ private nonisolated func filterPredicate(
         clauses.append("""
         EXISTS (SELECT 1 FROM asset_metadata AS place_metadata
             JOIN place_cell
-              ON place_cell.cell_latitude = \(PlaceCell.sql("place_metadata.primary_latitude"))
-              AND place_cell.cell_longitude = \(PlaceCell.sql("place_metadata.primary_longitude"))
+              ON place_cell.cell_latitude = place_metadata.place_cell_latitude
+              AND place_cell.cell_longitude = place_metadata.place_cell_longitude
             WHERE place_metadata.library_root_id = media_asset.library_root_id
               AND place_metadata.relative_path = media_asset.relative_path
               AND (\(placeClauses.joined(separator: " OR "))))

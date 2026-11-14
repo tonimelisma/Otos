@@ -524,7 +524,7 @@ actor MediaImportExecutor {
                         "batch": "\(context.batch.unixMilliseconds)",
                         "nextIndex": "\(index)",
                         "entryBytes": "\(entryBytes)",
-                        "committedBytes": "\(ledger.committedBytes)",
+                        "inFlightBytes": "\(ledger.inFlightBytes)",
                         "capacity": capacity.map { "\($0)" } ?? "unknown",
                         "available": ledger.available(reported: capacity).map { "\($0)" } ?? "unknown",
                         "floor": "\(FreeSpaceFloor.bytes)",
@@ -561,17 +561,18 @@ actor MediaImportExecutor {
             }
             while let result = await group.next() {
                 // An entry's bytes stay committed only for the files it left on the disk:
-                // a published entry returns the companions that did not copy, any other
-                // outcome returns everything.
+                // a published entry gives back the companions that did not copy, any other
+                // outcome everything.
                 let committed = committedByIndex.removeValue(forKey: result.index) ?? 0
                 if case let .published(_, _, companionsNotCopied) = result.outcome {
                     let notCopied = Set(companionsNotCopied)
-                    ledger.release(copyEntries[result.index].source.companions
+                    let notCopiedBytes = copyEntries[result.index].source.companions
                         .filter { notCopied.contains($0.relativePath) }
                         .compactMap(\.byteSize)
-                        .reduce(0, +))
+                        .reduce(0, +)
+                    ledger.settle(committed: committed, landed: committed - notCopiedBytes)
                 } else {
-                    ledger.release(committed)
+                    ledger.settle(committed: committed, landed: 0)
                 }
                 switch result.outcome {
                 case let .published(products, bytes, companionsNotCopied):

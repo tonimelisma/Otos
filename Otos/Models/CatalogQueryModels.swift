@@ -408,9 +408,11 @@ nonisolated struct CatalogQueryRequest: Hashable {
     static let initial = CatalogQueryRequest(descriptor: .default, generation: 0)
 }
 
-/// The file types the filter popover offers: those present in every available source,
-/// whatever the sidebar shows. The filter itself spans scopes (APP-042), so its choices
-/// do too — a value chosen in one scope keeps its row in every other.
+/// The choices the filter popover offers: the file types and places present in every
+/// available source, whatever the sidebar shows, so the choices are the same under every
+/// row and a row's leaves (an area or stack under Places, a person under People), which keep
+/// the row's filter (APP-013), never lose a choice it holds. Every held value also has a row
+/// (`formats(for:holding:)`, `countries(holding:)`), so it can always be seen and cleared.
 nonisolated struct CatalogFilterOptions: Equatable {
     var formatsByKind: [MediaKind: [MediaFormatToken]] = [:]
     /// The countries and towns Maps named for the located items, most items first (ADR 0051).
@@ -423,6 +425,33 @@ nonisolated struct CatalogFilterOptions: Equatable {
     /// Every token is one file type (MediaMetadata's name), so a type is one row.
     func formats(for kind: MediaKind, holding filter: MediaFilter) -> [MediaFormatToken] {
         Set(formatsByKind[kind] ?? []).union(filter.fileTypes(of: kind)).sorted()
+    }
+
+    /// The countries, each with its towns, most items first: those named, plus every place
+    /// `filter` holds that nothing named has — a held town under its country, after the towns
+    /// named, and a held country with no named items after the countries named — so every
+    /// held place can be seen and cleared (a place held in a language no longer the Mac's,
+    /// or whose photos left the catalog).
+    func countries(holding filter: MediaFilter) -> [PlaceFilterCountry] {
+        var heldTowns: [String: Set<String>] = [:]
+        var heldCountries: Set<String> = []
+        for place in filter.places {
+            heldCountries.insert(place.country)
+            if let town = place.town {
+                heldTowns[place.country, default: []].insert(town)
+            }
+        }
+        func withHeldTowns(_ country: String, towns: [String]) -> PlaceFilterCountry {
+            let named = Set(towns)
+            let held = (heldTowns[country] ?? []).subtracting(named).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            return PlaceFilterCountry(name: country, towns: towns + held)
+        }
+        let named = countries.map { withHeldTowns($0.name, towns: $0.towns) }
+        let namedNames = Set(countries.map(\.name))
+        let held = heldCountries.subtracting(namedNames)
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            .map { withHeldTowns($0, towns: []) }
+        return named + held
     }
 }
 

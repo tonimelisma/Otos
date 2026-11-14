@@ -649,7 +649,8 @@ struct ContentView: View {
                 detailReader: viewModel.tileDetailReader,
                 onViewportChanged: viewModel.mapViewportChanged,
                 onClusterClick: viewModel.zoomIntoMapCluster,
-                onClusterDoubleClick: viewModel.openMapCluster,
+                onClusterDoubleClick: viewModel.doubleClickMapCluster,
+                onClusterOpen: viewModel.openMapCluster,
                 clearFilters: viewModel.clearMediaFilter
             )
         } else {

@@ -63,6 +63,64 @@ struct MaterializationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    /// ADR 0027: a download that found its file already local wrote nothing, so the room
+    /// it was committed is given back while other downloads are still in flight; only the
+    /// bytes a download landed stay counted.
+    @Test func aFileAlreadyLocalGivesItsRoomBackWhileOthersAreInFlight() async throws {
+        let held = HeldInteractiveExecutor()
+        let coordinator = MaterializationCoordinator(
+            store: CatalogStore(location: .inMemory),
+            executor: { request in
+                switch request.id.relativePath.rawValue {
+                case "held.jpg":
+                    await held.run(request.id.fileURL)
+                case "local.jpg":
+                    MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
+                default:
+                    MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 0)
+                }
+            },
+            volumeCapacity: { _ in FreeSpaceFloor.bytes + 2500 }
+        )
+        await coordinator.start()
+        let holding = Task {
+            await coordinator.materialize(request("held.jpg", root: "/other", priority: .background, sourceSize: 500))
+        }
+        try await held.waitForStart()
+
+        let local = await coordinator.materialize(request("local.jpg", priority: .background, sourceSize: 1000))
+        #expect(local.outcome == .alreadyMaterialized)
+        // 2500 free, 500 in flight: 2000 left for this one only if the local file's 1000
+        // came back.
+        let next = await coordinator.materialize(request("next.jpg", priority: .background, sourceSize: 1500))
+        #expect(next.outcome == .materialized)
+
+        await coordinator.shutdown()
+        _ = await holding.value
+    }
+
+    /// ENR-008: a command (Move to Trash's download) runs under the bounded background
+    /// persistence, through the executor the app gives the coordinator for a folder's file:
+    /// a provider that refuses twice in a row ends it as `providerUnavailable`, where an
+    /// interactive wait would keep going (`FileMaterializationTests`).
+    @Test func aCommandRunsUnderTheBoundedBackgroundPersistence() async {
+        let refusing = FileMaterializationProviders(
+            status: { _ in .dataless },
+            request: { _ in },
+            probe: { _ async in .providerUnavailable },
+            changes: { _ in AsyncStream { $0.finish() } }
+        )
+        let coordinator = MaterializationCoordinator(
+            store: CatalogStore(location: .inMemory),
+            executor: { await FileMaterialization.materialize($0, providers: refusing) },
+            volumeCapacity: ampleVolumeCapacity
+        )
+        await coordinator.start()
+        let result = await coordinator.materialize(request("trash.jpg", priority: .command))
+        #expect(result.outcome == .providerUnavailable)
+        await coordinator.shutdown()
+    }
+
     @Test func sameIDRequestsShareOnePhysicalTransfer() async throws {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
@@ -435,7 +493,11 @@ struct MaterializationCoordinatorTests {
     /// here instead, which left `inFlightBytes` and `backgroundByRoot` non-zero and tripped
     /// `shutdown()`'s preconditions — a trap that killed the test host and reported as 362
     /// unrelated failures.
-    @Test func theLastInteractiveWaiterLeavingEndsTheTransferAndReleasesAccounting() async throws {
+    ///
+    /// A command transfer (ENR-008) stops the same way: no on-screen demand outlives it, and
+    /// a Move to Trash cancelled before its download lands leaves nothing running.
+    @Test(arguments: [MaterializationCoordinator.Priority.interactive, .command])
+    func theLastWaiterLeavingEndsTheTransferAndReleasesAccounting(priority: MaterializationCoordinator.Priority) async throws {
         let store = CatalogStore(location: .inMemory)
         let executor = HeldInteractiveExecutor()
         let coordinator = MaterializationCoordinator(
@@ -452,7 +514,7 @@ struct MaterializationCoordinatorTests {
         let waiting = Task {
             await coordinator.materialize(
                 MaterializationCoordinator.Request(
-                    id: id, sourceSize: 4096, isVideo: false, priority: .interactive
+                    id: id, sourceSize: 4096, isVideo: false, priority: priority
                 )
             )
         }

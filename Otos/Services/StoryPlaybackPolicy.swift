@@ -3,8 +3,8 @@ import Foundation
 /// Story playback policy guide
 ///
 /// Pure rules for the On This Day story player (ADR 0049). The story plays the scope's
-/// items in the scope's own order — newest anniversary first, newest capture first within
-/// one — so its order is the scope's ordered IDs and its runs are the scope's
+/// items in the scope's own order — newest anniversary first, and within one its Liked
+/// photos and then the newest capture — so its order is the scope's ordered IDs and its runs are the scope's
 /// `OnThisDayAnniversary`s. This type decides where playback starts, what next and previous are,
 /// where it ends, what survives a catalog change, and when a still's hold may start; the
 /// ViewModel (`CatalogWindowViewModelStory.swift`) applies those answers.

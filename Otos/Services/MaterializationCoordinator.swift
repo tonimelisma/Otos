@@ -714,7 +714,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
                     rootPath=\(id.libraryRootPath.rawValue, privacy: .public) \
                     relativePath=\(id.relativePath.rawValue, privacy: .public) \
                     sourceSize=\(entry.request.sourceSize ?? -1, privacy: .public) \
-                    committedBytes=\(ledger.committedBytes, privacy: .public) \
+                    inFlightBytes=\(ledger.inFlightBytes, privacy: .public) \
                     reported=\(reading.reported ?? -1, privacy: .public) \
                     available=\(ledger.available(reported: reading.reported) ?? -1, privacy: .public) \
                     floor=\(FreeSpaceFloor.bytes, privacy: .public)
@@ -731,13 +731,12 @@ actor MaterializationCoordinator: MaterializationRequesting {
         return true
     }
 
-    /// Settles a download's commitment: kept when the file became local, returned
-    /// otherwise, and the volume's ledger dropped once nothing committed is in flight there.
-    private func settleCommitment(of entry: InFlightEntry, landed: Bool) {
+    /// Settles a download's commitment with the bytes its outcome landed (all of them when
+    /// it downloaded the file, none when the file was already local or nothing arrived), and
+    /// drops the volume's ledger once nothing committed is in flight there.
+    private func settleCommitment(of entry: InFlightEntry, outcome: MaterializationOutcome) {
         guard let commit = entry.floorCommit else { return }
-        if !landed {
-            ledgers[commit.volume]?.release(commit.bytes)
-        }
+        ledgers[commit.volume]?.settle(committed: commit.bytes, landed: outcome.landedBytes(of: commit.bytes))
         if !inFlightByID.values.contains(where: { $0.floorCommit?.volume == commit.volume }) {
             ledgers[commit.volume] = nil
         }
@@ -757,7 +756,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
             effectivePriority: entry.effectivePriority
         )
         removeAccounting(for: entry)
-        settleCommitment(of: entry, landed: result.isMaterialized)
+        settleCommitment(of: entry, outcome: result.outcome)
         let deliveredAt = clock.now
         let providerMs = DiagnosticsTiming.milliseconds(from: entry.dispatchedAt, to: providerFinishedAt)
         let completionDeliveryMs = DiagnosticsTiming.milliseconds(from: providerFinishedAt, to: deliveredAt)

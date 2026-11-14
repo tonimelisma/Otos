@@ -27,12 +27,12 @@ struct FreeSpaceLedgerTests {
         #expect(admitted5)
         let admitted6 = ledger.admit(1000, reported: floor + 2500)
         #expect(!admitted6)
-        #expect(ledger.committedBytes == 2000)
+        #expect(ledger.inFlightBytes == 2000)
     }
 
-    /// A landed write stays committed: its bytes are on the disk. A write that left
-    /// nothing behind returns its bytes.
-    @Test func aReleasedWriteReturnsItsBytesAndALandedOneDoesNot() {
+    /// A landed write stays counted: its bytes are on the disk. A write that left nothing
+    /// behind gives its bytes back.
+    @Test func aWriteThatLandedNothingGivesItsBytesBackAndALandedOneDoesNot() {
         var ledger = FreeSpaceLedger()
         let admitted7 = ledger.admit(1000, reported: floor + 2000)
         #expect(admitted7)
@@ -40,10 +40,52 @@ struct FreeSpaceLedgerTests {
         #expect(admitted8)
         let admitted9 = ledger.admit(1000, reported: floor + 2000)
         #expect(!admitted9)
-        ledger.release(1000)
+        ledger.settle(committed: 1000, landed: 0)
         let admitted10 = ledger.admit(1000, reported: floor + 2000)
         #expect(admitted10)
-        #expect(ledger.committedBytes == 2000)
+        #expect(ledger.inFlightBytes == 2000)
+        ledger.settle(committed: 1000, landed: 1000)
+        let admitted11 = ledger.admit(1000, reported: floor + 2000)
+        #expect(!admitted11, "the landed write is still on the disk the figure has not caught up with")
+        #expect(ledger.inFlightBytes == 1000)
+    }
+
+    /// A download that found its file already local wrote nothing: its outcome lands no
+    /// bytes, so its commitment is given back in full (ADR 0027).
+    @Test func aFileAlreadyLocalLandsNothing() {
+        #expect(MaterializationOutcome.alreadyMaterialized.landedBytes(of: 1000) == 0)
+        #expect(MaterializationOutcome.materialized.landedBytes(of: 1000) == 1000)
+        #expect(MaterializationOutcome.timedOut.landedBytes(of: 1000) == 0)
+        var ledger = FreeSpaceLedger()
+        let admitted = ledger.admit(1000, reported: floor + 1500)
+        #expect(admitted)
+        ledger.settle(committed: 1000, landed: MaterializationOutcome.alreadyMaterialized.landedBytes(of: 1000))
+        let next = ledger.admit(1000, reported: floor + 1500)
+        #expect(next, "nothing was written, so the room is still there")
+    }
+
+    /// Space freed while writes are in flight: a figure that rises above the last one is
+    /// live, and the projection is re-based on it less what is still in flight.
+    @Test func freedSpaceIsAdmittedBeforeTheStretchEnds() {
+        var ledger = FreeSpaceLedger()
+        let first = ledger.admit(1000, reported: floor + 1500)
+        #expect(first)
+        let held = ledger.admit(1000, reported: floor + 500)
+        #expect(!held)
+        // The user empties the Trash: the figure rises 10 000 with the first write in flight.
+        let freed = ledger.admit(1000, reported: floor + 10500)
+        #expect(freed)
+        #expect(ledger.available(reported: floor + 10500) == floor + 10500 - 2000)
+    }
+
+    /// A figure that holds still is not live, however many writes land: no re-base.
+    @Test func aFigureThatHoldsStillNeverRebases() {
+        var ledger = FreeSpaceLedger()
+        let first = ledger.admit(1000, reported: floor + 1500)
+        #expect(first)
+        ledger.settle(committed: 1000, landed: 1000)
+        let second = ledger.admit(1000, reported: floor + 1500)
+        #expect(!second)
     }
 
     /// Someone else's write lowers the figure below the projection: the figure is believed.

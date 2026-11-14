@@ -283,20 +283,14 @@ extension FileMaterialization {
         }
     }
 
+    /// Downloads a request's file from its file provider as hard as its priority asks
+    /// (`Persistence.forPriority`): the executor `MaterializationCoordinator` runs for a
+    /// folder's or a card's file.
     nonisolated static func materialize(
-        _ url: URL,
-        persistence: Persistence = .background
+        _ request: MaterializationCoordinator.Request,
+        providers: FileMaterializationProviders = .fileProvider
     ) async -> MaterializationResult {
-        await materialize(
-            url,
-            persistence: persistence,
-            providers: FileMaterializationProviders(
-                status: status(of:),
-                request: requestMaterialization(of:),
-                probe: probeProviderLiveness(of:),
-                changes: attributeChanges(of:)
-            )
-        )
+        await materialize(request.id.fileURL, persistence: .forPriority(request.priority), providers: providers)
     }
 
     nonisolated static func materialize(
@@ -531,6 +525,14 @@ nonisolated struct FileMaterializationProviders {
     /// (the file could not be opened for events) leaves the re-request schedule to wake
     /// the wait.
     let changes: @Sendable (URL) -> AsyncStream<Void>
+
+    /// The file provider itself.
+    static let fileProvider = FileMaterializationProviders(
+        status: FileMaterialization.status(of:),
+        request: FileMaterialization.requestMaterialization(of:),
+        probe: FileMaterialization.probeProviderLiveness(of:),
+        changes: FileMaterialization.attributeChanges(of:)
+    )
 }
 
 /// Outcome of `materializationWakeDecision`: what one wake of the arrival wait does.
@@ -597,6 +599,20 @@ nonisolated enum MaterializationOutcome: Equatable {
         case .requestFailed, .timedOut, .providerUnavailable, .insufficientLocalSpace, .cancelled,
              .statusUnavailable, .deviceUnavailable, .serverUnreachable:
             false
+        }
+    }
+
+    /// The bytes this outcome put on the disk, of a file `size` bytes long, which the
+    /// free-space floor keeps counting (`FreeSpaceLedger.settle`): all of them when a
+    /// download made the file local; none when it was already local, since its bytes were
+    /// already in the volume's figure, or when nothing landed.
+    func landedBytes(of size: Int64) -> Int64 {
+        switch self {
+        case .materialized:
+            size
+        case .alreadyMaterialized, .requestFailed, .timedOut, .providerUnavailable, .insufficientLocalSpace,
+             .cancelled, .statusUnavailable, .deviceUnavailable, .serverUnreachable:
+            0
         }
     }
 

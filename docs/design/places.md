@@ -119,7 +119,8 @@ gutter). Only cells touching the viewport, padded by one cell, are drawn.
 click drills in, as a click on a cluster does on nearly every map, and the double-click
 that ends the drilling opens the photos (owner decision, 2026-11-12). A double-click's
 first click has already started the zoom; what opens is the stack that click landed on,
-not whatever lies under the pointer once the camera moved. An opened stack is its items
+not whatever lies under the pointer once the camera moved, and Back to Map returns to the
+map that first click zoomed from. An opened stack is its items
 by identity, not a box: neighbouring stacks' boxes overlap, and a box would take in
 another stack's items.
 
@@ -164,7 +165,11 @@ countries show, and within a country the first five towns; `Show All 14 Countrie
 `Show All 9 Towns` lists the rest in place and `Show Less` folds it back, and the whole
 list of countries gains `Search Places` once there are more than eight. `No places named
 yet` before any cell is named. Checking a country includes all of it; unchecking one town
-of a checked country narrows it to the rest. A checked place always shows. It narrows the
+of a checked country narrows it to the rest. A checked place always shows, even one
+nothing is named any more (a name in the Mac's previous language, a town whose photos
+left): a held town after its country's named towns, a held country after the named
+countries, so it can be seen and cleared. Names are in the Mac's language; after a
+language change, the list fills again as the cells are named anew. It narrows the
 map and every scope, within the sidebar row it was set in (`docs/design/people.md`, The
 filter's reach).
 

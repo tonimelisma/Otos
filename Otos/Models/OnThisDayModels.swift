@@ -7,14 +7,16 @@ import Foundation
 // `OnThisDayAnniversary` per earlier day that holds a match, in play order. Those days are
 // the day's month and day in earlier years, or — when no earlier year holds one — the
 // day of the month in earlier months (`AnniversaryMatch`). The scope fixes its own order,
-// newest capture first, so an anniversary is one contiguous run of the scope's ordered IDs
+// newest day first and, within a day, its Liked photos and then the newest capture
+// (`OnThisDayPicks.likedFirst`), so an anniversary is one contiguous run of the scope's ordered IDs
 // and the story player walks exactly those runs.
 
 /// One earlier anniversary of On This Day: its run in the scope's play order.
 nonisolated struct OnThisDayAnniversary: Hashable, Sendable, Identifiable {
     /// The day the run was taken on: the anniversary in its year and month.
     let day: CalendarDay
-    /// The run's first item in play order — its newest capture of the day — which stands
+    /// The run's first item in play order — the day's newest Liked photo, else its newest
+    /// capture — which stands
     /// for the anniversary in the collection.
     let keyItem: MediaAssetID
     /// Where the run starts in the scope's ordered IDs.

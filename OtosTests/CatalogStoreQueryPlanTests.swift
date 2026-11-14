@@ -163,6 +163,81 @@ struct CatalogStoreQueryPlanTests {
         #expect(rows.first?.coordinate == PlaceCoordinate(latitude: 60.17, longitude: 24.94))
     }
 
+    /// Place names (ADR 0051): the unnamed cells' read walks the place-cell index in its own
+    /// order — no scan of every location, no temporary sort — and the filter options' read
+    /// starts from the named cells and reaches each located row through that index, not
+    /// from every row of the scope. SQLite generates each row's cell exactly as
+    /// `PlaceCell.init` computes it, on the pole and the 180th meridian too. The launch's
+    /// hand-back of undecodable stills seeks them by their index.
+    @Test func placeCellAndUndecodableReadsAreIndexDriven() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        let coordinates: [(Int64, String, PlaceCoordinate)] = [
+            (rootID1, "a.jpg", PlaceCoordinate(latitude: 60.17, longitude: 24.94)),
+            (rootID1, "b.jpg", PlaceCoordinate(latitude: -33.87, longitude: -0.001)),
+            (rootID2, "c.jpg", PlaceCoordinate(latitude: 90, longitude: 180)),
+        ]
+        try await dbQueue.write { db in
+            for (rootID, path, coordinate) in coordinates {
+                try db.execute(
+                    sql: """
+                    INSERT INTO asset_metadata (library_root_id, relative_path, primary_latitude, primary_longitude)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    arguments: [rootID, path, coordinate.latitude, coordinate.longitude]
+                )
+            }
+        }
+        let scope = CatalogScopePredicate(rootIDs: [rootID1, rootID2])
+
+        let (unnamedPlan, nextPagePlan, optionsPlan, undecodablePlan, cells) = try await dbQueue.read { db in
+            let optionsQuery = try #require(try CatalogQueryGateway.placeOptionsQuery(scope: scope, db: db))
+            return try (
+                explainPlan(db, sql: CatalogQueryGateway.unnamedPlaceCellsSQL(after: false), arguments: ["en-Latn", 32]),
+                explainPlan(db, sql: CatalogQueryGateway.unnamedPlaceCellsSQL(after: true), arguments: [0, 0, "en-Latn", 32]),
+                explainPlan(db, query: optionsQuery),
+                explainPlan(
+                    db,
+                    sql: """
+                    UPDATE media_asset SET rendered_source_size = NULL, rendered_source_mtime = NULL, undecodable_by = NULL
+                    WHERE undecodable_by IS NOT NULL AND undecodable_by <> ?
+                    """,
+                    arguments: ["otos2"]
+                ),
+                Row.fetchAll(
+                    db,
+                    sql: "SELECT relative_path, place_cell_latitude, place_cell_longitude FROM asset_metadata"
+                ).reduce(into: [String: PlaceCell]()) { cells, row in
+                    cells[row["relative_path"]] = PlaceCell(
+                        latitude: row["place_cell_latitude"], longitude: row["place_cell_longitude"]
+                    )
+                }
+            )
+        }
+
+        for plan in [unnamedPlan, nextPagePlan] {
+            #expect(plan.contains("USING INDEX idx_asset_metadata_place_cell"))
+            #expect(!plan.contains("SCAN"))
+            #expect(!usesTemporarySort(plan))
+        }
+        #expect(optionsPlan.contains("SEARCH place_metadata USING INDEX idx_asset_metadata_place_cell"))
+        #expect(!optionsPlan.contains("SCAN media_asset"))
+        #expect(!optionsPlan.contains("SCAN place_metadata"))
+        #expect(undecodablePlan.contains("USING INDEX idx_media_asset_undecodable"))
+        #expect(!undecodablePlan.contains("SCAN media_asset"))
+        for (_, path, coordinate) in coordinates {
+            #expect(cells[path] == PlaceCell(coordinate))
+        }
+        #expect(cells["c.jpg"] == PlaceCell(latitude: 4499, longitude: 8999))
+    }
+
     @Test func enrichmentClaimUpdateReturningClaimsRows() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")

@@ -214,10 +214,7 @@ struct CatalogFilterPopoverContent: View {
     private var placesSection: some View {
         let filter = descriptor.filter
         let query = placesQuery.trimmingCharacters(in: .whitespaces)
-        var countries = options.countries
-        for held in filter.places where !countries.contains(where: { $0.name == held.country }) {
-            countries.append(PlaceFilterCountry(name: held.country, towns: held.town.map { [$0] } ?? []))
-        }
+        let countries = options.countries(holding: filter)
         let head = FilterListHead.rows(
             countries, isChecked: { country in filter.places.contains { $0.country == country.name } },
             isExpanded: showsAllCountries

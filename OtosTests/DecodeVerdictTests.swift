@@ -105,10 +105,12 @@ struct DecodeVerdictTests {
         try await fresh.start(scansSavedLibraries: false)
         await fresh.shutdown()
         try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+            // Back to before v25, and v44, which indexes its column.
+            try db.execute(sql: "DROP INDEX idx_media_asset_undecodable")
             try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN undecodable_by")
             try db.execute(
-                sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
-                arguments: [CatalogSchema.decodeVerdictMigrationIdentifier]
+                sql: "DELETE FROM grdb_migrations WHERE identifier IN (?, ?)",
+                arguments: [CatalogSchema.decodeVerdictMigrationIdentifier, CatalogSchema.undecodableIndexMigrationIdentifier]
             )
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
             try Self.insertStampedStill("fallback.jpg", undecodableBy: nil, preview: nil, db: db, withVerdictColumn: false)

@@ -569,13 +569,12 @@ actor MediaTrashCoordinator {
         return volume
     }
 
-    /// Settles a download's commitment: kept when its bytes are on the disk, returned
-    /// otherwise, and the volume's ledger dropped once nothing of Otos's is in flight there.
-    private func settleCommitment(of id: MediaAssetID, landed: Bool) {
+    /// Settles a download's commitment with the bytes its members' downloads landed (none
+    /// for a member already local), and drops the volume's ledger once nothing of Otos's is in
+    /// flight there.
+    private func settleCommitment(of id: MediaAssetID, landedBytes: Int64) {
         guard let commit = downloadCommits.removeValue(forKey: id) else { return }
-        if !landed {
-            ledgers[commit.volume]?.release(commit.bytes)
-        }
+        ledgers[commit.volume]?.settle(committed: commit.bytes, landed: min(landedBytes, commit.bytes))
         if !downloadCommits.values.contains(where: { $0.volume == commit.volume }) {
             ledgers[commit.volume] = nil
         }
@@ -586,7 +585,7 @@ actor MediaTrashCoordinator {
         precondition(!isShuttingDown, "a download started after shutdown would outlive it")
         downloadCommits[item.id] = (volume, bytes)
         guard let materializationRequester else {
-            settleCommitment(of: item.id, landed: false)
+            settleCommitment(of: item.id, landedBytes: 0)
             OtosLog.catalog.errorOperation("mediaTrash.path", phase: "failed", fields: [
                 "reason": "noMaterializer", "path": item.id.relativePath.rawValue,
             ])
@@ -609,20 +608,22 @@ actor MediaTrashCoordinator {
         let id = item.id
         downloads[id] = Task { [weak self] in
             var outcome: MaterializationOutcome = .alreadyMaterialized
+            var landed: Int64 = 0
             for request in requests {
                 let result = await materializationRequester.materialize(request)
+                landed += result.outcome.landedBytes(of: request.sourceSize ?? 0)
                 if !result.isMaterialized {
                     outcome = result.outcome
                     break
                 }
             }
-            await self?.finishDownload(id, outcome: outcome)
+            await self?.finishDownload(id, outcome: outcome, landedBytes: landed)
         }
     }
 
-    private func finishDownload(_ id: MediaAssetID, outcome: MaterializationOutcome) {
+    private func finishDownload(_ id: MediaAssetID, outcome: MaterializationOutcome, landedBytes: Int64) {
         downloads[id] = nil
-        settleCommitment(of: id, landed: outcome == .alreadyMaterialized || outcome == .materialized)
+        settleCommitment(of: id, landedBytes: landedBytes)
         guard !isShuttingDown else { return }
         switch outcome {
         case .alreadyMaterialized, .materialized:

@@ -155,10 +155,21 @@ struct CatalogWindowViewModelMapTests {
         #expect(after.bounds.width <= shown.width / 4)
         #expect(abs(MapClusterPolicy.region(of: after.bounds).centerLatitude - 60.175) < 0.001)
 
-        model.openMapCluster(clusters[0])
-        #expect(model.queryDescriptor.scope == .mapStack(MapStack(members: located.map(\.id))))
+        model.doubleClickMapCluster(clusters[0])
+        let stack = SidebarSelection.mapStack(MapStack(members: located.map(\.id)))
+        #expect(model.queryDescriptor.scope == stack)
         #expect(model.showsMapAreaLeaf)
         #expect(model.viewMode == .grid)
+
+        // The first click's flight settles after the stack opened; Back still returns to the
+        // map the double-click left, not to the zoom its first click started.
+        model.mapViewportChanged(viewport(latitudinalMeters: 50000))
+        model.applyState(windowState(model, scope: stack, ids: located.map(\.id)))
+        model.returnToPlaces()
+        model.applyState(windowState(model, scope: .places, ids: located.map(\.id), map: CatalogMapState(located: located)))
+        let back = try #require(model.mapCameraRequest)
+        #expect(back.revision == after.revision + 1)
+        #expect(back.bounds == MapClusterPolicy.bounds(of: shown))
     }
 
     /// MapKit clamps a camera past its zoom-out. The viewport that follows a fit's own

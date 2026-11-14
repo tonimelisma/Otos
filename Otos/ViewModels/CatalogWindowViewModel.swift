@@ -542,6 +542,12 @@ final class CatalogWindowViewModel {
     /// with margin exceeds its zoom-out at a window's width), so the fit is checked
     /// against the viewport that followed it and re-asked once without margin.
     @ObservationIgnored var mapPendingFit: (revision: UInt64, padded: Bool)?
+    /// The stack the newest click zoomed into and the viewport it zoomed from, until the
+    /// next click, open or area: a double-click's first click (`doubleClickMapCluster`).
+    @ObservationIgnored var mapClusterZoom: (cluster: MediaAssetID, from: MapViewport)?
+    /// The map the user left for an area or a stack, which Back returns to: taken when they
+    /// leave, so a camera flight that settles after does not move it (APP-058).
+    @ObservationIgnored var mapLeftViewport: MapViewport?
     /// `NSApplication.willTerminateNotification` registration that saves the place.
     @ObservationIgnored var terminationObserver: (any NSObjectProtocol)?
     @ObservationIgnored let previewLoader: any PreviewLoading
@@ -709,10 +715,7 @@ final class CatalogWindowViewModel {
                     }
                     return await immichAccounts.downloadOriginal(request)
                 case .library, .removableVolume, nil:
-                    return await FileMaterialization.materialize(
-                        request.id.fileURL,
-                        persistence: .forPriority(request.priority)
-                    )
+                    return await FileMaterialization.materialize(request)
                 }
             },
             volumeCapacity: volumeCapacity
