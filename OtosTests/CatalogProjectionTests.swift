@@ -122,7 +122,8 @@ struct CatalogProjectionTests {
         let state = await projection.windowState(fixture: fixture, sidebarSelection: .allMedia)
 
         #expect(state.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["shown.jpg"])
-        #expect(state.mediaEmptyState == .noMedia)
+        // A scope with items has no empty state to say.
+        #expect(state.mediaEmptyState == nil)
     }
 
     @Test func allMediaEmptyStateDistinguishesUnavailableCatalogedMedia() async {

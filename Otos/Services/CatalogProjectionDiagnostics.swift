@@ -148,7 +148,7 @@ nonisolated struct CatalogProjectionPublicationDiagnostics {
                 "sidebarSelection": selectedSidebarRow.diagnosticDescription,
                 "resolvedSidebarSelection": state.resolvedSidebarSelection.diagnosticDescription,
                 "retainedResolvedSelection": "\(retainedResolvedSelection)",
-                "emptyState": state.mediaEmptyState.diagnosticDescription,
+                "emptyState": state.mediaEmptyState?.diagnosticDescription ?? "none",
                 "searchPhase": state.searchPhase.map { "\($0)" } ?? "none",
                 "storeReadMs": "\(storeReadMs)",
                 "projectionMs": "\(projectionMs)",

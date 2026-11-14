@@ -8,15 +8,21 @@ import Testing
 /// scene labels that gate a query naming a thing.
 @Suite(.testDirectory)
 struct SearchReadingTests {
+    /// Whether `query` matches `text` as a search pass matches it (`PhotoSearchIndex`): the
+    /// reading kept folded, the query's words read once.
+    private static func matches(_ query: String, in text: String) -> Bool {
+        SearchTextQuery(query).matches(folded: SearchTextReading.folded(text))
+    }
+
     @Test func typedWordsMatchAtTheStartOfAWord() {
         let text = "STARBUCKS Coffee\nMenu · Café crème 4,50 €"
-        #expect(SearchTextReading.matches(query: "starbucks", in: text))
-        #expect(SearchTextReading.matches(query: "cafe CREME", in: text))
-        #expect(SearchTextReading.matches(query: "coff", in: text))
-        #expect(!SearchTextReading.matches(query: "bucks", in: text))
-        #expect(!SearchTextReading.matches(query: "starbucks tea", in: text))
-        #expect(!SearchTextReading.matches(query: "a", in: text))
-        #expect(SearchTextReading.matches(query: "咖啡", in: "星巴克咖啡"))
+        #expect(Self.matches("starbucks", in: text))
+        #expect(Self.matches("cafe CREME", in: text))
+        #expect(Self.matches("coff", in: text))
+        #expect(!Self.matches("bucks", in: text))
+        #expect(!Self.matches("starbucks tea", in: text))
+        #expect(!Self.matches("a", in: text))
+        #expect(Self.matches("咖啡", in: "星巴克咖啡"))
     }
 
     @Test func aQueryNamingAThingIsGatedAndAPhraseIsNot() throws {
@@ -41,7 +47,7 @@ struct SearchReadingTests {
     @Test func textInAPictureIsRead() throws {
         let image = try #require(Self.picture(saying: "OTOS SEARCH 2026"))
         let read = try Self.readAsTheIndexDoes(image)
-        #expect(SearchTextReading.matches(query: "otos search", in: SearchTextReading.searchable(read)))
+        #expect(Self.matches("otos search", in: SearchTextReading.searchable(read)))
         #expect(SearchTextReading.certain(read) == ["OTOS SEARCH 2026"])
         let blank = SearchModelTests.solid(red: 0.4, green: 0.5, blue: 0.6, width: 1200, height: 800)
         #expect(try Self.readAsTheIndexDoes(blank).isEmpty)

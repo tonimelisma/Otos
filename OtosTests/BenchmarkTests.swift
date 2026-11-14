@@ -120,6 +120,36 @@ struct BenchmarkTests {
             }
             #expect(built.people.count >= 20)
         }
+
+        // What a faces write costs the window and the derived owners once it settles: the
+        // window's pass, and a build of each owner whose answer is built from faces
+        // (`PeopleAssignment.inputs`, `DuplicatesProjection.inputs`). A new person is a faces
+        // write that leaves every face where it was.
+        let window = CatalogProjection(cadence: .milliseconds(25))
+        let states = await window.states(store: store, initialDescriptor: .default)
+        let consuming = Task {
+            for await _ in states {}
+        }
+        defer { consuming.cancel() }
+        func settled() async throws {
+            try await waitUntil {
+                let windowSettled = await window.isQuiescent
+                let duplicatesSettled = await window.duplicatesAreQuiescent
+                let peopleSettled = await window.peopleAreQuiescent
+                return windowSettled && duplicatesSettled && peopleSettled
+            }
+        }
+        try await settled()
+        var added = 0
+        try await Benchmark.measure("projection.derived.afterFacesWrite", iterations: 3) {
+            added += 1
+            let heard = await window.detailRefreshGeneration
+            _ = try await store.perform(.moveToNewPerson([], name: "Benchmark \(added)"))
+            // The projection has taken the change in; from then on it is not quiescent until
+            // its pass has asked the owners, and they are not until their builds are done.
+            try await waitUntil { await window.detailRefreshGeneration > heard }
+            try await settled()
+        }
         await store.shutdown()
     }
 
@@ -287,7 +317,7 @@ struct BenchmarkTests {
         var next = owner
         try await Benchmark.measure("grid.structuralApply.days5000") {
             controller.receive(next)
-            try await awaitGridApply(controller, expectedIDs: next.orderedAssetIDs)
+            try await awaitGridShows(controller, next)
             controller.collectionView.layoutSubtreeIfNeeded()
             #expect(controller.collectionView.numberOfSections == 5000)
             next = next.orderedAssetIDs == owner.orderedAssetIDs ? other : owner

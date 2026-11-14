@@ -591,7 +591,7 @@ extension VideoFaceTests {
     }
 
     /// Only AVFoundation's word that it cannot decode the bytes is a verdict, by domain and
-    /// code. An unknown error, a failed decode (which the same video has answered once and
+    /// code, and for a truncated AVI's `unknown` by its underlying status. Another unknown error, a failed decode (which the same video has answered once and
     /// then read cleanly), a network error and a failed analysis are failed reads.
     @Test func onlyAVFoundationsWordThatItCannotDecodeIsAVerdict() {
         struct AnalysisFailed: Error {}
@@ -600,9 +600,20 @@ extension VideoFaceTests {
             #expect(VideoFaceReader.isUndecodable(AVError(code)), "\(code)")
             #expect(VideoFaceReader.isUndecodable(NSError(domain: AVFoundationErrorDomain, code: code.rawValue)), "\(code) as NSError")
         }
+        func unknown(over status: Int) -> NSError {
+            NSError(domain: AVFoundationErrorDomain, code: AVError.Code.unknown.rawValue, userInfo: [
+                NSUnderlyingErrorKey: NSError(domain: NSOSStatusErrorDomain, code: status),
+            ])
+        }
+        // A truncated AVI's answer: `unknown` over -12344, on every read.
+        #expect(VideoFaceReader.isUndecodable(unknown(over: -12344)))
         let failures: [any Error] = [
             AVError(.unknown), AVError(.decodeFailed), URLError(.timedOut), AnalysisFailed(),
             FaceAnalysisError.modelUnavailable(description: "missing"),
+            unknown(over: -17761),
+            NSError(domain: AVFoundationErrorDomain, code: AVError.Code.unknown.rawValue, userInfo: [
+                NSUnderlyingErrorKey: NSError(domain: NSCocoaErrorDomain, code: -12344),
+            ]),
         ]
         for failure in failures {
             #expect(!VideoFaceReader.isUndecodable(failure), "\(failure)")

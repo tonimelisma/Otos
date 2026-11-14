@@ -12,7 +12,7 @@ import SwiftUI
 struct OnThisDayView: View {
     let onThisDay: CatalogOnThisDayState?
     let today: CalendarDay
-    let emptyState: CatalogMediaEmptyState
+    let emptyState: CatalogMediaEmptyState?
     let focusRequest: OnThisDayFocusRequest?
     var tileContentStore: TileContentStore?
     var thumbnailDirectory: URL?
@@ -37,7 +37,7 @@ struct OnThisDayView: View {
             )
             if let anniversaries = onThisDay?.anniversaries, !anniversaries.isEmpty {
                 cards(anniversaries)
-            } else {
+            } else if let emptyState {
                 CatalogMediaEmptyStateView(emptyState: emptyState, clearFilters: clearFilters)
                     .background(DesignPalette.content(for: colorScheme))
             }

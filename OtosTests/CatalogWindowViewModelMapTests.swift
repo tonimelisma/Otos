@@ -418,7 +418,7 @@ struct CatalogWindowViewModelMapTests {
             ),
             filterOptions: .empty,
             resolvedSidebarSelection: scope,
-            mediaEmptyState: ids.isEmpty ? .noLocatedMedia : .noMedia,
+            mediaEmptyState: ids.isEmpty ? .noLocatedMedia : nil,
             deviceConnectionBanner: nil,
             map: map,
             queryGeneration: generation ?? model.queryGeneration

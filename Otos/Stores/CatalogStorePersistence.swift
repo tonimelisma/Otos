@@ -341,6 +341,11 @@ extension CatalogStore {
         migrator.registerMigration(CatalogSchema.wholeSecondCaptureLocalMigrationIdentifier) { db in
             try CatalogSchema.migrateToWholeSecondCaptureLocal(db)
         }
+        migrator.registerMigration(CatalogSchema.assignedFacePhotoIndexMigrationIdentifier) { db in
+            for statement in CatalogSchema.assignedFacePhotoIndexStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

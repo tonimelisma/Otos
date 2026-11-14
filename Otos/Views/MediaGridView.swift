@@ -7,7 +7,7 @@ struct MediaGridView: View {
     let title: String
     let grid: CatalogMediaGridState
     var tileContentStore: TileContentStore?
-    let emptyState: CatalogMediaEmptyState
+    let emptyState: CatalogMediaEmptyState?
     let deviceConnectionBanner: CatalogDeviceConnectionBanner?
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
@@ -57,7 +57,9 @@ struct MediaGridView: View {
 
             Group {
                 if grid.orderedAssetIDs.isEmpty {
-                    CatalogMediaEmptyStateView(emptyState: emptyState, clearFilters: clearFilters)
+                    if let emptyState {
+                        CatalogMediaEmptyStateView(emptyState: emptyState, clearFilters: clearFilters)
+                    }
                 } else {
                     MediaGridBridgeView(
                         grid: grid,
@@ -119,7 +121,7 @@ struct MediaGridView: View {
             scope: .allMedia,
             orderedAssetIDs: [asset.id]
         ),
-        emptyState: .noMedia,
+        emptyState: nil,
         deviceConnectionBanner: nil
     )
 }

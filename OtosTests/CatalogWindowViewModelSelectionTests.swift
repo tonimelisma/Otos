@@ -161,7 +161,7 @@ struct CatalogWindowViewModelSelectionTests {
         let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)
         controller.receive(grid)
         // Drive apply to completion: receive starts apply; wait for async completion.
-        try await awaitGridApply(controller, expectedIDs: ids)
+        try await awaitGridShows(controller, grid)
 
         #expect(model.gridSelection.selection == expected)
         #expect(controller.selectedIdentities() == expected)
@@ -180,7 +180,7 @@ struct CatalogWindowViewModelSelectionTests {
         strip.selectionHandlers = .from(model)
         let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)
         strip.receive(grid)
-        try await awaitGridApply(strip, expectedIDs: ids)
+        try await awaitGridShows(strip, grid)
         #expect(model.gridSelection.selection == [ids[2]])
         #expect(strip.selectedIdentities() == [ids[2]])
 
@@ -189,7 +189,7 @@ struct CatalogWindowViewModelSelectionTests {
         _ = gridController.view
         gridController.selectionHandlers = .from(model)
         gridController.receive(grid)
-        try await awaitGridApply(gridController, expectedIDs: ids)
+        try await awaitGridShows(gridController, grid)
         #expect(model.gridSelection.selection == [ids[2]])
         #expect(gridController.selectedIdentities() == [ids[2]])
     }
@@ -233,7 +233,7 @@ private func makeWindowState(
         ),
         filterOptions: .empty,
         resolvedSidebarSelection: descriptor.scope,
-        mediaEmptyState: orderedIDs.isEmpty ? .noMedia : .noMedia,
+        mediaEmptyState: orderedIDs.isEmpty ? .noMedia : nil,
         deviceConnectionBanner: nil,
         queryGeneration: 0
     )

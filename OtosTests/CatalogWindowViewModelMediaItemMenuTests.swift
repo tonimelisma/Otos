@@ -19,7 +19,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         controller.selectionHandlers = .from(model)
         controller.contextMenu = model.makeMediaItemContextMenu
         controller.receive(model.state.mediaGrid)
-        try await awaitGridApply(controller, expectedIDs: ids)
+        try await awaitGridShows(controller, model.state.mediaGrid)
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
         _ = model.applyGridClick(hit: ids[1], modifiers: [.command], orderedIDs: ids)
 
@@ -40,7 +40,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         controller.selectionHandlers = .from(model)
         controller.contextMenu = model.makeMediaItemContextMenu
         controller.receive(model.state.mediaGrid)
-        try await awaitGridApply(controller, expectedIDs: ids)
+        try await awaitGridShows(controller, model.state.mediaGrid)
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
         _ = model.applyGridClick(hit: ids[2], modifiers: [.shift], orderedIDs: ids)
 

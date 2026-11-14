@@ -455,7 +455,7 @@ struct CatalogOnThisDayScopeTests {
             selectedAssetCount: 0
         )
         #expect(empty == .nothingOnThisDay(Self.today))
-        #expect(empty.title == "Nothing on This Day")
+        #expect(empty?.title == "Nothing on This Day")
         #expect(filtered == .noFilterMatches)
         // Another scope publishes no anniversaries.
         #expect(CatalogWindowPolicy.onThisDayState(

@@ -97,8 +97,8 @@ struct ProjectionEnrichmentCoalescingTests {
     }
 
     /// Store-level oracle: a batch that changes no capture date, kind, format, grouping
-    /// identifier or location names its detail alone; one that changes the capture date
-    /// names it.
+    /// identifier or location names its detail and what it wrote — its record, its rendering
+    /// and its digest — and none of those; one that changes the capture date names it.
     @Test func enrichmentNotificationNamesWhatTheBatchChanged() async throws {
         let (store, state) = try await seededStore()
         let asset = try #require(state.testAssets.first)
@@ -116,13 +116,13 @@ struct ProjectionEnrichmentCoalescingTests {
 
         _ = await store.applyEnrichmentBatch([detailEnrichment(for: asset)])
         let detail = await changes.waitForValues { $0.count == 1 }
-        #expect(detail.last == .changed([.detail, .copies]))
+        #expect(detail.last == .changed([.detail, .copies, .mediaRecord, .images]))
 
         _ = await store.applyEnrichmentBatch([
             detailEnrichment(for: asset, captureDate: Self.baseDate.addingTimeInterval(1_000_000)),
         ])
         let dated = await changes.waitForValues { $0.count == 2 }
-        #expect(dated.last == .changed([.detail, .copies, .captureDate]))
+        #expect(dated.last == .changed([.detail, .copies, .mediaRecord, .images, .captureDate]))
     }
 
     /// End-to-end: detail-only enrichment batches read neither the order nor the options; a

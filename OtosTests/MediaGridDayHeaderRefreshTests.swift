@@ -78,10 +78,10 @@ extension AppKitWindowTests {
             harness.receive(first)
             #expect(harness.controller.mutationGate.inFlight == .structuralApply)
             #expect(harness.controller.collectionView.numberOfSections == 0)
-            harness.receive(second)
+            let secondGrid = harness.receive(second)
             #expect(harness.controller.mutationGate.stallDiagnosticFields["pendingGrid"] == "true")
 
-            try await awaitGridApply(harness.controller, expectedIDs: second.map(\.0))
+            try await awaitGridShows(harness.controller, secondGrid)
             let applied = harness.controller.structure
             #expect(applied.orderedIDs == second.map(\.0))
             #expect(harness.controller.collectionView.numberOfSections == 2)
@@ -124,21 +124,21 @@ private final class DayHeaderHarness {
 
     /// Hands the controller a grid of `entries` in order, each with its day bucket, as the
     /// view model does.
-    func receive(_ entries: [(MediaAssetID, Date)]) {
-        controller.receive(
-            CatalogMediaGridState(
-                scope: .allMedia,
-                orderedAssetIDs: entries.map(\.0),
-                dayBuckets: entries.map(\.1)
-            )
+    @discardableResult
+    func receive(_ entries: [(MediaAssetID, Date)]) -> CatalogMediaGridState {
+        let grid = CatalogMediaGridState(
+            scope: .allMedia,
+            orderedAssetIDs: entries.map(\.0),
+            dayBuckets: entries.map(\.1)
         )
+        controller.receive(grid)
+        return grid
     }
 
     /// One structural apply of `entries` through the controller's gate, then the layout
     /// pass that puts the result on screen.
     func apply(_ entries: [(MediaAssetID, Date)]) async throws {
-        receive(entries)
-        try await awaitGridApply(controller, expectedIDs: entries.map(\.0))
+        try await awaitGridShows(controller, receive(entries))
         controller.view.layoutSubtreeIfNeeded()
         controller.collectionView.layoutSubtreeIfNeeded()
     }

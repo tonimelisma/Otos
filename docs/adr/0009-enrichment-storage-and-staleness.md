@@ -79,8 +79,10 @@ This ADR owns:
   transient instead was rejected: it would retry on every pass and show the file as
   unreadable, blaming the file for the decoder.
 - A video AVFoundation says it cannot decode follows the same rule: its format is not one
-  AVFoundation recognises, its bytes do not parse, there is no decoder for them, or there is
-  no image at a sampled time (`VideoFaceReader.isUndecodable`, by domain and code). Its faces
+  AVFoundation recognises, its bytes do not parse, there is no decoder for them, there is
+  no image at a sampled time, or it answers `unknown` over -12344, which every truncated AVI
+  tried answers on every read (`VideoFaceReader.isUndecodable`, by domain and code, and for
+  `unknown` by its underlying status). Its faces
   are stamped with none and `undecodable_by` names the frame reader's decoder, Otos's
   video revision and the macOS build (`VideoFaceReader.decoderIdentity`); at launch a video
   another decoder could not read loses its faces stamp and is read again (ENR-031). Each

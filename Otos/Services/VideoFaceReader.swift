@@ -41,18 +41,31 @@ nonisolated enum VideoFaceReader {
     /// to the bytes it was given, and every read of them gives it again (measured on the
     /// owner's library: 67 videos each answered the same code on every read, up to 33 reads
     /// in three days, `docs/research/2026-11-14-videos-avfoundation-cannot-decode.md`).
-    /// Classified by domain and code only. Anything else — an unknown error, a failed decode,
-    /// which the same file has answered once and then read cleanly, a failed analysis — is
-    /// not a verdict: the read failed, and the video's faces stay owed.
+    /// One `unknown` is a verdict too, by its underlying status: an AVI whose data stops
+    /// before its header says it does (`truncatedAVIStatus`). Every truncation of an AVI
+    /// tried answered it on every read, an intact AVI answered `decodeFailed`, and truncated
+    /// MP4 and MOV files answered other codes; in the owner's log only three truncated AVIs
+    /// answered it (`docs/research/2026-11-14-derived-owners-and-face-checks.md`).
+    /// Classified by domain and code only, and the underlying status's domain and code.
+    /// Anything else — another unknown error (an outage once gave MKVs `unknown` over
+    /// -17761), a failed decode, which the same file has answered once and then read
+    /// cleanly, a failed analysis — is not a verdict: the read failed, and the video's faces
+    /// stay owed.
     static func isUndecodable(_ error: any Error) -> Bool {
         guard let error = error as? AVError else { return false }
         switch error.code {
         case .fileFormatNotRecognized, .fileFailedToParse, .failedToParse, .decoderNotFound, .noImageAtTime:
             return true
+        case .unknown:
+            let underlying = (error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError
+            return underlying?.domain == NSOSStatusErrorDomain && underlying?.code == truncatedAVIStatus
         default:
             return false
         }
     }
+
+    /// The status under AVFoundation's `unknown` for an AVI whose data is cut short.
+    static let truncatedAVIStatus = -12344
 
     /// A video's faces, one per person, with their frames staged under `finalRelativeName`.
     /// No faces when the video has no video track. Throws when a frame could not be read or
@@ -85,29 +98,23 @@ nonisolated enum VideoFaceReader {
         )
     }
 
-    /// The frames at `samples`, in order; none for a video with no video track. Throws, and
-    /// logs, when the duration or any frame cannot be read: an unread frame is not a frame
-    /// without faces (ADR 0032), so a partial read is never stamped.
+    /// The frames at `samples`, in order; none for a video with no video track. Throws when
+    /// the duration or any frame cannot be read: an unread frame is not a frame without faces
+    /// (ADR 0032), so a partial read is never stamped. The caller logs what the read came to,
+    /// once, with the error.
     @concurrent
     static func frames(of asset: AVURLAsset) async throws -> [CGImage] {
-        do {
-            guard try await !asset.loadTracks(withMediaType: .video).isEmpty else { return [] }
-            let duration = try await asset.load(.duration)
-            let generator = AVAssetImageGenerator(asset: asset)
-            generator.appliesPreferredTrackTransform = true
-            generator.requestedTimeToleranceBefore = .zero
-            generator.requestedTimeToleranceAfter = .zero
-            var frames: [CGImage] = []
-            for fraction in samples {
-                try await frames.append(generator.image(at: CMTimeMultiplyByFloat64(duration, multiplier: fraction)).image)
-            }
-            return frames
-        } catch {
-            OtosLog.mediaIO.errorOperation("videoFaces.frames", phase: "unreadable", fields: [
-                "path": asset.url.lastPathComponent, "error": String(describing: error),
-            ])
-            throw error
+        guard try await !asset.loadTracks(withMediaType: .video).isEmpty else { return [] }
+        let duration = try await asset.load(.duration)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        var frames: [CGImage] = []
+        for fraction in samples {
+            try await frames.append(generator.image(at: CMTimeMultiplyByFloat64(duration, multiplier: fraction)).image)
         }
+        return frames
     }
 
     /// One face per person across `frames`, each frame's faces in reading order: the face and

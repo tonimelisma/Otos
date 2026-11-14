@@ -391,8 +391,8 @@ extension CatalogWindowViewModel {
         shownPerson?.displayName ?? state.title
     }
 
-    /// The published empty state.
-    var mediaEmptyState: CatalogMediaEmptyState {
+    /// The published empty state; nil while the scope holds items.
+    var mediaEmptyState: CatalogMediaEmptyState? {
         state.mediaEmptyState
     }
 

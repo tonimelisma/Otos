@@ -31,9 +31,10 @@ import OSLog
 ///
 /// The duplicate groups and People have their own owners, `DuplicatesProjection` and
 /// `PeopleAssignment`, each with its own loop. A pass publishes the window with what they
-/// last built and, when it took up a catalog change (`derivedRequested`), asks both owners
-/// for a build, or People for its unchecked tally alone when rows were only added
-/// (`tallyRequested`); it never waits for one. Builds come back on `duplicatesTask` and
+/// last built and, when it took up a catalog change of a kind an owner's answer is built from
+/// (`DuplicatesProjection.inputs`, `PeopleAssignment.inputs`), asks that owner for a build
+/// (`duplicatesRequested`, `peopleRequested`), or People for its unchecked tally alone when
+/// rows were only added (`tallyRequested`); it never waits for one. Builds come back on `duplicatesTask` and
 /// `peopleTask` and go out by republishing the last state with them. So detection and
 /// grouping never hold back the sidebar or the grid, and a change of scope, filter or sort
 /// never rebuilds them, since neither depends on it.
@@ -94,12 +95,16 @@ actor CatalogProjection {
     private var searchTask: Task<Void, Never>?
     private var searchQueryTask: Task<Void, Never>?
     private var duplicatesTask: Task<Void, Never>?
-    /// Bumped by every catalog change and by a new subscription: the duplicate groups and
-    /// People may differ.
-    private var derivedRequested: UInt64 = 0
-    /// The `derivedRequested` value last passed on to `duplicatesProjection` and
-    /// `peopleAssignment`.
-    private var derivedForwarded: UInt64 = 0
+    /// Bumped by a new subscription and by every catalog change of a kind the groups are
+    /// built from (`DuplicatesProjection.inputs`): the groups may differ.
+    private var duplicatesRequested: UInt64 = 0
+    /// The `duplicatesRequested` value last passed on to `duplicatesProjection`.
+    private var duplicatesForwarded: UInt64 = 0
+    /// Bumped by a new subscription and by every catalog change of a kind People reads
+    /// (`PeopleAssignment.inputs`): who the faces are may differ.
+    private var peopleRequested: UInt64 = 0
+    /// The `peopleRequested` value last passed on to `peopleAssignment`.
+    private var peopleForwarded: UInt64 = 0
     /// Bumped by rows only added: they carry nothing the groups or the assignment are built
     /// from, but each new still is one People's tally counts as not yet checked.
     private var tallyRequested: UInt64 = 0
@@ -332,7 +337,8 @@ private extension CatalogProjection {
         self.duplicatesProjection = duplicatesProjection
         let peopleAssignment = PeopleAssignment(store: store, builder: peopleBuilder)
         self.peopleAssignment = peopleAssignment
-        derivedRequested &+= 1
+        duplicatesRequested &+= 1
+        peopleRequested &+= 1
         duplicatesTask = Task { [weak self, duplicatesProjection] in
             await duplicatesProjection.start()
             for await built in duplicatesProjection.builds {
@@ -415,11 +421,17 @@ private extension CatalogProjection {
         detailRefreshGeneration &+= 1
         factRevisions.record(change.facts)
         // Rows that were only added carry nothing the groups or the assignment are built
-        // from; they change People's unchecked tally alone.
+        // from; they change People's unchecked tally alone. Any other change asks each owner
+        // whose answer is built from a kind of fact it touched.
         if change == .assetsAdded {
             tallyRequested &+= 1
         } else {
-            derivedRequested &+= 1
+            if !change.facts.isDisjoint(with: DuplicatesProjection.inputs) {
+                duplicatesRequested &+= 1
+            }
+            if !change.facts.isDisjoint(with: PeopleAssignment.inputs) {
+                peopleRequested &+= 1
+            }
         }
         requestPublication(ringNow: publishedBeforeCatalogLoad)
     }
@@ -434,7 +446,8 @@ private extension CatalogProjection {
         runningPasses += 1
         defer { runningPasses -= 1 }
         let startedFrom = requested
-        let derivedStartedFrom = derivedRequested
+        let duplicatesStartedFrom = duplicatesRequested
+        let peopleStartedFrom = peopleRequested
         let tallyStartedFrom = tallyRequested
         let startedReads = reads
         let startedRevisions = factRevisions
@@ -535,19 +548,23 @@ private extension CatalogProjection {
         reads = passReads
         covered = startedFrom
         ringIfBehind()
-        // An injected test builder derives nothing. Otherwise a pass that took up a catalog
-        // change asks both owners for a build, and one that took up only added rows asks
-        // People for its tally; it waits for neither.
+        // An injected test builder derives nothing. Otherwise a pass that took up a change
+        // an owner's answer is built from asks that owner for a build, and one that took up
+        // added rows asks People for its tally; it waits for neither.
         guard stateBuilder == nil, let duplicatesProjection, let peopleAssignment else {
             return
         }
-        let asksBuild = derivedStartedFrom != derivedForwarded
+        let asksDuplicates = duplicatesStartedFrom != duplicatesForwarded
+        let asksPeople = peopleStartedFrom != peopleForwarded
         let asksTally = tallyStartedFrom != tallyForwarded
-        derivedForwarded = derivedStartedFrom
+        duplicatesForwarded = duplicatesStartedFrom
+        peopleForwarded = peopleStartedFrom
         tallyForwarded = tallyStartedFrom
-        if asksBuild {
-            // A full People pass reads the tally too.
+        if asksDuplicates {
             await duplicatesProjection.request()
+        }
+        if asksPeople {
+            // A full People pass reads the tally too.
             await peopleAssignment.request()
         } else if asksTally {
             await peopleAssignment.requestTally()
@@ -670,8 +687,10 @@ private extension CatalogProjection {
         peopleAssignment = nil
         peopleTask?.cancel()
         peopleTask = nil
-        derivedRequested = 0
-        derivedForwarded = 0
+        duplicatesRequested = 0
+        duplicatesForwarded = 0
+        peopleRequested = 0
+        peopleForwarded = 0
         tallyRequested = 0
         tallyForwarded = 0
         changeTask?.cancel()

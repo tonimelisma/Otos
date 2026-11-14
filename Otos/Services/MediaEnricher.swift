@@ -215,15 +215,19 @@ nonisolated struct MediaEnricher {
             let started = ContinuousClock.now
             let remote = RemoteVideoAsset(reader: reader, filename: relativePath.rawValue)
             let faces: EnrichedVideoFaces?
+            let readError: String?
             // A frame the server did not send is neither an unreadable nor an undecodable
             // video: `remote.failed` below makes it `.unanswered`, whatever AVFoundation said.
+            // The read has one outcome line, `videoFaces.remote`, carrying what AVFoundation said.
             switch await Self.readVideoFaces(remote.asset, id: id, analyzeFaces: analyzeFaces, directory: thumbnailDirectory) {
             case let .success(read):
                 faces = read.faces
                 facesVerdict = read.verdict
-            case let .failure(unread):
+                readError = read.undecodableError
+            case let .failure(failure):
                 faces = nil
-                facesUnread = unread
+                facesUnread = failure.unread
+                readError = failure.error
             }
             let cost = remote.cost
             guard !remote.failed else {
@@ -233,7 +237,7 @@ nonisolated struct MediaEnricher {
                 }
                 OtosLog.metadata.noticeOperation("videoFaces.remote", phase: "unanswered", fields: [
                     "rootPath": id.libraryRootPath.rawValue, "relativePath": relativePath.rawValue,
-                    "bytes": "\(cost.bytes)",
+                    "bytes": "\(cost.bytes)", "error": readError ?? "none",
                 ])
                 return .unanswered
             }
@@ -246,6 +250,8 @@ nonisolated struct MediaEnricher {
                 "rootPath": id.libraryRootPath.rawValue,
                 "relativePath": relativePath.rawValue,
                 "faces": faces.map { "\($0.faces.count)" } ?? "unread",
+                "unread": facesUnread.map { "\($0)" } ?? "none",
+                "error": readError ?? "none",
                 "reads": "\(cost.reads)",
                 "bytes": "\(cost.bytes)",
                 "fileBytes": "\(reader.size)",
@@ -460,14 +466,16 @@ nonisolated struct MediaEnricher {
         // A failed face read is its own outcome: the other products are made and written, and
         // only the faces stay owed (`EnrichmentOutcome.facesUnread`).
         if scope.contains(.videoFaces) {
-            switch await Self.readVideoFaces(AVURLAsset(url: url), id: id, analyzeFaces: analyzeFaces, directory: thumbnailDirectory) {
+            let read = await Self.readVideoFaces(AVURLAsset(url: url), id: id, analyzeFaces: analyzeFaces, directory: thumbnailDirectory)
+            Self.logLocalVideoFacesRead(read, id: id)
+            switch read {
             case let .success(read):
                 videoFaces = read.faces
                 facesVerdict = read.verdict
                 products.append(read.verdict == .decoded ? "videoFaces=\(read.faces.faces.count)" : "videoFacesUndecodable")
-            case let .failure(unread):
-                facesUnread = unread
-                products.append("videoFacesUnread=\(unread)")
+            case let .failure(failure):
+                facesUnread = failure.unread
+                products.append("videoFacesUnread=\(failure.unread)")
             }
         }
         var rendering: EnrichedRendering?
@@ -525,24 +533,33 @@ nonisolated struct MediaEnricher {
         return facesUnread.map { .facesUnread(result, $0) } ?? .complete(result)
     }
 
-    /// A video's faces as read, with what its frame reader said about the video.
+    /// A video's faces as read, with what its frame reader said about the video, and the
+    /// error it said it with when it cannot decode the video.
     private struct VideoFacesRead {
         let faces: EnrichedVideoFaces
         let verdict: DecodeVerdict
+        var undecodableError: String?
+    }
+
+    /// Why a video's faces could not be read, with the error that said so.
+    private struct VideoFacesFailure: Error {
+        let unread: VideoFacesUnread
+        let error: String
     }
 
     /// A video's faces, or why they could not be read: the model (no video can be read until
     /// it loads) or this video (its frames or their analysis). A video AVFoundation says it
     /// cannot decode (`VideoFaceReader.isUndecodable`) is read as holding no face, with the
     /// decoder that said so: its faces are stamped, so it is not read again until its file or
-    /// that decoder changes, the rule a still no decoder reads follows (ADR 0009). Logged
-    /// every way.
+    /// that decoder changes, the rule a still no decoder reads follows (ADR 0009). Logs
+    /// nothing: what a read comes to is its caller's to say, once — a remote read the server
+    /// did not answer is `.unanswered`, whatever AVFoundation said.
     private static func readVideoFaces(
         _ asset: AVURLAsset,
         id: MediaAssetID,
         analyzeFaces: @escaping FaceAnalysisReader,
         directory: URL
-    ) async -> Result<VideoFacesRead, VideoFacesUnread> {
+    ) async -> Result<VideoFacesRead, VideoFacesFailure> {
         do {
             return try await .success(VideoFacesRead(
                 faces: VideoFaceReader.read(
@@ -552,26 +569,42 @@ nonisolated struct MediaEnricher {
                 verdict: .decoded
             ))
         } catch where VideoFaceReader.isUndecodable(error) {
-            OtosLog.metadata.noticeOperation("videoFaces.read", phase: "undecodable", fields: [
-                "rootPath": id.libraryRootPath.rawValue,
-                "relativePath": id.relativePath.rawValue,
-                "decoder": VideoFaceReader.decoderIdentity,
-                "error": String(describing: error),
-            ])
-            return .success(VideoFacesRead(faces: .noneFound, verdict: .undecodable(decoder: VideoFaceReader.decoderIdentity)))
+            return .success(VideoFacesRead(
+                faces: .noneFound,
+                verdict: .undecodable(decoder: VideoFaceReader.decoderIdentity),
+                undecodableError: String(describing: error)
+            ))
         } catch {
             let unread: VideoFacesUnread = if case FaceAnalysisError.modelUnavailable = error {
                 .model
             } else {
                 .video
             }
+            return .failure(VideoFacesFailure(unread: unread, error: String(describing: error)))
+        }
+    }
+
+    /// A local video's face read, said once: a video its decoder cannot decode, or one whose
+    /// faces could not be read. A read that found its faces says so in `enrichment.item`.
+    private static func logLocalVideoFacesRead(_ read: Result<VideoFacesRead, VideoFacesFailure>, id: MediaAssetID) {
+        switch read {
+        case let .success(read):
+            guard let error = read.undecodableError else {
+                return
+            }
+            OtosLog.metadata.noticeOperation("videoFaces.read", phase: "undecodable", fields: [
+                "rootPath": id.libraryRootPath.rawValue,
+                "relativePath": id.relativePath.rawValue,
+                "decoder": VideoFaceReader.decoderIdentity,
+                "error": error,
+            ])
+        case let .failure(failure):
             OtosLog.metadata.errorOperation("videoFaces.read", phase: "failed", fields: [
                 "rootPath": id.libraryRootPath.rawValue,
                 "relativePath": id.relativePath.rawValue,
-                "unread": "\(unread)",
-                "error": String(describing: error),
+                "unread": "\(failure.unread)",
+                "error": failure.error,
             ])
-            return .failure(unread)
         }
     }
 

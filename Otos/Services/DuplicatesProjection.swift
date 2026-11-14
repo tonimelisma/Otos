@@ -9,7 +9,7 @@ import OSLog
 /// one.
 ///
 /// `CatalogProjection` asks for a build with `request()` after a publication that took up a
-/// catalog change, so requests arrive no faster than the window's own cadence for store
+/// catalog change of a kind the groups are built from (`inputs`), so requests arrive no faster than the window's own cadence for store
 /// changes. A request only adds to `requested`; a pass records the value it started from
 /// and covers exactly that when its build succeeds, so a request made while a build runs is
 /// never lost and runs next (ADR 0032). One loop task runs every pass off a
@@ -23,6 +23,17 @@ import OSLog
 /// yielded on `builds`, which `CatalogProjection` merges into the window state.
 actor DuplicatesProjection {
     typealias Builder = @Sendable (CatalogStore, [CatalogLibraryState]) async throws -> CatalogDuplicatesState
+
+    /// What the groups are built from, so `CatalogProjection` asks for a build only when one
+    /// of these moved: which rows are shown and which movies a Live Photo hides; digests,
+    /// render signatures and the pairs kept together; and the facts a group's copies are
+    /// compared and listed by — kind, capture date, the record's dimensions, camera and
+    /// instant, the user's choice, and the images a signature is current for and the edit
+    /// they show. Faces, places, search readings and enrichment's own stamps are not among
+    /// them.
+    static let inputs: CatalogChangedFacts = [
+        .membership, .grouping, .copies, .kindAndFormat, .captureDate, .mediaRecord, .choices, .images,
+    ]
 
     /// Built groups, each differing from the one before; only the newest matters. One
     /// consumer: `CatalogProjection`.

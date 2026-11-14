@@ -127,8 +127,9 @@ struct MediaGridScrollAnchorTests {
             .filter { $0.offset.isMultiple(of: 3) || $0.element == before.id }
             .map(\.element)
 
-        controller.perform(controller.mutationGate.receive(filtered(kept)))
-        try await awaitGridApply(controller, expectedIDs: kept)
+        let next = filtered(kept)
+        controller.perform(controller.mutationGate.receive(next))
+        try await awaitGridShows(controller, next)
 
         let after = try #require(
             controller.onScreenOffset(of: before.id),
@@ -154,8 +155,9 @@ struct MediaGridScrollAnchorTests {
             .map { ids[$0] }
         let expected = try #require(ids[(topIndex + 1)...].first(where: Set(kept).contains))
 
-        controller.perform(controller.mutationGate.receive(filtered(kept)))
-        try await awaitGridApply(controller, expectedIDs: kept)
+        let next = filtered(kept)
+        controller.perform(controller.mutationGate.receive(next))
+        try await awaitGridShows(controller, next)
 
         let after = try #require(
             controller.onScreenOffset(of: expected),
@@ -177,8 +179,9 @@ struct MediaGridScrollAnchorTests {
         )
         let offsetBefore = try #require(controller.onScreenOffset(of: selected))
 
-        controller.perform(controller.mutationGate.receive(sorted(Array(ids.reversed()))))
-        try await awaitGridApply(controller, expectedIDs: Array(ids.reversed()))
+        let next = sorted(Array(ids.reversed()))
+        controller.perform(controller.mutationGate.receive(next))
+        try await awaitGridShows(controller, next)
 
         let offsetAfter = try #require(
             controller.onScreenOffset(of: selected),
@@ -195,8 +198,9 @@ struct MediaGridScrollAnchorTests {
         let kept = controller.currentIDs.enumerated().filter { $0.offset.isMultiple(of: 2) }.map(\.element)
 
         #expect(controller.captureScrollAnchor(change: .filterOrSort, nextOrderedIDs: kept) == nil)
-        controller.perform(controller.mutationGate.receive(filtered(kept)))
-        try await awaitGridApply(controller, expectedIDs: kept)
+        let next = filtered(kept)
+        controller.perform(controller.mutationGate.receive(next))
+        try await awaitGridShows(controller, next)
 
         #expect(controller.scrollView.contentView.bounds.origin.y == 0)
     }

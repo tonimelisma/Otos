@@ -65,12 +65,16 @@ func drainMainQueue() async {
     }
 }
 
-/// Waits until the grid controller shows `expectedIDs` with no apply in flight, then
-/// drains the main queue so the apply's completion block has run.
+/// Waits until the grid controller has applied `grid` — its order and its day buckets, the
+/// two values a structural apply installs (`MediaGridMutationGate`), so a change of days
+/// alone is waited on as surely as a reorder — with no mutation in flight, then drains the
+/// main queue so the apply's completion block has run.
 @MainActor
-func awaitGridApply(_ controller: MediaGridViewController, expectedIDs: [MediaAssetID]) async throws {
+func awaitGridShows(_ controller: MediaGridViewController, _ grid: CatalogMediaGridState) async throws {
+    let gate = controller.mutationGate
     try await waitUntil {
-        controller.mutationGate.displayedOrderedIDs == expectedIDs && controller.mutationGate.inFlight == .none
+        gate.displayedOrderedIDs == grid.orderedAssetIDs && gate.displayedDayBuckets == grid.dayBuckets
+            && gate.inFlight == .none
     }
     await drainMainQueue()
 }

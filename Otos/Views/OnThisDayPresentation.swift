@@ -34,7 +34,7 @@ nonisolated enum OnThisDayPresentation {
     /// earlier years or months` only once the scope is known to hold none, and nothing while that is
     /// not known — libraries still being checked or offline, or a filter that emptied it,
     /// which the empty state below names (honest numbers, or none).
-    static func barSummary(_ onThisDay: CatalogOnThisDayState?, emptyState: CatalogMediaEmptyState) -> String {
+    static func barSummary(_ onThisDay: CatalogOnThisDayState?, emptyState: CatalogMediaEmptyState?) -> String {
         if let onThisDay, !onThisDay.anniversaries.isEmpty {
             return barSummary(
                 itemCount: onThisDay.itemCount,
@@ -42,7 +42,7 @@ nonisolated enum OnThisDayPresentation {
                 isYears: onThisDay.isYears
             )
         }
-        if case .nothingOnThisDay = emptyState {
+        if case .nothingOnThisDay? = emptyState {
             return barSummary(itemCount: 0, runCount: 0, isYears: true)
         }
         return ""

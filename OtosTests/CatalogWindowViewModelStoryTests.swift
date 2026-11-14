@@ -86,7 +86,7 @@ struct CatalogWindowViewModelStoryTests {
             ),
             filterOptions: .empty,
             resolvedSidebarSelection: scope,
-            mediaEmptyState: ids.isEmpty ? .nothingOnThisDay(Self.today) : .noMedia,
+            mediaEmptyState: ids.isEmpty ? .nothingOnThisDay(Self.today) : nil,
             deviceConnectionBanner: nil,
             onThisDay: CatalogOnThisDayState(day: Self.today, anniversaries: years),
             queryGeneration: model.queryGeneration

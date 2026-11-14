@@ -109,7 +109,8 @@ nonisolated struct CatalogWindowState: Equatable {
     var mediaGrid: CatalogMediaGridState
     var filterOptions: CatalogFilterOptions
     var resolvedSidebarSelection: SidebarSelection
-    var mediaEmptyState: CatalogMediaEmptyState
+    /// What the window says about its empty scope; nil while the scope holds items.
+    var mediaEmptyState: CatalogMediaEmptyState?
     var deviceConnectionBanner: CatalogDeviceConnectionBanner?
     /// The Places map's content: the located items in display order and the count left
     /// off the map. Set only while the resolved scope is `.places` (ADR 0040).

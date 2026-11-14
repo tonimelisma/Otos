@@ -353,8 +353,9 @@ extension AppKitWindowTests {
         private func applyEach(_ steps: [[(String, Date?)]], to controller: MediaGridViewController) async throws {
             for entries in steps {
                 let ids = entries.map { MediaGridStructureTests.id($0.0) }
-                controller.receive(CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids, dayBuckets: entries.map(\.1)))
-                try await awaitGridApply(controller, expectedIDs: ids)
+                let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids, dayBuckets: entries.map(\.1))
+                controller.receive(grid)
+                try await awaitGridShows(controller, grid)
                 controller.collectionView.layoutSubtreeIfNeeded()
                 let expected = MediaGridStructure(orderedIDs: ids, dayBuckets: entries.map(\.1))
                 #expect(controller.structure.sections == expected.sections)

@@ -49,7 +49,7 @@ struct PeopleView: View {
     let people: CatalogPeopleState
     let session: PeopleSession
     /// The window's shared sentence when libraries are offline or being checked.
-    let librariesState: CatalogMediaEmptyState
+    let librariesState: CatalogMediaEmptyState?
     let images: FaceTileImages?
     let derivedImageDirectory: URL?
     let actions: PeopleActions
@@ -83,8 +83,8 @@ struct PeopleView: View {
     private var emptySentence: String? {
         guard people.people.isEmpty else { return nil }
         switch librariesState {
-        case .checkingLibraries, .noAvailableMedia:
-            return librariesState.message
+        case .checkingLibraries?, .noAvailableMedia?:
+            return librariesState?.message
         default:
             return PeoplePresentation.emptySentence(people)
         }

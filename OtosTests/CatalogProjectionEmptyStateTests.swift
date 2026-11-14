@@ -169,6 +169,75 @@ struct CatalogProjectionEmptyStateTests {
         await store.shutdown()
     }
 
+    /// Each derived owner is rebuilt only when a kind of fact its answer is built from moved
+    /// (`DuplicatesProjection.inputs`, `PeopleAssignment.inputs`): a new person is a faces
+    /// fact, which People reads and the groups do not; copies kept together are a copies
+    /// fact, which the groups read and People does not.
+    @Test func eachDerivedOwnerIsRebuiltOnlyWhenAFactItIsBuiltFromMoved() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for name in ["a.jpg", "b.jpg"] {
+            try "jpeg \(name)".write(to: root.appending(path: name), atomically: true, encoding: .utf8)
+        }
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let state = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
+        let ids = state.testAssets.map(\.id)
+
+        let duplicatesGate = ArrivalGate()
+        let peopleGate = ArrivalGate()
+        await duplicatesGate.open()
+        await peopleGate.open()
+        let projection = CatalogProjection(
+            cadence: .milliseconds(10),
+            duplicatesBuilder: { _, _ in
+                await duplicatesGate.arrive()
+                return .empty
+            },
+            peopleBuilder: { _, _ in
+                await peopleGate.arrive()
+                return .empty
+            }
+        )
+        let recorder = EmptyStateRecorder()
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer {
+            recordingTask.cancel()
+        }
+        func settle() async throws {
+            try await waitUntil {
+                let windowSettled = await projection.isQuiescent
+                let duplicatesSettled = await projection.duplicatesAreQuiescent
+                let peopleSettled = await projection.peopleAreQuiescent
+                return windowSettled && duplicatesSettled && peopleSettled
+            }
+        }
+        await duplicatesGate.waitForArrivals(1)
+        await peopleGate.waitForArrivals(1)
+        try await settle()
+        let groupsBefore = await duplicatesGate.arrivalCount
+        let peopleBefore = await peopleGate.arrivalCount
+
+        _ = try await store.perform(.moveToNewPerson([], name: "Sam"))
+        await peopleGate.waitForArrivals(peopleBefore + 1)
+        try await settle()
+        #expect(await duplicatesGate.arrivalCount == groupsBefore)
+        let peopleAfterFaces = await peopleGate.arrivalCount
+
+        _ = try await store.keepCopiesTogether([ids])
+        await duplicatesGate.waitForArrivals(groupsBefore + 1)
+        try await settle()
+        #expect(await peopleGate.arrivalCount == peopleAfterFaces)
+        await store.shutdown()
+    }
+
     /// A row only added is one more still not yet checked for faces, so People's unchecked
     /// tally counts it, though neither the groups nor the assignment are rebuilt for it.
     @Test func addedRowsAreCountedInPeoplesTallyWithoutRebuildingDuplicates() async throws {

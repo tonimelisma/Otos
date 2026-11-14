@@ -530,6 +530,34 @@ struct CatalogStoreQueryPlanTests {
         }
     }
 
+    /// Whether a row is one of People's — a face given a person — is one seek of the partial
+    /// index holding exactly those faces, never a read of every face row of the photo.
+    @Test func whetherARowIsOneOfPeoplesIsOneSeekOfTheAssignedFaces() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        let plans = try await dbQueue.read { db in
+            try [[rootID1], [rootID1, rootID2]].map { roots in
+                let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
+                    descriptor: CatalogQueryDescriptor(scope: .people),
+                    scope: CatalogScopePredicate(rootIDs: roots, content: .withPerson),
+                    db: db
+                ))
+                return try explainPlan(db, query: query)
+            }
+        }
+        for plan in plans {
+            let faceLines = plan.split(separator: "\n").filter { $0.contains(" face ") }
+            #expect(!faceLines.isEmpty, "\(plan)")
+            for line in faceLines {
+                #expect(line.contains("idx_face_assigned_photo (library_root_id=? AND relative_path=?)"), "\(plan)")
+            }
+        }
+    }
+
     /// On This Day's left-out photos are sought by each row's key, never by a scan of every
     /// search row — which a `NOT IN` list did once per outer row when the read started from
     /// the place cells (the filter's place options).

@@ -11,7 +11,7 @@ import OSLog
 /// of scope, filter or sort never starts one.
 ///
 /// `CatalogProjection` asks for a pass with `request()` after a publication that took up a
-/// catalog change; every act on faces or people is one (`CatalogStore.perform(_:)`), and so
+/// catalog change of a kind a pass reads (`inputs`); every act on faces or people is one (`CatalogStore.perform(_:)`), and so
 /// is every enrichment batch that reads faces. A request only adds to `requested`; a pass
 /// records the value it started from and covers exactly that when it succeeds, so a request
 /// made while a pass runs is never lost and runs next (ADR 0032). One loop task runs every
@@ -37,6 +37,16 @@ import OSLog
 /// with them.
 actor PeopleAssignment {
     typealias Builder = @Sendable (CatalogStore, [CatalogLibraryState]) async throws -> CatalogPeopleState
+
+    /// What a pass reads (`CatalogStore.peopleSnapshot`), so `CatalogProjection` asks for one
+    /// only when one of these moved: the faces, who they are and which photos are checked for
+    /// them; which rows are shown and which movies a Live Photo hides; the stacks a face's
+    /// photo stands for (kind, burst, capture date, choices and stack keys); a face's capture
+    /// date; and the image its tile is cut from. Digests, render signatures, the record's
+    /// other facts, places, search readings and enrichment's own stamps are not among them.
+    static let inputs: CatalogChangedFacts = [
+        .faces, .membership, .grouping, .kindAndFormat, .captureDate, .choices, .images,
+    ]
 
     /// Built states, each differing from the one before; only the newest matters. One
     /// consumer: `CatalogProjection`.

@@ -1341,7 +1341,7 @@ extension CatalogWindowViewModel {
             previousItemCount: previousItemCount,
             itemDelta: itemCount - previousItemCount,
             selection: nextState.resolvedSidebarSelection.diagnosticDescription,
-            emptyState: nextState.mediaEmptyState.diagnosticDescription,
+            emptyState: nextState.mediaEmptyState?.diagnosticDescription ?? "none",
             mediaIdentityChanged: mediaIdentityChanged,
             detailRefreshGeneration: nextState.mediaGrid.detailRefreshGeneration,
             timestamp: .now
@@ -1378,7 +1378,7 @@ extension CatalogWindowViewModel {
             "applyMs": "\(applyMs)",
             "items": "\(items)",
             "scope": state.resolvedSidebarSelection.diagnosticDescription,
-            "emptyState": state.mediaEmptyState.diagnosticDescription,
+            "emptyState": state.mediaEmptyState?.diagnosticDescription ?? "none",
         ])
     }
 

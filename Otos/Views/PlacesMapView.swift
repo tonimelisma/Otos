@@ -18,7 +18,7 @@ struct PlacesMapView: View {
     let map: CatalogMapState
     let clusters: [MapPlaceCluster]
     let cameraRequest: MapCameraRequest?
-    let emptyState: CatalogMediaEmptyState
+    let emptyState: CatalogMediaEmptyState?
     var tileContentStore: TileContentStore?
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
@@ -40,8 +40,10 @@ struct PlacesMapView: View {
         VStack(spacing: 0) {
             PlacesMapBar(locatedCount: map.located.count)
             if map.located.isEmpty {
-                CatalogMediaEmptyStateView(emptyState: emptyState, clearFilters: clearFilters)
-                    .background(DesignPalette.content(for: colorScheme))
+                if let emptyState {
+                    CatalogMediaEmptyStateView(emptyState: emptyState, clearFilters: clearFilters)
+                        .background(DesignPalette.content(for: colorScheme))
+                }
             } else {
                 mapContent
             }

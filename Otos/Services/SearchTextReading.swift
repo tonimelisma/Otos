@@ -62,12 +62,6 @@ nonisolated enum SearchTextReading {
         return false
     }
 
-    /// Whether every word of `query` appears in `text` at the start of a word, ignoring case
-    /// and diacritics (`SearchTextQuery`).
-    static func matches(query: String, in text: String) -> Bool {
-        SearchTextQuery(query).matches(folded: folded(text))
-    }
-
     /// A text as matching compares it: case, diacritics and width folded. The index keeps each
     /// reading folded, so a query folds only itself.
     static func folded(_ text: String) -> String {

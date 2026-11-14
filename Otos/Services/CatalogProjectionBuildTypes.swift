@@ -16,7 +16,7 @@ nonisolated struct CatalogProjectionWindowStateParts {
     /// under any sort but `.bestDate`. See `CatalogMediaGridState.dayBuckets`.
     let scopedDayBuckets: [Date?]
     let filterOptions: CatalogFilterOptions
-    let mediaEmptyState: CatalogMediaEmptyState
+    let mediaEmptyState: CatalogMediaEmptyState?
     /// The Places map's content; nil for every other scope (ADR 0040).
     let map: CatalogMapState?
     /// On This Day's years; nil for every other scope (ADR 0049).

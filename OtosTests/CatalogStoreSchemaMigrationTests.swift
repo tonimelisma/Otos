@@ -219,6 +219,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.facePersonPhotoIndexMigrationIdentifier,
             CatalogSchema.windowReadIndexesMigrationIdentifier,
             CatalogSchema.wholeSecondCaptureLocalMigrationIdentifier,
+            CatalogSchema.assignedFacePhotoIndexMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)

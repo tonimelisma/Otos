@@ -263,6 +263,8 @@ nonisolated enum CatalogWindowPolicy {
         }
     }
 
+    /// What the window says about an empty scope, and nil when the scope holds items: a
+    /// scope with items has no empty state to draw.
     static func mediaEmptyState(
         for descriptor: CatalogQueryDescriptor,
         libraries: [CatalogLibraryState],
@@ -270,8 +272,8 @@ nonisolated enum CatalogWindowPolicy {
         unfilteredVisibleAssetCount: Int,
         selectedAssetCount: Int,
         search: CatalogSearchOutcome? = nil
-    ) -> CatalogMediaEmptyState {
-        guard selectedAssetCount == 0 else { return .noMedia }
+    ) -> CatalogMediaEmptyState? {
+        guard selectedAssetCount == 0 else { return nil }
         if let search, let text = descriptor.search?.text, search.unsearchedScopeCount > 0 {
             switch search {
             case let .read(_, stillReading):

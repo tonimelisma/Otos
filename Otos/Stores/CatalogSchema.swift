@@ -1342,6 +1342,21 @@ nonisolated enum CatalogSchema {
     /// name; no stored column changes.
     static let wholeSecondCaptureLocalMigrationIdentifier = "v56_capture_local_whole_seconds"
 
+    /// The People scope holds every photo with a face given a person: an `EXISTS` over `face`
+    /// per row of the order. By the face table's key it read each face's row to test its
+    /// person and whether it is a face, and those rows carry the embeddings: on the owner's
+    /// catalog (98,359 faces, 147,024 rows) the check over every row took 4.8 s cold, 0.44 s
+    /// warm. A partial index of exactly the faces it accepts answers it from the index:
+    /// 0.13–0.15 s, cold or warm (`docs/research/2026-11-14-derived-owners-and-face-checks.md`).
+    static let assignedFacePhotoIndexMigrationIdentifier = "v57_assigned_face_photo_index"
+
+    static let assignedFacePhotoIndexStatements: [String] = [
+        """
+        CREATE INDEX idx_face_assigned_photo
+        ON face(library_root_id, relative_path) WHERE person_id IS NOT NULL AND is_not_face = 0
+        """,
+    ]
+
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """
         SELECT name, sql FROM sqlite_master

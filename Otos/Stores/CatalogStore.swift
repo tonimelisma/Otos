@@ -59,25 +59,35 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
     /// What search read of a row that decides where it shows: the labels On This Day
     /// leaves a photo out by.
     static let searchReadings = CatalogChangedFacts(rawValue: 1 << 8)
-    /// What only a tile, a pane or enrichment reads: thumbnails, previews, edits, render
-    /// signatures, what enrichment owes.
+    /// What only a tile, a pane or enrichment reads: what enrichment owes and has claimed,
+    /// its stamps, an original's locality. A write names it beside any other kind it
+    /// touched, because a tile's detail refresh follows every change.
     static let detail = CatalogChangedFacts(rawValue: 1 << 9)
     /// The user's choices (Liked, Disliked) and stack keys: what the choices filter selects
     /// by, On This Day ranks by and a stack shows (ADR 0052).
     static let choices = CatalogChangedFacts(rawValue: 1 << 10)
+    /// A row's stored images and what they show: its thumbnail (provisional or rendered), its
+    /// preview, a video's face frames, and the edit they are rendered with. What a face's
+    /// tile is cut from and what a render signature is current for.
+    static let images = CatalogChangedFacts(rawValue: 1 << 11)
+    /// What the bytes' metadata record says beyond the date, kind, grouping and location the
+    /// other kinds name: dimensions, orientation, camera, lens and serial, the capture
+    /// instant, the record itself. What the same-photo rule compares.
+    static let mediaRecord = CatalogChangedFacts(rawValue: 1 << 12)
 
     static let all: CatalogChangedFacts = [
         .membership, .captureDate, .kindAndFormat, .grouping, .location, .placeNames, .faces, .copies,
-        .searchReadings, .detail, .choices,
+        .searchReadings, .detail, .choices, .images, .mediaRecord,
     ]
 
     /// How many kinds there are: the bits `all` sets.
-    static let bitCount = 11
+    static let bitCount = 13
 
     private static let names: [(CatalogChangedFacts, String)] = [
         (.membership, "membership"), (.captureDate, "captureDate"), (.kindAndFormat, "kindAndFormat"),
         (.grouping, "grouping"), (.location, "location"), (.placeNames, "placeNames"), (.faces, "faces"),
         (.copies, "copies"), (.searchReadings, "searchReadings"), (.detail, "detail"), (.choices, "choices"),
+        (.images, "images"), (.mediaRecord, "mediaRecord"),
     ]
 
     /// The kinds by name, comma-separated, `all` or `none`: one log field.
@@ -1167,8 +1177,9 @@ extension CatalogStore {
                 "owedAgain": "\(cleared > 0)",
             ])
         }
+        // A cleared stamp makes the photo one not yet checked for faces: People's tally.
         if cleared > 0 {
-            notifyCatalogChanged(.changed(.detail))
+            notifyCatalogChanged(.changed([.faces, .detail]))
         }
     }
 
@@ -2800,7 +2811,7 @@ extension CatalogStore {
             )
         }
         if result.saved != nil {
-            notifyCatalogChanged(.changed(.detail))
+            notifyCatalogChanged(.changed([.images, .detail]))
         }
         OtosLog.catalog.noticeOperation("catalog.editRecipe", phase: "finish", fields: [
             "rootPath": id.libraryRootPath.rawValue,
@@ -2870,7 +2881,7 @@ extension CatalogStore {
         }
         if outcome.applied {
             deleteSupersededImages(outcome.superseded)
-            notifyCatalogChanged(.changed(.detail))
+            notifyCatalogChanged(.changed([.images, .detail]))
         } else {
             discardStagedImages(staged)
         }
@@ -3788,6 +3799,12 @@ extension CatalogStore {
         if let old = oldRow, let newRow {
             outcome.facts.formUnion(old.changedFacts(to: newRow))
         }
+        if result.metadata != nil {
+            outcome.facts.insert(.mediaRecord)
+        }
+        if result.rendering != nil || result.provisionalThumbnail != nil || result.videoFaces?.frames != nil {
+            outcome.facts.insert(.images)
+        }
         if result.videoFaces != nil {
             outcome.facts.insert(.faces)
         }
@@ -3964,7 +3981,7 @@ extension CatalogStore {
                 )
                 let newRow = try Row.fetchOne(db, sql: overlaySQL, arguments: arguments)
                     .map(EnrichmentOverlayBeforeWrite.init(row:))
-                outcome.facts.insert(.detail)
+                outcome.facts.formUnion([.detail, .mediaRecord])
                 if let oldRow, let newRow {
                     outcome.facts.formUnion(oldRow.changedFacts(to: newRow))
                 }
@@ -5458,7 +5475,7 @@ extension CatalogStore {
             return count
         }
         if changed.value > 0 {
-            notifyCatalogChanged(.changed(.detail))
+            notifyCatalogChanged(.changed([.images, .detail]))
         }
     }
 
