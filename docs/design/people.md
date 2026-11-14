@@ -106,8 +106,9 @@ one photo (`Sam and Ian are both in 3 photos`) or a photo the user gave either p
 the birthday kept. The question is judged when asked; the answer `Merge` is judged by the
 catalog when the merge is applied, after any act submitted before it (a birthday saved with
 a taken name). Should it refuse there, `Couldn't Merge These People` says why in the same
-words, with `OK`, and nothing moves: the person merged away is still the one shown and
-filtered until the merge has happened.
+words, with `OK`, and nothing moves. Until the catalog answers, the person merged away is
+still the one shown and filtered, even when the People list without them arrives first; its
+confirmation names the person merged into, who takes their place.
 
 **Empty states:** one centered L3 sentence under the bar: `People appear here as Otos
 finds faces in your photos.`, `People appear here once Otos finds the same face on

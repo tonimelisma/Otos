@@ -1342,7 +1342,7 @@ extension CatalogStore {
 
     /// The one write path for what the user decides about faces and people (ADR 0047):
     /// performs one act in one transaction and returns what undoes it, with the person the
-    /// act gave the faces to. A refused act (a hard rule, `PeopleRuleViolation`) changes
+    /// act gave the faces to (for a merge, the person merged into). A refused act (a hard rule, `PeopleRuleViolation`) changes
     /// nothing.
     func perform(_ act: PeopleAct) async throws -> PeopleActOutcome {
         let rowIDs = roots.rowIDSnapshot()
@@ -1390,6 +1390,7 @@ extension CatalogStore {
             case let .edit(person, name, birthday):
                 try Self.updatePerson(person, name: name, birthday: birthday, db: db)
             case let .merge(from, into):
+                given = into
                 try Self.mergePerson(from, into: into, db: db)
             case let .setHidden(person, hidden):
                 try db.execute(sql: "UPDATE person SET is_hidden = ? WHERE id = ?", arguments: [hidden ? 1 : 0, person.rawValue])

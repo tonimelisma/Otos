@@ -299,6 +299,15 @@ grouping had put with the right child.
   exists only there), the People filter, whose several people are photos of them together,
   the face acts in
   the photo menus and the Info pane (`docs/design/people.md`).
+- **Which person the window shows:** one view-model owner (`reconcileShownPeople`) decides it,
+  with the filter's people, from the published People state and the acts the store has not
+  answered. Each act's submission takes a number (`PendingPeopleActs`), and the store's answer
+  comes back under it. The store commits a merge and rings the projection before its answer
+  returns, so the People state without the person merged away can arrive first: while that
+  merge is outstanding, the person stays shown and filtered. Its confirmation names the person
+  merged into (`PeopleActOutcome.person`), who takes their place; its refusal hands them back
+  to the published state. Hide, and a person Otos deletes once empty, have no successor: the
+  window returns to the gallery whichever arrives first.
 
 ### Licences and attribution
 

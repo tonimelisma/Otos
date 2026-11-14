@@ -35,8 +35,13 @@ struct PeopleViewModelTests {
             FaceID(asset: library.id("clip.mov"), index: 0)
         }
 
-        /// `others` are more stills, none read for faces.
-        static func make(in directory: URL, withVideo: Bool = false, others: [String] = []) async throws -> Fixture {
+        /// `others` are more stills, none read for faces. Without `consumesIntents` the People
+        /// intent consumer is not started: the test takes each intent off the stream, runs it
+        /// through the store and applies what the store did itself, so it can deliver a People
+        /// state at the very suspension between the store's write and its answer.
+        static func make(
+            in directory: URL, withVideo: Bool = false, others: [String] = [], consumesIntents: Bool = true
+        ) async throws -> Fixture {
             let library = try await FaceEnrichmentTests.ScannedLibrary.make(
                 in: directory, files: ["a.jpg", "b.jpg"] + (withVideo ? ["clip.mov"] : []) + others
             )
@@ -59,7 +64,9 @@ struct PeopleViewModelTests {
                 volumeCapacity: ampleVolumeCapacity,
                 trashFiles: .refusing
             )
-            model.startPeopleIntentConsumer()
+            if consumesIntents {
+                model.startPeopleIntentConsumer()
+            }
             return Fixture(
                 library: library, model: model, sam: sam, hers: hers,
                 like: FaceID(asset: library.id("b.jpg"), index: 0),
@@ -462,6 +469,71 @@ struct PeopleViewModelTests {
         #expect(try await fixture.assignment(of: fixture.stranger) == .user(other))
         fixture.model.dismissMergeRefusal()
         #expect(fixture.model.peopleSession.mergeRefusal == nil)
+        await fixture.store.shutdown()
+    }
+
+    /// The People state a merge publishes can reach the window while the store's answer is
+    /// still on its way: the store commits the merge and rings the projection before its
+    /// await returns. Delivered at exactly that suspension, a state that no longer lists the
+    /// person merged away leaves the window showing and filtering them; the store's
+    /// confirmation then takes the window to the person it names, merged into.
+    @Test func aPeopleStateBeforeTheMergesConfirmationLeavesTheWindowToIt() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory(), consumesIntents: false)
+        let other = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
+        let people = try await fixture.people()
+        fixture.show(people, scope: .people)
+        fixture.model.openPerson(other)
+        fixture.show(people, scope: .person(other))
+        fixture.model.setPeopleFilter(other, included: true)
+        var intents = fixture.model.peopleIntentStream.makeAsyncIterator()
+
+        fixture.model.askMerge(other, into: fixture.sam)
+        try #require(fixture.model.peopleSession.mergeQuestion != nil)
+        fixture.model.answerMerge(true)
+        let merge = try #require(await intents.next())
+        let answer = await CatalogWindowViewModel.runPeopleIntent(merge, store: fixture.store)
+        let merged = try await fixture.people()
+        #expect(merged.person(other) == nil)
+        fixture.show(merged, scope: .person(other))
+        #expect(fixture.model.queryDescriptor.scope == .person(other))
+        #expect(fixture.model.queryDescriptor.filter.people == [other])
+
+        fixture.model.applyPeopleIntentEvent(answer)
+        #expect(fixture.model.queryDescriptor.scope == .person(fixture.sam))
+        #expect(fixture.model.queryDescriptor.filter.people == [fixture.sam])
+        #expect(fixture.model.peopleSession.selectedPeople == [fixture.sam])
+        fixture.show(merged, scope: .person(fixture.sam))
+        #expect(fixture.model.queryDescriptor.scope == .person(fixture.sam))
+        #expect(fixture.model.windowTitle == "Sam")
+        await fixture.store.shutdown()
+    }
+
+    /// A merge the store refuses hands the person it would have merged away back to the
+    /// published state: here they were hidden while the merge was on its way, so its refusal
+    /// returns the window to the gallery and the filter lets go of them.
+    @Test func aRefusedMergeHandsThePersonBackToThePublishedState() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory(), consumesIntents: false)
+        let other = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
+        _ = try await fixture.store.perform(.move([fixture.like], to: fixture.sam))
+        let people = try await fixture.people()
+        fixture.show(people, scope: .people)
+        fixture.model.openPerson(other)
+        fixture.show(people, scope: .person(other))
+        fixture.model.setPeopleFilter(other, included: true)
+        var intents = fixture.model.peopleIntentStream.makeAsyncIterator()
+
+        fixture.model.peopleSession.mergeQuestion = PeopleMergeQuestion(from: other, into: fixture.sam)
+        fixture.model.answerMerge(true)
+        let merge = try #require(await intents.next())
+        let answer = await CatalogWindowViewModel.runPeopleIntent(merge, store: fixture.store)
+        _ = try await fixture.store.perform(.setHidden(other, true))
+        try await fixture.show(fixture.people(), scope: .person(other))
+        #expect(fixture.model.queryDescriptor.scope == .person(other))
+
+        fixture.model.applyPeopleIntentEvent(answer)
+        #expect(fixture.model.peopleSession.mergeRefusal?.reason == "Unnamed Person and Sam are both in 1 photo")
+        #expect(fixture.model.queryDescriptor.scope == .people)
+        #expect(fixture.model.queryDescriptor.filter.people.isEmpty)
         await fixture.store.shutdown()
     }
 

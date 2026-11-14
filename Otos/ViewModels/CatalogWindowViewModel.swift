@@ -160,6 +160,8 @@ final class CatalogWindowViewModel {
     var outlinedFaces: [FaceID] = []
     /// Lookups over the last People state, rebuilt when it changes (`applyPeopleState`).
     @ObservationIgnored var peopleIndex = PeopleIndex(.empty)
+    /// The People acts submitted that the store has not answered (`PendingPeopleActs`).
+    @ObservationIgnored var pendingPeopleActs = PendingPeopleActs()
     /// Face crops decoded this process, shared by every face tile (DES-110).
     @ObservationIgnored let faceTileImages = FaceTileImages()
 
