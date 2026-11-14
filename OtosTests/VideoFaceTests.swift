@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreGraphics
 import Foundation
+import GRDB
 import ImageIO
 @testable import OtosKit
 import Synchronization
@@ -456,6 +457,73 @@ extension VideoFaceTests {
 
         let faces = try await library.store.peopleSnapshot().faces
         #expect(faces.map(\.assignment) == [.open, .user(sam)])
+        await library.store.shutdown()
+    }
+}
+
+extension VideoFaceTests {
+    /// ADR 0047: while the face model cannot be loaded, a library video that owes only its
+    /// faces is never claimed. Counted by the claim writes the catalog sees: a held wake writes
+    /// no claim and no release for it; an admitted wake claims it once, for its faces alone.
+    @Test func aVideoOwedOnlyItsFacesIsNotClaimedWhileTheModelIsMissing() async throws {
+        let directory = try makeTestDirectory()
+        let library = try await VideoLibrary.make(in: directory)
+        let counter = try DatabaseQueue(path: directory.appending(path: "db/catalog.sqlite").path(percentEncoded: false))
+        try await counter.write { db in
+            // Every product but the faces is current.
+            try db.execute(sql: """
+            UPDATE media_asset SET
+                metadata_source_size = COALESCE(byte_size, -1),
+                metadata_source_mtime = CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER),
+                rendered_source_size = COALESCE(byte_size, -1),
+                rendered_source_mtime = CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER),
+                content_hash_xxh3_128 = zeroblob(16),
+                content_hash_source_size = COALESCE(byte_size, -1),
+                content_hash_source_mtime = CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+            """)
+            try db.execute(sql: "CREATE TABLE claim_write (claimed INTEGER NOT NULL)")
+            try db.execute(sql: """
+            CREATE TRIGGER count_claim_write AFTER UPDATE OF enrichment_claimed ON media_asset
+            WHEN NEW.enrichment_claimed IS NOT OLD.enrichment_claimed
+            BEGIN INSERT INTO claim_write VALUES (NEW.enrichment_claimed IS NOT NULL); END
+            """)
+        }
+        func writes() async throws -> (claims: Int, releases: Int) {
+            try await counter.read { db in
+                try (
+                    Int.fetchOne(db, sql: "SELECT COUNT(*) FROM claim_write WHERE claimed = 1") ?? 0,
+                    Int.fetchOne(db, sql: "SELECT COUNT(*) FROM claim_write WHERE claimed = 0") ?? 0
+                )
+            }
+        }
+        func coordinator(_ schedule: EnrichmentSchedule) -> EnrichmentCoordinator {
+            EnrichmentCoordinator(
+                store: library.store,
+                enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
+                materialize: { _ in .testMaterialized },
+                readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+                schedule: schedule
+            )
+        }
+
+        var held = EnrichmentSchedule(retrySchedule: .production)
+        held.holdVideoFaces(now: .now)
+        let heldCoordinator = coordinator(held)
+        let heldWork = await heldCoordinator.dequeueEnrichmentWork()
+        let heldWrites = try await writes()
+        await heldCoordinator.shutdown()
+        #expect(heldWork.isEmpty)
+        #expect(heldWrites.claims == 0)
+        #expect(heldWrites.releases == 0)
+
+        let admittedCoordinator = coordinator(EnrichmentSchedule(retrySchedule: .production))
+        let admittedWork = await admittedCoordinator.dequeueEnrichmentWork()
+        let admittedWrites = try await writes()
+        await admittedCoordinator.shutdown()
+        #expect(admittedWork.map(\.id) == [library.id])
+        #expect(admittedWork.map(\.scope) == [.videoFaces])
+        #expect(admittedWrites.claims == 1)
+        #expect(admittedWrites.releases == 0)
         await library.store.shutdown()
     }
 }

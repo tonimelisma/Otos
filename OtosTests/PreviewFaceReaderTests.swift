@@ -386,12 +386,12 @@ struct PreviewFaceReaderTests {
 
         static func make(in directory: URL) async throws -> ImmichAccount {
             let store = CatalogStore(
-                location: .databaseFile(directory.appending(path: "db/catalog.sqlite")), scanCadence: .milliseconds(10)
+                location: .databaseFile(directory.appending(path: "db/catalog.sqlite")), scanCadence: .milliseconds(10),
+                stagingContainers: StagingContainers(base: directory)
             )
             try await store.start(scansSavedLibraries: false)
             let rootPath = try await store.addImmichAccount(
-                server: PreviewFaceReaderTests.server, userID: "user-1", displayName: "Family",
-                stagingContainer: directory.appending(path: "RemoteStaging", directoryHint: .isDirectory)
+                server: PreviewFaceReaderTests.server, userID: "user-1", displayName: "Family"
             )
             return ImmichAccount(store: store, rootPath: rootPath)
         }

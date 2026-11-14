@@ -112,11 +112,10 @@ struct BenchmarkTests {
     /// first sync stalls its own stream.
     @Test func immichListingCases() async throws {
         let temp = try makeTestDirectory()
-        let store = CatalogStore(location: .databaseFile(temp.appending(path: "Catalog.sqlite")))
+        let store = CatalogStore(location: .databaseFile(temp.appending(path: "Catalog.sqlite")), stagingContainers: StagingContainers(base: temp))
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.addImmichAccount(
-            server: #require(URL(string: "https://photos.example.com")), userID: "u1", displayName: "Family",
-            stagingContainer: temp.appending(path: "RemoteStaging")
+            server: #require(URL(string: "https://photos.example.com")), userID: "u1", displayName: "Family"
         )
         func batch(_ range: Range<Int>) -> SourceListingChanges {
             let items = range.map { index in

@@ -94,7 +94,15 @@ unreachable is never a deletion.
   `immich:<normalized server URL>#<user id>`, and its path is an Otos staging folder
   `RemoteStaging/<sanitized identity>/` under the app's Caches folder named by its bundle
   identifier, beside `DeviceStaging` but a separate container, so a dev build and the
-  installed app (ADR 0030) never share it. While Otos holds the account, signed in or not,
+  installed app (ADR 0030) never share it. The path is a function of the build's containers
+  (`StagingContainers`) and the identity, not a fact of its own: the catalog stores it
+  because asset identity is the path (ADR 0008), and the Store re-derives it at every load,
+  a camera's root too. A root stored elsewhere — by another build, or under the one shared
+  container before containers were named by bundle identifier — moves into this build's own:
+  its row stays, so every overlay keyed by row and relative path moves with it, derived images
+  take the new names, and an import or erase journaled against the old path follows; nothing
+  on disk moves, the staged bytes being a cache fetched again on demand and the old folder
+  its own build's to sweep. While Otos holds the account, signed in or not,
   it claims the tree with the same `flock` a camera's tree carries, so another instance's
   sweep never deletes the originals it staged; forgetting the account releases it. Staged
   originals are working copies, not overlay, so they do not belong in the backed-up

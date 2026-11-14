@@ -556,6 +556,18 @@ extension CatalogStore {
         return thumbnailMigrations
     }
 
+    /// Points every import and card-erase journal row that names `oldPath` as its source at
+    /// `newPath`: a moved staging root's interrupted work recovers against where the root now
+    /// is (`MediaImportRecovery`).
+    static func moveJournaledSourceRoot(from oldPath: LibraryRootPath, to newPath: LibraryRootPath, db: Database) throws {
+        for table in ["active_file_operation", "active_source_erase"] {
+            try db.execute(
+                sql: "UPDATE \(table) SET source_root_path = ? WHERE source_root_path = ?",
+                arguments: [newPath.rawValue, oldPath.rawValue]
+            )
+        }
+    }
+
     static func updateLibraryRootLastSeen(rootRowID: Int64, lastSeenAt: Date, db: Database) throws {
         try db.execute(
             sql: "UPDATE library_root SET last_seen_at = ? WHERE id = ?",

@@ -261,6 +261,10 @@ actor CatalogStore {
 
     /// The WAL file size past which a bulk write empties the log (`boundWAL`).
     private let walByteBudget: Int64
+    /// Where this build's staging roots live. A camera's or an Immich account's root path is
+    /// derived from it and the source's identity, and re-derived at every load
+    /// (`normalizedLoadedRoot`), so no root keeps a folder another build owns (ADR 0046).
+    private let stagingContainers: StagingContainers
     private let scanner: CatalogScanner
     private let filesystemWatcher: CatalogFilesystemWatcher
     /// How often a running scan flushes what it has found: at most once a second. A rate
@@ -392,9 +396,11 @@ actor CatalogStore {
         wallClock: @escaping @Sendable () -> Date = { Date() },
         initialLoadDidRead: (@Sendable () async -> Void)? = nil,
         importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)? = nil,
-        walByteBudget: Int64 = CatalogStore.defaultWALByteBudget
+        walByteBudget: Int64 = CatalogStore.defaultWALByteBudget,
+        stagingContainers: StagingContainers = .live
     ) {
         self.walByteBudget = walByteBudget
+        self.stagingContainers = stagingContainers
         self.location = location
         self.scanner = scanner
         self.filesystemWatcher = filesystemWatcher
@@ -1833,18 +1839,25 @@ extension CatalogStore {
 
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreOrderedAssetIDQuery")
         let dbWriter = try database()
+        // The stacks are built in the read, before its rows: On This Day's match judges a
+        // year's rows by them (`OnThisDayPicks.shows`), and every stack and row then comes
+        // from one snapshot (ADR 0052).
+        let stackRootPaths = roots.pathsByRowID.filter { rowID, path in
+            scope.rootIDs.contains(rowID) && availableLibraryPaths.contains(path)
+        }
         // One read transaction: a row this read sees under a new identity always comes
         // with the pending batch that renamed it (ARC-052).
-        let stackRootIDs = Array(scope.rootIDs)
         let timedRows = try await timedRead(dbWriter) { db in
-            try (
+            let stacks = try PhotoStackSQL.build(rootPaths: stackRootPaths, db: db)
+            return try (
                 rows: CatalogQueryGateway.fetchOrderedAssetIDRows(
                     descriptor: descriptor,
                     scope: scope,
+                    stacks: .built(stacks),
                     db: db
                 ),
                 pending: Self.fetchPendingIdentityRemapBatches(db: db),
-                stackCandidates: PhotoStackSQL.fetchCandidates(rootIDs: stackRootIDs, db: db)
+                stacks: stacks
             )
         }
         OtosSignpost.persistence.endInterval("CatalogStoreOrderedAssetIDQuery", signpost)
@@ -1900,22 +1913,14 @@ extension CatalogStore {
             }
         }
         let queryMs = timedRows.totalMs
-        // The stack rule runs here, after the read, so the log reports the read, the rule
-        // and the order's own work apart (ADR 0052).
-        let stackCandidates = timedRows.value.stackCandidates
-        let ruleStart = ContinuousClock.now
-        var stacks: [PhotoStack] = []
-        for (rowID, candidates) in stackCandidates.byRoot {
-            guard let rootPath = validRootPathsByRowID[rowID] else {
-                continue
-            }
-            stacks += PhotoStackRule.stacks(candidates: candidates, libraryRootPath: rootPath)
-        }
-        let catalogStacks = CatalogStacks(stacks)
+        // The log reports the stacks' read and rule apart from the order's own work (ADR 0052).
+        let builtStacks = timedRows.value.stacks
+        let catalogStacks = builtStacks.stacks
         // On This Day judges a stack by its key: the SQL left out a Disliked key's row, and
-        // its RAW twin or its burst's other frames leave with it (`OnThisDayPicks`, ADR 0052).
+        // its RAW twin or its burst's other frames leave with it (`OnThisDayPicks.shows`, the
+        // rule its years-or-months match asks too).
         if scope.isAnniversary, !catalogStacks.stacks.isEmpty {
-            let kept = ids.indices.filter { !catalogStacks.isInStackWithDislikedKey(ids[$0]) }
+            let kept = ids.indices.filter { OnThisDayPicks.shows(ids[$0], stacks: catalogStacks) }
             if kept.count != ids.count {
                 ids = kept.map { ids[$0] }
                 // Each is empty or index-paired with the order.
@@ -1923,7 +1928,6 @@ extension CatalogStore {
                 coordinates = coordinates.isEmpty ? [] : kept.map { coordinates[$0] }
             }
         }
-        let stackRuleDuration = ContinuousClock.now - ruleStart
         OtosLog.catalog.debug(
             """
             Catalog ordered asset IDs queried descriptor=\(descriptor.diagnosticDescription, privacy: .public) \
@@ -1940,7 +1944,7 @@ extension CatalogStore {
             ])
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) stackCandidates=\(stackCandidates.count, privacy: .public) stackReadMs=\(DiagnosticsTiming.milliseconds(stackCandidates.readDuration), privacy: .public) stackRuleMs=\(DiagnosticsTiming.milliseconds(stackRuleDuration), privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
+            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) stackCandidates=\(builtStacks.candidateCount, privacy: .public) stackReadMs=\(DiagnosticsTiming.milliseconds(builtStacks.readDuration), privacy: .public) stackRuleMs=\(DiagnosticsTiming.milliseconds(builtStacks.ruleDuration), privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )
         return CatalogOrderedAssets(
             ids: ids,
@@ -2924,15 +2928,19 @@ extension CatalogStore {
     /// Claims the rows among `ids` that need enrichment on a root enrichment may read, in
     /// `ids` order. These are the rows the user is looking at and rows a download just made
     /// local; the coordinator claims them ahead of background work and outside its claim
-    /// window, so the list's own length is the bound.
-    func priorityEnrichmentCandidates(_ ids: [MediaAssetID]) async throws -> [ClaimedEnrichmentCandidate] {
+    /// window, so the list's own length is the bound. While `videoFaces` is held, no row is
+    /// claimed for a video's faces (`EnrichmentClaim.admitting`).
+    func priorityEnrichmentCandidates(
+        _ ids: [MediaAssetID],
+        videoFaces: VideoFacesAdmission
+    ) async throws -> [ClaimedEnrichmentCandidate] {
         var seen = Set<MediaAssetID>()
         let uniqueIDs = EnrichmentClaimGateway.unclaimedPriorityIDs(ids, claimedIDs: &seen)
         guard !uniqueIDs.isEmpty else {
             return []
         }
         let queryStart = ContinuousClock.now
-        let claims = try await priorityEnrichmentCandidates(ids: uniqueIDs, limit: uniqueIDs.count)
+        let claims = try await priorityEnrichmentCandidates(ids: uniqueIDs, limit: uniqueIDs.count, videoFaces: videoFaces)
         await recordSlowEnrichmentCandidateQueryIfNeeded(
             priorityCount: uniqueIDs.count,
             returnedCount: claims.value.count,
@@ -2944,8 +2952,10 @@ extension CatalogStore {
     }
 
     /// Claims up to `limit` background rows: removable sources first, then libraries, each
-    /// newest capture first (ADR 0013, ADR 0018).
-    func enrichmentCandidates(limit: Int) async throws -> [ClaimedEnrichmentCandidate] {
+    /// newest capture first (ADR 0013, ADR 0018). While `videoFaces` is held, no row is
+    /// claimed for a video's faces (`EnrichmentClaim.admitting`), so a video that owes only
+    /// them is not claimed at all.
+    func enrichmentCandidates(limit: Int, videoFaces: VideoFacesAdmission) async throws -> [ClaimedEnrichmentCandidate] {
         guard limit > 0 else {
             return []
         }
@@ -2959,7 +2969,7 @@ extension CatalogStore {
         let landed = Array(localBytesAwaitingProducts.prefix(limit))
         localBytesAwaitingProducts.removeFirst(landed.count)
         let landedClaims = try await priorityEnrichmentCandidates(
-            ids: landed, limit: landed.count, bytesAreLocal: true
+            ids: landed, limit: landed.count, videoFaces: videoFaces, bytesAreLocal: true
         )
         if !landed.isEmpty {
             // Whether a fresh copy was enriched while its bytes were local: each claim's
@@ -2972,7 +2982,9 @@ extension CatalogStore {
         }
         var claims = landedClaims
         if landedClaims.value.count < limit {
-            let tiers = try await claimedEnrichmentCandidates(limit: limit - landedClaims.value.count)
+            let tiers = try await claimedEnrichmentCandidates(
+                limit: limit - landedClaims.value.count, videoFaces: videoFaces
+            )
             claims = DatabaseTimedValue(
                 value: landedClaims.value + tiers.value,
                 waitMs: landedClaims.waitMs + tiers.waitMs,
@@ -3047,10 +3059,11 @@ extension CatalogStore {
     /// `bytesAreLocal` marks rows whose bytes just became local: a root first claimed for
     /// metadata alone (a card, a camera, an Immich account) is claimed for its rendering and
     /// digest too (`EnrichmentClaim.products`); a fixed library is claimed for its every
-    /// product from the start (`EnrichmentClaim.library`).
+    /// product from the start (`EnrichmentClaim.library`); either, admitting `videoFaces`.
     private func priorityEnrichmentCandidates(
         ids: [MediaAssetID],
         limit: Int,
+        videoFaces: VideoFacesAdmission,
         bytesAreLocal: Bool = false
     ) async throws -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]> {
         let priorityAssetsByID = try await mediaAssets(for: ids)
@@ -3063,7 +3076,8 @@ extension CatalogStore {
             isRootEnrichable: { [roots] path in roots[path]?.isEnrichable == true },
             firstClaim: { [roots] path in
                 let first = roots[path]?.root.firstClaim ?? .metadata
-                return bytesAreLocal && (first == .metadata || first == .account) ? .products : first
+                let claim = bytesAreLocal && (first == .metadata || first == .account) ? .products : first
+                return claim.admitting(videoFaces)
             }
         )
         guard !eligibleClaims.isEmpty else {
@@ -3112,7 +3126,7 @@ extension CatalogStore {
         )
     }
 
-    private func claimedEnrichmentCandidates(limit: Int) async throws
+    private func claimedEnrichmentCandidates(limit: Int, videoFaces: VideoFacesAdmission) async throws
         -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]>
     {
         let prioritizedRootIDs = roots.enrichableRootIDsByRemovablePriority()
@@ -3139,9 +3153,9 @@ extension CatalogStore {
                 try !EnrichmentClaimGateway.hasRowsNeedingMetadata(rootID: rootID, db: db)
             }
             let priorityGroups: [(rootIDs: [Int64], claim: EnrichmentClaim)] = [
-                (removableRoots.intersection(libraryRootIDs).sorted(), .library),
+                (removableRoots.intersection(libraryRootIDs).sorted(), EnrichmentClaim.library.admitting(videoFaces)),
                 (removableRoots.intersection(metadataFirstRootIDs).sorted(), .metadata),
-                (removableRoots.intersection(accountRootIDs).sorted(), .account),
+                (removableRoots.intersection(accountRootIDs).sorted(), EnrichmentClaim.account.admitting(videoFaces)),
                 (cardsReadyForProducts, .products),
             ]
             for group in priorityGroups where storedAssets.count < limit && !group.rootIDs.isEmpty {
@@ -3159,9 +3173,9 @@ extension CatalogStore {
             // every pass; claimed first, it would fill every window and hold back a source
             // whose rows are readable now (an Immich account's, read in ranges).
             let fixedSources: [(rootID: Int64, claim: EnrichmentClaim)] =
-                fixedRoots.intersection(libraryRootIDs).sorted().map { ($0, .library) }
+                fixedRoots.intersection(libraryRootIDs).sorted().map { ($0, EnrichmentClaim.library.admitting(videoFaces)) }
                     + fixedRoots.intersection(metadataFirstRootIDs).sorted().map { ($0, .metadata) }
-                    + fixedRoots.intersection(accountRootIDs).sorted().map { ($0, .account) }
+                    + fixedRoots.intersection(accountRootIDs).sorted().map { ($0, EnrichmentClaim.account.admitting(videoFaces)) }
             if storedAssets.count < limit, !fixedSources.isEmpty {
                 let share = max(1, (limit - storedAssets.count) / fixedSources.count)
                 for pass in [share, limit] {
@@ -4420,8 +4434,7 @@ extension CatalogStore {
     func addImmichAccount(
         server: URL,
         userID: String,
-        displayName: String,
-        stagingContainer: URL = StagingLocation.containerURL(.remote)
+        displayName: String
     ) async throws -> LibraryRootPath {
         guard let identity = DeviceIdentity.immichAccount(server: server, userID: userID),
               let serverURL = ImmichServerAddress.normalized(server)
@@ -4432,7 +4445,7 @@ extension CatalogStore {
         if let existing = roots.rootForDeviceIdentity(identity) {
             return existing.path
         }
-        let stagingURL = StagingLocation.sessionRootURL(identity: identity, inContainer: stagingContainer)
+        let stagingURL = stagingContainers.sessionRoot(in: .remote, identity: identity)
         try FileManager.default.createDirectory(at: stagingURL, withIntermediateDirectories: true)
         let path = try CatalogPath.normalizedDirectoryPath(for: stagingURL)
         try validateNoOverlap(path)
@@ -5556,21 +5569,40 @@ private extension CatalogStore {
         return normalizedRoots
     }
 
+    /// The path `storedRoot` is at in this process: a user-chosen folder's spelling as the
+    /// filesystem normalizes it, and a staging root's path derived from this build's
+    /// containers and its identity (`StagingContainers`), so a root stored by another build,
+    /// or before the containers were named by bundle identifier, moves into this build's own.
+    /// A move keeps the root's row, so every overlay its assets hold — faces, people, search
+    /// readings, edits, keyed by the row and the relative path — moves with it; derived images
+    /// take the new identity's names, and an import or erase journaled against the old path
+    /// follows it. Nothing on disk moves: staged bytes are a cache, re-fetched on demand, and
+    /// the old folder is its own build's to sweep.
+    private func loadedPath(of storedRoot: StoredRoot) -> LibraryRootPath? {
+        if storedRoot.kind.isUserChosenFolder {
+            return try? CatalogPath.normalizedExistingDirectoryPath(for: storedRoot.path.url)
+        }
+        guard let container = storedRoot.kind.stagingContainer, let identity = storedRoot.deviceIdentity else {
+            return nil
+        }
+        return try? CatalogPath.normalizedDirectoryPath(
+            for: stagingContainers.sessionRoot(in: container, identity: identity)
+        )
+    }
+
     private func normalizedLoadedRoot(
         _ storedRoot: StoredRoot,
         dbWriter: any DatabaseWriter
     ) async -> StoredRoot {
-        guard storedRoot.kind.isUserChosenFolder else {
-            return storedRoot
-        }
-        guard let normalizedPath = try? CatalogPath.normalizedExistingDirectoryPath(for: storedRoot.path.url),
-              normalizedPath != storedRoot.path
-        else {
+        guard let normalizedPath = loadedPath(of: storedRoot), normalizedPath != storedRoot.path else {
             return storedRoot
         }
         do {
+            let oldPath = storedRoot.path
             let thumbnailMigrations = try await dbWriter.write { db in
-                try Self.updateLibraryRootPath(rootRowID: storedRoot.id, path: normalizedPath, db: db)
+                let migrations = try Self.updateLibraryRootPath(rootRowID: storedRoot.id, path: normalizedPath, db: db)
+                try Self.moveJournaledSourceRoot(from: oldPath, to: normalizedPath, db: db)
+                return migrations
             }
             migrateNormalizedRootThumbnails(thumbnailMigrations)
             OtosLog.persistence.info(
@@ -5581,7 +5613,7 @@ private extension CatalogStore {
                 """
             )
             OtosLog.catalog.notice(
-                "op=catalog.library.normalize phase=finish oldRootPath=\(storedRoot.path.rawValue, privacy: .public) rootPath=\(normalizedPath.rawValue, privacy: .public) thumbnailMigrations=\(thumbnailMigrations.count, privacy: .public)"
+                "op=catalog.library.normalize phase=finish kind=\(storedRoot.kind.rawValue, privacy: .public) oldRootPath=\(storedRoot.path.rawValue, privacy: .public) rootPath=\(normalizedPath.rawValue, privacy: .public) thumbnailMigrations=\(thumbnailMigrations.count, privacy: .public)"
             )
             return StoredRoot(
                 id: storedRoot.id,

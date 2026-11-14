@@ -77,11 +77,12 @@ struct RemoteRangeEnrichmentTests {
     /// An account is not claimed until its owner says its server answers, and stops being
     /// claimed when it says the server does not.
     @Test func anAccountIsEnrichableOnlyWhileItsServerAnswers() async throws {
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = try CatalogStore(
+            location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: makeTestDirectory())
+        )
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.addImmichAccount(
-            server: #require(URL(string: "https://photos.example.com")), userID: "u1", displayName: "Family",
-            stagingContainer: makeTestDirectory()
+            server: #require(URL(string: "https://photos.example.com")), userID: "u1", displayName: "Family"
         )
         #expect(await !store.enrichableRootPaths().contains(rootPath))
         await store.setSourceAnswering(true, for: rootPath)
@@ -98,11 +99,10 @@ struct RemoteRangeEnrichmentTests {
     @Test func anAccountRowsMetadataIsReadInRanges() async throws {
         let data = try Data(contentsOf: SourceTree.mediaFixtures.appending(path: "jpeg-exif-offset-date.jpg"))
         let temp = try makeTestDirectory()
-        let store = CatalogStore(location: .databaseFile(temp.appending(path: "Catalog.sqlite")))
+        let store = CatalogStore(location: .databaseFile(temp.appending(path: "Catalog.sqlite")), stagingContainers: StagingContainers(base: temp))
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.addImmichAccount(
-            server: #require(URL(string: "https://photos.example.com")), userID: "u1", displayName: "Family",
-            stagingContainer: temp.appending(path: "RemoteStaging")
+            server: #require(URL(string: "https://photos.example.com")), userID: "u1", displayName: "Family"
         )
         let scan = try await store.beginSourceListing(rootPath: rootPath)
         let path = MediaRelativePath(rawValue: "asset-1/IMG_1.JPG")

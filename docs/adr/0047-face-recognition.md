@@ -99,7 +99,13 @@ grouping had put with the right child.
   and is its own outcome, never the whole read's failure: the video's other products are
   written and only its faces stay owed, paced for 900 s on the retry ledger. A model that
   cannot be loaded holds every video's faces for 900 s, so a missing model does not download
-  and decode every library video in turn.
+  and decode every library video in turn. The hold is the scheduler's process state
+  (`EnrichmentSchedule.videoFaces(at:)`), passed to every Store claim as a value
+  (`VideoFacesAdmission`): held, a library is claimed under the products' claim and an
+  account under the metadata claim (`EnrichmentClaim.admitting`), whose predicates are the
+  wider claims' without the faces, so a video that owes only its faces is never claimed —
+  no claim and release written for it on every wake — and one that owes more is claimed
+  for the rest.
 - **An Immich account's videos are read in byte ranges,** never downloaded: AVFoundation asks
   a resource loader for each range it needs (`RemoteVideoAsset`), and each is read with the
   account's `RemoteRangeReader`, the access its metadata takes (ADR 0046 §5), under the

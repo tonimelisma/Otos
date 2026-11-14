@@ -66,12 +66,12 @@ struct ImmichLiveServerTests {
         do {
             let store = try CatalogStore(
                 location: .databaseFile(makeTestDirectory().appending(path: "Catalog.sqlite")),
-                scanCadence: .milliseconds(10)
+                scanCadence: .milliseconds(10),
+                stagingContainers: StagingContainers(base: makeTestDirectory())
             )
             try await store.start(scansSavedLibraries: false)
             let rootPath = try await store.addImmichAccount(
-                server: credentials.server, userID: login.userID, displayName: login.name,
-                stagingContainer: makeTestDirectory().appending(path: "RemoteStaging")
+                server: credentials.server, userID: login.userID, displayName: login.name
             )
             let sync = ImmichCatalogSync(
                 rootPath: rootPath,
@@ -163,12 +163,12 @@ struct ImmichLiveServerTests {
             uploaded.append(stillID)
 
             let store = try CatalogStore(
-                location: .databaseFile(directory.appending(path: "Catalog.sqlite")), scanCadence: .milliseconds(10)
+                location: .databaseFile(directory.appending(path: "Catalog.sqlite")), scanCadence: .milliseconds(10),
+                stagingContainers: StagingContainers(base: directory)
             )
             try await store.start(scansSavedLibraries: false)
             let rootPath = try await store.addImmichAccount(
-                server: credentials.server, userID: login.userID, displayName: login.name,
-                stagingContainer: directory.appending(path: "RemoteStaging")
+                server: credentials.server, userID: login.userID, displayName: login.name
             )
             let sync = ImmichCatalogSync(
                 rootPath: rootPath, source: ImmichSessionSyncSource(client: client, token: token), store: store,

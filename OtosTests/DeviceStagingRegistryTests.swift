@@ -165,18 +165,18 @@ struct DeviceStagingRegistryTests {
 
             func deleteToken(for _: DeviceIdentity) throws {}
         }
-        let container = try makeTestDirectory().appending(path: "RemoteStaging", directoryHint: .isDirectory)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let containers = try StagingContainers(base: makeTestDirectory())
+        let container = containers.url(.remote)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: containers)
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.addImmichAccount(
-            server: #require(URL(string: "https://photos.example.com")), userID: "user-1", displayName: "Family",
-            stagingContainer: container
+            server: #require(URL(string: "https://photos.example.com")), userID: "user-1", displayName: "Family"
         )
         let staged = rootPath.url.appending(path: "a1/IMG_1.JPG", directoryHint: .notDirectory)
         try FileManager.default.createDirectory(at: staged.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(repeating: 5, count: 64).write(to: staged)
         let accounts = ImmichAccounts(
-            store: store, sessions: NoSessions(), stagingContainer: container, volumeCapacity: ampleVolumeCapacity
+            store: store, sessions: NoSessions(), volumeCapacity: ampleVolumeCapacity
         )
 
         await accounts.start()

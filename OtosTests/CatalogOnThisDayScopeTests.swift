@@ -295,6 +295,76 @@ struct CatalogOnThisDayScopeTests {
         await store.shutdown()
     }
 
+    /// A year is offered exactly when its card would hold a photo (`OnThisDayPicks.shows`):
+    /// an earlier year whose only photo is a pair with a Disliked key holds no photo On This
+    /// Day shows — its RAW twin is not Disliked, but leaves with its key — so the day falls
+    /// back to earlier months, and every read of the scope agrees. Once the key is Liked
+    /// again, the year is offered.
+    @Test func onThisDayOffersAYearOnlyWhenItsCardWouldHoldAPhoto() async throws {
+        let temp = try makeTestDirectory()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let captured: [(String, MediaKind, Date)] = [
+            ("DSC1.ARW", .raw, Self.local(2023, 11, 9, 8)),
+            ("DSC1.JPG", .image, Self.local(2023, 11, 9, 8)),
+            ("2026-10-09.jpg", .image, Self.local(2026, 10, 9, 12)),
+        ]
+        for (name, _, _) in captured {
+            try writeCatalogStoreFile(root.appending(path: name), contents: name)
+        }
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == captured.count }
+        let rootPath = try #require(await store.currentLibraries().first { $0.kind == .library }?.path)
+        func id(_ name: String) -> MediaAssetID {
+            MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: name))
+        }
+        for (name, kind, instant) in captured {
+            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
+            _ = await store.applyEnrichmentBatch([
+                EnrichmentResult(
+                    id: id(name),
+                    metadata: AssetMetadata.absoluteCapture(instant: instant),
+                    enrichedKind: kind,
+                    thumbnailPath: "\(name)-thumb.jpg",
+                    sourceSize: asset.byteSize,
+                    sourceMTimeSeconds: asset.contentModifiedAt.map { Int($0.timeIntervalSince1970) },
+                    contentHash: .empty
+                ),
+            ])
+        }
+        _ = try await store.setMediaChoice(.disliked, for: [id("DSC1.JPG")])
+        let scope = SidebarSelection.onThisDay(Self.today)
+        let available: Set<LibraryRootPath> = [rootPath]
+
+        let disliked = try await store.orderedAssetIDs(for: CatalogQueryDescriptor(scope: scope), availableLibraryPaths: available)
+        let dislikedCount = try await store.visibleAssetCount(for: scope, availableLibraryPaths: available)
+        let dislikedCataloged = try await store.catalogedAssetCount(for: scope)
+
+        _ = try await store.setMediaChoice(.liked, for: [id("DSC1.JPG")])
+        let liked = try await store.orderedAssetIDs(for: CatalogQueryDescriptor(scope: scope), availableLibraryPaths: available)
+        await store.shutdown()
+
+        // The months' match: the 9th of October, not an empty 2023. The pair's 9 November
+        // is a 9th too, and leaves with its key.
+        #expect(disliked.ids == [id("2026-10-09.jpg")])
+        // The counts read the months as well: a count is of rows, so the RAW twin the SQL
+        // leaves in is one of its two; the years' match would hold that row alone.
+        #expect(dislikedCount == 2)
+        #expect(dislikedCataloged == 2)
+        let state = try #require(CatalogWindowPolicy.onThisDayState(
+            for: CatalogQueryDescriptor(scope: scope),
+            scopedAssetIDs: disliked.ids,
+            scopedDayBuckets: disliked.dayBuckets
+        ))
+        #expect(!state.isYears)
+        // A Liked key shows the pair: 2023 is offered, and the months are not.
+        #expect(Set(liked.ids) == [id("DSC1.ARW"), id("DSC1.JPG")])
+        #expect(liked.stacks.stack(containing: id("DSC1.JPG"))?.key == id("DSC1.JPG"))
+    }
+
     @MainActor
     @Test func onThisDayResolvesWithTheFixedLibrariesAndNamesItsEmptiness() {
         let pictures = CatalogLibraryState(

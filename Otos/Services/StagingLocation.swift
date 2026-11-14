@@ -12,6 +12,40 @@ nonisolated enum StagingContainer: String, CaseIterable, Sendable {
     case remote = "RemoteStaging"
 }
 
+/// Where this build's staging containers are: one folder holding a folder per
+/// `StagingContainer`. `live` is the running app's own, under Caches and named by its bundle
+/// identifier; a test passes its own folder.
+///
+/// A staging root's path is a function of this and the source's identity
+/// (`sessionRoot(in:identity:)`), never a fact of its own: the catalog stores it because
+/// asset identity is the path (ADR 0008), and `CatalogStore` re-derives it from this value at
+/// every load, so a root never points at a folder outside its build's container (ADR 0046).
+nonisolated struct StagingContainers: Equatable, Sendable {
+    let base: URL
+
+    /// The running app's containers: `Caches/<bundle identifier>/`.
+    static var live: StagingContainers {
+        let caches = (try? FileManager.default.url(
+            for: .cachesDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )) ?? FileManager.default.temporaryDirectory
+        return StagingContainers(
+            base: caches.appending(path: Bundle.main.bundleIdentifier ?? "net.melisma.Otos", directoryHint: .isDirectory)
+        )
+    }
+
+    func url(_ container: StagingContainer) -> URL {
+        base.appending(path: container.rawValue, directoryHint: .isDirectory)
+    }
+
+    /// Where the root for `identity` lives in `container`.
+    func sessionRoot(in container: StagingContainer, identity: DeviceIdentity) -> URL {
+        StagingLocation.sessionRootURL(identity: identity, inContainer: url(container))
+    }
+}
+
 /// The one owner of where staged originals live on disk.
 ///
 /// Two types built this path independently before — `DeviceStagingRegistry` for its sweeps
@@ -64,15 +98,7 @@ nonisolated enum StagingLocation {
     /// a dev build (`net.melisma.Otos.dev`) and the installed app never share a container
     /// and never sweep each other's trees (ADR 0030).
     static func containerURL(_ container: StagingContainer) -> URL {
-        let caches = (try? FileManager.default.url(
-            for: .cachesDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? FileManager.default.temporaryDirectory
-        return caches
-            .appending(path: Bundle.main.bundleIdentifier ?? "net.melisma.Otos", directoryHint: .isDirectory)
-            .appending(path: container.rawValue, directoryHint: .isDirectory)
+        StagingContainers.live.url(container)
     }
 
     /// Where one source's bytes go. Stable across launches for the same source.

@@ -40,9 +40,10 @@ nonisolated enum CatalogQueryGateway {
     static func fetchOrderedAssetIDRows(
         descriptor: CatalogQueryDescriptor,
         scope: CatalogScopePredicate,
+        stacks: AnniversaryStacks = .readWhenNeeded,
         db: Database
     ) throws -> [OrderedAssetIDRow] {
-        guard let query = try orderedAssetIDQuery(descriptor: descriptor, scope: scope, db: db) else {
+        guard let query = try orderedAssetIDQuery(descriptor: descriptor, scope: scope, stacks: stacks, db: db) else {
             return []
         }
         // Read by position, in `orderedAssetIDQuery`'s column order: a name lookup per column
@@ -82,14 +83,16 @@ nonisolated enum CatalogQueryGateway {
         var isLiked = false
     }
 
-    /// `db` is the read's own transaction: a scope with a date dimension reads its year
-    /// floor there (`scopeClause`), so the ranges and the rows come from one snapshot.
+    /// `db` is the read's own transaction: a scope with a date dimension decides its
+    /// anniversary match there (`scopeClause`), judging stacks by `stacks`, so the match and
+    /// the rows come from one snapshot.
     static func orderedAssetIDQuery(
         descriptor: CatalogQueryDescriptor,
         scope: CatalogScopePredicate,
+        stacks: AnniversaryStacks = .readWhenNeeded,
         db: Database
     ) throws -> SQLQuery? {
-        guard let scopeClause = try scopeClause(scope, db: db) else {
+        guard let scopeClause = try scopeClause(scope, stacks: stacks, db: db) else {
             return nil
         }
         let order = orderPlan(
@@ -115,6 +118,23 @@ nonisolated enum CatalogQueryGateway {
             ORDER BY \(order.orderBy)
             """,
             arguments: StatementArguments(arguments)
+        )
+    }
+
+    /// The rows of `scope` that `match` selects and On This Day's exclusion leaves in, by key:
+    /// what the years-or-months match walks (`anniversaryMatch`). Nil when the scope selects
+    /// nothing.
+    static func anniversaryRowsQuery(scope: CatalogScopePredicate, match: AnniversaryMatch) throws -> SQLQuery? {
+        guard !scope.selectsNothing, let clause = try scopeClause(scope, anniversary: match) else {
+            return nil
+        }
+        return SQLQuery(
+            sql: """
+            SELECT media_asset.library_root_id, media_asset.relative_path
+            FROM media_asset\(clause.join)
+            WHERE \(clause.sql)
+            """,
+            arguments: StatementArguments(clause.arguments)
         )
     }
 
@@ -491,6 +511,38 @@ nonisolated enum PhotoStackSQL {
         let readDuration: Duration
     }
 
+    /// Every stack of some roots as one read built them: the stacks, the root paths their
+    /// files are named under, and what the read and the rule cost, which the order query
+    /// reports apart from its own work.
+    struct Built: Sendable {
+        let stacks: CatalogStacks
+        let rootPaths: [Int64: LibraryRootPath]
+        let candidateCount: Int
+        let readDuration: Duration
+        let ruleDuration: Duration
+    }
+
+    /// Reads the candidates of `rootPaths`' roots and runs `PhotoStackRule` over them, in the
+    /// caller's read, so the stacks come from the snapshot its rows do.
+    static func build(rootPaths: [Int64: LibraryRootPath], db: Database) throws -> Built {
+        let candidates = try fetchCandidates(rootIDs: rootPaths.keys.sorted(), db: db)
+        let ruleStart = ContinuousClock.now
+        var stacks: [PhotoStack] = []
+        for (rowID, rootCandidates) in candidates.byRoot {
+            guard let rootPath = rootPaths[rowID] else {
+                continue
+            }
+            stacks += PhotoStackRule.stacks(candidates: rootCandidates, libraryRootPath: rootPath)
+        }
+        return Built(
+            stacks: CatalogStacks(stacks),
+            rootPaths: rootPaths,
+            candidateCount: candidates.count,
+            readDuration: candidates.readDuration,
+            ruleDuration: ContinuousClock.now - ruleStart
+        )
+    }
+
     /// The columns `candidateQuery` selects, in order: each row is read by position.
     private enum Column: Int {
         case libraryRootID, relativePath, bestKind, nameKey, sortKey, keyChosenAt
@@ -691,9 +743,11 @@ private nonisolated func orderPlan(
 /// so the same read can also carry each row's coordinate; columns are qualified with
 /// their table so the join introduces no ambiguity. A scope with a date dimension decides
 /// its anniversary match in `db`, the caller's read (`anniversaryMatch`), so the match and
-/// the rows it selects come from one snapshot (ADR 0049).
+/// the rows it selects come from one snapshot (ADR 0049); `stacks` are what the match judges
+/// a stack's files by.
 private nonisolated func scopeClause(
     _ scope: CatalogScopePredicate,
+    stacks: AnniversaryStacks = .readWhenNeeded,
     db: Database
 ) throws -> ScopeClause? {
     guard !scope.selectsNothing else {
@@ -703,7 +757,7 @@ private nonisolated func scopeClause(
     case .any:
         return try scopeClause(scope, anniversary: nil)
     case let .anniversary(day):
-        guard let match = try anniversaryMatch(for: day, scope: scope, db: db) else {
+        guard let match = try anniversaryMatch(for: day, scope: scope, stacks: stacks, db: db) else {
             return nil
         }
         return try scopeClause(scope, anniversary: match)
@@ -712,25 +766,66 @@ private nonisolated func scopeClause(
 
 private typealias ScopeClause = (join: String, sql: String, arguments: [any DatabaseValueConvertible])
 
-/// On This Day's match (ADR 0049): the day in earlier years while any row of the scope
-/// falls on one, else the day in earlier months. The question is asked of the scope alone
-/// — its roots and visibility rules — never of the filter, so the filter only narrows what
-/// the scope holds and never turns years into months. Nil only for a day no calendar
-/// starts, which `CalendarDay.today()` never is.
+/// The stacks On This Day's match judges a stack's files by (`OnThisDayPicks.shows`): the
+/// ones the read already built from its own transaction, or none yet, built from the same
+/// transaction when a year's rows first need them. Either way they come from the snapshot
+/// the rows do.
+nonisolated enum AnniversaryStacks {
+    case built(PhotoStackSQL.Built)
+    case readWhenNeeded
+
+    func resolved(rootIDs: [Int64], db: Database) throws -> PhotoStackSQL.Built {
+        switch self {
+        case let .built(built):
+            return built
+        case .readWhenNeeded:
+            var rootPaths: [Int64: LibraryRootPath] = [:]
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT id, path FROM library_root WHERE id IN (\(sqlPlaceholders(count: rootIDs.count)))",
+                arguments: StatementArguments(rootIDs)
+            )
+            for row in rows {
+                rootPaths[row[0]] = LibraryRootPath(rawValue: row[1])
+            }
+            return try PhotoStackSQL.build(rootPaths: rootPaths, db: db)
+        }
+    }
+}
+
+/// On This Day's match (ADR 0049): the day in earlier years while the scope holds a photo
+/// On This Day would show on one, else the day in earlier months. "Would show" is the rule
+/// that fills the cards (`OnThisDayPicks.shows`): a row the exclusion leaves in, unless it is
+/// a file of a stack whose key is Disliked. So a year is offered exactly when its card would
+/// hold a photo. The question is asked of the scope alone — its roots and visibility rules
+/// — never of the filter, so the filter only narrows what the scope holds and never turns
+/// years into months. Nil only for a day no calendar starts, which `CalendarDay.today()`
+/// never is.
+///
+/// The year's rows are walked in their index's order and the walk stops at the first one
+/// shown, so a day whose first row is shown costs what an `EXISTS` would.
 private nonisolated func anniversaryMatch(
     for day: CalendarDay,
     scope: CatalogScopePredicate,
+    stacks: AnniversaryStacks,
     db: Database
 ) throws -> AnniversaryMatch? {
-    if let years = AnniversaryMatch.years(for: day), let clause = try scopeClause(scope, anniversary: years) {
-        let holdsAYear = try Bool.fetchOne(
-            db,
-            sql: "SELECT EXISTS (SELECT 1 FROM media_asset\(clause.join) WHERE \(clause.sql))",
-            arguments: StatementArguments(clause.arguments)
-        ) ?? false
-        if holdsAYear {
-            logAnniversaryMatch(day: day, unit: .years)
-            return years
+    if let years = AnniversaryMatch.years(for: day),
+       let query = try CatalogQueryGateway.anniversaryRowsQuery(scope: scope, match: years)
+    {
+        let rows = try Row.fetchCursor(db, sql: query.sql, arguments: query.arguments)
+        var judged: PhotoStackSQL.Built?
+        while let row = try rows.next() {
+            let built = try judged ?? stacks.resolved(rootIDs: scope.rootIDs, db: db)
+            judged = built
+            guard let rootPath = built.rootPaths[row[0]] else {
+                continue
+            }
+            let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: row[1]))
+            if OnThisDayPicks.shows(id, stacks: built.stacks) {
+                logAnniversaryMatch(day: day, unit: .years)
+                return years
+            }
         }
     }
     let months = AnniversaryMatch.months(for: day)

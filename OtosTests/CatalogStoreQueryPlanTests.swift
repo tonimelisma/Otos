@@ -357,6 +357,32 @@ struct CatalogStoreQueryPlanTests {
         #expect(!plan.contains("SCAN search_embedding\n") && !plan.hasSuffix("SCAN search_embedding"))
     }
 
+    /// On This Day's years-or-months match walks a year's rows through a capture-time index
+    /// of their roots, bounded by the year's start, never by a scan of every row.
+    @Test func onThisDaysYearRowsAreWalkedThroughTheCaptureIndex() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let match = try #require(AnniversaryMatch.years(for: CalendarDay(year: 2026, month: 11, day: 9)))
+        let plans = try await dbQueue.read { db in
+            try [1, 3].map { rootCount in
+                let scope = CatalogScopePredicate(rootIDs: Array(1 ... Int64(rootCount)))
+                let query = try #require(try CatalogQueryGateway.anniversaryRowsQuery(scope: scope, match: match))
+                return try explainPlan(db, sql: query.sql, arguments: query.arguments)
+            }
+        }
+        for plan in plans {
+            let lines = plan.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+            #expect(lines.contains { $0.hasPrefix("SEARCH media_asset USING") && $0.contains("best_capture_local<?") }, "\(plan)")
+            #expect(!lines.contains { $0.hasPrefix("SCAN media_asset") }, "\(plan)")
+        }
+    }
+
     @Test func metadataOnlyClaimQueriesUseMetadataOnlyIndexes() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")

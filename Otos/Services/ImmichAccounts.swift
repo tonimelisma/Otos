@@ -94,9 +94,6 @@ actor ImmichAccounts {
     /// Reads a volume's free space for the floor every account's sync keeps (ADR 0027).
     private let volumeCapacity: VolumeCapacityReader
     private let schedule: Schedule
-    /// Where new accounts' staging folders go: the app's Caches `RemoteStaging`, or a test's
-    /// own folder.
-    private let stagingContainer: URL
     private let clock = ContinuousClock()
     private var accounts: [LibraryRootPath: Account] = [:]
     private var status: [LibraryRootPath: ImmichAccountStatus] = [:]
@@ -106,11 +103,9 @@ actor ImmichAccounts {
         sessions: any ImmichSessionStoring = ImmichKeychainSessionStore(),
         urlSession: URLSession = .shared,
         schedule: Schedule = .production,
-        stagingContainer: URL = StagingLocation.containerURL(.remote),
         volumeCapacity: @escaping VolumeCapacityReader
     ) {
         self.volumeCapacity = volumeCapacity
-        self.stagingContainer = stagingContainer
         self.store = store
         self.sessions = sessions
         self.urlSession = urlSession
@@ -187,7 +182,7 @@ actor ImmichAccounts {
         let rootPath: LibraryRootPath
         do {
             rootPath = try await store.addImmichAccount(
-                server: address, userID: login.userID, displayName: login.name, stagingContainer: stagingContainer
+                server: address, userID: login.userID, displayName: login.name
             )
             guard let root = await store.currentLibraries().first(where: { $0.path == rootPath })?.root,
                   let identity = root.deviceIdentity

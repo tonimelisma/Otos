@@ -4,6 +4,7 @@ import Foundation
 /// 2026-11-13, following Apple Photos' Memories): never a photo the user Disliked, never one
 /// Vision is confident is a screenshot or a document, and a day's Liked photos first. A
 /// photo not yet read for search has no labels and stays: an unknown is not a screenshot.
+/// A stack is judged by its key (`shows`).
 nonisolated enum OnThisDayPicks {
     /// The scene labels that leave a photo out: Vision's confident labels as search stores
     /// them (`search_embedding.confident_labels`, comma-separated identifiers).
@@ -31,6 +32,15 @@ nonisolated enum OnThisDayPicks {
               WHERE \(leftOutLabelSQL)
           )
         """
+    }
+
+    /// Whether On This Day shows `id`, a row `exclusionSQL` left in: unless it is a file of a
+    /// stack whose key is Disliked. A choice on a collapsed stack is its key's (ADR 0052), so
+    /// such a stack's every file leaves, the key's RAW twin and a burst's other frames with it.
+    /// The one answer both the cards (`CatalogStore.orderedAssetIDs`) and the years-or-months
+    /// match (`anniversaryMatch`) ask, so a year is offered exactly when its card holds a photo.
+    static func shows(_ id: MediaAssetID, stacks: CatalogStacks) -> Bool {
+        !stacks.isInStackWithDislikedKey(id)
     }
 
     /// The most photos one anniversary shows (owner, 2026-11-12, from the day sizes in

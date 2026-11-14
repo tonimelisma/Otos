@@ -103,11 +103,10 @@ struct CatalogProjectionEmptyStateTests {
     /// catalog holds still rebuilds them.
     @Test func addedRowsArePublishedWithoutRebuildingDuplicates() async throws {
         let temp = try makeTestDirectory()
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: temp))
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.addImmichAccount(
-            server: #require(URL(string: "https://photos.example.com")), userID: "user-1", displayName: "Family",
-            stagingContainer: temp.appending(path: "RemoteStaging")
+            server: #require(URL(string: "https://photos.example.com")), userID: "user-1", displayName: "Family"
         )
         func item(_ id: String, size: Int64) -> SourceListedItem {
             SourceListedItem(
@@ -174,11 +173,10 @@ struct CatalogProjectionEmptyStateTests {
     /// tally counts it, though neither the groups nor the assignment are rebuilt for it.
     @Test func addedRowsAreCountedInPeoplesTallyWithoutRebuildingDuplicates() async throws {
         let temp = try makeTestDirectory()
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: temp))
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.addImmichAccount(
-            server: #require(URL(string: "https://photos.example.com")), userID: "user-1", displayName: "Family",
-            stagingContainer: temp.appending(path: "RemoteStaging")
+            server: #require(URL(string: "https://photos.example.com")), userID: "user-1", displayName: "Family"
         )
         func item(_ id: String) -> SourceListedItem {
             SourceListedItem(

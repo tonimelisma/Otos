@@ -111,7 +111,9 @@ crop and rotation, curation, copy, share, open with, drag, export, Info's pictur
 Curation being the key's, a collapsed stack is Liked or Disliked as its key is
 (`PhotoStack.keyChoice`): a surface that judges photos by their choice judges a stack by its
 key, so On This Day, which leaves Disliked photos out, leaves out every file of a stack whose
-key is Disliked, and a Disliked RAW behind a JPEG key leaves the JPEG.
+key is Disliked, and a Disliked RAW behind a JPEG key leaves the JPEG. That is one answer
+(`OnThisDayPicks.shows`), asked by the cards and by the years-or-months match alike, so a year
+whose only photos are such a stack is not offered (ADR 0049).
 Anything that changes files acts on every member of a collapsed stack: Move to Trash, Reveal in
 Finder, import and reorganization. A member of an expanded stack is an ordinary photo for every
 action, Move to Trash included: it trashes that one file. Each member keeps its own overlay;

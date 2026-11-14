@@ -191,12 +191,13 @@ struct ImmichCatalogSyncTests {
         let rootPath: LibraryRootPath
 
         static func make() async throws -> Fixture {
-            let staging = try makeTestDirectory().appending(path: "RemoteStaging", directoryHint: .isDirectory)
-            let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+            let staging = try makeTestDirectory()
+            let store = CatalogStore(
+                location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: staging)
+            )
             try await store.start(scansSavedLibraries: false)
             let rootPath = try await store.addImmichAccount(
-                server: ImmichCatalogSyncTests.server, userID: "user-1", displayName: "Family",
-                stagingContainer: staging
+                server: ImmichCatalogSyncTests.server, userID: "user-1", displayName: "Family"
             )
             return Fixture(store: store, rootPath: rootPath)
         }
@@ -556,11 +557,10 @@ struct ImmichCatalogSyncTests {
 
         static func make() async throws -> FileFixture {
             let temp = try makeTestDirectory()
-            let store = CatalogStore(location: .databaseFile(temp.appending(path: "Catalog.sqlite")))
+            let store = CatalogStore(location: .databaseFile(temp.appending(path: "Catalog.sqlite")), stagingContainers: StagingContainers(base: temp))
             try await store.start(scansSavedLibraries: false)
             let rootPath = try await store.addImmichAccount(
-                server: ImmichCatalogSyncTests.server, userID: "user-1", displayName: "Family",
-                stagingContainer: temp.appending(path: "RemoteStaging")
+                server: ImmichCatalogSyncTests.server, userID: "user-1", displayName: "Family"
             )
             return try FileFixture(store: store, rootPath: rootPath, directory: #require(store.thumbnailDirectory))
         }
@@ -872,11 +872,10 @@ struct ImmichCatalogSyncTests {
             func walBytes() throws -> Int {
                 try #require(FileManager.default.attributesOfItem(atPath: wal)[.size] as? Int)
             }
-            let store = CatalogStore(location: .databaseFile(file), walByteBudget: budget)
+            let store = CatalogStore(location: .databaseFile(file), walByteBudget: budget, stagingContainers: StagingContainers(base: temp))
             try await store.start(scansSavedLibraries: false)
             let rootPath = try await store.addImmichAccount(
-                server: Self.server, userID: "user-1", displayName: "Family",
-                stagingContainer: temp.appending(path: "RemoteStaging")
+                server: Self.server, userID: "user-1", displayName: "Family"
             )
             let scan = try await store.beginSourceListing(rootPath: rootPath)
             let items = (0 ..< 200).map { index in

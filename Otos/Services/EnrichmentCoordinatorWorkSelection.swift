@@ -53,6 +53,9 @@ extension EnrichmentCoordinator {
 
         do {
             var routing = ClaimRouting()
+            // While the face model cannot be loaded, every claim this pass makes leaves a
+            // video's faces out, so a video that owes only them is never claimed (ADR 0047).
+            let videoFaces = schedule.videoFaces(at: now)
             // Rows the user is looking at (and rows a download just made local) are claimed
             // before queued work is drained, and outside the claim window. The window bounds
             // look-ahead, and a row on screen is not look-ahead: when the window is full of
@@ -64,7 +67,7 @@ extension EnrichmentCoordinator {
                 readyClaims[$0] == nil && !schedule.hasDemand(for: $0)
             }
             if !unclaimedPriority.isEmpty {
-                let claimed = try await store.priorityEnrichmentCandidates(unclaimedPriority)
+                let claimed = try await store.priorityEnrichmentCandidates(unclaimedPriority, videoFaces: videoFaces)
                 for candidate in claimed {
                     await recordClaimedCandidate(candidate.asset)
                 }
@@ -86,7 +89,7 @@ extension EnrichmentCoordinator {
                 guard currentClaimCapacity > 0 else { break }
                 let claimLimit = min(max(claimBatchSize, currentReadyCapacity), currentClaimCapacity)
                 lastClaimLimit = claimLimit
-                let claimed = try await claimSkippingLedgerDeferrals(limit: claimLimit, now: now)
+                let claimed = try await claimSkippingLedgerDeferrals(limit: claimLimit, videoFaces: videoFaces, now: now)
                 routing.examined += claimed.totalExamined
                 routing.deferred += claimed.deferredIDs.count
                 if !claimed.deferredIDs.isEmpty {
@@ -219,13 +222,14 @@ extension EnrichmentCoordinator {
     /// query naturally skips past them and surfaces different rows.
     private func claimSkippingLedgerDeferrals(
         limit: Int,
+        videoFaces: VideoFacesAdmission,
         now: ContinuousClock.Instant
     ) async throws -> (ready: [ClaimedEnrichmentCandidate], deferredIDs: [MediaAssetID], totalExamined: Int) {
         var ready: [ClaimedEnrichmentCandidate] = []
         var deferredIDs: [MediaAssetID] = []
         var totalExamined = 0
         for _ in 0 ..< Self.maxLedgerSkipPasses {
-            let batch = try await claimEnrichmentCandidates(limit: limit)
+            let batch = try await claimEnrichmentCandidates(limit: limit, videoFaces: videoFaces)
             guard !batch.isEmpty else {
                 break
             }
@@ -241,9 +245,7 @@ extension EnrichmentCoordinator {
     }
 
     /// Splits a claimed batch into the rows the pacing ledger lets through at `now` and
-    /// the rows it defers back to the Store (`EnrichmentSchedule.ledgerAdmits`). While the face
-    /// model is missing, a row loses its video's faces from its scope, and a row claimed only
-    /// for them is deferred too (`EnrichmentSchedule.admittingVideoFaces`).
+    /// the rows it defers back to the Store (`EnrichmentSchedule.ledgerAdmits`).
     private func partitionByWaits(
         _ candidates: [ClaimedEnrichmentCandidate],
         now: ContinuousClock.Instant
@@ -251,10 +253,8 @@ extension EnrichmentCoordinator {
         var ready: [ClaimedEnrichmentCandidate] = []
         var deferred: [MediaAssetID] = []
         for candidate in candidates {
-            if schedule.ledgerAdmits(candidate.asset.id, sourceSize: candidate.asset.byteSize, now: now),
-               let admitted = schedule.admittingVideoFaces(candidate, now: now)
-            {
-                ready.append(admitted)
+            if schedule.ledgerAdmits(candidate.asset.id, sourceSize: candidate.asset.byteSize, now: now) {
+                ready.append(candidate)
             } else {
                 deferred.append(candidate.asset.id)
             }
@@ -343,8 +343,11 @@ extension EnrichmentCoordinator {
 
     /// Background claims, in Store order. Priority rows were claimed first, outside the
     /// window, by `dequeueEnrichmentWork`.
-    private func claimEnrichmentCandidates(limit: Int) async throws -> [ClaimedEnrichmentCandidate] {
-        let candidates = try await store.enrichmentCandidates(limit: limit)
+    private func claimEnrichmentCandidates(
+        limit: Int,
+        videoFaces: VideoFacesAdmission
+    ) async throws -> [ClaimedEnrichmentCandidate] {
+        let candidates = try await store.enrichmentCandidates(limit: limit, videoFaces: videoFaces)
         for candidate in candidates {
             await recordClaimedCandidate(candidate.asset)
         }

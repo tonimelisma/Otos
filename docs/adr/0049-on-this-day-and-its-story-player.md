@@ -78,9 +78,14 @@ view mode for it.
    UTC calendar, so SQLite's `strftime(…, 'unixepoch')` writes the date the clock showed
    with no zone applied, and a daylight-saving day is midnight to midnight like any
    other. Years match `strftime('%m-%d') = '11-12'` on rows taken before the day's year
-   began; months match `strftime('%d') = '12'` on rows taken before its month began. An
-   `EXISTS` over the scope with the years' match — its roots and visibility rules, never
-   the filter — decides the unit: any row keeps the years; none falls back to the months.
+   began; months match `strftime('%d') = '12'` on rows taken before its month began. The
+   scope's rows under the years' match — its roots and visibility rules, never the filter —
+   decide the unit by the rule that fills the cards (`OnThisDayPicks.shows`): a year is
+   offered exactly when its card would hold a photo, so any row On This Day would show keeps
+   the years, and none falls back to the months. A row the exclusion leaves in is still not
+   shown when it is a file of a stack whose key is Disliked (ADR 0052), so the walk judges
+   each row by the stacks the read built in the same transaction, and stops at the first
+   row shown.
    Because the filter takes no part, it only narrows: a video filter on a scope whose
    year holds only photos shows nothing, never last month's videos. Every read decides
    the same unit from the same snapshot, so order, counts and filter options agree, and
@@ -239,7 +244,10 @@ loupe's owners already answer every case the story needs.
   read's transaction, so `orderedAssetIDQuery` and `distinctFilterableTypesQuery` take
   the `Database`.
 - `DateConstraint.anniversary` resolves to years or months inside each read with one
-  extra `EXISTS`, which stops at its first row when a year holds the day; the scope's
+  extra walk of the year's rows (`CatalogQueryGateway.anniversaryRowsQuery`, through a
+  capture-time index), which stops at its first row shown; the order read builds the
+  stacks in its own transaction before its rows and hands them to the walk, and a count,
+  read only for an empty scope, builds them when a year's rows first need them; the scope's
   reads filter rows by a function rather than an index range, linear in the scope's
   rows, and `op=onThisDay.query` carries the cost. The benchmark cases
   `projection.windowState.onThisDay.years` and `.months` watch it.

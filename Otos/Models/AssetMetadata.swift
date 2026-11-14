@@ -249,6 +249,27 @@ nonisolated enum EnrichmentClaim: Hashable, Sendable, CaseIterable {
     case products
     case library
     case account
+
+    /// The claim to take while `videoFaces` says whether a video's faces may be handed out.
+    /// Held, a claim that covers them covers everything else it does: a fixed library's every
+    /// other product is `.products`' predicate, an account's metadata is `.metadata`'s, so a
+    /// video that owes only its faces matches neither and is never claimed (ADR 0047).
+    func admitting(_ videoFaces: VideoFacesAdmission) -> EnrichmentClaim {
+        switch (self, videoFaces) {
+        case (.library, .held): .products
+        case (.account, .held): .metadata
+        case (_, .admitted), (.metadata, .held), (.products, .held): self
+        }
+    }
+}
+
+/// Whether a claim may hand out a video's faces. Held while the face model cannot be
+/// loaded (`EnrichmentSchedule.holdVideoFaces`): no video can be read for them then, so
+/// none is claimed for them. Process state the scheduler owns, passed to each claim as a
+/// value.
+nonisolated enum VideoFacesAdmission: Equatable, Sendable {
+    case admitted
+    case held
 }
 
 /// The products one enrichment of a claimed row makes (ADR 0009, ADR 0018): the set of

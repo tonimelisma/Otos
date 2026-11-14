@@ -89,8 +89,8 @@ nonisolated struct EnrichmentSchedule: Sendable {
     private(set) var retryLedger: [MediaAssetID: RetryLedgerEntry] = [:]
     private(set) var readinessRechecks: [MediaAssetID: ContinuousClock.Instant] = [:]
     private(set) var writeRetryAt: ContinuousClock.Instant?
-    /// Until when no row is read for a video's faces, because the face model could not be
-    /// loaded (`holdVideoFaces`).
+    /// Until when no row is claimed for a video's faces, because the face model could not be
+    /// loaded (`holdVideoFaces`, `videoFaces(at:)`).
     private(set) var videoFacesHeldUntil: ContinuousClock.Instant?
     /// Last emitted scheduler-route facts, and how many identical passes have been
     /// collapsed since (B1). The route line was once unconditional, so a scheduler spinning
@@ -332,22 +332,20 @@ nonisolated struct EnrichmentSchedule: Sendable {
 
     /// Holds every video's faces for `faceModelBackoff`: no video can be read for them while the
     /// face model cannot be loaded, so reading one after another would download and decode
-    /// every library video for nothing.
+    /// every library video for nothing, and claiming one for them would write its claim and
+    /// its release for nothing.
     mutating func holdVideoFaces(now: ContinuousClock.Instant) {
         videoFacesHeldUntil = now.advanced(by: retrySchedule.faceModelBackoff)
     }
 
-    /// `candidate` as it may proceed at `now`: as claimed, without a video's faces while they
-    /// are held, or nil when its faces were all it was claimed for, so its claim is released.
-    func admittingVideoFaces(
-        _ candidate: ClaimedEnrichmentCandidate,
-        now: ContinuousClock.Instant
-    ) -> ClaimedEnrichmentCandidate? {
-        guard let held = videoFacesHeldUntil, held > now, candidate.scope.contains(.videoFaces) else {
-            return candidate
+    /// Whether a claim at `now` may hand out a video's faces: the one answer the coordinator
+    /// passes to every Store claim, so a held video is never claimed for them, rather than
+    /// claimed and given back.
+    func videoFaces(at now: ContinuousClock.Instant) -> VideoFacesAdmission {
+        guard let held = videoFacesHeldUntil, held > now else {
+            return .admitted
         }
-        let scope = candidate.scope.subtracting(.videoFaces)
-        return scope.isEmpty ? nil : ClaimedEnrichmentCandidate(asset: candidate.asset, scope: scope)
+        return .held
     }
 
     // MARK: - Readiness rechecks

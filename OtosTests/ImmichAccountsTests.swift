@@ -115,7 +115,9 @@ struct ImmichAccountsTests {
     private static let quick = ImmichAccounts.Schedule(poll: .seconds(3600), backoff: [.zero])
 
     private func makeStore() async throws -> CatalogStore {
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = try CatalogStore(
+            location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: makeTestDirectory())
+        )
         try await store.start(scansSavedLibraries: false)
         return store
     }
@@ -152,7 +154,6 @@ struct ImmichAccountsTests {
         let sessions = MemorySessions()
         let accounts = try ImmichAccounts(
             store: store, sessions: sessions, urlSession: server.session(), schedule: Self.quick,
-            stagingContainer: makeTestDirectory(),
             volumeCapacity: ampleVolumeCapacity
         )
 
@@ -179,11 +180,11 @@ struct ImmichAccountsTests {
         let wrong = FakeServer(host: "wrong.test")
         let old = FakeServer(host: "old.test", major: 2)
         let wrongAccounts = try ImmichAccounts(
-            store: store, sessions: sessions, urlSession: wrong.session(), stagingContainer: makeTestDirectory(),
+            store: store, sessions: sessions, urlSession: wrong.session(),
             volumeCapacity: ampleVolumeCapacity
         )
         let oldAccounts = try ImmichAccounts(
-            store: store, sessions: sessions, urlSession: old.session(), stagingContainer: makeTestDirectory(),
+            store: store, sessions: sessions, urlSession: old.session(),
             volumeCapacity: ampleVolumeCapacity
         )
 
@@ -210,7 +211,6 @@ struct ImmichAccountsTests {
         let asked = ImmichAccounts.Schedule(poll: .seconds(3600), backoff: [.seconds(3600)])
         let accounts = try ImmichAccounts(
             store: store, sessions: MemorySessions(), urlSession: server.session(), schedule: asked,
-            stagingContainer: makeTestDirectory(),
             volumeCapacity: ampleVolumeCapacity
         )
         let address = try #require(URL(string: "http://flaky.test"))
@@ -238,7 +238,7 @@ struct ImmichAccountsTests {
         let store = try await makeStore()
         let accounts = try ImmichAccounts(
             store: store, sessions: MemorySessions(), urlSession: server.session(), schedule: Self.quick,
-            stagingContainer: makeTestDirectory(), volumeCapacity: ampleVolumeCapacity
+            volumeCapacity: ampleVolumeCapacity
         )
         let address = try #require(URL(string: "http://again.test"))
         guard case let .added(rootPath) = await accounts.add(server: address, email: "a", password: "right") else {
@@ -298,7 +298,7 @@ struct ImmichAccountsTests {
         let up = FakeServer(host: "kept.test")
         let first = try ImmichAccounts(
             store: store, sessions: sessions, urlSession: up.session(), schedule: Self.quick,
-            stagingContainer: makeTestDirectory(), volumeCapacity: ampleVolumeCapacity
+            volumeCapacity: ampleVolumeCapacity
         )
         let before = Date()
         guard case let .added(rootPath) = try await first.add(
@@ -316,7 +316,7 @@ struct ImmichAccountsTests {
         let asked = ImmichAccounts.Schedule(poll: .seconds(3600), backoff: [.seconds(3600)])
         let second = try ImmichAccounts(
             store: store, sessions: sessions, urlSession: down.session(), schedule: asked,
-            stagingContainer: makeTestDirectory(), volumeCapacity: ampleVolumeCapacity
+            volumeCapacity: ampleVolumeCapacity
         )
         await second.start()
         // The offline status that ends the wait is the kept sync's, not a syncing one.
@@ -357,18 +357,15 @@ struct ImmichAccountsTests {
         let store = try await makeStore()
         let sessions = MemorySessions()
         let saved = try await store.addImmichAccount(
-            server: #require(URL(string: "http://resume.test")), userID: "u1", displayName: "Saved",
-            stagingContainer: makeTestDirectory()
+            server: #require(URL(string: "http://resume.test")), userID: "u1", displayName: "Saved"
         )
         let unsaved = try await store.addImmichAccount(
-            server: #require(URL(string: "http://resume.test")), userID: "u2", displayName: "Unsaved",
-            stagingContainer: makeTestDirectory()
+            server: #require(URL(string: "http://resume.test")), userID: "u2", displayName: "Unsaved"
         )
         let identity = try #require(await store.currentLibraries().first { $0.path == saved }?.root.deviceIdentity)
         try sessions.saveToken("tok", for: identity)
         let accounts = try ImmichAccounts(
             store: store, sessions: sessions, urlSession: server.session(), schedule: Self.quick,
-            stagingContainer: makeTestDirectory(),
             volumeCapacity: ampleVolumeCapacity
         )
 
@@ -386,7 +383,6 @@ struct ImmichAccountsTests {
         let sessions = MemorySessions()
         let accounts = try ImmichAccounts(
             store: store, sessions: sessions, urlSession: server.session(), schedule: Self.quick,
-            stagingContainer: makeTestDirectory(),
             volumeCapacity: ampleVolumeCapacity
         )
         guard case let .added(rootPath) = try await accounts.add(
@@ -416,7 +412,6 @@ struct ImmichAccountsTests {
         let store = try await makeStore()
         let accounts = try ImmichAccounts(
             store: store, sessions: MemorySessions(), urlSession: server.session(), schedule: Self.quick,
-            stagingContainer: makeTestDirectory(),
             volumeCapacity: ampleVolumeCapacity
         )
         guard case let .added(rootPath) = try await accounts.add(
@@ -437,7 +432,7 @@ struct ImmichAccountsTests {
         #expect(await accounts.downloadOriginal(request(.interactive)).outcome == .materialized)
         #expect(FileManager.default.contents(atPath: id.fileURL.path(percentEncoded: false)) == FakeServer.original)
         // Offered ahead of other work, for every product it owes: a rendering, not just metadata.
-        let offered = try await store.enrichmentCandidates(limit: 4)
+        let offered = try await store.enrichmentCandidates(limit: 4, videoFaces: .admitted)
         #expect(offered.map(\.asset.id) == [id])
         #expect(offered.first?.scope.contains(.rendering) == true)
 

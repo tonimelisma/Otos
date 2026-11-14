@@ -20,9 +20,9 @@ struct CatalogStoreEnrichmentClaimTests {
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
 
-        let firstClaim = try await store.enrichmentCandidates(limit: 1)
+        let firstClaim = try await store.enrichmentCandidates(limit: 1, videoFaces: .admitted)
         #expect(firstClaim.map(\.asset.relativePath) == [rel])
-        let blockedByLease = try await store.enrichmentCandidates(limit: 1)
+        let blockedByLease = try await store.enrichmentCandidates(limit: 1, videoFaces: .admitted)
         #expect(blockedByLease.isEmpty)
         #expect(try await enrichmentClaimedRowCount(databaseURL: databaseURL) == 1)
 
@@ -53,11 +53,12 @@ struct CatalogStoreEnrichmentClaimTests {
         let visibleSecondID = try #require(idsByName["visible-second.jpg"])
         let visibleThirdID = try #require(idsByName["visible-third.jpg"])
 
-        let firstClaim = try await store.priorityEnrichmentCandidates([claimedID])
+        let firstClaim = try await store.priorityEnrichmentCandidates([claimedID], videoFaces: .admitted)
         #expect(firstClaim.map(\.asset.relativePath.rawValue) == ["claimed.jpg"])
 
         let visibleClaims = try await store.priorityEnrichmentCandidates(
-            [claimedID, visibleSecondID, visibleThirdID]
+            [claimedID, visibleSecondID, visibleThirdID],
+            videoFaces: .admitted
         )
 
         #expect(visibleClaims.map(\.asset.relativePath.rawValue) == ["visible-second.jpg", "visible-third.jpg"])
@@ -79,7 +80,7 @@ struct CatalogStoreEnrichmentClaimTests {
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 3 }
 
-        let claims = try await store.enrichmentCandidates(limit: 3)
+        let claims = try await store.enrichmentCandidates(limit: 3, videoFaces: .admitted)
 
         #expect(claims.map(\.asset.relativePath.rawValue) == ["newest.jpg", "middle.jpg", "old.jpg"])
     }
@@ -127,7 +128,7 @@ struct CatalogStoreEnrichmentClaimTests {
                 && snapshot.removableSources.first?.availability == .available
         }
 
-        let claims = try await store.enrichmentCandidates(limit: 2)
+        let claims = try await store.enrichmentCandidates(limit: 2, videoFaces: .admitted)
 
         #expect(claims.map(\.asset.relativePath.rawValue) == ["card-old.jpg", "fixed-new.jpg"])
     }
@@ -165,11 +166,11 @@ struct CatalogStoreEnrichmentClaimTests {
         try await store.addLibrary(url: newer)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 6 }
 
-        let window = try await store.enrichmentCandidates(limit: 2)
+        let window = try await store.enrichmentCandidates(limit: 2, videoFaces: .admitted)
         #expect(Set(window.map { $0.asset.relativePath.rawValue.prefix(5) }) == ["older", "newer"])
 
         // The newer library has two rows left and the older two: a window of five takes all.
-        let rest = try await store.enrichmentCandidates(limit: 5)
+        let rest = try await store.enrichmentCandidates(limit: 5, videoFaces: .admitted)
         #expect(rest.count == 4)
     }
 }

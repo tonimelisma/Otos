@@ -116,7 +116,7 @@ struct EnrichmentCoordinatorTests {
 
         await blocker.release()
         await coordinator.shutdown()
-        let reclaimed = try await store.enrichmentCandidates(limit: 3)
+        let reclaimed = try await store.enrichmentCandidates(limit: 3, videoFaces: .admitted)
 
         #expect(Set(reclaimed.map(\.asset.relativePath.rawValue)) == Set(relativeNames))
         try await store.releaseEnrichmentClaims(reclaimed.map(\.asset.id))
