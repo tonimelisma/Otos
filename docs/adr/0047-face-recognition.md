@@ -95,6 +95,10 @@ grouping had put with the right child.
   627 GB (owner decision, 2026-11-13). `VideoFaceReader` decodes the frames at 0, 10, 25,
   50, 75 and 90% upright at full resolution with no time tolerance, so a re-read finds the
   same frames, and reads each with `FaceAnalyzer`.
+- **A video AVFoundation cannot decode** is no failed read: its faces are stamped with none
+  and the decoder that said so is stored, and it is read again once that decoder changes
+  (ADR 0009, ENR-031). An Immich account's MKV videos are among them: AVFoundation does not
+  read the format.
 - **A read that fails:** a frame that cannot be read or a failed analysis stamps no faces,
   and is its own outcome, never the whole read's failure: the video's other products are
   written and only its faces stay owed, paced for 900 s on the retry ledger. A model that

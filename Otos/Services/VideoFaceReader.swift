@@ -25,6 +25,35 @@ nonisolated enum VideoFaceReader {
     /// Where a video's frames are read, as fractions of its duration.
     static let samples: [Double] = [0, 0.1, 0.25, 0.5, 0.75, 0.9]
 
+    /// Otos's own part of the decoder: how it asks AVFoundation for a video's frames
+    /// (`samples`, no tolerance, upright). A change to that which can make an undecodable
+    /// video readable is a new revision.
+    static let decodeRevision = 1
+
+    /// The decoder a verdict of "cannot decode" about a video is about: Otos's revision and
+    /// the macOS build, whose AVFoundation decodes the frames. A video it could not decode
+    /// is read again once either changes (ENR-031).
+    static let decoderIdentity = DecodeVerdict.decoder("otos-video", revision: decodeRevision)
+
+    /// Whether `error`, thrown by `read`, is AVFoundation's word that it cannot decode this
+    /// video's bytes: their format is not one it recognises, they do not parse, it has no
+    /// decoder for them, or it has no image at a sampled time. Each is the platform's answer
+    /// to the bytes it was given, and every read of them gives it again (measured on the
+    /// owner's library: 67 videos each answered the same code on every read, up to 33 reads
+    /// in three days, `docs/research/2026-11-14-videos-avfoundation-cannot-decode.md`).
+    /// Classified by domain and code only. Anything else — an unknown error, a failed decode,
+    /// which the same file has answered once and then read cleanly, a failed analysis — is
+    /// not a verdict: the read failed, and the video's faces stay owed.
+    static func isUndecodable(_ error: any Error) -> Bool {
+        guard let error = error as? AVError else { return false }
+        switch error.code {
+        case .fileFormatNotRecognized, .fileFailedToParse, .failedToParse, .decoderNotFound, .noImageAtTime:
+            return true
+        default:
+            return false
+        }
+    }
+
     /// A video's faces, one per person, with their frames staged under `finalRelativeName`.
     /// No faces when the video has no video track. Throws when a frame could not be read or
     /// analysed, so nothing is stamped and the video is read again.

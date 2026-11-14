@@ -217,8 +217,9 @@ struct VideoFaceTests {
         #expect(remote.failed)
     }
 
-    /// A video whose frames cannot be read is an error, not a video without faces: nothing is
-    /// stamped and it is read again, and the analyser never sees a frame.
+    /// A video whose frames cannot be read is an error to the reader, not a video without
+    /// faces, and the analyser never sees a frame: whether the error is a verdict on the
+    /// video is the enricher's question (`VideoFaceReader.isUndecodable`).
     @Test func aVideoThatDoesNotDecodeIsNotStampedAsFaceless() async throws {
         let directory = try makeTestDirectory()
         let video = directory.appending(path: "broken.mov")
@@ -525,5 +526,86 @@ extension VideoFaceTests {
         #expect(admittedWrites.claims == 1)
         #expect(admittedWrites.releases == 0)
         await library.store.shutdown()
+    }
+}
+
+// MARK: - A video AVFoundation cannot decode
+
+extension VideoFaceTests {
+    /// A library video whose bytes AVFoundation says it cannot parse is read, as holding no
+    /// face, by the decoder that said so: the read is complete, its faces are stamped, and it
+    /// neither owes faces nor counts as unchecked, so it is not read again on every wake. The
+    /// analyser never sees a frame.
+    @Test func aVideoAVFoundationCannotDecodeIsStampedWithNoFacesByThatDecoder() async throws {
+        let fixture = try await VideoLibrary.make(in: makeTestDirectory())
+        let asset = try #require(try await fixture.store.mediaAssets(for: [fixture.id])[fixture.id])
+        let enricher = MediaEnricher.live(
+            thumbnailDirectory: fixture.thumbnailDirectory,
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            analyzeFaces: { _ in
+                Issue.record("a frame reached the analyser")
+                return FaceAnalysis(faces: [], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
+            }
+        )
+        let video = URL(fileURLWithPath: fixture.rootPath.rawValue, isDirectory: true).appending(path: "clip.mov")
+
+        let outcome = await enricher.enrich(
+            fixture.id, .localFile(video), asset.byteSize, MediaAsset.mtimeSeconds(asset.contentModifiedAt), [.videoFaces], nil
+        )
+
+        guard case let .complete(result) = outcome else {
+            Issue.record("expected .complete, got \(outcome)")
+            await fixture.store.shutdown()
+            return
+        }
+        #expect(result.videoFaces == .noneFound)
+        #expect(result.decodeVerdict == .undecodable(decoder: VideoFaceReader.decoderIdentity))
+        #expect(await fixture.store.applyEnrichmentBatch([result]) == .applied(count: 1))
+        #expect(asset.videoFacesStale)
+        let stamped = try #require(try await fixture.store.mediaAssets(for: [fixture.id])[fixture.id])
+        #expect(!stamped.videoFacesStale)
+        #expect(try await fixture.store.peopleSnapshot(availableLibraryPaths: [fixture.rootPath]).unchecked == MediaCount())
+        await fixture.store.shutdown()
+    }
+
+    /// A video the reader decodes is decoded, so a verdict an earlier read left is cleared.
+    @Test func aVideoTheReaderDecodesIsDecoded() async throws {
+        let directory = try makeTestDirectory()
+        let video = directory.appending(path: "clip.mov")
+        try FileManager.default.copyItem(at: Self.fixture, to: video)
+        let enricher = MediaEnricher.live(
+            thumbnailDirectory: directory.appending(path: "Thumbnails", directoryHint: .isDirectory),
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            analyzeFaces: { _ in Self.analysis([]) }
+        )
+        let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: directory.path), relativePath: MediaRelativePath(rawValue: "clip.mov"))
+
+        let outcome = await enricher.enrich(id, .localFile(video), 100, 1000, [.videoFaces], nil)
+
+        guard case let .complete(result) = outcome else {
+            Issue.record("expected .complete, got \(outcome)")
+            return
+        }
+        #expect(result.videoFaces == .noneFound)
+        #expect(result.decodeVerdict == .decoded)
+    }
+
+    /// Only AVFoundation's word that it cannot decode the bytes is a verdict, by domain and
+    /// code. An unknown error, a failed decode (which the same video has answered once and
+    /// then read cleanly), a network error and a failed analysis are failed reads.
+    @Test func onlyAVFoundationsWordThatItCannotDecodeIsAVerdict() {
+        struct AnalysisFailed: Error {}
+        let verdicts: [AVError.Code] = [.fileFormatNotRecognized, .fileFailedToParse, .failedToParse, .decoderNotFound, .noImageAtTime]
+        for code in verdicts {
+            #expect(VideoFaceReader.isUndecodable(AVError(code)), "\(code)")
+            #expect(VideoFaceReader.isUndecodable(NSError(domain: AVFoundationErrorDomain, code: code.rawValue)), "\(code) as NSError")
+        }
+        let failures: [any Error] = [
+            AVError(.unknown), AVError(.decodeFailed), URLError(.timedOut), AnalysisFailed(),
+            FaceAnalysisError.modelUnavailable(description: "missing"),
+        ]
+        for failure in failures {
+            #expect(!VideoFaceReader.isUndecodable(failure), "\(failure)")
+        }
     }
 }

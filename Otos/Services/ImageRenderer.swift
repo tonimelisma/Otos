@@ -57,20 +57,7 @@ final nonisolated class ImageRenderer: Sendable {
     /// The decoder a verdict of "cannot decode" is about: Otos's revision and the macOS
     /// build, whose Image I/O and `CIRAWFilter` do the decoding. A still neither could
     /// decode is tried again once either changes (ENR-029).
-    static let decoderIdentity = "otos\(decodeRevision)-macos\(operatingSystemBuild)"
-
-    /// The running macOS build (`kern.osversion`, e.g. `26B118`).
-    private static let operatingSystemBuild: String = {
-        var size = 0
-        guard sysctlbyname("kern.osversion", nil, &size, nil, 0) == 0, size > 0 else {
-            return "unread"
-        }
-        var bytes = [CChar](repeating: 0, count: size)
-        guard sysctlbyname("kern.osversion", &bytes, &size, nil, 0) == 0 else {
-            return "unread"
-        }
-        return String(cString: bytes)
-    }()
+    static let decoderIdentity = DecodeVerdict.decoder("otos", revision: decodeRevision)
 
     static let background = ImageRenderer(lane: "background", qos: .utility, imageDecodes: 4)
     static let interactive = ImageRenderer(lane: "interactive", qos: .userInitiated, imageDecodes: 1)

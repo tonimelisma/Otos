@@ -197,7 +197,7 @@ struct CatalogStoreQueryPlanTests {
         }
         let scope = CatalogScopePredicate(rootIDs: [rootID1, rootID2])
 
-        let (unnamedPlan, nextPagePlan, optionsPlan, undecodablePlan, cells) = try await dbQueue.read { db in
+        let (unnamedPlan, nextPagePlan, optionsPlan, undecodablePlans, cells) = try await dbQueue.read { db in
             let optionsQuery = try #require(try CatalogQueryGateway.placeOptionsQuery(
                 scope: scope, language: PlaceNameLanguage(identifier: "en-Latn"), db: db
             ))
@@ -205,14 +205,9 @@ struct CatalogStoreQueryPlanTests {
                 explainPlan(db, sql: CatalogQueryGateway.unnamedPlaceCellsSQL(after: false), arguments: ["en-Latn", 32]),
                 explainPlan(db, sql: CatalogQueryGateway.unnamedPlaceCellsSQL(after: true), arguments: [0, 0, "en-Latn", 32]),
                 explainPlan(db, query: optionsQuery),
-                explainPlan(
-                    db,
-                    sql: """
-                    UPDATE media_asset SET rendered_source_size = NULL, rendered_source_mtime = NULL, undecodable_by = NULL
-                    WHERE undecodable_by IS NOT NULL AND undecodable_by <> ?
-                    """,
-                    arguments: ["otos2"]
-                ),
+                [CatalogStore.releaseUndecodedStillsSQL, CatalogStore.releaseUndecodedVideosSQL].map { sql in
+                    try explainPlan(db, sql: sql, arguments: ["otos2"])
+                },
                 Row.fetchAll(
                     db,
                     sql: "SELECT relative_path, place_cell_latitude, place_cell_longitude FROM asset_metadata"
@@ -232,8 +227,10 @@ struct CatalogStoreQueryPlanTests {
         #expect(optionsPlan.contains("SEARCH place_metadata USING INDEX idx_asset_metadata_place_cell"))
         #expect(!optionsPlan.contains("SCAN media_asset"))
         #expect(!optionsPlan.contains("SCAN place_metadata"))
-        #expect(undecodablePlan.contains("USING INDEX idx_media_asset_undecodable"))
-        #expect(!undecodablePlan.contains("SCAN media_asset"))
+        for undecodablePlan in undecodablePlans {
+            #expect(undecodablePlan.contains("USING INDEX idx_media_asset_undecodable"))
+            #expect(!undecodablePlan.contains("SCAN media_asset"))
+        }
         for (_, path, coordinate) in coordinates {
             #expect(cells[path] == PlaceCell(coordinate))
         }

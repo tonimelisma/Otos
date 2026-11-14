@@ -93,6 +93,20 @@ struct DeviceStagingRegistryTests {
         )
     }
 
+    /// A staging root is a path, derived before its tree exists (every launch re-derives the
+    /// roots it loads): deriving it touches nothing on disk, and only the claim that uses
+    /// the tree makes it.
+    @Test func aStagingRootIsDerivedWithoutTouchingTheDisk() throws {
+        let container = try makeTestDirectory().appending(path: "DeviceStaging", directoryHint: .isDirectory)
+
+        let root = StagingLocation.sessionRootURL(identity: .camera(id: "abc"), inContainer: container)
+
+        #expect(!FileManager.default.fileExists(atPath: container.path(percentEncoded: false)))
+        #expect(StagingLocation.claimOwnership(of: root))
+        #expect(FileManager.default.fileExists(atPath: root.path(percentEncoded: false)))
+        StagingLocation.releaseOwnership(of: root)
+    }
+
     /// The launch backstop: a tree whose owner is gone is collected. Ownership is asked of
     /// the kernel rather than encoded in a name, so nothing has to be reconciled.
     @Test func theSweepRemovesTreesNoLiveInstanceHolds() throws {

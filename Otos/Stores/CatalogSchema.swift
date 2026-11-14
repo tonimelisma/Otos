@@ -1000,9 +1000,9 @@ nonisolated enum CatalogSchema {
         ]
     }
 
-    /// `idx_media_asset_undecodable`: the stills a decoder could not read (ENR-029), so the
-    /// launch's hand-back of those another decoder judged (`releaseStillsUndecodedByAnotherDecoder`)
-    /// seeks them instead of scanning every row.
+    /// `idx_media_asset_undecodable`: the stills and videos a decoder could not read (ENR-029,
+    /// ENR-031), so the launch's hand-back of those another decoder judged
+    /// (`releaseUndecodedByAnotherDecoder`) seeks them instead of scanning every row.
     static let undecodableIndexMigrationIdentifier = "v44_media_asset_undecodable_index"
 
     static let undecodableIndexStatements: [String] = [

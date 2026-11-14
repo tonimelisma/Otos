@@ -437,21 +437,41 @@ nonisolated struct EnrichedVideoFaces: Equatable, Sendable {
     static let noneFound = EnrichedVideoFaces(faces: [], analysisRevision: FaceAnalyzer.revision, frames: nil)
 }
 
-/// What a still's decoder said about it (ENR-029). "Cannot decode" is a fact about that
-/// decoder, never about the photo, so it names the decoder: a still whose rendering fell
-/// back to QuickLook's thumbnail because no decoder could read it is tried again once the
-/// decoder changes.
+/// What a file's decoder said about it: a still's renderer (ENR-029), a video's frame
+/// reader (ENR-031). "Cannot decode" is a fact about that decoder, never about the file, so
+/// it names the decoder: a still whose rendering fell back to QuickLook's thumbnail, or a
+/// video stamped with no faces, because the decoder could not read it is tried again once
+/// the decoder changes.
 nonisolated enum DecodeVerdict: Equatable, Sendable {
     case decoded
     case undecodable(decoder: String)
 
-    /// The stored form: the decoder's identity, or nil once a decoder read the still.
+    /// The stored form: the decoder's identity, or nil once a decoder read the file.
     var undecodableBy: String? {
         switch self {
         case .decoded: nil
         case let .undecodable(decoder): decoder
         }
     }
+
+    /// A decoder's identity: Otos's own part, named and at its revision (how Otos hands the
+    /// bytes to the platform), and the running macOS build, whose frameworks do the decoding.
+    static func decoder(_ name: String, revision: Int) -> String {
+        "\(name)\(revision)-macos\(operatingSystemBuild)"
+    }
+
+    /// The running macOS build (`kern.osversion`, e.g. `26B118`).
+    private static let operatingSystemBuild: String = {
+        var size = 0
+        guard sysctlbyname("kern.osversion", nil, &size, nil, 0) == 0, size > 0 else {
+            return "unread"
+        }
+        var bytes = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("kern.osversion", &bytes, &size, nil, 0) == 0 else {
+            return "unread"
+        }
+        return String(cString: bytes)
+    }()
 }
 
 /// What one enrichment made for one row, each product present only when the scope
@@ -473,8 +493,9 @@ nonisolated struct EnrichmentResult: Equatable {
     /// Absent when the scope did not cover the digest. The store then leaves the row's
     /// existing hash columns untouched rather than clearing them.
     let contentHash: XXH3Digest128?
-    /// Whether the renderer could decode the still, when the result covers its rendering;
-    /// nil leaves the stored verdict as it is.
+    /// Whether the file's decoder could decode it: the renderer a still's, when the result
+    /// covers its rendering, and the frame reader a video's, when it covers its faces; nil
+    /// leaves the stored verdict as it is.
     let decodeVerdict: DecodeVerdict?
     /// Absent when the scope did not cover a video's faces. Present, it replaces every face
     /// the video held, and stamps them, even when it holds none (ADR 0047).

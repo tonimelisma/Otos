@@ -94,6 +94,53 @@ struct DecodeVerdictTests {
         #expect(rows["decoded.jpg"] == Stamps(rendered: true, undecodableBy: nil))
     }
 
+    /// At launch a video another frame reader could not decode loses its faces stamp, so
+    /// enrichment reads its faces again (ENR-031); one this reader could not decode keeps it.
+    /// Each kind is judged by its own decoder: a video's verdict never releases a still's
+    /// rendering, nor a still's decoder a video's faces.
+    @Test func launchReleasesOnlyVideosAnotherFrameReaderCouldNotDecode() async throws {
+        let databaseURL = try makeTestDirectory().appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let fresh = CatalogStore(location: .databaseFile(databaseURL))
+        try await fresh.start(scansSavedLibraries: false)
+        await fresh.shutdown()
+        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            let videos: [(String, String?)] = [
+                ("earlierReader.mov", "otos-video0-macos25A1"), ("thisReader.mov", VideoFaceReader.decoderIdentity),
+                ("stillDecoder.mov", ImageRenderer.decoderIdentity), ("decoded.mov", nil),
+            ]
+            for (path, undecodableBy) in videos {
+                try Self.insertStampedStill(path, undecodableBy: undecodableBy, preview: nil, kind: "video", db: db)
+                try db.execute(
+                    sql: "UPDATE media_asset SET faces_source_size = 10, faces_source_mtime = 20 WHERE relative_path = ?",
+                    arguments: [path]
+                )
+            }
+            try Self.insertStampedStill("videoReader.jpg", undecodableBy: VideoFaceReader.decoderIdentity, preview: nil, db: db)
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        await store.shutdown()
+
+        let rows = try await Self.stamps(databaseURL)
+        let faces = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try Dictionary(uniqueKeysWithValues: Row.fetchAll(db, sql: "SELECT relative_path, faces_source_size FROM media_asset").map { row in
+                (row["relative_path"] as String, (row["faces_source_size"] as Int64?) != nil)
+            })
+        }
+        #expect(rows["earlierReader.mov"] == Stamps(rendered: true, undecodableBy: nil))
+        #expect(faces["earlierReader.mov"] == false)
+        #expect(rows["stillDecoder.mov"] == Stamps(rendered: true, undecodableBy: nil))
+        #expect(faces["stillDecoder.mov"] == false)
+        #expect(rows["thisReader.mov"] == Stamps(rendered: true, undecodableBy: VideoFaceReader.decoderIdentity))
+        #expect(faces["thisReader.mov"] == true)
+        #expect(rows["decoded.mov"] == Stamps(rendered: true, undecodableBy: nil))
+        #expect(faces["decoded.mov"] == true)
+        #expect(rows["videoReader.jpg"] == Stamps(rendered: false, undecodableBy: nil))
+    }
+
     /// Before the verdict was stored, a still the renderer could not read was rendered
     /// from QuickLook's thumbnail: stamped, with no preview. The migration marks those as
     /// undecodable by Otos's first decoder, so launch tries each again; a still with a

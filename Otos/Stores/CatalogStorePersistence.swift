@@ -857,22 +857,38 @@ extension CatalogStore {
         }
     }
 
-    /// Hands every still that a decoder other than `decoder` could not decode back to
-    /// enrichment (ENR-029): its rendering stamp is cleared, so it is rendered again, and the
-    /// verdict with it, which the new rendering records afresh. Returns how many stills were
-    /// released.
-    static func releaseStillsUndecodedByAnotherDecoder(_ decoder: String, db: Database) throws -> Int {
-        try db.execute(
-            sql: """
-            UPDATE media_asset SET
-                rendered_source_size = NULL, rendered_source_mtime = NULL,
-                undecodable_by = NULL
-            WHERE undecodable_by IS NOT NULL AND undecodable_by <> ?
-            """,
-            arguments: [decoder]
-        )
-        return db.changesCount
+    /// Hands every file that a decoder other than its kind's current one could not decode back
+    /// to enrichment: a still's rendering stamp is cleared, so it is rendered again (ENR-029),
+    /// and a video's faces stamp, so its faces are read again (ENR-031), each with its
+    /// verdict, which the new read records afresh. Each kind is judged by its own decoder, so
+    /// a still's verdict never releases a video, nor a video's a still. Returns how many
+    /// stills and videos were released.
+    static func releaseUndecodedByAnotherDecoder(
+        still stillDecoder: String,
+        video videoDecoder: String,
+        db: Database
+    ) throws -> (stills: Int, videos: Int) {
+        try db.execute(sql: releaseUndecodedStillsSQL, arguments: [stillDecoder])
+        let stills = db.changesCount
+        try db.execute(sql: releaseUndecodedVideosSQL, arguments: [videoDecoder])
+        return (stills, db.changesCount)
     }
+
+    /// `releaseUndecodedByAnotherDecoder`'s stills, sought through `idx_media_asset_undecodable`.
+    static let releaseUndecodedStillsSQL = """
+    UPDATE media_asset SET
+        rendered_source_size = NULL, rendered_source_mtime = NULL,
+        undecodable_by = NULL
+    WHERE undecodable_by IS NOT NULL AND undecodable_by <> ? AND best_kind IS NOT 'video'
+    """
+
+    /// `releaseUndecodedByAnotherDecoder`'s videos, sought through `idx_media_asset_undecodable`.
+    static let releaseUndecodedVideosSQL = """
+    UPDATE media_asset SET
+        faces_source_size = NULL, faces_source_mtime = NULL,
+        undecodable_by = NULL
+    WHERE undecodable_by IS NOT NULL AND undecodable_by <> ? AND best_kind = 'video'
+    """
 
     /// A still's faces (ADR 0047): the reading replaces the faces the asset held, and its
     /// stamp names the source its preview was made from, so a still with no face in it is

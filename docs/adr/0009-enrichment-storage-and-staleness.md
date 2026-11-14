@@ -78,6 +78,18 @@ This ADR owns:
   (`docs/research/2026-11-11-arw-bytes-read-as-tiff.md`). Marking the still
   transient instead was rejected: it would retry on every pass and show the file as
   unreadable, blaming the file for the decoder.
+- A video AVFoundation says it cannot decode follows the same rule: its format is not one
+  AVFoundation recognises, its bytes do not parse, there is no decoder for them, or there is
+  no image at a sampled time (`VideoFaceReader.isUndecodable`, by domain and code). Its faces
+  are stamped with none and `undecodable_by` names the frame reader's decoder, Otos's
+  video revision and the macOS build (`VideoFaceReader.decoderIdentity`); at launch a video
+  another decoder could not read loses its faces stamp and is read again (ENR-031). Each
+  kind is judged by its own decoder, so a change to one never re-reads the other. Any other
+  error, a failed decode among them, stays a failed read (`facesUnread`): the owner's
+  library answered a failed decode once for videos that then read cleanly, while 67
+  videos each answered one of the verdict codes on every read, up to 33 reads in three days
+  (`docs/research/2026-11-14-videos-avfoundation-cannot-decode.md`). Pacing alone left
+  them read every 900 s and at every launch, each decoded or ranged again for nothing.
 - Timestamp role facts are stored; SQLite's generated `best_capture_local` value
   supplies Date sort and enrichment priority. Video duration is a hot scalar
   because the tile surface needs it for every visible video; other metadata

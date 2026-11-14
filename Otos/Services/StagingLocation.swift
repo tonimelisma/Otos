@@ -22,7 +22,8 @@ nonisolated enum StagingContainer: String, CaseIterable, Sendable {
 /// is, so a dev build (`net.melisma.Otos.dev`) and the installed app never share a container
 /// and never sweep each other's trees (ADR 0030). Staging is a rebuildable transfer cache,
 /// not overlay: these bytes exist only until the item they belong to is imported or the app
-/// quits.
+/// quits. Time Machine leaves Caches out of every backup itself (`tmutil isexcluded`), so
+/// no tree here is marked excluded from backup.
 ///
 /// A staging root's path is a function of this and the source's identity
 /// (`sessionRoot(in:identity:)`), never a fact of its own: the catalog stores it because
@@ -118,25 +119,11 @@ nonisolated enum StagingLocation {
 
     private static let ownerMarkerName = ".otos-owner"
 
-    /// Where one source's bytes go. Stable across launches for the same source.
+    /// Where one source's bytes go. Stable across launches for the same source. A path only:
+    /// deriving it touches nothing on disk, and the tree is made by the claim that uses it
+    /// (`claimOwnership(of:)`).
     static func sessionRootURL(identity: DeviceIdentity, inContainer container: URL) -> URL {
-        let root = container
-            .appending(path: CameraSourceMonitor.sanitize(identity.rawValue), directoryHint: .isDirectory)
-        var values = URLResourceValues()
-        values.isExcludedFromBackup = true
-        var mutableRoot = root
-        do {
-            try mutableRoot.setResourceValues(values)
-        } catch where ErrorDiagnostics.isMissingFile(error) {
-            // Already gone: the outcome this removal wanted.
-        } catch {
-            // The folder may not exist yet; it is excluded again whenever it is resolved.
-            OtosLog.fileAccess.errorOperation("source.staging", phase: "excludeFromBackupFailed", fields: [
-                "path": root.path(percentEncoded: false),
-                "error": String(describing: error),
-            ])
-        }
-        return root
+        container.appending(path: CameraSourceMonitor.sanitize(identity.rawValue), directoryHint: .isDirectory)
     }
 
     /// Claims one staging tree, named by its path, for as long as this process uses it: an
