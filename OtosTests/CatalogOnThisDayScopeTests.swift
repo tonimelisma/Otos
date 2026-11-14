@@ -350,10 +350,10 @@ struct CatalogOnThisDayScopeTests {
         // The months' match: the 9th of October, not an empty 2023. The pair's 9 November
         // is a 9th too, and leaves with its key.
         #expect(disliked.ids == [id("2026-10-09.jpg")])
-        // The counts read the months as well: a count is of rows, so the RAW twin the SQL
-        // leaves in is one of its two; the years' match would hold that row alone.
-        #expect(dislikedCount == 2)
-        #expect(dislikedCataloged == 2)
+        // The counts read the months as well, and count what the cards show: the RAW twin
+        // leaves with its key.
+        #expect(dislikedCount == 1)
+        #expect(dislikedCataloged == 1)
         let state = try #require(CatalogWindowPolicy.onThisDayState(
             for: CatalogQueryDescriptor(scope: scope),
             scopedAssetIDs: disliked.ids,
@@ -363,6 +363,70 @@ struct CatalogOnThisDayScopeTests {
         // A Liked key shows the pair: 2023 is offered, and the months are not.
         #expect(Set(liked.ids) == [id("DSC1.ARW"), id("DSC1.JPG")])
         #expect(liked.stacks.stack(containing: id("DSC1.JPG"))?.key == id("DSC1.JPG"))
+    }
+
+    /// On This Day's counts come from the rule its cards use (`OnThisDayPicks.shows`): its
+    /// only visible use of them is the empty state, and a scope whose every photo is a file of
+    /// a Disliked-key stack is nothing on this day — under a filter it is not "no matches",
+    /// which would say clearing the filter shows something.
+    @Test func onThisDaysEmptyStateCountsOnlyWhatItsCardsWouldShow() async throws {
+        let temp = try makeTestDirectory()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let captured: [(String, MediaKind, Date)] = [
+            ("DSC1.ARW", .raw, Self.local(2023, 11, 9, 8)),
+            ("DSC1.JPG", .image, Self.local(2023, 11, 9, 8)),
+        ]
+        for (name, _, _) in captured {
+            try writeCatalogStoreFile(root.appending(path: name), contents: name)
+        }
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == captured.count }
+        let rootPath = try #require(await store.currentLibraries().first { $0.kind == .library }?.path)
+        func id(_ name: String) -> MediaAssetID {
+            MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: name))
+        }
+        for (name, kind, instant) in captured {
+            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
+            _ = await store.applyEnrichmentBatch([
+                EnrichmentResult(
+                    id: id(name),
+                    metadata: AssetMetadata.absoluteCapture(instant: instant),
+                    enrichedKind: kind,
+                    thumbnailPath: "\(name)-thumb.jpg",
+                    sourceSize: asset.byteSize,
+                    sourceMTimeSeconds: asset.contentModifiedAt.map { Int($0.timeIntervalSince1970) },
+                    contentHash: .empty
+                ),
+            ])
+        }
+        _ = try await store.setMediaChoice(.disliked, for: [id("DSC1.JPG")])
+        let scope = SidebarSelection.onThisDay(Self.today)
+        let rawOnly = MediaFilter(kinds: [.raw])
+        let filtered = try await store.orderedAssetIDs(
+            for: CatalogQueryDescriptor(scope: scope, filter: rawOnly), availableLibraryPaths: [rootPath]
+        )
+        let unfiltered = try await store.visibleAssetCount(for: scope, availableLibraryPaths: [rootPath])
+        let cataloged = try await store.catalogedAssetCount(for: scope)
+        let filteredCount = try await store.visibleAssetCount(for: scope, filter: rawOnly, availableLibraryPaths: [rootPath])
+        await store.shutdown()
+
+        #expect(filtered.ids.isEmpty)
+        #expect(unfiltered == 0)
+        #expect(cataloged == 0)
+        #expect(filteredCount == 0)
+        let library = CatalogLibraryState(root: LibraryRoot(path: rootPath), availability: .available, activity: .idle)
+        let empty = CatalogWindowPolicy.mediaEmptyState(
+            for: CatalogQueryDescriptor(scope: scope, filter: rawOnly),
+            libraries: [library],
+            allAssetCount: cataloged,
+            unfilteredVisibleAssetCount: unfiltered,
+            selectedAssetCount: filtered.ids.count
+        )
+        #expect(empty == .nothingOnThisDay(Self.today))
     }
 
     @MainActor

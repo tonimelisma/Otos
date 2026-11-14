@@ -247,7 +247,8 @@ loupe's owners already answer every case the story needs.
   extra walk of the year's rows (`CatalogQueryGateway.anniversaryRowsQuery`, through a
   capture-time index), which stops at its first row shown; the order read builds the
   stacks in its own transaction before its rows and hands them to the walk, and a count,
-  read only for an empty scope, builds them when a year's rows first need them; the scope's
+  read only for an empty scope, builds them once for the walk and for itself, counting only
+  the rows `OnThisDayPicks.shows`, so the empty state it decides agrees with the cards; the scope's
   reads filter rows by a function rather than an index range, linear in the scope's
   rows, and `op=onThisDay.query` carries the cost. The benchmark cases
   `projection.windowState.onThisDay.years` and `.months` watch it.

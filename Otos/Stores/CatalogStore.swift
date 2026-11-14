@@ -261,10 +261,14 @@ actor CatalogStore {
 
     /// The WAL file size past which a bulk write empties the log (`boundWAL`).
     private let walByteBudget: Int64
-    /// Where this build's staging roots live. A camera's or an Immich account's root path is
-    /// derived from it and the source's identity, and re-derived at every load
-    /// (`normalizedLoadedRoot`), so no root keeps a folder another build owns (ADR 0046).
-    private let stagingContainers: StagingContainers
+    /// Where this catalog's staging roots live: the one answer every reader asks
+    /// (`StagingContainers`). The app's are its bundle identifier's under Caches, a catalog
+    /// file's sit beside it, and an in-memory catalog's in a temporary folder of its own. A
+    /// camera's or an Immich account's root path is derived from it and the source's
+    /// identity, and re-derived at every load (`normalizedLoadedRoot`), so no root keeps a
+    /// folder another build owns (ADR 0046). `nonisolated` because it is immutable: the
+    /// camera monitor, the sweeps and the import's release read it synchronously.
+    nonisolated let stagingContainers: StagingContainers
     private let scanner: CatalogScanner
     private let filesystemWatcher: CatalogFilesystemWatcher
     /// How often a running scan flushes what it has found: at most once a second. A rate
@@ -397,10 +401,10 @@ actor CatalogStore {
         initialLoadDidRead: (@Sendable () async -> Void)? = nil,
         importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)? = nil,
         walByteBudget: Int64 = CatalogStore.defaultWALByteBudget,
-        stagingContainers: StagingContainers = .live
+        stagingContainers: StagingContainers? = nil
     ) {
         self.walByteBudget = walByteBudget
-        self.stagingContainers = stagingContainers
+        self.stagingContainers = stagingContainers ?? Self.stagingContainers(for: location)
         self.location = location
         self.scanner = scanner
         self.filesystemWatcher = filesystemWatcher
@@ -5372,6 +5376,18 @@ extension CatalogStore {
             url.deletingLastPathComponent().appending(path: "Thumbnails", directoryHint: .isDirectory)
         case .inMemory:
             nil
+        }
+    }
+
+    /// The staging containers a catalog at `location` owns when none is given.
+    nonisolated static func stagingContainers(for location: Location) -> StagingContainers {
+        switch location {
+        case let .application(bundleIdentifier):
+            .application(bundleIdentifier: bundleIdentifier)
+        case let .databaseFile(url):
+            StagingContainers(base: url.deletingLastPathComponent().appending(path: "Staging", directoryHint: .isDirectory))
+        case .inMemory:
+            StagingContainers(base: URL.temporaryDirectory.appending(path: "OtosStaging-\(UUID().uuidString)", directoryHint: .isDirectory))
         }
     }
 

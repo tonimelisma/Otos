@@ -40,14 +40,14 @@ nonisolated enum StagedSourceReleaser {
     /// copied entry, and `MediaImportRecovery` runs it again for every interrupted one at
     /// `MediaOperationCoordinator.start()`. An `await` here would add a suspension to both
     /// hot paths to delete a file that needs no actor at all.
-    static func releaseIfCached(kind: LibraryRootKind, sourceURL: URL) {
+    static func releaseIfCached(kind: LibraryRootKind, sourceURL: URL, stagingContainers: StagingContainers) {
         // Only a device root has a cache to release. A removable volume's "source" is the
         // user's own card, and a library's is the user's own file; neither is ours to
         // remove, which is why this switches on kind rather than testing for a file.
         guard kind.stagesOriginals else {
             return
         }
-        StagingLocation.releaseStagedFile(at: sourceURL)
+        stagingContainers.releaseStagedFile(at: sourceURL)
     }
 }
 
@@ -1715,7 +1715,9 @@ actor MediaImportExecutor {
         // would discard the only local copy of something that might still fail to publish.
         // A failed or blocked entry never reaches here, so its bytes stay and a retry does
         // not re-download them.
-        StagedSourceReleaser.releaseIfCached(kind: request.sourceKind, sourceURL: request.sourceURL)
+        StagedSourceReleaser.releaseIfCached(
+            kind: request.sourceKind, sourceURL: request.sourceURL, stagingContainers: request.store.stagingContainers
+        )
         let settleFinished = ContinuousClock().now
         let totalElapsedMs = max(
             DiagnosticsTiming.milliseconds(from: request.copyStarted, to: settleFinished),

@@ -12,9 +12,17 @@ nonisolated enum StagingContainer: String, CaseIterable, Sendable {
     case remote = "RemoteStaging"
 }
 
-/// Where this build's staging containers are: one folder holding a folder per
-/// `StagingContainer`. `live` is the running app's own, under Caches and named by its bundle
-/// identifier; a test passes its own folder.
+/// Where a catalog's staging containers are: one folder holding a folder per
+/// `StagingContainer`. The one answer to "where is this source's staging folder": the
+/// `CatalogStore` derives it from its `Location` (`CatalogStore.stagingContainers`) and every
+/// reader — the camera monitor and its sessions, the Store's roots, the sweeps, the quit
+/// check, an import's release of a staged file — asks that one value.
+///
+/// The app's is under Caches, named by its bundle identifier as its Application Support data
+/// is, so a dev build (`net.melisma.Otos.dev`) and the installed app never share a container
+/// and never sweep each other's trees (ADR 0030). Staging is a rebuildable transfer cache,
+/// not overlay: these bytes exist only until the item they belong to is imported or the app
+/// quits.
 ///
 /// A staging root's path is a function of this and the source's identity
 /// (`sessionRoot(in:identity:)`), never a fact of its own: the catalog stores it because
@@ -23,30 +31,52 @@ nonisolated enum StagingContainer: String, CaseIterable, Sendable {
 nonisolated struct StagingContainers: Equatable, Sendable {
     let base: URL
 
-    /// The running app's containers: `Caches/<bundle identifier>/`.
-    static var live: StagingContainers {
+    /// An app's containers: `Caches/<bundle identifier>/`.
+    static func application(bundleIdentifier: String) -> StagingContainers {
         let caches = (try? FileManager.default.url(
             for: .cachesDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
             create: true
         )) ?? FileManager.default.temporaryDirectory
-        return StagingContainers(
-            base: caches.appending(path: Bundle.main.bundleIdentifier ?? "net.melisma.Otos", directoryHint: .isDirectory)
-        )
+        return StagingContainers(base: caches.appending(path: bundleIdentifier, directoryHint: .isDirectory))
     }
 
     func url(_ container: StagingContainer) -> URL {
         base.appending(path: container.rawValue, directoryHint: .isDirectory)
     }
 
+    /// Every container's folder.
+    var urls: [URL] {
+        StagingContainer.allCases.map(url)
+    }
+
     /// Where the root for `identity` lives in `container`.
     func sessionRoot(in container: StagingContainer, identity: DeviceIdentity) -> URL {
         StagingLocation.sessionRootURL(identity: identity, inContainer: url(container))
     }
+
+    /// Deletes every tree in these containers no live instance holds
+    /// (`StagingLocation.sweepUnownedStaging`).
+    func sweepUnowned() {
+        StagingLocation.sweepUnownedStaging(inContainers: urls)
+    }
+
+    /// Whether this process has staged a file in these containers
+    /// (`StagingLocation.hasStagedBytes`).
+    func hasStagedBytes() -> Bool {
+        StagingLocation.hasStagedBytes(inContainers: urls)
+    }
+
+    /// Frees one staged file in these containers (`StagingLocation.releaseStagedFile`).
+    func releaseStagedFile(at url: URL) {
+        StagingLocation.releaseStagedFile(at: url, inContainers: urls)
+    }
 }
 
-/// The one owner of where staged originals live on disk.
+/// The mechanics of staged trees: a tree's path in a container, its ownership lock, the
+/// sweep, placing a download and releasing a staged file. Which containers is never decided
+/// here: every caller passes the catalog's `StagingContainers`.
 ///
 /// Two types built this path independently before — `DeviceStagingRegistry` for its sweeps
 /// and `DeviceCameraSession` for its own root — so "where is staging?" had two answers, and
@@ -88,19 +118,6 @@ nonisolated enum StagingLocation {
 
     private static let ownerMarkerName = ".otos-owner"
 
-    /// The directory holding every staging tree of one container.
-    ///
-    /// Under Caches: staging is a rebuildable transfer cache, not overlay. Overlay lives in
-    /// Application Support and is backed up; these bytes exist only until the item they
-    /// belong to is imported or the app quits.
-    ///
-    /// Named by the running app's bundle identifier, as its Application Support data is, so
-    /// a dev build (`net.melisma.Otos.dev`) and the installed app never share a container
-    /// and never sweep each other's trees (ADR 0030).
-    static func containerURL(_ container: StagingContainer) -> URL {
-        StagingContainers.live.url(container)
-    }
-
     /// Where one source's bytes go. Stable across launches for the same source.
     static func sessionRootURL(identity: DeviceIdentity, inContainer container: URL) -> URL {
         let root = container
@@ -122,18 +139,12 @@ nonisolated enum StagingLocation {
         return root
     }
 
-    /// Claims this source's staging tree for as long as this process is attached to it.
+    /// Claims one staging tree, named by its path, for as long as this process uses it: an
+    /// attached camera's, an Immich account's held signed in or not.
     ///
     /// Best-effort by design: a failed claim means another instance will do the cleaning, not
     /// that staging cannot be used. Returning early rather than throwing keeps attach working
     /// in the pathological case of two instances sharing a camera.
-    @discardableResult
-    static func claimOwnership(identity: DeviceIdentity, inContainer container: URL) -> Bool {
-        claimOwnership(of: sessionRootURL(identity: identity, inContainer: container))
-    }
-
-    /// Claims one staging tree, named by its path: what an Immich account's root is, for as
-    /// long as this process holds the account. The same best-effort claim as a camera's.
     @discardableResult
     static func claimOwnership(of root: URL) -> Bool {
         do {
@@ -192,9 +203,7 @@ nonisolated enum StagingLocation {
     /// The crash backstop and the quit path, in one function. A tree whose lock can be taken
     /// has no live owner — either its process exited cleanly, or it died and the kernel
     /// released the lock for it — so its bytes belong to a session that is over.
-    static func sweepUnownedStaging(
-        inContainers containers: [URL] = StagingContainer.allCases.map(containerURL)
-    ) {
+    static func sweepUnownedStaging(inContainers containers: [URL]) {
         let contents = containers.flatMap { container in
             (try? FileManager.default.contentsOfDirectory(
                 at: container,
@@ -243,9 +252,7 @@ nonisolated enum StagingLocation {
     ///
     /// Enumerating stops at the first file, so this stays cheap when there genuinely are tens
     /// of gigabytes below it.
-    static func hasStagedBytes(
-        inContainers containers: [URL] = StagingContainer.allCases.map(containerURL)
-    ) -> Bool {
+    static func hasStagedBytes(inContainers containers: [URL]) -> Bool {
         let roots = ownedDescriptors.withLock { Array($0.keys) }
         for path in roots where isInsideStaging(URL(fileURLWithPath: path, isDirectory: true), inContainers: containers) {
             guard let enumerator = FileManager.default.enumerator(
@@ -273,8 +280,8 @@ nonisolated enum StagingLocation {
     ///
     /// Containment is proven before deleting, not assumed: this takes a path, and a path
     /// wrong by one component would be a delete inside the user's own media.
-    static func releaseStagedFile(at url: URL) {
-        guard isInsideStaging(url) else {
+    static func releaseStagedFile(at url: URL, inContainers containers: [URL]) {
+        guard isInsideStaging(url, inContainers: containers) else {
             OtosLog.fileAccess.errorOperation("source.staging", phase: "releaseRefused", fields: [
                 "reason": "outsideStagingRoot",
                 "path": url.path(percentEncoded: false),
@@ -349,10 +356,7 @@ nonisolated enum StagingLocation {
     /// The guard on releasing staged bytes. Checked against the containers rather than one
     /// source's tree, because a release can legitimately target any attached source; what it
     /// must never do is reach outside staging altogether.
-    static func isInsideStaging(
-        _ url: URL,
-        inContainers containers: [URL] = StagingContainer.allCases.map(containerURL)
-    ) -> Bool {
+    static func isInsideStaging(_ url: URL, inContainers containers: [URL]) -> Bool {
         let candidate = url.standardizedFileURL.path(percentEncoded: false)
         return containers.contains { container in
             let root = container.standardizedFileURL.path(percentEncoded: false)

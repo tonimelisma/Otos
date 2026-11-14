@@ -36,6 +36,7 @@ extension CatalogWindowViewModel {
 
     func startCameraSourceMonitoring() {
         let monitor = CameraSourceMonitor(
+            stagingContainers: catalogStore.stagingContainers,
             onAttach: { [weak self] session in
                 self?.attachCameraSession(session)
             },
@@ -64,8 +65,9 @@ extension CatalogWindowViewModel {
     /// state to reconcile; a live peer's tree is skipped. It runs before monitoring starts so
     /// a camera attaching right now cannot race it.
     func startDeviceStagingSweepThenCameraMonitoring() {
+        let stagingContainers = catalogStore.stagingContainers
         deviceStagingSweepTask = Task.detached(priority: .utility) { [weak self] in
-            StagingLocation.sweepUnownedStaging()
+            stagingContainers.sweepUnowned()
             guard !Task.isCancelled else {
                 return
             }

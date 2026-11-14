@@ -178,6 +178,9 @@ final class CameraSourceMonitor: NSObject {
     private var sessionsByIdentity: [DeviceIdentity: DeviceCameraSession] = [:]
     private var identitiesByDevice: [ObjectIdentifier: DeviceIdentity] = [:]
     private var isStarted = false
+    /// The catalog's staging containers (`CatalogStore.stagingContainers`): where each
+    /// camera's session stages its files, so the camera's root and the Store's are one path.
+    let stagingContainers: StagingContainers
     /// Browser reports in the order the browser made them; `browserLoop` is the one consumer.
     private let browserEvents: AsyncStream<BrowserEvent>.Continuation
     private var browserLoop: Task<Void, Never>?
@@ -188,9 +191,11 @@ final class CameraSourceMonitor: NSObject {
     }
 
     init(
+        stagingContainers: StagingContainers,
         onAttach: @escaping @MainActor @Sendable (DeviceCameraSession) -> Void,
         onDetach: @escaping @MainActor @Sendable (DeviceIdentity) -> Void
     ) {
+        self.stagingContainers = stagingContainers
         self.onAttach = onAttach
         self.onDetach = onDetach
         let (stream, continuation) = AsyncStream.makeStream(of: BrowserEvent.self, bufferingPolicy: .unbounded)
@@ -254,11 +259,18 @@ final class CameraSourceMonitor: NSObject {
         let session = DeviceCameraSession(
             identity: identity,
             displayName: device.name ?? "Connected Camera",
-            device: device
+            device: device,
+            stagingRootURL: stagingRoot(for: identity)
         )
         sessionsByIdentity[identity] = session
         identitiesByDevice[ObjectIdentifier(device)] = identity
         onAttach(session)
+    }
+
+    /// Where the camera named `identity` stages its files: its tree in the catalog's device
+    /// container.
+    func stagingRoot(for identity: DeviceIdentity) -> URL {
+        stagingContainers.sessionRoot(in: .device, identity: identity)
     }
 
     private func detach(_ device: ICCameraDevice) {
@@ -402,16 +414,16 @@ final class DeviceCameraSession: NSObject {
         case catalogComplete
     }
 
-    init(identity: DeviceIdentity, displayName: String, device: ICCameraDevice) {
+    /// `stagingRootURL` is the tree its monitor names for it (`CameraSourceMonitor.stagingRoot`).
+    init(identity: DeviceIdentity, displayName: String, device: ICCameraDevice, stagingRootURL: URL) {
         self.identity = identity
         self.displayName = displayName
         self.device = device
-        let container = StagingLocation.containerURL(.device)
-        stagingRootURL = StagingLocation.sessionRootURL(identity: identity, inContainer: container)
+        self.stagingRootURL = stagingRootURL
         // Claims this camera's tree for as long as this process is attached, so a peer's
         // launch sweep leaves it alone. Best-effort: a failed claim means another instance
         // does the cleaning, not that staging is unusable.
-        StagingLocation.claimOwnership(identity: identity, inContainer: container)
+        StagingLocation.claimOwnership(of: stagingRootURL)
         let (stream, continuation) = AsyncStream.makeStream(of: SessionEvent.self, bufferingPolicy: .unbounded)
         events = continuation
         (catalogChanges, catalogChangeBell) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))

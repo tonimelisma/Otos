@@ -269,28 +269,57 @@ nonisolated enum CatalogQueryGateway {
         )
     }
 
-    /// Rows in scope, optionally narrowed by the user filter.
+    /// Rows in scope, optionally narrowed by the user filter. On This Day's are the rows it
+    /// shows (`OnThisDayPicks.shows`), so its empty state never counts a file of a stack
+    /// whose key is Disliked: a scope whose cards are all left out reads as nothing on this
+    /// day, never as a filter's doing or an offline library's. Its stacks are built once,
+    /// in this read, for the match and the count alike.
     static func countAssets(
         scope: CatalogScopePredicate,
         filter: MediaFilter = .all,
         db: Database
     ) throws -> Int {
-        guard let scopeClause = try scopeClause(scope, db: db) else {
+        let picks: PhotoStackSQL.Built? = scope.isAnniversary && !scope.selectsNothing
+            ? try AnniversaryStacks.readWhenNeeded.resolved(rootIDs: scope.rootIDs, db: db)
+            : nil
+        guard let scopeClause = try scopeClause(scope, stacks: picks.map(AnniversaryStacks.built) ?? .readWhenNeeded, db: db) else {
             return 0
         }
         var arguments = scopeClause.arguments
         let filterPredicate = filterPredicate(for: filter)
         arguments.append(contentsOf: filterPredicate.arguments)
         let filterSQL = filterPredicate.sql.map { "\n  AND \($0)" } ?? ""
-        return try Int.fetchOne(
+        guard let picks else {
+            return try Int.fetchOne(
+                db,
+                sql: """
+                SELECT COUNT(*)
+                FROM media_asset\(scopeClause.join)
+                WHERE \(scopeClause.sql)\(filterSQL)
+                """,
+                arguments: StatementArguments(arguments)
+            ) ?? 0
+        }
+        let rows = try Row.fetchCursor(
             db,
             sql: """
-            SELECT COUNT(*)
+            SELECT media_asset.library_root_id, media_asset.relative_path
             FROM media_asset\(scopeClause.join)
             WHERE \(scopeClause.sql)\(filterSQL)
             """,
             arguments: StatementArguments(arguments)
-        ) ?? 0
+        )
+        var shown = 0
+        while let row = try rows.next() {
+            guard let rootPath = picks.rootPaths[row[0]] else {
+                continue
+            }
+            let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: row[1]))
+            if OnThisDayPicks.shows(id, stacks: picks.stacks) {
+                shown += 1
+            }
+        }
+        return shown
     }
 
     static func fetchStoredAssets(

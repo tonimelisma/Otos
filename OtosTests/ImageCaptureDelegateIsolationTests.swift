@@ -14,7 +14,9 @@ import Testing
 /// entry, before any body ran, so an empty method trapped just as hard as a busy one.
 struct ImageCaptureDelegateIsolationTests {
     @Test func browserCallbackDeliveredOffTheMainThreadDoesNotTrap() async {
-        let monitor = await CameraSourceMonitor(onAttach: { _ in }, onDetach: { _ in })
+        let monitor = await CameraSourceMonitor(
+            stagingContainers: StagingContainers(base: URL.temporaryDirectory), onAttach: { _ in }, onDetach: { _ in }
+        )
         let browser = ICDeviceBrowser()
 
         await withCheckedContinuation { continuation in

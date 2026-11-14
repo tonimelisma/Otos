@@ -231,7 +231,8 @@ struct MediaImportRecovery {
                 StagedSourceReleaser.releaseIfCached(
                     kind: operation.sourceKind,
                     sourceURL: operation.sourceRootPath.url
-                        .appendingPathComponent(operation.sourceRelativePath.rawValue)
+                        .appendingPathComponent(operation.sourceRelativePath.rawValue),
+                    stagingContainers: store.stagingContainers
                 )
             } catch {
                 OtosLog.catalog.errorOperation("mediaOperation.recover", phase: "settleFailed", fields: [

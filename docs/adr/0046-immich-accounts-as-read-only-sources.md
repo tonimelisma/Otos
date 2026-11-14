@@ -94,8 +94,12 @@ unreachable is never a deletion.
   `immich:<normalized server URL>#<user id>`, and its path is an Otos staging folder
   `RemoteStaging/<sanitized identity>/` under the app's Caches folder named by its bundle
   identifier, beside `DeviceStaging` but a separate container, so a dev build and the
-  installed app (ADR 0030) never share it. The path is a function of the build's containers
-  (`StagingContainers`) and the identity, not a fact of its own: the catalog stores it
+  installed app (ADR 0030) never share it. One value answers where a source stages: the
+  Store's `StagingContainers`, derived from its catalog location (the app's bundle
+  identifier under Caches, a catalog file's folder, an in-memory catalog's own temporary
+  folder), which the camera monitor, the sweeps, the quit check and an import's release of a
+  staged file all read; nothing else builds a container path. The path is a function of those
+  containers and the identity, not a fact of its own: the catalog stores it
   because asset identity is the path (ADR 0008), and the Store re-derives it at every load,
   a camera's root too. A root stored elsewhere — by another build, or under the one shared
   container before containers were named by bundle identifier — moves into this build's own:

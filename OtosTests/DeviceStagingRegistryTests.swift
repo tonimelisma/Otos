@@ -119,7 +119,7 @@ struct DeviceStagingRegistryTests {
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        #expect(StagingLocation.claimOwnership(identity: .camera(id: "live"), inContainer: container))
+        #expect(StagingLocation.claimOwnership(of: StagingLocation.sessionRootURL(identity: .camera(id: "live"), inContainer: container)))
         defer { StagingLocation.releaseOwnership() }
 
         let held = StagingLocation.sessionRootURL(identity: .camera(id: "live"), inContainer: container)
@@ -141,7 +141,7 @@ struct DeviceStagingRegistryTests {
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        StagingLocation.claimOwnership(identity: .camera(id: "quitting"), inContainer: container)
+        StagingLocation.claimOwnership(of: StagingLocation.sessionRootURL(identity: .camera(id: "quitting"), inContainer: container))
         let root = StagingLocation.sessionRootURL(identity: .camera(id: "quitting"), inContainer: container)
         let staged = root.appending(path: "A.ARW", directoryHint: .notDirectory)
         try Data(repeating: 3, count: 128).write(to: staged)
@@ -199,13 +199,42 @@ struct DeviceStagingRegistryTests {
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        StagingLocation.claimOwnership(identity: .camera(id: "empty"), inContainer: container)
+        StagingLocation.claimOwnership(of: StagingLocation.sessionRootURL(identity: .camera(id: "empty"), inContainer: container))
         defer { StagingLocation.releaseOwnership() }
 
         #expect(
             !StagingLocation.hasStagedBytes(inContainers: [container]),
             "directories alone are not bytes; quitting must not defer to delete nothing"
         )
+    }
+
+    /// One owner answers where a source stages (`CatalogStore.stagingContainers`): a camera
+    /// monitor given a catalog's containers names each camera's tree inside them, never the
+    /// app's own Caches container, so the camera's root and the Store's are one path.
+    @MainActor
+    @Test func aCameraStagesUnderTheContainersItWasGiven() throws {
+        let containers = try StagingContainers(base: makeTestDirectory())
+        let monitor = CameraSourceMonitor(stagingContainers: containers, onAttach: { _ in }, onDetach: { _ in })
+        let root = monitor.stagingRoot(for: .camera(id: "abc"))
+        #expect(root == containers.sessionRoot(in: .device, identity: .camera(id: "abc")))
+        #expect(StagingLocation.isInsideStaging(root, inContainers: [containers.url(.device)]))
+        let app = StagingContainers.application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos")
+        #expect(!StagingLocation.isInsideStaging(root, inContainers: app.urls))
+    }
+
+    /// A catalog's staging containers follow its location when none is given: the app's
+    /// under Caches by its bundle identifier, a catalog file's beside it, and each in-memory
+    /// catalog's a temporary folder of its own; a given value wins.
+    @Test func aCatalogsStagingFollowsItsLocation() throws {
+        let directory = try makeTestDirectory()
+        let file = CatalogStore(location: .databaseFile(directory.appending(path: "db/catalog.sqlite")))
+        #expect(file.stagingContainers.base == directory.appending(path: "db/Staging", directoryHint: .isDirectory))
+        let app = CatalogStore.stagingContainers(for: .application(bundleIdentifier: "net.melisma.Otos.test"))
+        #expect(app.base.lastPathComponent == "net.melisma.Otos.test")
+        #expect(app.base.deletingLastPathComponent().lastPathComponent == "Caches")
+        #expect(CatalogStore(location: .inMemory).stagingContainers != CatalogStore(location: .inMemory).stagingContainers)
+        let given = StagingContainers(base: directory)
+        #expect(CatalogStore(location: .inMemory, stagingContainers: given).stagingContainers == given)
     }
 
     /// A1's guard: a release path outside staging is refused, never followed. The intent
