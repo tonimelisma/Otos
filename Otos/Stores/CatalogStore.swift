@@ -2007,22 +2007,39 @@ extension CatalogStore {
         return timedCount.value
     }
 
-    /// The file types and places the filter popover offers, drawn from every available
-    /// source — fixed libraries, cards and cameras alike — and not from the shown scope, so
-    /// the choices are the same under every row and its leaves (`CatalogFilterOptions`).
-    func filterOptions(availableLibraryPaths: Set<LibraryRootPath>) async throws -> CatalogFilterOptions {
-        let scope = CatalogScopePredicate(rootIDs: roots.rootIDs(in: availableLibraryPaths))
+    /// The file types and places the filter popover offers when the window shows
+    /// `selection`: those present in the scope of its sidebar row (`SidebarSelection.sidebarRow`),
+    /// so a library offers only what it holds and a leaf offers what its row does
+    /// (`CatalogFilterOptions`). Places are offered only while the catalog holds names in one
+    /// language, `placeNameLanguages` being the languages it holds (`placeNameLanguages()`).
+    func filterOptions(
+        for selection: SidebarSelection,
+        availableLibraryPaths: Set<LibraryRootPath>,
+        placeNameLanguages: Set<PlaceNameLanguage>
+    ) async throws -> CatalogFilterOptions {
+        let row = selection.sidebarRow
+        let scope = scopePredicate(selection: row, availableLibraryPaths: availableLibraryPaths)
         guard !scope.selectsNothing else {
             return .empty
         }
+        let language = placeNameLanguages.count == 1 ? placeNameLanguages.first : nil
         let dbWriter = try database()
         let timedOptions = try await timedRead(dbWriter) { db in
-            try CatalogQueryGateway.filterOptions(scope: scope, db: db)
+            try CatalogQueryGateway.filterOptions(scope: scope, placeNameLanguage: language, db: db)
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.filterOptions phase=finish rootCount=\(scope.rootIDs.count, privacy: .public) kindCount=\(timedOptions.value.formatsByKind.count, privacy: .public) formatCount=\(timedOptions.value.formatsByKind.values.reduce(0) { $0 + $1.count }, privacy: .public) waitMs=\(timedOptions.waitMs, privacy: .public) execMs=\(timedOptions.execMs, privacy: .public) queryMs=\(timedOptions.totalMs, privacy: .public)"
+            "op=catalog.store.query.filterOptions phase=finish row=\(row.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) kindCount=\(timedOptions.value.formatsByKind.count, privacy: .public) formatCount=\(timedOptions.value.formatsByKind.values.reduce(0) { $0 + $1.count }, privacy: .public) countryCount=\(timedOptions.value.countries.count, privacy: .public) placeLanguage=\(language?.identifier ?? "none", privacy: .public) waitMs=\(timedOptions.waitMs, privacy: .public) execMs=\(timedOptions.execMs, privacy: .public) queryMs=\(timedOptions.totalMs, privacy: .public)"
         )
         return timedOptions.value
+    }
+
+    /// The languages the catalog holds place names in (ADR 0051): one once the reader has
+    /// forgotten the others, none before anything is named. A held place filter lives only
+    /// while its language is among them (`MediaFilter.keepingPlaces(namedIn:)`).
+    func placeNameLanguages() async throws -> Set<PlaceNameLanguage> {
+        try await database().read { db in
+            try Set(String.fetchAll(db, sql: CatalogQueryGateway.placeNameLanguagesSQL).map(PlaceNameLanguage.init(identifier:)))
+        }
     }
 
     // MARK: - Place names (ADR 0040)
@@ -2065,9 +2082,10 @@ extension CatalogStore {
     }
 
     /// Forgets the names stored in any language but `language` (ADR 0051): the catalog keeps
-    /// one language's names, so the filter never offers one place under two names, and
-    /// a place held in the filter under its old name matches nothing rather than a dwindling
-    /// share of its photos. Returns how many cells were forgotten; a catalog change when any.
+    /// one language's names, so the filter never offers one place under two names, and a
+    /// place held in the filter under its old name leaves the filter rather than match a
+    /// dwindling share of its photos (`MediaFilter.keepingPlaces(namedIn:)`). Returns how
+    /// many cells were forgotten; a catalog change when any.
     func forgetPlaceNames(notIn language: PlaceNameLanguage) async throws -> Int {
         let forgotten = try await database().write { db in
             try db.execute(sql: "DELETE FROM place_cell WHERE language <> ?", arguments: [language.identifier])

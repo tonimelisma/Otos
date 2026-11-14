@@ -24,7 +24,9 @@ struct PlacesMapView: View {
     var detailReader: MediaTileDetailReader?
     let onViewportChanged: (MapViewport) -> Void
     let onClusterClick: (MapPlaceCluster) -> Void
-    let onClusterDoubleClick: (MapPlaceCluster) -> Void
+    /// Every mouse-down in the map with AppKit's click count, before anything under the
+    /// pointer sees it; true when the owner takes the click (`mapMouseDown(clickCount:)`).
+    let onMouseDown: (Int) -> Bool
     let onClusterOpen: (MapPlaceCluster) -> Void
     var clearFilters: () -> Void = {}
     @State private var camera: MapCameraPosition = .automatic
@@ -57,15 +59,16 @@ struct PlacesMapView: View {
                         thumbnailDirectory: thumbnailDirectory,
                         detailReader: detailReader
                     )
-                    // One gesture, AppKit's click count deciding: a click zooms at once, and
-                    // the second click of a double-click opens. A SwiftUI double-tap beside a
-                    // single tap would hold every click back until no second one came.
+                    // A click acts at once, on the stack under it. The second click of a
+                    // double-click is not this stack's to take: the map's mouse-down monitor
+                    // hands it to the stack the first click acted on (`MapMouseDownMonitor`),
+                    // and a later click AppKit counts as a gesture begun elsewhere — on bare
+                    // map, before this stack slid under the pointer — acts on nothing here. A
+                    // SwiftUI double-tap beside a single tap would hold every click back until
+                    // no second one came.
                     .onTapGesture {
-                        if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
-                            onClusterDoubleClick(cluster)
-                        } else {
-                            onClusterClick(cluster)
-                        }
+                        guard Self.currentClickCount == 1 else { return }
+                        onClusterClick(cluster)
                     }
                     .accessibilityAction(named: "Show Photos") {
                         onClusterOpen(cluster)
@@ -101,7 +104,17 @@ struct PlacesMapView: View {
         .onChange(of: cameraRequest?.revision, initial: true) { _, _ in
             applyCameraRequest()
         }
+        .background(MapMouseDownMonitor(onMouseDown: onMouseDown))
         .accessibilityLabel("Map")
+    }
+
+    /// AppKit's click count for the mouse event a tap answers; 1 for a press with no mouse
+    /// event behind it (VoiceOver), since `clickCount` is defined only on mouse events.
+    private static var currentClickCount: Int {
+        guard let event = NSApp.currentEvent, [.leftMouseDown, .leftMouseUp].contains(event.type) else {
+            return 1
+        }
+        return event.clickCount
     }
 
     /// Eases a camera that settled past the pan band back inside it, at the same zoom:
@@ -157,6 +170,72 @@ struct PlacesMapView: View {
         )
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
             camera = .rect(rect)
+        }
+    }
+}
+
+/// AppKit's click count for every mouse-down inside the map, delivered before MapKit or a
+/// stack hit-tests it, so a double-click is routed as one gesture rather than by whatever the
+/// first click's camera flight moved under the pointer. SwiftUI offers neither the count nor
+/// a look at a click before the view under it; a local event monitor offers both. The view
+/// draws nothing and takes no click itself (`hitTest` is nil); the monitor lives exactly as
+/// long as the view is in a window.
+private struct MapMouseDownMonitor: NSViewRepresentable {
+    let onMouseDown: (Int) -> Bool
+
+    func makeNSView(context: Context) -> MonitorView {
+        let view = MonitorView()
+        view.onMouseDown = onMouseDown
+        return view
+    }
+
+    func updateNSView(_ view: MonitorView, context: Context) {
+        view.onMouseDown = onMouseDown
+    }
+
+    static func dismantleNSView(_ view: MonitorView, coordinator: ()) {
+        view.stopMonitoring()
+    }
+
+    final class MonitorView: NSView {
+        var onMouseDown: ((Int) -> Bool)?
+        private var monitor: Any?
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            nil
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stopMonitoring()
+            guard window != nil else { return }
+            // AppKit runs a local monitor on the main thread, before the event is dispatched;
+            // returning nil consumes it.
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+                let windowNumber = event.windowNumber
+                let location = event.locationInWindow
+                let clickCount = event.clickCount
+                let taken = MainActor.assumeIsolated {
+                    self?.takes(windowNumber: windowNumber, location: location, clickCount: clickCount) ?? false
+                }
+                return taken ? nil : event
+            }
+        }
+
+        private func takes(windowNumber: Int, location: NSPoint, clickCount: Int) -> Bool {
+            guard let window, window.windowNumber == windowNumber,
+                  bounds.contains(convert(location, from: nil))
+            else {
+                return false
+            }
+            return onMouseDown?(clickCount) ?? false
+        }
+
+        func stopMonitoring() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
+            monitor = nil
         }
     }
 }

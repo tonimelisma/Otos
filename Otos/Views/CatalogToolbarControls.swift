@@ -216,11 +216,11 @@ struct CatalogFilterPopoverContent: View {
         let query = placesQuery.trimmingCharacters(in: .whitespaces)
         let countries = options.countries(holding: filter)
         let head = FilterListHead.rows(
-            countries, isChecked: { country in filter.places.contains { $0.country == country.name } },
+            countries, isChecked: { country in filter.heldPlaces.contains { $0.country == country.name } },
             isExpanded: showsAllCountries
         )
         let shown = head.shown.compactMap { country -> PlaceFilterCountry? in
-            if query.isEmpty || filter.places.contains(where: { $0.country == country.name })
+            if query.isEmpty || filter.heldPlaces.contains(where: { $0.country == country.name })
                 || country.name.localizedStandardContains(query)
             {
                 return country
@@ -294,7 +294,7 @@ struct CatalogFilterPopoverContent: View {
         let whole = PlaceFilterKey(country: country.name, town: nil)
         guard !country.towns.isEmpty else {
             return [MenuToggleSource(isOn: Binding(
-                get: { descriptor.filter.places.contains(whole) },
+                get: { descriptor.filter.heldPlaces.contains(whole) },
                 set: { places.setPlace(whole, $0) }
             ))]
         }
@@ -315,12 +315,12 @@ struct CatalogFilterPopoverContent: View {
 
     /// A town checked on its own, not through its whole country: the row a head must keep.
     private func isPlaceIncludedExplicitly(_ town: String, in country: String) -> Bool {
-        descriptor.filter.places.contains(PlaceFilterKey(country: country, town: town))
+        descriptor.filter.heldPlaces.contains(PlaceFilterKey(country: country, town: town))
     }
 
     private func isPlaceIncluded(_ town: String, in country: String) -> Bool {
-        descriptor.filter.places.contains(PlaceFilterKey(country: country, town: nil))
-            || descriptor.filter.places.contains(PlaceFilterKey(country: country, town: town))
+        descriptor.filter.heldPlaces.contains(PlaceFilterKey(country: country, town: nil))
+            || descriptor.filter.heldPlaces.contains(PlaceFilterKey(country: country, town: town))
     }
 
     /// A collection-backed Toggle gives macOS its native mixed state. Every

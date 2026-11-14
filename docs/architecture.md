@@ -131,8 +131,9 @@ everything expensive happens on an actor off the main thread.
 - **Query scope** is resolved once. `RootRegistry.scopePredicate` turns a
   `SidebarSelection` into one `CatalogScopePredicate` (root IDs plus an optional
   import-batch stamp), and every scoped read — ordered IDs, cataloged count, visible
-  count — consumes that value rather than bare root IDs. Filter options are the one
-  unscoped read: they span every available source, as the filter spans scopes. An Imports
+  count, filter options — consumes that value rather than bare root IDs. Filter options
+  read the scope of the shown sidebar row (`SidebarSelection.sidebarRow`), whose filter a
+  leaf keeps, so a leaf is offered its row's choices. An Imports
   row narrows by root *and* by batch; holding both dimensions in one value is what
   stops a read from honoring one and forgetting the other.
 - **The grid** is the one AppKit boundary (`MediaGridBridgeView` +

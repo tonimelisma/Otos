@@ -14,9 +14,8 @@ import Testing
 struct CatalogBatchScopeTests {
     private static let batch = ImportBatchID(unixMilliseconds: 1_785_908_514_176)
 
-    /// Every scoped read agrees about the batch: ordering and both counts. The filter's
-    /// choices are not a scoped read: a batch of videos still offers the library's
-    /// stills, because the filter spans scopes (APP-025).
+    /// Every scoped read agrees about the batch: ordering, both counts and the filter's
+    /// choices, so a batch of videos offers no stills it does not hold (APP-025).
     @Test func everyScopedReadAppliesBatchMembership() async throws {
         let temp = try makeTestDirectory()
         defer { try? FileManager.default.removeItem(at: temp) }
@@ -50,7 +49,10 @@ struct CatalogBatchScopeTests {
         )
         let batchCatalogedCount = try await store.catalogedAssetCount(for: batchScope)
         let libraryCatalogedCount = try await store.catalogedAssetCount(for: .library(rootPath))
-        let options = try await store.filterOptions(availableLibraryPaths: available)
+        // The options are the shown row's: the batch offers its clips' type alone, the
+        // library every type it holds.
+        let batchOptions = try await store.filterOptions(for: batchScope, availableLibraryPaths: available, placeNameLanguages: [])
+        let options = try await store.filterOptions(for: .library(rootPath), availableLibraryPaths: available, placeNameLanguages: [])
         await store.shutdown()
 
         #expect(Set(batchIDs.map(\.relativePath.rawValue)) == ["clip-one.mp4", "clip-two.mp4"])
@@ -59,6 +61,7 @@ struct CatalogBatchScopeTests {
         #expect(batchVisibleCount == 2)
         #expect(batchCatalogedCount == 2)
         #expect(libraryCatalogedCount == 3)
+        #expect(batchOptions.formatsByKind == [.video: [MediaFormatToken(rawValue: "MP4")]])
         #expect(options.formatsByKind[.video] == [MediaFormatToken(rawValue: "MP4")])
         #expect(options.formatsByKind[.image] == [MediaFormatToken(rawValue: "HEIF")])
     }

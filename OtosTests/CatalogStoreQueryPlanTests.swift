@@ -198,7 +198,9 @@ struct CatalogStoreQueryPlanTests {
         let scope = CatalogScopePredicate(rootIDs: [rootID1, rootID2])
 
         let (unnamedPlan, nextPagePlan, optionsPlan, undecodablePlan, cells) = try await dbQueue.read { db in
-            let optionsQuery = try #require(try CatalogQueryGateway.placeOptionsQuery(scope: scope, db: db))
+            let optionsQuery = try #require(try CatalogQueryGateway.placeOptionsQuery(
+                scope: scope, language: PlaceNameLanguage(identifier: "en-Latn"), db: db
+            ))
             return try (
                 explainPlan(db, sql: CatalogQueryGateway.unnamedPlaceCellsSQL(after: false), arguments: ["en-Latn", 32]),
                 explainPlan(db, sql: CatalogQueryGateway.unnamedPlaceCellsSQL(after: true), arguments: [0, 0, "en-Latn", 32]),
@@ -339,9 +341,58 @@ struct CatalogStoreQueryPlanTests {
         }
     }
 
-    /// On This Day's left-out photos are read from their own partial index, whose condition
-    /// the clause states in the same text, never by a scan of every search row.
-    @Test func onThisDaysLeftOutPhotosAreReadFromTheirPartialIndex() async throws {
+    /// The filter's options are read over the shown row's scope (APP-013, APP-025), whatever
+    /// that row is: the file types from the scope's own rows, the places from the named cells
+    /// in the catalog's language reaching each located row through the place-cell index —
+    /// never a scan of every row, every location or every search row. Measured on the owner's
+    /// 166,554-photo catalog (2026-11-13): every row's two reads about a second at most warm, the same
+    /// scale as the every-source read they replace. The languages read scans only
+    /// `place_cell`, one row per named cell.
+    @Test func theOptionsReadsOfEveryRowAreIndexDriven() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        let roots = [rootID1, rootID2]
+        let scopes: [(String, CatalogScopePredicate)] = [
+            ("allMedia", CatalogScopePredicate(rootIDs: roots)),
+            ("library", CatalogScopePredicate(rootIDs: [rootID1])),
+            ("places", CatalogScopePredicate(rootIDs: roots, location: .located)),
+            ("onThisDay", CatalogScopePredicate(rootIDs: roots, date: .anniversary(CalendarDay(year: 2026, month: 11, day: 13)))),
+            ("duplicates", CatalogScopePredicate(rootIDs: roots, content: .duplicated)),
+            ("people", CatalogScopePredicate(rootIDs: roots, content: .withPerson)),
+            ("importBatch", CatalogScopePredicate(rootIDs: roots, importBatchUnixMs: 1_785_908_514_176)),
+        ]
+        let (plans, languagesPlan) = try await dbQueue.read { db in
+            var plans: [(String, String)] = []
+            for (name, scope) in scopes {
+                let types = try #require(try CatalogQueryGateway.distinctFilterableTypesQuery(scope: scope, db: db))
+                let places = try #require(try CatalogQueryGateway.placeOptionsQuery(
+                    scope: scope, language: PlaceNameLanguage(identifier: "en-Latn"), db: db
+                ))
+                try plans.append(("\(name).types", explainPlan(db, query: types)))
+                try plans.append(("\(name).places", explainPlan(db, query: places)))
+            }
+            return try (plans, explainPlan(db, sql: CatalogQueryGateway.placeNameLanguagesSQL))
+        }
+        for (name, plan) in plans {
+            let lines = plan.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+            for table in ["media_asset", "place_metadata", "asset_metadata", "search_embedding", "face"] {
+                #expect(!lines.contains { $0 == "SCAN \(table)" || $0.hasPrefix("SCAN \(table) ") }, "\(name): \(plan)")
+            }
+            if name.hasSuffix(".places") {
+                #expect(plan.contains("SEARCH place_metadata USING INDEX idx_asset_metadata_place_cell"), "\(name): \(plan)")
+            }
+        }
+        #expect(!languagesPlan.contains("media_asset") && !languagesPlan.contains("asset_metadata"))
+    }
+
+    /// On This Day's left-out photos are sought by each row's key, never by a scan of every
+    /// search row — which a `NOT IN` list did once per outer row when the read started from
+    /// the place cells (the filter's place options).
+    @Test func onThisDaysLeftOutPhotosAreSoughtByKey() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
@@ -353,8 +404,9 @@ struct CatalogStoreQueryPlanTests {
         let plan = try await dbQueue.read { db in
             try explainPlan(db, sql: "SELECT 1 FROM media_asset WHERE 1\(OnThisDayPicks.exclusionSQL)")
         }
-        #expect(plan.contains("USING INDEX idx_search_embedding_left_out"))
-        #expect(!plan.contains("SCAN search_embedding\n") && !plan.hasSuffix("SCAN search_embedding"))
+        #expect(plan.contains("SEARCH search_embedding USING"))
+        #expect(plan.contains("(library_root_id=? AND relative_path=?)"))
+        #expect(!plan.contains("SCAN search_embedding"))
     }
 
     /// On This Day's years-or-months match walks a year's rows through a capture-time index

@@ -652,8 +652,8 @@ struct ContentView: View {
                 thumbnailDirectory: viewModel.thumbnailDirectory,
                 detailReader: viewModel.tileDetailReader,
                 onViewportChanged: viewModel.mapViewportChanged,
-                onClusterClick: viewModel.zoomIntoMapCluster,
-                onClusterDoubleClick: viewModel.doubleClickMapCluster,
+                onClusterClick: viewModel.clickMapCluster,
+                onMouseDown: viewModel.mapMouseDown(clickCount:),
                 onClusterOpen: viewModel.openMapCluster,
                 clearFilters: viewModel.clearMediaFilter
             )

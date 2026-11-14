@@ -10,9 +10,8 @@ nonisolated enum OnThisDayPicks {
     /// them (`search_embedding.confident_labels`, comma-separated identifiers).
     static let excludedLabels = ["screenshot", "document"]
 
-    /// Whether a `search_embedding` row's confident labels hold an excluded label. One text
-    /// for the partial index `idx_search_embedding_left_out` and for the query that reads it,
-    /// since SQLite uses a partial index only when the query states its condition.
+    /// Whether a `search_embedding` row's confident labels hold an excluded label: one text
+    /// for the scope's exclusion and for the Info pane's reading of one photo.
     static var leftOutLabelSQL: String {
         excludedLabels
             .map { "(',' || confident_labels || ',') LIKE '%,\($0),%'" }
@@ -20,16 +19,21 @@ nonisolated enum OnThisDayPicks {
     }
 
     /// The anniversary scope's extra `WHERE` terms over `media_asset`. The years-or-months
-    /// match reads the same clause, so a day holding only screenshots is no anniversary. The
-    /// left-out rows are read once per query from their own small index, not looked up per
-    /// row of the day.
+    /// match reads the same clause, so a day holding only screenshots is no anniversary. A
+    /// row's own search row is sought by its key, only for a row the day's other terms kept.
+    /// A `NOT IN` over every left-out row was rejected on measurement: when a read starts
+    /// from another table — the filter's place options start from the named cells — SQLite
+    /// ran it for each outer row, 9–12 s on the owner's 166,554-photo catalog against 0.15 s
+    /// for this form (2026-11-13).
     static var exclusionSQL: String {
         """
 
           AND media_asset.media_choice <> 'disliked'
-          AND (media_asset.library_root_id, media_asset.relative_path) NOT IN (
-              SELECT library_root_id, relative_path FROM search_embedding
-              WHERE \(leftOutLabelSQL)
+          AND NOT EXISTS (
+              SELECT 1 FROM search_embedding
+              WHERE search_embedding.library_root_id = media_asset.library_root_id
+                AND search_embedding.relative_path = media_asset.relative_path
+                AND (\(leftOutLabelSQL))
           )
         """
     }

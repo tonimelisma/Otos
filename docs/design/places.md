@@ -118,9 +118,14 @@ gutter). Only cells touching the viewport, padded by one cell, are drawn.
 **[deviation]** from Photos, whose click does nothing and whose double-click zooms. A
 click drills in, as a click on a cluster does on nearly every map, and the double-click
 that ends the drilling opens the photos (owner decision, 2026-11-12). A double-click's
-first click has already started the zoom; what opens is the stack that click landed on,
-not whatever lies under the pointer once the camera moved, and Back to Map returns to the
-map that first click zoomed from. An opened stack is its items
+first click has already started the zoom, which moves an off-centre stack out from under
+the pointer, so a double-click is one gesture, decided by AppKit's click count and not by
+what lies under the pointer: its second click is taken before MapKit or any stack sees it
+and opens the stack the first click landed on — never a neighbouring stack the flight slid
+there, never MapKit's own double-click zoom on the bare map — a third click does nothing
+more, and on a stack the first click already opened the second opens nothing again. A
+click counted as a second click whose first did not land on a stack acts on nothing it
+lands on. Back to Map returns to the map that first click zoomed from. An opened stack is its items
 by identity, not a box: neighbouring stacks' boxes overlap, and a box would take in
 another stack's items.
 
@@ -159,17 +164,22 @@ points.
 ## The Places filter
 
 A section of the filter popover, under People (ADR 0051): every country Apple Maps named for
-the located items, most items first, each a checkbox opening onto its towns (`Springfield,
+the located items in the shown sidebar row's scope — a library's own, a card's own, Places'
+— most items first, so every place offered matches something there (an area or a stack
+under the map is offered what Places is), each a checkbox opening onto its towns (`Springfield,
 IL`), most items first, a country with some towns checked shown mixed. The first five
 countries show, and within a country the first five towns; `Show All 14 Countries` /
 `Show All 9 Towns` lists the rest in place and `Show Less` folds it back, and the whole
 list of countries gains `Search Places` once there are more than eight. `No places named
 yet` before any cell is named. Checking a country includes all of it; unchecking one town
 of a checked country narrows it to the rest. A checked place always shows, even one
-nothing is named any more (a name in the Mac's previous language, a town whose photos
-left): a held town after its country's named towns, a held country after the named
-countries, so it can be seen and cleared. Names are in the Mac's language; after a
-language change, the list fills again as the cells are named anew. It narrows the
+nothing in the scope is named any more (a town whose photos left): a held town after its
+country's named towns, a held country after the named countries, so it can be seen and
+cleared. Names are in the Mac's language; after a language change, the list fills again
+as the cells are named anew, and every checked place leaves the filter as soon as the old
+names are forgotten: the catalog holds nothing that names a place apart from its name in
+one language, so a checked `Finland` cannot become `Suomi`, and is cleared — the boxes
+uncheck and the grid widens — rather than left checked matching nothing. It narrows the
 map and every scope, within the sidebar row it was set in (`docs/design/people.md`, The
 filter's reach).
 

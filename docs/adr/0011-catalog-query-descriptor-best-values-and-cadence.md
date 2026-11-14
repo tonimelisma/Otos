@@ -120,18 +120,21 @@ and Videos parent toggles directly above their child file types. Partial child
 selection gives the parent a mixed state; selecting every kind or clearing every
 selection canonicalizes back to the empty, all-items descriptor.
 
-The filter's options are not scoped. The descriptor's filter belongs to the sidebar row
-it was set in: choosing another row starts it unfiltered, but the filter survives into
-that row's leaves and back (a map area or stack, a person, a duplicate group) and into a
-restored place (APP-042, `docs/design/people.md`), so a filter value and the rows that
-show it must span the same thing: the
-popover always lists all three kinds, and under each the file types present in any
-available source plus every file type the filter holds. A filter holds a file type
-under its kind (`FilterFileType`), which is what lets it draw a row for a type no
-available row has any more. Options drawn from the shown scope were rejected: a value
-chosen in one scope then had no row in another, so the window said "Filtered" with
-nothing ticked, and the filter's own normalization gave different answers per scope. The View
-menu opens that same popover instead of duplicating the hierarchy.
+The filter's options are the sidebar row's (owner order, 2026-11-13). The descriptor's
+filter belongs to the sidebar row it was set in: choosing another row starts it
+unfiltered, but the filter survives into that row's leaves and back (a map area or
+stack, a person, a duplicate group) and into a restored place (APP-042,
+`docs/design/people.md`), so a filter value and the rows that show it span the same
+thing — the row: the popover always lists all three kinds, and under each the file
+types present in the row's scope (`SidebarSelection.sidebarRow`, resolved by the same
+`RootRegistry.scopePredicate` as every scoped read) plus every file type the filter
+holds. A filter holds a file type under its kind (`FilterFileType`), which is what lets
+it draw a row for a type the row no longer has. Options drawn from every available
+source were rejected: a library then offered a town or a file type only a connected
+card held, and choosing it matched nothing. Options drawn from the shown leaf were
+rejected too: an area's options would shrink as the map moved, while the filter it keeps
+is the row's. The View menu opens that same popover instead of duplicating the
+hierarchy.
 
 `best_format` tokens are MediaMetadata's file-type names (ADR 0039): HEIC, HEIF and
 HIF are one `HEIF`, JPG/JPE one `JPEG`, TIF one `TIFF`, so every token is one filter

@@ -138,7 +138,13 @@ nonisolated enum CatalogQueryGateway {
         )
     }
 
-    static func filterOptions(scope: CatalogScopePredicate, db: Database) throws -> CatalogFilterOptions {
+    /// The options for the row whose scope is `scope`, the places among them named in
+    /// `placeNameLanguage` (none without one).
+    static func filterOptions(
+        scope: CatalogScopePredicate,
+        placeNameLanguage: PlaceNameLanguage?,
+        db: Database
+    ) throws -> CatalogFilterOptions {
         guard let query = try distinctFilterableTypesQuery(scope: scope, db: db) else {
             return .empty
         }
@@ -156,16 +162,25 @@ nonisolated enum CatalogQueryGateway {
             }
             formatsByKind[kind] = formats
         }
+        guard let placeNameLanguage else {
+            return CatalogFilterOptions(formatsByKind: formatsByKind.mapValues { $0.sorted() })
+        }
         return try CatalogFilterOptions(
             formatsByKind: formatsByKind.mapValues { $0.sorted() },
-            countries: placeOptions(scope: scope, db: db)
+            countries: placeOptions(scope: scope, language: placeNameLanguage, db: db),
+            placeNameLanguage: placeNameLanguage
         )
     }
 
-    /// The countries and towns Maps named for the located items in scope, most items first,
-    /// then the name in the locale's order (ADR 0051). A cell named nothing offers nothing.
-    static func placeOptions(scope: CatalogScopePredicate, db: Database) throws -> [PlaceFilterCountry] {
-        guard let query = try placeOptionsQuery(scope: scope, db: db) else {
+    /// The countries and towns Maps named in `language` for the located items in scope, most
+    /// items first, then the name in the locale's order (ADR 0051). A cell named nothing
+    /// offers nothing.
+    static func placeOptions(
+        scope: CatalogScopePredicate,
+        language: PlaceNameLanguage,
+        db: Database
+    ) throws -> [PlaceFilterCountry] {
+        guard let query = try placeOptionsQuery(scope: scope, language: language, db: db) else {
             return []
         }
         let rows = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments)
@@ -188,7 +203,11 @@ nonisolated enum CatalogQueryGateway {
     /// rows through `idx_asset_metadata_place_cell`, and each row's scope by its key — work in
     /// the located rows of named cells, not in every row of the scope. The join order is
     /// fixed (`CROSS JOIN`) because the planner otherwise starts from the scope's rows.
-    static func placeOptionsQuery(scope: CatalogScopePredicate, db: Database) throws -> SQLQuery? {
+    static func placeOptionsQuery(
+        scope: CatalogScopePredicate,
+        language: PlaceNameLanguage,
+        db: Database
+    ) throws -> SQLQuery? {
         guard let scopeClause = try scopeClause(scope, db: db) else {
             return nil
         }
@@ -202,12 +221,18 @@ nonisolated enum CatalogQueryGateway {
             CROSS JOIN media_asset
               ON media_asset.library_root_id = place_metadata.library_root_id
               AND media_asset.relative_path = place_metadata.relative_path\(scopeClause.join)
-            WHERE place_cell.country IS NOT NULL AND \(scopeClause.sql)
+            WHERE place_cell.language = ? AND place_cell.country IS NOT NULL AND \(scopeClause.sql)
             GROUP BY place_cell.country, place_cell.town
             """,
-            arguments: StatementArguments(scopeClause.arguments)
+            arguments: StatementArguments([language.identifier] + scopeClause.arguments)
         )
     }
+
+    /// The languages the catalog holds place names in (ADR 0051): one, once the reader has
+    /// forgotten every other; none before anything is named. A scan of `place_cell`, which
+    /// holds one row per map cell a located photo falls in — a few thousand at most — and is
+    /// read with no other table.
+    static let placeNameLanguagesSQL = "SELECT DISTINCT language FROM place_cell"
 
     /// The read of `CatalogStore.unnamedPlaceCells`: the distinct cells of located rows in
     /// index order, from after a cell when `after`, with no name in the language argued.
@@ -1020,11 +1045,12 @@ private nonisolated func filterPredicate(
         peopleClauses.append("\(face) face.person_id IS NULL)")
     }
     clauses += peopleClauses
-    // The Places filter (ADR 0040): a photo whose cell Maps named as one of the countries or
-    // towns checked.
-    if !filter.places.isEmpty {
+    // The Places filter (ADR 0051): a photo whose cell Maps named, in the filter's language,
+    // as one of the countries or towns checked.
+    if let places = filter.places {
         var placeClauses: [String] = []
-        for place in filter.places.sorted() {
+        arguments.append(places.language.identifier)
+        for place in places.keys.sorted() {
             if let town = place.town {
                 placeClauses.append("(place_cell.country = ? AND place_cell.town = ?)")
                 arguments.append(place.country)
@@ -1041,6 +1067,7 @@ private nonisolated func filterPredicate(
               AND place_cell.cell_longitude = place_metadata.place_cell_longitude
             WHERE place_metadata.library_root_id = media_asset.library_root_id
               AND place_metadata.relative_path = media_asset.relative_path
+              AND place_cell.language = ?
               AND (\(placeClauses.joined(separator: " OR "))))
         """)
     }

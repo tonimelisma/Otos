@@ -62,6 +62,11 @@ nonisolated struct PlaceNameLanguage: Hashable, Sendable {
             .compactMap(\.self)
             .joined(separator: "-")
     }
+
+    /// A language as stored (`place_cell.language`) or saved with a held filter.
+    init(identifier: String) {
+        self.identifier = identifier
+    }
 }
 
 /// What Apple Maps names a cell: its country and its town, the town with the context that
@@ -81,6 +86,24 @@ nonisolated struct PlaceFilterKey: Hashable, Sendable, Comparable {
 
     static func < (lhs: PlaceFilterKey, rhs: PlaceFilterKey) -> Bool {
         (lhs.country, lhs.town ?? "") < (rhs.country, rhs.town ?? "")
+    }
+}
+
+/// The places a filter holds (ADR 0051): countries and towns by the names Maps gave them in
+/// `language`. A name is a place only in its language, and the catalog stores nothing else
+/// that names a country or a town — no code, no ID — so a held place outlives no change of
+/// language: once the catalog holds no names in `language`, the filter lets it go
+/// (`MediaFilter.keepingPlaces(namedIn:)`) rather than hold a name that matches nothing.
+nonisolated struct PlaceFilter: Hashable, Sendable {
+    let language: PlaceNameLanguage
+    /// Never empty: a filter holding no place holds no `PlaceFilter`.
+    let keys: Set<PlaceFilterKey>
+
+    /// Nil for no keys.
+    init?(language: PlaceNameLanguage, keys: Set<PlaceFilterKey>) {
+        guard !keys.isEmpty else { return nil }
+        self.language = language
+        self.keys = keys
     }
 }
 

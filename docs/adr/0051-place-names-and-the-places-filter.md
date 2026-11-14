@@ -69,17 +69,31 @@ descriptor (APP-013, ADR 0011); the owner-state rules the reader follows (ADR 00
   A failure never replaces a stored name.
 - **One owner, one loop.** `PlaceNameReader` (an actor) drains unnamed cells in pages,
   woken by the Store's change notifications (ADR 0032 rule 3).
-- **The filter.** `MediaFilter.places` holds countries and towns. A photo matches when its
-  cell is named one of them. Checking a country includes all of it; unchecking one town of a
-  checked country narrows it to the rest. The popover offers the countries and towns named
-  for the located items in every available source, whatever the sidebar shows, as it offers
-  file types: the choices are then the same under every row, and a row's leaves (an area or
-  a stack under Places, a person under People), which keep the row's filter (APP-013), never
-  lose a choice it holds. Each is most items first (counted in the same read), since the
+- **The filter.** `MediaFilter.places` is a `PlaceFilter`: countries and towns by their
+  names, with the one language those names are in. A photo matches when its cell is named
+  one of them in that language. Checking a country includes all of it; unchecking one town
+  of a checked country narrows it to the rest. The popover offers the countries and towns
+  named for the located items in the scope of the sidebar row the window shows, as it
+  offers file types (`CatalogStore.filterOptions(for:)`, owner order 2026-11-13): a library
+  never offers a town only a card holds, so no choice matches nothing. A row's leaves (an
+  area or a stack under Places, a person under People, a group under Duplicates) keep the
+  row's filter (APP-013) and are offered the row's choices, so a leaf never loses a choice
+  it holds. Places are offered only while the catalog holds names in exactly one language
+  (`CatalogFilterOptions.placeNameLanguage`). Each is most items first (counted in the same read), since the
   places a library holds most of are the ones filtered by; a tie goes in the locale's order.
   Every place the filter holds has a row (`CatalogFilterOptions.countries(holding:)`): a
   held town under its country after the towns named, a held country nothing names after the
   countries named — a filter never holds a value the user cannot see.
+- **A held place and a new language.** The catalog stores a cell's names and their
+  language, nothing else — no country code, no place ID — so nothing carries `Finland` to
+  `Suomi`. A held place filter lives only while the catalog holds names in its language:
+  Projection resolves the descriptor with the languages `place_cell` holds
+  (`MediaFilter.keepingPlaces(namedIn:)` in `CatalogWindowPolicy.resolvedDescriptor`), the
+  window adopts the resolved descriptor with the state it answers, and the places leave the
+  popover, the grid and the saved browser place together (`op=filter.places
+  phase=released`). Storing Maps's region code would carry a country across languages but
+  not a town, which Maps names per language with no identity; it was rejected as a second
+  identity for half the filter.
 - **Not in the catalog of media.** Place names are derived, rebuildable overlay in
   Application Support (ADR 0008): nothing is written to media files.
 
@@ -103,7 +117,8 @@ descriptor (APP-013, ADR 0011); the owner-state rules the reader follows (ADR 00
   from when the reader starts; a library's first naming may take minutes while Maps
   throttles. Until a cell is named, its photos match no place.
 - **Language:** changing the Mac's language names every cell again; until a cell is named
-  in the new language, its photos match no place. A region change alone names nothing.
+  in the new language, its photos match no place, and a place the filter held in the old
+  language leaves it once those names are forgotten. A region change alone names nothing.
 - **Failures:** a cell Maps keeps failing on is asked again every pass, no more often than
   the backoff allows; it never blocks the cells after it.
 - **Precision:** a photo within about a kilometre of a town's edge may carry the

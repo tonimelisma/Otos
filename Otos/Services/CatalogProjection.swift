@@ -261,7 +261,7 @@ actor CatalogProjection {
         let facts = makeBuildFacts(
             allRoots: allRoots,
             request: request,
-            resolvedDescriptor: Self.resolvedDescriptor(for: request, allRoots: allRoots, importBatches: []),
+            resolvedDescriptor: Self.resolvedDescriptor(for: request, allRoots: allRoots, importBatches: [], placeNameLanguages: []),
             importBatches: [],
             ordered: (orderedAssetIDs, [], []),
             orderQueryMs: 0

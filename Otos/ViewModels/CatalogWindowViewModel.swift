@@ -560,9 +560,9 @@ final class CatalogWindowViewModel {
     /// with margin exceeds its zoom-out at a window's width), so the fit is checked
     /// against the viewport that followed it and re-asked once without margin.
     @ObservationIgnored var mapPendingFit: (revision: UInt64, padded: Bool)?
-    /// The stack the newest click zoomed into and the viewport it zoomed from, until the
-    /// next click, open or area: a double-click's first click (`doubleClickMapCluster`).
-    @ObservationIgnored var mapClusterZoom: (cluster: MediaAssetID, from: MapViewport)?
+    /// What the newest click on a stack did, until the next click starts another gesture:
+    /// the gesture a double-click's second click belongs to (`mapMouseDown(clickCount:)`).
+    @ObservationIgnored var mapStackClick: MapStackClick?
     /// The map the user left for an area or a stack, which Back returns to: taken when they
     /// leave, so a camera flight that settles after does not move it (APP-058).
     @ObservationIgnored var mapLeftViewport: MapViewport?
@@ -1263,6 +1263,15 @@ extension CatalogWindowViewModel {
         // generations make that freshness check value-independent, covering rapid
         // A -> B -> A toggles that equality alone cannot distinguish.
         if nextState.queryGeneration == queryGeneration {
+            // The resolved filter can have let go of places named in a language the catalog
+            // no longer holds (ADR 0051); adopting it clears them from the popover too.
+            if let held = queryDescriptor.filter.places, nextState.queryDescriptor.filter.places == nil {
+                OtosLog.ui.noticeOperation("filter.places", phase: "released", fields: [
+                    "vm": diagnosticID,
+                    "language": held.language.identifier,
+                    "held": "\(held.keys.count)",
+                ])
+            }
             queryDescriptor = nextState.queryDescriptor
             sidebarSelection = nextState.resolvedSidebarSelection
         } else if currentSelectionWasRemoved(in: nextState) {
@@ -1415,10 +1424,16 @@ extension CatalogWindowViewModel {
         setMediaFilter(queryDescriptor.filter.settingChoice(choice, included: included))
     }
 
-    /// The Places filter (ADR 0040): a country, or one town in it.
+    /// The Places filter (ADR 0051): a country, or one town in it, named in the language the
+    /// popover offers them in — or, for a held place the catalog names no more, the
+    /// filter's own. With neither there is no row to check.
     func setPlaceFilter(_ place: PlaceFilterKey, included: Bool) {
+        let filter = queryDescriptor.filter
+        guard let language = state.filterOptions.placeNameLanguage ?? filter.places?.language else {
+            return
+        }
         let towns = state.filterOptions.countries.first { $0.name == place.country }?.towns ?? []
-        setMediaFilter(queryDescriptor.filter.settingPlace(place, included: included, towns: towns))
+        setMediaFilter(filter.settingPlace(place, included: included, towns: towns, language: language))
     }
 
     /// Choosing a sort while searching orders the results by it instead of by relevance.

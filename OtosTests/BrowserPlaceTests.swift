@@ -24,7 +24,10 @@ struct BrowserPlaceTests {
                     choices: [.liked],
                     people: [PersonID(rawValue: 3), PersonID(rawValue: 9)],
                     unassignedFaces: true,
-                    places: [PlaceFilterKey(country: "Finland", town: nil), PlaceFilterKey(country: "Australia", town: "Sydney NSW")]
+                    places: PlaceFilter(
+                        language: PlaceNameLanguage(identifier: "en-Latn"),
+                        keys: [PlaceFilterKey(country: "Finland", town: nil), PlaceFilterKey(country: "Australia", town: "Sydney NSW")]
+                    )
                 ),
                 sort: MediaSortOrder(field: .likeness, direction: .ascending)
             ),
@@ -94,8 +97,8 @@ struct BrowserPlaceTests {
         BrowserPlace(descriptor: .default, viewMode: .grid, focus: nil, selection: []).save(to: preferences)
         let stored = try #require(preferences.string(forKey: BrowserPlace.defaultsKey))
         for (valid, invalid) in [
-            // A place stored while several people could mean any of them.
-            ("\"version\":5", "\"version\":4"),
+            // A place stored before its places carried their language.
+            ("\"version\":6", "\"version\":5"),
             ("\"sortField\":\"bestDate\"", "\"sortField\":\"rating\""),
             ("\"viewMode\":\"grid\"", "\"viewMode\":\"survey\""),
             ("\"kind\":\"allMedia\"", "\"kind\":\"smartAlbum\""),

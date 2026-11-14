@@ -864,9 +864,8 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
-    /// On This Day picks (ADR 0049): `idx_search_embedding_left_out` holds just the rows
-    /// whose confident labels leave a photo out of On This Day (`OnThisDayPicks`), so each
-    /// anniversary read takes them from a small index instead of probing per row.
+    /// On This Day picks (ADR 0049): `idx_search_embedding_left_out` held just the rows whose
+    /// confident labels leave a photo out of On This Day (`OnThisDayPicks`); v52 drops it.
     static let leftOutIndexMigrationIdentifier = "v38_on_this_day_left_out"
 
     static var leftOutIndexStatements: [String] {
@@ -1191,6 +1190,15 @@ nonisolated enum CatalogSchema {
 
     static let unreadThumbnailsStatements: [String] = [
         "DELETE FROM search_embedding WHERE embedding IS NULL",
+    ]
+
+    /// On This Day seeks each row's search row by its key (`OnThisDayPicks.exclusionSQL`), so
+    /// v38's `idx_search_embedding_left_out`, which a list of every left-out row was read
+    /// from, serves no read and goes.
+    static let leftOutIndexDroppedMigrationIdentifier = "v52_on_this_day_left_out_index_dropped"
+
+    static let leftOutIndexDroppedStatements: [String] = [
+        "DROP INDEX idx_search_embedding_left_out",
     ]
 
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.

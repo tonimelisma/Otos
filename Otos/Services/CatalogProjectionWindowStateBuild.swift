@@ -17,10 +17,12 @@ extension CatalogProjection {
     ) async throws -> (CatalogWindowState, CatalogProjectionBuildMetrics) {
         let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
         let importBatches = try await store.importBatches()
+        let placeNameLanguages = try await store.placeNameLanguages()
         let resolvedDescriptor = Self.resolvedDescriptor(
             for: request,
             allRoots: allRoots,
-            importBatches: importBatches
+            importBatches: importBatches,
+            placeNameLanguages: placeNameLanguages
         )
         // The query is read by the index's own owner; a pass only takes what it has read, so
         // it never waits on Translation or Maps. A query still being read publishes nothing
@@ -87,7 +89,11 @@ extension CatalogProjection {
         // The supplementary reads are independent; an error in any fails the build.
         async let unfilteredVisibleAssetCount = unfilteredVisibleAssetCount(facts, store: store)
         async let allAssetCount = catalogedAssetCount(facts, store: store)
-        async let filterOptions = store.filterOptions(availableLibraryPaths: facts.availableLibraryPaths)
+        async let filterOptions = store.filterOptions(
+            for: facts.resolvedDescriptor.scope,
+            availableLibraryPaths: facts.availableLibraryPaths,
+            placeNameLanguages: placeNameLanguages
+        )
         var (state, metrics) = try await windowState(
             from: facts,
             allAssetCount: allAssetCount,
@@ -212,14 +218,16 @@ extension CatalogProjection {
     static func resolvedDescriptor(
         for request: CatalogQueryRequest,
         allRoots: [CatalogLibraryState],
-        importBatches: [ImportBatchSummary]
+        importBatches: [ImportBatchSummary],
+        placeNameLanguages: Set<PlaceNameLanguage>
     ) -> CatalogQueryDescriptor {
         let sources = CatalogWindowPolicy.sourceRows(from: allRoots)
         return CatalogWindowPolicy.resolvedDescriptor(
             request.descriptor,
             libraries: sources.libraries,
             removableSources: sources.removableSources,
-            importBatches: importBatches
+            importBatches: importBatches,
+            placeNameLanguages: placeNameLanguages
         )
     }
 

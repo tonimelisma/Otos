@@ -102,7 +102,7 @@ struct CatalogWindowViewModelMapTests {
         model.mapViewportChanged(cityViewport())
         let clusters = try await waitForValue { model.mapClusters.isEmpty ? nil : model.mapClusters }
 
-        model.zoomIntoMapCluster(clusters[0])
+        model.clickMapCluster(clusters[0])
 
         let stack = SidebarSelection.mapStack(MapStack(members: [id("a.jpg")]))
         #expect(model.queryDescriptor.scope == stack)
@@ -129,7 +129,8 @@ struct CatalogWindowViewModelMapTests {
     }
 
     /// A click on a stack that can split zooms into it; a double-click opens exactly its
-    /// items, whatever the camera did after the first click.
+    /// items, whatever the camera did after the first click: the second click belongs to the
+    /// gesture its first click began, not to what the flight moved under the pointer.
     @MainActor
     @Test func aClickZoomsIntoAStackAndADoubleClickOpensIt() async throws {
         let model = makeViewModel()
@@ -146,7 +147,8 @@ struct CatalogWindowViewModelMapTests {
         #expect(!clusters[0].isExactPlace)
         let before = try #require(model.mapCameraRequest)
 
-        model.zoomIntoMapCluster(clusters[0])
+        #expect(!model.mapMouseDown(clickCount: 1))
+        model.clickMapCluster(clusters[0])
 
         #expect(model.queryDescriptor.scope == .places)
         let after = try #require(model.mapCameraRequest)
@@ -155,7 +157,10 @@ struct CatalogWindowViewModelMapTests {
         #expect(after.bounds.width <= shown.width / 4)
         #expect(abs(MapClusterPolicy.region(of: after.bounds).centerLatitude - 60.175) < 0.001)
 
-        model.doubleClickMapCluster(clusters[0])
+        // The flight is under way when the second click lands; the click is taken before
+        // anything under the pointer sees it.
+        model.mapViewportChanged(viewport(latitudinalMeters: 100_000))
+        #expect(model.mapMouseDown(clickCount: 2))
         let stack = SidebarSelection.mapStack(MapStack(members: located.map(\.id)))
         #expect(model.queryDescriptor.scope == stack)
         #expect(model.showsMapAreaLeaf)
@@ -170,6 +175,75 @@ struct CatalogWindowViewModelMapTests {
         let back = try #require(model.mapCameraRequest)
         #expect(back.revision == after.revision + 1)
         #expect(back.bounds == MapClusterPolicy.bounds(of: shown))
+    }
+
+    /// The reported case: a stack off the map's centre, double-clicked. Its first click flies
+    /// the camera to it, so whatever the second click would land on — bare map, which MapKit
+    /// would zoom again, or a neighbouring stack — has moved under the pointer. The second click
+    /// is the gesture's: it opens the stack the first click acted on, a third does nothing more,
+    /// and a click AppKit counts as one begins a new gesture whose own second click is left to
+    /// what lies under it. A double-click on a stack no zoom can split opens it once.
+    @MainActor
+    @Test func aDoubleClicksSecondClickNeverActsOnWhatTheFirstMovedUnderThePointer() async throws {
+        let model = makeViewModel()
+        model.startMapClustering()
+        model.selectSidebar(.places)
+        let located = [
+            LocatedAsset(id: id("centre-a.jpg"), coordinate: PlaceCoordinate(latitude: 60.170, longitude: 24.94)),
+            LocatedAsset(id: id("centre-b.jpg"), coordinate: PlaceCoordinate(latitude: 60.180, longitude: 24.94)),
+            LocatedAsset(id: id("east-a.jpg"), coordinate: PlaceCoordinate(latitude: 60.170, longitude: 27.0)),
+            LocatedAsset(id: id("east-b.jpg"), coordinate: PlaceCoordinate(latitude: 60.180, longitude: 27.0)),
+        ]
+        model.applyState(windowState(model, scope: .places, ids: located.map(\.id), map: CatalogMapState(located: located)))
+        let shown = viewport(latitudinalMeters: 400_000)
+        model.mapViewportChanged(shown)
+        let clusters = try await waitForValue { model.mapClusters.count == 2 ? model.mapClusters : nil }
+        let east = try #require(clusters.first { $0.memberIDs.contains(id("east-a.jpg")) })
+        #expect(!east.isExactPlace)
+
+        // A click begins a gesture; a second click begun on bare map is not one of a stack's.
+        #expect(!model.mapMouseDown(clickCount: 1))
+        #expect(!model.mapMouseDown(clickCount: 2))
+        #expect(model.queryDescriptor.scope == .places)
+
+        #expect(!model.mapMouseDown(clickCount: 1))
+        model.clickMapCluster(east)
+        let zoom = try #require(model.mapCameraRequest)
+        #expect(MapClusterPolicy.region(of: zoom.bounds).centerLongitude > 26)
+        // The flight brings the east stack to the centre, where the centre stack was.
+        model.mapViewportChanged(viewport(latitudinalMeters: 60000, longitude: 27.0))
+        #expect(model.mapMouseDown(clickCount: 2))
+        let stack = SidebarSelection.mapStack(MapStack(members: east.memberIDs))
+        #expect(model.queryDescriptor.scope == stack)
+        let generation = model.queryGeneration
+        #expect(model.mapMouseDown(clickCount: 3))
+        #expect(model.queryGeneration == generation)
+        #expect(model.mapLeftViewport == shown)
+
+        // A click AppKit counts as one, after the gesture: the next second click is not taken.
+        #expect(!model.mapMouseDown(clickCount: 1))
+        #expect(!model.mapMouseDown(clickCount: 2))
+        #expect(model.queryGeneration == generation)
+    }
+
+    /// A stack no zoom can split opens on its first click; the second click of the double-click
+    /// is that gesture's and opens nothing again.
+    @MainActor
+    @Test func aDoubleClickOnAnExactStackOpensItOnce() async throws {
+        let model = makeViewModel()
+        model.startMapClustering()
+        model.selectSidebar(.places)
+        let located = [LocatedAsset(id: id("a.jpg"), coordinate: Self.helsinki)]
+        model.applyState(windowState(model, scope: .places, ids: [id("a.jpg")], map: CatalogMapState(located: located)))
+        model.mapViewportChanged(cityViewport())
+        let clusters = try await waitForValue { model.mapClusters.isEmpty ? nil : model.mapClusters }
+
+        #expect(!model.mapMouseDown(clickCount: 1))
+        model.clickMapCluster(clusters[0])
+        let generation = model.queryGeneration
+        #expect(model.queryDescriptor.scope == .mapStack(MapStack(members: [id("a.jpg")])))
+        #expect(model.mapMouseDown(clickCount: 2))
+        #expect(model.queryGeneration == generation)
     }
 
     /// MapKit clamps a camera past its zoom-out. The viewport that follows a fit's own
@@ -355,9 +429,9 @@ struct CatalogWindowViewModelMapTests {
         viewport(latitudinalMeters: 20000)
     }
 
-    private func viewport(latitudinalMeters: Double) -> MapViewport {
+    private func viewport(latitudinalMeters: Double, longitude: Double = Self.helsinki.longitude) -> MapViewport {
         let region = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: Self.helsinki.latitude, longitude: Self.helsinki.longitude),
+            center: CLLocationCoordinate2D(latitude: Self.helsinki.latitude, longitude: longitude),
             latitudinalMeters: latitudinalMeters,
             longitudinalMeters: latitudinalMeters
         )

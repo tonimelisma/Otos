@@ -19,7 +19,7 @@ import Foundation
 /// position, never their launch.
 nonisolated struct BrowserPlace: Equatable {
     static let defaultsKey = "browserPlace"
-    static let currentVersion = 5
+    static let currentVersion = 6
 
     var descriptor: CatalogQueryDescriptor
     var viewMode: BrowserViewMode
@@ -54,9 +54,10 @@ nonisolated struct BrowserPlace: Equatable {
 // MARK: - Wire format
 
 private nonisolated extension BrowserPlace {
-    /// Version 4 of the stored shape: a filter's file types carry their kind, and the filter
-    /// holds People and Places. Plain values, so the domain types stay free of persistence conformances
-    /// and this file is the whole schema.
+    /// Version 6 of the stored shape: a filter's file types carry their kind, and the filter
+    /// holds People and Places, its places with the language they are named in. Plain values,
+    /// so the domain types stay free of persistence conformances and this file is the whole
+    /// schema.
     nonisolated struct Record: Codable {
         nonisolated struct Scope: Codable {
             /// `allMedia`, `places`, `mapArea`, `onThisDay`, `duplicates`, `people`,
@@ -97,6 +98,10 @@ private nonisolated extension BrowserPlace {
         var unassignedFaces: Bool
         /// The Places filter's rows: a country, or a town in it.
         var places: [Place]
+        /// The language `places` are named in (`PlaceNameLanguage`); nil exactly when there
+        /// are none. A place the catalog no longer names in it leaves the filter when the
+        /// window is first published (ADR 0051).
+        var placeLanguage: String?
         var sortField: String
         var sortDirection: String
         var viewMode: String
@@ -122,9 +127,16 @@ private nonisolated extension BrowserPlace {
                 MediaFormatToken.normalize(extension: fileType.format).map { FilterFileType(kind: kind, format: $0) }
             }
         }
+        let places = record.placeLanguage.flatMap { language in
+            PlaceFilter(
+                language: PlaceNameLanguage(identifier: language),
+                keys: Set(record.places.map { PlaceFilterKey(country: $0.country, town: $0.town) })
+            )
+        }
         guard kinds.count == record.kinds.count,
               choices.count == record.choices.count,
-              fileTypes.count == record.fileTypes.count
+              fileTypes.count == record.fileTypes.count,
+              (places == nil) == record.places.isEmpty
         else {
             return nil
         }
@@ -134,7 +146,7 @@ private nonisolated extension BrowserPlace {
             choices: Set(choices),
             people: Set(record.people.map(PersonID.init(rawValue:))),
             unassignedFaces: record.unassignedFaces,
-            places: Set(record.places.map { PlaceFilterKey(country: $0.country, town: $0.town) })
+            places: places
         )
         self.init(
             descriptor: CatalogQueryDescriptor(
@@ -198,7 +210,8 @@ private nonisolated extension BrowserPlace.Record {
             choices: descriptor.filter.choices.map(\.rawValue).sorted(),
             people: descriptor.filter.people.map(\.rawValue).sorted(),
             unassignedFaces: descriptor.filter.unassignedFaces,
-            places: descriptor.filter.places.sorted().map { Place(country: $0.country, town: $0.town) },
+            places: descriptor.filter.heldPlaces.sorted().map { Place(country: $0.country, town: $0.town) },
+            placeLanguage: descriptor.filter.places?.language.identifier,
             sortField: descriptor.sort.field.rawValue,
             sortDirection: descriptor.sort.direction.rawValue,
             viewMode: place.viewMode.rawValue,

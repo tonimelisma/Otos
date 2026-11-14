@@ -62,9 +62,16 @@ Map view mode.
 - **A click drills in; a double-click opens** (owner decision, 2026-11-12). A click on a
   stack zooms into it, as a click on a cluster does on nearly every map; one whose
   members share a coordinate, which no zoom can split, opens. A double-click opens the
-  stack. The map has no selection. One tap gesture reads AppKit's click count, so the
-  click zooms at once rather than waiting out the double-click interval, and the
-  double-click's second click opens the stack its first click landed on. It is presented in the ordinary view modes, and a
+  stack. The map has no selection. A stack's tap acts only on a click AppKit counts as
+  one, so the click zooms at once rather than waiting out the double-click interval. The
+  zoom moves an off-centre stack from under the pointer, so the second click is routed by
+  gesture, not by hit-testing: a local event monitor over the map
+  (`MapMouseDownMonitor`) hands every mouse-down's click count to the ViewModel
+  (`mapMouseDown(clickCount:)`) before MapKit or a stack sees it, and a second click
+  after a click on a stack is taken — it opens the stack that first click acted on
+  (`MapStackClick`) and reaches nothing under the pointer, neither a neighbouring stack nor
+  MapKit's own double-click zoom. A click counted as one starts a new gesture. No timer
+  decides it. It is presented in the ordinary view modes, and a
   Back to Map toolbar item returns to the map at the viewport the user left. This is
   Photos' Grid, reached through Otos's own picker rather than a fourth control.
 - **The scope predicate carries the location dimension.** `CatalogScopePredicate`

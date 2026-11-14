@@ -101,13 +101,32 @@ nonisolated struct MediaFilter: Hashable {
     /// The People filter's `Unidentified Faces` row: photos holding, as well, a face with no
     /// person.
     var unassignedFaces = false
-    /// The Places filter (ADR 0051): photos taken in any of these countries or towns.
-    var places: Set<PlaceFilterKey> = []
+    /// The Places filter (ADR 0051): photos taken in any of these countries or towns, by
+    /// their names in one language.
+    var places: PlaceFilter?
 
     static let all = MediaFilter()
 
     var isActive: Bool {
-        !kinds.isEmpty || !fileTypes.isEmpty || !choices.isEmpty || filtersPeople || !places.isEmpty
+        !kinds.isEmpty || !fileTypes.isEmpty || !choices.isEmpty || filtersPeople || places != nil
+    }
+
+    /// The countries and towns the Places filter holds, in whatever language they are named.
+    var heldPlaces: Set<PlaceFilterKey> {
+        places?.keys ?? []
+    }
+
+    /// This filter without its places once the catalog holds no names in their language —
+    /// the Mac's language changed, and the reader forgot the old names (ADR 0051). Nothing
+    /// the catalog stores names a place apart from its name, so the place cannot be carried
+    /// into the new language; it leaves the filter instead of matching nothing.
+    func keepingPlaces(namedIn languages: Set<PlaceNameLanguage>) -> MediaFilter {
+        guard let places, !languages.contains(places.language) else {
+            return self
+        }
+        var updated = self
+        updated.places = nil
+        return updated
     }
 
     var filtersPeople: Bool {
@@ -125,33 +144,33 @@ nonisolated struct MediaFilter: Hashable {
     }
 
     /// Checking a country includes all of it, so its towns leave the filter; checking a town
-    /// of a checked country narrows the country to the towns checked.
-    func settingPlace(_ place: PlaceFilterKey, included: Bool, towns: [String]) -> MediaFilter {
-        var updated = self
+    /// of a checked country narrows the country to the towns checked. `language` is the one
+    /// `place` and `towns` are named in; places held in another are let go, since one filter
+    /// holds one language's names.
+    func settingPlace(_ place: PlaceFilterKey, included: Bool, towns: [String], language: PlaceNameLanguage) -> MediaFilter {
+        var places = places?.language == language ? heldPlaces : []
         let country = PlaceFilterKey(country: place.country, town: nil)
         if place.town == nil {
-            updated.places = updated.places.filter { $0.country != place.country }
+            places = places.filter { $0.country != place.country }
             if included {
-                updated.places.insert(country)
+                places.insert(country)
             }
-            return updated
-        }
-        if updated.places.contains(country) {
+        } else if places.contains(country) {
             // Narrowing a whole country: every other town stays.
-            updated.places.remove(country)
+            places.remove(country)
             for town in towns where town != place.town {
-                updated.places.insert(PlaceFilterKey(country: place.country, town: town))
+                places.insert(PlaceFilterKey(country: place.country, town: town))
             }
             if included {
-                updated.places.insert(place)
+                places.insert(place)
             }
-            return updated
-        }
-        if included {
-            updated.places.insert(place)
+        } else if included {
+            places.insert(place)
         } else {
-            updated.places.remove(place)
+            places.remove(place)
         }
+        var updated = self
+        updated.places = PlaceFilter(language: language, keys: places)
         return updated
     }
 
@@ -395,7 +414,7 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
         kinds=\(kindList.isEmpty ? "all" : kindList) \
         formats=\(formatList.isEmpty ? "all" : formatList) \
         choices=\(choiceList.isEmpty ? "all" : choiceList) \
-        places=\(filter.places.count) \
+        places=\(filter.heldPlaces.count) \
         people=\(filter.people.count)\(filter.unassignedFaces ? "+unassigned" : "") \
         search=\(search.map { "\($0.text.count)chars:\($0.order)" } ?? "none")
         """
@@ -412,15 +431,23 @@ nonisolated struct CatalogQueryRequest: Hashable {
     static let initial = CatalogQueryRequest(descriptor: .default, generation: 0)
 }
 
-/// The choices the filter popover offers: the file types and places present in every
-/// available source, whatever the sidebar shows, so the choices are the same under every
-/// row and a row's leaves (an area or stack under Places, a person under People), which keep
-/// the row's filter (APP-013), never lose a choice it holds. Every held value also has a row
-/// (`formats(for:holding:)`, `countries(holding:)`), so it can always be seen and cleared.
+/// The choices the filter popover offers: the file types and places present in the scope of
+/// the sidebar row the window shows — a library's own, a card's own, Places' located items —
+/// so every choice matches something there. A row's leaves (an area or stack under Places, a
+/// person under People, a group under Duplicates) keep the row's filter (APP-013) and are
+/// offered the row's choices, so a leaf never loses a choice it holds. Every held value also
+/// has a row (`formats(for:holding:)`, `countries(holding:)`), so it can always be seen and
+/// cleared.
 nonisolated struct CatalogFilterOptions: Equatable {
     var formatsByKind: [MediaKind: [MediaFormatToken]] = [:]
-    /// The countries and towns Maps named for the located items, most items first (ADR 0051).
+    /// The countries and towns Maps named for the located items, most items first (ADR 0051),
+    /// in `placeNameLanguage`.
     var countries: [PlaceFilterCountry] = []
+    /// The language `countries` are named in, which a place checked from them is held in.
+    /// Nil while the catalog holds no names, or names in more than one language — only until
+    /// the reader forgets the old language's (`CatalogStore.forgetPlaceNames`) — and then no
+    /// place is offered.
+    var placeNameLanguage: PlaceNameLanguage?
 
     static let empty = CatalogFilterOptions()
 
@@ -434,12 +461,12 @@ nonisolated struct CatalogFilterOptions: Equatable {
     /// The countries, each with its towns, most items first: those named, plus every place
     /// `filter` holds that nothing named has — a held town under its country, after the towns
     /// named, and a held country with no named items after the countries named — so every
-    /// held place can be seen and cleared (a place held in a language no longer the Mac's,
-    /// or whose photos left the catalog).
+    /// held place can be seen and cleared (a place whose photos left the row's scope or the
+    /// catalog).
     func countries(holding filter: MediaFilter) -> [PlaceFilterCountry] {
         var heldTowns: [String: Set<String>] = [:]
         var heldCountries: Set<String> = []
-        for place in filter.places {
+        for place in filter.heldPlaces {
             heldCountries.insert(place.country)
             if let town = place.town {
                 heldTowns[place.country, default: []].insert(town)

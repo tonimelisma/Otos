@@ -97,11 +97,17 @@ nonisolated enum CatalogWindowPolicy {
         }
     }
 
+    /// The descriptor as the catalog can answer it: its scope resolved against the sources
+    /// and batches that exist, and its filter without places named in a language the catalog
+    /// no longer holds names in (ADR 0051), which would match nothing. The window adopts the
+    /// result with the state it answers (`CatalogWindowViewModel.applyState`), so a place the
+    /// catalog let go leaves the popover and the saved place too.
     static func resolvedDescriptor(
         _ descriptor: CatalogQueryDescriptor,
         libraries: [CatalogLibraryState],
         removableSources: [CatalogLibraryState],
-        importBatches: [ImportBatchSummary] = []
+        importBatches: [ImportBatchSummary] = [],
+        placeNameLanguages: Set<PlaceNameLanguage>
     ) -> CatalogQueryDescriptor {
         CatalogQueryDescriptor(
             scope: resolvedSidebarSelection(
@@ -110,7 +116,7 @@ nonisolated enum CatalogWindowPolicy {
                 removableSources: removableSources,
                 importBatches: importBatches
             ),
-            filter: descriptor.filter,
+            filter: descriptor.filter.keepingPlaces(namedIn: placeNameLanguages),
             sort: descriptor.sort,
             search: descriptor.search
         )
